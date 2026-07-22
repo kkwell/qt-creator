@@ -325,6 +325,11 @@ OptionalProviderPresentation WorkbenchController::diagnosticsProviderPresentatio
     return m_diagnosticsProvider;
 }
 
+DiagnosticsStatusPresentation WorkbenchController::diagnosticsStatusPresentation() const
+{
+    return m_diagnosticsStatus;
+}
+
 bool WorkbenchController::scanAvailable() const
 {
     return m_scanProvider.isAvailable();
@@ -814,11 +819,29 @@ void WorkbenchController::refreshOptionalProviders(Core::Provider *excluding)
         diagnosticsSnapshot = diagnosticsProvider->latestSnapshot();
     }
 
+    DiagnosticsStatusPresentation diagnosticsStatus;
+    diagnosticsStatus.provider = diagnostics;
+    diagnosticsStatus.streamState = diagnosticsState;
+    diagnosticsStatus.request = diagnosticsRequest;
+    if (diagnosticsSnapshot) {
+        diagnosticsStatus.request = {
+            diagnosticsSnapshot->projectId,
+            diagnosticsSnapshot->masterId,
+        };
+        diagnosticsStatus.runMode = diagnosticsSnapshot->runMode;
+        diagnosticsStatus.masterState = diagnosticsSnapshot->masterState;
+        diagnosticsStatus.mock = diagnosticsSnapshot->mock;
+        diagnosticsStatus.masterHasError = diagnosticsSnapshot->masterHasError;
+        diagnosticsStatus.activeAlarmCount = diagnosticsSnapshot->activeAlarmCount;
+    }
+
     const bool diagnosticsChanged = m_diagnosticsProvider != diagnostics;
     const bool diagnosticsAvailabilityChanged
         = m_diagnosticsProvider.isAvailable() != diagnostics.isAvailable();
+    const bool statusPresentationChanged = m_diagnosticsStatus != diagnosticsStatus;
     m_scanProvider = scan;
     m_diagnosticsProvider = diagnostics;
+    m_diagnosticsStatus = diagnosticsStatus;
     m_treeModel.setProviderPresentations(
         m_scanProvider,
         m_diagnosticsProvider,
@@ -828,6 +851,8 @@ void WorkbenchController::refreshOptionalProviders(Core::Provider *excluding)
         diagnosticsSnapshot);
     if (diagnosticsChanged)
         emit diagnosticsProviderChanged(diagnosticsAvailabilityChanged);
+    if (statusPresentationChanged)
+        emit diagnosticsStatusChanged();
 }
 
 void WorkbenchController::handleOptionalAvailabilityChanged()

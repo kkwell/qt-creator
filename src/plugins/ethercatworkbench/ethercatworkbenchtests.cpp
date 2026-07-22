@@ -5053,6 +5053,224 @@ void EtherCATWorkbenchTests::testStatusBarTracksStateService()
     QTRY_VERIFY(statusButton->text().contains("Offline", Qt::CaseInsensitive));
 }
 
+void EtherCATWorkbenchTests::testStatusBarTracksPreferredDiagnosticsMode()
+{
+    auto statusButton = ::Core::ICore::statusBar()->findChild<QToolButton *>(
+        "EtherCATWorkbenchStatus");
+    QVERIFY(statusButton);
+
+    Core::StateService *stateService
+        = ExtensionSystem::PluginManager::getObject<Core::StateService>();
+    QVERIFY(stateService);
+    const QList<Core::StatusEntry> previousStatuses = stateService->statuses();
+    stateService->clearAll();
+
+    AvailableDiagnosticsProvider preferred(
+        Utils::Id("EtherCAT.Workbench.StatusDiagnosticsA"),
+        "Local Mock preferred status diagnostics");
+    AvailableDiagnosticsProvider fallback(
+        Utils::Id("EtherCAT.Workbench.StatusDiagnosticsZ"),
+        "Local Mock fallback status diagnostics");
+    preferred.setAvailable(true);
+    fallback.setAvailable(true);
+    bool preferredRegistered = false;
+    bool fallbackRegistered = false;
+    const QScopeGuard cleanup([&] {
+        if (preferredRegistered)
+            ExtensionSystem::PluginManager::removeObject(&preferred);
+        if (fallbackRegistered)
+            ExtensionSystem::PluginManager::removeObject(&fallback);
+        stateService->clearAll();
+        for (const Core::StatusEntry &status : previousStatuses)
+            stateService->setStatus(status);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    const Data::ProjectSnapshot project = projectSnapshot("Status diagnostics project");
+    const Data::NodeId projectId = project.id;
+    const Data::NodeId diagnosticsMasterId = masterId(project);
+    Data::DiagnosticsSnapshot preferredSnapshot;
+    preferredSnapshot.projectId = projectId;
+    preferredSnapshot.masterId = diagnosticsMasterId;
+    preferredSnapshot.mock = true;
+    preferredSnapshot.runMode = Data::DiagnosticsRunMode::Config;
+    preferredSnapshot.masterState = Data::EtherCATState::PreOperational;
+    preferred.publishSnapshot(preferredSnapshot);
+
+    Data::DiagnosticsSnapshot fallbackSnapshot = preferredSnapshot;
+    fallbackSnapshot.runMode = Data::DiagnosticsRunMode::Run;
+    fallbackSnapshot.masterState = Data::EtherCATState::Operational;
+    fallback.publishSnapshot(fallbackSnapshot);
+
+    ExtensionSystem::PluginManager::addObject(&fallback);
+    fallbackRegistered = true;
+    ExtensionSystem::PluginManager::addObject(&preferred);
+    preferredRegistered = true;
+
+    const Utils::Id statusSource("EtherCAT.Workbench.PreferredDiagnosticsStatus");
+    QVERIFY(stateService->setStatus(
+        {statusSource,
+         Core::StatusSeverity::Ready,
+         "Mock diagnostics ready",
+         "Deterministic preferred-provider status test"}));
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Config / PREOP"));
+    QVERIFY(statusButton->toolTip().contains("Local Mock preferred status diagnostics"));
+    QVERIFY(statusButton->toolTip().contains("MOCK Config / PREOP"));
+    QVERIFY(statusButton->toolTip().contains(projectId.toString()));
+    QVERIFY(statusButton->toolTip().contains(diagnosticsMasterId.toString()));
+    QCOMPARE(statusButton->accessibleDescription(), statusButton->toolTip());
+    QVERIFY(statusButton->menu());
+    QVERIFY(std::any_of(
+        statusButton->menu()->actions().cbegin(),
+        statusButton->menu()->actions().cend(),
+        [](const QAction *action) { return action->text() == "MOCK Config / PREOP"; }));
+
+    fallbackSnapshot.runMode = Data::DiagnosticsRunMode::FreeRun;
+    fallbackSnapshot.masterState = Data::EtherCATState::SafeOperational;
+    fallback.publishSnapshot(fallbackSnapshot);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCOMPARE(statusButton->text(), QString("MOCK Config / PREOP"));
+
+    preferredSnapshot.runMode = Data::DiagnosticsRunMode::FreeRun;
+    preferredSnapshot.masterState = Data::EtherCATState::SafeOperational;
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK FreeRun / SAFEOP"));
+
+    preferredSnapshot.runMode = Data::DiagnosticsRunMode::Run;
+    preferredSnapshot.masterState = Data::EtherCATState::Operational;
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Run / OP"));
+
+    preferredSnapshot.mock = false;
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("Diagnostics Run / OP"));
+    QVERIFY(statusButton->toolTip().contains("Provider-reported diagnostics only"));
+    QVERIFY(!statusButton->toolTip().contains("Local Mock diagnostics only"));
+    preferred.setStreamState(Data::DiagnosticsStreamState::Failed);
+    QTRY_COMPARE(statusButton->text(), QString("Diagnostics Fault"));
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("Diagnostics Run / OP"));
+
+    fallback.setAvailable(false);
+    QVERIFY(stateService->setStatus(
+        {statusSource,
+         Core::StatusSeverity::Busy,
+         "Mock diagnostics busy",
+         "Equal severity must not relabel the Provider"}));
+    preferred.beginRequest(projectId, diagnosticsMasterId);
+    QTRY_VERIFY(statusButton->toolTip().contains("Provider-reported diagnostics only"));
+    QTRY_COMPARE(statusButton->text(), QString("Diagnostics Busy"));
+    QVERIFY(statusButton->toolTip().contains("Starting"));
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Busy"));
+
+    preferredSnapshot.activeAlarmCount = 1;
+    QVERIFY(stateService->setStatus(
+        {statusSource,
+         Core::StatusSeverity::Warning,
+         "Mock diagnostics warning",
+         "Equal severity must preserve neutral Provider wording"}));
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("Diagnostics Warning"));
+    preferredSnapshot.activeAlarmCount = 0;
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Warning"));
+
+    QVERIFY(stateService->setStatus(
+        {statusSource,
+         Core::StatusSeverity::Error,
+         "Mock diagnostics fault",
+         "Equal severity must preserve neutral Provider wording"}));
+    preferred.setStreamState(Data::DiagnosticsStreamState::Failed);
+    QTRY_COMPARE(statusButton->text(), QString("Diagnostics Fault"));
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Fault"));
+
+    QVERIFY(stateService->setStatus(
+        {statusSource,
+         Core::StatusSeverity::Ready,
+         "Mock diagnostics ready",
+         "Deterministic preferred-provider status test"}));
+    QTRY_COMPARE(statusButton->text(), QString("Diagnostics Run / OP"));
+    fallback.setAvailable(true);
+    QTRY_COMPARE(statusButton->text(), QString("Diagnostics Run / OP"));
+    preferredSnapshot.mock = true;
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Run / OP"));
+    fallback.setAvailable(false);
+    preferred.beginRequest(projectId, diagnosticsMasterId);
+    QTRY_COMPARE(statusButton->text(), QString("Diagnostics Busy"));
+    QVERIFY(statusButton->toolTip().contains("Starting"));
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Run / OP"));
+    preferred.setStreamState(Data::DiagnosticsStreamState::Stopping);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Busy"));
+    QVERIFY(statusButton->toolTip().contains("Stopping"));
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Run / OP"));
+    fallback.setAvailable(true);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Run / OP"));
+
+    preferred.setAvailable(false);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK FreeRun / SAFEOP"));
+    preferred.setAvailable(true);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Run / OP"));
+
+    QVERIFY(stateService->setStatus(
+        {statusSource,
+         Core::StatusSeverity::Warning,
+         "Mock diagnostics warning",
+         "Warning must remain visible"}));
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Warning"));
+    QVERIFY(statusButton->toolTip().contains("MOCK Run / OP"));
+    QVERIFY(stateService->setStatus(
+        {statusSource,
+         Core::StatusSeverity::Error,
+         "Mock diagnostics fault",
+         "Fault must remain visible"}));
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Fault"));
+    QVERIFY(statusButton->toolTip().contains("MOCK Run / OP"));
+
+    stateService->clearStatus(statusSource);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Run / OP"));
+
+    preferredSnapshot.activeAlarmCount = 1;
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Warning"));
+    QVERIFY(statusButton->toolTip().contains("MOCK Run / OP"));
+    preferredSnapshot.activeAlarmCount = 0;
+    preferredSnapshot.masterHasError = true;
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Warning"));
+    preferredSnapshot.masterHasError = false;
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Run / OP"));
+    preferred.setStreamState(Data::DiagnosticsStreamState::Failed);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Fault"));
+    QVERIFY(statusButton->toolTip().contains("Failed"));
+    preferred.publishSnapshot(preferredSnapshot);
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Run / OP"));
+
+    ExtensionSystem::PluginManager::removeObject(&preferred);
+    preferredRegistered = false;
+    QTRY_COMPARE(statusButton->text(), QString("MOCK FreeRun / SAFEOP"));
+    preferredSnapshot.runMode = Data::DiagnosticsRunMode::Config;
+    preferredSnapshot.masterState = Data::EtherCATState::PreOperational;
+    preferred.publishSnapshot(preferredSnapshot);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCOMPARE(statusButton->text(), QString("MOCK FreeRun / SAFEOP"));
+
+    ExtensionSystem::PluginManager::removeObject(&fallback);
+    fallbackRegistered = false;
+    QTRY_VERIFY(statusButton->text().contains("Offline", Qt::CaseInsensitive));
+    QVERIFY(stateService->setStatus(
+        {statusSource, Core::StatusSeverity::Ready, "Mock ready fallback", {}}));
+    QTRY_COMPARE(statusButton->text(), QString("MOCK Ready"));
+    stateService->clearStatus(statusSource);
+    QTRY_VERIFY(statusButton->text().contains("Offline", Qt::CaseInsensitive));
+}
+
 void EtherCATWorkbenchTests::testTreeModelLargeIncrementalUpdate()
 {
     WorkbenchTreeModel model;

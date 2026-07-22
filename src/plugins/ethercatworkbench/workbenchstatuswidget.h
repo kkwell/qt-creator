@@ -15,16 +15,22 @@ class StateService;
 
 namespace EtherCAT::Workbench::Internal {
 
+class WorkbenchController;
+
 class WorkbenchStatusWidget final : public QToolButton
 {
 public:
-    explicit WorkbenchStatusWidget(Core::StateService *stateService, QWidget *parent = nullptr);
+    explicit WorkbenchStatusWidget(
+        Core::StateService *stateService,
+        WorkbenchController *controller,
+        QWidget *parent = nullptr);
 
 private:
     void updateStatus();
     void updateMinimumWidth();
 
     QPointer<Core::StateService> m_stateService;
+    QPointer<WorkbenchController> m_controller;
     QMenu *m_menu = nullptr;
 };
 

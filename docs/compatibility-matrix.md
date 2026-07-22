@@ -2635,3 +2635,40 @@ keyboard context-event contract is at
 <https://doc.qt.io/qt-6/qcontextmenuevent.html>. Beckhoff's selected-object
 keyboard convention is at
 <https://infosys.beckhoff.com/content/1033/tcplccontrol/925416331.html>.
+
+## EtherCATWorkbench preferred Diagnostics status qualification
+
+`ISSUE-WB-STATUS-PREFERRED-DIAGNOSTICS-001` is qualified from local baseline
+`0524d2dfbb14cacd6f25c584ede4bcce9fe416c4`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Only the Workbench test changed; all five production SHA-256 values remained identical before and after the red test. The control showed `MOCK Ready` instead of required `MOCK Config / PREOP`, and the target exited with status 1 |
+| Preferred Provider modes | The deterministically preferred Provider projects Config/PREOP, FreeRun/SAFEOP, and Run/OP; a non-preferred Provider update cannot replace it |
+| Severity merge | Starting/Stopping are Busy, Failed is Fault, active alarm or Master error is Warning, and higher `StateService` Warning/Error remains authoritative; equal-severity non-Mock Providers retain neutral `Diagnostics` wording for Busy, Warning, and Fault |
+| Provider boundary | Local snapshots retain `MOCK`; `mock=false` uses neutral `Diagnostics` and explicitly remains Provider-reported rather than inferred controller or hardware state |
+| Lifecycle fallback | Availability loss and recovery, removal, and replacement update immediately; removed-Provider signals are ignored; no Provider falls back to Offline or the remaining generic state |
+| Compact details and accessibility | Text, tooltip, disabled menu entry, Project/Master IDs, and accessible description all expose the same preferred semantic state and truthful source boundary |
+| Focused normal and 2x | Two normal runs and one 2x run each passed 3 events, 0 failed, target status 0 |
+| Related normal and 2x | Two normal runs and one 2x run each passed 8 events, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | Two normal runs and one 2x run each passed 72 events, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 72, Scan 7, Diagnostics 7; 123 passed, 0 failed in six isolated LLDB-supervised processes |
+| Known soft assertion | The existing invalid-project path still emits the pre-existing ProjectExplorer TaskHub category soft assertion; it did not fail a test or target |
+| Final source SHA-256 | Plugin setup `f704eb2324c0a1cd532e1240cf9f0a2a5322a8135cfc4110848b3615bed8893e`; tests `35ef4c3dfa1ffa0be5dd9dabc2c6c0fa4b9003045256a28a00cdb9fedd61ee67` / `3f6c8f0fd810dbc6988687878f05827001e92898629f82bd08408d80f485ef39`; controller `874a901a3fd7884a80ad323e87325cf634b2439b33cc87af9ea40aea929a5c2d` / `d5d5b9f8d95e6eed11448c810d0faef765ab275a0ff4e3e862fd9658dc1bed3c`; status control `722814e9fedd50b4511974c3f7e20d2e896473d913adc03f130237defbf4a960` / `4903613607ee7e779c287b9903963bd0f6e17c8698c94461493a671c2395b358` |
+| Final git blobs | Plugin setup `5b6b305ba88faf63559e5578ea10191a168d7b02`; tests `23fbdb1a8623e0e67085f77aa9ce89483bbaea06` / `41c56a396f40a2a67091762b43b6867f90fea5f7`; controller `c89a718570af005ad64d3770cc1a2f5f1848d5b1` / `1502eb7b21f61f1db7c0d8f5b39e8e46bd064f7b`; status control `fe50e55aa93940ddb5177a14368c0ee16dfe731c` / `dafe0fec1be89d1d203a50cc81b673dc6dc86599` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 plugin dylibs; executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `f99970b4ee69e009236b0156168caa29e5c2944f7ea7de803d357dc55eeacf91`; test Workbench `20857c91a8e92157677c7c527b6df2a9572e4570ceeb4f038d2c62d6ab9e18ff` |
+| Enabled startup | PID 5129 remained alive for 37 post-ready samples with Workbench mapped in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 7036 remained alive for 37 samples with `-noload EtherCATWorkbench`; Workbench was absent in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Crash-dialog audit | From 2026-07-22 18:30:36 to 18:33:08 +0800 there was no residual qualification process, new matching DiagnosticReports file, or matching crash-service event |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM; no visible main window or system crash dialog |
+| Visual/manual inspection | Not run by design because executable acceptance had to remain invisible and non-interrupting |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard `extensionmanager_test.h` blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, ProjectService, Project command, model role, or source-list changes | None |
+| Core, ProjectExplorer, app, network, ADS, scan, online state, SDO, or hardware changes | None; this is a private Workbench projection over local/offline Mock or explicitly Provider-reported values |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-status-preferred-diagnostics-001.urIOBN`. Beckhoff's
+Config/FreeRun status-bar and OP descriptions are referenced only for terms
+and interaction at
+<https://infosys.beckhoff.com/content/1033/el6201/1037001483.html>.

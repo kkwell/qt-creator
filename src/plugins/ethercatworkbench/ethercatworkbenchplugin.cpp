@@ -83,7 +83,7 @@ void EtherCATWorkbenchPlugin::initialize()
     m_navigationFactory = std::make_unique<WorkbenchNavigationFactory>(m_controller.get());
     m_mode = std::make_unique<WorkbenchMode>(m_controller.get());
     setupActions();
-    m_statusWidget = new WorkbenchStatusWidget(stateService);
+    m_statusWidget = new WorkbenchStatusWidget(stateService, m_controller.get());
     ::Core::StatusBarManager::addStatusBarWidget(
         m_statusWidget,
         ::Core::StatusBarManager::LastLeftAligned,

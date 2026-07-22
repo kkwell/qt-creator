@@ -40,6 +40,7 @@ private slots:
     void testEtherCATRepositoryEmptyState();
     void testEditableConfiguredSlaveEtherCATWorkflow();
     void testStatusBarTracksStateService();
+    void testStatusBarTracksPreferredDiagnosticsMode();
     void testTreeModelLargeIncrementalUpdate();
     void testConfiguredSlaveStateIcon();
     void testProviderStateTreeAndNavigation();

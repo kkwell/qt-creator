@@ -38,6 +38,22 @@ struct OfflineMasterTarget
     QString masterName;
 };
 
+struct DiagnosticsStatusPresentation
+{
+    OptionalProviderPresentation provider;
+    Data::DiagnosticsStreamState streamState = Data::DiagnosticsStreamState::Stopped;
+    Data::DiagnosticsRequest request;
+    std::optional<Data::DiagnosticsRunMode> runMode;
+    std::optional<Data::EtherCATState> masterState;
+    bool mock = false;
+    bool masterHasError = false;
+    int activeAlarmCount = 0;
+
+    friend bool operator==(
+        const DiagnosticsStatusPresentation &, const DiagnosticsStatusPresentation &)
+        = default;
+};
+
 class WorkbenchController final : public QObject
 {
     Q_OBJECT
@@ -53,6 +69,7 @@ public:
     Core::ProviderRegistry *providerRegistry() const;
     OptionalProviderPresentation scanProviderPresentation() const;
     OptionalProviderPresentation diagnosticsProviderPresentation() const;
+    DiagnosticsStatusPresentation diagnosticsStatusPresentation() const;
     bool scanAvailable() const;
     bool diagnosticsAvailable() const;
     bool canInsertDeviceOnSelectedMaster() const;
@@ -93,6 +110,7 @@ signals:
     void copyCurrentNodeIdRequested();
     void insertDeviceRequested();
     void diagnosticsProviderChanged(bool availabilityChanged);
+    void diagnosticsStatusChanged();
 
 private:
     void refreshProjects();
@@ -110,6 +128,7 @@ private:
     bool m_shuttingDown = false;
     OptionalProviderPresentation m_scanProvider;
     OptionalProviderPresentation m_diagnosticsProvider;
+    DiagnosticsStatusPresentation m_diagnosticsStatus;
 };
 
 } // namespace EtherCAT::Workbench::Internal

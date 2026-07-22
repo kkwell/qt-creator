@@ -81,11 +81,18 @@ navigation controls.
 ## Unified status surface
 
 The Workbench registers one Qt Creator status-bar control in the standard
-`LastLeftAligned` area. It is visible only in EtherCAT Mode and consumes the
-existing `StateService` entries published by the Mock Scan and Diagnostics
-workflows. The highest-severity entry selects a Ready, Busy, Warning, or Fault
-icon and a short textual state. Every active phase-1 state remains explicitly
-labeled `MOCK` in every UI language; an empty service displays `Offline`.
+`LastLeftAligned` area. It is visible only in EtherCAT Mode and merges the
+existing `StateService` entries with a value-only projection from the
+deterministically preferred public Diagnostics Provider. The highest severity
+selects a Ready, Busy, Warning, or Fault icon and a short textual state; an
+empty service with no active Diagnostics state displays `Offline`.
+
+Local phase-1 Diagnostics snapshots remain explicitly labeled `MOCK`. While
+the preferred local Mock stream is running, the compact text distinguishes
+`MOCK Config / PREOP`, `MOCK FreeRun / SAFEOP`, and `MOCK Run / OP`. A future
+or test Provider that reports `mock=false` uses neutral `Diagnostics` wording
+and is identified as Provider-reported only; the Workbench does not infer a
+controller or physical-hardware connection from that value.
 
 The button tooltip and drop-down list retain every contributing summary and
 detail, so the compact visible state does not discard its source information.
@@ -5034,3 +5041,67 @@ EasyBoard `extensionmanager_test.h` blocker remains outside this private
 Workbench issue. Qualification is local/offline Mock evidence; visible
 desktop inspection was intentionally not run so acceptance did not interrupt
 desktop use.
+
+## Preferred Diagnostics status projection
+
+`ISSUE-WB-STATUS-PREFERRED-DIAGNOSTICS-001`, based on local commit
+`0524d2dfbb14cacd6f25c584ede4bcce9fe416c4`, closes the inconsistency where the
+Diagnostics commands and tree showed Config, FreeRun, or Run/OP while the
+status control collapsed every healthy mode to `MOCK Ready`. The status now
+projects the already selected preferred Diagnostics Provider as `MOCK Config /
+PREOP`, `MOCK FreeRun / SAFEOP`, or `MOCK Run / OP`. Beckhoff's Config/FreeRun
+status-bar and OP descriptions are used only as terminology and interaction
+references:
+<https://infosys.beckhoff.com/content/1033/el6201/1037001483.html>.
+
+Starting and Stopping map to Busy, Failed to Fault, and an active alarm or
+Master error to Warning. A higher-severity `StateService` contribution remains
+authoritative; at equal severity, a non-Mock Provider keeps neutral
+`Diagnostics` wording rather than being relabeled as local Mock. The tooltip,
+disabled menu entry, and accessible description
+retain the preferred Provider name, reported mode, Project/Master identifiers,
+and the local-Mock or Provider-reported boundary. A non-Mock snapshot is never
+presented as proof of a controller, transport, online transition, or physical
+hardware. Provider availability, availability recovery, deterministic
+replacement, and removal are reflected immediately; signals from a removed
+Provider no longer affect the status.
+
+Failure-first changed only the new Workbench test while the five production
+files retained their original SHA-256 values. The target exited with status 1
+after observing `MOCK Ready` where `MOCK Config / PREOP` was required. Final
+focused runs passed three events twice at normal scale and once at 2x; related
+runs passed eight events on the same matrix; complete Workbench runs passed 72
+events on all three runs. Six isolated plugin suites passed 123 events: Core
+17, Project 12, Devices 8, Workbench 72, Scan 7, and Diagnostics 7. The known
+pre-existing ProjectExplorer TaskHub soft assertion remains limited to the
+invalid-project test path and did not fail a test or target.
+
+The full `WITH_TESTS=OFF` product build passed and contains exactly 16 plugin
+dylibs. The executable SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+the product and test Workbench plugin SHA-256 values are
+`f99970b4ee69e009236b0156168caa29e5c2944f7ea7de803d357dc55eeacf91`
+and `20857c91a8e92157677c7c527b6df2a9572e4570ceeb4f038d2c62d6ab9e18ff`.
+
+Enabled product PID 5129 remained alive for 37 consecutive post-ready
+samples with Workbench mapped in all 37. Explicitly disabled PID 7036
+remained alive for 37 samples with `-noload EtherCATWorkbench` and Workbench
+absent in all 37. LLDB passed intentional SIGTERM without stopping or
+notifying; both targets recorded status 15. Every executable run used fresh
+HOME/settings, cleared inherited DYLD variables, `QT_QPA_PLATFORM=offscreen`,
+`CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch
+Bar bypass. The 2026-07-22 18:30:36 to 18:33:08 +0800 audit found no residual
+qualification process, new matching DiagnosticReports file, or matching crash
+service event. No visible main window or manual desktop inspection was used.
+
+Evidence is under
+`/private/tmp/embed-labs-wb-status-preferred-diagnostics-001.urIOBN`. The issue
+changes only seven existing private Workbench implementation/test files and
+these four documents. It adds no public API, source file, dependency,
+Provider or ProjectService contract, Project format, persistence field,
+Project command, model role, Core or ProjectExplorer hook, application
+bootstrap change, production thread or timer, network, ADS, scan, online
+state, SDO execution, or hardware behavior. No CMake or qbs description
+changed, so qbs was not run. The unrelated `WITH_TESTS=ON` all-target build
+was not rerun because the known EasyBoard `extensionmanager_test.h` blocker
+remains outside this private Workbench issue.

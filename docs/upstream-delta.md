@@ -207,10 +207,10 @@ application path change, so the direct Core patch count remains five.
 
 The Workbench unified-status issue also changes only the product-owned
 `EtherCATWorkbench` plugin and documentation. It uses the existing public
-Qt Creator `StatusBarManager` and product-owned `StateService`, adds no plugin
-dependency, and keeps CMake and qbs source lists synchronized. No upstream
-Core, ProjectExplorer, or application path changes, so the direct Core patch
-count remains five.
+Qt Creator `StatusBarManager`, product-owned `StateService`, and public
+Diagnostics Provider values, adds no plugin dependency, and keeps CMake and
+qbs source lists synchronized. No upstream Core, ProjectExplorer, or
+application path changes, so the direct Core patch count remains five.
 
 The Workbench command-strip issue changes only the product-owned
 `EtherCATWorkbench` plugin and documentation. It uses Qt Creator's public
@@ -1214,3 +1214,33 @@ remote comparison, fetch, pull, merge, rebase, push, PR, or publication was
 performed. The supported baseline remains the local `embed-labs` history.
 Authoritative evidence is under
 `/private/tmp/embed-labs-wb-nav-keyboard-context-target-001.Du2VdU`.
+
+## Local preferred Diagnostics status projection delta
+
+`ISSUE-WB-STATUS-PREFERRED-DIAGNOSTICS-001` is a private Workbench correction
+on local baseline `0524d2dfbb14cacd6f25c584ede4bcce9fe416c4`. The existing
+deterministically preferred Diagnostics Provider is copied into a private
+value presentation so the status control distinguishes Config/PREOP,
+FreeRun/SAFEOP, and Run/OP instead of collapsing every healthy mode to Ready.
+Shared `StateService` severity remains authoritative when it is higher. Mock
+and Provider-reported source boundaries remain explicit; no status value is
+treated as proof of transport, controller, online, or hardware state.
+
+The local delta changes only seven existing private Workbench
+implementation/test files and four evidence documents. It introduces no new
+path, public API, source file, dependency, build-system entry, Project format,
+persistence field, Provider/ProjectService contract, Project command, custom
+model role, production thread/timer, direct upstream Core patch, Core or
+ProjectExplorer hook, app bootstrap, network, ADS, scan, online transition,
+SDO, ESC/EEPROM, or hardware behavior. The Workbench path count remains 44 and
+the direct upstream Core patch count remains five. No CMake or qbs description
+changed, so qbs was not run. The unrelated `WITH_TESTS=ON` all-target build
+was not rerun because the known EasyBoard `extensionmanager_test.h` blocker
+remains outside this issue.
+
+Qualification used local/offline Mock and explicitly Provider-reported values
+plus offscreen enabled/disabled product lifecycle runs with passed-through
+SIGTERM. No visible main window, remote comparison, fetch, pull, merge,
+rebase, push, PR, or publication occurred. The supported baseline remains the
+local `embed-labs` history. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-status-preferred-diagnostics-001.urIOBN`.

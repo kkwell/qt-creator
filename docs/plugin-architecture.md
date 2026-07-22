@@ -208,10 +208,12 @@ shared `EtherCAT.Menu` ActionManager registrations into one compact Mode-level
 command strip. It reuses the same actions and discovers optional
 Scan/Diagnostics commands without reverse dependencies or private UI access.
 EtherCATCore now provides the shared `StateService`; the Workbench renders its
-highest-severity Scan/Diagnostics contribution through one mode-scoped Qt
-Creator status-bar control, while the producer plugins retain ownership of
-their state. It uses standard icons and preserves explicit `MOCK` labeling. The
-same Workbench controller now copies public immutable Scan and Diagnostics
+highest-severity Scan/Diagnostics contribution and a value-only semantic
+projection from the preferred Diagnostics Provider through one mode-scoped Qt
+Creator status-bar control, while producer plugins retain ownership of their
+state. It uses standard icons, preserves explicit `MOCK` labeling for local
+snapshots, and uses neutral Provider-reported wording otherwise. The same
+Workbench controller now copies public immutable Scan and Diagnostics
 snapshots into a presentation-only tree overlay. It exposes topology
 differences, live Mock
 state, warnings, errors, and ActionManager navigation without depending on
@@ -1926,3 +1928,41 @@ Qualification is local/offline Mock and includes normal/2x offscreen tests
 plus enabled/disabled product lifecycle evidence with no visible main window
 or new crash record. Evidence is under
 `/private/tmp/embed-labs-wb-nav-keyboard-context-target-001.Du2VdU`.
+
+## Workbench preferred Diagnostics status boundary
+
+`ISSUE-WB-STATUS-PREFERRED-DIAGNOSTICS-001`, based on
+`0524d2dfbb14cacd6f25c584ede4bcce9fe416c4`, remains inside the product-owned
+private Workbench controller and status widget. `WorkbenchController` uses the
+existing deterministic optional-Provider selection and copies only the
+preferred Diagnostics presentation, stream/request, run mode, Master state,
+Mock flag, Master error, and active-alarm count into the value-only
+`DiagnosticsStatusPresentation`. The status widget retains no Provider
+pointer, model index, sample series, mutable snapshot, or transport object.
+
+The dedicated `diagnosticsStatusChanged` signal refreshes only status
+presentation. Periodic semantic changes are not misrepresented as Provider
+availability or Details-page lifecycle changes. Provider registry ownership,
+object-pool add/remove ordering, producer sampling, and optional-plugin
+selection remain unchanged. Qt Creator's object-pool lifetime contract is
+documented at <https://doc.qt.io/qtcreator-extending/pluginmanager.html>.
+
+`WorkbenchStatusWidget` merges the copied Provider severity with the shared
+`StateService`; the highest severity wins, while a healthy running Provider
+supplies the mode-specific Ready text. At equal non-Ready severity, a non-Mock
+Provider keeps neutral `Diagnostics` wording; a strictly higher StateService
+entry remains authoritative. Plugin destruction still deletes the
+status widget before its controller. Local Mock values are explicit, and a
+non-Mock value is described only as Provider-reported, never as an inferred
+controller or hardware connection.
+
+The boundary changes only seven existing private Workbench
+implementation/test files and four evidence documents. It adds no public API,
+source file, dependency, Provider/ProjectService contract, Project command,
+model role, persistence field, thread, timer, Core or ProjectExplorer hook,
+application-bootstrap change, network transport, ADS, scan, online transition,
+SDO execution, or hardware behavior. No CMake or qbs entry changed.
+Qualification is local/offline Mock or explicitly Provider-reported data and
+includes normal/2x offscreen tests plus enabled/disabled product lifecycle
+evidence with no visible main window or new crash record. Evidence is under
+`/private/tmp/embed-labs-wb-status-preferred-diagnostics-001.urIOBN`.
