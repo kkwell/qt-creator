@@ -49,7 +49,8 @@ private:
     bool submitConfiguration(
         const Data::ProcessDataConfiguration &configuration,
         const Data::NodeId &inlineEntryId = {},
-        int inlineColumn = -1);
+        int inlineColumn = -1,
+        QString *inlineRejection = nullptr);
     void rebuildModels(
         bool preserveInlineEditor = false, bool notifyPreservedColumn = false);
     void rebuildPdoModels(
@@ -57,6 +58,9 @@ private:
     void selectPdo(const Data::NodeId &pdoId);
     void trackInlineEditor(
         QWidget *editor, const Data::PdoEntryConfiguration &entry, int column);
+    void showInlineEditRejection(
+        const Data::NodeId &entryId, int column, const QString &message);
+    void clearInlineEditRejection();
     bool canPreserveInlineEditor(bool stableContext) const;
     void updateTablePresentation();
     void showValidation(const Data::ConfigurationValidation &validation, const QString &prefix = {});
@@ -84,6 +88,7 @@ private:
     bool m_inlineEditorCommitInProgress = false;
     std::optional<Data::PdoEntryConfiguration> m_inlineEditorSubmittedAuthority;
     bool m_inlineEditorMetadataDirty = false;
+    bool m_inlineEditRejectionActive = false;
 
     QLabel *m_summary = nullptr;
     Utils::InfoLabel *m_validation = nullptr;

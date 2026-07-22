@@ -3164,3 +3164,47 @@ timer, and command-state references are
 <https://doc.qt.io/qtcreator-extending/actionmanager.html>. Beckhoff's scan
 reference supplies workflow terminology only:
 <https://infosys.beckhoff.com/content/1033/ps2001-2420-1001/10832129675.html>.
+
+## EtherCATWorkbench Process Data edit-rejection feedback qualification
+
+`ISSUE-WB-PROCESS-DATA-EDIT-REJECTION-FEEDBACK-001` is qualified from local
+baseline `037bd681e7ce17bd665d345f83a64b49a28a2428`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| User-visible defect | Invalid PDO Content text could close its editor, restore the accepted cell, and leave the positive `Configuration is valid` strip without explaining the rejection |
+| Local parse guidance | Real editors report exact allowed forms/ranges for Index, Subindex, Bits, Bit Offset, and non-empty Name |
+| Domain validation | A real Bits `8` edit against `UINT16` reports the first complete-configuration error with `Change not applied.`; accepted data remains 16 bits |
+| Delegate-only boundary | The standard and Type delegates consume the model's private one-shot result; rejected direct programmatic `setData()` publishes no feedback or announcement, both with no editor and while a real editor is open; valid direct writes retain the existing Project path |
+| Rejection invariants | Complete Project snapshot, accepted EditRole value, Undo/Redo availability, `projectChanged`, and model `dataChanged` remain unchanged |
+| Feedback/accessibility | Error type, stable accessible name, exact accessible description and both tooltips, and one Polite announcement are verified for each real rejection |
+| Clearing | PDO Content cell and Sync-Manager selection directly restore normal validation metadata without announcement; successful edit, Undo/Redo, repeated rejection, and Project close are verified; PDO selection uses the same reviewed private clear path |
+| Defensive branches | Read-only and Project-service failures return delegate feedback strings by code inspection; service failure injection is deliberately not claimed |
+| Failure-first | Test-only changes retained production cpp/header hashes `229c2660bddc89c6bf7d5cafb481fb6a646ec672ea777cc915421aa9402ad955` and `ab7d21d3820117780abc31c232e99b7541fd38138378d4ab2fce4deffdf786ad`; a real blank-Name Return left `InfoLabel::Ok`, and the target exited 1 |
+| Superseded test harness | An intermediate raw `QLabel *` Project-close assertion dereferenced a destroyed widget; the final test uses `QPointer` and does not count that run as product evidence |
+| Delegate ODR correction | A pre-final related run exposed a real Startup delegate teardown `EXC_BAD_ACCESS`; LLDB/MallocScribble traced two different linker-visible `DataTypeDelegate` classes, and renaming the Process Data class to `ProcessDataTypeDelegate` produced distinct destructor/vtable/typeinfo symbols |
+| Post-fix focused normal and 2x | Each run passed 3 events, 0 failed, target status 0 |
+| Post-fix related normal and 2x | Each run passed 9 events, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | Two post-fix runs at each scale passed 82 events per run, 0 failed, target status 0; Startup editing passed in every run |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 82, Scan 11, Diagnostics 7; 137 passed, 0 failed, every target status 0 |
+| Final source SHA-256 | Process Data cpp `00cb248c93611ff911941f2af9632d2f4abbe19a56b8c13ca6a7ac2c75507eb0`; header `a489a2cde89a7a13e993427c2ee342d6d1b4e0342d65618f06c3d5904b12bba4`; tests `37311df512697533f4bdc639a760b80c26479898d1669efcac47599c82d81948`; test header `e0860f1940a699c8c1f53cd0694b5918f7b88792f6fe27e1b08a4cdbdd1c1d70` |
+| Final git blobs | Process Data cpp `b38e47a0be15a0ca5c695378b5b1c1bdb5394f84`; header `e436385dc4881c138bad1522037fe58397bc75ea`; tests `d5cc3ec1986c9d685bbeed29e5386914d3f88cf8`; test header `a1ed3404b855a1bf0969546293f559051448622f` |
+| Qualified build | Qt 6.11.0 Release tests; `WITH_TESTS=OFF` Workbench target and full product passed with exactly 16 plugin dylibs |
+| Product hashes | Executable `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `06e77fefb9451cdae1fd1912e4cb982aeecf2365a2a99c59077d8372b60b2763`; test Workbench `63829550a2be2a9516737c58589af97780640c2d88595d2a0805a6ec2752dd33` |
+| Enabled/disabled lifecycle | Both invisible product runs stayed alive for 37/37 samples; Workbench and Scan mapped in 37 enabled and 0 disabled samples; both ended with expected status 15 |
+| Crash-dialog audit | From 2026-07-23 05:08:22–05:10:47 +0800, residual processes, new Embed Labs DiagnosticReports, and matching ReportCrash/CrashReporter/diagnosticd events were all 0 |
+| Invisible execution | Fresh HOME/settings, offscreen Qt, disabled crash reporting, cleared DYLD variables, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM; no visible/manual UI inspection |
+| Mock/offline boundary | No physical interface, network, ADS, physical or online scan, online CoE/SDO, controller, PLC, Zynq, or hardware behavior was exercised or claimed; Mock Scan regression tests remain in scope |
+| Build descriptions | No CMake or qbs file changed, so qbs was not run |
+| Local-only policy | No remote comparison, fetch, pull, merge, rebase, push, PR, or publication was performed |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-process-data-edit-feedback-001.seBJey`. Qt model,
+delegate, and announcement contracts are at
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData>,
+<https://doc.qt.io/qt-6/qstyleditemdelegate.html#setModelData>, and
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Qt Creator's
+local validation precedent is at
+<https://code.qt.io/cgit/qt-creator/qt-creator.git/tree/src/libs/utils/projectintropage.cpp?h=20.0#n193>.
+Beckhoff's Process Data page supplies PDO terminology only:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.

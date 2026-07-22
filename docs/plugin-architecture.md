@@ -2483,3 +2483,68 @@ totaled 136 pass events. Workbench and Scan mapped in 37/37 enabled samples and
 0/37 explicit-disabled samples; crash-service events, new diagnostic reports,
 and residual processes were 0. Evidence is under
 `/private/tmp/embed-labs-wb-scan-project-lifecycle-001.9fVQNz`.
+
+## Workbench Process Data edit-rejection boundary
+
+`ISSUE-WB-PROCESS-DATA-EDIT-REJECTION-FEEDBACK-001` remains inside the private
+Process Data page and its table model/delegates. `PdoContentTableModel`
+continues to own candidate parsing and returns the normal boolean model result.
+It now retains only a private, one-shot rejection string. The standard and
+Type delegates clear that slot before a real commit, invoke the existing model
+write, then consume the result synchronously. Only that delegate transaction
+can publish rejection feedback.
+
+This split preserves caller authority. Rejected direct model writes publish no
+widget feedback or announcement, even if an editor happens to be open; valid
+direct writes retain their existing Project submission and rebuild behavior.
+Parsed candidates continue through `validateProcessDataConfiguration()` and
+the existing `ProjectService::setProcessDataConfiguration()` command path.
+Validation, read-only, and service failures return an inline string to the
+delegate without changing the public service result, Project snapshot,
+Undo/Redo, persistence, or model roles. The model does not manipulate the
+validation widget directly; its existing non-owning page submission bridge
+remains.
+
+The page owns feedback presentation and lifetime. It verifies the rejected
+entry ID, selected PDO ID, and editor column against the tracked editor
+authority before updating the existing validation `InfoLabel`. It clears the
+transient error through the normal validation renderer on content, PDO, or
+Sync-Manager selection, successful submission, refresh, or context teardown.
+The optional polite announcement is a UI event request, not a service signal
+or manual VoiceOver claim.
+
+The Process Data Type delegate is named `ProcessDataTypeDelegate`. This unique
+translation-unit class name is required because Startup already has a
+different namespace-scope `DataTypeDelegate`. A pre-final crash demonstrated
+that the formerly identical linker name allowed distinct class layouts to
+share one destructor symbol. The rename keeps separate destructor, vtable, and
+typeinfo symbols without touching Startup source or any exported interface.
+
+Qt's model/delegate contracts are documented at
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData> and
+<https://doc.qt.io/qt-6/qstyleditemdelegate.html#setModelData>. The
+announcement event is documented at
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Qt Creator's
+`InfoLabel` and error-validation precedent are at
+<https://code.qt.io/cgit/qt-creator/qt-creator.git/tree/src/libs/utils/infolabel.h?h=20.0>
+and
+<https://code.qt.io/cgit/qt-creator/qt-creator.git/tree/src/libs/utils/projectintropage.cpp?h=20.0#n193>.
+Beckhoff's Process Data reference supplies hierarchy and edit terminology
+only, not this local feedback contract.
+
+The boundary changes only `processdatapage.cpp/.h`, the existing Workbench
+test declaration/implementation, and four documents. It adds no public type,
+virtual method, model role, dependency, source file, Project format field,
+Project command, persistence, Core/ProjectExplorer hook, application
+bootstrap, production thread or timer, socket, network transport, controller
+protocol, or upstream integration surface. CMake and qbs descriptions remain
+unchanged.
+
+Failure-first reproduced the unexplained rejection and exited 1. Post-fix
+MallocScribble, normal/2x focused and related tests, four complete Workbench
+runs, six isolated suites, the `WITH_TESTS=OFF` product build, and
+enabled/disabled invisible lifecycle all passed. The six suites totaled 137
+pass events. Workbench and Scan mapped in 37/37 enabled samples and 0/37
+explicit-disabled samples; crash-service events, new diagnostic reports, and
+residual processes were 0. Evidence is under
+`/private/tmp/embed-labs-wb-process-data-edit-feedback-001.seBJey`.

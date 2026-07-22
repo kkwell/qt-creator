@@ -66,6 +66,7 @@ private slots:
     void testProcessDataTableAccessibility();
     void testProcessDataRepositoryEmptyState();
     void testEditableProcessDataWorkflow();
+    void testProcessDataEditRejectionFeedback();
     void testProcessDataInlineDraftSurvivesNonConflictingRefresh();
     void testCoeOnlineMockWorkflow();
     void testCoeMockEditRejectionFeedback();

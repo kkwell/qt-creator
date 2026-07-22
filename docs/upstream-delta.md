@@ -1716,3 +1716,65 @@ No remote comparison, fetch, pull, merge, rebase, push, PR, or publication was
 performed. The supported source of truth remains the local `embed-labs`
 history. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-scan-project-lifecycle-001.9fVQNz`.
+
+## Local Process Data edit-rejection feedback delta
+
+`ISSUE-WB-PROCESS-DATA-EDIT-REJECTION-FEEDBACK-001` is a private Workbench
+correction on local baseline `037bd681e7ce17bd665d345f83a64b49a28a2428`.
+Invalid real-editor submissions for PDO Content Index, Subindex, Bits, Bit
+Offset, and Name now explain the accepted syntax or range in the existing
+Process Data validation strip. Parsed candidates that fail full configuration
+validation report its first error with `Change not applied.`.
+
+The table model keeps only a private one-shot result. Real delegates consume
+it and ask the page to present feedback; rejected direct programmatic
+`setData()` publishes no feedback or announcement, while valid direct writes
+retain their existing Project path. Rejection leaves Project data, Undo/Redo,
+accepted model values, and notifications unchanged. The page mirrors the
+visible error through accessible description and tooltips and requests one
+optional polite announcement. Selection, successful submission, refresh, and
+teardown clear the transient state.
+
+The delta also gives the Process Data Type delegate a unique
+`ProcessDataTypeDelegate` name. A pre-final LLDB/MallocScribble run proved that
+its former `DataTypeDelegate` name collided with Startup's different class at
+link time and could apply the wrong destructor during page teardown. The
+rename produces separate local symbols and modifies no Startup source or
+public contract.
+
+The local source delta is limited to:
+
+- `src/plugins/ethercatworkbench/processdatapage.cpp/.h`;
+- the existing Workbench test declaration and implementation;
+- the four required evidence documents.
+
+There is no new file, public API or role, dependency, Project format or
+persistence field, Provider/ProjectService contract, Project command, direct
+upstream Core patch, Core/ProjectExplorer hook, application bootstrap,
+production thread or timer, network, ADS, scan, online state, CoE/SDO, PLC,
+controller, or hardware behavior. CMake and qbs descriptions are unchanged.
+
+Failure-first reproduced the unexplained blank-Name Return path and exited 1
+while production hashes stayed fixed. After the minimal implementation and
+delegate-name correction, focused and related tests passed at normal and 2x
+scale; four complete Workbench runs passed 82 events each, and the six
+isolated EtherCAT suites passed 137 events. The Qt 6.11.0 `WITH_TESTS=OFF`
+Workbench and complete product builds passed with exactly 16 plugin dylibs.
+
+Invisible enabled and explicit `-noload EtherCATWorkbench` product runs each
+stayed alive for 37 samples. Workbench and Scan mapped in 37/37 and 0/37
+samples respectively, and each ended with expected status 15. The fail-closed
+audit found zero residual process, new Embed Labs diagnostic report, or
+matching crash-service event. No visible UI, real interface, network, online
+SDO, controller, PLC, Zynq, or hardware execution was used or claimed.
+
+Qt's model, delegate, and announcement references are
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData>,
+<https://doc.qt.io/qt-6/qstyleditemdelegate.html#setModelData>, and
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Beckhoff's
+Process Data page is referenced only for PDO terminology at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.
+No remote comparison, fetch, pull, merge, rebase, push, PR, or publication was
+performed. The supported source of truth remains the local `embed-labs`
+history. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-process-data-edit-feedback-001.seBJey`.

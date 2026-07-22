@@ -15,6 +15,9 @@
 
 #include <QAbstractItemView>
 #include <QAbstractTableModel>
+#if QT_CONFIG(accessibility)
+#include <QAccessible>
+#endif
 #include <QComboBox>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -663,6 +666,7 @@ public:
             return false;
         if (role != Qt::EditRole && !(role == DataTypeRole && index.column() == Type))
             return false;
+        m_lastEditRejection.clear();
 
         const Data::PdoEntryConfiguration current = m_pdo->entries.at(index.row());
         if (current.id.isNull())
@@ -699,24 +703,33 @@ public:
         if (!entry.mappingSupported)
             return false;
 
+        const auto rejectUserInput = [this](const QString &reason) {
+            m_lastEditRejection = Tr::tr("Change not applied. %1").arg(reason);
+            return false;
+        };
         quint64 unsignedValue = 0;
         switch (index.column()) {
         case Index:
             if (!parseUnsignedValue(value, std::numeric_limits<quint16>::max(), &unsignedValue)
                 || unsignedValue == 0) {
-                return false;
+                return rejectUserInput(
+                    Tr::tr("PDO entry Index must be a decimal or 0x-prefixed hexadecimal "
+                           "integer from 1 to 65535."));
             }
             entry.index = quint16(unsignedValue);
             break;
         case Subindex:
-            if (!parseUnsignedValue(value, std::numeric_limits<quint8>::max(), &unsignedValue))
-                return false;
+            if (!parseUnsignedValue(value, std::numeric_limits<quint8>::max(), &unsignedValue)) {
+                return rejectUserInput(
+                    Tr::tr("PDO entry Subindex must be a decimal or 0x-prefixed hexadecimal "
+                           "integer from 0 to 255."));
+            }
             entry.subIndex = quint8(unsignedValue);
             break;
         case Bits:
             if (!parseUnsignedValue(value, std::numeric_limits<int>::max(), &unsignedValue)
                 || unsignedValue == 0) {
-                return false;
+                return rejectUserInput(Tr::tr("PDO entry Bits must be a positive integer."));
             }
             entry.bitLength = int(unsignedValue);
             break;
@@ -729,14 +742,18 @@ public:
             }
             bool ok = false;
             const qint64 offset = text.toLongLong(&ok);
-            if (!ok || offset < -1)
-                return false;
+            if (!ok || offset < -1) {
+                return rejectUserInput(
+                    Tr::tr("PDO entry Bit Offset must be Auto or an integer greater than or "
+                           "equal to -1."));
+            }
             entry.requestedBitOffset = offset;
             break;
         }
         case Name:
-            if (value.toString().trimmed().isEmpty())
-                return false;
+            if (value.toString().trimmed().isEmpty()) {
+                return rejectUserInput(Tr::tr("PDO entry Name cannot be empty."));
+            }
             entry.name = value.toString().trimmed();
             break;
         case Type: {
@@ -759,8 +776,24 @@ public:
             return false;
         }
         *candidateEntry = entry;
-        return m_page
-               && m_page->submitConfiguration(candidate, current.id, index.column());
+        QString rejection;
+        const bool accepted
+            = m_page
+              && m_page->submitConfiguration(
+                  candidate, current.id, index.column(), &rejection);
+        if (!accepted)
+            m_lastEditRejection = rejection;
+        return accepted;
+    }
+
+    void clearEditRejection()
+    {
+        m_lastEditRejection.clear();
+    }
+
+    QString takeEditRejection()
+    {
+        return std::exchange(m_lastEditRejection, {});
     }
 
     bool setConfiguration(
@@ -928,6 +961,7 @@ private:
     Data::ProcessDataConfiguration m_configuration;
     std::optional<Data::PdoConfiguration> m_pdo;
     Data::ConfigurationValidation m_validation;
+    QString m_lastEditRejection;
     bool m_editable = false;
 };
 
@@ -1048,13 +1082,16 @@ static bool sameInlineEditorAuthority(
 }
 
 using EditorOpenedHandler = std::function<void(QWidget *, const QModelIndex &)>;
+using EditRejectedHandler = std::function<void(const QModelIndex &, const QString &)>;
 
 class ProcessDataItemDelegate : public QStyledItemDelegate
 {
 public:
-    ProcessDataItemDelegate(EditorOpenedHandler editorOpened, QObject *parent)
+    ProcessDataItemDelegate(
+        EditorOpenedHandler editorOpened, EditRejectedHandler editRejected, QObject *parent)
         : QStyledItemDelegate(parent)
         , m_editorOpened(std::move(editorOpened))
+        , m_editRejected(std::move(editRejected))
     {}
 
     QWidget *createEditor(
@@ -1065,6 +1102,15 @@ public:
         return editor;
     }
 
+    void setModelData(
+        QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const override
+    {
+        auto contentModel = static_cast<PdoContentTableModel *>(model);
+        contentModel->clearEditRejection();
+        QStyledItemDelegate::setModelData(editor, model, index);
+        notifyEditRejected(contentModel, index);
+    }
+
 protected:
     void notifyEditorOpened(QWidget *editor, const QModelIndex &index) const
     {
@@ -1072,11 +1118,19 @@ protected:
             m_editorOpened(editor, index);
     }
 
+    void notifyEditRejected(PdoContentTableModel *model, const QModelIndex &index) const
+    {
+        const QString rejection = model->takeEditRejection();
+        if (!rejection.isEmpty() && m_editRejected)
+            m_editRejected(index, rejection);
+    }
+
 private:
     EditorOpenedHandler m_editorOpened;
+    EditRejectedHandler m_editRejected;
 };
 
-class DataTypeDelegate final : public ProcessDataItemDelegate
+class ProcessDataTypeDelegate final : public ProcessDataItemDelegate
 {
 public:
     using ProcessDataItemDelegate::ProcessDataItemDelegate;
@@ -1117,8 +1171,12 @@ public:
     void setModelData(QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const final
     {
         auto comboBox = qobject_cast<QComboBox *>(editor);
-        if (comboBox)
+        auto contentModel = static_cast<PdoContentTableModel *>(model);
+        contentModel->clearEditRejection();
+        if (comboBox) {
             model->setData(index, comboBox->currentData(), DataTypeRole);
+            notifyEditRejected(contentModel, index);
+        }
     }
 
     void updateEditorGeometry(
@@ -1210,6 +1268,7 @@ ProcessDataPage::ProcessDataPage(WorkbenchController *controller, QWidget *paren
     m_validation->setObjectName("EtherCATProcessDataValidation");
     m_validation->setElideMode(Qt::ElideNone);
     m_validation->setWordWrap(true);
+    m_validation->setAccessibleName(Tr::tr("Process Data edit feedback"));
     m_restoreDefaults->setObjectName("EtherCATProcessDataRestoreDefaults");
 
     m_syncManagers->setObjectName("EtherCATProcessDataSyncManagers");
@@ -1226,7 +1285,14 @@ ProcessDataPage::ProcessDataPage(WorkbenchController *controller, QWidget *paren
         if (const Data::PdoEntryConfiguration *entry = m_pdoContentModel->entryAt(index.row()))
             trackInlineEditor(editor, *entry, index.column());
     };
-    m_pdoContent->setItemDelegate(new ProcessDataItemDelegate(editorOpened, m_pdoContent));
+    const EditRejectedHandler editRejected = [this](
+                                                   const QModelIndex &index,
+                                                   const QString &message) {
+        if (const Data::PdoEntryConfiguration *entry = m_pdoContentModel->entryAt(index.row()))
+            showInlineEditRejection(entry->id, index.column(), message);
+    };
+    m_pdoContent->setItemDelegate(
+        new ProcessDataItemDelegate(editorOpened, editRejected, m_pdoContent));
     configureTable(
         m_syncManagers,
         SyncManagerTableModel::Name,
@@ -1261,7 +1327,8 @@ ProcessDataPage::ProcessDataPage(WorkbenchController *controller, QWidget *paren
             "Validated absolute layout of active outputs and inputs in the offline process "
             "image."));
     m_pdoContent->setItemDelegateForColumn(
-        PdoContentTableModel::Type, new DataTypeDelegate(editorOpened, m_pdoContent));
+        PdoContentTableModel::Type,
+        new ProcessDataTypeDelegate(editorOpened, editRejected, m_pdoContent));
 
     auto headerLayout = new QHBoxLayout;
     headerLayout->setContentsMargins(QMargins());
@@ -1318,6 +1385,7 @@ ProcessDataPage::ProcessDataPage(WorkbenchController *controller, QWidget *paren
             m_selectedSyncManagerId = current.data(StableIdRole).value<Data::NodeId>();
             m_selectedPdoId = {};
             rebuildPdoModels();
+            clearInlineEditRejection();
         });
     const auto pdoSelected = [this](const QModelIndex &current) {
         if (!m_rebuilding)
@@ -1330,6 +1398,14 @@ ProcessDataPage::ProcessDataPage(WorkbenchController *controller, QWidget *paren
         if (!isEmpty(m_esiDefaults))
             submitConfiguration(m_esiDefaults);
     });
+    connect(
+        m_pdoContent->selectionModel(),
+        &QItemSelectionModel::currentChanged,
+        this,
+        [this](const QModelIndex &current, const QModelIndex &previous) {
+            if (!m_rebuilding && current != previous)
+                clearInlineEditRejection();
+        });
 }
 
 ProcessDataPage::~ProcessDataPage()
@@ -1558,17 +1634,37 @@ void ProcessDataPage::setContext(const Core::PropertyPageContext &context)
 bool ProcessDataPage::submitConfiguration(
     const Data::ProcessDataConfiguration &configuration,
     const Data::NodeId &inlineEntryId,
-    int inlineColumn)
+    int inlineColumn,
+    QString *inlineRejection)
 {
+    if (inlineRejection)
+        inlineRejection->clear();
     const Data::ConfigurationValidation validation = Data::validateProcessDataConfiguration(
         configuration);
     if (validation.hasErrors()) {
-        showValidation(validation, Tr::tr("Change not applied."));
+        if (inlineRejection) {
+            const auto firstError = std::find_if(
+                validation.issues.cbegin(),
+                validation.issues.cend(),
+                [](const Data::ConfigurationIssue &issue) {
+                    return issue.severity == Data::ConfigurationIssueSeverity::Error;
+                });
+            *inlineRejection
+                = firstError == validation.issues.cend()
+                      ? Tr::tr("Change not applied.")
+                      : Tr::tr("Change not applied. %1").arg(firstError->message);
+        } else {
+            showValidation(validation, Tr::tr("Change not applied."));
+        }
         return false;
     }
     if (!m_editable || !m_controller || !m_controller->projectService()) {
-        showValidation(
-            validation, Tr::tr("Change not applied: this Process Data selection is read-only."));
+        const QString message
+            = Tr::tr("Change not applied: this Process Data selection is read-only.");
+        if (inlineRejection)
+            *inlineRejection = message;
+        else
+            showValidation(validation, message);
         return false;
     }
     const bool inlineEditorCommit
@@ -1599,7 +1695,11 @@ bool ProcessDataPage::submitConfiguration(
         = m_controller->projectService()
               ->setProcessDataConfiguration(m_context.projectId, m_ownerSlaveId, configuration);
     if (!result) {
-        showValidation(validation, Tr::tr("Change not applied: %1").arg(result.error()));
+        const QString message = Tr::tr("Change not applied: %1").arg(result.error());
+        if (inlineRejection)
+            *inlineRejection = message;
+        else
+            showValidation(validation, message);
         return false;
     }
 
@@ -1696,6 +1796,34 @@ void ProcessDataPage::trackInlineEditor(
     });
 }
 
+void ProcessDataPage::showInlineEditRejection(
+    const Data::NodeId &entryId, int column, const QString &message)
+{
+    if (!m_inlineEditor || !m_inlineEditorAuthority
+        || m_inlineEditorAuthority->id != entryId || m_inlineEditorPdoId != m_selectedPdoId
+        || m_inlineEditorColumn != column) {
+        return;
+    }
+
+    m_inlineEditRejectionActive = true;
+    m_validation->setType(Utils::InfoLabel::Error);
+    m_validation->setText(message);
+    m_validation->setAccessibleDescription(message);
+    m_validation->setAdditionalToolTip(message);
+    m_validation->setToolTip(message);
+#if QT_CONFIG(accessibility)
+    QAccessibleAnnouncementEvent announcement(m_validation, message);
+    announcement.setPoliteness(QAccessible::AnnouncementPoliteness::Polite);
+    QAccessible::updateAccessibility(&announcement);
+#endif
+}
+
+void ProcessDataPage::clearInlineEditRejection()
+{
+    if (m_inlineEditRejectionActive)
+        showValidation(Data::validateProcessDataConfiguration(m_configuration));
+}
+
 bool ProcessDataPage::canPreserveInlineEditor(bool stableContext) const
 {
     if (!stableContext || !m_editable || !m_inlineEditor || !m_inlineEditorAuthority
@@ -1755,6 +1883,7 @@ void ProcessDataPage::selectPdo(const Data::NodeId &pdoId)
     }
     m_pdoContentModel->setConfiguration(m_configuration, pdoId, m_editable);
     m_rebuilding = false;
+    clearInlineEditRejection();
 }
 
 void ProcessDataPage::updateTablePresentation()
@@ -1836,6 +1965,7 @@ void ProcessDataPage::updateTablePresentation()
 void ProcessDataPage::showValidation(
     const Data::ConfigurationValidation &validation, const QString &prefix)
 {
+    m_inlineEditRejectionActive = false;
     int errorCount = 0;
     int warningCount = 0;
     QStringList details;
@@ -1921,6 +2051,8 @@ void ProcessDataPage::showValidation(
                     .arg(validation.processImage.inputs.byteSize);
     }
     m_validation->setText(text);
+    m_validation->setAccessibleDescription(text);
+    m_validation->setAdditionalToolTip(details.join('\n'));
     m_validation->setToolTip(details.join('\n'));
 }
 

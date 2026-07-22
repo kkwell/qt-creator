@@ -6291,3 +6291,120 @@ ADS, online scan, CoE/SDO, PLC, controller, Zynq, or hardware behavior. No
 CMake or qbs description changed, so qbs was not run. No visible/manual UI
 inspection, remote comparison, fetch, pull, merge, rebase, push, PR, or
 publication was performed.
+
+## Process Data inline-edit rejection feedback
+
+`ISSUE-WB-PROCESS-DATA-EDIT-REJECTION-FEEDBACK-001`, based on local baseline
+`037bd681e7ce17bd665d345f83a64b49a28a2428`, explains why a PDO Content edit
+was not applied. Previously, the real editor could close and restore the
+accepted value while the validation strip still said that the configuration
+was valid. The private Process Data page now reports these candidate errors:
+
+- Index must be a decimal or `0x`-prefixed hexadecimal integer from 1 to
+  65535;
+- Subindex must use the same number formats and remain from 0 to 255;
+- Bits must be a positive integer;
+- Bit Offset must be `Auto` or an integer greater than or equal to -1;
+- Name cannot be empty.
+
+A parsed candidate that fails complete Process Data validation reports the
+first domain error with the same `Change not applied.` prefix. For example,
+changing a 16-bit `UINT` entry to 8 bits reports the bit-length/type mismatch.
+Read-only and Project-service rejection strings are also routed through the
+same delegate result path, but those defensive branches were code-reviewed
+rather than fault-injected in this issue.
+
+Feedback is deliberately a real-editor behavior. `PdoContentTableModel`
+records a private rejection reason while returning the normal `setData()`
+result. `ProcessDataItemDelegate::setModelData()` consumes it after a real
+delegate submission and asks the page to show it. Direct programmatic
+`setData()` rejection remains presentation-silent, including while an editor
+is open; valid direct writes retain their existing Project submission path.
+This keeps rejected model calls from impersonating user input and preserves
+the accepted Project snapshot, Undo/Redo availability, and model notifications
+on every rejected candidate.
+
+The existing validation `InfoLabel` becomes an error surface with stable
+accessible name `Process Data edit feedback`; visible text, accessible
+description, normal tooltip, and additional tooltip agree. Each real rejection
+requests one polite `QAccessibleAnnouncementEvent`. This verifies the event
+path only and is not a manual VoiceOver or audible-speech claim. Moving to a
+different PDO Content cell, Sync Manager, or PDO, a successful submission,
+normal context refresh, or Project close clears or destroys the transient
+state. Content-cell and Sync-Manager clearing are exercised directly; the PDO
+selection branch reuses the same private clear method and was code-reviewed.
+
+Qt specifies the model return contract at
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData>, the void delegate
+commit hook at
+<https://doc.qt.io/qt-6/qstyleditemdelegate.html#setModelData>, and the
+optional announcement event at
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Qt Creator's
+`Utils::InfoLabel` and validation precedent are at
+<https://code.qt.io/cgit/qt-creator/qt-creator.git/tree/src/libs/utils/infolabel.h?h=20.0>
+and
+<https://code.qt.io/cgit/qt-creator/qt-creator.git/tree/src/libs/utils/projectintropage.cpp?h=20.0#n193>.
+Beckhoff's Process Data page is used only for PDO List/PDO Content and edit
+workflow terminology:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.
+It does not define these local messages or accessibility behavior.
+
+Failure-first changed only the Workbench test declaration and implementation.
+Production `processdatapage.cpp/.h` retained SHA-256 values
+`229c2660bddc89c6bf7d5cafb481fb6a646ec672ea777cc915421aa9402ad955`
+and
+`ab7d21d3820117780abc31c232e99b7541fd38138378d4ab2fce4deffdf786ad`.
+Initialization and cleanup passed, the real blank-Name Return path left the
+label at `InfoLabel::Ok` instead of `Error`, and the target exited 1.
+
+Two intermediate failures are not final green evidence. A test-only Project-
+close assertion initially retained a raw label pointer after widget teardown;
+it was replaced by `QPointer`. More importantly, a pre-final related run
+reproduced a real `EXC_BAD_ACCESS` while destroying Startup's
+`DataTypeDelegate`. LLDB with `MallocScribble` proved that Startup and Process
+Data had different namespace-scope classes with the same linker-visible name,
+so the Process Data class was renamed `ProcessDataTypeDelegate`. The old crash
+logs are superseded by a post-fix MallocScribble run, normal/2x focused and
+related runs, and all four complete Workbench runs.
+
+Final focused normal/2x runs passed 3 events each; related Process Data runs
+passed 9 each. Two complete Workbench runs at each scale passed 82 events per
+run. Six isolated suites passed 137 events: Core 17, Project 12, Devices 8,
+Workbench 82, Scan 11, and Diagnostics 7. Every authoritative target exited
+0. Final SHA-256 values for `processdatapage.cpp`, its header, Workbench tests,
+and the test header are
+`00cb248c93611ff911941f2af9632d2f4abbe19a56b8c13ca6a7ac2c75507eb0`,
+`a489a2cde89a7a13e993427c2ee342d6d1b4e0342d65618f06c3d5904b12bba4`,
+`37311df512697533f4bdc639a760b80c26479898d1669efcac47599c82d81948`,
+and
+`e0860f1940a699c8c1f53cd0694b5918f7b88792f6fe27e1b08a4cdbdd1c1d70`;
+their git blobs are `b38e47a0be15a0ca5c695378b5b1c1bdb5394f84`,
+`e436385dc4881c138bad1522037fe58397bc75ea`,
+`d5cc3ec1986c9d685bbeed29e5386914d3f88cf8`, and
+`a1ed3404b855a1bf0969546293f559051448622f`.
+
+The Qt 6.11.0 `WITH_TESTS=OFF` Workbench target and complete product build
+passed with exactly 16 plugin dylibs. Executable, product Workbench, and test
+Workbench SHA-256 values are
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`,
+`06e77fefb9451cdae1fd1912e4cb982aeecf2365a2a99c59077d8372b60b2763`,
+and
+`63829550a2be2a9516737c58589af97780640c2d88595d2a0805a6ec2752dd33`.
+Invisible enabled and explicit `-noload EtherCATWorkbench` product runs each
+remained alive for 37/37 samples. Workbench and Scan mapped in 37/37 enabled
+samples and 0/37 disabled samples; each run ended by intentional passed-through
+SIGTERM with status 15. The 2026-07-23 05:08:22 to 05:10:47 +0800 audit found
+zero residual process, new Embed Labs DiagnosticReports file, or matching
+crash-service event.
+
+Evidence is under
+`/private/tmp/embed-labs-wb-process-data-edit-feedback-001.seBJey`. This issue
+changes only private Process Data implementation, its existing Workbench test
+declaration/implementation, and these four documents. It adds no public API or
+model role, source file, dependency, Project format or persistence field,
+Provider/ProjectService contract, Project command, Core or ProjectExplorer
+hook, application bootstrap, production thread or timer, network, ADS, scan,
+online state, CoE/SDO, PLC, controller, or hardware behavior. No CMake or qbs
+description changed, so qbs was not run. No visible/manual UI inspection,
+remote operation, fetch, pull, merge, rebase, push, PR, or publication was
+performed.

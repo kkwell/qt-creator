@@ -437,6 +437,25 @@ static void captureGeneralAccessibleUpdate(QAccessibleEvent *event)
     }
 }
 
+static QPointer<QObject> s_processDataAnnouncementObject;
+static QStringList s_processDataAnnouncementMessages;
+static QList<QAccessible::AnnouncementPoliteness> s_processDataAnnouncementPoliteness;
+static QAccessible::UpdateHandler s_previousProcessDataAccessibleUpdateHandler = nullptr;
+
+static void captureProcessDataAccessibleUpdate(QAccessibleEvent *event)
+{
+    if (event && event->type() == QAccessible::Announcement
+        && event->object() == s_processDataAnnouncementObject) {
+        const auto announcement = static_cast<QAccessibleAnnouncementEvent *>(event);
+        s_processDataAnnouncementMessages.append(announcement->message());
+        s_processDataAnnouncementPoliteness.append(announcement->politeness());
+    }
+    if (s_previousProcessDataAccessibleUpdateHandler
+        && s_previousProcessDataAccessibleUpdateHandler != &captureProcessDataAccessibleUpdate) {
+        s_previousProcessDataAccessibleUpdateHandler(event);
+    }
+}
+
 static QPointer<QObject> s_coeAnnouncementObject;
 static QStringList s_coeAnnouncementMessages;
 static QList<QAccessible::AnnouncementPoliteness> s_coeAnnouncementPoliteness;
@@ -9908,8 +9927,9 @@ void EtherCATWorkbenchTests::testEditableProcessDataWorkflow()
     const int offsetColumn = columnWithHeader(content->model(), "Bit Offset");
     QVERIFY(bitsColumn >= 0);
     QVERIFY(offsetColumn >= 0);
+    const QString validationBeforeDirectRejection = validation->text();
     QVERIFY(!content->model()->setData(content->model()->index(0, bitsColumn), 8));
-    QVERIFY(validation->text().contains("not applied", Qt::CaseInsensitive));
+    QCOMPARE(validation->text(), validationBeforeDirectRejection);
     const Data::ProjectSnapshot afterRejectedEdit = *projectService->project(file.projectId);
     QCOMPARE(afterRejectedEdit.slaves.size(), 1);
     QCOMPARE(afterRejectedEdit.slaves.first().processData.pdos.size(), 2);
@@ -10090,6 +10110,309 @@ void EtherCATWorkbenchTests::testEditableProcessDataWorkflow()
     QTRY_VERIFY(!projectService->project(file.projectId).has_value());
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testProcessDataEditRejectionFeedback()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("process-data-edit-feedback.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(deviceEsi()));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x5678;
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory, *device, "process-data-edit-feedback.ecatproject", "Process Data Feedback");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    details.resize(1100, 720);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::PROCESS_DATA_PAGE_ID).toString());
+    QVERIFY(page);
+    QTableView *syncManagers = page->findChild<QTableView *>(
+        "EtherCATProcessDataSyncManagers");
+    QTableView *content = page->findChild<QTableView *>("EtherCATProcessDataPdoContent");
+    QPointer<QLabel> validation = page->findChild<QLabel *>("EtherCATProcessDataValidation");
+    QVERIFY(syncManagers);
+    QVERIFY(content);
+    QVERIFY(validation);
+
+    syncManagers->setCurrentIndex(syncManagers->model()->index(0, 0));
+    const int nameColumn = columnWithHeader(content->model(), "Name");
+    QVERIFY(nameColumn >= 0);
+    const QModelIndex nameIndex = content->model()->index(0, nameColumn);
+    QVERIFY(nameIndex.isValid());
+    QVERIFY(content->model()->flags(nameIndex) & Qt::ItemIsEditable);
+    QCOMPARE(nameIndex.data(Qt::EditRole).toString(), QString("Controlword"));
+    const QString acceptedValidation = validation->text();
+    QVERIFY(acceptedValidation.contains("Configuration is valid", Qt::CaseInsensitive));
+
+    auto infoValidation = static_cast<Utils::InfoLabel *>(validation.data());
+#if QT_CONFIG(accessibility)
+    s_processDataAnnouncementObject = validation;
+    s_processDataAnnouncementMessages.clear();
+    s_processDataAnnouncementPoliteness.clear();
+    s_previousProcessDataAccessibleUpdateHandler
+        = QAccessible::installUpdateHandler(&captureProcessDataAccessibleUpdate);
+    const auto restoreAccessibleUpdateHandler = qScopeGuard([] {
+        const QAccessible::UpdateHandler previous
+            = std::exchange(s_previousProcessDataAccessibleUpdateHandler, nullptr);
+        QAccessible::installUpdateHandler(previous);
+        s_processDataAnnouncementObject = nullptr;
+        s_processDataAnnouncementMessages.clear();
+        s_processDataAnnouncementPoliteness.clear();
+    });
+#endif
+
+    const Data::ProjectSnapshot beforeRejection = *projectService->project(file.projectId);
+    const bool canUndoBefore = projectService->canUndoProject(file.projectId);
+    const bool canRedoBefore = projectService->canRedoProject(file.projectId);
+    QSignalSpy projectChanges(projectService, &Core::ProjectService::projectChanged);
+    QSignalSpy dataChanges(content->model(), &QAbstractItemModel::dataChanged);
+
+    QVERIFY(!content->model()->setData(nameIndex, QString("   "), Qt::EditRole));
+    QCOMPARE(validation->text(), acceptedValidation);
+    QCOMPARE(projectChanges.count(), 0);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_processDataAnnouncementMessages.size(), 0);
+#endif
+
+    const auto openEditor = [content](const QModelIndex &index) {
+        content->setCurrentIndex(index);
+        content->edit(index);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        return QPointer<QLineEdit>(content->findChild<QLineEdit *>());
+    };
+
+    QPointer<QLineEdit> editor = openEditor(nameIndex);
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    editor->setText("   ");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+
+    const QString rejection = "Change not applied. PDO entry Name cannot be empty.";
+    QCOMPARE(nameIndex.data(Qt::EditRole).toString(), QString("Controlword"));
+    QCOMPARE(*projectService->project(file.projectId), beforeRejection);
+    QCOMPARE(projectService->canUndoProject(file.projectId), canUndoBefore);
+    QCOMPARE(projectService->canRedoProject(file.projectId), canRedoBefore);
+    QCOMPARE(projectChanges.count(), 0);
+    QCOMPARE(dataChanges.count(), 0);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+    QCOMPARE(validation->text(), rejection);
+    QCOMPARE(validation->accessibleName(), QString("Process Data edit feedback"));
+    QCOMPARE(validation->accessibleDescription(), rejection);
+    QCOMPARE(infoValidation->additionalToolTip(), rejection);
+    QCOMPARE(validation->toolTip(), rejection);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_processDataAnnouncementMessages, QStringList{rejection});
+    QCOMPARE(
+        s_processDataAnnouncementPoliteness,
+        QList<QAccessible::AnnouncementPoliteness>{
+            QAccessible::AnnouncementPoliteness::Polite});
+    int expectedAnnouncements = s_processDataAnnouncementMessages.size();
+#endif
+
+    struct RejectedInput
+    {
+        QString header;
+        QString input;
+        QString message;
+    };
+    const QList<RejectedInput> rejectedInputs = {
+        {"Index",
+         "0",
+         "Change not applied. PDO entry Index must be a decimal or 0x-prefixed hexadecimal "
+         "integer from 1 to 65535."},
+        {"Subindex",
+         "256",
+         "Change not applied. PDO entry Subindex must be a decimal or 0x-prefixed hexadecimal "
+         "integer from 0 to 255."},
+        {"Bits", "0", "Change not applied. PDO entry Bits must be a positive integer."},
+        {"Bit Offset",
+         "-2",
+         "Change not applied. PDO entry Bit Offset must be Auto or an integer greater than or "
+         "equal to -1."},
+    };
+    for (const RejectedInput &attempt : rejectedInputs) {
+        const int column = columnWithHeader(content->model(), attempt.header);
+        QVERIFY(column >= 0);
+        const QModelIndex editIndex = content->model()->index(0, column);
+        QVERIFY(editIndex.isValid());
+        QVERIFY(content->model()->flags(editIndex) & Qt::ItemIsEditable);
+        const QVariant acceptedValue = editIndex.data(Qt::EditRole);
+        editor = openEditor(editIndex);
+        QTRY_VERIFY(editor);
+        editor->selectAll();
+        QTest::keyClicks(editor, attempt.input);
+        QTest::keyClick(editor, Qt::Key_Return);
+        QTRY_VERIFY(editor.isNull());
+
+        QCOMPARE(editIndex.data(Qt::EditRole), acceptedValue);
+        QCOMPARE(*projectService->project(file.projectId), beforeRejection);
+        QCOMPARE(projectService->canUndoProject(file.projectId), canUndoBefore);
+        QCOMPARE(projectService->canRedoProject(file.projectId), canRedoBefore);
+        QCOMPARE(projectChanges.count(), 0);
+        QCOMPARE(dataChanges.count(), 0);
+        QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+        QCOMPARE(validation->text(), attempt.message);
+        QCOMPARE(validation->accessibleDescription(), attempt.message);
+        QCOMPARE(infoValidation->additionalToolTip(), attempt.message);
+        QCOMPARE(validation->toolTip(), attempt.message);
+#if QT_CONFIG(accessibility)
+        ++expectedAnnouncements;
+        QCOMPARE(s_processDataAnnouncementMessages.size(), expectedAnnouncements);
+        QCOMPARE(s_processDataAnnouncementMessages.last(), attempt.message);
+        QCOMPARE(
+            s_processDataAnnouncementPoliteness.last(),
+            QAccessible::AnnouncementPoliteness::Polite);
+#endif
+    }
+
+    editor = openEditor(content->model()->index(0, nameColumn));
+    QTRY_VERIFY(editor);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Ok);
+    QVERIFY(validation->text().contains("Configuration is valid", Qt::CaseInsensitive));
+    QCOMPARE(validation->accessibleDescription(), validation->text());
+    QVERIFY(infoValidation->additionalToolTip().isEmpty());
+    QVERIFY(validation->toolTip().isEmpty());
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_processDataAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+    const QString validationWhileEditorOpen = validation->text();
+    QVERIFY(!content->model()->setData(
+        content->model()->index(0, nameColumn), QString(" "), Qt::EditRole));
+    QCOMPARE(validation->text(), validationWhileEditorOpen);
+    QCOMPARE(projectChanges.count(), 0);
+    QCOMPARE(dataChanges.count(), 0);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_processDataAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+    QTest::keyClick(editor, Qt::Key_Escape);
+    QTRY_VERIFY(editor.isNull());
+
+    const int bitsColumn = columnWithHeader(content->model(), "Bits");
+    QVERIFY(bitsColumn >= 0);
+    const QModelIndex bitsIndex = content->model()->index(0, bitsColumn);
+    editor = openEditor(bitsIndex);
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    QTest::keyClicks(editor, "8");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    const QString semanticRejection
+        = "Change not applied. PDO entry bit length 8 does not match its 16-bit data type.";
+    QCOMPARE(bitsIndex.data(Qt::EditRole).toInt(), 16);
+    QCOMPARE(validation->text(), semanticRejection);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Error);
+    QCOMPARE(*projectService->project(file.projectId), beforeRejection);
+    QCOMPARE(projectService->canUndoProject(file.projectId), canUndoBefore);
+    QCOMPARE(projectService->canRedoProject(file.projectId), canRedoBefore);
+    QCOMPARE(projectChanges.count(), 0);
+    QCOMPARE(dataChanges.count(), 0);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_processDataAnnouncementMessages.size(), expectedAnnouncements);
+    QCOMPARE(s_processDataAnnouncementMessages.last(), semanticRejection);
+    QCOMPARE(
+        s_processDataAnnouncementPoliteness.last(),
+        QAccessible::AnnouncementPoliteness::Polite);
+#endif
+
+    syncManagers->setCurrentIndex(syncManagers->model()->index(1, 0));
+    QTRY_VERIFY(validation->text() != semanticRejection);
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Ok);
+    QVERIFY(validation->text().contains("Configuration is valid", Qt::CaseInsensitive));
+    QCOMPARE(validation->accessibleDescription(), validation->text());
+    QVERIFY(infoValidation->additionalToolTip().isEmpty());
+    QVERIFY(validation->toolTip().isEmpty());
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_processDataAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+    syncManagers->setCurrentIndex(syncManagers->model()->index(0, 0));
+    QTRY_COMPARE(
+        content->model()->index(0, nameColumn).data(Qt::EditRole).toString(),
+        QString("Controlword"));
+
+    editor = openEditor(content->model()->index(0, nameColumn));
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    editor->setText("Accepted Controlword");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QTRY_COMPARE(
+        content->model()->index(0, nameColumn).data(Qt::EditRole).toString(),
+        QString("Accepted Controlword"));
+    const int changesAfterAcceptedEdit = projectChanges.count();
+    QVERIFY(changesAfterAcceptedEdit > 0);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+    QCOMPARE(infoValidation->type(), Utils::InfoLabel::Ok);
+    QVERIFY(validation->text().contains("Configuration is valid", Qt::CaseInsensitive));
+    QCOMPARE(validation->accessibleDescription(), validation->text());
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_processDataAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_COMPARE(content->model()->index(0, nameColumn).data().toString(), QString("Controlword"));
+    QVERIFY(!projectService->canUndoProject(file.projectId));
+    QVERIFY_RESULT(projectService->redoProject(file.projectId));
+    QTRY_COMPARE(
+        content->model()->index(0, nameColumn).data().toString(), QString("Accepted Controlword"));
+    const int changesAfterRedo = projectChanges.count();
+    QVERIFY(changesAfterRedo > changesAfterAcceptedEdit);
+
+    editor = openEditor(content->model()->index(0, nameColumn));
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    editor->setText(" ");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QCOMPARE(validation->text(), rejection);
+    QCOMPARE(projectChanges.count(), changesAfterRedo);
+#if QT_CONFIG(accessibility)
+    ++expectedAnnouncements;
+    QCOMPARE(s_processDataAnnouncementMessages.size(), expectedAnnouncements);
+#endif
+
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(validation.isNull() || validation->text() != rejection);
+    if (validation)
+        QCOMPARE(validation->accessibleDescription(), validation->text());
+    QCOMPARE(projectChanges.count(), changesAfterRedo);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_processDataAnnouncementMessages.size(), expectedAnnouncements);
+#endif
 }
 
 void EtherCATWorkbenchTests::testProcessDataInlineDraftSurvivesNonConflictingRefresh()
