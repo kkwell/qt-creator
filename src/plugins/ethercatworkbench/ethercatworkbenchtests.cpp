@@ -7293,6 +7293,215 @@ void EtherCATWorkbenchTests::testEsiRepositoryRefreshPreservesGeneralDraft()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testEthercatAliasDraftSurvivesNonConflictingRefresh()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray esi = deviceEsi();
+    esi.replace("#x00005678", "#x7A1D0002");
+    esi.replace("#x00000011", "#x0000D002");
+    esi.replace("AX5000", "EL-ALIAS-DRAFT");
+    esi.replace("Workbench Servo", "Alias Draft Servo");
+    QByteArray updatedEsi = esi;
+    updatedEsi.replace("EL-ALIAS-DRAFT", "EL-ALIAS-DRAFT-UPDATED");
+    updatedEsi.replace(">Outputs</Sm>", ">Refreshed Outputs</Sm>");
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("alias-draft-refresh.xml");
+    const Utils::FilePath updatedEsiPath = Utils::FilePath::fromString(directory.path())
+                                               .canonicalPath()
+                                               .pathAppended("alias-draft-refresh-updated.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(esi));
+    QVERIFY_RESULT(updatedEsiPath.writeFileContents(updatedEsi));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.typeName == "EL-ALIAS-DRAFT";
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory, *device, "alias-draft-refresh.ecatproject", "Alias Draft Project");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    details.resize(1100, 720);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QTRY_COMPARE(details.currentContext().nodeId, file.slaveId);
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::ConfiguredSlave);
+
+    QPointer<QWidget> page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::ETHERCAT_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    QTRY_COMPARE(details.tabWidget()->currentWidget(), page.data());
+    QPointer<QSpinBox> alias = page->findChild<QSpinBox *>("EtherCATEthercatAlias");
+    QPointer<QLineEdit> aliasEditor = alias ? alias->findChild<QLineEdit *>() : nullptr;
+    QPointer<QLineEdit> type = page->findChild<QLineEdit *>("EtherCATEthercatType");
+    QPointer<QTreeWidget> syncManagers
+        = page->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
+    QVERIFY(alias);
+    QVERIFY(aliasEditor);
+    QVERIFY(type);
+    QVERIFY(syncManagers);
+    QCOMPARE(alias->value(), 3);
+    QCOMPARE(aliasEditor->text(), QString("3"));
+    QCOMPARE(type->text(), QString("EL-ALIAS-DRAFT"));
+    QCOMPARE(syncManagers->topLevelItemCount(), 2);
+    QCOMPARE(syncManagers->topLevelItem(0)->text(1), QString("Outputs"));
+
+    alias->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(alias->hasFocus());
+    alias->selectAll();
+    QTest::keyClicks(alias, "321");
+    QCOMPARE(aliasEditor->text(), QString("321"));
+    QVERIFY(aliasEditor->isModified());
+    QVERIFY(aliasEditor->isUndoAvailable());
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().alias, quint16(3));
+    aliasEditor->setSelection(0, 2);
+    const int selectionStart = aliasEditor->selectionStart();
+    const int selectionLength = aliasEditor->selectedText().size();
+    const int cursorPosition = aliasEditor->cursorPosition();
+    QPointer<QWidget> focusBeforeRefresh = QApplication::focusWidget();
+    QVERIFY(focusBeforeRefresh);
+
+    QSignalSpy devicesChanged(repository, &Core::DeviceRepositoryProvider::devicesChanged);
+    const Data::DeviceImportResult refreshResult
+        = waitForJob(repository->importFiles({updatedEsiPath}));
+    QCOMPARE(refreshResult.requestedFiles, 1);
+    QCOMPARE(refreshResult.importedDevices, 0);
+    QCOMPARE(refreshResult.updatedDevices, 1);
+    QCOMPARE(refreshResult.failedFiles, 0);
+    QCOMPARE(refreshResult.affectedDeviceIds, QList<Data::NodeId>{device->id});
+    QCOMPARE(devicesChanged.count(), 1);
+
+    QVERIFY(page);
+    QVERIFY(alias);
+    QVERIFY(aliasEditor);
+    QVERIFY(type);
+    QVERIFY(syncManagers);
+    QCOMPARE(details.currentContext().nodeId, file.slaveId);
+    QCOMPARE(controller.selectionService()->currentNodeId(), file.slaveId);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().alias, quint16(3));
+    QCOMPARE(aliasEditor->text(), QString("321"));
+    QVERIFY(aliasEditor->isModified());
+    QCOMPARE(QApplication::focusWidget(), focusBeforeRefresh.data());
+    QCOMPARE(aliasEditor->selectionStart(), selectionStart);
+    QCOMPARE(aliasEditor->selectedText().size(), selectionLength);
+    QCOMPARE(aliasEditor->cursorPosition(), cursorPosition);
+    QVERIFY(aliasEditor->isUndoAvailable());
+    QCOMPARE(type->text(), QString("EL-ALIAS-DRAFT-UPDATED"));
+    QCOMPARE(syncManagers->topLevelItemCount(), 2);
+    QCOMPARE(syncManagers->topLevelItem(0)->text(1), QString("Refreshed Outputs"));
+
+    aliasEditor->undo();
+    QVERIFY(aliasEditor->text() != QString("321"));
+    QVERIFY(aliasEditor->isRedoAvailable());
+    aliasEditor->redo();
+    QCOMPARE(aliasEditor->text(), QString("321"));
+    QTest::keyClick(alias, Qt::Key_Return);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().alias, quint16(321));
+    QTRY_COMPARE(alias->value(), 321);
+    QCOMPARE(aliasEditor->text(), QString("321"));
+    QVERIFY(!aliasEditor->isModified());
+
+    alias->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(alias->hasFocus() || aliasEditor->hasFocus());
+    alias->selectAll();
+    QTest::keyClicks(alias, "456");
+    QCOMPARE(aliasEditor->text(), QString("456"));
+    QVERIFY(aliasEditor->isModified());
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().alias, quint16(321));
+    QPointer<QWidget> focusBeforeProjectRefresh = QApplication::focusWidget();
+    QVERIFY(focusBeforeProjectRefresh);
+    QVERIFY(
+        focusBeforeProjectRefresh.data() == alias.data()
+        || focusBeforeProjectRefresh.data() == aliasEditor.data());
+    const QString renamedProject = QString::fromUtf8("Alias Draft Project / 同项目刷新");
+    QVERIFY_RESULT(projectService->renameProject(file.projectId, renamedProject));
+    QTRY_COMPARE(projectService->project(file.projectId)->name, renamedProject);
+    QCOMPARE(aliasEditor->text(), QString("456"));
+    QVERIFY(aliasEditor->isModified());
+    QCOMPARE(QApplication::focusWidget(), focusBeforeProjectRefresh.data());
+    const Utils::Result<> undoProjectRename = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoProjectRename);
+    QTRY_COMPARE(projectService->project(file.projectId)->name, QString("Alias Draft Project"));
+    QCOMPARE(aliasEditor->text(), QString("456"));
+    QVERIFY(aliasEditor->isModified());
+    QCOMPARE(QApplication::focusWidget(), focusBeforeProjectRefresh.data());
+
+    QVERIFY_RESULT(controller.setOfflineSlaveAlias(file.projectId, file.slaveId, 654));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().alias, quint16(654));
+    QTRY_COMPARE(alias->value(), 654);
+    QCOMPARE(aliasEditor->text(), QString("654"));
+    QVERIFY(!aliasEditor->isModified());
+    const Utils::Result<> undoAuthoritativeAlias = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoAuthoritativeAlias);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().alias, quint16(321));
+    QTRY_COMPARE(alias->value(), 321);
+
+    details.tabWidget()->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(QApplication::focusWidget() != alias.data());
+    QTRY_VERIFY(QApplication::focusWidget() != aliasEditor.data());
+    aliasEditor->setText("777");
+    aliasEditor->setModified(true);
+    QCOMPARE(aliasEditor->text(), QString("777"));
+    controller.selectionService()->setCurrentNodeId(file.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.projectId);
+    QTRY_VERIFY(page.isNull());
+    QTRY_VERIFY(alias.isNull());
+    QTRY_VERIFY(aliasEditor.isNull());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.slaveId);
+    page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::ETHERCAT_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    alias = page->findChild<QSpinBox *>("EtherCATEthercatAlias");
+    aliasEditor = alias ? alias->findChild<QLineEdit *>() : nullptr;
+    QVERIFY(alias);
+    QVERIFY(aliasEditor);
+    QCOMPARE(alias->value(), 321);
+    QCOMPARE(aliasEditor->text(), QString("321"));
+
+    details.tabWidget()->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(QApplication::focusWidget() != alias.data());
+    QTRY_VERIFY(QApplication::focusWidget() != aliasEditor.data());
+    aliasEditor->setText("888");
+    aliasEditor->setModified(true);
+    QCOMPARE(aliasEditor->text(), QString("888"));
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QTRY_VERIFY(page.isNull());
+    QTRY_VERIFY(alias.isNull());
+    QTRY_VERIFY(aliasEditor.isNull());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
 void EtherCATWorkbenchTests::testNavigationSetActiveProjectCommand()
 {
     ::Core::ModeManager::activateMode(Constants::MODE_ID);

@@ -1851,3 +1851,42 @@ or new crash record. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-process-data-selection-refresh-001.jPkuu0/final2`;
 the two red proofs are under the sibling `failure-first/` and
 `derived-failure/` directories.
+
+## Workbench EtherCAT Alias draft-baseline boundary
+
+`ISSUE-WB-ETHERCAT-ALIAS-NONCONFLICTING-REFRESH-DRAFT-001`, based on
+`8c374cb68b2ea5844c6ca5a51cf31ed8b2aa14a1`, remains entirely inside the
+product-owned private `EtherCATPage`. `DetailsView` continues to route Device
+Repository and current-Project changes into page refreshes; Repository and
+Project providers remain authoritative for the values and signals they own.
+
+Before replacing its context snapshot, the page compares the stable Project
+ID, node ID, and node kind and checks the new authoritative Alias against its
+last baseline. Only a modified or focused Alias editor in that unchanged
+context is left untouched. The rest of the EtherCAT surface refreshes from
+fresh data. The page retains no cross-plugin QObject, Project object,
+`QModelIndex`, mutable Repository entry, or Project snapshot. Its private
+spin-box subclass only exposes the widget-owned line editor needed to preserve
+text, focus, selection, cursor, and local editor Undo/Redo state.
+
+ProjectService and EtherCATProject continue to own Alias validation,
+persistence, Project modified state, Undo, and Redo. A scoped force-authority
+path surrounds explicit commits, including synchronous refresh, rejection,
+and no-op normalization. External Alias changes, Project Undo, context
+switches, invalid contexts, and Project close therefore always replace or
+destroy the draft from current authority. This is not a generic dirty-form,
+autosave, cross-node cache, merge/conflict, Project revision, generation, or
+CAS protocol.
+
+The boundary changes only private `ethercatpage.cpp/.h`, the existing
+Workbench test declaration/implementation, and four evidence documents. It
+adds no public API, source file, dependency, model role, Project format,
+persistence field, Provider or ProjectService contract, Project command,
+production thread or timer, Core or ProjectExplorer hook,
+application-bootstrap path, network transport, scan, online state, ADS, SDO
+execution, ESC/EEPROM write, or hardware behavior. No CMake or qbs description
+changed. Qualification is local/offline Mock and includes offscreen enabled
+and explicitly disabled product lifecycle evidence with no visible main
+window or new crash record. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-alias-draft-refresh-001.F7RkQj/final`; the red
+proof is under the sibling `failure-first/` directory.

@@ -4325,6 +4325,118 @@ outside this issue. Qualification is local/offline Mock evidence; visible
 desktop inspection was intentionally not run so acceptance did not interrupt
 desktop use.
 
+## Configured Station Alias non-conflicting refresh draft continuity
+
+`ISSUE-WB-ETHERCAT-ALIAS-NONCONFLICTING-REFRESH-DRAFT-001` is based on
+local commit `8c374cb68b2ea5844c6ca5a51cf31ed8b2aa14a1`. A configured slave's
+Alias editor uses `keyboardTracking(false)` and commits on
+`editingFinished`. Before this correction, typing `321` over persisted Alias
+`3` and receiving a Repository or current-Project refresh reset the editor to
+`3` before the user completed the edit.
+
+The private `EtherCATPage` now preserves only the current Alias editor when
+the Project ID, node ID, and node kind are unchanged, the page still
+represents a configured slave, the editor is modified or focused, and the
+freshly read Alias still equals the page's last authoritative baseline. The
+preserved state includes text, modified state, focus, cursor, selection, and
+the line editor's local Undo/Redo history. Type, SyncManager, and the other
+EtherCAT fields continue to refresh from current Repository and Project data.
+
+An explicit Alias commit uses a scoped force-authority reload. An external
+Alias command, Project Undo, changed or invalid context, node switch, and
+Project close also reload or destroy the editor from authority. ProjectService
+and EtherCATProject remain the owners of validation, persistence, modified
+state, Project Undo, and Project Redo. This page-local rule is not autosave, a
+cross-node draft cache, merge/conflict UI, or a Project revision/CAS protocol.
+
+Qt documents that disabling `QAbstractSpinBox::keyboardTracking` delays value
+and text signals until completion, while `editingFinished` is emitted when
+editing finishes through focus loss or Enter:
+<https://doc.qt.io/qt-6/qabstractspinbox.html#keyboardTracking-prop> and
+<https://doc.qt.io/qt-6/qabstractspinbox.html#editingFinished>. Beckhoff
+documents the EtherCAT tab and Configured Station Alias as a 16-bit node
+addressing setting:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1342524811.html>,
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358008331.html>,
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1356630411.html>, and
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1257993099.html>.
+This qualification persists only local/offline Project configuration; it does
+not claim an ESC/EEPROM write or physical-hardware control.
+
+Failure-first changed only the Workbench test. Production
+`ethercatpage.cpp/.h` remained at SHA-256
+`2ee8353e49b0f4071d2f43ae3085e5af4b5d78b5035146f41957391e8852cc5d`
+and `8551cd7031c8084c4dcd2de962adfa03827561d9c6c5bd94c0c87514dda8e6b4`,
+with git blobs `910465f3a1dde786add222808d502131f5b6bb9e` and
+`dd3751d3b552b6bcb51d8f7aa68e0b9d117e6406`. The real Repository update
+left the Project Alias at `3` but changed the draft from expected `321` back
+to actual `3`. Init and cleanup passed, the intended assertion failed, and
+the target exited with status 1 in `failure-first/test.log`.
+
+The final focused test imports a same-identity ESI update and proves that the
+Alias draft and editor state survive while Type and the first SyncManager name
+refresh. It proves local editor Undo/Redo, Return commit to `321`, same-Project
+rename and Undo with a `456` draft, external Alias `654` authority and Project
+Undo back to `321`, and draft destruction across a node switch and Project
+close. Focused normal and 2x runs each passed three events. Related normal and
+2x runs each passed ten events. Complete Workbench normal and 2x runs each
+passed 70 events. Six isolated plugin suites passed 121 events: Core 17,
+Project 12, Devices 8, Workbench 70, Scan 7, and Diagnostics 7. All recorded
+zero failures and target status 0. The complete Workbench run retains the
+known pre-existing ProjectExplorer TaskHub category soft assertion in the
+invalid-project path; it did not fail a test or target.
+
+Final SHA-256 values for the page implementation, page header, Workbench test
+implementation, and test declaration are respectively
+`a6ff4c3a5da7a96061ccf7fd42f7426533a46a3628f43047d5fc93e27ab1fba2`,
+`e0517e191523303a45dc7574dbe95f701ddf40c27c18fff27b4e87d11d13d18a`,
+`173639291cee4a476f9878b49aff177943a14f8536b68e05ff26a408de3663e0`,
+and `0fd6cf8f6dd36e4c5a0fbd713726e4e2075cd2f5231654620dee18e3c683104c`.
+Their git blobs are `cfe4498bd3368d61e906149c9019e96a0e4a05ef`,
+`9f9e1bfd2957b5667e7d0eb64dc762684c5c5903`,
+`204287c739f8c5fca0de6ea1dd4d299006b9eb66`, and
+`a5d954d40310141922a3513709700749ce3e2f8d`.
+
+The full `WITH_TESTS=OFF` product build passed and contains exactly 16 plugin
+dylibs. The executable SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+the product and test Workbench plugin SHA-256 values are
+`09ce71bb36af84f6a9b5f18681257c06b5e8bfcc88ec08d60d3fa5af61d64cbb`
+and `0ea23b46bf78722d6147c0bfc9753313d7412152df814a386e9fc115df21dac3`.
+
+Enabled product startup observed PID 37850 alive for 37 samples with the
+Workbench plugin mapped in all 37. Explicitly disabled startup observed PID
+41198 alive for 37 samples with `-noload EtherCATWorkbench` and Workbench
+absent in all 37. LLDB passed SIGTERM without stop or notification, and both
+targets recorded status 15. The disabled run emitted the existing non-fatal
+shared-memory initialization message and remained alive for every sample.
+Every executable run used fresh HOME/settings, cleared inherited DYLD
+variables, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`,
+`-no-crashcheck`, and only the process-local Touch Bar bypass. No visible main
+window was opened. The 2026-07-22 16:34:14 to 16:38:48 +0800 audit found no
+residual product/debugger process, new matching DiagnosticReports file, or
+matching crash-service event.
+
+Authoritative final evidence is under
+`/private/tmp/embed-labs-wb-alias-draft-refresh-001.F7RkQj/final`; the sibling
+`failure-first/` directory is the red proof. Earlier `green/` and
+`qualification1/` directories are intermediate audit history, while
+`final/invalid-*` entries record two intentionally rejected LLDB-driver
+attempts that exited before tests ran. This issue changes only private
+`ethercatpage.cpp/.h`, the Workbench test declaration/implementation, and
+these four documents. It adds no duplicate-Alias policy, public API, source
+file, dependency, Project format, persistence field, Project command,
+Provider or ProjectService contract, custom model role, production thread or
+timer, Core or ProjectExplorer hook, application-bootstrap change, Modules or
+Channels behavior, network transport, ADS, scan, online state, fixed address,
+Identification, port graph, SDO execution, ESC/EEPROM write, or hardware
+behavior. No CMake or qbs description changed, so qbs was not run. The
+unrelated `WITH_TESTS=ON` all-target build was not rerun because the known
+EasyBoard `extensionmanager_test.h` blocker remains outside this private
+Workbench issue. Qualification is local/offline Mock evidence; visible
+desktop inspection was intentionally not run so acceptance did not interrupt
+desktop use.
+
 ## Process Data same-context selection continuity
 
 `ISSUE-WB-PROCESS-DATA-SAME-CONTEXT-SELECTION-001` is qualified from local

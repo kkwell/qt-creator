@@ -52,6 +52,7 @@ private slots:
     void testDetailsKeyboardFocusContinuity();
     void testProjectScopedDetailsRefreshPreservesGeneralDraft();
     void testEsiRepositoryRefreshPreservesGeneralDraft();
+    void testEthercatAliasDraftSurvivesNonConflictingRefresh();
     void testNavigationSetActiveProjectCommand();
     void testNavigationFilterEmptyState();
     void testNavigationKeyboardFocus();

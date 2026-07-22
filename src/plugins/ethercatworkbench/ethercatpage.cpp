@@ -18,6 +18,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScopedValueRollback>
 #include <QScreen>
 #include <QSpinBox>
 #include <QStyle>
@@ -56,6 +57,14 @@ static QString syncManagerDirection(Data::SyncManagerDirection direction)
     return Tr::tr("Unknown");
 }
 
+class AliasSpinBox final : public QSpinBox
+{
+public:
+    using QSpinBox::QSpinBox;
+
+    QLineEdit *editor() const { return lineEdit(); }
+};
+
 EtherCATPage::EtherCATPage(WorkbenchController *controller, QWidget *parent)
     : QWidget(parent)
     , m_controller(controller)
@@ -74,7 +83,8 @@ EtherCATPage::EtherCATPage(WorkbenchController *controller, QWidget *parent)
     , m_productRevision(new QLineEdit(m_slaveForm))
     , m_autoIncAddress(new QLineEdit(m_slaveForm))
     , m_ethercatAddress(new QLineEdit(m_slaveForm))
-    , m_alias(new QSpinBox(m_slaveForm))
+    , m_alias(new AliasSpinBox(m_slaveForm))
+    , m_aliasEditor(static_cast<AliasSpinBox *>(m_alias)->editor())
     , m_identificationValue(new QLineEdit(m_slaveForm))
     , m_previousPort(new QLineEdit(m_slaveForm))
     , m_advancedSettings(new QPushButton(Tr::tr("Advanced Settings..."), m_slaveForm))
@@ -229,8 +239,6 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
 {
     if (m_masterTopologyDialog)
         m_masterTopologyDialog->reject();
-    m_context = context;
-    m_updating = true;
 
     const std::optional<Data::OfflineSlaveConfiguration> slave
         = m_controller ? m_controller->treeModel()->offlineSlave(context.nodeId) : std::nullopt;
@@ -244,6 +252,19 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
             return m_controller->deviceRepository()->device(slave->deviceDescriptionId);
         return std::nullopt;
     }();
+    const bool configuredSlave = context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave
+                                 && slave.has_value();
+    const bool preserveAlias
+        = !m_forceAuthoritativeAliasReload && configuredSlave && m_alias->isEnabled()
+          && (m_aliasEditor->isModified() || m_alias->hasFocus() || m_aliasEditor->hasFocus())
+          && m_context.projectId == context.projectId && m_context.nodeId == context.nodeId
+          && m_context.nodeKind == context.nodeKind
+          && m_aliasBaselineProjectId == context.projectId
+          && m_aliasBaselineNodeId == context.nodeId && m_aliasBaselineKind == context.nodeKind
+          && m_aliasBaseline == slave->alias;
+
+    m_context = context;
+    m_updating = true;
 
     const QStringList syncManagerHeaders
         = {Tr::tr("SM"),
@@ -303,7 +324,8 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
                          "Offline EtherCAT settings for %1. No matching ESI SyncManager data is "
                          "available.")
                          .arg(slave->name),
-            device ? syncManagerHeaders : QStringList());
+            device ? syncManagerHeaders : QStringList(),
+            preserveAlias);
         m_type->setText(typeName(device));
         m_productRevision->setText(
             Tr::tr("%1 / %2").arg(
@@ -311,7 +333,8 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
                 hexValue(slave->identity.revisionNumber, 8)));
         m_autoIncAddress->setText(autoIncrementAddress(slave->position));
         m_ethercatAddress->setText(Tr::tr("Automatic at startup (not stored)"));
-        m_alias->setValue(slave->alias);
+        if (!preserveAlias)
+            m_alias->setValue(slave->alias);
         m_alias->setEnabled(true);
         m_identificationValue->setText(Tr::tr("Not configured"));
         m_previousPort->setText(previousPortText(*slave));
@@ -371,10 +394,23 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
         reset(Tr::tr("EtherCAT properties are unavailable for this selection."), {});
     }
 
+    if (configuredSlave) {
+        m_aliasBaselineProjectId = context.projectId;
+        m_aliasBaselineNodeId = context.nodeId;
+        m_aliasBaselineKind = context.nodeKind;
+        m_aliasBaseline = slave->alias;
+    } else {
+        m_aliasBaselineProjectId = {};
+        m_aliasBaselineNodeId = {};
+        m_aliasBaselineKind = Core::WorkbenchNodeKind::None;
+        m_aliasBaseline = 0;
+    }
+
     m_updating = false;
 }
 
-void EtherCATPage::reset(const QString &summary, const QStringList &headers)
+void EtherCATPage::reset(
+    const QString &summary, const QStringList &headers, bool preserveAlias)
 {
     m_summary->setText(summary);
     m_summary->setAccessibleDescription(summary);
@@ -384,13 +420,16 @@ void EtherCATPage::reset(const QString &summary, const QStringList &headers)
     m_masterTopology->setEnabled(false);
     m_masterFrameState->clear();
     m_masterFrameState->hide();
-    m_slaveForm->hide();
+    if (!preserveAlias)
+        m_slaveForm->hide();
     m_type->clear();
     m_productRevision->clear();
     m_autoIncAddress->clear();
     m_ethercatAddress->clear();
-    m_alias->setValue(0);
-    m_alias->setEnabled(false);
+    if (!preserveAlias) {
+        m_alias->setValue(0);
+        m_alias->setEnabled(false);
+    }
     m_identificationValue->clear();
     m_previousPort->clear();
     m_tree->clear();
@@ -443,6 +482,8 @@ void EtherCATPage::commitAlias()
         || m_context.nodeKind != Core::WorkbenchNodeKind::ConfiguredSlave) {
         return;
     }
+    const QScopedValueRollback forceReload(m_forceAuthoritativeAliasReload, true);
+    m_aliasEditor->setModified(false);
     const Utils::Result<> result = m_controller->setOfflineSlaveAlias(
         m_context.projectId, m_context.nodeId, quint16(m_alias->value()));
     if (!result) {

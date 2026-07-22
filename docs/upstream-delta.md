@@ -1151,6 +1151,33 @@ publication occurred. Authoritative final evidence is under
 the sibling `failure-first/` and `derived-failure/` directories contain the
 two red proofs.
 
+`ISSUE-WB-ETHERCAT-ALIAS-NONCONFLICTING-REFRESH-DRAFT-001`, based on
+`8c374cb68b2ea5844c6ca5a51cf31ed8b2aa14a1`, changes only the existing
+product-owned private `ethercatpage.cpp/.h`, Workbench test
+declaration/implementation, and documentation. A modified or focused Alias
+draft now survives a same-Project, same-node, same-kind refresh only while the
+fresh authoritative Alias still equals the page's last baseline. The Alias
+editor state is retained while Type, SyncManager, and other EtherCAT data
+refresh. An explicit commit, external Alias change, Project Undo, node switch,
+invalid context, and Project close always restore or destroy the draft from
+current authority.
+
+The change introduces no duplicate-Alias policy, generic dirty-form or
+conflict framework, autosave, cross-node cache, Project revision/generation
+or CAS protocol, public API, source file, dependency, CMake/qbs entry, Project
+format, persistence field, Provider or ProjectService contract, Project
+command, custom model role, production thread or timer, Core or
+ProjectExplorer hook, application-bootstrap change, controller/network
+transport, ADS, online state, scan, Modules/Channels behavior, fixed address,
+Identification, port graph, SDO execution, ESC/EEPROM write, or hardware
+behavior. The Workbench path count remains 44 and the direct upstream Core
+patch count remains five. Qualification used only local/offline Mock state
+plus offscreen enabled/disabled product lifecycle runs with passed-through
+SIGTERM. No visible main window, remote comparison, fetch, pull, merge,
+rebase, push, or publication occurred. Authoritative final evidence is under
+`/private/tmp/embed-labs-wb-alias-draft-refresh-001.F7RkQj/final`; the sibling
+`failure-first/` directory contains the red proof.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

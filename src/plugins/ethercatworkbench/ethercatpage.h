@@ -30,7 +30,7 @@ public:
     void setContext(const Core::PropertyPageContext &context);
 
 private:
-    void reset(const QString &summary, const QStringList &headers);
+    void reset(const QString &summary, const QStringList &headers, bool preserveAlias = false);
     void addSyncManagerRow(const QStringList &values);
     void addSyncManagers(const Data::DeviceDescription &device);
     void commitAlias();
@@ -54,10 +54,16 @@ private:
     QLineEdit *m_autoIncAddress;
     QLineEdit *m_ethercatAddress;
     QSpinBox *m_alias;
+    QLineEdit *m_aliasEditor;
     QLineEdit *m_identificationValue;
     QLineEdit *m_previousPort;
     QPushButton *m_advancedSettings;
     QTreeWidget *m_tree;
+    Data::NodeId m_aliasBaselineProjectId;
+    Data::NodeId m_aliasBaselineNodeId;
+    Core::WorkbenchNodeKind m_aliasBaselineKind = Core::WorkbenchNodeKind::None;
+    quint16 m_aliasBaseline = 0;
+    bool m_forceAuthoritativeAliasReload = false;
     bool m_updating = false;
 };
 

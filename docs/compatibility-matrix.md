@@ -2533,6 +2533,56 @@ superseded intermediate audit history. The Qt current-item contract is at
 Manager/PDO Assignment relationship is at
 <https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10834607243.html>.
 
+## EtherCATWorkbench Alias non-conflicting refresh qualification
+
+`ISSUE-WB-ETHERCAT-ALIAS-NONCONFLICTING-REFRESH-DRAFT-001` is qualified from
+local baseline `8c374cb68b2ea5844c6ca5a51cf31ed8b2aa14a1`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Only the Workbench test changed; production `ethercatpage.cpp/.h` stayed at SHA-256 `2ee8353e49b0f4071d2f43ae3085e5af4b5d78b5035146f41957391e8852cc5d` / `8551cd7031c8084c4dcd2de962adfa03827561d9c6c5bd94c0c87514dda8e6b4` and blobs `910465f3a1dde786add222808d502131f5b6bb9e` / `dd3751d3b552b6bcb51d8f7aa68e0b9d117e6406`; a real Repository update replaced draft `321` with persisted `3`, failed the assertion, and exited 1 |
+| Stable identity and authoritative baseline | Preservation requires the same Project ID, node ID, node kind, configured-slave context, and a fresh Alias equal to the page's last authoritative Alias |
+| Local edit gate | Only an enabled Alias whose internal editor is modified or whose spin box/editor owns focus can be preserved |
+| Same-context Repository refresh | A real same-identity ESI update preserves the draft, modified state, focus, selection, cursor, and local editor Undo/Redo |
+| Other EtherCAT data freshness | The same update refreshes the Type and first SyncManager name while Alias remains a local draft |
+| Explicit commit authority | Return commits `321` through the existing controller path; scoped force-authority refresh clears the editor's modified state and normalizes success, rejection, and no-op paths |
+| External Alias and Undo authority | An external command to `654` replaces draft `456`; Project Undo restores authoritative `321` instead of reviving the draft |
+| Node and Project lifecycle | A draft is not cached across node switch and is destroyed on Project close |
+| Deliberate exclusions | No duplicate nonzero Alias conflict rule, autosave, cross-node draft cache, merge/conflict UI, revision/CAS protocol, Repository signal suppression, generic form service, online lookup, or physical-hardware behavior |
+| Focused normal and 2x | Each passed 3 events, 0 failed, target status 0 |
+| Related normal and 2x | Each passed 10 events, 0 failed, target status 0 |
+| Complete Workbench | Normal and 2x each passed 70 events, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 70, Scan 7, Diagnostics 7; 121 passed, 0 failed in isolated LLDB-supervised processes |
+| Known soft assertion | The existing invalid-project path still emits the pre-existing ProjectExplorer TaskHub category soft assertion; it does not fail a test or target |
+| Final source SHA-256 | Page implementation `a6ff4c3a5da7a96061ccf7fd42f7426533a46a3628f43047d5fc93e27ab1fba2`; page header `e0517e191523303a45dc7574dbe95f701ddf40c27c18fff27b4e87d11d13d18a`; tests `173639291cee4a476f9878b49aff177943a14f8536b68e05ff26a408de3663e0`; test header `0fd6cf8f6dd36e4c5a0fbd713726e4e2075cd2f5231654620dee18e3c683104c` |
+| Final git blobs | Page implementation `cfe4498bd3368d61e906149c9019e96a0e4a05ef`; page header `9f9e1bfd2957b5667e7d0eb64dc762684c5c5903`; tests `204287c739f8c5fca0de6ea1dd4d299006b9eb66`; test header `a5d954d40310141922a3513709700749ce3e2f8d` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 plugin dylibs; executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `09ce71bb36af84f6a9b5f18681257c06b5e8bfcc88ec08d60d3fa5af61d64cbb`; test Workbench `0ea23b46bf78722d6147c0bfc9753313d7412152df814a386e9fc115df21dac3` |
+| Enabled startup | PID 37850 remained alive for 37 samples with Workbench mapped in all 37; passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 41198 remained alive for 37 samples with `-noload EtherCATWorkbench`; Workbench was absent in all 37; passed-through SIGTERM produced target status 15 |
+| Known non-fatal launch message | The disabled run emitted the existing shared-memory initialization message, remained alive for all 37 samples, and produced no crash artifact or service event |
+| Crash-dialog audit | From 2026-07-22 16:34:14 to 16:38:48 +0800 there was no residual product/debugger process, new matching DiagnosticReports file, or matching crash-service event |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM; no visible main window or system crash dialog |
+| Visual/manual inspection | Not run by design because executable acceptance had to remain invisible and non-interrupting |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard `extensionmanager_test.h` blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, ProjectService, Project command, model role, or source-list changes | None |
+| Core, ProjectExplorer, app, Modules/Channels, network, ADS, scan, online state, fixed address, Identification, ports, SDO, ESC/EEPROM, or hardware changes | None; this remains a private Workbench draft-continuity change over local/offline Mock data |
+
+Authoritative final evidence is under
+`/private/tmp/embed-labs-wb-alias-draft-refresh-001.F7RkQj/final`; the sibling
+`failure-first/` directory contains the red proof. Earlier `green/` and
+`qualification1/` directories are intermediate audit history. The relevant
+Qt contracts are
+<https://doc.qt.io/qt-6/qabstractspinbox.html#keyboardTracking-prop> and
+<https://doc.qt.io/qt-6/qabstractspinbox.html#editingFinished>. Beckhoff's
+EtherCAT tab and Alias/addressing semantics are documented at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1342524811.html>,
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358008331.html>,
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1356630411.html>, and
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1257993099.html>.
+These references do not change the local/offline boundary into an ESC/EEPROM
+or hardware-control claim.
+
 ## Verification states
 
 Use only these evidence labels:
