@@ -5458,6 +5458,83 @@ and Channels remain a separate data/API chain and are not completed here.
 `EtherCATWorkbenchPlugin` remains In progress. No CMake or qbs description
 changed, so qbs was not run.
 
+## CoE non-conflicting inline-draft continuity
+
+`ISSUE-WB-COE-NONCONFLICTING-INLINE-DRAFT-REFRESH-001`, based on local
+commit `d26f695ec7581b7864e87577d0b935997a30546d`, keeps one active Value
+editor usable across a refresh of the same configured slave. The page tracks
+the editor by scalar object address, never by row or `QModelIndex`. It first
+builds the complete target dictionary, including the current Mock generation
+and every compatible accepted override, and then compares the active object's
+old and target authority.
+
+Preservation requires the same non-null Project ID, node ID, and configured-
+slave node kind; an editable Mock source; the same writable, non-synthetic
+object; unchanged offline and final Mock bytes, parsed and raw data type,
+process-data role, edited-state provenance, and active-root child count. Name,
+unit, and sibling-object metadata may refresh while the active row remains
+visible through the current filter. A sibling object may be inserted or
+removed without changing the active address. Preservation is not claimed when
+fresh metadata filters the active row out of the proxy view; normal view
+behavior may then close its editor.
+
+When the gate holds, the private tree model synchronizes roots and children by
+object address with row remove and insert notifications. Matching
+`CoeObjectItem` instances remain allocated, their parent and row metadata are
+updated inside the corresponding begin/end notification, and the active Value
+column is excluded from `dataChanged()`. A defensive move path exists inside
+the private synchronizer, but sorted production definitions do not currently
+exercise or qualify it. The same `QLineEdit` therefore keeps its uncommitted
+text, modified state, focus, selection, cursor position, and Undo history.
+Fresh sibling and non-Value metadata remain visible, and a persistent index
+follows the active object when an earlier sibling is added or removed.
+
+Return still commits only to the page-local Mock model; Escape restores the
+last accepted Mock bytes. Neither path writes the Project or creates a Project
+Undo command. Update List and Show Offline are deliberate clear boundaries.
+An offline/final-Mock value or width conflict, parsed/raw type change,
+writable or process-data change, active-root structural conflict, object
+removal, context change, and page destruction close the editor with revert
+semantics and render fresh authority. The page destructor also synchronously
+releases an editor left queued for deferred deletion, so teardown cannot
+commit pending text.
+
+This is a single-editor, page-private synchronization boundary. It is not a
+persistent-editor feature, generic tree synchronizer, cross-node draft cache,
+autosave mechanism, Repository revision, Project revision, CAS/merge service,
+or conflict UI. It adds no public API, Project field, persistence, Provider or
+ProjectService contract, Project command, public model role, production
+thread/timer, source file, dependency, CMake/qbs entry, Core or
+ProjectExplorer hook, application bootstrap, network, ADS, scan, online CoE,
+SDO, controller, PLC, or hardware behavior.
+
+Qt documents that model reset invalidates current/selected data and resets
+attached views, while an item-view reset closes open editors without
+committing their changes. The implementation therefore avoids reset only for
+the compatible active address and retains normal delegate Return/Escape
+semantics:
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#beginResetModel>,
+<https://doc.qt.io/qt-6/qabstractitemview.html#reset>,
+<https://doc.qt.io/qt-6/qstyleditemdelegate.html#setModelData>, and
+<https://doc.qt.io/qt-6.8/qlineedit.html>. Beckhoff's CoE page remains a
+terminology and interaction reference for Value, RW/RO, Offline value, and
+Update List only:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
+
+Final qualification rebuilt the test and `WITH_TESTS=OFF` product trees.
+The focused test passed at 1x and 2x scaling, and four complete Workbench runs
+each passed 78 events. The six isolated EtherCAT suites passed 129 events:
+Core 17, Project 12, Devices 8, Workbench 78, Scan 7, and Diagnostics 7. The
+product app contains the expected 16 plugin dylibs. Enabled and explicit
+`-noload EtherCATWorkbench` lifecycle runs each remained alive for 37 of 37
+one-second samples; the Workbench dylib was present in all enabled samples and
+none of the disabled samples. Passed-through SIGTERM ended both runs with
+status 15, leaving zero residual processes, new Embed Labs diagnostic reports,
+or matching crash-service events. All runs used an offscreen platform, fresh
+HOME/settings, and disabled crash reporting, so no visible main window or
+manual UI inspection was involved. Evidence is under
+`/private/tmp/embed-labs-wb-coe-inline-draft-001.177q7M`.
+
 ## CoE non-conflicting Mock-value refresh continuity
 
 `ISSUE-WB-COE-NONCONFLICTING-MOCK-VALUE-REFRESH-001`, based on local commit
@@ -5466,8 +5543,9 @@ value across a refresh of the same configured slave. Preservation requires
 the same non-`None` Project ID, node ID, and node kind, the same scalar object
 address, a writable non-synthetic object, and unchanged offline bytes and
 width, parsed data type, raw data type, writable flag, and process-data role.
-Only values already accepted by the model's `setData()` path qualify; text in
-an active editor that has not been committed is outside this issue.
+Only values already accepted by the model's `setData()` path qualify for that
+override replay. The separate active-editor boundary now covers text that has
+not yet been committed.
 
 A real Project rename and a same-identity ESI metadata or sibling-object update
 therefore keep the local override while the page renders fresh Project and ESI

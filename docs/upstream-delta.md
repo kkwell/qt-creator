@@ -1421,7 +1421,8 @@ current bytes through its existing checked command path. Explicit Update List
 is the clear boundary in both Mock and Offline view. Empty offline baselines
 can retain an already accepted non-empty arbitrary width, but Update List
 returns them to empty. Authority conflict, object removal, context change, and
-page teardown discard the override. Uncommitted editor text is excluded.
+page teardown discard the override. Uncommitted editor text was excluded from
+that delta and is now covered by the separate local inline-draft delta below.
 
 This is an existing-path, cpp-private value replay, not an upstream Core
 change, generic cache, Repository revision, merge/CAS protocol, persistence
@@ -1448,3 +1449,55 @@ No remote comparison, fetch, pull, merge, rebase, push, PR, or publication
 occurred. The supported baseline remains the local `embed-labs` history.
 Authoritative evidence is under
 `/private/tmp/embed-labs-wb-coe-mock-value-refresh-001.Z9NXQ5`.
+
+## Local CoE non-conflicting refresh inline-draft delta
+
+`ISSUE-WB-COE-NONCONFLICTING-INLINE-DRAFT-REFRESH-001` is a private
+Workbench correction on local baseline
+`d26f695ec7581b7864e87577d0b935997a30546d`. One active configured-slave CoE
+Value editor survives a same-Project, same-node, same-kind refresh only while
+the final target retains the same writable non-synthetic object address,
+offline and Mock bytes, parsed/raw type, process-data role, edited-state
+provenance, active-root child count, and continued visibility through the
+current proxy filter. If refreshed metadata filters the row out, editor
+preservation is outside this delta.
+
+The private model builds the final target dictionary before deciding whether
+to synchronize. Compatible roots and children use address-based row-removal
+and row-insertion notifications; matching items remain allocated and the
+active Value column is omitted from data-change notifications. A defensive
+move path is present but is neither reached by sorted production definitions
+nor qualified by this delta. Fresh sibling and non-Value metadata still
+render. Return/Escape retain default delegate semantics and a Mock edit never
+mutates the Project.
+
+Update List, Show Offline, authority conflict or read-only transition, object
+removal, node/context change, and page teardown revert the editor and use the
+normal reset/authority path. The page destructor prevents pending text from
+being committed during deferred editor deletion. This is not a multiple- or
+persistent-editor feature, generic tree synchronizer, cross-node cache,
+autosave, persistence, revision, CAS, merge, or conflict UI.
+
+The local delta changes only existing private `coeonlinepage.cpp/.h`, the
+Workbench test declaration/implementation, and four evidence documents. It
+introduces no new path, public API, source file, dependency, CMake/qbs entry,
+Project format or persistence field, Provider/ProjectService contract,
+Project command, public model role, production thread/timer, direct upstream
+Core patch, Core or ProjectExplorer hook, application bootstrap, network, ADS,
+scan, online CoE, SDO, ESC/EEPROM, PLC, controller, or hardware behavior. The
+Workbench path count remains 44 and the direct upstream Core patch count
+remains five.
+
+Qualification uses local ESI/offline Project and Mock state plus offscreen
+tests and enabled/disabled main-program lifecycle runs with passed-through
+SIGTERM. Focused 1x/2x tests passed, four complete Workbench runs each passed
+78 events, and the six isolated EtherCAT suites passed 129 events. The full
+`WITH_TESTS=OFF` product build contains 16 plugin dylibs. Enabled and explicit
+`-noload EtherCATWorkbench` runs each remained alive for 37 of 37 samples;
+Workbench was loaded in all enabled samples and no disabled sample. Both ended
+with expected target status 15, with zero residual processes, new Embed Labs
+diagnostic reports, or matching crash-service events. No visible/manual UI
+inspection, remote comparison, fetch, pull, merge, rebase, push, PR, or
+publication is part of this delta. The supported baseline remains the local
+`embed-labs` history. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-coe-inline-draft-001.177q7M`.

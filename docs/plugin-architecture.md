@@ -2177,11 +2177,12 @@ path refreshes from baselines and the Offline path rebuilds without overrides.
 Authority conflicts, object removal, context change, and page destruction also
 omit or reject replay.
 
-Only values already accepted by `setData()` are represented; an uncommitted
-delegate editor is outside this boundary. The map is page-local and transient,
-not a generic cache, Repository revision, merge/CAS protocol, conflict UI, or
-persistence service. Existing ProjectService commands, Repository routing,
-public model roles, Provider contracts, and Project format are unchanged.
+Only values already accepted by `setData()` are represented by that replay
+map. The separate CoE inline-editor boundary below now covers an uncommitted
+delegate editor. The map is page-local and transient, not a generic cache,
+Repository revision, merge/CAS protocol, conflict UI, or persistence service.
+Existing ProjectService commands, Repository routing, public model roles,
+Provider contracts, and Project format are unchanged.
 
 The boundary changes only existing private `coeonlinepage.cpp/.h`, the
 Workbench test declaration/implementation, and four evidence documents. It
@@ -2192,3 +2193,63 @@ ESI/offline Project data, source and proxy model contract checkers, normal/2x
 offscreen tests, and enabled/disabled product lifecycle evidence.
 Authoritative evidence is under
 `/private/tmp/embed-labs-wb-coe-mock-value-refresh-001.Z9NXQ5`.
+
+## Workbench CoE inline-editor authority boundary
+
+`ISSUE-WB-COE-NONCONFLICTING-INLINE-DRAFT-REFRESH-001`, based on local
+commit `d26f695ec7581b7864e87577d0b935997a30546d`, remains inside the private
+`CoeOnlinePage`, its cpp-local model/delegate/tree view, the Workbench test,
+and four evidence documents. The page stores only a `QPointer` to the active
+editor, its scalar object address, and a destruction generation. It retains no
+ordinary or persistent `QModelIndex`, row, Project, Repository, or service
+object as authority.
+
+Before a same-context refresh, the model builds the final target tree from
+fresh Project/ESI definitions, the current deterministic Mock generation, and
+compatible accepted overrides. It permits incremental synchronization only
+when the active address remains a writable non-synthetic Mock object with
+unchanged offline and final Mock bytes, parsed/raw type, process-data role,
+edited-state provenance, and active-root child count. This model-level check
+complements the page's Project/node/kind gate and prevents a partial sync from
+keeping an editor across an authority conflict. The proxy filter remains view
+authority: this boundary does not promise preservation if refreshed metadata
+causes the active row to stop matching the current filter.
+
+Roots and children are synchronized by scalar address. Row removal and
+insertion keep matching heap-allocated items stable while their parent and row
+fields are updated between the matching begin/end calls. The private
+synchronizer has a defensive move path, but sorted production definitions do
+not currently exercise or qualify it. Fresh fields are copied into matching
+items. `dataChanged()` covers every changed sibling and the non-Value columns
+of the active object, but deliberately excludes its Value column so the
+delegate cannot reload and destroy the local draft. The proxy view and its
+internal persistent editor index therefore follow the same object when an
+earlier sibling is inserted or removed.
+
+A cpp-local delegate reports editor creation; a cpp-local tree view exposes
+only a revert-close operation. Eligible refreshes leave the editor alone.
+Update List, Show Offline, authority conflict, read-only transition, object or
+context removal, and teardown close it with `RevertModelCache` before the
+existing reset path. Normal Return and Escape remain the default styled-
+delegate paths. Because a CoE Mock edit is page-local, no ProjectService
+commit/re-entry guard is required. The destructor synchronously deletes a
+delegate editor still queued after revert close.
+
+This boundary adds no generic editor/tree service, public type, public model
+role, Provider/ProjectService contract, Project command, Project format,
+persistence field, Repository/Project revision, CAS/merge protocol, source
+file, dependency, CMake/qbs entry, production thread/timer, direct upstream
+Core patch, Core or ProjectExplorer hook, application bootstrap, network, ADS,
+scan, online CoE, SDO, PLC, controller, or hardware behavior. The Workbench
+path count remains 44 and the direct upstream Core patch count remains five.
+
+Final Qt-native qualification passed the focused editor test at 1x and 2x,
+four complete 78-event Workbench runs, and all six isolated EtherCAT suites
+with 129 events total. The complete `WITH_TESTS=OFF` product build contains 16
+plugin dylibs. Enabled and explicit `-noload EtherCATWorkbench` product runs
+were each alive for 37 of 37 samples; the Workbench dylib was loaded for all
+enabled samples and none of the disabled samples. Both passed-through SIGTERM
+terminations reported target status 15, with no residual process, new Embed
+Labs diagnostic report, or matching crash-service event. Every run was
+offscreen with fresh HOME/settings and crash reporting disabled. Evidence is
+under `/private/tmp/embed-labs-wb-coe-inline-draft-001.177q7M`.

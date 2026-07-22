@@ -29,11 +29,13 @@
 #include <QScopedValueRollback>
 #include <QSortFilterProxyModel>
 #include <QStackedWidget>
+#include <QStyledItemDelegate>
 #include <QTreeView>
 #include <QVBoxLayout>
 #include <QtEndian>
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -438,12 +440,69 @@ public:
         return result;
     }
 
-    void setDefinitions(
-        const QList<CoeObjectDefinition> &definitions, bool mockValueEditingEnabled)
+    bool canSynchronizeDefinitions(
+        const QList<CoeObjectDefinition> &definitions,
+        bool mockValueEditingEnabled,
+        int generation,
+        const MockValueOverrides &preservedOverrides,
+        quint32 preservedAddress) const
     {
+        std::vector<std::unique_ptr<CoeObjectItem>> targetItems = itemsForDefinitions(definitions);
+        refreshItems(
+            targetItems, generation, preservedOverrides, mockValueEditingEnabled);
+        return canSynchronizeItem(
+            targetItems, mockValueEditingEnabled, preservedAddress);
+    }
+
+    bool setDefinitions(
+        const QList<CoeObjectDefinition> &definitions,
+        bool mockValueEditingEnabled,
+        int generation = 0,
+        const MockValueOverrides &preservedOverrides = {},
+        const std::optional<quint32> &preservedAddress = {})
+    {
+        std::vector<std::unique_ptr<CoeObjectItem>> targetItems = itemsForDefinitions(definitions);
+        refreshItems(
+            targetItems, generation, preservedOverrides, mockValueEditingEnabled);
+        if (preservedAddress
+            && canSynchronizeItem(targetItems, mockValueEditingEnabled, *preservedAddress)) {
+            m_mockValueEditingEnabled = mockValueEditingEnabled;
+            synchronizeItems(m_roots, targetItems, nullptr, {}, *preservedAddress);
+            return false;
+        }
+
         beginResetModel();
         m_mockValueEditingEnabled = mockValueEditingEnabled;
-        m_roots.clear();
+        m_roots = std::move(targetItems);
+        endResetModel();
+        return true;
+    }
+
+    void setShowOffline(bool showOffline)
+    {
+        if (m_showOffline == showOffline)
+            return;
+        beginResetModel();
+        m_showOffline = showOffline;
+        endResetModel();
+    }
+
+    bool showOffline() const { return m_showOffline; }
+
+    void refreshMockValues(
+        int generation, const MockValueOverrides &preservedOverrides = {})
+    {
+        beginResetModel();
+        refreshItems(
+            m_roots, generation, preservedOverrides, m_mockValueEditingEnabled);
+        endResetModel();
+    }
+
+private:
+    static std::vector<std::unique_ptr<CoeObjectItem>> itemsForDefinitions(
+        const QList<CoeObjectDefinition> &definitions)
+    {
+        std::vector<std::unique_ptr<CoeObjectItem>> roots;
         QMap<quint16, QList<CoeObjectDefinition>> groups;
         for (const CoeObjectDefinition &definition : definitions)
             groups[definition.index].append(definition);
@@ -469,7 +528,7 @@ public:
                                               {},
                                               {},
                                               {}};
-            auto root = createItem(rootDefinition, nullptr, int(m_roots.size()));
+            auto root = createItem(rootDefinition, nullptr, int(roots.size()));
             root->synthetic = zero == values.cend();
             for (const CoeObjectDefinition &definition : std::as_const(values)) {
                 if (definition.subIndex == 0)
@@ -477,27 +536,18 @@ public:
                 root->children.push_back(
                     createItem(definition, root.get(), int(root->children.size())));
             }
-            m_roots.push_back(std::move(root));
+            roots.push_back(std::move(root));
         }
-        endResetModel();
+        return roots;
     }
 
-    void setShowOffline(bool showOffline)
+    static void refreshItems(
+        std::vector<std::unique_ptr<CoeObjectItem>> &roots,
+        int generation,
+        const MockValueOverrides &preservedOverrides,
+        bool mockValueEditingEnabled)
     {
-        if (m_showOffline == showOffline)
-            return;
-        beginResetModel();
-        m_showOffline = showOffline;
-        endResetModel();
-    }
-
-    bool showOffline() const { return m_showOffline; }
-
-    void refreshMockValues(
-        int generation, const MockValueOverrides &preservedOverrides = {})
-    {
-        beginResetModel();
-        const auto refresh = [this, &preservedOverrides, generation](
+        const auto refresh = [&preservedOverrides, generation, mockValueEditingEnabled](
                                  auto &&self, CoeObjectItem *item) -> void {
             item->mockValueEdited = false;
             if (!item->synthetic) {
@@ -511,7 +561,7 @@ public:
             }
             const auto preserved = preservedOverrides.constFind(
                 address(item->index, item->subIndex));
-            if (preserved != preservedOverrides.cend() && m_mockValueEditingEnabled
+            if (preserved != preservedOverrides.cend() && mockValueEditingEnabled
                 && item->writable && !item->synthetic
                 && preserved->offlineValue == item->offlineValue
                 && preserved->dataType == item->dataType
@@ -526,12 +576,162 @@ public:
             for (const auto &child : item->children)
                 self(self, child.get());
         };
-        for (const auto &root : m_roots)
+        for (const auto &root : roots)
             refresh(refresh, root.get());
-        endResetModel();
     }
 
-private:
+    static const CoeObjectItem *findItem(
+        const std::vector<std::unique_ptr<CoeObjectItem>> &items, quint32 objectAddress)
+    {
+        for (const auto &item : items) {
+            if (address(item->index, item->subIndex) == objectAddress)
+                return item.get();
+            if (const CoeObjectItem *child = findItem(item->children, objectAddress))
+                return child;
+        }
+        return nullptr;
+    }
+
+    bool canSynchronizeItem(
+        const std::vector<std::unique_ptr<CoeObjectItem>> &targetItems,
+        bool mockValueEditingEnabled,
+        quint32 preservedAddress) const
+    {
+        const CoeObjectItem *current = findItem(m_roots, preservedAddress);
+        const CoeObjectItem *target = findItem(targetItems, preservedAddress);
+        return m_mockValueEditingEnabled && mockValueEditingEnabled && !m_showOffline && current
+               && target && !current->synthetic && !target->synthetic && current->writable
+               && target->writable && current->index == target->index
+               && current->subIndex == target->subIndex
+               && current->processData == target->processData
+               && current->dataType == target->dataType
+               && current->rawDataType == target->rawDataType
+               && current->offlineValue == target->offlineValue
+               && current->mockValue == target->mockValue
+               && current->mockValueEdited == target->mockValueEdited
+               && current->children.size() == target->children.size();
+    }
+
+    static bool sameItemData(const CoeObjectItem &left, const CoeObjectItem &right)
+    {
+        return left.index == right.index && left.subIndex == right.subIndex
+               && left.name == right.name && left.writable == right.writable
+               && left.processData == right.processData && left.synthetic == right.synthetic
+               && left.dataType == right.dataType && left.rawDataType == right.rawDataType
+               && left.offlineValue == right.offlineValue && left.mockValue == right.mockValue
+               && left.mockValueEdited == right.mockValueEdited && left.unit == right.unit;
+    }
+
+    static void copyItemData(CoeObjectItem *target, const CoeObjectItem &source)
+    {
+        target->index = source.index;
+        target->subIndex = source.subIndex;
+        target->name = source.name;
+        target->writable = source.writable;
+        target->processData = source.processData;
+        target->synthetic = source.synthetic;
+        target->dataType = source.dataType;
+        target->rawDataType = source.rawDataType;
+        target->offlineValue = source.offlineValue;
+        target->mockValue = source.mockValue;
+        target->mockValueEdited = source.mockValueEdited;
+        target->unit = source.unit;
+    }
+
+    static void updateRows(
+        std::vector<std::unique_ptr<CoeObjectItem>> &items, CoeObjectItem *parent)
+    {
+        for (int row = 0; row < int(items.size()); ++row) {
+            items.at(row)->parent = parent;
+            items.at(row)->row = row;
+        }
+    }
+
+    void synchronizeItems(
+        std::vector<std::unique_ptr<CoeObjectItem>> &currentItems,
+        std::vector<std::unique_ptr<CoeObjectItem>> &targetItems,
+        CoeObjectItem *parentItem,
+        const QModelIndex &parentIndex,
+        quint32 preservedAddress)
+    {
+        const auto containsAddress = [](const auto &items, quint32 objectAddress) {
+            return std::any_of(items.cbegin(), items.cend(), [objectAddress](const auto &item) {
+                return address(item->index, item->subIndex) == objectAddress;
+            });
+        };
+        for (int row = int(currentItems.size()) - 1; row >= 0; --row) {
+            const quint32 currentAddress
+                = address(currentItems.at(row)->index, currentItems.at(row)->subIndex);
+            if (containsAddress(targetItems, currentAddress))
+                continue;
+            beginRemoveRows(parentIndex, row, row);
+            currentItems.erase(currentItems.begin() + row);
+            updateRows(currentItems, parentItem);
+            endRemoveRows();
+        }
+
+        for (int targetRow = 0; targetRow < int(targetItems.size()); ++targetRow) {
+            const quint32 targetAddress
+                = address(targetItems.at(targetRow)->index, targetItems.at(targetRow)->subIndex);
+            int currentRow = -1;
+            for (int row = 0; row < int(currentItems.size()); ++row) {
+                if (address(currentItems.at(row)->index, currentItems.at(row)->subIndex)
+                    == targetAddress) {
+                    currentRow = row;
+                    break;
+                }
+            }
+            if (currentRow < 0) {
+                beginInsertRows(parentIndex, targetRow, targetRow);
+                currentItems.insert(
+                    currentItems.begin() + targetRow, std::move(targetItems.at(targetRow)));
+                updateRows(currentItems, parentItem);
+                endInsertRows();
+                continue;
+            }
+            if (currentRow != targetRow) {
+                const int destination = currentRow < targetRow ? targetRow + 1 : targetRow;
+                if (!beginMoveRows(
+                        parentIndex, currentRow, currentRow, parentIndex, destination)) {
+                    QTC_CHECK(false);
+                    continue;
+                }
+                std::unique_ptr<CoeObjectItem> moved = std::move(currentItems.at(currentRow));
+                currentItems.erase(currentItems.begin() + currentRow);
+                currentItems.insert(currentItems.begin() + targetRow, std::move(moved));
+                updateRows(currentItems, parentItem);
+                endMoveRows();
+            }
+
+            CoeObjectItem *current = currentItems.at(targetRow).get();
+            CoeObjectItem *target = targetItems.at(targetRow).get();
+            const bool itemDataChanged = !sameItemData(*current, *target);
+            const qsizetype previousChildCount = qsizetype(current->children.size());
+            copyItemData(current, *target);
+            const QModelIndex currentIndex = index(targetRow, 0, parentIndex);
+            synchronizeItems(
+                current->children,
+                target->children,
+                current,
+                currentIndex,
+                preservedAddress);
+            if (!itemDataChanged && previousChildCount == qsizetype(current->children.size()))
+                continue;
+            if (targetAddress == preservedAddress) {
+                emit dataChanged(
+                    index(targetRow, 0, parentIndex),
+                    index(targetRow, Value - 1, parentIndex));
+                emit dataChanged(
+                    index(targetRow, Value + 1, parentIndex),
+                    index(targetRow, ColumnCount - 1, parentIndex));
+            } else {
+                emit dataChanged(
+                    index(targetRow, 0, parentIndex),
+                    index(targetRow, ColumnCount - 1, parentIndex));
+            }
+        }
+    }
+
     static std::unique_ptr<CoeObjectItem> createItem(
         const CoeObjectDefinition &definition, CoeObjectItem *parent, int row)
     {
@@ -645,6 +845,40 @@ private:
     DictionaryRange m_range = DictionaryRange::All;
     bool m_hideStandard = false;
     bool m_hidePdo = false;
+};
+
+using CoeEditorOpenedHandler = std::function<void(QWidget *, const QModelIndex &)>;
+
+class CoeItemDelegate final : public QStyledItemDelegate
+{
+public:
+    CoeItemDelegate(CoeEditorOpenedHandler editorOpened, QObject *parent)
+        : QStyledItemDelegate(parent)
+        , m_editorOpened(std::move(editorOpened))
+    {}
+
+    QWidget *createEditor(
+        QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const final
+    {
+        QWidget *editor = QStyledItemDelegate::createEditor(parent, option, index);
+        if (editor && m_editorOpened)
+            m_editorOpened(editor, index);
+        return editor;
+    }
+
+private:
+    CoeEditorOpenedHandler m_editorOpened;
+};
+
+class CoeTreeView final : public QTreeView
+{
+public:
+    using QTreeView::QTreeView;
+
+    void discardInlineEditor(QWidget *editor)
+    {
+        closeEditor(editor, QAbstractItemDelegate::RevertModelCache);
+    }
 };
 
 static QModelIndex indexForAddress(
@@ -837,7 +1071,7 @@ CoeOnlinePage::CoeOnlinePage(WorkbenchController *controller, QWidget *parent)
     , m_moduleOd(new QLineEdit(this))
     , m_filter(new Utils::FancyLineEdit(this))
     , m_dictionaryStack(new QStackedWidget(this))
-    , m_dictionary(new QTreeView(m_dictionaryStack))
+    , m_dictionary(new CoeTreeView(m_dictionaryStack))
     , m_filterEmptyState(new QWidget(m_dictionaryStack))
     , m_clearFilters(new QPushButton(Tr::tr("Clear Filters"), m_filterEmptyState))
     , m_model(new CoeObjectModel(this))
@@ -888,6 +1122,11 @@ CoeOnlinePage::CoeOnlinePage(WorkbenchController *controller, QWidget *parent)
     m_dictionary->setEditTriggers(
         QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed
         | QAbstractItemView::SelectedClicked);
+    m_dictionary->setItemDelegate(new CoeItemDelegate(
+        [this](QWidget *editor, const QModelIndex &index) {
+            trackInlineEditor(editor, index);
+        },
+        m_dictionary));
     m_filterModel->setSourceModel(m_model);
     const auto beginFilterResultChange = [this] { ++m_filterResultChangeDepth; };
     const auto finishFilterResultChange = [this] {
@@ -997,6 +1236,7 @@ CoeOnlinePage::CoeOnlinePage(WorkbenchController *controller, QWidget *parent)
     connect(m_showOffline, &QCheckBox::toggled, this, [this](bool checked) {
         QScopedValueRollback resultChange(
             m_filterResultChangeDepth, m_filterResultChangeDepth + 1);
+        discardInlineEditor();
         m_model->setShowOffline(checked);
         m_dataSource->setText(
             checked ? Tr::tr("Offline Data")
@@ -1012,7 +1252,37 @@ CoeOnlinePage::CoeOnlinePage(WorkbenchController *controller, QWidget *parent)
             if (current.isValid() && m_filterResultChangeDepth == 0)
                 m_selectedObjectAddress = current.siblingAtColumn(0).data(AddressRole).toUInt();
             updateButtonState();
-        });
+    });
+}
+
+CoeOnlinePage::~CoeOnlinePage()
+{
+    if (m_inlineEditor) {
+        QPointer<QWidget> editor = m_inlineEditor;
+        discardInlineEditor();
+        delete editor.data();
+    }
+}
+
+void CoeOnlinePage::trackInlineEditor(QWidget *editor, const QModelIndex &index)
+{
+    if (!editor || !index.isValid() || index.column() != CoeObjectModel::Value)
+        return;
+    m_inlineEditor = editor;
+    m_inlineEditorAddress = index.data(AddressRole).toUInt();
+    const quint64 generation = ++m_inlineEditorGeneration;
+    connect(editor, &QObject::destroyed, this, [this, generation] {
+        if (generation != m_inlineEditorGeneration)
+            return;
+        m_inlineEditor = nullptr;
+        m_inlineEditorAddress.reset();
+    });
+}
+
+void CoeOnlinePage::discardInlineEditor()
+{
+    if (m_inlineEditor)
+        static_cast<CoeTreeView *>(m_dictionary)->discardInlineEditor(m_inlineEditor);
 }
 
 void CoeOnlinePage::setContext(const Core::PropertyPageContext &context)
@@ -1073,10 +1343,26 @@ void CoeOnlinePage::rebuildObjects(bool preserveMockValues)
         = m_context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave && slave.has_value()
           && !m_context.projectId.isNull() && m_controller && m_controller->projectService()
           && m_controller->projectService()->project(m_context.projectId).has_value();
-    m_model->setDefinitions(objectDefinitions(slave, device), mockValueEditingEnabled);
+    const QList<CoeObjectDefinition> definitions = objectDefinitions(slave, device);
+    const bool preserveInlineEditor
+        = preserveMockValues && m_inlineEditor && m_inlineEditorAddress
+          && m_model->canSynchronizeDefinitions(
+              definitions,
+              mockValueEditingEnabled,
+              m_mockGeneration,
+              mockValueOverrides,
+              *m_inlineEditorAddress);
+    const std::optional<quint32> inlineEditorAddress
+        = preserveInlineEditor ? m_inlineEditorAddress : std::nullopt;
+    if (!preserveInlineEditor)
+        discardInlineEditor();
+    m_model->setDefinitions(
+        definitions,
+        mockValueEditingEnabled,
+        m_mockGeneration,
+        mockValueOverrides,
+        inlineEditorAddress);
     m_model->setShowOffline(m_showOffline->isChecked());
-    if (m_mockGeneration > 0 || !mockValueOverrides.isEmpty())
-        m_model->refreshMockValues(m_mockGeneration, mockValueOverrides);
     m_dataSource->setText(
         m_showOffline->isChecked() ? Tr::tr("Offline Data")
                                    : Tr::tr("Mock Data - sample %1").arg(m_mockGeneration));
@@ -1097,6 +1383,7 @@ void CoeOnlinePage::rebuildObjects(bool preserveMockValues)
 
 void CoeOnlinePage::updateList()
 {
+    discardInlineEditor();
     if (!m_showOffline->isChecked()) {
         ++m_mockGeneration;
         m_model->refreshMockValues(m_mockGeneration);

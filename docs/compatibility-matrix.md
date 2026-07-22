@@ -1428,6 +1428,49 @@ Qt defines the dynamic proxy and accessibility contracts at
 <https://doc.qt.io/qt-6/qwidget.html>. Beckhoff's CoE Online page remains the
 object-dictionary comparison:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
+
+## EtherCATWorkbench CoE non-conflicting inline-draft qualification
+
+`ISSUE-WB-COE-NONCONFLICTING-INLINE-DRAFT-REFRESH-001` is qualified from
+local baseline `d26f695ec7581b7864e87577d0b935997a30546d`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Only the new Workbench test changed; production `coeonlinepage.cpp/.h` retained SHA-256 `4f6a83237a8be1158799242f5e26f31490ee7559349c1aabc9fddc0d95c5fe0d` / `ef599680bc35e50556b8f222b06eb7b2672dfac01324ef5993e0a857d5ddb66a` and blobs `c758168bf1fdc7a02634e22546b14d5c54978ae3` / `83d07f6d006009bebdf70b2a087d8ce7b2231a63`; a real Project rename emitted two proxy model resets instead of zero, target status 1 |
+| Stable preservation gate | Same non-null Project, configured-slave node and kind, editable Mock source, scalar address, writable non-synthetic object, offline/final-Mock bytes, parsed/raw type, process-data role, edited-state provenance, active-root child count, and continued visibility through the current proxy filter |
+| Editor state | The same real `QLineEdit`, uncommitted text, modified state, focus, selection, cursor, and Undo availability survive eligible refreshes; native IME composition is not claimed |
+| Project rename | A real rename preserved the editor without model reset; the underlying `EditRole` remained `08`, proving the draft was not silently accepted |
+| Repository metadata | Fresh active `6060:00` Name and sibling metadata rendered; source and proxy `dataChanged()` covered the active Name but excluded its Value while the same editor and underlying Mock value remained unchanged |
+| Structural synchronization | Inserting `605F:00` before active `6060:00` moved its persistent proxy index forward one row; removing the sibling moved it back. Both source and proxy remained under `QAbstractItemModelTester`, with row signals and no reset |
+| Structural coverage limit | The test directly qualifies top-level sibling insertion/removal. The same private recursive path handles children under source/proxy model testers, but child insertion/removal and the defensive move branch are not directly exercised or claimed as separate user-facing behavior |
+| Accepted override plus draft | After Return accepted local Mock `5A`, a new uncommitted `6B` survived another metadata refresh; `6072:00` rendered `refreshed over accepted override` through source and proxy `dataChanged()`, while the underlying active value stayed `5A` |
+| Delegate semantics | Escape discarded the preserved draft; Return accepted a valid one-byte value only in the page-local Mock model. Neither changed the Project snapshot |
+| Explicit clear boundaries | Update List discarded an active draft and regenerated `09`; Show Offline discarded a draft, displayed authoritative `08`, and returned to unedited Mock `09` |
+| Authority conflict | A width/value change closed the editor and rendered generated `0A00`; a fixed/read-only change closed it, removed editability, and rendered `08` |
+| Object removal and context | Removing `6060:00` destroyed its editor; a Project-node switch destroyed the CoE page and editor. Drafts never changed the Project snapshot |
+| Final source identity | SHA-256: `coeonlinepage.cpp` `7f0c8d977575d87f7ad08c6a94fcd0708f03c2d59f5e6891aa719828c4688d15`, `.h` `8efa640a8cf8fad46d396dd22269c7c1a5ea68a448179cd67745e6cb1fc433e2`, tests `.cpp` `44c6ed51ddcac07104b39670ff8e51fbb1ffb594556bac332cbab04be2d1c5a2`, tests `.h` `69232684a3c22e18cb3f23f21ae2ab0e334fea906e766dffd8a3377252ce3a20`; blobs `8351fff476b0edfed51a09f11c9185dfe81f9c7c`, `ee362007d7152e33df3eb8e10f9655a563ab200f`, `8fde78bcdae8caa914cfe254c7f97ceed1e0089c`, `b30eedf2b177de7b11b0c2ccc1aaa2f0a8ab7ba8` |
+| Focused final regression | Normal and 2x runs each passed init, `testCoeInlineDraftSurvivesNonConflictingRefresh`, and cleanup: three pass events, zero failures, target status 0 |
+| Complete Workbench regression | Two normal and two 2x complete runs each passed 78 events with target status 0: 312 pass events, zero failures |
+| Six-plugin isolation | Core 17, Project 12, Devices 8, Workbench 78, Scan 7, and Diagnostics 7: 129 pass events, zero failures |
+| Product build and identity | The test Workbench target and complete `WITH_TESTS=OFF` product build passed; the product contains 16 plugin dylibs. Product executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product/test Workbench dylibs `306c42e407646c1a3841f1fafb1407bcf002006c400117d9ef300b41532f56b1` / `d38fc759ac9b20d8c066b147947c00726d0b04d06acf682f392186af827c50eb` |
+| Main-program lifecycle | Enabled: 37/37 alive and 37/37 Workbench loaded. Explicit `-noload EtherCATWorkbench`: 37/37 alive and 0/37 loaded. Passed-through SIGTERM produced target status 15 for both, with zero residual processes, new Embed Labs DiagnosticReports, or matching crash-service events |
+| Invisible execution policy | Fresh HOME/settings, inherited DYLD variables cleared, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and only the process-local Touch Bar LLDB breakpoint; no visible main window or manual UI inspection |
+| Superseded test attempts | One preliminary run reused non-distinct Repository metadata and incorrectly expected one updated device; the fixture was made unique. Two post-review invocations used an invalid dot-form selector, printed usage, and exited 255 before testing. Two subsequent runs used an over-strict full-string expectation that omitted the existing bilingual Name prefix; both status-1 logs contained the refreshed marker. The assertion was corrected to check that unique marker, and final comma-form 1x/2x runs passed. All five logs are retained and excluded from green qualification |
+| Superseded build attempts | The first failure-first build used the unavailable `QPersistentModelIndex::siblingAtColumn()` test helper; the test was corrected to index through its model before the valid red run. A later intermediate test-only edit placed read-only fixture declarations in the wrong test, producing duplicate and undeclared identifiers; the declarations were moved into the target test. Both compiler logs are retained, excluded from qualification, and superseded by the passing test/product builds |
+| Known non-fatal messages | Each final complete Workbench log contains the existing ProjectExplorer TaskHub category soft assertion while `testInvalidProjectPresentationAndLifecycle` still passes; the disabled product run contains one shared-memory initialization message while all 37 samples remain alive, shutdown returns expected status 15, and no crash artifact appears |
+| Deliberate exclusions | Multiple or persistent editors, generic tree/draft synchronization, cross-node cache, native IME composition, persistence, Project/Repository revision, CAS/merge/conflict UI, public API/model role, network, ADS, online CoE/SDO, controller, PLC, and hardware behavior are not claimed |
+| qbs execution | Not run; no CMake or qbs description changed |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-coe-inline-draft-001.177q7M`. Qt's reset,
+delegate, persistent-index, and line-edit contracts are at
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#beginResetModel>,
+<https://doc.qt.io/qt-6/qabstractitemview.html#reset>,
+<https://doc.qt.io/qt-6/qstyleditemdelegate.html#setModelData>,
+<https://doc.qt.io/qt-6/qpersistentmodelindex.html>, and
+<https://doc.qt.io/qt-6.8/qlineedit.html>. Beckhoff's CoE page is referenced
+only for object-value, RW/RO, Offline-value, and Update List terminology at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
 The atomic clear and address-based restoration are Embed Labs Qt-native
 behavior.
 
@@ -2883,7 +2926,7 @@ baseline `925b14062f93403cfc9f9552dcaec1e3015ba662`.
 | Failure-first | Only the new Workbench test changed; production `coeonlinepage.cpp/.h` retained SHA-256 `2faebb9f5095f4540a7dd1f70fc9dcbaf06958ed6101b524bc66615750da69a4` / `542315c7a5ba4f404ec8d2d2edaee15bc519e9f19a7e64e67cf134d2edf53952` and blobs `253744dc05c01ff3a9f0b2fa754bc9cf5e6291cc` / `e916c21579d01c6558e839632c840c7fc2d2c5af`; after a real Project rename the old page returned `08` instead of accepted `5A`, target status 1 |
 | Stable context gate | Preservation requires non-`None` plus equal Project ID, node ID, and configured-slave node kind |
 | Object authority gate | Scalar address, offline bytes and width, parsed type, raw type, writable flag, and process-data role must match; the current object must remain writable and non-synthetic |
-| Accepted values only | Only edits already accepted by model `setData()` qualify; an uncommitted active editor is a separate future issue |
+| Accepted values only | Only edits already accepted by model `setData()` qualify for Mock-value replay; the separate CoE inline-draft boundary covers an uncommitted active editor |
 | Empty offline baseline | An accepted arbitrary non-empty width is retained only while the baseline stays empty and all other authority matches; explicit Update List restores empty |
 | Project rename | A real rename retained `6060:00 = 5A` and the empty-baseline `6061:00 = C0DE` without changing the Project through either edit |
 | Same-identity ESI refresh | Both overrides survived while the fresh `6072:00` sibling comment became visible |
@@ -2908,7 +2951,7 @@ baseline `925b14062f93403cfc9f9552dcaec1e3015ba662`.
 | Crash-dialog audit | From 2026-07-22 23:34:30 to 23:36:52 +0800 there was no residual qualification process, new Embed Labs DiagnosticReports file, or matching ReportCrash/CrashReporter/diagnosticd event |
 | Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, disabled crash reporting, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM; acceptance continued without opening or touching a visible user instance |
 | Known non-fatal launch message | The disabled run emitted the existing shared-memory initialization message, remained alive for all 37 samples, and produced no crash artifact or service event |
-| Deliberate exclusions | No active-editor preservation, persistence, cross-node cache, generic merge/CAS service, public API or model role, Provider/ProjectService contract, network, ADS, SDO, controller, or hardware behavior |
+| Deliberate exclusions | This accepted-value issue adds no active-editor mechanism itself; the separate CoE inline-draft boundary now provides that private behavior. Persistence, cross-node cache, generic merge/CAS service, public API or model role, Provider/ProjectService contract, network, ADS, SDO, controller, and hardware behavior remain excluded |
 | qbs execution | Not run; no CMake or qbs description changed |
 
 Evidence is under

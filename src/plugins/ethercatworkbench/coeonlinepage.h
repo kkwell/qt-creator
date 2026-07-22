@@ -4,6 +4,7 @@
 
 #include <ethercatcore/providers.h>
 
+#include <QPointer>
 #include <QWidget>
 
 #include <optional>
@@ -12,6 +13,7 @@ QT_BEGIN_NAMESPACE
 class QCheckBox;
 class QLabel;
 class QLineEdit;
+class QModelIndex;
 class QPushButton;
 class QStackedWidget;
 class QTreeView;
@@ -34,6 +36,7 @@ class CoeOnlinePage final : public QWidget
 
 public:
     explicit CoeOnlinePage(WorkbenchController *controller, QWidget *parent = nullptr);
+    ~CoeOnlinePage() final;
 
     void setContext(const Core::PropertyPageContext &context);
 
@@ -47,6 +50,8 @@ private:
     void clearFilters();
     void showAdvancedSettings();
     void addSelectedToStartup();
+    void trackInlineEditor(QWidget *editor, const QModelIndex &index);
+    void discardInlineEditor();
 
     WorkbenchController *m_controller = nullptr;
     Core::PropertyPageContext m_context;
@@ -72,6 +77,9 @@ private:
     CoeFilterModel *m_filterModel = nullptr;
     std::optional<quint32> m_selectedObjectAddress;
     int m_filterResultChangeDepth = 0;
+    QPointer<QWidget> m_inlineEditor;
+    std::optional<quint32> m_inlineEditorAddress;
+    quint64 m_inlineEditorGeneration = 0;
 };
 
 } // namespace EtherCAT::Workbench::Internal

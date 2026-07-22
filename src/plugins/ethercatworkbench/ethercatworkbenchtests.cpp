@@ -11084,6 +11084,412 @@ void EtherCATWorkbenchTests::testCoeMockValueSurvivesNonConflictingRefresh()
     QTRY_VERIFY(dictionary.isNull());
 }
 
+void EtherCATWorkbenchTests::testCoeInlineDraftSurvivesNonConflictingRefresh()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray esi = deviceEsi();
+    esi.replace("#x00005678", "#x7A1C0005");
+    esi.replace("#x00000011", "#x0000B405");
+    esi.replace("AX5000", "EL-COE-INLINE-DRAFT");
+    esi.replace("Workbench Servo", "CoE Inline Draft Servo");
+    const QByteArray modeCommand
+        = "<InitCmd><Transition>PS</Transition>\n"
+          "<Index>#x6060</Index><SubIndex>0</SubIndex><Data>08</Data><Comment>Mode</Comment>\n"
+          "</InitCmd>";
+    QCOMPARE(esi.count(modeCommand), 1);
+    QByteArray metadataEsi = esi;
+    metadataEsi.replace(
+        "Maximum torque commissioning limit", "Maximum torque refreshed during draft");
+    QByteArray metadataModeCommand = modeCommand;
+    metadataModeCommand.replace(
+        "<Comment>Mode</Comment>", "<Comment>Mode metadata refreshed</Comment>");
+    metadataEsi.replace(modeCommand, metadataModeCommand);
+    const QByteArray insertedCommand
+        = "<InitCmd><Transition>PS</Transition><Index>#x605F</Index><SubIndex>0</SubIndex>"
+          "<Data>01</Data><Comment>Inserted draft sibling</Comment></InitCmd>";
+    QCOMPARE(metadataEsi.count("</InitCmds>"), 1);
+    QByteArray insertedEsi = metadataEsi;
+    QByteArray insertedCommands = insertedCommand;
+    insertedCommands.append("</InitCmds>");
+    insertedEsi.replace("</InitCmds>", insertedCommands);
+    QByteArray authorityEsi = metadataEsi;
+    authorityEsi.replace(
+        "<Data>08</Data><Comment>Mode metadata refreshed</Comment>",
+        "<Data>0900</Data><Comment>Mode authority changed</Comment>");
+    QByteArray removedEsi = metadataEsi;
+    removedEsi.replace(metadataModeCommand, QByteArray());
+    QByteArray readOnlyEsi = metadataEsi;
+    QByteArray fixedModeCommand = metadataModeCommand;
+    fixedModeCommand.replace(
+        "<Transition>PS</Transition>", "<Transition>&lt;PS&gt;</Transition>");
+    readOnlyEsi.replace(metadataModeCommand, fixedModeCommand);
+    QByteArray authorityRestoreEsi = metadataEsi;
+    authorityRestoreEsi.replace(
+        "Maximum torque refreshed during draft",
+        "Maximum torque restored after draft authority change");
+    QByteArray removedRestoreEsi = metadataEsi;
+    removedRestoreEsi.replace(
+        "Maximum torque refreshed during draft",
+        "Maximum torque restored after draft object removal");
+    QByteArray readOnlyRestoreEsi = metadataEsi;
+    readOnlyRestoreEsi.replace(
+        "Maximum torque refreshed during draft",
+        "Maximum torque restored after draft read-only change");
+    QByteArray overrideRefreshEsi = metadataEsi;
+    overrideRefreshEsi.replace(
+        "Maximum torque refreshed during draft",
+        "Maximum torque refreshed over accepted override");
+
+    const Utils::FilePath testRoot = Utils::FilePath::fromString(directory.path()).canonicalPath();
+    const Utils::FilePath esiPath = testRoot.pathAppended("coe-inline-draft.xml");
+    const Utils::FilePath metadataEsiPath
+        = testRoot.pathAppended("coe-inline-draft-metadata.xml");
+    const Utils::FilePath insertedEsiPath
+        = testRoot.pathAppended("coe-inline-draft-inserted.xml");
+    const Utils::FilePath authorityEsiPath
+        = testRoot.pathAppended("coe-inline-draft-authority.xml");
+    const Utils::FilePath removedEsiPath
+        = testRoot.pathAppended("coe-inline-draft-removed.xml");
+    const Utils::FilePath readOnlyEsiPath
+        = testRoot.pathAppended("coe-inline-draft-read-only.xml");
+    const Utils::FilePath authorityRestoreEsiPath
+        = testRoot.pathAppended("coe-inline-draft-authority-restore.xml");
+    const Utils::FilePath removedRestoreEsiPath
+        = testRoot.pathAppended("coe-inline-draft-removed-restore.xml");
+    const Utils::FilePath readOnlyRestoreEsiPath
+        = testRoot.pathAppended("coe-inline-draft-read-only-restore.xml");
+    const Utils::FilePath overrideRefreshEsiPath
+        = testRoot.pathAppended("coe-inline-draft-override-refresh.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(esi));
+    QVERIFY_RESULT(metadataEsiPath.writeFileContents(metadataEsi));
+    QVERIFY_RESULT(insertedEsiPath.writeFileContents(insertedEsi));
+    QVERIFY_RESULT(authorityEsiPath.writeFileContents(authorityEsi));
+    QVERIFY_RESULT(removedEsiPath.writeFileContents(removedEsi));
+    QVERIFY_RESULT(readOnlyEsiPath.writeFileContents(readOnlyEsi));
+    QVERIFY_RESULT(authorityRestoreEsiPath.writeFileContents(authorityRestoreEsi));
+    QVERIFY_RESULT(removedRestoreEsiPath.writeFileContents(removedRestoreEsi));
+    QVERIFY_RESULT(readOnlyRestoreEsiPath.writeFileContents(readOnlyRestoreEsi));
+    QVERIFY_RESULT(overrideRefreshEsiPath.writeFileContents(overrideRefreshEsi));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.typeName == "EL-COE-INLINE-DRAFT";
+    });
+    QVERIFY(device != devices.cend());
+    const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    details.resize(1100, 720);
+    details.show();
+    QTRY_COMPARE(details.currentContext().nodeId, file.slaveId);
+    QPointer<QWidget> page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::COE_ONLINE_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page.data());
+    QPointer<QTreeView> dictionary
+        = page->findChild<QTreeView *>("EtherCATCoeObjectDictionary");
+    QPointer<QPushButton> updateList
+        = page->findChild<QPushButton *>("EtherCATCoeUpdateList");
+    QPointer<QCheckBox> showOffline
+        = page->findChild<QCheckBox *>("EtherCATCoeShowOffline");
+    QVERIFY(dictionary);
+    QVERIFY(updateList);
+    QVERIFY(showOffline);
+    QAbstractItemModel *model = dictionary->model();
+    QVERIFY(model);
+    QAbstractItemModelTester dictionaryTester(
+        model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    auto proxyModel = qobject_cast<QAbstractProxyModel *>(model);
+    QVERIFY(proxyModel);
+    QAbstractItemModelTester sourceDictionaryTester(
+        proxyModel->sourceModel(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+    const auto dataChangeCovers = [](const QSignalSpy &spy, const QModelIndex &index) {
+        return std::any_of(spy.cbegin(), spy.cend(), [&index](const auto &arguments) {
+            const QModelIndex topLeft = arguments.at(0).template value<QModelIndex>();
+            const QModelIndex bottomRight = arguments.at(1).template value<QModelIndex>();
+            return topLeft.parent() == index.parent() && topLeft.row() <= index.row()
+                   && bottomRight.row() >= index.row() && topLeft.column() <= index.column()
+                   && bottomRight.column() >= index.column();
+        });
+    };
+    const int valueColumn = columnWithHeader(model, "Value");
+    QVERIFY(valueColumn >= 0);
+
+    QModelIndex object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    QModelIndex value = object.siblingAtColumn(valueColumn);
+    QVERIFY(model->flags(value) & Qt::ItemIsEditable);
+    QPersistentModelIndex persistentValue(value);
+    QPersistentModelIndex persistentSourceValue(proxyModel->mapToSource(value));
+    const int initialValueRow = persistentValue.row();
+    dictionary->setCurrentIndex(value);
+    dictionary->edit(value);
+    QPointer<QLineEdit> editor = dictionary->findChild<QLineEdit *>();
+    QTRY_VERIFY(editor);
+    editor->setFocus(Qt::OtherFocusReason);
+    editor->selectAll();
+    QTest::keyClicks(editor, "5A");
+    QVERIFY(editor->isModified());
+    QVERIFY(editor->isUndoAvailable());
+    QTRY_VERIFY(editor->hasFocus());
+    editor->setSelection(0, 1);
+    const QString draft = editor->text();
+    const int selectionStart = editor->selectionStart();
+    const int selectionLength = editor->selectedText().size();
+    const int cursorPosition = editor->cursorPosition();
+    QCOMPARE(persistentValue.data(Qt::EditRole).toString(), QString("08"));
+
+    QSignalSpy modelResets(model, &QAbstractItemModel::modelReset);
+    const QString renamedProject
+        = QString::fromUtf8("CoE Inline Draft / \u540c\u9879\u76ee\u5237\u65b0");
+    QVERIFY_RESULT(projectService->renameProject(file.projectId, renamedProject));
+    QTRY_COMPARE(projectService->project(file.projectId)->name, renamedProject);
+    QCOMPARE(modelResets.count(), 0);
+    QTRY_VERIFY(editor);
+    QVERIFY(persistentValue.isValid());
+    QCOMPARE(persistentValue.row(), initialValueRow);
+    QCOMPARE(editor->text(), draft);
+    QVERIFY(editor->isModified());
+    QVERIFY(editor->isUndoAvailable());
+    QTRY_VERIFY(editor->hasFocus());
+    QCOMPARE(editor->selectionStart(), selectionStart);
+    QCOMPARE(editor->selectedText().size(), selectionLength);
+    QCOMPARE(editor->cursorPosition(), cursorPosition);
+    QCOMPARE(persistentValue.data(Qt::EditRole).toString(), QString("08"));
+    const Data::ProjectSnapshot projectAfterRename = *projectService->project(file.projectId);
+
+    QSignalSpy rowsInserted(model, &QAbstractItemModel::rowsInserted);
+    QSignalSpy proxyDataChanges(model, &QAbstractItemModel::dataChanged);
+    QSignalSpy sourceDataChanges(
+        proxyModel->sourceModel(), &QAbstractItemModel::dataChanged);
+    const Data::DeviceImportResult insertedRefresh
+        = waitForJob(repository->importFiles({insertedEsiPath}));
+    QCOMPARE(insertedRefresh.updatedDevices, 1);
+    QCOMPARE(insertedRefresh.failedFiles, 0);
+    QCOMPARE(modelResets.count(), 0);
+    QVERIFY(!rowsInserted.isEmpty());
+    QTRY_VERIFY(editor);
+    QVERIFY(persistentValue.isValid());
+    QVERIFY(persistentSourceValue.isValid());
+    QCOMPARE(persistentValue.row(), initialValueRow + 1);
+    QCOMPARE(
+        persistentValue.model()
+            ->index(persistentValue.row(), 0, persistentValue.parent())
+            .data()
+            .toString(),
+        QString("6060:00"));
+    QCOMPARE(editor->text(), draft);
+    QVERIFY(editor->isModified());
+    QVERIFY(editor->isUndoAvailable());
+    QTRY_VERIFY(editor->hasFocus());
+    QCOMPARE(editor->selectionStart(), selectionStart);
+    QCOMPARE(editor->selectedText().size(), selectionLength);
+    QCOMPARE(editor->cursorPosition(), cursorPosition);
+    QCOMPARE(*projectService->project(file.projectId), projectAfterRename);
+    const QModelIndex refreshedActiveName = persistentValue.model()->index(
+        persistentValue.row(), 1, persistentValue.parent());
+    const QModelIndex refreshedSourceName = persistentSourceValue.model()->index(
+        persistentSourceValue.row(), 1, persistentSourceValue.parent());
+    QCOMPARE(refreshedActiveName.data().toString(), QString("Mode metadata refreshed"));
+    QVERIFY(dataChangeCovers(proxyDataChanges, refreshedActiveName));
+    QVERIFY(dataChangeCovers(sourceDataChanges, refreshedSourceName));
+    QVERIFY(!dataChangeCovers(proxyDataChanges, persistentValue));
+    QVERIFY(!dataChangeCovers(sourceDataChanges, persistentSourceValue));
+    const QModelIndex refreshedSibling = findByDisplayText(model, "6072:00");
+    QVERIFY(refreshedSibling.isValid());
+    QVERIFY(refreshedSibling.siblingAtColumn(1)
+                .data()
+                .toString()
+                .contains("refreshed during draft", Qt::CaseInsensitive));
+
+    QSignalSpy rowsRemoved(model, &QAbstractItemModel::rowsRemoved);
+    const Data::DeviceImportResult removedSiblingRefresh
+        = waitForJob(repository->importFiles({metadataEsiPath}));
+    QCOMPARE(removedSiblingRefresh.updatedDevices, 1);
+    QCOMPARE(removedSiblingRefresh.failedFiles, 0);
+    QCOMPARE(modelResets.count(), 0);
+    QVERIFY(!rowsRemoved.isEmpty());
+    QTRY_VERIFY(editor);
+    QVERIFY(persistentValue.isValid());
+    QCOMPARE(persistentValue.row(), initialValueRow);
+    QCOMPARE(editor->text(), draft);
+    QVERIFY(editor->isModified());
+    QVERIFY(editor->isUndoAvailable());
+    QTRY_VERIFY(editor->hasFocus());
+    QCOMPARE(editor->selectionStart(), selectionStart);
+    QCOMPARE(editor->selectedText().size(), selectionLength);
+    QCOMPARE(editor->cursorPosition(), cursorPosition);
+    QCOMPARE(persistentValue.data(Qt::EditRole).toString(), QString("08"));
+    QCOMPARE(*projectService->project(file.projectId), projectAfterRename);
+
+    QTest::keyClick(editor, Qt::Key_Escape);
+    QTRY_VERIFY(editor.isNull());
+    QCOMPARE(persistentValue.data(Qt::EditRole).toString(), QString("08"));
+    QCOMPARE(*projectService->project(file.projectId), projectAfterRename);
+
+    dictionary->setCurrentIndex(persistentValue);
+    dictionary->edit(persistentValue);
+    editor = dictionary->findChild<QLineEdit *>();
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    QTest::keyClicks(editor, "5A");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QCOMPARE(persistentValue.data(Qt::EditRole).toString(), QString("5A"));
+    QCOMPARE(*projectService->project(file.projectId), projectAfterRename);
+
+    dictionary->setCurrentIndex(persistentValue);
+    dictionary->edit(persistentValue);
+    editor = dictionary->findChild<QLineEdit *>();
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    QTest::keyClicks(editor, "6B");
+    const QString overrideDraft = editor->text();
+    proxyDataChanges.clear();
+    sourceDataChanges.clear();
+    const Data::DeviceImportResult overrideRefresh
+        = waitForJob(repository->importFiles({overrideRefreshEsiPath}));
+    QCOMPARE(overrideRefresh.updatedDevices, 1);
+    QCOMPARE(overrideRefresh.failedFiles, 0);
+    QCOMPARE(modelResets.count(), 0);
+    QTRY_VERIFY(editor);
+    QCOMPARE(editor->text(), overrideDraft);
+    QVERIFY(editor->isModified());
+    QVERIFY(editor->isUndoAvailable());
+    QTRY_VERIFY(editor->hasFocus());
+    QCOMPARE(persistentValue.data(Qt::EditRole).toString(), QString("5A"));
+    const QModelIndex overrideSibling = findByDisplayText(model, "6072:00");
+    QVERIFY(overrideSibling.isValid());
+    const QModelIndex overrideSiblingName = overrideSibling.siblingAtColumn(1);
+    QVERIFY(overrideSiblingName.data().toString().contains(
+        "refreshed over accepted override", Qt::CaseInsensitive));
+    QVERIFY(dataChangeCovers(proxyDataChanges, overrideSiblingName));
+    QVERIFY(dataChangeCovers(
+        sourceDataChanges, proxyModel->mapToSource(overrideSiblingName)));
+    QCOMPARE(*projectService->project(file.projectId), projectAfterRename);
+    updateList->click();
+    QTRY_VERIFY(editor.isNull());
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("09"));
+    QCOMPARE(*projectService->project(file.projectId), projectAfterRename);
+
+    dictionary->setCurrentIndex(value);
+    dictionary->edit(value);
+    editor = dictionary->findChild<QLineEdit *>();
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    QTest::keyClicks(editor, "7C");
+    showOffline->setChecked(true);
+    QTRY_VERIFY(editor.isNull());
+    object = findByDisplayText(model, "6060:00");
+    QCOMPARE(object.siblingAtColumn(valueColumn).data(Qt::EditRole).toString(), QString("08"));
+    showOffline->setChecked(false);
+    object = findByDisplayText(model, "6060:00");
+    value = object.siblingAtColumn(valueColumn);
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("09"));
+    QCOMPARE(*projectService->project(file.projectId), projectAfterRename);
+
+    dictionary->setCurrentIndex(value);
+    dictionary->edit(value);
+    editor = dictionary->findChild<QLineEdit *>();
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    QTest::keyClicks(editor, "A5");
+    const Data::DeviceImportResult authorityRefresh
+        = waitForJob(repository->importFiles({authorityEsiPath}));
+    QCOMPARE(authorityRefresh.updatedDevices, 1);
+    QCOMPARE(authorityRefresh.failedFiles, 0);
+    QTRY_VERIFY(editor.isNull());
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    QCOMPARE(object.siblingAtColumn(valueColumn).data(Qt::EditRole).toString(), QString("0A00"));
+    QCOMPARE(*projectService->project(file.projectId), projectAfterRename);
+
+    QCOMPARE(waitForJob(repository->importFiles({authorityRestoreEsiPath})).updatedDevices, 1);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("09"));
+    dictionary->setCurrentIndex(value);
+    dictionary->edit(value);
+    editor = dictionary->findChild<QLineEdit *>();
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    QTest::keyClicks(editor, "B6");
+    const Data::DeviceImportResult readOnlyRefresh
+        = waitForJob(repository->importFiles({readOnlyEsiPath}));
+    QCOMPARE(readOnlyRefresh.updatedDevices, 1);
+    QCOMPARE(readOnlyRefresh.failedFiles, 0);
+    QTRY_VERIFY(editor.isNull());
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QVERIFY(!(model->flags(value) & Qt::ItemIsEditable));
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("08"));
+    QCOMPARE(*projectService->project(file.projectId), projectAfterRename);
+
+    QCOMPARE(waitForJob(repository->importFiles({readOnlyRestoreEsiPath})).updatedDevices, 1);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QVERIFY(model->flags(value) & Qt::ItemIsEditable);
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("09"));
+    dictionary->setCurrentIndex(value);
+    dictionary->edit(value);
+    editor = dictionary->findChild<QLineEdit *>();
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    QTest::keyClicks(editor, "3D");
+    const Data::DeviceImportResult objectRemoval
+        = waitForJob(repository->importFiles({removedEsiPath}));
+    QCOMPARE(objectRemoval.updatedDevices, 1);
+    QCOMPARE(objectRemoval.failedFiles, 0);
+    QTRY_VERIFY(editor.isNull());
+    QVERIFY(!findByDisplayText(model, "6060:00").isValid());
+    QCOMPARE(*projectService->project(file.projectId), projectAfterRename);
+
+    QCOMPARE(waitForJob(repository->importFiles({removedRestoreEsiPath})).updatedDevices, 1);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    dictionary->setCurrentIndex(value);
+    dictionary->edit(value);
+    editor = dictionary->findChild<QLineEdit *>();
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    QTest::keyClicks(editor, "4E");
+    controller.selectionService()->setCurrentNodeId(file.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.projectId);
+    QTRY_VERIFY(editor.isNull());
+    QTRY_VERIFY(page.isNull());
+    QTRY_VERIFY(dictionary.isNull());
+    QCOMPARE(*projectService->project(file.projectId), projectAfterRename);
+}
+
 void EtherCATWorkbenchTests::testCoeDictionaryCellAccessibility()
 {
     WorkbenchController controller;
