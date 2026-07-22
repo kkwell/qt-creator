@@ -2818,3 +2818,57 @@ runs. Qt's model, delegate, view-reset, and editor contracts are at
 <https://doc.qt.io/qt-6/qlineedit.html>. Beckhoff's Startup page is referenced
 only for terminology and ordered-request interaction at
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.
+
+## EtherCATWorkbench Process Data non-conflicting refresh qualification
+
+`ISSUE-WB-PROCESS-DATA-NONCONFLICTING-REFRESH-DRAFT-001` is qualified from
+local baseline `31b4fb48bd564caa3ad5bd2a0947aa5e9800b38d`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Only the new Workbench test changed; production `processdatapage.cpp/.h` retained SHA-256 `fdefc48d56337bb156feac5152cea699d34872337d8b831aaf3739700f409d0e` / `55c4cf8b5978f3948fdc42eed8658b5791def9fda57a99cfb79902aa15562bcc` and blobs `4812288c373b047ff36174863b30daa986471c41` / `ad62cb47a8d5c7d92b3057a6577c31d5f901a82a`; the real Repository rebuild emitted 3 model resets instead of 0, target status 1 |
+| Stable preservation gate | Same Project ID, configured-slave node and kind, editable mapping, selected unique non-null PDO ID, active unique non-null entry ID, unchanged edited-field authority, and compatible stored/ESI-proposal source are required |
+| Field authority | Index, Subindex, Bits, requested Bit Offset, Name, and combined Type/raw-Type/bit-length compare their own authoritative values; sibling fields and rows always refresh |
+| Editor state | Unicode plus literal `%1`, text, modified state, focus, selection, cursor, and real `QLineEdit` Undo availability survive eligible refreshes; native IME composition was not tested |
+| Repository rebuild | A real `rebuildIndex()` completed with two indexing transitions and one devices reset; the same PDO/entry remained selected, the draft survived, and model reset count remained zero |
+| Structural synchronization | A fresh sibling insertion before the active Name emitted exactly one row insertion; its persistent index moved from row 0 to row 1 with no reset and retained its stable entry ID. A second prefix insertion changed the active automatic Bit Offset while preserving its stable persistent index. Remove/move paths are implemented but are not a direct test matrix in this issue |
+| Commit isolation | Return submitted the active Name once with one `projectChanged` notification on the already-dirty stack, covered its current cell with `dataChanged`, retained fresh sibling authority, and closed the editor |
+| ESI proposal commit | Direct inline Name commit stored the full ESI proposal and returned to the unstored proposal in one Undo step. The existing clean-stack transition emitted two identical Project snapshots; the test checks equality and does not treat them as two writes |
+| Alternate delegate | The Type combo retained its local choice across Project rename; Escape discarded it and left authoritative Process Data unchanged |
+| Deferred automatic offset display | While an automatic Bit Offset editor stayed open, a prefix Entry changed its calculated `Auto (N)` value without notifying the active column. Escape destroyed the editor, then a covering `DisplayRole` notification published the fresh display without a reset |
+| Conflict and source authority | An external same-Name change and an unrelated stored-to-ESI source transition closed the editor without committing the local draft and rendered current authority |
+| Context and lifecycle | Node switch created a read-only derived page and discarded the draft. Deleting a secondary Details view with an active editor drained deferred deletion without Project mutation or Undo/Redo change |
+| Hide behavior | Production `hideEvent()` preserves the editor unless selection changes or the page leaves its Details stack. Ordinary tab/mode/window hiding is implementation-inspected, not directly exercised by the final test; context departure and page destruction are exercised separately |
+| Model contract checker | `QAbstractItemModelTester` remained attached to the original PDO Content model through Repository refresh, row insertion, data updates, commit, conflict, and source transition, up to the context switch that destroyed that model. Derived/restored pages and secondary Details teardown were exercised separately, not under that tester |
+| Deliberate exclusions | Explicit persistent/multiple editors, a generic table service, cross-node cache, native IME composition, Index/Subindex/Bits editor repetition, full remove/move test matrix, online CoE/SDO, controller, network, PLC, and hardware behavior are not claimed. Direct editor evidence covers Name, Type, and automatic Bit Offset. Same-context fixed/read-only, missing/duplicate-ID, and removed-PDO/entry transitions are implementation gate paths rather than direct cases; direct read-only evidence is the context switch to a derived page |
+| Focused normal and 2x | One final normal and one final 2x run each passed 3 events, 0 failed, target status 0 |
+| Process Data-related normal and 2x | One final normal and one final 2x run each passed 8 events, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | One final normal and one final 2x run each passed 76 events, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 76, Scan 7, Diagnostics 7; 127 passed, 0 failed in six isolated LLDB-supervised processes |
+| Known soft assertion | The existing invalid-project path emitted the pre-existing ProjectExplorer TaskHub category soft assertion; it did not fail a test or target |
+| Review-derived failure | With intermediate implementation/header SHA-256 `02de2a77eddf28340038366d94cda6b50350f1efd05302d522b1bd3ff1f80fc4` / `ab7d21d3820117780abc31c232e99b7541fd38138378d4ab2fce4deffdf786ad` unchanged, automatic Bit Offset changed after a prefix insertion but the post-Escape notification lacked `DisplayRole`; target status 1 |
+| Final source SHA-256 | Process Data implementation `229c2660bddc89c6bf7d5cafb481fb6a646ec672ea777cc915421aa9402ad955`; header `ab7d21d3820117780abc31c232e99b7541fd38138378d4ab2fce4deffdf786ad`; tests `56da283f56109fc90aa2ae36ff23f5966ce90f598f3409099a00528e085abf60`; test header `9e3ccd91a9a9411895fc51684dd55b0951937155833a0ed213ddd4e166e582ae` |
+| Final git blobs | Process Data implementation `f4e3bf0c571e72607c4a3ecd88fb6541dbb3b275`; header `dc86720292c451a968b14554b8618513b5f1938d`; tests `075546eaaf460b3f4bee31dbb1018eee7bbf7cc3`; test header `92df5cf6855728a4cc20f8c7396853e3f32dbf25` |
+| Product build and inventory | The `WITH_TESTS=OFF` product Workbench target built successfully; the existing product bundle contains 16 plugin dylibs |
+| Product hashes | Executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `61f62e15fd6718c982dccae52a02f81ddb8186e7be568757dec10dd2f4ec5af0`; test Workbench `add102b915212c371528217f3867a61409a5cdc889e9d452196f9bcb16b9e3d5` |
+| Enabled startup | PID 334 remained alive for 37 samples with Workbench mapped in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 1849 remained alive for 37 samples with `-noload EtherCATWorkbench`; Workbench was absent in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Crash-dialog audit | From 2026-07-22 22:51:29 to 22:53:50 +0800 there was no residual matching process, new Embed Labs DiagnosticReports file, or matching ReportCrash/CrashReporter/diagnosticd event |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM; full main-program runtime acceptance proceeded without pause and did not open, pause, or terminate a visible user instance |
+| Visual/manual inspection | Not run by design because executable acceptance had to remain invisible and non-interrupting |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard `extensionmanager_test.h` blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, ProjectService, Project command, public model role, or source-list changes | None |
+| Core, ProjectExplorer, app, network, ADS, scan, online state, CoE/SDO, PLC, controller, or hardware changes | None; qualification used local ESI/offline Project data only |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-process-data-draft-001.lx7VcX`. Qt's model-reset,
+view-reset, persistent-index, row-move, and line-edit contracts are at
+<https://doc.qt.io/qt-6.8/qabstractitemmodel.html#beginResetModel>,
+<https://doc.qt.io/qt-6.8/qabstractitemview.html#reset>,
+<https://doc.qt.io/qt-6.8/qpersistentmodelindex.html>,
+<https://doc.qt.io/qt-6.8/qabstractitemmodel.html#beginMoveRows>, and
+<https://doc.qt.io/qt-6.8/qlineedit.html#text-prop>. Beckhoff's Process Data
+page is referenced only for hierarchy, fixed-mapping, and interaction
+terminology at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.

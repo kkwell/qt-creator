@@ -64,6 +64,7 @@ private slots:
     void testProcessDataTableAccessibility();
     void testProcessDataRepositoryEmptyState();
     void testEditableProcessDataWorkflow();
+    void testProcessDataInlineDraftSurvivesNonConflictingRefresh();
     void testCoeOnlineMockWorkflow();
     void testCoeSameContextViewStateContinuity();
     void testCoeDictionaryCellAccessibility();

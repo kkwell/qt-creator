@@ -5456,3 +5456,128 @@ network, ADS, scan, online state, SDO execution, or hardware behavior. Modules
 and Channels remain a separate data/API chain and are not completed here.
 `EtherCATWorkbenchPlugin` remains In progress. No CMake or qbs description
 changed, so qbs was not run.
+
+## Process Data non-conflicting refresh inline-draft continuity
+
+`ISSUE-WB-PROCESS-DATA-NONCONFLICTING-REFRESH-DRAFT-001`, based on local
+commit `31b4fb48bd564caa3ad5bd2a0947aa5e9800b38d`, keeps one active PDO Content
+editor usable while fresh authority is rendered for the same Project,
+configured slave, selected PDO, and entry. Preservation requires an editable
+page, unique non-null PDO and entry IDs, unchanged authority for the edited
+field, unchanged stored-versus-ESI-proposal source, and continued mapping
+support. Index, Subindex, Bits, Bit Offset, Name, and Type each compare only
+their own stored authority.
+
+The private table model synchronizes current entries with fresh entries by
+stable ID using row removal, insertion, and movement notifications. Sibling
+cells and rows render current Project or Repository authority, while
+`dataChanged()` deliberately excludes the active cell until the editor is
+committed or destroyed. Qt item views otherwise reload an open editor for any
+`dataChanged()` range covering its index, regardless of the supplied roles.
+This keeps the same editor widget and therefore its text, modified state,
+focus, selection, cursor, and line-edit Undo history across eligible refreshes.
+When a sibling layout change alters an automatic Bit Offset display, the
+deferred post-editor notification includes `DisplayRole` as well as the
+accessibility and tooltip roles, so the closed cell renders its new
+`Auto (N)` value without reloading the active editor.
+
+Return commits through the existing checked `ProjectService` path. A private
+commit guard allows the synchronous stored-source transition caused by the
+editor's own first commit and includes the active cell in the committed
+notification. The candidate is located by stable PDO and entry IDs rather
+than a stale row, so a fresh sibling inserted before the editor is retained.
+The initial clean-to-dirty Project transition currently publishes two
+identical `projectChanged` snapshots through the existing Project document;
+the test proves they carry the same stored configuration and that exactly one
+Undo step returns to the unstored ESI proposal. This issue does not change the
+Project document notification contract.
+
+An external change to the edited field, a fixed or read-only transition,
+missing or duplicate IDs, a removed PDO or entry, a different Project or node,
+an unrelated source transition, or page removal discards the transient editor
+with revert semantics and renders current authority. Ordinary tab, mode, or
+window hiding does not deliberately discard the draft while the page remains
+in its Details stack. Page destruction synchronously releases an editor left
+queued for deferred deletion, so teardown cannot commit pending text or leave
+an editor behind. There is no cross-node cache, and persistent editors opened
+through `openPersistentEditor()` are not part of this boundary.
+
+The behavior follows Qt's
+[model reset contract](https://doc.qt.io/qt-6.8/qabstractitemmodel.html#beginResetModel),
+[item-view reset contract](https://doc.qt.io/qt-6.8/qabstractitemview.html#reset),
+[persistent-index contract](https://doc.qt.io/qt-6.8/qpersistentmodelindex.html),
+[row-move contract](https://doc.qt.io/qt-6.8/qabstractitemmodel.html#beginMoveRows),
+and [line-edit text contract](https://doc.qt.io/qt-6.8/qlineedit.html#text-prop).
+Beckhoff's
+[Process Data page](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html)
+is used only for the Sync Manager, PDO, entry, and fixed-mapping interaction
+comparison. It does not define this local Qt editor-continuity behavior.
+
+Failure-first changed only the new test while production
+`processdatapage.cpp/.h` retained SHA-256 values
+`fdefc48d56337bb156feac5152cea699d34872337d8b831aaf3739700f409d0e` and
+`55c4cf8b5978f3948fdc42eed8658b5791def9fda57a99cfb79902aa15562bcc`,
+with baseline blobs `4812288c373b047ff36174863b30daa986471c41` and
+`ad62cb47a8d5c7d92b3057a6577c31d5f901a82a`. The old model emitted three
+resets instead of zero during the real Repository rebuild and exited 1.
+
+Independent review then exposed a derived display-notification defect while
+the intermediate implementation/header SHA-256 values were
+`02de2a77eddf28340038366d94cda6b50350f1efd05302d522b1bd3ff1f80fc4` and
+`ab7d21d3820117780abc31c232e99b7541fd38138378d4ab2fce4deffdf786ad`.
+After a prefix Entry changed the automatic offset while its editor was open,
+Escape closed the editor but no covering `DisplayRole` notification was
+observed; the target exited 1.
+
+Final implementation/header SHA-256 values are
+`229c2660bddc89c6bf7d5cafb481fb6a646ec672ea777cc915421aa9402ad955` and
+`ab7d21d3820117780abc31c232e99b7541fd38138378d4ab2fce4deffdf786ad`;
+their git blobs are `f4e3bf0c571e72607c4a3ecd88fb6541dbb3b275` and
+`dc86720292c451a968b14554b8618513b5f1938d`.
+
+Final focused runs passed three events at normal and 2x scale. Process
+Data-related runs passed eight events at both scales. Complete Workbench runs
+passed 76 events at both scales. The isolated suites passed 127 events: Core
+17, Project 12, Devices 8, Workbench 76, Scan 7, and Diagnostics 7. Every
+target exited 0. Complete Workbench retains the known pre-existing
+ProjectExplorer TaskHub soft assertion in the invalid-project path; it did not
+fail a test or target.
+
+The `WITH_TESTS=OFF` product Workbench target built successfully and the
+bundle contains 16 plugin dylibs. The executable SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+the product and test Workbench plugin SHA-256 values are
+`61f62e15fd6718c982dccae52a02f81ddb8186e7be568757dec10dd2f4ec5af0`
+and
+`add102b915212c371528217f3867a61409a5cdc889e9d452196f9bcb16b9e3d5`.
+
+Enabled PID 334 remained alive for 37 samples with Workbench mapped in all
+37. Explicitly disabled PID 1849 remained alive for 37 samples with
+`-noload EtherCATWorkbench` and Workbench absent in all 37. LLDB passed the
+intentional SIGTERM through and both targets recorded status 15. From
+2026-07-22 22:51:29 to 22:53:50 +0800 there was no residual qualification
+process, new matching DiagnosticReports file, or matching crash-service event.
+Fresh HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`,
+and the process-local Touch Bar bypass kept the complete main-program runtime
+acceptance invisible and non-interrupting. No visible/manual UI inspection
+was run.
+
+Authoritative evidence is under
+`/private/tmp/embed-labs-wb-process-data-draft-001.lx7VcX`. The issue changes
+only private `processdatapage.cpp/.h`, the existing Workbench test declaration
+and implementation, and these four documents. It adds no generic editor or
+table service, public API, source file, dependency, Project format,
+persistence field, Provider or ProjectService contract, Project command,
+public model role, thread, timer, Core or ProjectExplorer hook, application
+bootstrap change, network, ADS, scan, online state, CoE/SDO execution, PLC,
+controller, or hardware behavior. Numeric editor paths are retained but the
+new direct editor test covers Name, Type, and automatic Bit Offset; Index,
+Subindex, and Bits are not repeated editor-by-editor. Structural preservation
+is directly exercised with sibling insertion, not a complete remove/move
+matrix. Same-context fixed/read-only, missing/duplicate-ID, and removed
+PDO/entry transitions are implementation gate paths rather than direct test
+cases; the direct read-only evidence is the context switch to a derived page.
+Modules and Channels remain a separate data/API chain.
+`EtherCATWorkbenchPlugin` remains In progress. No CMake or qbs description
+changed, so qbs was not run.

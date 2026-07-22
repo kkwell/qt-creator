@@ -1363,3 +1363,42 @@ visible/manual UI inspection, remote comparison, fetch, pull, merge, rebase,
 push, PR, or publication occurred. The supported baseline remains the local
 `embed-labs` history. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-startup-draft-001.XNDmkO`.
+
+## Local Process Data non-conflicting refresh inline-draft delta
+
+`ISSUE-WB-PROCESS-DATA-NONCONFLICTING-REFRESH-DRAFT-001` is a private
+Workbench correction on local baseline
+`31b4fb48bd564caa3ad5bd2a0947aa5e9800b38d`. One active configured-slave PDO
+Content editor survives a same-Project, same-node, same-kind refresh only
+while its unique stable PDO and entry IDs remain present, the mapping remains
+editable, its own field authority is unchanged, and the stored/ESI-proposal
+source is compatible.
+
+The model applies fresh row removal, insertion, movement, and sibling-cell
+updates by stable entry ID without reloading the active cell. The existing
+Project command remains authoritative. The editor's own synchronous first
+commit may cross from ESI proposal to stored configuration under a private
+scope; unrelated source changes and external same-field conflicts discard the
+draft. A deferred post-editor `DisplayRole` update refreshes an automatic Bit
+Offset after sibling layout changes. Read-only/fixed state, invalid identity,
+removed rows, context changes, Details-page removal, and teardown also use
+revert semantics. Ordinary page hiding does not intentionally discard a draft
+while the page remains in its Details stack.
+
+The local delta changes only existing private `processdatapage.cpp/.h`, the
+Workbench test declaration/implementation, and four evidence documents. It
+introduces no new path, public API, source file, dependency, CMake/qbs entry,
+Project format, persistence field, Provider/ProjectService contract, Project
+command, public model role, production thread/timer, direct upstream Core
+patch, Core or ProjectExplorer hook, application bootstrap, network, ADS,
+scan, online state, CoE/SDO execution, ESC/EEPROM, PLC, controller, or hardware
+behavior. It is not a generic table/draft service, multiple- or
+persistent-editor feature, cross-node cache, autosave, Project revision, CAS,
+merge, or conflict UI.
+
+Qualification used local ESI/offline Project data plus offscreen
+enabled/disabled main-program lifecycle runs with passed-through SIGTERM. No
+visible/manual UI inspection, remote comparison, fetch, pull, merge, rebase,
+push, PR, or publication occurred. The supported baseline remains the local
+`embed-labs` history. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-process-data-draft-001.lx7VcX`.

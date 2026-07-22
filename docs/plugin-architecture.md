@@ -2094,3 +2094,58 @@ behavior. No CMake or qbs entry changed. Modules and Channels remain a
 separate data/API chain. `EtherCATWorkbenchPlugin` remains In progress.
 Authoritative evidence is under
 `/private/tmp/embed-labs-wb-startup-draft-001.XNDmkO`.
+
+## Workbench Process Data inline-editor authority boundary
+
+`ISSUE-WB-PROCESS-DATA-NONCONFLICTING-REFRESH-DRAFT-001`, based on local
+commit `31b4fb48bd564caa3ad5bd2a0947aa5e9800b38d`, remains entirely inside the
+product-owned private `ProcessDataPage`, its PDO Content model, delegates, and
+table view. EtherCATProject and `ProjectService` continue to own validation,
+persistence, modified state, Undo, and Redo.
+
+The page keeps value-only anchors for the current context, selected PDO,
+stable entry ID, edited column, source state, and last authoritative entry.
+It retains no Project or Repository object, service object, table row, or
+model item as authority. The table view's internal persistent index continues
+to follow an editor through granular sibling-row changes; the feature itself
+does not expose a new persistent index or public model role.
+
+Preservation requires the same Project, configured-slave node and kind,
+selected unique non-null PDO ID, unique non-null entry ID, editable mapping,
+unchanged field authority, and compatible stored/ESI-proposal source. Field
+authority is Index, Subindex, bit length, requested bit offset, Name, or the
+combined Type/raw-Type/bit-length value, according to the active column.
+Other fields and sibling rows always update from the fresh configuration.
+
+When the gate holds, the model applies `beginRemoveRows()`,
+`beginInsertRows()`, and `beginMoveRows()` by stable entry ID instead of a
+model reset. It excludes the active cell from `dataChanged()` during a
+non-conflicting refresh because Qt's item view may call `setEditorData()` for
+every covered open editor without filtering on the role list. Metadata for
+that cell is published after editor destruction. Automatic Bit Offset also
+adds `DisplayRole` to that deferred notification because fresh sibling layout
+can change its `Auto (N)` presentation while the requested offset remains
+unchanged. The committed path includes the active cell and uses a scoped
+source-transition guard only for its own synchronous `ProjectService`
+re-entry.
+
+Conflict, missing or duplicate identity, unsupported or fixed mapping,
+read-only state, removed PDO/entry, unrelated source change, context change,
+or Details-page removal closes the transient editor with revert semantics.
+Ordinary tab, mode, and window hiding leaves it alone while its page remains
+in the same Details stack. The page destructor closes and synchronously
+releases any delegate editor queued for deferred deletion. The boundary does
+not support multiple or explicitly persistent editors, cross-node caching, a
+generic table synchronizer, autosave, Project revision, CAS, merge, or
+conflict UI.
+
+The local delta changes only existing private `processdatapage.cpp/.h`, the
+Workbench test declaration/implementation, and four evidence documents. It
+adds no public API, source file, dependency, Provider/ProjectService contract,
+Project format, persistence field, Project command, public model role, Core
+or ProjectExplorer hook, application-bootstrap change, production thread or
+timer, network, ADS, scan, online state, CoE/SDO execution, PLC, controller,
+or hardware behavior. No CMake or qbs entry changed. Qualification used local
+ESI/offline Project data with normal/2x offscreen tests and enabled/disabled
+product lifecycle evidence. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-process-data-draft-001.lx7VcX`.

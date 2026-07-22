@@ -9684,6 +9684,528 @@ void EtherCATWorkbenchTests::testEditableProcessDataWorkflow()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testProcessDataInlineDraftSurvivesNonConflictingRefresh()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("process-data-inline-draft.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(deviceEsi()));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x5678;
+    });
+    QVERIFY(device != devices.cend());
+    const std::optional<Data::DeviceDescription> processDataDevice
+        = repository->device(device->id);
+    QVERIFY(processDataDevice);
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory, *device, "process-data-inline-draft.ecatproject", "Process Data Inline Draft");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    details.resize(1100, 720);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::PROCESS_DATA_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    QTRY_COMPARE(details.tabWidget()->currentWidget(), page);
+    QTableView *content
+        = page->findChild<QTableView *>("EtherCATProcessDataPdoContent");
+    QTableView *pdoList = page->findChild<QTableView *>("EtherCATProcessDataPdoList");
+    QPushButton *defaults
+        = page->findChild<QPushButton *>("EtherCATProcessDataRestoreDefaults");
+    QVERIFY(content);
+    QVERIFY(pdoList);
+    QVERIFY(defaults);
+    QAbstractItemModelTester
+        modelTester(content->model(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+    const auto dataChangeCovers = [](const QSignalSpy &spy, const QModelIndex &index) {
+        return std::any_of(spy.cbegin(), spy.cend(), [&index](const auto &arguments) {
+            const QModelIndex topLeft = arguments.at(0).template value<QModelIndex>();
+            const QModelIndex bottomRight = arguments.at(1).template value<QModelIndex>();
+            return topLeft.parent() == index.parent() && topLeft.row() <= index.row()
+                   && bottomRight.row() >= index.row() && topLeft.column() <= index.column()
+                   && bottomRight.column() >= index.column();
+        });
+    };
+    const auto dataChangeCoversWithRole
+        = [](const QSignalSpy &spy, const QModelIndex &index, int role) {
+              return std::any_of(spy.cbegin(), spy.cend(), [&index, role](const auto &arguments) {
+                  const QModelIndex topLeft = arguments.at(0).template value<QModelIndex>();
+                  const QModelIndex bottomRight = arguments.at(1).template value<QModelIndex>();
+                  const QList<int> roles = arguments.at(2).template value<QList<int>>();
+                  return topLeft.parent() == index.parent() && topLeft.row() <= index.row()
+                         && bottomRight.row() >= index.row()
+                         && topLeft.column() <= index.column()
+                         && bottomRight.column() >= index.column()
+                         && (roles.isEmpty() || roles.contains(role));
+              });
+          };
+
+    const Data::ProcessDataConfiguration esiDefaults
+        = processDataDefaultsFromDevice(*processDataDevice, file.slaveId);
+    const Data::ProcessDataConfiguration initialEmptyProcessData;
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().processData,
+        initialEmptyProcessData);
+    QTRY_COMPARE(content->model()->rowCount(), 1);
+    QCOMPARE(defaults->text(), QString("Store ESI Defaults"));
+    const int nameColumn = columnWithHeader(content->model(), "Name");
+    const int typeColumn = columnWithHeader(content->model(), "Type");
+    const int bitOffsetColumn = columnWithHeader(content->model(), "Bit Offset");
+    QVERIFY(nameColumn >= 0);
+    QVERIFY(typeColumn >= 0);
+    QVERIFY(bitOffsetColumn >= 0);
+    const QModelIndex proposalNameIndex = content->model()->index(0, nameColumn);
+    QVERIFY(content->model()->flags(proposalNameIndex) & Qt::ItemIsEditable);
+    content->setCurrentIndex(proposalNameIndex);
+    content->edit(proposalNameIndex);
+    QPointer<QLineEdit> proposalEditor = content->findChild<QLineEdit *>();
+    QTRY_VERIFY(proposalEditor);
+    proposalEditor->selectAll();
+    QTest::keyClicks(proposalEditor, "Stored directly from ESI proposal");
+    QSignalSpy proposalProjectChanges(projectService, &Core::ProjectService::projectChanged);
+    QSignalSpy proposalDataChanges(content->model(), &QAbstractItemModel::dataChanged);
+    QSignalSpy proposalModelResets(content->model(), &QAbstractItemModel::modelReset);
+    QVERIFY(!projectService->canUndoProject(file.projectId));
+    QTest::keyClick(proposalEditor, Qt::Key_Return);
+    QTRY_VERIFY(proposalEditor.isNull());
+    QTRY_VERIFY(!proposalProjectChanges.isEmpty());
+    QCOMPARE(proposalModelResets.count(), 0);
+    QVERIFY(dataChangeCovers(proposalDataChanges, proposalNameIndex));
+    QCOMPARE(proposalNameIndex.data().toString(), QString("Stored directly from ESI proposal"));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().processData.pdos.size(), 2);
+    const Data::ProjectSnapshot storedProposal = *projectService->project(file.projectId);
+    for (const QList<QVariant> &arguments : std::as_const(proposalProjectChanges))
+        QCOMPARE(arguments.at(0).value<Data::ProjectSnapshot>(), storedProposal);
+    QCOMPARE(
+        storedProposal.slaves.first()
+            .processData.pdos.first()
+            .entries.first()
+            .name,
+        QString("Stored directly from ESI proposal"));
+    QVERIFY(projectService->canUndoProject(file.projectId));
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().processData,
+        initialEmptyProcessData);
+    QVERIFY(!projectService->canUndoProject(file.projectId));
+    QTRY_COMPARE(content->model()->index(0, nameColumn).data().toString(), QString("Controlword"));
+    QCOMPARE(defaults->text(), QString("Store ESI Defaults"));
+
+    defaults->click();
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().processData.pdos.size(), 2);
+    QTRY_COMPARE(content->model()->rowCount(), 1);
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().processData, esiDefaults);
+    constexpr int processDataStableIdRole = Qt::UserRole + 1;
+    const Data::NodeId selectedPdoId
+        = pdoList->currentIndex().data(processDataStableIdRole).value<Data::NodeId>();
+    QVERIFY(!selectedPdoId.isNull());
+    const QModelIndex nameIndex = content->model()->index(0, nameColumn);
+    const Data::NodeId activeEntryId
+        = nameIndex.data(processDataStableIdRole).value<Data::NodeId>();
+    QVERIFY(!activeEntryId.isNull());
+    QPersistentModelIndex persistentNameIndex(nameIndex);
+    const auto rowForEntry = [content](const Data::NodeId &entryId) {
+        for (int row = 0; row < content->model()->rowCount(); ++row) {
+            if (content->model()->index(row, 0).data(processDataStableIdRole).value<Data::NodeId>()
+                == entryId) {
+                return row;
+            }
+        }
+        return -1;
+    };
+    QVERIFY(content->model()->flags(nameIndex) & Qt::ItemIsEditable);
+    content->setCurrentIndex(nameIndex);
+    content->edit(nameIndex);
+    QPointer<QLineEdit> editor = content->findChild<QLineEdit *>();
+    QTRY_VERIFY(editor);
+    editor->setFocus(Qt::OtherFocusReason);
+    editor->selectAll();
+    QTest::keyClicks(editor, "Draft %1 / ");
+    editor->insert(QString::fromUtf8("\u8fdb\u7a0b\u6570\u636e"));
+    const QString draft = editor->text();
+    QVERIFY(draft.contains("%1"));
+    QVERIFY(editor->isModified());
+    QVERIFY(editor->isUndoAvailable());
+    QTRY_VERIFY(editor->hasFocus());
+    editor->setSelection(3, 7);
+    const int selectionStart = editor->selectionStart();
+    const int selectionLength = editor->selectedText().size();
+    const int cursorPosition = editor->cursorPosition();
+
+    const Data::ProjectSnapshot beforeRefresh = *projectService->project(file.projectId);
+    QSignalSpy modelResets(content->model(), &QAbstractItemModel::modelReset);
+    QSignalSpy indexingChanged(repository, &Core::DeviceRepositoryProvider::indexingChanged);
+    QSignalSpy devicesReset(repository, &Core::DeviceRepositoryProvider::devicesReset);
+    const Data::DeviceImportResult refreshResult = waitForJob(repository->rebuildIndex());
+    QCOMPARE(refreshResult.failedFiles, 0);
+    QCOMPARE(indexingChanged.count(), 2);
+    QCOMPARE(devicesReset.count(), 1);
+    QCOMPARE(modelResets.count(), 0);
+    QVERIFY(editor);
+    QVERIFY(persistentNameIndex.isValid());
+    QCOMPARE(persistentNameIndex.row(), 0);
+    QCOMPARE(
+        pdoList->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedPdoId);
+    QCOMPARE(editor->text(), draft);
+    QVERIFY(editor->isModified());
+    QTRY_VERIFY(editor->hasFocus());
+    QCOMPARE(editor->selectionStart(), selectionStart);
+    QCOMPARE(editor->selectedText().size(), selectionLength);
+    QCOMPARE(editor->cursorPosition(), cursorPosition);
+    QVERIFY(editor->isUndoAvailable());
+    QCOMPARE(*projectService->project(file.projectId), beforeRefresh);
+
+    Data::ProcessDataConfiguration structuralRefresh
+        = projectService->project(file.projectId)->slaves.first().processData;
+    auto structuralPdo = std::find_if(
+        structuralRefresh.pdos.begin(),
+        structuralRefresh.pdos.end(),
+        [&selectedPdoId](const auto &pdo) { return pdo.id == selectedPdoId; });
+    QVERIFY(structuralPdo != structuralRefresh.pdos.end());
+    const Data::NodeId siblingEntryId = Data::NodeId::create();
+    structuralPdo->entries.prepend(
+        {siblingEntryId,
+         0x607a,
+         0,
+         "Fresh sibling authority",
+         32,
+         Data::EtherCATDataType::Integer32,
+         "DINT",
+         -1,
+         true,
+         false});
+    QSignalSpy rowsInserted(content->model(), &QAbstractItemModel::rowsInserted);
+    QSignalSpy structuralProjectChanges(projectService, &Core::ProjectService::projectChanged);
+    QVERIFY_RESULT(projectService->setProcessDataConfiguration(
+        file.projectId, file.slaveId, structuralRefresh));
+    QCOMPARE(structuralProjectChanges.count(), 1);
+    QTRY_COMPARE(content->model()->rowCount(), 2);
+    QCOMPARE(rowsInserted.count(), 1);
+    QCOMPARE(rowsInserted.at(0).at(1).toInt(), 0);
+    QCOMPARE(rowsInserted.at(0).at(2).toInt(), 0);
+    QCOMPARE(modelResets.count(), 0);
+    QVERIFY(persistentNameIndex.isValid());
+    QCOMPARE(persistentNameIndex.row(), 1);
+    QCOMPARE(
+        persistentNameIndex.data(processDataStableIdRole).value<Data::NodeId>(), activeEntryId);
+    QCOMPARE(rowForEntry(activeEntryId), 1);
+    QCOMPARE(
+        pdoList->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedPdoId);
+    QCOMPARE(content->model()->index(0, nameColumn).data().toString(),
+             QString("Fresh sibling authority"));
+    QVERIFY(editor);
+    QCOMPARE(editor->text(), draft);
+    QVERIFY(editor->isModified());
+    QVERIFY(editor->isUndoAvailable());
+    QTRY_VERIFY(editor->hasFocus());
+    QCOMPARE(editor->selectionStart(), selectionStart);
+    QCOMPARE(editor->selectedText().size(), selectionLength);
+    QCOMPARE(editor->cursorPosition(), cursorPosition);
+
+    QSignalSpy inlineCommitChanges(projectService, &Core::ProjectService::projectChanged);
+    QSignalSpy inlineCommitDataChanges(content->model(), &QAbstractItemModel::dataChanged);
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QCOMPARE(inlineCommitChanges.count(), 1);
+    QCOMPARE(modelResets.count(), 0);
+    QVERIFY(dataChangeCovers(inlineCommitDataChanges, persistentNameIndex));
+    QCOMPARE(persistentNameIndex.data().toString(), draft.trimmed());
+    const Data::ProcessDataConfiguration afterInlineCommit
+        = projectService->project(file.projectId)->slaves.first().processData;
+    const auto committedPdo = std::find_if(
+        afterInlineCommit.pdos.cbegin(),
+        afterInlineCommit.pdos.cend(),
+        [&selectedPdoId](const auto &pdo) { return pdo.id == selectedPdoId; });
+    QVERIFY(committedPdo != afterInlineCommit.pdos.cend());
+    const auto committedEntry = std::find_if(
+        committedPdo->entries.cbegin(),
+        committedPdo->entries.cend(),
+        [&activeEntryId](const auto &entry) { return entry.id == activeEntryId; });
+    const auto committedSibling = std::find_if(
+        committedPdo->entries.cbegin(),
+        committedPdo->entries.cend(),
+        [&siblingEntryId](const auto &entry) { return entry.id == siblingEntryId; });
+    QVERIFY(committedEntry != committedPdo->entries.cend());
+    QVERIFY(committedSibling != committedPdo->entries.cend());
+    QCOMPARE(committedEntry->name, draft.trimmed());
+    QCOMPARE(committedSibling->name, QString("Fresh sibling authority"));
+
+    const int automaticOffsetRow = rowForEntry(activeEntryId);
+    QVERIFY(automaticOffsetRow >= 0);
+    QPersistentModelIndex automaticOffsetIndex(
+        content->model()->index(automaticOffsetRow, bitOffsetColumn));
+    const QString previousAutomaticOffset = automaticOffsetIndex.data().toString();
+    QVERIFY(previousAutomaticOffset.startsWith("Auto ("));
+    content->setCurrentIndex(automaticOffsetIndex);
+    content->edit(automaticOffsetIndex);
+    QPointer<QLineEdit> automaticOffsetEditor = content->findChild<QLineEdit *>();
+    QTRY_VERIFY(automaticOffsetEditor);
+    automaticOffsetEditor->setFocus(Qt::OtherFocusReason);
+    Data::ProcessDataConfiguration automaticOffsetRefresh
+        = projectService->project(file.projectId)->slaves.first().processData;
+    auto automaticOffsetPdo = std::find_if(
+        automaticOffsetRefresh.pdos.begin(),
+        automaticOffsetRefresh.pdos.end(),
+        [&selectedPdoId](const auto &pdo) { return pdo.id == selectedPdoId; });
+    QVERIFY(automaticOffsetPdo != automaticOffsetRefresh.pdos.end());
+    const Data::NodeId offsetSiblingId = Data::NodeId::create();
+    automaticOffsetPdo->entries.prepend(
+        {offsetSiblingId,
+         0x607b,
+         0,
+         "Automatic offset prefix",
+         8,
+         Data::EtherCATDataType::UnsignedInteger8,
+         "USINT",
+         -1,
+         true,
+         false});
+    QSignalSpy automaticOffsetDataChanges(
+        content->model(), &QAbstractItemModel::dataChanged);
+    QSignalSpy automaticOffsetProjectChanges(
+        projectService, &Core::ProjectService::projectChanged);
+    QVERIFY_RESULT(projectService->setProcessDataConfiguration(
+        file.projectId, file.slaveId, automaticOffsetRefresh));
+    QCOMPARE(automaticOffsetProjectChanges.count(), 1);
+    QCOMPARE(modelResets.count(), 0);
+    QVERIFY(automaticOffsetEditor);
+    QVERIFY(automaticOffsetIndex.isValid());
+    QCOMPARE(
+        automaticOffsetIndex.data(processDataStableIdRole).value<Data::NodeId>(),
+        activeEntryId);
+    QVERIFY(!dataChangeCovers(automaticOffsetDataChanges, automaticOffsetIndex));
+    QTest::keyClick(automaticOffsetEditor, Qt::Key_Escape);
+    QTRY_VERIFY(automaticOffsetEditor.isNull());
+    QVERIFY(dataChangeCoversWithRole(
+        automaticOffsetDataChanges, automaticOffsetIndex, Qt::DisplayRole));
+    QVERIFY(automaticOffsetIndex.data().toString() != previousAutomaticOffset);
+
+    const int activeRow = rowForEntry(activeEntryId);
+    QVERIFY(activeRow >= 0);
+    const QModelIndex typeIndex = content->model()->index(activeRow, typeColumn);
+    content->setCurrentIndex(typeIndex);
+    content->edit(typeIndex);
+    QPointer<QComboBox> typeEditor = content->findChild<QComboBox *>();
+    QTRY_VERIFY(typeEditor);
+    typeEditor->setFocus(Qt::OtherFocusReason);
+    const int draftedType = typeEditor->findData(int(Data::EtherCATDataType::Integer32));
+    QVERIFY(draftedType >= 0);
+    typeEditor->setCurrentIndex(draftedType);
+    QTRY_COMPARE(typeEditor->currentData().toInt(), int(Data::EtherCATDataType::Integer32));
+    const Data::EtherCATDataType authoritativeType = committedEntry->dataType;
+    QSignalSpy typeModelResets(content->model(), &QAbstractItemModel::modelReset);
+    QSignalSpy renameChanges(projectService, &Core::ProjectService::projectChanged);
+    QVERIFY_RESULT(projectService->renameProject(
+        file.projectId, QString::fromUtf8("Process Data Inline Draft / \u540c\u9879\u76ee")));
+    QCOMPARE(renameChanges.count(), 1);
+    QCOMPARE(typeModelResets.count(), 0);
+    QCOMPARE(
+        pdoList->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedPdoId);
+    QVERIFY(typeEditor);
+    QCOMPARE(typeEditor->currentData().toInt(), int(Data::EtherCATDataType::Integer32));
+    QTest::keyClick(typeEditor, Qt::Key_Escape);
+    QTRY_VERIFY(typeEditor.isNull());
+    QCOMPARE(renameChanges.count(), 1);
+    const Data::ProcessDataConfiguration afterTypeEscape
+        = projectService->project(file.projectId)->slaves.first().processData;
+    const auto typeEscapePdo = std::find_if(
+        afterTypeEscape.pdos.cbegin(),
+        afterTypeEscape.pdos.cend(),
+        [&selectedPdoId](const auto &pdo) { return pdo.id == selectedPdoId; });
+    QVERIFY(typeEscapePdo != afterTypeEscape.pdos.cend());
+    const auto typeEscapeEntry = std::find_if(
+        typeEscapePdo->entries.cbegin(),
+        typeEscapePdo->entries.cend(),
+        [&activeEntryId](const auto &entry) { return entry.id == activeEntryId; });
+    QVERIFY(typeEscapeEntry != typeEscapePdo->entries.cend());
+    QCOMPARE(typeEscapeEntry->dataType, authoritativeType);
+
+    const QModelIndex conflictNameIndex
+        = content->model()->index(rowForEntry(activeEntryId), nameColumn);
+    content->setCurrentIndex(conflictNameIndex);
+    content->edit(conflictNameIndex);
+    QPointer<QLineEdit> conflictEditor = content->findChild<QLineEdit *>();
+    QTRY_VERIFY(conflictEditor);
+    conflictEditor->selectAll();
+    QTest::keyClicks(conflictEditor, "Local conflicting draft");
+    Data::ProcessDataConfiguration conflictingRefresh
+        = projectService->project(file.projectId)->slaves.first().processData;
+    auto conflictPdo = std::find_if(
+        conflictingRefresh.pdos.begin(),
+        conflictingRefresh.pdos.end(),
+        [&selectedPdoId](const auto &pdo) { return pdo.id == selectedPdoId; });
+    QVERIFY(conflictPdo != conflictingRefresh.pdos.end());
+    auto conflictEntry = std::find_if(
+        conflictPdo->entries.begin(),
+        conflictPdo->entries.end(),
+        [&activeEntryId](const auto &entry) { return entry.id == activeEntryId; });
+    QVERIFY(conflictEntry != conflictPdo->entries.end());
+    conflictEntry->name = "Authoritative Process Data conflict";
+    QSignalSpy conflictProjectChanges(projectService, &Core::ProjectService::projectChanged);
+    QVERIFY_RESULT(projectService->setProcessDataConfiguration(
+        file.projectId, file.slaveId, conflictingRefresh));
+    QCOMPARE(conflictProjectChanges.count(), 1);
+    QTRY_VERIFY(conflictEditor.isNull());
+    QCOMPARE(conflictProjectChanges.count(), 1);
+    QTRY_COMPARE(
+        content->model()->index(rowForEntry(activeEntryId), nameColumn).data().toString(),
+        QString("Authoritative Process Data conflict"));
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().processData,
+        conflictingRefresh);
+
+    QVERIFY_RESULT(projectService->setProcessDataConfiguration(
+        file.projectId, file.slaveId, esiDefaults));
+    QTRY_COMPARE(rowForEntry(activeEntryId), 0);
+    const QModelIndex sourceNameIndex
+        = content->model()->index(rowForEntry(activeEntryId), nameColumn);
+    content->setCurrentIndex(sourceNameIndex);
+    content->edit(sourceNameIndex);
+    QPointer<QLineEdit> sourceEditor = content->findChild<QLineEdit *>();
+    QTRY_VERIFY(sourceEditor);
+    sourceEditor->selectAll();
+    QTest::keyClicks(sourceEditor, "Stored source only draft");
+    QVERIFY(sourceEditor->isModified());
+    const Data::ProcessDataConfiguration emptyProcessData;
+    QSignalSpy sourceProjectChanges(projectService, &Core::ProjectService::projectChanged);
+    QVERIFY_RESULT(projectService->setProcessDataConfiguration(
+        file.projectId, file.slaveId, emptyProcessData));
+    QCOMPARE(sourceProjectChanges.count(), 1);
+    QTRY_VERIFY(sourceEditor.isNull());
+    QCOMPARE(sourceProjectChanges.count(), 1);
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().processData,
+        emptyProcessData);
+    QTRY_COMPARE(
+        content->model()->index(rowForEntry(activeEntryId), nameColumn).data().toString(),
+        QString("Controlword"));
+    QCOMPARE(defaults->text(), QString("Store ESI Defaults"));
+
+    QVERIFY_RESULT(projectService->setProcessDataConfiguration(
+        file.projectId, file.slaveId, esiDefaults));
+    QTRY_COMPARE(rowForEntry(activeEntryId), 0);
+    const QModelIndex contextNameIndex
+        = content->model()->index(rowForEntry(activeEntryId), nameColumn);
+    content->setCurrentIndex(contextNameIndex);
+    content->edit(contextNameIndex);
+    QPointer<QLineEdit> contextEditor = content->findChild<QLineEdit *>();
+    QTRY_VERIFY(contextEditor);
+    contextEditor->selectAll();
+    QTest::keyClicks(contextEditor, "Context-only draft");
+    const Data::ProjectSnapshot beforeContextSwitch = *projectService->project(file.projectId);
+    const QModelIndex configuredSlave = controller.treeModel()->indexForNodeId(file.slaveId);
+    const QModelIndex rxPdoBranch = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::RxPdoGroup, configuredSlave);
+    QVERIFY(rxPdoBranch.isValid());
+    const QModelIndex configuredRxPdo = controller.treeModel()->index(0, 0, rxPdoBranch);
+    QCOMPARE(
+        configuredRxPdo.data(WorkbenchTreeModel::NodeKindRole).value<Core::WorkbenchNodeKind>(),
+        Core::WorkbenchNodeKind::Pdo);
+    const Data::NodeId configuredRxPdoId
+        = configuredRxPdo.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    QPointer<QWidget> contextPage(page);
+    QPointer<QTableView> contextTable(content);
+    controller.selectionService()->setCurrentNodeId(configuredRxPdoId);
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::Pdo);
+    QTRY_VERIFY(contextPage.isNull());
+    QTRY_VERIFY(contextTable.isNull());
+    QTRY_VERIFY(contextEditor.isNull());
+    QCOMPARE(*projectService->project(file.projectId), beforeContextSwitch);
+    QWidget *derivedPage = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::PROCESS_DATA_PAGE_ID).toString());
+    QVERIFY(derivedPage);
+    QTableView *derivedContent
+        = derivedPage->findChild<QTableView *>("EtherCATProcessDataPdoContent");
+    QVERIFY(derivedContent);
+    const int derivedNameColumn = columnWithHeader(derivedContent->model(), "Name");
+    QVERIFY(derivedNameColumn >= 0);
+    QTRY_COMPARE(derivedContent->model()->index(0, derivedNameColumn).data().toString(),
+                 QString("Controlword"));
+    QVERIFY(!(derivedContent->model()->flags(
+                  derivedContent->model()->index(0, derivedNameColumn))
+              & Qt::ItemIsEditable));
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.slaveId);
+    QWidget *restoredPage = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::PROCESS_DATA_PAGE_ID).toString());
+    QVERIFY(restoredPage);
+    QTableView *restoredContent
+        = restoredPage->findChild<QTableView *>("EtherCATProcessDataPdoContent");
+    QVERIFY(restoredContent);
+    const int restoredNameColumn = columnWithHeader(restoredContent->model(), "Name");
+    QVERIFY(restoredNameColumn >= 0);
+    QTRY_COMPARE(restoredContent->model()->index(0, restoredNameColumn).data().toString(),
+                 QString("Controlword"));
+
+    const Data::ProjectSnapshot beforeTeardown = *projectService->project(file.projectId);
+    const bool canUndoBeforeTeardown = projectService->canUndoProject(file.projectId);
+    const bool canRedoBeforeTeardown = projectService->canRedoProject(file.projectId);
+    auto teardownDetails = new DetailsView(&controller);
+    teardownDetails->resize(1100, 720);
+    teardownDetails->show();
+    QTRY_VERIFY(teardownDetails->isVisible());
+    QPointer<QWidget> teardownPage = teardownDetails->findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::PROCESS_DATA_PAGE_ID).toString());
+    QVERIFY(teardownPage);
+    teardownDetails->tabWidget()->setCurrentWidget(teardownPage);
+    QPointer<QTableView> teardownContent
+        = teardownPage->findChild<QTableView *>("EtherCATProcessDataPdoContent");
+    QVERIFY(teardownContent);
+    const int teardownNameColumn = columnWithHeader(teardownContent->model(), "Name");
+    QVERIFY(teardownNameColumn >= 0);
+    const QModelIndex teardownNameIndex = teardownContent->model()->index(0, teardownNameColumn);
+    teardownContent->setCurrentIndex(teardownNameIndex);
+    teardownContent->edit(teardownNameIndex);
+    QPointer<QLineEdit> teardownEditor = teardownContent->findChild<QLineEdit *>();
+    QTRY_VERIFY(teardownEditor);
+    teardownEditor->selectAll();
+    QTest::keyClicks(teardownEditor, "Page teardown draft");
+    QVERIFY(teardownEditor->isModified());
+    QSignalSpy teardownProjectChanges(projectService, &Core::ProjectService::projectChanged);
+    delete teardownDetails;
+    QVERIFY(teardownPage.isNull());
+    QVERIFY(teardownContent.isNull());
+    QVERIFY(teardownEditor.isNull());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCOMPARE(teardownProjectChanges.count(), 0);
+    QCOMPARE(*projectService->project(file.projectId), beforeTeardown);
+    QCOMPARE(projectService->canUndoProject(file.projectId), canUndoBeforeTeardown);
+    QCOMPARE(projectService->canRedoProject(file.projectId), canRedoBeforeTeardown);
+}
+
 void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
 {
     WorkbenchController controller;

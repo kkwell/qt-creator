@@ -8,6 +8,8 @@
 
 #include <coreplugin/minisplitter.h>
 
+#include <ethercatcore/selectionservice.h>
+
 #include <utils/infolabel.h>
 #include <utils/stylehelper.h>
 
@@ -17,14 +19,19 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QHideEvent>
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QPushButton>
+#include <QScopedValueRollback>
+#include <QStackedWidget>
 #include <QStyledItemDelegate>
 #include <QTableView>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <functional>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -657,14 +664,38 @@ public:
         if (role != Qt::EditRole && !(role == DataTypeRole && index.column() == Type))
             return false;
 
+        const Data::PdoEntryConfiguration current = m_pdo->entries.at(index.row());
+        if (current.id.isNull())
+            return false;
+
+        if (m_pdo->id.isNull())
+            return false;
         Data::ProcessDataConfiguration candidate = m_configuration;
         const auto pdo
             = std::find_if(candidate.pdos.begin(), candidate.pdos.end(), [this](const auto &entry) {
                   return entry.id == m_pdo->id;
               });
-        if (pdo == candidate.pdos.end() || pdo->fixed || !pdo->mappingSupported)
+        if (pdo == candidate.pdos.end() || pdo->fixed || !pdo->mappingSupported
+            || std::find_if(
+                   std::next(pdo),
+                   candidate.pdos.end(),
+                   [this](const auto &entry) { return entry.id == m_pdo->id; })
+                   != candidate.pdos.end()) {
             return false;
-        Data::PdoEntryConfiguration entry = pdo->entries.at(index.row());
+        }
+        const auto candidateEntry = std::find_if(
+            pdo->entries.begin(), pdo->entries.end(), [&current](const auto &entry) {
+                return entry.id == current.id;
+            });
+        if (candidateEntry == pdo->entries.end()
+            || std::find_if(
+                   std::next(candidateEntry),
+                   pdo->entries.end(),
+                   [&current](const auto &entry) { return entry.id == current.id; })
+                   != pdo->entries.end()) {
+            return false;
+        }
+        Data::PdoEntryConfiguration entry = *candidateEntry;
         if (!entry.mappingSupported)
             return false;
 
@@ -727,30 +758,155 @@ public:
         default:
             return false;
         }
-        pdo->entries.replace(index.row(), entry);
-        return m_page && m_page->submitConfiguration(candidate);
+        *candidateEntry = entry;
+        return m_page
+               && m_page->submitConfiguration(candidate, current.id, index.column());
     }
 
-    void setConfiguration(
+    bool setConfiguration(
         const Data::ProcessDataConfiguration &configuration,
         const Data::NodeId &pdoId,
-        bool editable)
+        bool editable,
+        const Data::NodeId &preservedEntryId = {},
+        int preservedColumn = -1,
+        bool notifyPreservedColumn = false,
+        bool *preservedMetadataChanged = nullptr)
     {
-        beginResetModel();
-        m_configuration = configuration;
-        m_pdo.reset();
+        if (preservedMetadataChanged)
+            *preservedMetadataChanged = false;
         const auto pdo = std::find_if(
             configuration.pdos.cbegin(), configuration.pdos.cend(), [&pdoId](const auto &entry) {
                 return entry.id == pdoId;
             });
+        if (!preservedEntryId.isNull() && preservedColumn >= 0 && m_pdo
+            && pdo != configuration.pdos.cend() && m_pdo->id == pdoId
+            && m_editable == editable && hasValidUniqueIds(m_pdo->entries)
+            && hasValidUniqueIds(pdo->entries)) {
+            synchronizeConfiguration(
+                configuration,
+                *pdo,
+                editable,
+                preservedEntryId,
+                preservedColumn,
+                notifyPreservedColumn);
+            if (preservedMetadataChanged)
+                *preservedMetadataChanged = !notifyPreservedColumn;
+            return false;
+        }
+
+        beginResetModel();
+        m_configuration = configuration;
+        m_pdo.reset();
         if (pdo != configuration.pdos.cend())
             m_pdo = *pdo;
         m_validation = Data::validateProcessDataConfiguration(configuration);
         m_editable = editable;
         endResetModel();
+        return true;
+    }
+
+    const Data::PdoEntryConfiguration *entryAt(int row) const
+    {
+        return m_pdo && row >= 0 && row < m_pdo->entries.size()
+                   ? &m_pdo->entries.at(row)
+                   : nullptr;
+    }
+
+    void notifyMetadataChanged(const Data::NodeId &entryId, int column)
+    {
+        if (!m_pdo)
+            return;
+        for (int row = 0; row < m_pdo->entries.size(); ++row) {
+            if (m_pdo->entries.at(row).id != entryId)
+                continue;
+            const QModelIndex changedIndex = index(row, column);
+            QList<int> roles
+                = {Qt::AccessibleTextRole, Qt::AccessibleDescriptionRole, Qt::ToolTipRole};
+            if (column == BitOffset)
+                roles.prepend(Qt::DisplayRole);
+            emit dataChanged(changedIndex, changedIndex, roles);
+            return;
+        }
     }
 
 private:
+    static bool hasValidUniqueIds(const QList<Data::PdoEntryConfiguration> &entries)
+    {
+        for (qsizetype left = 0; left < entries.size(); ++left) {
+            if (entries.at(left).id.isNull())
+                return false;
+            for (qsizetype right = left + 1; right < entries.size(); ++right) {
+                if (entries.at(left).id == entries.at(right).id)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    void synchronizeConfiguration(
+        const Data::ProcessDataConfiguration &configuration,
+        const Data::PdoConfiguration &pdo,
+        bool editable,
+        const Data::NodeId &preservedEntryId,
+        int preservedColumn,
+        bool notifyPreservedColumn)
+    {
+        const auto containsId = [](const auto &entries, const Data::NodeId &id) {
+            return std::any_of(entries.cbegin(), entries.cend(), [&id](const auto &entry) {
+                return entry.id == id;
+            });
+        };
+        for (int row = int(m_pdo->entries.size()) - 1; row >= 0; --row) {
+            if (containsId(pdo.entries, m_pdo->entries.at(row).id))
+                continue;
+            beginRemoveRows({}, row, row);
+            m_pdo->entries.removeAt(row);
+            endRemoveRows();
+        }
+
+        for (int targetRow = 0; targetRow < pdo.entries.size(); ++targetRow) {
+            const Data::NodeId targetId = pdo.entries.at(targetRow).id;
+            int currentRow = -1;
+            for (int row = 0; row < m_pdo->entries.size(); ++row) {
+                if (m_pdo->entries.at(row).id == targetId) {
+                    currentRow = row;
+                    break;
+                }
+            }
+            if (currentRow < 0) {
+                beginInsertRows({}, targetRow, targetRow);
+                m_pdo->entries.insert(targetRow, pdo.entries.at(targetRow));
+                endInsertRows();
+            } else if (currentRow != targetRow) {
+                const int destination = currentRow < targetRow ? targetRow + 1 : targetRow;
+                beginMoveRows({}, currentRow, currentRow, {}, destination);
+                m_pdo->entries.move(currentRow, targetRow);
+                endMoveRows();
+            }
+        }
+
+        QList<Data::PdoEntryConfiguration> synchronizedEntries = m_pdo->entries;
+        m_configuration = configuration;
+        m_pdo = pdo;
+        m_pdo->entries = synchronizedEntries;
+        m_validation = Data::validateProcessDataConfiguration(configuration);
+        m_editable = editable;
+        for (int row = 0; row < pdo.entries.size(); ++row) {
+            m_pdo->entries[row] = pdo.entries.at(row);
+            const bool preservedRow = pdo.entries.at(row).id == preservedEntryId;
+            if (!preservedRow || notifyPreservedColumn) {
+                emit dataChanged(index(row, 0), index(row, ColumnCount - 1));
+            } else {
+                if (preservedColumn > 0)
+                    emit dataChanged(index(row, 0), index(row, preservedColumn - 1));
+                if (preservedColumn + 1 < ColumnCount) {
+                    emit dataChanged(
+                        index(row, preservedColumn + 1), index(row, ColumnCount - 1));
+                }
+            }
+        }
+    }
+
     std::optional<Data::ProcessImageEntry> processImageEntry(const Data::NodeId &entryId) const
     {
         const auto findIn = [&entryId](const Data::ProcessImageDirection &direction)
@@ -865,13 +1021,68 @@ private:
     QList<Data::ProcessImageEntry> m_entries;
 };
 
-class DataTypeDelegate final : public QStyledItemDelegate
+static bool sameInlineEditorAuthority(
+    const Data::PdoEntryConfiguration &left,
+    const Data::PdoEntryConfiguration &right,
+    int column)
+{
+    if (left.id != right.id)
+        return false;
+    switch (column) {
+    case PdoContentTableModel::Index:
+        return left.index == right.index;
+    case PdoContentTableModel::Subindex:
+        return left.subIndex == right.subIndex;
+    case PdoContentTableModel::Bits:
+        return left.bitLength == right.bitLength;
+    case PdoContentTableModel::BitOffset:
+        return left.requestedBitOffset == right.requestedBitOffset;
+    case PdoContentTableModel::Name:
+        return left.name == right.name;
+    case PdoContentTableModel::Type:
+        return left.dataType == right.dataType && left.rawDataType == right.rawDataType
+               && left.bitLength == right.bitLength;
+    default:
+        return false;
+    }
+}
+
+using EditorOpenedHandler = std::function<void(QWidget *, const QModelIndex &)>;
+
+class ProcessDataItemDelegate : public QStyledItemDelegate
 {
 public:
-    using QStyledItemDelegate::QStyledItemDelegate;
+    ProcessDataItemDelegate(EditorOpenedHandler editorOpened, QObject *parent)
+        : QStyledItemDelegate(parent)
+        , m_editorOpened(std::move(editorOpened))
+    {}
 
     QWidget *createEditor(
-        QWidget *parent, const QStyleOptionViewItem &, const QModelIndex &) const final
+        QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const override
+    {
+        QWidget *editor = QStyledItemDelegate::createEditor(parent, option, index);
+        notifyEditorOpened(editor, index);
+        return editor;
+    }
+
+protected:
+    void notifyEditorOpened(QWidget *editor, const QModelIndex &index) const
+    {
+        if (editor && m_editorOpened)
+            m_editorOpened(editor, index);
+    }
+
+private:
+    EditorOpenedHandler m_editorOpened;
+};
+
+class DataTypeDelegate final : public ProcessDataItemDelegate
+{
+public:
+    using ProcessDataItemDelegate::ProcessDataItemDelegate;
+
+    QWidget *createEditor(
+        QWidget *parent, const QStyleOptionViewItem &, const QModelIndex &index) const final
     {
         auto editor = new QComboBox(parent);
         const QList<Data::EtherCATDataType> types
@@ -891,6 +1102,7 @@ public:
                Data::EtherCATDataType::OctetString};
         for (Data::EtherCATDataType type : types)
             editor->addItem(dataTypeName(type), int(type));
+        notifyEditorOpened(editor, index);
         return editor;
     }
 
@@ -913,6 +1125,17 @@ public:
         QWidget *editor, const QStyleOptionViewItem &option, const QModelIndex &) const final
     {
         editor->setGeometry(option.rect);
+    }
+};
+
+class ProcessDataTableView final : public QTableView
+{
+public:
+    using QTableView::QTableView;
+
+    void discardInlineEditor(QWidget *editor)
+    {
+        closeEditor(editor, QAbstractItemDelegate::RevertModelCache);
     }
 };
 
@@ -972,7 +1195,7 @@ ProcessDataPage::ProcessDataPage(WorkbenchController *controller, QWidget *paren
     , m_syncManagers(new QTableView(this))
     , m_assignments(new QTableView(this))
     , m_pdoList(new QTableView(this))
-    , m_pdoContent(new QTableView(this))
+    , m_pdoContent(new ProcessDataTableView(this))
     , m_processImage(new QTableView(this))
     , m_syncManagerModel(new SyncManagerTableModel(this))
     , m_assignmentModel(new PdoAssignmentTableModel(this))
@@ -999,6 +1222,11 @@ ProcessDataPage::ProcessDataPage(WorkbenchController *controller, QWidget *paren
     m_pdoList->setModel(m_pdoListModel);
     m_pdoContent->setModel(m_pdoContentModel);
     m_processImage->setModel(m_processImageModel);
+    const EditorOpenedHandler editorOpened = [this](QWidget *editor, const QModelIndex &index) {
+        if (const Data::PdoEntryConfiguration *entry = m_pdoContentModel->entryAt(index.row()))
+            trackInlineEditor(editor, *entry, index.column());
+    };
+    m_pdoContent->setItemDelegate(new ProcessDataItemDelegate(editorOpened, m_pdoContent));
     configureTable(
         m_syncManagers,
         SyncManagerTableModel::Name,
@@ -1032,8 +1260,8 @@ ProcessDataPage::ProcessDataPage(WorkbenchController *controller, QWidget *paren
         Tr::tr(
             "Validated absolute layout of active outputs and inputs in the offline process "
             "image."));
-    m_pdoContent
-        ->setItemDelegateForColumn(PdoContentTableModel::Type, new DataTypeDelegate(m_pdoContent));
+    m_pdoContent->setItemDelegateForColumn(
+        PdoContentTableModel::Type, new DataTypeDelegate(editorOpened, m_pdoContent));
 
     auto headerLayout = new QHBoxLayout;
     headerLayout->setContentsMargins(QMargins());
@@ -1102,6 +1330,30 @@ ProcessDataPage::ProcessDataPage(WorkbenchController *controller, QWidget *paren
         if (!isEmpty(m_esiDefaults))
             submitConfiguration(m_esiDefaults);
     });
+}
+
+ProcessDataPage::~ProcessDataPage()
+{
+    if (m_inlineEditor) {
+        m_inlineEditorMetadataDirty = false;
+        QPointer<QWidget> editor = m_inlineEditor;
+        static_cast<ProcessDataTableView *>(m_pdoContent)->discardInlineEditor(editor);
+        delete editor.data();
+    }
+}
+
+void ProcessDataPage::hideEvent(QHideEvent *event)
+{
+    const bool selectionChanged
+        = m_controller && m_controller->selectionService()
+          && m_controller->selectionService()->currentNodeId() != m_context.nodeId;
+    const auto pageStack = qobject_cast<QStackedWidget *>(parentWidget());
+    const bool removedFromPageStack = pageStack && pageStack->indexOf(this) < 0;
+    if (m_inlineEditor && (selectionChanged || removedFromPageStack)) {
+        m_inlineEditorMetadataDirty = false;
+        static_cast<ProcessDataTableView *>(m_pdoContent)->discardInlineEditor(m_inlineEditor);
+    }
+    QWidget::hideEvent(event);
 }
 
 void ProcessDataPage::setContext(const Core::PropertyPageContext &context)
@@ -1299,10 +1551,14 @@ void ProcessDataPage::setContext(const Core::PropertyPageContext &context)
     m_restoreDefaults->setText(
         m_showingEsiDefaults ? Tr::tr("Store ESI Defaults") : Tr::tr("Restore ESI Defaults"));
     updateTablePresentation();
-    rebuildModels();
+    rebuildModels(
+        canPreserveInlineEditor(sameStableContext), m_inlineEditorCommitInProgress);
 }
 
-bool ProcessDataPage::submitConfiguration(const Data::ProcessDataConfiguration &configuration)
+bool ProcessDataPage::submitConfiguration(
+    const Data::ProcessDataConfiguration &configuration,
+    const Data::NodeId &inlineEntryId,
+    int inlineColumn)
 {
     const Data::ConfigurationValidation validation = Data::validateProcessDataConfiguration(
         configuration);
@@ -1315,6 +1571,30 @@ bool ProcessDataPage::submitConfiguration(const Data::ProcessDataConfiguration &
             validation, Tr::tr("Change not applied: this Process Data selection is read-only."));
         return false;
     }
+    const bool inlineEditorCommit
+        = m_inlineEditor && m_inlineEditorAuthority && m_inlineEditorPdoId == m_selectedPdoId
+          && m_inlineEditorAuthority->id == inlineEntryId
+          && m_inlineEditorColumn == inlineColumn;
+    std::optional<Data::PdoEntryConfiguration> submittedAuthority;
+    if (inlineEditorCommit) {
+        const auto pdo = std::find_if(
+            configuration.pdos.cbegin(),
+            configuration.pdos.cend(),
+            [this](const auto &candidate) { return candidate.id == m_inlineEditorPdoId; });
+        if (pdo != configuration.pdos.cend()) {
+            const auto entry = std::find_if(
+                pdo->entries.cbegin(),
+                pdo->entries.cend(),
+                [&inlineEntryId](const auto &candidate) {
+                    return candidate.id == inlineEntryId;
+                });
+            if (entry != pdo->entries.cend())
+                submittedAuthority = *entry;
+        }
+    }
+    const QScopedValueRollback commitGuard(m_inlineEditorCommitInProgress, inlineEditorCommit);
+    const QScopedValueRollback submittedGuard(
+        m_inlineEditorSubmittedAuthority, submittedAuthority);
     const Utils::Result<> result
         = m_controller->projectService()
               ->setProcessDataConfiguration(m_context.projectId, m_ownerSlaveId, configuration);
@@ -1326,11 +1606,12 @@ bool ProcessDataPage::submitConfiguration(const Data::ProcessDataConfiguration &
     m_configuration = configuration;
     m_showingEsiDefaults = false;
     m_restoreDefaults->setText(Tr::tr("Restore ESI Defaults"));
-    rebuildModels();
+    rebuildModels(
+        inlineEditorCommit && canPreserveInlineEditor(true), inlineEditorCommit);
     return true;
 }
 
-void ProcessDataPage::rebuildModels()
+void ProcessDataPage::rebuildModels(bool preserveInlineEditor, bool notifyPreservedColumn)
 {
     m_rebuilding = true;
     m_syncManagerModel->setConfiguration(m_configuration);
@@ -1343,7 +1624,7 @@ void ProcessDataPage::rebuildModels()
               : Data::NodeId();
     m_syncManagers->setCurrentIndex(m_syncManagerModel->index(syncManagerRow, 0));
     m_rebuilding = false;
-    rebuildPdoModels();
+    rebuildPdoModels(preserveInlineEditor, notifyPreservedColumn);
 
     const Data::ConfigurationValidation validation = Data::validateProcessDataConfiguration(
         m_configuration);
@@ -1351,7 +1632,8 @@ void ProcessDataPage::rebuildModels()
     showValidation(validation);
 }
 
-void ProcessDataPage::rebuildPdoModels()
+void ProcessDataPage::rebuildPdoModels(
+    bool preserveInlineEditor, bool notifyPreservedColumn)
 {
     int syncManager = -1;
     const auto selectedSyncManager = std::find_if(
@@ -1373,8 +1655,86 @@ void ProcessDataPage::rebuildPdoModels()
     const int assignmentRow = rowForId(m_assignmentModel, m_selectedPdoId);
     m_assignments->setCurrentIndex(m_assignmentModel->index(assignmentRow, 0));
     m_pdoList->setCurrentIndex(m_pdoListModel->index(pdoRow, 0));
-    m_pdoContentModel->setConfiguration(m_configuration, m_selectedPdoId, m_editable);
+    if (!preserveInlineEditor && m_inlineEditor) {
+        m_inlineEditorMetadataDirty = false;
+        static_cast<ProcessDataTableView *>(m_pdoContent)->discardInlineEditor(m_inlineEditor);
+    }
+    bool preservedMetadataChanged = false;
+    m_pdoContentModel->setConfiguration(
+        m_configuration,
+        m_selectedPdoId,
+        m_editable,
+        preserveInlineEditor ? m_inlineEditorAuthority->id : Data::NodeId(),
+        preserveInlineEditor ? m_inlineEditorColumn : -1,
+        notifyPreservedColumn,
+        &preservedMetadataChanged);
+    if (preserveInlineEditor)
+        m_inlineEditorMetadataDirty |= preservedMetadataChanged;
     m_rebuilding = false;
+}
+
+void ProcessDataPage::trackInlineEditor(
+    QWidget *editor, const Data::PdoEntryConfiguration &entry, int column)
+{
+    m_inlineEditor = editor;
+    m_inlineEditorAuthority = entry;
+    m_inlineEditorPdoId = m_selectedPdoId;
+    m_inlineEditorColumn = column;
+    m_inlineEditorShowingEsiDefaults = m_showingEsiDefaults;
+    m_inlineEditorMetadataDirty = false;
+    const quint64 generation = ++m_inlineEditorGeneration;
+    connect(editor, &QObject::destroyed, this, [this, generation, entryId = entry.id, column] {
+        if (generation != m_inlineEditorGeneration)
+            return;
+        if (m_inlineEditorMetadataDirty)
+            m_pdoContentModel->notifyMetadataChanged(entryId, column);
+        m_inlineEditor = nullptr;
+        m_inlineEditorAuthority.reset();
+        m_inlineEditorPdoId = {};
+        m_inlineEditorColumn = -1;
+        m_inlineEditorMetadataDirty = false;
+    });
+}
+
+bool ProcessDataPage::canPreserveInlineEditor(bool stableContext) const
+{
+    if (!stableContext || !m_editable || !m_inlineEditor || !m_inlineEditorAuthority
+        || m_inlineEditorPdoId.isNull() || m_inlineEditorPdoId != m_selectedPdoId
+        || (!m_inlineEditorCommitInProgress
+            && m_inlineEditorShowingEsiDefaults != m_showingEsiDefaults)) {
+        return false;
+    }
+    const auto pdo = std::find_if(
+        m_configuration.pdos.cbegin(),
+        m_configuration.pdos.cend(),
+        [this](const auto &candidate) { return candidate.id == m_inlineEditorPdoId; });
+    if (pdo == m_configuration.pdos.cend() || pdo->fixed || !pdo->mappingSupported
+        || std::find_if(
+               std::next(pdo),
+               m_configuration.pdos.cend(),
+               [this](const auto &candidate) { return candidate.id == m_inlineEditorPdoId; })
+               != m_configuration.pdos.cend()) {
+        return false;
+    }
+    const auto entry = std::find_if(
+        pdo->entries.cbegin(), pdo->entries.cend(), [this](const auto &candidate) {
+            return candidate.id == m_inlineEditorAuthority->id;
+        });
+    if (entry == pdo->entries.cend() || !entry->mappingSupported
+        || std::find_if(
+               std::next(entry),
+               pdo->entries.cend(),
+               [this](const auto &candidate) {
+                   return candidate.id == m_inlineEditorAuthority->id;
+               })
+               != pdo->entries.cend()) {
+        return false;
+    }
+    const Data::PdoEntryConfiguration &authority
+        = m_inlineEditorCommitInProgress && m_inlineEditorSubmittedAuthority
+              ? *m_inlineEditorSubmittedAuthority
+              : *m_inlineEditorAuthority;
+    return sameInlineEditorAuthority(authority, *entry, m_inlineEditorColumn);
 }
 
 void ProcessDataPage::selectPdo(const Data::NodeId &pdoId)
@@ -1389,6 +1749,10 @@ void ProcessDataPage::selectPdo(const Data::NodeId &pdoId)
         m_assignments->setCurrentIndex(m_assignmentModel->index(assignmentRow, 0));
     if (pdoRow >= 0)
         m_pdoList->setCurrentIndex(m_pdoListModel->index(pdoRow, 0));
+    if (m_inlineEditor) {
+        m_inlineEditorMetadataDirty = false;
+        static_cast<ProcessDataTableView *>(m_pdoContent)->discardInlineEditor(m_inlineEditor);
+    }
     m_pdoContentModel->setConfiguration(m_configuration, pdoId, m_editable);
     m_rebuilding = false;
 }
