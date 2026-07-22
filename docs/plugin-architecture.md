@@ -1810,3 +1810,44 @@ scan, SDO execution, or hardware behavior. No CMake or qbs entry changed. The
 Workbench path count remains 44 and the direct upstream Core patch count
 remains five. Qualification uses local/offline Mock state and offscreen
 enabled/disabled product lifecycle runs only.
+
+## Workbench Process Data refresh-selection boundary
+
+`ISSUE-WB-PROCESS-DATA-SAME-CONTEXT-SELECTION-001`, based on
+`f4da0b18cc48077374ba2528091cdb3aeaad99f5`, remains entirely inside the
+product-owned private `ProcessDataPage`. `DetailsView` continues to route
+Device Repository and current-Project changes into page refreshes. Repository
+and Project providers remain authoritative for their data and signals.
+
+Before replacing its context snapshot, the page compares stable Project ID,
+node ID, and node kind. Only the same stable context retains the selected Sync
+Manager and PDO IDs. The existing rebuild resolves those IDs in the new models
+and falls back to the first available rows when an ID disappeared. If the PDO
+still exists but its owning Sync Manager changed, the fresh PDO relationship
+selects that owner. A context switch clears the IDs, after which existing
+PDO/PDO-entry derived-node focus runs. That focus is not reapplied on a refresh
+of the same derived context, so it cannot override the user's later manual
+selection. No `QModelIndex`, row number, repository object, or mutable Project
+snapshot is retained across refresh.
+
+Qt's selection model identifies the current item used for keyboard navigation
+and focus indication, while Beckhoff's Process Data surface makes the selected
+Sync Manager the owner of the displayed PDO Assignment:
+<https://doc.qt.io/qt-6/qitemselectionmodel.html> and
+<https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10834607243.html>.
+This private identity rule does not establish a generic selection service,
+cross-node cache, persistent-index contract, repository signal filter,
+refresh-reason API, Project revision, merge, or conflict protocol.
+
+The boundary changes only `processdatapage.cpp`, the existing Workbench test
+implementation, and four evidence documents. It adds no public API, source
+file, dependency, model role, Provider or ProjectService contract, Project
+format, persistence field, Project command, production thread or timer, Core
+or ProjectExplorer hook, application-bootstrap path, network transport, scan,
+online state, SDO execution, or hardware behavior. No CMake or qbs description
+changed. Qualification is local/offline Mock and includes offscreen enabled
+and explicitly disabled product lifecycle evidence with no visible main window
+or new crash record. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-process-data-selection-refresh-001.jPkuu0/final2`;
+the two red proofs are under the sibling `failure-first/` and
+`derived-failure/` directories.

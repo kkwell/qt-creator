@@ -2492,6 +2492,47 @@ history. Qt's dialog and connection contracts are at
 Remove semantics are at
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
 
+## EtherCATWorkbench Process Data refresh-selection qualification
+
+`ISSUE-WB-PROCESS-DATA-SAME-CONTEXT-SELECTION-001` is qualified from local
+baseline `f4da0b18cc48077374ba2528091cdb3aeaad99f5`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Only the Workbench test changed; production stayed at SHA-256 `1eb40802141f55cfc4125f160e410300cb174e0d5d098a307d3ad863904cf80c` and blob `94832604f9589ee2acdf8b5133ce9c6c91bf328a`; a real repository rebuild changed the selected second Sync Manager to the first, failed the stable-ID assertion, and exited 1 |
+| Same-context continuity | Repository rebuild, same-Project rename, and Undo preserve the selected Sync Manager/PDO stable IDs and Statusword content when Project ID, node ID, and node kind are unchanged; a retained PDO follows its fresh owning Sync Manager if reassigned; a manual Status selection inside the same derived RxPDO context also survives a real repository rebuild |
+| Missing-ID fallback | Removing the selected mapping falls back to the first available Sync Manager/PDO; Undo retains that still-valid current row |
+| Context boundary | Switching from a selected TxPDO context to the derived RxPDO node clears the unrelated IDs and focuses Command; derived-node focusing runs only for the genuine context change and does not override a later manual choice during same-context refresh |
+| Project authority | Refresh itself does not change the Project; Process Data mutation, validation, modified state, persistence, Undo, and Redo remain owned by ProjectService/EtherCATProject |
+| Deliberate exclusions | No cross-node cache, persistent-index contract, repository signal suppression, refresh-reason API, generic selection service, Project revision, merge, conflict UI, online lookup, or hardware behavior |
+| Focused normal and 2x | Each passed 3 events, 0 failed, target status 0 |
+| Related normal and 2x | Each passed 8 events, 0 failed, target status 0 |
+| Complete Workbench | Normal and 2x each passed 69 events, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 69, Scan 7, Diagnostics 7; 120 passed, 0 failed in isolated LLDB-supervised processes; the isolated Diagnostics rerun is authoritative and supersedes an earlier parallel attempt that logged seven pass events but did not terminate |
+| Known soft assertion | The existing invalid-project path still emits the pre-existing ProjectExplorer TaskHub category soft assertion; it does not fail a test or target |
+| Final source SHA-256 | Page implementation `fdefc48d56337bb156feac5152cea699d34872337d8b831aaf3739700f409d0e`; tests `4460ba1cd1f38bb5c351f683790e5a09d60d6d84442a27f6b07c9c460cd955d3`; test header `9eca5d0743f50a179e02ff9acb11aa42267d87f3c6e67918c8b83f435318f20a` |
+| Final git blobs | Page implementation `4812288c373b047ff36174863b30daa986471c41`; tests `04461d6d46f43b3a412466a02a433e2eca9779ec`; test header `25cbc12231cded1ee57165f66973b025afe7befb` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 allow-listed plugin dylibs; executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `0a711961fc9b841e142dbea24bcf62f8320a027956aa5797be03a55c234411e1`; test Workbench `bfcc8b3e460f6578a5e3f58d56a57588b7c2fda827f5b85f1708a87b75f644c8` |
+| Enabled startup | PID 71981 remained alive for 37 samples with Workbench mapped in all 37; passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 74910 remained alive for 37 samples with Workbench absent in all 37; passed-through SIGTERM produced target status 15 |
+| Known non-fatal launch message | The disabled run emitted the existing shared-memory initialization message, then remained alive for all 37 samples and produced no crash artifact or service event |
+| Crash-dialog audit | From 2026-07-22 14:35:44 to 14:42:08 +0800 there was no residual product/debugger process, new matching DiagnosticReports file, or matching crash-service event |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM; no visible main window or system crash dialog |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard `extensionmanager_test.h` blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, ProjectService, Project command, model role, or source-list changes | None |
+| Core, ProjectExplorer, app, network, scan, online state, SDO, or hardware changes | None; this remains a private Workbench selection-continuity change over local/offline Mock data |
+
+Authoritative final evidence is under
+`/private/tmp/embed-labs-wb-process-data-selection-refresh-001.jPkuu0/final2`;
+the sibling `failure-first/` and `derived-failure/` directories contain the two
+red proofs. Sibling `final/`, `green/`, `product/`, root-level product/hash
+files, and the non-isolated `final2/six-ethercatdiagnostics/` attempt are
+superseded intermediate audit history. The Qt current-item contract is at
+<https://doc.qt.io/qt-6/qitemselectionmodel.html>. Beckhoff's selected Sync
+Manager/PDO Assignment relationship is at
+<https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10834607243.html>.
+
 ## Verification states
 
 Use only these evidence labels:

@@ -4325,6 +4325,110 @@ outside this issue. Qualification is local/offline Mock evidence; visible
 desktop inspection was intentionally not run so acceptance did not interrupt
 desktop use.
 
+## Process Data same-context selection continuity
+
+`ISSUE-WB-PROCESS-DATA-SAME-CONTEXT-SELECTION-001` is qualified from local
+baseline `f4da0b18cc48077374ba2528091cdb3aeaad99f5`. It fixes one
+user-visible Process Data correctness problem. A Device Repository rebuild or
+a change to the current Project previously refreshed the existing page and
+silently moved its current Sync Manager and PDO back to the first rows. A user
+reviewing a later TxPDO could consequently see RxPDO content and direct the
+next edit at the wrong mapping.
+
+`ProcessDataPage` now retains the selected Sync Manager and PDO stable IDs
+only when Project ID, node ID, and node kind are unchanged. Its existing model
+rebuild resolves those IDs against fresh authoritative data. If either ID no
+longer exists, the established deterministic first-row fallback remains in
+force. If the selected PDO still exists under a different Sync Manager, its
+fresh owning Sync Manager replaces the stale owner selection. Switching
+Project, node, or node kind clears the old IDs before the existing derived-node
+focusing logic runs. Derived-node focusing now runs only for that genuine
+context change, so a manual Sync Manager/PDO choice within the same derived
+context also survives a refresh. Repository contents, Project commands,
+validation, Process Image layout, Undo/Redo, and editability are unchanged.
+
+Qt documents that a view's current item drives keyboard navigation and focus
+indication, and that model reset does not emit the current-item change signals:
+<https://doc.qt.io/qt-6/qitemselectionmodel.html>. Beckhoff's Process Data tab
+documents that the selected Sync Manager controls the PDO Assignment shown
+below it:
+<https://infosys.beckhoff.com/content/1033/ps2001-2410-1001/10834607243.html>.
+The implementation therefore restores product-owned stable identity rather
+than retaining a transient `QModelIndex` or row number.
+
+Failure-first changed only `ethercatworkbenchtests.cpp`. Production
+`processdatapage.cpp` stayed at SHA-256
+`1eb40802141f55cfc4125f160e410300cb174e0d5d098a307d3ad863904cf80c`
+and git blob `94832604f9589ee2acdf8b5133ce9c6c91bf328a`. A real repository
+`rebuildIndex()` then replaced the selected second Sync Manager with the first
+one, failed the stable-ID assertion, and exited the target with status 1.
+
+The final focused workflow passed three events at normal and 2x scale. It
+proves stable Sync Manager/PDO and Statusword content across a real repository
+rebuild, a same-Project rename, and Undo. It also proves first-row fallback
+when the selected mapping disappears, PDO continuity when its owning Sync
+Manager changes, restoration of the original owner after Undo, retention of a
+resulting valid fallback row, and fresh derived-node focus after a context
+switch. After that switch, it manually selects Status in the same derived
+RxPDO context and proves a real repository rebuild preserves the selected
+stable IDs and Statusword content. The related Process Data and Details-refresh
+group passed eight events at each scale.
+Complete Workbench runs passed 69 events at each scale. Six isolated suites
+passed 120 events: Core 17, Project 12, Devices 8, Workbench 69, Scan 7, and
+Diagnostics 7. The authoritative Diagnostics result is its isolated rerun; an
+earlier parallel attempt recorded all seven pass events but did not terminate
+and is superseded. The complete Workbench run retains the known pre-existing
+ProjectExplorer TaskHub soft assertion in the invalid-project path; it did not
+fail a test or target.
+
+Final SHA-256 values for the page implementation, Workbench tests, and test
+declaration are respectively
+`fdefc48d56337bb156feac5152cea699d34872337d8b831aaf3739700f409d0e`,
+`4460ba1cd1f38bb5c351f683790e5a09d60d6d84442a27f6b07c9c460cd955d3`,
+and `9eca5d0743f50a179e02ff9acb11aa42267d87f3c6e67918c8b83f435318f20a`.
+Their git blobs are `4812288c373b047ff36174863b30daa986471c41`,
+`04461d6d46f43b3a412466a02a433e2eca9779ec`, and
+`25cbc12231cded1ee57165f66973b025afe7befb`.
+
+The full `WITH_TESTS=OFF` product build passed and contains exactly 16
+allow-listed plugin dylibs. The executable SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+the product and test Workbench plugin SHA-256 values are
+`0a711961fc9b841e142dbea24bcf62f8320a027956aa5797be03a55c234411e1`
+and `bfcc8b3e460f6578a5e3f58d56a57588b7c2fda827f5b85f1708a87b75f644c8`.
+
+Enabled product startup observed PID 71981 alive for 37 consecutive samples,
+with Workbench mapped in all 37. Explicitly disabled startup observed PID
+74910 alive for 37 samples, with Workbench absent in all 37. LLDB passed
+SIGTERM directly without stopping or notifying; both targets recorded status
+15. The disabled run emitted the known non-fatal shared-memory initialization
+message and nevertheless stayed alive for all 37 samples. Every executable
+used fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, a
+disabled crash reporter, `-no-crashcheck`, and the process-local Touch Bar
+bypass. The 2026-07-22 14:35:44 to 14:42:08 +0800 audit found no residual
+product/debugger process, new matching DiagnosticReports file, or matching
+crash-service event. No visible main window or system crash dialog was opened.
+
+Authoritative final evidence is under
+`/private/tmp/embed-labs-wb-process-data-selection-refresh-001.jPkuu0/final2`;
+the two failure-first proofs are under the sibling `failure-first/` and
+`derived-failure/` directories. The sibling `final/`, `green/`, `product/`,
+root-level product/hash files, and the non-isolated
+`final2/six-ethercatdiagnostics/` attempt are superseded intermediate audit
+history, not final qualification.
+This issue changes only private
+`processdatapage.cpp`, the existing Workbench test implementation, and these
+four documents. It adds no public API, source file, dependency, model role,
+Provider or ProjectService contract, Project format, persistence field,
+Project command, Core or ProjectExplorer hook, application-bootstrap change,
+production thread or timer, network transport, scan, online state, SDO
+execution, or hardware behavior. No CMake or qbs description changed, so qbs
+was not run. The unrelated `WITH_TESTS=ON` all-target build was not rerun
+because the known EasyBoard `extensionmanager_test.h` blocker remains outside
+this private Workbench issue. Qualification is local/offline Mock evidence;
+desktop inspection stayed offscreen so acceptance did not interrupt desktop
+use.
+
 ## Offline-slave removal confirmation invalidation
 
 `ISSUE-WB-OFFLINE-SLAVE-REMOVE-CONFIRM-INVALIDATION-001`, based on local

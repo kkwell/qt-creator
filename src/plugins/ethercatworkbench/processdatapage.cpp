@@ -1106,6 +1106,10 @@ ProcessDataPage::ProcessDataPage(WorkbenchController *controller, QWidget *paren
 
 void ProcessDataPage::setContext(const Core::PropertyPageContext &context)
 {
+    const bool sameStableContext
+        = context.nodeKind != Core::WorkbenchNodeKind::None && !context.nodeId.isNull()
+          && context.projectId == m_context.projectId && context.nodeId == m_context.nodeId
+          && context.nodeKind == m_context.nodeKind;
     m_context = context;
     const std::optional<Data::ProjectSnapshot> project
         = m_controller && m_controller->projectService()
@@ -1115,8 +1119,10 @@ void ProcessDataPage::setContext(const Core::PropertyPageContext &context)
     m_esiDefaults = {};
     m_configuration = {};
     m_ownerSlaveId = {};
-    m_selectedSyncManagerId = {};
-    m_selectedPdoId = {};
+    if (!sameStableContext) {
+        m_selectedSyncManagerId = {};
+        m_selectedPdoId = {};
+    }
     m_showingEsiDefaults = false;
     m_repositoryDeviceAvailable = false;
     m_repositoryDeviceSupported = false;
@@ -1153,37 +1159,58 @@ void ProcessDataPage::setContext(const Core::PropertyPageContext &context)
         m_configuration = m_esiDefaults;
         m_showingEsiDefaults = true;
     }
+    if (sameStableContext && !m_selectedPdoId.isNull()) {
+        const auto selectedPdo = std::find_if(
+            m_configuration.pdos.cbegin(),
+            m_configuration.pdos.cend(),
+            [this](const Data::PdoConfiguration &pdo) { return pdo.id == m_selectedPdoId; });
+        if (selectedPdo != m_configuration.pdos.cend()) {
+            const auto syncManager = std::find_if(
+                m_configuration.syncManagers.cbegin(),
+                m_configuration.syncManagers.cend(),
+                [selectedPdo](const Data::SyncManagerConfiguration &entry) {
+                    return entry.index == selectedPdo->syncManager;
+                });
+            if (syncManager != m_configuration.syncManagers.cend())
+                m_selectedSyncManagerId = syncManager->id;
+        }
+    }
     m_repositoryProcessDataHasErrors
         = m_repositoryProcessDataAvailable
           && Data::validateProcessDataConfiguration(m_configuration).hasErrors();
 
-    const Data::NodeId sourceId
-        = m_controller ? m_controller->treeModel()->sourceNodeId(context.nodeId) : Data::NodeId();
-    const std::optional<Data::PdoDirection> direction = directionForNodeKind(context.nodeKind);
-    const auto selectedPdo = std::find_if(
-        m_configuration.pdos.cbegin(),
-        m_configuration.pdos.cend(),
-        [&sourceId, direction, &context](const Data::PdoConfiguration &pdo) {
-            if (direction)
-                return pdo.selected && pdo.direction == *direction;
-            if (context.nodeKind == Core::WorkbenchNodeKind::Pdo)
-                return pdo.id == sourceId;
-            if (context.nodeKind == Core::WorkbenchNodeKind::PdoEntry) {
-                return std::any_of(
-                    pdo.entries.cbegin(), pdo.entries.cend(), [&sourceId](const auto &entry) {
-                        return entry.id == sourceId;
-                    });
-            }
-            return false;
-        });
-    if (selectedPdo != m_configuration.pdos.cend()) {
-        m_selectedPdoId = selectedPdo->id;
-        const auto syncManager = std::find_if(
-            m_configuration.syncManagers.cbegin(),
-            m_configuration.syncManagers.cend(),
-            [selectedPdo](const auto &entry) { return entry.index == selectedPdo->syncManager; });
-        if (syncManager != m_configuration.syncManagers.cend())
-            m_selectedSyncManagerId = syncManager->id;
+    if (!sameStableContext) {
+        const Data::NodeId sourceId = m_controller
+                                          ? m_controller->treeModel()->sourceNodeId(context.nodeId)
+                                          : Data::NodeId();
+        const std::optional<Data::PdoDirection> direction = directionForNodeKind(context.nodeKind);
+        const auto selectedPdo = std::find_if(
+            m_configuration.pdos.cbegin(),
+            m_configuration.pdos.cend(),
+            [&sourceId, direction, &context](const Data::PdoConfiguration &pdo) {
+                if (direction)
+                    return pdo.selected && pdo.direction == *direction;
+                if (context.nodeKind == Core::WorkbenchNodeKind::Pdo)
+                    return pdo.id == sourceId;
+                if (context.nodeKind == Core::WorkbenchNodeKind::PdoEntry) {
+                    return std::any_of(
+                        pdo.entries.cbegin(), pdo.entries.cend(), [&sourceId](const auto &entry) {
+                            return entry.id == sourceId;
+                        });
+                }
+                return false;
+            });
+        if (selectedPdo != m_configuration.pdos.cend()) {
+            m_selectedPdoId = selectedPdo->id;
+            const auto syncManager = std::find_if(
+                m_configuration.syncManagers.cbegin(),
+                m_configuration.syncManagers.cend(),
+                [selectedPdo](const auto &entry) {
+                    return entry.index == selectedPdo->syncManager;
+                });
+            if (syncManager != m_configuration.syncManagers.cend())
+                m_selectedSyncManagerId = syncManager->id;
+        }
     }
 
     if (context.nodeKind == Core::WorkbenchNodeKind::Device

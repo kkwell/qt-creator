@@ -1125,6 +1125,32 @@ enabled/disabled product lifecycle runs with passed-through SIGTERM. No
 visible main window, remote comparison, fetch, pull, merge, rebase, push, or
 publication occurred.
 
+`ISSUE-WB-PROCESS-DATA-SAME-CONTEXT-SELECTION-001`, based on
+`f4da0b18cc48077374ba2528091cdb3aeaad99f5`, changes only the existing
+product-owned private `processdatapage.cpp`, Workbench test implementation,
+and documentation. A same-Project, same-node, same-kind refresh now re-resolves
+the selected Sync Manager and PDO stable IDs in fresh models. Missing IDs use
+the existing first-row fallback; a retained PDO follows its fresh owning Sync
+Manager; a context change clears the old IDs before the existing derived-node
+focus rule runs. That derived focus is not reapplied during a same-context
+refresh, so a later manual selection remains current.
+
+The change introduces no generic selection service, cross-node cache,
+persistent-index contract, repository signal suppression, refresh-reason API,
+Project revision or conflict protocol, public API, source file, dependency,
+CMake/qbs entry, Project format, persistence field, Provider or ProjectService
+contract, Project command, custom model role, production thread or timer, Core
+or ProjectExplorer hook, application-bootstrap change, controller/network
+transport, online state, scan, SDO execution, or hardware behavior. The
+Workbench path count remains 44 and the direct upstream Core patch count
+remains five. Qualification used only local/offline Mock state plus offscreen
+enabled/disabled product lifecycle runs with passed-through SIGTERM. No
+visible main window, remote comparison, fetch, pull, merge, rebase, push, or
+publication occurred. Authoritative final evidence is under
+`/private/tmp/embed-labs-wb-process-data-selection-refresh-001.jPkuu0/final2`;
+the sibling `failure-first/` and `derived-failure/` directories contain the
+two red proofs.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

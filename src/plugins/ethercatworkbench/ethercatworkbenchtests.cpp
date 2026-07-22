@@ -8830,6 +8830,48 @@ void EtherCATWorkbenchTests::testEditableProcessDataWorkflow()
     QTRY_COMPARE(assignments->model()->rowCount(), 1);
     QTRY_COMPARE(pdoList->model()->index(0, 2).data().toString(), QString("Status"));
     QTRY_COMPARE(content->model()->index(0, 4).data().toString(), QString("Statusword"));
+    constexpr int processDataStableIdRole = Qt::UserRole + 1;
+    const Data::NodeId selectedSyncManagerId
+        = syncManagers->currentIndex().data(processDataStableIdRole).value<Data::NodeId>();
+    const Data::NodeId selectedPdoId
+        = pdoList->currentIndex().data(processDataStableIdRole).value<Data::NodeId>();
+    QVERIFY(!selectedSyncManagerId.isNull());
+    QVERIFY(!selectedPdoId.isNull());
+    const Data::ProjectSnapshot beforeRepositoryRefresh
+        = *projectService->project(file.projectId);
+    QSignalSpy indexingChanged(repository, &Core::DeviceRepositoryProvider::indexingChanged);
+    QSignalSpy devicesReset(repository, &Core::DeviceRepositoryProvider::devicesReset);
+    const Data::DeviceImportResult refreshResult = waitForJob(repository->rebuildIndex());
+    QCOMPARE(refreshResult.failedFiles, 0);
+    QCOMPARE(indexingChanged.count(), 2);
+    QCOMPARE(devicesReset.count(), 1);
+    QTRY_COMPARE(
+        syncManagers->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedSyncManagerId);
+    QTRY_COMPARE(
+        pdoList->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedPdoId);
+    QCOMPARE(pdoList->currentIndex().siblingAtColumn(2).data().toString(), QString("Status"));
+    QCOMPARE(content->model()->index(0, 4).data().toString(), QString("Statusword"));
+    QCOMPARE(*projectService->project(file.projectId), beforeRepositoryRefresh);
+
+    QVERIFY_RESULT(projectService->renameProject(file.projectId, "Process Data Selection Refresh"));
+    QTRY_COMPARE(
+        syncManagers->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedSyncManagerId);
+    QTRY_COMPARE(
+        pdoList->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedPdoId);
+    QCOMPARE(content->model()->index(0, 4).data().toString(), QString("Statusword"));
+    const Utils::Result<> undoRename = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoRename);
+    QTRY_COMPARE(
+        syncManagers->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedSyncManagerId);
+    QTRY_COMPARE(
+        pdoList->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedPdoId);
+    QVERIFY(!projectService->project(file.projectId)->modified);
     const int flagsColumn = columnWithHeader(pdoList->model(), "Flags");
     const int defaultColumn = columnWithHeader(pdoList->model(), "Default");
     const int typeColumn = columnWithHeader(content->model(), "Type");
@@ -8943,6 +8985,63 @@ void EtherCATWorkbenchTests::testEditableProcessDataWorkflow()
     const Utils::Result<> redoType = projectService->redoProject(file.projectId);
     QVERIFY_RESULT(redoType);
 
+    syncManagers->setCurrentIndex(syncManagers->model()->index(1, 0));
+    QTRY_COMPARE(
+        syncManagers->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedSyncManagerId);
+    QTRY_COMPARE(
+        pdoList->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedPdoId);
+    Data::ProcessDataConfiguration reassignedMapping
+        = projectService->project(file.projectId)->slaves.first().processData;
+    QCOMPARE(reassignedMapping.syncManagers.size(), 2);
+    QCOMPARE(reassignedMapping.pdos.size(), 2);
+    Data::SyncManagerConfiguration reassignedSyncManager
+        = reassignedMapping.syncManagers.last();
+    reassignedSyncManager.id = Data::NodeId::create();
+    reassignedSyncManager.index += 1;
+    reassignedSyncManager.name = "Reassigned Inputs";
+    reassignedMapping.syncManagers.append(reassignedSyncManager);
+    reassignedMapping.pdos.last().syncManager = reassignedSyncManager.index;
+    QVERIFY_RESULT(projectService->setProcessDataConfiguration(
+        file.projectId, file.slaveId, reassignedMapping));
+    QTRY_COMPARE(
+        syncManagers->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        reassignedSyncManager.id);
+    QTRY_COMPARE(
+        pdoList->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedPdoId);
+    QTRY_COMPARE(content->model()->index(0, 4).data().toString(), QString("Statusword"));
+    const Utils::Result<> undoMappingReassignment = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoMappingReassignment);
+    QTRY_COMPARE(
+        syncManagers->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedSyncManagerId);
+    QTRY_COMPARE(
+        pdoList->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedPdoId);
+
+    Data::ProcessDataConfiguration withoutSelectedMapping
+        = projectService->project(file.projectId)->slaves.first().processData;
+    QCOMPARE(withoutSelectedMapping.syncManagers.size(), 2);
+    QCOMPARE(withoutSelectedMapping.pdos.size(), 2);
+    withoutSelectedMapping.syncManagers.removeLast();
+    withoutSelectedMapping.pdos.removeLast();
+    QVERIFY_RESULT(projectService->setProcessDataConfiguration(
+        file.projectId, file.slaveId, withoutSelectedMapping));
+    QTRY_COMPARE(syncManagers->currentIndex().row(), 0);
+    QTRY_COMPARE(pdoList->currentIndex().siblingAtColumn(2).data().toString(), QString("Command"));
+    const Utils::Result<> undoMappingRemoval = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoMappingRemoval);
+    QTRY_COMPARE(syncManagers->model()->rowCount(), 2);
+    QTRY_COMPARE(syncManagers->currentIndex().row(), 0);
+
+    syncManagers->setCurrentIndex(syncManagers->model()->index(1, 0));
+    QTRY_COMPARE(
+        syncManagers->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedSyncManagerId);
+    QTRY_COMPARE(pdoList->currentIndex().siblingAtColumn(2).data().toString(), QString("Status"));
+
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     const QModelIndex configuredSlave = controller.treeModel()->indexForNodeId(file.slaveId);
     const QModelIndex rxPdoBranch = directChildByKind(
@@ -8959,13 +9058,19 @@ void EtherCATWorkbenchTests::testEditableProcessDataWorkflow()
     QWidget *derivedPage = details.findChild<QWidget *>(
         "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::PROCESS_DATA_PAGE_ID).toString());
     QVERIFY(derivedPage);
+    QTableView *derivedSyncManagers = derivedPage->findChild<QTableView *>(
+        "EtherCATProcessDataSyncManagers");
     QTableView *derivedAssignments = derivedPage->findChild<QTableView *>(
         "EtherCATProcessDataAssignments");
     QTableView *derivedPdoList = derivedPage->findChild<QTableView *>(
         "EtherCATProcessDataPdoList");
+    QTableView *derivedContent = derivedPage->findChild<QTableView *>(
+        "EtherCATProcessDataPdoContent");
     QLabel *derivedSummary = derivedPage->findChild<QLabel *>("EtherCATProcessDataSummary");
+    QVERIFY(derivedSyncManagers);
     QVERIFY(derivedAssignments);
     QVERIFY(derivedPdoList);
+    QVERIFY(derivedContent);
     QVERIFY(derivedSummary);
     QVERIFY(derivedSummary->text().contains("Read-only", Qt::CaseInsensitive));
     QCOMPARE(derivedPdoList->currentIndex().siblingAtColumn(2).data().toString(),
@@ -8973,6 +9078,35 @@ void EtherCATWorkbenchTests::testEditableProcessDataWorkflow()
     QVERIFY(!(
         derivedAssignments->model()->flags(derivedAssignments->model()->index(0, 0))
         & Qt::ItemIsUserCheckable));
+
+    derivedSyncManagers->setCurrentIndex(derivedSyncManagers->model()->index(1, 0));
+    QTRY_COMPARE(
+        derivedSyncManagers->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedSyncManagerId);
+    QTRY_COMPARE(
+        derivedPdoList->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedPdoId);
+    QTRY_COMPARE(derivedContent->model()->index(0, 4).data().toString(), QString("Statusword"));
+    const Data::ProjectSnapshot beforeDerivedRefresh
+        = *projectService->project(file.projectId);
+    QSignalSpy derivedIndexingChanged(
+        repository, &Core::DeviceRepositoryProvider::indexingChanged);
+    QSignalSpy derivedDevicesReset(repository, &Core::DeviceRepositoryProvider::devicesReset);
+    const Data::DeviceImportResult derivedRefreshResult = waitForJob(repository->rebuildIndex());
+    QCOMPARE(derivedRefreshResult.failedFiles, 0);
+    QCOMPARE(derivedIndexingChanged.count(), 2);
+    QCOMPARE(derivedDevicesReset.count(), 1);
+    QCOMPARE(details.currentContext().nodeId, configuredRxPdoId);
+    QTRY_COMPARE(
+        derivedSyncManagers->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedSyncManagerId);
+    QTRY_COMPARE(
+        derivedPdoList->currentIndex().data(processDataStableIdRole).value<Data::NodeId>(),
+        selectedPdoId);
+    QCOMPARE(derivedPdoList->currentIndex().siblingAtColumn(2).data().toString(),
+             QString("Status"));
+    QCOMPARE(derivedContent->model()->index(0, 4).data().toString(), QString("Statusword"));
+    QCOMPARE(*projectService->project(file.projectId), beforeDerivedRefresh);
 
     controller.selectionService()->clear();
     ProjectExplorer::ProjectManager::removeProject(opened.project());
