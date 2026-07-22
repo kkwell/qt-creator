@@ -1183,3 +1183,34 @@ rebase, push, or publication occurred. Authoritative final evidence is under
 A later upstream comparison or merge may only be performed after an explicit
 user request. Until then, the only supported baseline is the current local
 commit and its descendants on `embed-labs`.
+
+## Local keyboard context-menu targeting delta
+
+`ISSUE-WB-NAV-KEYBOARD-CONTEXT-TARGET-001` is a private Workbench correction
+on local baseline `38d0d262f972b6bd1f877b6a2306411a1240cbf7`. It preserves the
+original `QContextMenuEvent::reason()` before Qt's custom-context-menu signal
+can erase that distinction. Mouse hit testing remains unchanged. Keyboard and
+other non-mouse events keep the current stable node, use the visible portion
+of its row as the anchor, and use the viewport center when that row is outside
+the visible viewport.
+
+The behavior follows Qt's documented keyboard context-event and abstract
+scroll-area contracts:
+<https://doc.qt.io/qt-6/qcontextmenuevent.html> and
+<https://doc.qt.io/qt-6/qabstractscrollarea.html>. It also matches Beckhoff's
+documented Shift+F10 selected-object convention at
+<https://infosys.beckhoff.com/content/1033/tcplccontrol/925416331.html>.
+No Beckhoff code, binary interface, engineering format, icon, or branding was
+copied.
+
+The local delta changes only `workbenchnavigation.cpp/.h`, the Workbench test
+declaration/implementation, and four evidence documents. It introduces no
+public API, source file, dependency, build-system entry, Project format,
+persistence field, Provider/ProjectService contract, Project command, custom
+model role, production thread/timer, direct upstream Core patch, Core or
+ProjectExplorer hook, app bootstrap, network, ADS, scan, online state, SDO,
+ESC/EEPROM, or hardware behavior. No CMake or qbs description changed. No
+remote comparison, fetch, pull, merge, rebase, push, PR, or publication was
+performed. The supported baseline remains the local `embed-labs` history.
+Authoritative evidence is under
+`/private/tmp/embed-labs-wb-nav-keyboard-context-target-001.Du2VdU`.

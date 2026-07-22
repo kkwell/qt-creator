@@ -17,6 +17,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QContextMenuEvent>
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QLabel>
@@ -96,6 +97,8 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_treeView->setDragDropMode(QAbstractItemView::DragDrop);
     m_treeView->setDefaultDropAction(Qt::CopyAction);
     m_treeView->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_treeView->installEventFilter(this);
+    m_treeView->viewport()->installEventFilter(this);
     m_treeView->setHeaderHidden(false);
     m_treeView->header()->setStretchLastSection(false);
     m_treeView->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
@@ -237,7 +240,7 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
         m_treeView,
         &QTreeView::customContextMenuRequested,
         this,
-        &WorkbenchNavigationWidget::showContextMenu);
+        [this](const QPoint &position) { showContextMenu(position, true); });
     m_knownNodeIds = sourceNodeIds();
     m_treeView->expandToDepth(2);
     updateFilterState();
@@ -251,6 +254,23 @@ QTreeView *WorkbenchNavigationWidget::treeView() const
 QLineEdit *WorkbenchNavigationWidget::filterEdit() const
 {
     return m_filterEdit;
+}
+
+bool WorkbenchNavigationWidget::eventFilter(QObject *watched, QEvent *event)
+{
+    if ((watched == m_treeView || watched == m_treeView->viewport())
+        && event->type() == QEvent::ContextMenu) {
+        auto contextMenuEvent = static_cast<QContextMenuEvent *>(event);
+        const QPoint viewportPosition
+            = watched == m_treeView
+                  ? m_treeView->viewport()->mapFrom(m_treeView, contextMenuEvent->pos())
+                  : contextMenuEvent->pos();
+        showContextMenu(
+            viewportPosition, contextMenuEvent->reason() == QContextMenuEvent::Mouse);
+        contextMenuEvent->accept();
+        return true;
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 QSet<Data::NodeId> WorkbenchNavigationWidget::sourceNodeIds(int maximumDepth) const
@@ -441,16 +461,18 @@ void WorkbenchNavigationWidget::openDiagnostics()
     selectSourceIndex(m_sourceModel->diagnosticsForProject(current.projectId));
 }
 
-void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
+void WorkbenchNavigationWidget::showContextMenu(const QPoint &position, bool mouseTriggered)
 {
-    const QModelIndex proxyIndex = m_treeView->indexAt(position);
-    if (proxyIndex.isValid()) {
-        m_treeView->setCurrentIndex(proxyIndex);
-        if (m_controller && m_controller->selectionService()) {
-            const Core::PropertyPageContext clicked = m_sourceModel->contextForIndex(
-                m_proxyModel->mapToSource(proxyIndex));
-            if (clicked.nodeKind != Core::WorkbenchNodeKind::Placeholder)
-                m_controller->selectionService()->setCurrentNodeId(clicked.nodeId);
+    if (mouseTriggered) {
+        const QModelIndex proxyIndex = m_treeView->indexAt(position);
+        if (proxyIndex.isValid()) {
+            m_treeView->setCurrentIndex(proxyIndex);
+            if (m_controller && m_controller->selectionService()) {
+                const Core::PropertyPageContext clicked = m_sourceModel->contextForIndex(
+                    m_proxyModel->mapToSource(proxyIndex));
+                if (clicked.nodeKind != Core::WorkbenchNodeKind::Placeholder)
+                    m_controller->selectionService()->setCurrentNodeId(clicked.nodeId);
+            }
         }
     }
     const Core::PropertyPageContext context = m_sourceModel->contextForIndex(
@@ -546,7 +568,16 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position)
         menu.addSeparator();
         addCommand(Constants::COPY_NODE_ID_ACTION_ID);
     }
-    menu.exec(m_treeView->viewport()->mapToGlobal(position));
+    QPoint menuPosition = position;
+    if (!mouseTriggered) {
+        const QRect currentRect = m_treeView->visualRect(m_treeView->currentIndex());
+        const QRect visibleCurrentRect
+            = currentRect.intersected(m_treeView->viewport()->rect());
+        menuPosition = visibleCurrentRect.isEmpty()
+                           ? m_treeView->viewport()->rect().center()
+                           : visibleCurrentRect.center();
+    }
+    menu.exec(m_treeView->viewport()->mapToGlobal(menuPosition));
 
     Core::SelectionService *restoredSelectionService
         = m_controller ? m_controller->selectionService() : nullptr;

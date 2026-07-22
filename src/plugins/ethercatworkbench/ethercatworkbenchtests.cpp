@@ -44,6 +44,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
+#include <QContextMenuEvent>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDragEnterEvent>
@@ -7881,6 +7882,147 @@ void EtherCATWorkbenchTests::testNavigationKeyboardFocus()
                                        .value<Data::NodeId>();
     QCOMPARE(currentId, project.nodes.at(1).id);
     QCOMPARE(controller.selectionService()->currentNodeId(), currentId);
+    controller.selectionService()->clear();
+}
+
+void EtherCATWorkbenchTests::testNavigationKeyboardContextMenuTargetsCurrentNode()
+{
+    WorkbenchController controller;
+    const Data::ProjectSnapshot project = projectSnapshot("Keyboard context menu");
+    controller.treeModel()->setProjects({project});
+    controller.selectionService()->clear();
+
+    WorkbenchNavigationWidget navigation(&controller);
+    navigation.resize(700, 500);
+    QScreen *screen = QGuiApplication::primaryScreen();
+    QVERIFY(screen);
+    navigation.move(screen->availableGeometry().center() - navigation.rect().center());
+    navigation.show();
+    QTRY_VERIFY(navigation.isVisible());
+
+    QTreeView *tree = navigation.treeView();
+    const QModelIndex targetIndex = findByKind(
+        tree->model(), Core::WorkbenchNodeKind::Target);
+    const QModelIndex masterIndex = findByKind(
+        tree->model(), Core::WorkbenchNodeKind::Master);
+    QVERIFY(targetIndex.isValid());
+    QVERIFY(masterIndex.isValid());
+    tree->setCurrentIndex(masterIndex);
+    tree->scrollTo(masterIndex);
+    tree->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), tree);
+    const Data::NodeId masterNodeId
+        = masterIndex.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), masterNodeId);
+
+    const QRect masterRect = tree->visualRect(masterIndex);
+    QVERIFY(masterRect.isValid());
+    QVERIFY(!masterRect.isEmpty());
+    const QPoint masterAnchor = tree->viewport()->mapToGlobal(masterRect.center());
+    ::Core::Command *insertCommand = ::Core::ActionManager::command(
+        Constants::INSERT_DEVICE_ACTION_ID);
+    QVERIFY(insertCommand);
+
+    bool popupSeen = false;
+    bool insertActionPresent = false;
+    QPoint popupPosition;
+    QModelIndex popupCurrentIndex;
+    Data::NodeId popupNodeId;
+    QTimer::singleShot(0, &navigation, [&] {
+        auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!popup)
+            return;
+        popupSeen = true;
+        insertActionPresent = popup->actions().contains(insertCommand->action());
+        popupPosition = popup->mapToGlobal(QPoint());
+        popupCurrentIndex = tree->currentIndex();
+        popupNodeId = controller.selectionService()->currentNodeId();
+        popup->close();
+    });
+    QContextMenuEvent keyboardMenu(
+        QContextMenuEvent::Keyboard, QPoint(), tree->mapToGlobal(QPoint()));
+    QApplication::sendEvent(tree, &keyboardMenu);
+
+    QVERIFY(popupSeen);
+    QCOMPARE(tree->currentIndex(), masterIndex);
+    QCOMPARE(controller.selectionService()->currentNodeId(), masterNodeId);
+    QCOMPARE(popupCurrentIndex, masterIndex);
+    QCOMPARE(popupNodeId, masterNodeId);
+    QVERIFY(insertActionPresent);
+    QCOMPARE(popupPosition.y(), masterAnchor.y());
+
+    const QRect targetRect = tree->visualRect(targetIndex);
+    QVERIFY(targetRect.isValid());
+    QVERIFY(!targetRect.isEmpty());
+    const QPoint targetAnchor = tree->viewport()->mapToGlobal(targetRect.center());
+    bool mousePopupSeen = false;
+    bool mouseInsertActionPresent = false;
+    QPoint mousePopupPosition;
+    QModelIndex mousePopupCurrentIndex;
+    Data::NodeId mousePopupNodeId;
+    QTimer::singleShot(0, &navigation, [&] {
+        auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!popup)
+            return;
+        mousePopupSeen = true;
+        mouseInsertActionPresent = popup->actions().contains(insertCommand->action());
+        mousePopupPosition = popup->mapToGlobal(QPoint());
+        mousePopupCurrentIndex = tree->currentIndex();
+        mousePopupNodeId = controller.selectionService()->currentNodeId();
+        popup->close();
+    });
+    QContextMenuEvent mouseMenu(
+        QContextMenuEvent::Mouse, targetRect.center(), targetAnchor);
+    QApplication::sendEvent(tree->viewport(), &mouseMenu);
+
+    const Data::NodeId targetNodeId
+        = targetIndex.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    QVERIFY(mousePopupSeen);
+    QCOMPARE(tree->currentIndex(), targetIndex);
+    QCOMPARE(controller.selectionService()->currentNodeId(), targetNodeId);
+    QCOMPARE(mousePopupCurrentIndex, targetIndex);
+    QCOMPARE(mousePopupNodeId, targetNodeId);
+    QVERIFY(!mouseInsertActionPresent);
+    QCOMPARE(mousePopupPosition.y(), targetAnchor.y());
+
+    controller.treeModel()->syncDevices(deviceSummaries(50));
+    tree->expandAll();
+    const QModelIndex scrolledMasterIndex = findByKind(
+        tree->model(), Core::WorkbenchNodeKind::Master);
+    QVERIFY(scrolledMasterIndex.isValid());
+    tree->setCurrentIndex(scrolledMasterIndex);
+    const Data::NodeId scrolledMasterNodeId
+        = scrolledMasterIndex.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), scrolledMasterNodeId);
+    QTRY_VERIFY(tree->verticalScrollBar()->maximum() > 0);
+    tree->verticalScrollBar()->setValue(tree->verticalScrollBar()->maximum());
+    QTRY_VERIFY(!tree->viewport()->rect().intersects(tree->visualRect(scrolledMasterIndex)));
+    const QPoint viewportAnchor
+        = tree->viewport()->mapToGlobal(tree->viewport()->rect().center());
+    bool scrolledPopupSeen = false;
+    QPoint scrolledPopupPosition;
+    QModelIndex scrolledPopupCurrentIndex;
+    Data::NodeId scrolledPopupNodeId;
+    QTimer::singleShot(0, &navigation, [&] {
+        auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!popup)
+            return;
+        scrolledPopupSeen = true;
+        scrolledPopupPosition = popup->mapToGlobal(QPoint());
+        scrolledPopupCurrentIndex = tree->currentIndex();
+        scrolledPopupNodeId = controller.selectionService()->currentNodeId();
+        popup->close();
+    });
+    QContextMenuEvent scrolledKeyboardMenu(
+        QContextMenuEvent::Keyboard, QPoint(), tree->mapToGlobal(QPoint()));
+    QApplication::sendEvent(tree, &scrolledKeyboardMenu);
+
+    QVERIFY(scrolledPopupSeen);
+    QCOMPARE(tree->currentIndex(), scrolledMasterIndex);
+    QCOMPARE(controller.selectionService()->currentNodeId(), scrolledMasterNodeId);
+    QCOMPARE(scrolledPopupCurrentIndex, scrolledMasterIndex);
+    QCOMPARE(scrolledPopupNodeId, scrolledMasterNodeId);
+    QCOMPARE(scrolledPopupPosition.y(), viewportAnchor.y());
     controller.selectionService()->clear();
 }
 

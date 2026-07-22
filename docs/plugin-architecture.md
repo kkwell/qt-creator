@@ -1890,3 +1890,39 @@ and explicitly disabled product lifecycle evidence with no visible main
 window or new crash record. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-alias-draft-refresh-001.F7RkQj/final`; the red
 proof is under the sibling `failure-first/` directory.
+
+## Workbench keyboard context-event boundary
+
+`ISSUE-WB-NAV-KEYBOARD-CONTEXT-TARGET-001`, based on
+`38d0d262f972b6bd1f877b6a2306411a1240cbf7`, remains entirely inside the
+product-owned private `WorkbenchNavigationWidget`. The widget filters the
+original tree/viewport `QContextMenuEvent` only to retain its Mouse versus
+Keyboard/Other reason. Mouse requests still resolve a proxy index at the
+requested viewport point and publish that stable NodeId through the existing
+`SelectionService`. Non-mouse requests do not write Selection; they use the
+current proxy index solely to build the existing ActionManager-backed menu.
+
+The keyboard anchor is derived from `QTreeView::visualRect()` intersected with
+the viewport. An empty intersection uses the viewport center. No index, event,
+menu, or QObject crosses a plugin boundary, and no row or coordinate is
+persisted. Consuming the real event prevents duplicate menu delivery; the
+existing custom-signal connection remains a local compatibility path. Command
+registration, enablement authority, Project mutation, Details routing, and
+selection cleanup remain unchanged.
+
+Qt's reason/position and viewport contracts are at
+<https://doc.qt.io/qt-6/qcontextmenuevent.html> and
+<https://doc.qt.io/qt-6/qabstractscrollarea.html>. The result matches the
+selected-object keyboard interaction described by Beckhoff without importing
+its formats, assets, ADS stack, or hardware behavior.
+
+The boundary changes only private `workbenchnavigation.cpp/.h`, the existing
+Workbench test declaration/implementation, and four evidence documents. It
+adds no public API, source file, dependency, model role, persistence field,
+Provider or ProjectService contract, Project command, Core or ProjectExplorer
+hook, application-bootstrap change, production thread or timer, network,
+scan, online, SDO, or hardware behavior. No CMake or qbs entry changed.
+Qualification is local/offline Mock and includes normal/2x offscreen tests
+plus enabled/disabled product lifecycle evidence with no visible main window
+or new crash record. Evidence is under
+`/private/tmp/embed-labs-wb-nav-keyboard-context-target-001.Du2VdU`.

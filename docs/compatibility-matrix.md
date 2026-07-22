@@ -2597,3 +2597,41 @@ Use only these evidence labels:
 
 Do not convert `Installed`, `Existing artifact`, `Pending`, `Blocked`, or
 `Deferred` into `Verified` without the matching build or runtime evidence.
+
+## EtherCATWorkbench keyboard context-menu qualification
+
+`ISSUE-WB-NAV-KEYBOARD-CONTEXT-TARGET-001` is qualified from local baseline
+`38d0d262f972b6bd1f877b6a2306411a1240cbf7`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Only the Workbench test changed; production navigation stayed at SHA-256 `f6179d068288eec4f88a8cc83f56b58bb2dbd12373540703aa86266048fad761` / `42b40a81380b510430b93bd89822f7f7afc19bbb1b3085b1c007e2ce260489ee` and blobs `ddc7ffe1809768aec322ef9a379dd0495abc8445` / `3e1c35466c7c816c4386e61ea11d70eebd5c764e`; a real keyboard event moved Master selection to Project, failed, and exited 1 |
+| Keyboard target | A real Keyboard reason preserves the Master current index and stable Selection while the menu is visible and after it closes; the Master-only Insert Device action is present |
+| Visible-row anchor | Keyboard menu uses the visible intersection of the current row; its vertical origin equals the row-center anchor under normal and 2x scale |
+| Off-view fallback | After the current Master is scrolled fully outside the viewport, keyboard menu preserves Master and uses the viewport-center vertical anchor |
+| Mouse compatibility | A real Mouse reason on Target changes tree and Selection to Target while the menu is visible; the Master-only Insert Device action is absent and the requested row's vertical anchor is retained |
+| Duplicate prevention | Tree and viewport filters consume the real event before the custom-menu signal; existing direct custom-signal callers remain supported by the local connection |
+| Focused normal and 2x | Each passed 3 events, 0 failed, target status 0 |
+| Related normal and 2x | Each passed 12 events, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | Each passed 71 events, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 71, Scan 7, Diagnostics 7; 122 passed, 0 failed in six isolated LLDB-supervised processes |
+| Known soft assertion | The existing invalid-project path still emits the pre-existing ProjectExplorer TaskHub category soft assertion; it did not fail a test or target |
+| Final source SHA-256 | Navigation implementation `84a9aa508d876906a88ff349ef0bd0406bf60f4d6ba7090380d1b834d5ce4b4c`; header `e874a45f55f16a8bd5f1db9113eaaadfc96c36c6ea690bf99fc0740219e45ffc`; tests `888473502f6b22880a813847cab934631d73cfabacf1d46aec2907b4344fc9ce`; test header `0f2472d64258d1ff34095274501853c48e66cbdd221193d477e328cb9278fbc7` |
+| Final git blobs | Navigation implementation `8a2c6fc675520a9216815c72f0df6f753d5c5a46`; header `f0ee389be08c1023b25e086b761bc8983e879fbd`; tests `2b52792fcd9eea4c64b1838dc9c7f64bf313a93a`; test header `9798981c041d877ce5dc81539df140317ef02a43` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 plugin dylibs; executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `5d96db48757190e5ba47df76a9ffffcbdaf237701d7adeec5c9531ba8c1ec563`; test Workbench `25595a0f9a338c62de48565a2bd2877fc701ec64b8e2ad415a1c544c758a6ae4` |
+| Enabled startup | PID 35107 remained alive for 37 samples with Workbench mapped in all 37; passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 37010 remained alive for 37 samples with `-noload EtherCATWorkbench`; Workbench was absent in all 37; passed-through SIGTERM produced target status 15 |
+| Known non-fatal launch message | The disabled run emitted the existing shared-memory initialization message, remained alive for all 37 samples, and produced no crash artifact or service event |
+| Crash-dialog audit | From 2026-07-22 17:19:38 to 17:24:22 +0800 there was no residual qualification process, new matching DiagnosticReports file, or matching crash-service event |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM; no visible main window or system crash dialog |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard `extensionmanager_test.h` blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, ProjectService, Project command, model role, or source-list changes | None |
+| Core, ProjectExplorer, app, network, ADS, scan, online state, SDO, or hardware changes | None; this remains a private Workbench interaction correction over local/offline Mock data |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-nav-keyboard-context-target-001.Du2VdU`. Qt's
+keyboard context-event contract is at
+<https://doc.qt.io/qt-6/qcontextmenuevent.html>. Beckhoff's selected-object
+keyboard convention is at
+<https://infosys.beckhoff.com/content/1033/tcplccontrol/925416331.html>.

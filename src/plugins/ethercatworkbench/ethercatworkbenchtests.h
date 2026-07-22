@@ -56,6 +56,7 @@ private slots:
     void testNavigationSetActiveProjectCommand();
     void testNavigationFilterEmptyState();
     void testNavigationKeyboardFocus();
+    void testNavigationKeyboardContextMenuTargetsCurrentNode();
     void testBuiltInDevicePages();
     void testConfiguredSlaveTreeAndPages();
     void testTwinCatProcessDataTree();

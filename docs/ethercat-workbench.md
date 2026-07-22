@@ -4325,6 +4325,97 @@ outside this issue. Qualification is local/offline Mock evidence; visible
 desktop inspection was intentionally not run so acceptance did not interrupt
 desktop use.
 
+## Keyboard context-menu target and anchor
+
+`ISSUE-WB-NAV-KEYBOARD-CONTEXT-TARGET-001` is qualified from local baseline
+`38d0d262f972b6bd1f877b6a2306411a1240cbf7`. It fixes one keyboard-only
+navigation error. The tree previously converted every context-menu event into
+`customContextMenuRequested(QPoint)`, which discarded the event reason. A
+keyboard request commonly carries a null local position, so the old handler
+looked up viewport `(0, 0)`, changed the current row from the selected Master
+to the top Project, changed the stable Selection/Details target, and built the
+wrong node-specific menu.
+
+The private navigation widget now observes the original `QContextMenuEvent`
+on the tree and its viewport. Mouse requests retain the existing hit-test and
+selection behavior. Keyboard and other non-mouse requests keep the current
+stable node and anchor the menu to the visible part of its current row. If the
+selected row has been scrolled completely out of view, the anchor falls back
+to the viewport center. The event is consumed before Qt can emit a duplicate
+custom-menu signal; the existing direct signal path remains for current
+Workbench callers and tests.
+
+Qt documents both the keyboard reason and the possibility of a null position
+for non-mouse context events:
+<https://doc.qt.io/qt-6/qcontextmenuevent.html>. The viewport event boundary
+is documented at <https://doc.qt.io/qt-6/qabstractscrollarea.html>. Beckhoff
+documents Shift+F10 as the context menu for the selected object and describes
+selected-object I/O actions at
+<https://infosys.beckhoff.com/content/1033/tcplccontrol/925416331.html> and
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
+The local implementation follows those interaction semantics without copying
+branding, assets, engineering formats, or controller communication.
+
+Failure-first changed only the Workbench test. Production
+`workbenchnavigation.cpp/.h` remained at SHA-256
+`f6179d068288eec4f88a8cc83f56b58bb2dbd12373540703aa86266048fad761`
+and
+`42b40a81380b510430b93bd89822f7f7afc19bbb1b3085b1c007e2ce260489ee`,
+with git blobs `ddc7ffe1809768aec322ef9a379dd0495abc8445` and
+`3e1c35466c7c816c4386e61ea11d70eebd5c764e`. A real keyboard context event
+changed the current index from Master to Project, failed the intended stable
+index assertion, and exited with status 1.
+
+The final test sends real keyboard and mouse `QContextMenuEvent` instances.
+It checks the tree and `SelectionService` while each menu is still visible,
+verifies the Master-only Insert Device action, verifies that a mouse request
+on Target changes both targets and removes that action, and verifies the
+viewport-center fallback after the selected Master is scrolled out of view.
+Normal and `QT_SCALE_FACTOR=2` focused runs each passed 3 events; the related
+navigation/menu/lifecycle group passed 12 at each scale; complete Workbench
+runs passed 71 at each scale. Six isolated plugin suites passed 122 events:
+Core 17, Project 12, Devices 8, Workbench 71, Scan 7, and Diagnostics 7. The
+complete Workbench run retains the known pre-existing ProjectExplorer TaskHub
+soft assertion in its invalid-project path; it did not fail a test or target.
+
+Final SHA-256 values for the navigation implementation, navigation header,
+Workbench tests, and test declaration are respectively
+`84a9aa508d876906a88ff349ef0bd0406bf60f4d6ba7090380d1b834d5ce4b4c`,
+`e874a45f55f16a8bd5f1db9113eaaadfc96c36c6ea690bf99fc0740219e45ffc`,
+`888473502f6b22880a813847cab934631d73cfabacf1d46aec2907b4344fc9ce`,
+and `0f2472d64258d1ff34095274501853c48e66cbdd221193d477e328cb9278fbc7`.
+Their git blobs are `8a2c6fc675520a9216815c72f0df6f753d5c5a46`,
+`f0ee389be08c1023b25e086b761bc8983e879fbd`,
+`2b52792fcd9eea4c64b1838dc9c7f64bf313a93a`, and
+`9798981c041d877ce5dc81539df140317ef02a43`.
+
+The full `WITH_TESTS=OFF` product build passed with exactly 16 plugin dylibs.
+The executable SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+the product and test Workbench plugin values are
+`5d96db48757190e5ba47df76a9ffffcbdaf237701d7adeec5c9531ba8c1ec563`
+and `25595a0f9a338c62de48565a2bd2877fc701ec64b8e2ad415a1c544c758a6ae4`.
+Enabled PID 35107 stayed alive for 37 samples with Workbench mapped in all 37.
+Explicitly disabled PID 37010 stayed alive for 37 samples with Workbench
+absent in all 37. LLDB passed SIGTERM without stopping or notifying, and both
+targets recorded status 15. The disabled run's existing shared-memory message
+was non-fatal. From 2026-07-22 17:19:38 to 17:24:22 +0800 there was no
+residual qualification process, matching new DiagnosticReports file, or
+matching crash-service event.
+
+All executable checks used fresh HOME/settings, cleared inherited DYLD
+variables, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`,
+`-no-crashcheck`, and only the process-local Touch Bar bypass. No visible main
+window or system crash dialog was opened. Evidence is under
+`/private/tmp/embed-labs-wb-nav-keyboard-context-target-001.Du2VdU`. This
+issue changes only private navigation implementation/header, Workbench test
+implementation/declaration, and these four documents. It adds no public API,
+source file, dependency, Project or Provider contract, persistence, model
+role, Core/ProjectExplorer/app hook, thread, timer, network, ADS, scan, online,
+SDO, ESC/EEPROM, or hardware behavior. No CMake or qbs description changed.
+The unrelated `WITH_TESTS=ON` all-target build was not rerun because the known
+EasyBoard `extensionmanager_test.h` blocker remains outside this issue.
+
 ## Configured Station Alias non-conflicting refresh draft continuity
 
 `ISSUE-WB-ETHERCAT-ALIAS-NONCONFLICTING-REFRESH-DRAFT-001` is based on

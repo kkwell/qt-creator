@@ -12,6 +12,7 @@
 
 QT_BEGIN_NAMESPACE
 class QLineEdit;
+class QEvent;
 class QPushButton;
 class QSortFilterProxyModel;
 class QStackedWidget;
@@ -36,6 +37,9 @@ public:
     void locateFirstIssue();
     void openDiagnostics();
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) final;
+
 private:
     QSet<Data::NodeId> sourceNodeIds(int maximumDepth = -1) const;
     void handleFilterTextChanged(const QString &text);
@@ -47,7 +51,7 @@ private:
     void selectSourceIndex(const QModelIndex &sourceIndex);
     void selectNode(const Data::NodeId &nodeId);
     void updateFilterState();
-    void showContextMenu(const QPoint &position);
+    void showContextMenu(const QPoint &position, bool mouseTriggered);
     void locateUnsupportedDevice();
     void copyCurrentNodeId();
 
