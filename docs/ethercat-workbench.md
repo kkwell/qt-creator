@@ -4216,3 +4216,111 @@ unrelated `WITH_TESTS=ON` all-target build was not rerun; the known EasyBoard
 `extensionmanager_test.h` blocker remains outside this private Workbench
 issue. All qualification is local/offline Mock evidence, and manual visible
 desktop inspection was intentionally not run.
+
+## Offline slave removal project-refresh safety
+
+`ISSUE-WB-OFFLINE-SLAVE-REMOVE-PROJECT-REFRESH-001` is qualified from local
+baseline `312e1a9dbacfd621615c87d644b7a46bb5f5a64e`. It closes a destructive
+confirmation gap without changing the existing offline deletion command.
+
+The Remove command now captures the complete selected
+`OfflineSlaveConfiguration` by value before opening its asynchronous question.
+After Yes, the private Workbench controller still re-resolves the current
+Project, Master, Slave, and selection by stable ID. Before any mutation it also
+requires the current target Slave to equal the captured value exactly. That
+comparison covers `id`, `masterId`, `position`, identity, serial number, Alias,
+name, device-description ID, Process Data, Startup, DC, and every nested value
+inside those structures.
+
+If the same Slave configuration changes while the question is open, stale Yes
+returns an explicit error and performs no Project command. The refreshed Slave,
+selection, and Undo/Redo availability remain intact, and the user can reopen
+the question against the current configuration. A current Yes still removes
+the Slave and retains complete Undo/Redo. In the qualified single-Slave case,
+selection repairs to the Master; existing multi-Slave behavior selects the
+adjacent configured Slave. Escape remains a real no-op and the delete-on-close
+question is destroyed safely. Changes to another Project or sibling Slave do
+not invalidate the question while the re-resolved target Slave value itself
+remains unchanged.
+
+Qt documents asynchronous dialog opening and the nested-loop caution at
+<https://doc.qt.io/qt-6/qdialog.html#open> and
+<https://doc.qt.io/qt-6/qdialog.html#exec>. QMessageBox question, default, and
+Escape behavior is documented at <https://doc.qt.io/qt-6/qmessagebox.html>.
+Qt Creator's Project settings pages provide the local host precedent in
+`src/plugins/projectexplorer/buildsettingspropertiespage.cpp` and
+`runsettingspropertiespage.cpp`; the corresponding official source is at
+<https://github.com/qt-creator/qt-creator/tree/v20.0.0/src/plugins/projectexplorer>.
+Beckhoff documents that Remove deletes the selected I/O device from the tree
+and configuration at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
+Those sources do not prescribe this product's additional stale-confirmation
+guard.
+
+Failure-first changed only the Workbench test. Production remained at
+SHA-256 `5fb5b70a377f57c023bc2c9201d715d5cf6ea8e8639c425b231c68a7f01ce552`
+and blob `61c361f0b4c6fd37ca933d47d5852b539118c10a` for
+`workbenchcontroller.cpp`, and SHA-256
+`d8212f430dc167713504fb2501d1535200fd85d2ff99d8811b59b483963dc693`
+and blob `26cb642418687a60608b33183db524d4fc62fa74` for its header. The original
+test implementation and declaration were SHA-256
+`e1fa20d5cc394c7a6999da8d3274a98b6d0633cc67b5c252968e540ce4bdc2cc`
+and `d3771690ff204fc6eafab7a3c7f4231ad461ec6301d288731ae665d86a2670f9`,
+with blobs `1a81136d36cfd362562d5b275f21d2ca0a564fd6` and
+`a7c062a6ab301bb0de0470b2c6bdb0ab8a0296da`. A real
+`ProjectService::setDcConfiguration()` refresh preserved the same Slave ID,
+name, position, and selection, but stale Yes deleted it. Initialization and
+cleanup passed; the target failed safely with status 1 at the expected size
+assertion in
+`/private/tmp/embed-labs-remove-project-refresh.ErQwPA/failure-first/semantic2.log`.
+
+Final SHA-256 values for `workbenchcontroller.cpp`, its header, the Workbench
+test implementation, and its declaration are respectively
+`0e1a3c43132b186240ced01e69558fd847b97d0b97614b1f805dac2a753e0d32`,
+`1cd58714e3de3db609886fe0d1dd4b79a66132193c294352c6d9ff69a2e6e9f2`,
+`f6727669cf2d44325693853469fa6b5a9fac67fdd09f55e777faebc1293c7700`,
+and `b52558c301ddca51c465809597eaad066f68550e9fa889998c4990d7bc500c4e`.
+Their git blobs are `2d9af3fe0ede52c5146e4faf5335ef1e716eb134`,
+`9805736ecfa23b4597c749270041e9b3bfd03e90`,
+`1076daadd6da7063394f2dc924544f3f0da8cb86`, and
+`ec075cfc2d14e2e7aa0a1d3b054fa29b7ce419d8`.
+
+The focused test passed three events at normal and 2x scale; the related
+removal group passed four events at each scale. Complete Workbench runs passed
+66 events at each scale. The six isolated suites passed 117 events: Core 17,
+Project 12, Devices 8, Workbench 66, Scan 7, and Diagnostics 7. The complete
+Workbench runs retain the known pre-existing ProjectExplorer TaskHub soft
+assertion in the invalid-project path; it did not fail a test or target.
+
+The full `WITH_TESTS=OFF` product build passed and contains exactly 16
+allow-listed plugin dylibs. The executable SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+the product and test Workbench plugin SHA-256 values are
+`d2690915bbe2e089035deb5fa799386f670ec8050505910cdd26a5cf0d1a2b0c`
+and `a0678ed0e865c3e9528756b8b9a9d84e9c0a71d228586d8ecff1fd28c620acf5`.
+
+Enabled product startup observed PID 2618 alive for 37 consecutive samples;
+an independent `vmmap` confirmed the Workbench plugin was loaded. Explicitly
+disabled startup observed PID 7890 alive for 37 samples with
+`-noload EtherCATWorkbench`; an independent `vmmap` confirmed the plugin was
+absent. Each process was ended by an intentional passed-through SIGTERM with
+target status 15. The disabled run's shared-memory initialization message was
+non-fatal. Both used fresh HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar bypass. No visible main window was opened.
+The 2026-07-22 10:17:55 +0800 audit found no residual Embed Labs/LLDB process,
+new matching DiagnosticReports file, or matching crash-service event after
+10:12 +0800.
+
+Evidence is under
+`/private/tmp/embed-labs-remove-project-refresh.ErQwPA`. This issue changes
+only the private controller, its Workbench test declaration/implementation,
+and these four documents. It adds no public API, source file, ProjectService
+or Provider contract, persistence field, Project command, model role, Core or
+ProjectExplorer hook, application-bootstrap change, network transport, scan,
+online state, SDO execution, or hardware behavior. No CMake or qbs description
+changed, so qbs was not run. The unrelated `WITH_TESTS=ON` all-target build was
+not rerun because the known EasyBoard `extensionmanager_test.h` blocker remains
+outside this issue. Qualification is local/offline Mock evidence; visible
+desktop inspection was intentionally not run so acceptance did not interrupt
+desktop use.

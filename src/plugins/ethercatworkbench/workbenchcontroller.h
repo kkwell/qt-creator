@@ -27,6 +27,7 @@ struct OfflineSlaveRemovalCandidate
     Data::NodeId slaveId;
     QString name;
     int position = -1;
+    Data::OfflineSlaveConfiguration expectedSlave;
 };
 
 struct OfflineMasterTarget

@@ -1015,6 +1015,28 @@ The Workbench path count remains 44 and the direct upstream Core patch count
 remains five. Qualification used only local/offline Mock state and offscreen
 product lifecycle runs; no remote comparison or publication occurred.
 
+`ISSUE-WB-OFFLINE-SLAVE-REMOVE-PROJECT-REFRESH-001`, based on
+`312e1a9dbacfd621615c87d644b7a46bb5f5a64e`, changes only the existing
+product-owned private `workbenchcontroller.cpp/.h`, Workbench test
+declaration/implementation, and documentation. The removal question now owns
+the complete target Slave configuration by value. Yes re-resolves stable IDs
+and selection, then rejects a response if that same target configuration has
+changed. The refreshed Project, selection, and Undo/Redo state remain intact
+until the user confirms the current value. Another Project or sibling Slave
+does not invalidate the response while the target Slave value remains
+unchanged.
+
+The change introduces no revision/generation or CAS framework, public API,
+source file, dependency, CMake/qbs entry, Project format, persistence field,
+Provider or ProjectService contract, Project command, custom model role,
+production thread or timer, Core or ProjectExplorer hook,
+application-bootstrap change, controller/network transport, online state,
+scan, SDO execution, or hardware behavior. The Workbench path count remains
+44 and the direct upstream Core patch count remains five. Qualification used
+only local/offline Mock state plus offscreen enabled/disabled product
+lifecycle runs. No visible main window, remote comparison, fetch, pull, merge,
+rebase, push, or publication occurred.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

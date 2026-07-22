@@ -15,6 +15,7 @@ private slots:
     void testModeCommandStripMirrorsRegisteredActions();
     void testNavigationCommandsUseActionManager();
     void testOfflineTopologyEditingWorkflow();
+    void testOfflineSlaveRemovalConfirmationProjectRefresh();
     void testConfiguredSlaveTreePhysicalOrder();
     void testTwinCatInsertDeviceWorkflow();
     void testEsiDeviceSelectionCellAccessibility();

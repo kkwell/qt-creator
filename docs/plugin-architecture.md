@@ -1575,6 +1575,51 @@ description changed. All runtime evidence is local/offline Mock evidence; the
 full product lifecycle was qualified offscreen with the plugin enabled and
 explicitly disabled, without a visible main window or new crash record.
 
+## Workbench stale offline-slave removal boundary
+
+`ISSUE-WB-OFFLINE-SLAVE-REMOVE-PROJECT-REFRESH-001`, based on
+`312e1a9dbacfd621615c87d644b7a46bb5f5a64e`, remains entirely inside the
+product-owned private `WorkbenchController`. Its asynchronous question
+candidate owns a value snapshot of the complete
+`OfflineSlaveConfiguration`; it owns no Project reference, model index,
+widget pointer, or transaction.
+
+After Yes, the controller re-resolves the current Project, Master, Slave, and
+selection using their stable IDs. It exact-compares the current target against
+the captured value before using the existing checked replacement command.
+The comparison includes ID, Master, physical position, identity, serial,
+Alias, name, device-description ID, Process Data, Startup, DC, and their
+nested values. A target mismatch is an explicit no-op that requires a new
+confirmation. An unrelated Project or sibling change is outside the compared
+target and does not invalidate the response while the target value remains
+unchanged.
+
+This is deliberately not a Project revision, generation counter, CAS,
+transaction, lock, retry, merge, or live-dialog refresh framework.
+`ProjectService` remains authoritative for validation, persistence,
+notifications, and Undo/Redo. Current confirmation still enters the existing
+remove path, while stale confirmation cannot delete a refreshed
+configuration. Escape remains a no-op, and delete-on-close ownership remains
+inside the existing Workbench question flow.
+
+Qt's asynchronous dialog and QMessageBox contracts are documented at
+<https://doc.qt.io/qt-6/qdialog.html> and
+<https://doc.qt.io/qt-6/qmessagebox.html>. Qt Creator's Project settings pages
+provide the local host pattern, with official source at
+<https://github.com/qt-creator/qt-creator/tree/v20.0.0/src/plugins/projectexplorer>.
+Beckhoff documents the destructive Remove operation at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
+
+The boundary changes only `workbenchcontroller.cpp/.h`, the Workbench test
+declaration/implementation, and four evidence documents. It adds no public
+API, source file, dependency, Provider or ProjectService contract, Project
+format, persistence field, Project command, custom model role, production
+thread or timer, Core or ProjectExplorer hook, application-bootstrap path,
+network transport, scan, online state, SDO execution, or hardware behavior.
+No CMake or qbs description changed. Qualification is local/offline Mock and
+the product lifecycle was exercised offscreen with the plugin enabled and
+explicitly disabled, without a visible main window or new crash record.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

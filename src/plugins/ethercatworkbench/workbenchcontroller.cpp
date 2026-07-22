@@ -503,7 +503,7 @@ WorkbenchController::selectedOfflineSlaveRemovalCandidate() const
         return std::nullopt;
     const Data::OfflineSlaveConfiguration &slave = selected->slaves.at(selected->index);
     return OfflineSlaveRemovalCandidate{
-        selected->project.id, selected->masterId, slave.id, slave.name, slave.position};
+        selected->project.id, selected->masterId, slave.id, slave.name, slave.position, slave};
 }
 
 Utils::Result<> WorkbenchController::removeOfflineSlave(
@@ -522,6 +522,11 @@ Utils::Result<> WorkbenchController::removeOfflineSlave(
         || selected->masterId != candidate.masterId || selected->slaveId != candidate.slaveId) {
         return Utils::ResultError(
             Tr::tr("The offline slave is no longer available; nothing was removed."));
+    }
+    if (selected->slaves.at(selected->index) != candidate.expectedSlave) {
+        return Utils::ResultError(Tr::tr(
+            "The offline slave configuration changed while confirmation was open; nothing was "
+            "removed. Confirm the current configuration again."));
     }
 
     selected->slaves.removeAt(selected->index);

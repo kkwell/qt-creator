@@ -2291,6 +2291,46 @@ matching asynchronous delete-on-close precedent is at
 Beckhoff's offline/online Topology semantics are at
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1277974411.html>.
 
+## EtherCATWorkbench stale offline-slave removal qualification
+
+`ISSUE-WB-OFFLINE-SLAVE-REMOVE-PROJECT-REFRESH-001` is qualified from local
+baseline `312e1a9dbacfd621615c87d644b7a46bb5f5a64e`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Production controller implementation/header stayed at SHA-256 `5fb5b70a377f57c023bc2c9201d715d5cf6ea8e8639c425b231c68a7f01ce552` / `d8212f430dc167713504fb2501d1535200fd85d2ff99d8811b59b483963dc693` and blobs `61c361f0b4c6fd37ca933d47d5852b539118c10a` / `26cb642418687a60608b33183db524d4fc62fa74`; a real same-ID DC refresh followed by stale Yes removed the refreshed Slave, so the focused target exited 1 at the expected assertion in `failure-first/semantic2.log` |
+| Private capture | Workbench captures the complete `OfflineSlaveConfiguration` by value: ID, Master, position, identity, serial, Alias, name, device description, Process Data, Startup, DC, and nested fields |
+| Revalidation | Yes re-resolves current Project/Master/Slave stable IDs and selection, then exact-compares the target configuration before any mutation |
+| Stale response | A changed target returns an explicit error and preserves the refreshed configuration, Slave selection, Undo/Redo availability, and signal count; the user must confirm the current configuration again |
+| Unrelated refresh | Another Project or sibling Slave does not invalidate the question while the selected target Slave value remains unchanged |
+| Current response | A newly opened current question removes the Slave and remains fully Undo/Redo reversible; the qualified single-Slave case repairs selection to Master, while the existing multi-Slave path selects the adjacent Slave |
+| Escape and lifetime | A real Escape is a no-op; all questions use delete-on-close and are observed through guarded pointers until destruction |
+| Focused and related | Normal and 2x focused runs each passed 3 events; normal and 2x related removal runs each passed 4 events; 0 failed, status 0 |
+| Complete Workbench | Normal and 2x each passed 66 events, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 66, Scan 7, Diagnostics 7; 117 passed, 0 failed |
+| Known soft assertion | The pre-existing ProjectExplorer TaskHub category soft assertion remains confined to the invalid-project path and does not fail a test or target |
+| Final source SHA-256 | Controller implementation `0e1a3c43132b186240ced01e69558fd847b97d0b97614b1f805dac2a753e0d32`; controller header `1cd58714e3de3db609886fe0d1dd4b79a66132193c294352c6d9ff69a2e6e9f2`; tests `f6727669cf2d44325693853469fa6b5a9fac67fdd09f55e777faebc1293c7700`; test header `b52558c301ddca51c465809597eaad066f68550e9fa889998c4990d7bc500c4e` |
+| Final git blobs | Controller implementation `2d9af3fe0ede52c5146e4faf5335ef1e716eb134`; controller header `9805736ecfa23b4597c749270041e9b3bfd03e90`; tests `1076daadd6da7063394f2dc924544f3f0da8cb86`; test header `ec075cfc2d14e2e7aa0a1d3b054fa29b7ce419d8` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 allow-listed plugin dylibs; executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench SHA-256 `d2690915bbe2e089035deb5fa799386f670ec8050505910cdd26a5cf0d1a2b0c`; test Workbench SHA-256 `a0678ed0e865c3e9528756b8b9a9d84e9c0a71d228586d8ecff1fd28c620acf5` |
+| Enabled startup | PID 2618 remained running for 37 samples; independent `vmmap` confirmed Workbench loaded; intentional passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 7890 remained running for 37 samples with `-noload EtherCATWorkbench`; independent `vmmap` confirmed Workbench absent; intentional passed-through SIGTERM produced target status 15 |
+| Crash-dialog audit | At 2026-07-22 10:17:55 +0800 there was no residual Embed Labs/LLDB process, new matching DiagnosticReports file, or matching crash-service event after 10:12 +0800 |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, and only the process-local Touch Bar bypass; no visible main window or system crash dialog |
+| Visual/manual desktop inspection | Not run by design; product acceptance stayed offscreen so it did not interrupt desktop use |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard `extensionmanager_test.h` blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, ProjectService, Project command, model role, or source-list changes | None |
+| Core, ProjectExplorer, app, network, scan, online state, SDO, or hardware changes | None; this remains a private Workbench guard over local/offline Mock state |
+
+Evidence is under
+`/private/tmp/embed-labs-remove-project-refresh.ErQwPA`. Qt dialog and message
+semantics are documented at <https://doc.qt.io/qt-6/qdialog.html> and
+<https://doc.qt.io/qt-6/qmessagebox.html>. Qt Creator's official Project
+settings source is at
+<https://github.com/qt-creator/qt-creator/tree/v20.0.0/src/plugins/projectexplorer>.
+Beckhoff's selected-device Remove semantics are at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
+
 ## Verification states
 
 Use only these evidence labels:
