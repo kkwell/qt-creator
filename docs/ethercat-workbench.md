@@ -4325,6 +4325,83 @@ outside this issue. Qualification is local/offline Mock evidence; visible
 desktop inspection was intentionally not run so acceptance did not interrupt
 desktop use.
 
+## Offline-slave removal confirmation invalidation
+
+`ISSUE-WB-OFFLINE-SLAVE-REMOVE-CONFIRM-INVALIDATION-001`, based on local
+commit `532517066a612c4f5220484cadb830d0c07256c0`, removes a stale modal
+interaction from the configured-slave removal workflow. The question still
+uses the captured Project, Master, slave, and complete offline-slave
+configuration as its authority. While it is visible, a stable Selection
+change, target-Project close, target-slave removal, or any change to that
+captured slave now rejects and deletes the question immediately. The user no
+longer has to answer a destructive question whose subject is no longer
+current.
+
+The private action listens only for the existing Selection and Project
+lifecycle signals and keeps the dialog itself as each connection context. A
+Project change is relevant only when it is for the captured Project and a
+fresh controller lookup no longer returns the exact captured slave
+configuration. Changes to another Project, or sibling-only changes that leave
+the captured candidate unchanged, therefore leave the current question open.
+A current `Yes`, `No`, and Escape retain the existing behavior; the
+controller's complete validation after `Yes` remains as defense in depth, and
+the Project-owned mutation, modified state, persistence, nearest-node
+selection repair, Undo, and Redo paths are unchanged.
+
+Failure-first changed only the Workbench test. With production
+`ethercatworkbenchplugin.cpp` unchanged at SHA-256
+`03adb384bfd2e0e31606d9dd8294629718b1061c192764584db63198b25480b4`,
+changing the captured slave's DC configuration left the question alive, so
+the required null-guard assertion failed and the target exited with status 1.
+The final focused normal and 2x runs each passed three events; the related
+topology/lifecycle runs each passed four. Complete Workbench normal and 2x
+runs each passed 69 events. The six isolated suites passed 120 events: Core
+17, Project 12, Devices 8, Workbench 69, Scan 7, and Diagnostics 7. The full
+Workbench paths retain the known pre-existing ProjectExplorer TaskHub
+category soft assertion in the invalid-project fixture; it did not fail a
+test or target.
+
+The complete `WITH_TESTS=OFF` product build passed with exactly the 16
+allow-listed plugin dylibs. The product executable, product Workbench plugin,
+and test Workbench plugin SHA-256 values are respectively
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`,
+`3a0d246f1fb331d7691311dd940c3046e87a151a2901b3b876285c9b2a77b221`,
+and `9c95c1793d96fbc02aecae643a074d8870b5b05bb8e7c1e7ec36931d365b423f`.
+Enabled PID 18133 remained alive for 37 samples with Workbench mapped in all
+37; explicitly disabled PID 21782 remained alive for 37 samples with
+Workbench absent in all 37. Passed-through SIGTERM produced target status 15
+for both. The 2026-07-22 13:25:01 to 13:42:51 +0800 audit found no residual
+product/LLDB process, new matching DiagnosticReports file, or matching crash
+service event. All final passing qualification and product lifecycle runs
+were offscreen with fresh HOME/settings, cleared inherited DYLD variables,
+crash reporting disabled, and the process-local Touch Bar bypass, so no
+visible main window or system crash dialog interrupted desktop use.
+The exact outer launcher environment and enabled/disabled target arguments
+are retained in `product/lifecycle-command-manifest.txt` under the evidence
+root.
+
+Qt documents asynchronous `open()`, `finished`, `reject()`, and
+delete-on-close dialog ownership at <https://doc.qt.io/qt-6/qdialog.html>,
+the standard question surface at <https://doc.qt.io/qt-6/qmessagebox.html>,
+and context-owned signal connections at
+<https://doc.qt.io/qt-6/qobject.html#connect>. Beckhoff documents that Remove
+deletes the selected I/O device from the tree and configuration, but does not
+define this private stale-question policy:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
+
+Evidence is under
+`/private/tmp/embed-labs-wb-remove-confirm-invalidation-001`; `final2/` is the
+authoritative final test set, while earlier development-iteration logs are
+retained only for audit history. The issue changes only private Workbench
+action setup, Workbench test
+declaration/implementation, and these four documents. It adds no public API,
+source file, dependency, model role, Provider or ProjectService contract,
+Project format, persistence field, Project command, Core or ProjectExplorer
+hook, application-bootstrap change, production thread or timer, network,
+scan, online, SDO, or hardware behavior. No CMake or qbs description changed,
+so qbs was not run. Qualification remains truthful local/offline Mock
+evidence.
+
 ## Add New Item asynchronous dialog lifecycle
 
 `ISSUE-WB-INSERT-DIALOG-ASYNC-LIFECYCLE-001` is qualified from local baseline

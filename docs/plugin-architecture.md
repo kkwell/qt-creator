@@ -1772,3 +1772,41 @@ application bootstrap, thread, timer, network, scan, online, SDO, or hardware
 behavior. No CMake or qbs description changed. Qualification is local/offline
 Mock and includes full offscreen enabled/disabled product lifecycle evidence
 with passed-through SIGTERM and no new crash record.
+
+## Workbench removal-question invalidation boundary
+
+`ISSUE-WB-OFFLINE-SLAVE-REMOVE-CONFIRM-INVALIDATION-001`, based on
+`532517066a612c4f5220484cadb830d0c07256c0`, remains entirely within the
+product-owned private `EtherCATWorkbench` action layer. The removal question
+captures copied Project, Master, and slave IDs plus the complete
+`OfflineSlaveConfiguration`. Its lifetime is now subscribed to the existing
+`SelectionService::currentNodeChanged`,
+`ProjectService::projectAboutToBeRemoved`, and
+`ProjectService::projectChanged` signals, with the question as the QObject
+connection context and a guarded pointer as the close target.
+
+Selection drift and target-Project removal reject immediately. A change to
+the captured Project asks the existing Workbench controller for a fresh
+removal candidate and keeps the question only when the same stable Project,
+Master, slave, and complete configuration are still current. This comparison
+keeps only sibling changes that leave the captured candidate unchanged
+non-conflicting. Changes to an unrelated Project are ignored. The signal path
+only shortens a stale dialog's lifetime; it does not submit, replace, retarget,
+or merge a Project command.
+
+The existing affirmative path still revalidates the complete candidate before
+calling `ProjectService::replaceOfflineSlaves()`. EtherCATProject therefore
+continues to own validation, modified state, persistence, position
+normalization, Undo, and Redo. Workbench continues to own only presentation,
+stable-context validation, and post-command selection repair. No QObject,
+Project object, Provider pointer, `QModelIndex`, or mutable model data crosses
+a plugin boundary.
+
+The change adds no public service or data type, source file, dependency,
+metadata, persistent format, model role, Provider, Project command,
+production thread or timer, Core or ProjectExplorer hook,
+application-bootstrap change, controller/network transport, online state,
+scan, SDO execution, or hardware behavior. No CMake or qbs entry changed. The
+Workbench path count remains 44 and the direct upstream Core patch count
+remains five. Qualification uses local/offline Mock state and offscreen
+enabled/disabled product lifecycle runs only.

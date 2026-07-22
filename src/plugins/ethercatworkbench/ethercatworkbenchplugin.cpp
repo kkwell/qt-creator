@@ -284,10 +284,49 @@ void EtherCATWorkbenchPlugin::setupActions()
         confirmation->setStandardButtons(QMessageBox::Yes | QMessageBox::No);
         confirmation->setDefaultButton(QMessageBox::No);
         confirmation->setEscapeButton(QMessageBox::No);
+        const OfflineSlaveRemovalCandidate capturedCandidate = *candidate;
+        const QPointer<QMessageBox> guardedConfirmation = confirmation;
+        const auto rejectIfCandidateIsStale
+            = [controller, capturedCandidate, guardedConfirmation] {
+                  if (!guardedConfirmation || !guardedConfirmation->isVisible())
+                      return;
+                  const std::optional<OfflineSlaveRemovalCandidate> currentCandidate
+                      = controller ? controller->selectedOfflineSlaveRemovalCandidate()
+                                   : std::nullopt;
+                  if (currentCandidate
+                      && currentCandidate->projectId == capturedCandidate.projectId
+                      && currentCandidate->masterId == capturedCandidate.masterId
+                      && currentCandidate->slaveId == capturedCandidate.slaveId
+                      && currentCandidate->expectedSlave == capturedCandidate.expectedSlave) {
+                      return;
+                  }
+                  guardedConfirmation->reject();
+              };
+        connect(controller->selectionService(),
+                &Core::SelectionService::currentNodeChanged,
+                confirmation,
+                [rejectIfCandidateIsStale](const Data::NodeId &, const Data::NodeId &) {
+                    rejectIfCandidateIsStale();
+                });
+        connect(controller->projectService(),
+                &Core::ProjectService::projectAboutToBeRemoved,
+                confirmation,
+                [capturedCandidate, guardedConfirmation](const Data::NodeId &projectId) {
+                    if (projectId == capturedCandidate.projectId && guardedConfirmation)
+                        guardedConfirmation->reject();
+                });
+        connect(controller->projectService(),
+                &Core::ProjectService::projectChanged,
+                confirmation,
+                [capturedCandidate, rejectIfCandidateIsStale](
+                    const Data::ProjectSnapshot &project) {
+                    if (project.id == capturedCandidate.projectId)
+                        rejectIfCandidateIsStale();
+                });
         connect(confirmation,
                 &QMessageBox::finished,
                 confirmation,
-                [controller, candidate = *candidate](int result) {
+                [controller, candidate = capturedCandidate](int result) {
                     if (result != QMessageBox::Yes || !controller)
                         return;
                     if (const Utils::Result<> removal = controller->removeOfflineSlave(candidate);

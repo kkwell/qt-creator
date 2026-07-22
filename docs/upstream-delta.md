@@ -1104,6 +1104,27 @@ plus offscreen enabled/disabled product lifecycle runs with passed-through
 SIGTERM. No visible main window, remote comparison, fetch, pull, merge,
 rebase, push, or publication occurred.
 
+`ISSUE-WB-OFFLINE-SLAVE-REMOVE-CONFIRM-INVALIDATION-001`, based on
+`532517066a612c4f5220484cadb830d0c07256c0`, changes only the existing
+product-owned private Workbench action setup, Workbench test
+declaration/implementation, and documentation. A configured-slave removal
+question now rejects itself when its stable Selection changes, its Project is
+being removed, or its complete captured slave configuration is no longer
+current. Changes to another Project, or sibling-only changes that leave the
+captured candidate unchanged, remain non-conflicting. The existing controller
+revalidation and Project-owned removal/Undo/Redo path remain unchanged.
+
+The change introduces no public API, source file, dependency, CMake/qbs entry,
+Project format, persistence field, Provider or ProjectService contract,
+Project command, custom model role, production thread or timer, Core or
+ProjectExplorer hook, application-bootstrap change, controller/network
+transport, online state, scan, SDO execution, or hardware behavior. The
+Workbench path count remains 44 and the direct upstream Core patch count
+remains five. Qualification used only local/offline Mock state plus offscreen
+enabled/disabled product lifecycle runs with passed-through SIGTERM. No
+visible main window, remote comparison, fetch, pull, merge, rebase, push, or
+publication occurred.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

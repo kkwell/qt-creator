@@ -2450,6 +2450,48 @@ contract is at <https://doc.qt.io/qt-6/qitemselectionmodel.html>. Beckhoff's
 latest/older-revision insertion workflow is at
 <https://infosys.beckhoff.com/content/1033/ethercatsystem/2477595531.html>.
 
+## EtherCATWorkbench removal-confirmation invalidation qualification
+
+`ISSUE-WB-OFFLINE-SLAVE-REMOVE-CONFIRM-INVALIDATION-001` is qualified from
+local baseline `532517066a612c4f5220484cadb830d0c07256c0`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Only the Workbench test changed; production stayed at SHA-256 `03adb384bfd2e0e31606d9dd8294629718b1061c192764584db63198b25480b4`. After a same-slave DC refresh the old question remained alive, the required null-guard assertion failed, and the target exited with status 1 |
+| Selection invalidation | Changing the stable Selection while the question is visible rejects and deletes it without Project mutation |
+| Project lifecycle invalidation | Closing the captured Project rejects and deletes the question before stale input can be accepted |
+| Complete target invalidation | A change to any field of the captured `OfflineSlaveConfiguration`, or removal of that slave, rejects the question |
+| Non-conflicting refresh | A sibling-only DC change and restoration that leave the captured candidate unchanged, plus an unrelated-Project change, all leave the exact current candidate's question visible |
+| Current responses | Valid `Yes` removes only the captured slave; `No` and Escape remain non-mutating; complete Project-owned Undo/Redo restoration still passes |
+| Defense in depth | The controller still rereads and compares Selection, Project, Master, slave, and the complete configuration after `Yes` before submitting the existing replacement command |
+| Focused normal and 2x | Each passed 3 events, 0 failed, target status 0 |
+| Related normal and 2x | Each passed 4 events, 0 failed, target status 0 |
+| Complete Workbench | Normal and 2x each passed 69 events, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 69, Scan 7, Diagnostics 7; 120 passed, 0 failed in six isolated LLDB-supervised processes |
+| Known soft assertion | The existing invalid-project path still emits the pre-existing ProjectExplorer TaskHub category soft assertion; it is absent from the focused test and does not fail a test or target |
+| Final source SHA-256 | Plugin implementation `fcbc7b8af6ad31de240bf8a22d4d5d1ae5e55b0a3a984b971ab0f8c18d2b91c6`; tests `0771a822a557c87d2dd08452dace36d7a81ab53c3c5f1f847407869f95037e43`; test header `9eca5d0743f50a179e02ff9acb11aa42267d87f3c6e67918c8b83f435318f20a` |
+| Final git blobs | Plugin implementation `666a446400f704fb74d71db22e035adec318cb27`; tests `ea2465c903d3755a0393bdeac73c9f6b19357e90`; test header `25cbc12231cded1ee57165f66973b025afe7befb` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 allow-listed plugin dylibs; executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `3a0d246f1fb331d7691311dd940c3046e87a151a2901b3b876285c9b2a77b221`; test Workbench `9c95c1793d96fbc02aecae643a074d8870b5b05bb8e7c1e7ec36931d365b423f` |
+| Enabled startup | PID 18133 remained alive for 37 samples with Workbench mapped in all 37; passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 21782 remained alive for 37 samples with Workbench absent in all 37; passed-through SIGTERM produced target status 15 |
+| Crash-dialog audit | From 2026-07-22 13:25:01 to 13:42:51 +0800 there was no residual Embed Labs/LLDB process, new matching DiagnosticReports file, or matching crash-service event |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM; the exact launcher/target arguments are retained in `product/lifecycle-command-manifest.txt`; no visible main window or system crash dialog |
+| Deliberate exclusions | No single-instance confirmation manager, generic dialog framework, active-Project-switch policy, online/controller action, network, scan, SDO, or hardware behavior |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard `extensionmanager_test.h` blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, ProjectService, Project command, model role, or source-list changes | None |
+| Core, ProjectExplorer, application bootstrap, network, scan, online state, SDO, or hardware changes | None; this remains a private Workbench modal-lifecycle correction over local/offline Mock data |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-remove-confirm-invalidation-001`; `final2/` is the
+authoritative passing test set and earlier iteration logs remain only as audit
+history. Qt's dialog and connection contracts are at
+<https://doc.qt.io/qt-6/qdialog.html>,
+<https://doc.qt.io/qt-6/qmessagebox.html>, and
+<https://doc.qt.io/qt-6/qobject.html#connect>. Beckhoff's selected-device
+Remove semantics are at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1103121931.html>.
+
 ## Verification states
 
 Use only these evidence labels:

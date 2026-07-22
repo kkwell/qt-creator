@@ -1329,24 +1329,85 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     QCOMPARE(projectService->canRedoProject(file.projectId), couldRedoBeforeRemoval);
     QCOMPARE(projectChanges.count(), 0);
 
+    removeCommand->action()->trigger();
+    QPointer<QMessageBox> siblingRefreshConfirmation;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (siblingRefreshConfirmation
+         = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())),
+        2000);
+    const auto siblingRefreshCleanup = qScopeGuard([&] {
+        if (siblingRefreshConfirmation)
+            siblingRefreshConfirmation->reject();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    const auto sibling = std::find_if(
+        beforeRemoval.slaves.cbegin(), beforeRemoval.slaves.cend(), [&file](const auto &slave) {
+            return slave.id == file.slaveId;
+        });
+    QVERIFY(sibling != beforeRemoval.slaves.cend());
+    Data::DcConfiguration siblingDc = sibling->dc;
+    siblingDc.potentialReferenceClock = !siblingDc.potentialReferenceClock;
+    QVERIFY_RESULT(
+        projectService->setDcConfiguration(file.projectId, file.slaveId, siblingDc));
+    QTRY_VERIFY(siblingRefreshConfirmation && siblingRefreshConfirmation->isVisible());
+    QCOMPARE(controller.selectionService()->currentNodeId(), addedId);
+    QVERIFY_RESULT(
+        projectService->setDcConfiguration(file.projectId, file.slaveId, sibling->dc));
+    QTRY_COMPARE(*projectService->project(file.projectId), beforeRemoval);
+    QTRY_VERIFY(siblingRefreshConfirmation && siblingRefreshConfirmation->isVisible());
+    QAbstractButton *siblingRefreshNo = siblingRefreshConfirmation->button(QMessageBox::No);
+    QVERIFY(siblingRefreshNo);
+    siblingRefreshNo->click();
+    QTRY_VERIFY(siblingRefreshConfirmation.isNull());
+
+    removeCommand->action()->trigger();
+    QPointer<QMessageBox> unrelatedProjectConfirmation;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (unrelatedProjectConfirmation
+         = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())),
+        2000);
+    const auto unrelatedProjectCleanup = qScopeGuard([&] {
+        if (unrelatedProjectConfirmation)
+            unrelatedProjectConfirmation->reject();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    const Data::ProjectSnapshot unrelatedBeforeRefresh
+        = *projectService->project(alternate.projectId);
+    QCOMPARE(unrelatedBeforeRefresh.slaves.size(), 1);
+    Data::DcConfiguration unrelatedDc = unrelatedBeforeRefresh.slaves.first().dc;
+    unrelatedDc.potentialReferenceClock = !unrelatedDc.potentialReferenceClock;
+    QVERIFY_RESULT(projectService->setDcConfiguration(
+        alternate.projectId, alternate.slaveId, unrelatedDc));
+    QTRY_VERIFY(unrelatedProjectConfirmation && unrelatedProjectConfirmation->isVisible());
+    QCOMPARE(controller.selectionService()->currentNodeId(), addedId);
+    QCOMPARE(*projectService->project(file.projectId), beforeRemoval);
+    QAbstractButton *unrelatedProjectNo = unrelatedProjectConfirmation->button(QMessageBox::No);
+    QVERIFY(unrelatedProjectNo);
+    unrelatedProjectNo->click();
+    QTRY_VERIFY(unrelatedProjectConfirmation.isNull());
+    projectChanges.clear();
+
     navigation.activateWindow();
     navigation.treeView()->setFocus(Qt::OtherFocusReason);
     QTRY_VERIFY(removeCommand->action()->isEnabled());
     bool changedSelectionPromptSeen = false;
+    QPointer<QMessageBox> changedSelectionConfirmation;
     QTimer changedSelectionTimer;
     changedSelectionTimer.setSingleShot(true);
     connect(&changedSelectionTimer, &QTimer::timeout, removeCommand->action(), [&] {
-        QMessageBox *messageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-        if (!messageBox)
+        changedSelectionConfirmation
+            = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!changedSelectionConfirmation)
             return;
         changedSelectionPromptSeen = true;
         controller.selectionService()->setCurrentNodeId(file.slaveId);
-        if (QAbstractButton *yes = messageBox->button(QMessageBox::Yes))
-            yes->click();
     });
     changedSelectionTimer.start(0);
     removeCommand->action()->trigger();
     QTRY_VERIFY(changedSelectionPromptSeen);
+    QTRY_VERIFY(changedSelectionConfirmation.isNull());
     QVERIFY(*projectService->project(file.projectId) == beforeRemoval);
     QCOMPARE(controller.selectionService()->currentNodeId(), file.slaveId);
     QCOMPARE(projectChanges.count(), 0);
@@ -1427,20 +1488,21 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     navigation.treeView()->setFocus(Qt::OtherFocusReason);
     QTRY_VERIFY(removeCommand->action()->isEnabled());
     bool projectClosePromptSeen = false;
+    QPointer<QMessageBox> projectCloseConfirmation;
     QTimer projectCloseTimer;
     projectCloseTimer.setSingleShot(true);
     connect(&projectCloseTimer, &QTimer::timeout, removeCommand->action(), [&] {
-        QMessageBox *messageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-        if (!messageBox)
+        projectCloseConfirmation
+            = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+        if (!projectCloseConfirmation)
             return;
         projectClosePromptSeen = true;
         ProjectExplorer::ProjectManager::removeProject(opened.project());
-        if (QAbstractButton *yes = messageBox->button(QMessageBox::Yes))
-            yes->click();
     });
     projectCloseTimer.start(0);
     removeCommand->action()->trigger();
     QTRY_VERIFY(projectClosePromptSeen);
+    QTRY_VERIFY(projectCloseConfirmation.isNull());
     QTRY_VERIFY(!projectService->project(file.projectId).has_value());
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
@@ -1469,7 +1531,7 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     projectCleanup.dismiss();
 }
 
-void EtherCATWorkbenchTests::testOfflineSlaveRemovalConfirmationProjectRefresh()
+void EtherCATWorkbenchTests::testOfflineSlaveRemovalConfirmationInvalidationLifecycle()
 {
     ::Core::ModeManager::activateMode(Constants::MODE_ID);
     QTRY_COMPARE(::Core::ModeManager::currentModeId(), Utils::Id(Constants::MODE_ID));
@@ -1534,6 +1596,12 @@ void EtherCATWorkbenchTests::testOfflineSlaveRemovalConfirmationProjectRefresh()
         staleConfirmation->objectName(), QString("EtherCATOfflineSlaveRemovalConfirmation"));
     QVERIFY(staleConfirmation->testAttribute(Qt::WA_DeleteOnClose));
     QVERIFY(staleConfirmation->text().contains(beforeRefresh.slaves.first().name));
+    const auto confirmationCleanup = qScopeGuard([&] {
+        if (staleConfirmation)
+            staleConfirmation->reject();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
 
     Data::DcConfiguration refreshedDc = beforeRefresh.slaves.first().dc;
     refreshedDc.potentialReferenceClock = !refreshedDc.potentialReferenceClock;
@@ -1550,9 +1618,6 @@ void EtherCATWorkbenchTests::testOfflineSlaveRemovalConfirmationProjectRefresh()
     const bool couldRedoAfterRefresh = projectService->canRedoProject(file.projectId);
     QSignalSpy staleResponseChanges(projectService, &Core::ProjectService::projectChanged);
 
-    QAbstractButton *staleYes = staleConfirmation->button(QMessageBox::Yes);
-    QVERIFY(staleYes);
-    staleYes->click();
     QTRY_VERIFY(staleConfirmation.isNull());
     const std::optional<Data::ProjectSnapshot> afterStaleResponse
         = projectService->project(file.projectId);
@@ -1563,6 +1628,36 @@ void EtherCATWorkbenchTests::testOfflineSlaveRemovalConfirmationProjectRefresh()
     QCOMPARE(projectService->canUndoProject(file.projectId), couldUndoAfterRefresh);
     QCOMPARE(projectService->canRedoProject(file.projectId), couldRedoAfterRefresh);
     QCOMPARE(staleResponseChanges.count(), 0);
+
+    navigation.activateWindow();
+    navigation.treeView()->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(::Core::ICore::currentContextWidget(), static_cast<QWidget *>(&navigation));
+    QTRY_VERIFY(removeCommand->action()->isEnabled());
+    removeCommand->action()->trigger();
+    QPointer<QMessageBox> removedTargetConfirmation;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (removedTargetConfirmation
+         = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())),
+        2000);
+    const auto removedTargetCleanup = qScopeGuard([&] {
+        if (removedTargetConfirmation)
+            removedTargetConfirmation->reject();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QSignalSpy targetRemovalChanges(projectService, &Core::ProjectService::projectChanged);
+    QVERIFY_RESULT(projectService->replaceOfflineSlaves(
+        file.projectId, file.masterId, QList<Data::OfflineSlaveConfiguration>()));
+    QTRY_VERIFY(removedTargetConfirmation.isNull());
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 0);
+    QCOMPARE(targetRemovalChanges.count(), 1);
+    QVERIFY_RESULT(projectService->replaceOfflineSlaves(
+        file.projectId, file.masterId, afterRefresh.slaves));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves, afterRefresh.slaves);
+    QCOMPARE(targetRemovalChanges.count(), 2);
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), file.slaveId);
 
     navigation.activateWindow();
     navigation.treeView()->setFocus(Qt::OtherFocusReason);
