@@ -1329,3 +1329,37 @@ physical hardware. No visible main window, remote comparison, fetch, pull,
 merge, rebase, push, PR, or publication occurred. The supported baseline
 remains the local `embed-labs` history. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-coe-view-state-001.4vssYQ`.
+
+## Local Startup non-conflicting refresh inline-draft delta
+
+`ISSUE-WB-STARTUP-NONCONFLICTING-REFRESH-DRAFT-001` is a private Workbench
+correction on local baseline `a835d3340e0a3d644928adb445a8c916fda17e23`.
+One active configured-slave Startup editor survives a same-Project,
+same-node, same-kind refresh only while its stable request ID remains present,
+editable, non-fixed, and unchanged in the edited field. The model applies
+fresh row removal, insertion, movement, and sibling-cell updates by stable ID
+without reloading the active cell.
+
+An inline commit remains a checked `ProjectService` command and is protected
+only against its synchronous refresh re-entry. External same-field changes,
+read-only or source changes, removed requests, node switches, and Project
+close discard the local draft and restore current authority. Page teardown
+closes and releases an active editor without committing it. There is no
+cross-node cache, generic table synchronization service, autosave, Project
+revision, CAS, merge, or conflict UI.
+
+The local delta changes only existing private `startuppage.cpp/.h`, the
+Workbench test declaration/implementation, and four evidence documents. It
+introduces no new path, public API, source file, dependency, CMake/qbs entry,
+Project format, persistence field, Provider/ProjectService contract, Project
+command, public model role, production thread/timer, direct upstream Core
+patch, Core or ProjectExplorer hook, application bootstrap, network, ADS,
+scan, online state, SDO, ESC/EEPROM, or hardware behavior. The Workbench path
+count remains 44 and the direct upstream Core patch count remains five.
+
+Qualification used local ESI/offline Project values plus offscreen
+enabled/disabled product lifecycle runs with passed-through SIGTERM. No
+visible/manual UI inspection, remote comparison, fetch, pull, merge, rebase,
+push, PR, or publication occurred. The supported baseline remains the local
+`embed-labs` history. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-startup-draft-001.XNDmkO`.

@@ -4,6 +4,7 @@
 
 #include <ethercatcore/providers.h>
 
+#include <QPointer>
 #include <QWidget>
 
 #include <optional>
@@ -29,6 +30,7 @@ class StartupPage final : public QWidget
 
 public:
     explicit StartupPage(WorkbenchController *controller, QWidget *parent = nullptr);
+    ~StartupPage() final;
 
     void setContext(const Core::PropertyPageContext &context);
 
@@ -37,8 +39,17 @@ private:
 
     std::optional<Data::StartupConfiguration> currentConfiguration(
         quint64 contextGeneration, const Data::NodeId &projectId, const Data::NodeId &slaveId) const;
-    bool submitConfiguration(const Data::StartupConfiguration &configuration);
-    void rebuildModel();
+    bool submitConfiguration(
+        const Data::StartupConfiguration &configuration,
+        const Data::NodeId &inlineParameterId = {},
+        int inlineColumn = -1);
+    void rebuildModel(
+        bool preserveInlineEditor = false, bool notifyPreservedColumn = false);
+    void trackInlineEditor(
+        QWidget *editor,
+        const Data::StartupParameterConfiguration &parameter,
+        int column);
+    bool canPreserveInlineEditor(bool stableContext) const;
     void updateButtonState();
     void updateTablePresentation();
     void addParameter();
@@ -60,6 +71,14 @@ private:
     bool m_repositoryDeviceSupported = false;
     bool m_repositoryStartupAvailable = false;
     bool m_repositoryStartupHasErrors = false;
+    QPointer<QWidget> m_inlineEditor;
+    std::optional<Data::StartupParameterConfiguration> m_inlineEditorAuthority;
+    int m_inlineEditorColumn = -1;
+    quint64 m_inlineEditorGeneration = 0;
+    bool m_inlineEditorShowingEsiDefaults = false;
+    bool m_inlineEditorCommitInProgress = false;
+    std::optional<Data::StartupParameterConfiguration> m_inlineEditorSubmittedAuthority;
+    bool m_inlineEditorMetadataDirty = false;
 
     QLabel *m_summary = nullptr;
     Utils::InfoLabel *m_validation = nullptr;

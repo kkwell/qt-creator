@@ -23,13 +23,16 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScopedValueRollback>
 #include <QStyledItemDelegate>
 #include <QTableView>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <functional>
 #include <limits>
 #include <optional>
+#include <utility>
 
 namespace EtherCAT::Workbench::Internal {
 
@@ -410,20 +413,45 @@ public:
         default:
             return false;
         }
-        return m_page && m_page->submitConfiguration(candidate);
+        return m_page
+               && m_page->submitConfiguration(candidate, current.id, index.column());
     }
 
-    void setConfiguration(const Data::StartupConfiguration &configuration, bool editable)
+    bool setConfiguration(
+        const Data::StartupConfiguration &configuration,
+        bool editable,
+        const Data::NodeId &preservedParameterId = {},
+        int preservedColumn = -1,
+        bool notifyPreservedColumn = false,
+        bool *preservedMetadataChanged = nullptr)
     {
-        beginResetModel();
-        m_configuration = configuration;
-        m_parameters = configuration.parameters;
+        if (preservedMetadataChanged)
+            *preservedMetadataChanged = false;
+        QList<Data::StartupParameterConfiguration> parameters = configuration.parameters;
         std::stable_sort(
-            m_parameters.begin(), m_parameters.end(), [](const auto &left, const auto &right) {
+            parameters.begin(), parameters.end(), [](const auto &left, const auto &right) {
                 return left.order < right.order;
             });
+        if (!preservedParameterId.isNull() && preservedColumn >= 0 && m_editable == editable
+            && hasValidUniqueIds(m_parameters) && hasValidUniqueIds(parameters)) {
+            const bool metadataChanged = synchronizeConfiguration(
+                configuration,
+                parameters,
+                editable,
+                preservedParameterId,
+                preservedColumn,
+                notifyPreservedColumn);
+            if (preservedMetadataChanged)
+                *preservedMetadataChanged = metadataChanged;
+            return false;
+        }
+
+        beginResetModel();
+        m_configuration = configuration;
+        m_parameters = parameters;
         m_editable = editable;
         endResetModel();
+        return true;
     }
 
     const Data::StartupParameterConfiguration *parameterAt(int row) const
@@ -440,24 +468,176 @@ public:
         return result;
     }
 
+    void notifyMetadataChanged(const Data::NodeId &parameterId, int column)
+    {
+        for (int row = 0; row < m_parameters.size(); ++row) {
+            if (m_parameters.at(row).id != parameterId)
+                continue;
+            const QModelIndex changedIndex = index(row, column);
+            emit dataChanged(
+                changedIndex,
+                changedIndex,
+                {Qt::AccessibleTextRole,
+                 Qt::AccessibleDescriptionRole,
+                 Qt::ToolTipRole});
+            return;
+        }
+    }
+
 private:
+    static bool hasValidUniqueIds(const QList<Data::StartupParameterConfiguration> &parameters)
+    {
+        for (qsizetype left = 0; left < parameters.size(); ++left) {
+            if (parameters.at(left).id.isNull())
+                return false;
+            for (qsizetype right = left + 1; right < parameters.size(); ++right) {
+                if (parameters.at(left).id == parameters.at(right).id)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    bool synchronizeConfiguration(
+        const Data::StartupConfiguration &configuration,
+        const QList<Data::StartupParameterConfiguration> &parameters,
+        bool editable,
+        const Data::NodeId &preservedParameterId,
+        int preservedColumn,
+        bool notifyPreservedColumn)
+    {
+        bool preservedMetadataChanged = false;
+        const auto containsId = [](const auto &entries, const Data::NodeId &id) {
+            return std::any_of(entries.cbegin(), entries.cend(), [&id](const auto &entry) {
+                return entry.id == id;
+            });
+        };
+        for (int row = int(m_parameters.size()) - 1; row >= 0; --row) {
+            if (containsId(parameters, m_parameters.at(row).id))
+                continue;
+            beginRemoveRows({}, row, row);
+            m_parameters.removeAt(row);
+            endRemoveRows();
+        }
+
+        for (int targetRow = 0; targetRow < parameters.size(); ++targetRow) {
+            const Data::NodeId targetId = parameters.at(targetRow).id;
+            int currentRow = -1;
+            for (int row = 0; row < m_parameters.size(); ++row) {
+                if (m_parameters.at(row).id == targetId) {
+                    currentRow = row;
+                    break;
+                }
+            }
+            if (currentRow < 0) {
+                beginInsertRows({}, targetRow, targetRow);
+                m_parameters.insert(targetRow, parameters.at(targetRow));
+                endInsertRows();
+            } else if (currentRow != targetRow) {
+                const int destination = currentRow < targetRow ? targetRow + 1 : targetRow;
+                beginMoveRows({}, currentRow, currentRow, {}, destination);
+                m_parameters.move(currentRow, targetRow);
+                endMoveRows();
+            }
+        }
+
+        m_configuration = configuration;
+        m_editable = editable;
+        for (int row = 0; row < parameters.size(); ++row) {
+            if (m_parameters.at(row) == parameters.at(row))
+                continue;
+            m_parameters[row] = parameters.at(row);
+            const bool preservedRow = parameters.at(row).id == preservedParameterId;
+            preservedMetadataChanged |= preservedRow && !notifyPreservedColumn;
+            if (!preservedRow || notifyPreservedColumn) {
+                emit dataChanged(index(row, 0), index(row, ColumnCount - 1));
+            } else if (preservedColumn > 0) {
+                emit dataChanged(
+                    index(row, 0),
+                    index(row, preservedColumn - 1));
+            }
+            if (preservedRow && !notifyPreservedColumn && preservedColumn + 1 < ColumnCount) {
+                emit dataChanged(
+                    index(row, preservedColumn + 1), index(row, ColumnCount - 1));
+            }
+        }
+        return preservedMetadataChanged;
+    }
+
     StartupPage *m_page = nullptr;
     Data::StartupConfiguration m_configuration;
     QList<Data::StartupParameterConfiguration> m_parameters;
     bool m_editable = false;
 };
 
-class DataTypeDelegate final : public QStyledItemDelegate
+static bool sameInlineEditorAuthority(
+    const Data::StartupParameterConfiguration &left,
+    const Data::StartupParameterConfiguration &right,
+    int column)
+{
+    if (left.id != right.id)
+        return false;
+    switch (column) {
+    case StartupTableModel::Order:
+        return left.order == right.order;
+    case StartupTableModel::Transition:
+        return left.transition == right.transition;
+    case StartupTableModel::Index:
+        return left.index == right.index;
+    case StartupTableModel::Subindex:
+        return left.subIndex == right.subIndex;
+    case StartupTableModel::Type:
+        return left.dataType == right.dataType && left.rawDataType == right.rawDataType;
+    case StartupTableModel::Data:
+        return left.rawValue == right.rawValue;
+    case StartupTableModel::Comment:
+        return left.comment == right.comment;
+    default:
+        return false;
+    }
+}
+
+using EditorOpenedHandler = std::function<void(QWidget *, const QModelIndex &)>;
+
+class StartupItemDelegate : public QStyledItemDelegate
 {
 public:
-    using QStyledItemDelegate::QStyledItemDelegate;
+    StartupItemDelegate(EditorOpenedHandler editorOpened, QObject *parent)
+        : QStyledItemDelegate(parent)
+        , m_editorOpened(std::move(editorOpened))
+    {}
 
     QWidget *createEditor(
-        QWidget *parent, const QStyleOptionViewItem &, const QModelIndex &) const final
+        QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const override
+    {
+        QWidget *editor = QStyledItemDelegate::createEditor(parent, option, index);
+        notifyEditorOpened(editor, index);
+        return editor;
+    }
+
+protected:
+    void notifyEditorOpened(QWidget *editor, const QModelIndex &index) const
+    {
+        if (editor && m_editorOpened)
+            m_editorOpened(editor, index);
+    }
+
+private:
+    EditorOpenedHandler m_editorOpened;
+};
+
+class DataTypeDelegate final : public StartupItemDelegate
+{
+public:
+    using StartupItemDelegate::StartupItemDelegate;
+
+    QWidget *createEditor(
+        QWidget *parent, const QStyleOptionViewItem &, const QModelIndex &index) const final
     {
         auto editor = new QComboBox(parent);
         for (Data::EtherCATDataType type : dataTypes())
             editor->addItem(dataTypeName(type), int(type));
+        notifyEditorOpened(editor, index);
         return editor;
     }
 
@@ -480,17 +660,18 @@ public:
     }
 };
 
-class TransitionDelegate final : public QStyledItemDelegate
+class TransitionDelegate final : public StartupItemDelegate
 {
 public:
-    using QStyledItemDelegate::QStyledItemDelegate;
+    using StartupItemDelegate::StartupItemDelegate;
 
     QWidget *createEditor(
-        QWidget *parent, const QStyleOptionViewItem &, const QModelIndex &) const final
+        QWidget *parent, const QStyleOptionViewItem &, const QModelIndex &index) const final
     {
         auto editor = new QComboBox(parent);
         editor->setEditable(true);
         editor->addItems({"PS", "SO", "IP", "OS", "SP", "PI"});
+        notifyEditorOpened(editor, index);
         return editor;
     }
 
@@ -510,6 +691,17 @@ public:
         QWidget *editor, const QStyleOptionViewItem &option, const QModelIndex &) const final
     {
         editor->setGeometry(option.rect);
+    }
+};
+
+class StartupTableView final : public QTableView
+{
+public:
+    using QTableView::QTableView;
+
+    void discardInlineEditor(QWidget *editor)
+    {
+        closeEditor(editor, QAbstractItemDelegate::RevertModelCache);
     }
 };
 
@@ -664,7 +856,7 @@ StartupPage::StartupPage(WorkbenchController *controller, QWidget *parent)
     , m_summary(new QLabel(this))
     , m_validation(new Utils::InfoLabel(this))
     , m_restoreDefaults(new QPushButton(Tr::tr("Store ESI Defaults"), this))
-    , m_table(new QTableView(this))
+    , m_table(new StartupTableView(this))
     , m_moveUp(new QPushButton(Tr::tr("Move Up"), this))
     , m_moveDown(new QPushButton(Tr::tr("Move Down"), this))
     , m_new(new QPushButton(Tr::tr("New..."), this))
@@ -705,8 +897,17 @@ StartupPage::StartupPage(WorkbenchController *controller, QWidget *parent)
     m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     m_table->horizontalHeader()
         ->setSectionResizeMode(StartupTableModel::Comment, QHeaderView::Stretch);
-    m_table->setItemDelegateForColumn(StartupTableModel::Type, new DataTypeDelegate(m_table));
-    m_table->setItemDelegateForColumn(StartupTableModel::Transition, new TransitionDelegate(m_table));
+    const EditorOpenedHandler editorOpened = [this](QWidget *editor, const QModelIndex &index) {
+        if (const Data::StartupParameterConfiguration *parameter
+            = m_model->parameterAt(index.row())) {
+            trackInlineEditor(editor, *parameter, index.column());
+        }
+    };
+    m_table->setItemDelegate(new StartupItemDelegate(editorOpened, m_table));
+    m_table->setItemDelegateForColumn(
+        StartupTableModel::Type, new DataTypeDelegate(editorOpened, m_table));
+    m_table->setItemDelegateForColumn(
+        StartupTableModel::Transition, new TransitionDelegate(editorOpened, m_table));
 
     auto headerLayout = new QHBoxLayout;
     headerLayout->setContentsMargins(QMargins());
@@ -762,8 +963,22 @@ StartupPage::StartupPage(WorkbenchController *controller, QWidget *parent)
     connect(m_edit, &QPushButton::clicked, this, &StartupPage::editParameter);
 }
 
+StartupPage::~StartupPage()
+{
+    if (m_inlineEditor) {
+        m_inlineEditorMetadataDirty = false;
+        QPointer<QWidget> editor = m_inlineEditor;
+        static_cast<StartupTableView *>(m_table)->discardInlineEditor(editor);
+        delete editor.data();
+    }
+}
+
 void StartupPage::setContext(const Core::PropertyPageContext &context)
 {
+    const bool stableContext = m_context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave
+                               && context.nodeKind == m_context.nodeKind
+                               && context.projectId == m_context.projectId
+                               && context.nodeId == m_context.nodeId;
     ++m_contextGeneration;
     m_context = context;
     const std::optional<Data::ProjectSnapshot> project
@@ -888,7 +1103,8 @@ void StartupPage::setContext(const Core::PropertyPageContext &context)
     m_restoreDefaults->setText(
         m_showingEsiDefaults ? Tr::tr("Store ESI Defaults") : Tr::tr("Restore ESI Defaults"));
     updateTablePresentation();
-    rebuildModel();
+    rebuildModel(
+        canPreserveInlineEditor(stableContext), m_inlineEditorCommitInProgress);
 }
 
 std::optional<Data::StartupConfiguration> StartupPage::currentConfiguration(
@@ -913,7 +1129,10 @@ std::optional<Data::StartupConfiguration> StartupPage::currentConfiguration(
     return m_showingEsiDefaults ? m_configuration : slave->startup;
 }
 
-bool StartupPage::submitConfiguration(const Data::StartupConfiguration &configuration)
+bool StartupPage::submitConfiguration(
+    const Data::StartupConfiguration &configuration,
+    const Data::NodeId &inlineParameterId,
+    int inlineColumn)
 {
     const QList<Data::ConfigurationIssue> issues = Data::validateStartupConfiguration(configuration);
     const bool hasErrors = std::any_of(issues.cbegin(), issues.cend(), [](const auto &issue) {
@@ -927,6 +1146,24 @@ bool StartupPage::submitConfiguration(const Data::StartupConfiguration &configur
         showValidation(issues, Tr::tr("Change not applied: this ESI catalogue page is read-only."));
         return false;
     }
+    const bool inlineEditorCommit
+        = m_inlineEditor && m_inlineEditorAuthority
+          && m_inlineEditorAuthority->id == inlineParameterId
+          && m_inlineEditorColumn == inlineColumn;
+    std::optional<Data::StartupParameterConfiguration> submittedAuthority;
+    if (inlineEditorCommit) {
+        const auto submitted = std::find_if(
+            configuration.parameters.cbegin(),
+            configuration.parameters.cend(),
+            [&inlineParameterId](const auto &parameter) {
+                return parameter.id == inlineParameterId;
+            });
+        if (submitted != configuration.parameters.cend())
+            submittedAuthority = *submitted;
+    }
+    const QScopedValueRollback commitGuard(m_inlineEditorCommitInProgress, inlineEditorCommit);
+    const QScopedValueRollback submittedGuard(
+        m_inlineEditorSubmittedAuthority, submittedAuthority);
     const Utils::Result<> result
         = m_controller->projectService()
               ->setStartupConfiguration(m_context.projectId, m_context.nodeId, configuration);
@@ -938,21 +1175,80 @@ bool StartupPage::submitConfiguration(const Data::StartupConfiguration &configur
     m_configuration = configuration;
     m_showingEsiDefaults = false;
     m_restoreDefaults->setText(Tr::tr("Restore ESI Defaults"));
-    rebuildModel();
+    rebuildModel(
+        inlineEditorCommit && canPreserveInlineEditor(true), inlineEditorCommit);
     return true;
 }
 
-void StartupPage::rebuildModel()
+void StartupPage::trackInlineEditor(
+    QWidget *editor, const Data::StartupParameterConfiguration &parameter, int column)
 {
+    m_inlineEditor = editor;
+    m_inlineEditorAuthority = parameter;
+    m_inlineEditorColumn = column;
+    m_inlineEditorShowingEsiDefaults = m_showingEsiDefaults;
+    m_inlineEditorMetadataDirty = false;
+    const quint64 generation = ++m_inlineEditorGeneration;
+    connect(editor, &QObject::destroyed, this, [this, generation, parameterId = parameter.id, column] {
+        if (generation != m_inlineEditorGeneration)
+            return;
+        if (m_inlineEditorMetadataDirty)
+            m_model->notifyMetadataChanged(parameterId, column);
+        m_inlineEditor = nullptr;
+        m_inlineEditorAuthority.reset();
+        m_inlineEditorColumn = -1;
+        m_inlineEditorMetadataDirty = false;
+    });
+}
+
+bool StartupPage::canPreserveInlineEditor(bool stableContext) const
+{
+    if (!stableContext || !m_editable || !m_inlineEditor || !m_inlineEditorAuthority
+        || (!m_inlineEditorCommitInProgress
+            && m_inlineEditorShowingEsiDefaults != m_showingEsiDefaults)) {
+        return false;
+    }
+    const auto parameter = std::find_if(
+        m_configuration.parameters.cbegin(),
+        m_configuration.parameters.cend(),
+        [this](const auto &candidate) { return candidate.id == m_inlineEditorAuthority->id; });
+    if (parameter == m_configuration.parameters.cend() || isFixed(*parameter))
+        return false;
+    const Data::StartupParameterConfiguration &authority
+        = m_inlineEditorCommitInProgress && m_inlineEditorSubmittedAuthority
+              ? *m_inlineEditorSubmittedAuthority
+              : *m_inlineEditorAuthority;
+    return sameInlineEditorAuthority(authority, *parameter, m_inlineEditorColumn);
+}
+
+void StartupPage::rebuildModel(bool preserveInlineEditor, bool notifyPreservedColumn)
+{
+    if (!preserveInlineEditor && m_inlineEditor) {
+        m_inlineEditorMetadataDirty = false;
+        static_cast<StartupTableView *>(m_table)->discardInlineEditor(m_inlineEditor);
+    }
     m_rebuilding = true;
-    m_model->setConfiguration(m_configuration, m_editable);
-    int row = rowForId(m_model, m_selectedParameterId);
-    if (row < 0 && m_model->rowCount() > 0)
-        row = 0;
-    m_selectedParameterId = row >= 0
-                                ? m_model->index(row, 0).data(StableIdRole).value<Data::NodeId>()
-                                : Data::NodeId();
-    m_table->setCurrentIndex(m_model->index(row, 0));
+    bool preservedMetadataChanged = false;
+    const bool modelReset = m_model->setConfiguration(
+        m_configuration,
+        m_editable,
+        preserveInlineEditor ? m_inlineEditorAuthority->id : Data::NodeId(),
+        preserveInlineEditor ? m_inlineEditorColumn : -1,
+        notifyPreservedColumn,
+        &preservedMetadataChanged);
+    if (preserveInlineEditor)
+        m_inlineEditorMetadataDirty |= preservedMetadataChanged;
+    if (modelReset) {
+        int row = rowForId(m_model, m_selectedParameterId);
+        if (row < 0 && m_model->rowCount() > 0)
+            row = 0;
+        m_selectedParameterId = row >= 0
+                                    ? m_model->index(row, 0)
+                                          .data(StableIdRole)
+                                          .value<Data::NodeId>()
+                                    : Data::NodeId();
+        m_table->setCurrentIndex(m_model->index(row, 0));
+    }
     m_rebuilding = false;
     updateButtonState();
     showValidation(Data::validateStartupConfiguration(m_configuration));

@@ -73,6 +73,7 @@ private slots:
     void testStartupTableAccessibility();
     void testStartupRepositoryEmptyState();
     void testStartupDialogProjectRefresh();
+    void testStartupInlineDraftSurvivesNonConflictingRefresh();
     void testEditableStartupWorkflow();
     void testDcRepositoryModePreview();
     void testDcRepositoryModeEmptyState();

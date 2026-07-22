@@ -5365,3 +5365,94 @@ was not run. The unrelated `WITH_TESTS=ON` all-target build was not rerun
 because the known EasyBoard `extensionmanager_test.h` blocker remains outside
 this private Workbench issue. This is local/offline Mock view continuity, not
 an online CoE, controller, transport, or physical-device qualification.
+
+## Startup non-conflicting refresh inline-draft continuity
+
+`ISSUE-WB-STARTUP-NONCONFLICTING-REFRESH-DRAFT-001`, based on local commit
+`a835d3340e0a3d644928adb445a8c916fda17e23`, keeps one active configured-slave
+Startup table editor usable while fresh authority is rendered for the same
+Project, node ID, and configured-slave kind. Preservation additionally
+requires an editable Project, the same non-null request ID, a non-fixed
+request, an unchanged value for the edited field, and the same stored-versus-
+ESI-proposal source. The source transition caused by that editor's own first
+commit is handled inside the commit guard.
+
+`StartupTableModel` sorts the fresh request values and, only when both the old
+and new lists have unique non-null stable IDs, synchronizes them with row
+remove, insert, and move notifications. It publishes fresh sibling-cell data
+without sending `dataChanged()` for the active edit cell. Qt item views ignore
+the supplied roles when deciding whether to call `setEditorData()`, so even a
+metadata-only notification for that index could otherwise replace the draft.
+Accessibility, description, and tooltip changes for that cell are deferred
+until its editor is destroyed and are then located again by stable request ID.
+
+The editor widget itself remains owned by the table. Its text, modified state,
+focus, selection, cursor, and line-edit Undo history therefore survive Project
+rename, Repository re-index, sibling-field refresh, and structural insertion,
+removal, or movement before its request. A synchronous
+`ProjectService::projectChanged` during inline submission is covered by a
+page-private commit scope, so the submitted cell is refreshed without a model
+reset and the latest sibling authority is retained.
+
+A same-field external change, fixed/read-only transition, different Project or
+node, invalid context, removed request, or unrelated ESI/source transition
+closes the editor with `RevertModelCache` and performs the authoritative reset.
+There is no cross-node draft cache. Page destruction first removes the editor
+from the item view and then synchronously destroys any editor left behind by
+the delegate's default `deleteLater()` behavior. This prevents a deferred
+editor from outliving the page; teardown never commits its pending text.
+
+The implementation follows Qt's
+[model structural-change contract](https://doc.qt.io/qt-6/qabstractitemmodel.html),
+[delegate editor contract](https://doc.qt.io/qt-6/qabstractitemdelegate.html),
+[item-view reset behavior](https://doc.qt.io/qt-6/qabstractitemview.html#reset),
+and [line-edit state contract](https://doc.qt.io/qt-6/qlineedit.html).
+Beckhoff's
+[Startup page](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html)
+is used only as the ordered mailbox-request interaction comparison. It does
+not define this local Qt refresh-continuity behavior.
+
+The authoritative failure-first run changed only the new test while the old
+production `startuppage.cpp/.h` SHA-256 values were
+`2cf3ebe16293d99758f0501e89cc83def3b46861d15535f11301aa82b2e653d8` and
+`a743a90d1dc6e917b1fbc61e474b134b8cd9ca04574373e40a61213c3f76825c`.
+The old model emitted two resets instead of zero and the target exited 1.
+Final implementation/header SHA-256 values are
+`99902dbe8615dedc25380b8bbb7117ad54da9d092ec3e12bcf97afba57c5235f` and
+`01c85b28ca3b487f425c03380e4f1e6662574512a377c05344cd6157093e6eb6`.
+
+Final focused runs passed three events at normal and 2x scale. Startup-related
+runs passed seven events at both scales. Complete Workbench runs passed 75
+events at both scales. The isolated suites passed 126 events: Core 17,
+Project 12, Devices 8, Workbench 75, Scan 7, and Diagnostics 7. Every target
+exited 0. Complete Workbench retains the known pre-existing ProjectExplorer
+TaskHub soft assertion in the invalid-project path; it did not fail a test or
+target.
+
+The `WITH_TESTS=OFF` product Workbench target built successfully. Enabled PID
+23631 remained alive for 37 samples with Workbench mapped in all 37; explicitly
+disabled PID 25473 remained alive for 37 samples with
+`-noload EtherCATWorkbench` and Workbench absent in all 37. LLDB passed the
+intentional SIGTERM through and both targets recorded status 15. From
+2026-07-22 21:37:00 to 21:39:28 +0800 there was no residual matching process,
+new Embed Labs diagnostic report, matching crash-service event, visible main
+window, or system crash dialog.
+
+Every executable used a fresh HOME/settings path, cleared inherited DYLD
+variables, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`,
+`-no-crashcheck`, and the process-local Touch Bar bypass. Visible/manual UI
+inspection was not run because runtime acceptance had to remain invisible and
+must not pause the user's main program.
+
+Authoritative evidence is under
+`/private/tmp/embed-labs-wb-startup-draft-001.XNDmkO`; its manifest identifies
+the one valid red proof and superseded intermediate logs. The issue changes
+only private `startuppage.cpp/.h`, the existing Workbench test declaration and
+implementation, and these four documents. It adds no generic table or draft
+service, public API, source file, dependency, Project format, persistence
+field, Provider or ProjectService contract, Project command, model role,
+thread, timer, Core or ProjectExplorer hook, application bootstrap change,
+network, ADS, scan, online state, SDO execution, or hardware behavior. Modules
+and Channels remain a separate data/API chain and are not completed here.
+`EtherCATWorkbenchPlugin` remains In progress. No CMake or qbs description
+changed, so qbs was not run.

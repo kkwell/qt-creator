@@ -2054,3 +2054,43 @@ source file, dependency, source-list entry, CMake/qbs entry, Project format,
 thread, timer, network, ADS, scan, online state, SDO, or hardware behavior.
 `EtherCATWorkbenchPlugin` remains In progress. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-coe-view-state-001.4vssYQ`.
+
+## Workbench Startup inline-editor draft-baseline boundary
+
+`ISSUE-WB-STARTUP-NONCONFLICTING-REFRESH-DRAFT-001`, based on local commit
+`a835d3340e0a3d644928adb445a8c916fda17e23`, remains entirely inside the
+product-owned private `StartupPage`, its model, editor-tracking delegates, and
+table view. EtherCATProject and `ProjectService` remain the authority for
+validation, persistence, modified state, Undo, and Redo.
+
+The page owns only value anchors: Project ID, node ID, node kind, stable
+Startup request ID, edited column, and the last authoritative request value.
+It retains no Project or Repository object, service object, model index, table
+row, or request pointer across refreshes. A draft is eligible only in the same
+editable configured-slave context while its own fresh field authority and
+source state remain unchanged.
+
+The private model uses unique non-null request IDs for granular row remove,
+insert, move, and sibling-cell updates. It deliberately excludes the active
+cell from refresh notifications until the editor closes, because Qt item views
+may reload editor data regardless of the signal's role list. A page-private
+commit scope handles synchronous Project refresh during inline submission.
+Conflicts, read-only/source changes, removed requests, node changes, and
+Project close discard the draft and render current authority.
+
+Editor destruction remains table-owned during normal operation. The page
+destructor first closes the active editor with revert semantics and then
+synchronously releases any instance left queued by the delegate. No pending
+text is submitted during page teardown, and no deferred editor outlives its
+page. This is a private lifetime guard, not a general delegate policy.
+
+The boundary changes only existing private `startuppage.cpp/.h`, the Workbench
+test declaration/implementation, and four evidence documents. It adds no
+generic table or draft service, public API, source file, dependency,
+Provider/ProjectService contract, Project format, persistence field, Project
+command, model role, Core or ProjectExplorer hook, application-bootstrap
+change, thread, timer, network, ADS, scan, online state, SDO, or hardware
+behavior. No CMake or qbs entry changed. Modules and Channels remain a
+separate data/API chain. `EtherCATWorkbenchPlugin` remains In progress.
+Authoritative evidence is under
+`/private/tmp/embed-labs-wb-startup-draft-001.XNDmkO`.

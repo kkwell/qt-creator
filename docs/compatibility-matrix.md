@@ -5,7 +5,7 @@
 | Item | Supported or observed baseline | Evidence status |
 |---|---|---|
 | Product branch | `embed-labs` only | Verified |
-| Issue baseline commit | `2e0bc521205d130ea2d56fe6b88901185977d8c2` | Verified |
+| Issue baseline commit | `a835d3340e0a3d644928adb445a8c916fda17e23` | Verified |
 | Product version | 20.0.1 | Verified |
 | Recorded Qt Creator merge point | `11ba5cec09dce75db4bc948d98055e338ff59576` | Verified |
 | Qualified product Qt | Homebrew 6.11.0 | Clean Release build and GUI smoke verified |
@@ -2769,3 +2769,52 @@ selection contracts are at
 referenced only for terminology and interaction at
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html> and
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446522251.html>.
+
+## EtherCATWorkbench Startup non-conflicting refresh qualification
+
+`ISSUE-WB-STARTUP-NONCONFLICTING-REFRESH-DRAFT-001` is qualified from local
+baseline `a835d3340e0a3d644928adb445a8c916fda17e23`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | The authoritative red run used old production `startuppage.cpp/.h` SHA-256 `2cf3ebe16293d99758f0501e89cc83def3b46861d15535f11301aa82b2e653d8` / `a743a90d1dc6e917b1fbc61e474b134b8cd9ca04574373e40a61213c3f76825c` and baseline blobs `b5ad8f7cbd052279e76fa895d621854bb3ff1f86` / `ae44af514be94cf15fd1745231cba12b77527236`; a same-slave non-conflicting refresh emitted 2 model resets instead of 0, target status 1 |
+| Stable preservation gate | Same Project ID, node ID, configured-slave kind, editable Project, non-fixed stable request ID, unchanged edited-field authority, and compatible stored/ESI-proposal source are all required |
+| ESI proposal commit | A direct inline Comment commit stores the three ESI defaults, publishes the committed cell, closes its editor, and remains undoable back to the unstored proposal |
+| Editor state | Unicode plus literal `%1`, text, modified state, focus, selection, cursor, and real `QLineEdit` Undo availability survive eligible refreshes; native IME composition was not tested |
+| Repository rebuild | A real `rebuildIndex()` completed with two indexing transitions and one devices reset; the draft survived and model reset count remained zero |
+| Project and sibling refresh | Project rename and an external sibling Comment update rendered fresh authority without changing the active draft or its editor state |
+| Commit isolation | Return submitted the active value once, emitted a `dataChanged` range covering its cell, retained the latest sibling authority, and closed the editor |
+| Structural synchronization | Insertion and removal before the active request plus two actual request moves changed fresh row order with zero model resets; the editor remained bound to the same stable ID |
+| Conflict authority | An external change to the edited field caused exactly one reset, discarded the draft, and displayed/stored the external authority |
+| Alternate delegate | The editable Transition combo preserved `SO` across a sibling refresh; Escape rejected it and retained authoritative `PS` |
+| Context and lifecycle | Escape, node switch, re-entry, and Project close establish no cross-node draft. Deleting a secondary Details page with an active editor destroyed page, table, and editor without Project mutation or Undo/Redo change |
+| Model contract checker | `QAbstractItemModelTester` remained attached while remove, insert, move, update, reset, commit, and teardown paths were exercised |
+| Focused normal and 2x | One final normal and one final 2x run each passed 3 events, 0 failed, target status 0 |
+| Startup-related normal and 2x | One final normal and one final 2x run each passed 7 events, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | One final normal and one final 2x run each passed 75 events, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 75, Scan 7, Diagnostics 7; 126 passed, 0 failed in six isolated LLDB-supervised processes |
+| Known soft assertion | The existing invalid-project path emitted the pre-existing ProjectExplorer TaskHub category soft assertion; it did not fail a test or target |
+| Final source SHA-256 | Startup implementation `99902dbe8615dedc25380b8bbb7117ad54da9d092ec3e12bcf97afba57c5235f`; header `01c85b28ca3b487f425c03380e4f1e6662574512a377c05344cd6157093e6eb6`; tests `e24cfe520837600515ec10e5ef60920a05a3b6e110723e5fb61eed5f309ca277`; test header `6375ec50dffbb2f8f396d6192a19b6e4f4d1171d9286f8e64b4fc41e53f99ba8` |
+| Final git blobs | Startup implementation `800204196bc22db2bc7c65dcc1fb7355c1fad0d5`; header `a16b70c44354b519bff0ba30b1ca3efbabc8c8a0`; tests `e5412a895aefddd0d9434061a482406c19ec72c6`; test header `e9ad57e869e10193153b4bc0aa79a5e08df989da` |
+| Product build and inventory | The `WITH_TESTS=OFF` product Workbench target built successfully; the existing product bundle contains 16 plugin dylibs. Executable SHA-256 is `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product/test Workbench SHA-256 values are `364ff01532e9a89faba87981ce44fc549c93288fccf2e6e08339c0c30f7cf32e` / `0969db5fdfb705ff03d654c3d33219f5f9dda0e40fde368bf600509725eb19c5` |
+| Enabled startup | PID 23631 remained alive for 37 samples with Workbench mapped in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 25473 remained alive for 37 samples with `-noload EtherCATWorkbench`; Workbench was absent in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Crash-dialog audit | From 2026-07-22 21:37:00 to 21:39:28 +0800 there was no residual matching process, new Embed Labs DiagnosticReports file, matching ReportCrash/CrashReporter/diagnosticd event, visible main window, or system crash dialog |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM; offscreen main-program runtime acceptance proceeded without pause and did not open, pause, or terminate any visible user instance |
+| Visual/manual inspection | Not run by design because executable acceptance had to remain invisible and non-interrupting |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard `extensionmanager_test.h` blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Deliberate boundary | No generic table/draft service, cross-node cache, autosave, CAS/merge protocol, or Modules/Channels completion is claimed |
+| Public API, dependency, persistence, Provider, ProjectService, Project command, model role, or source-list changes | None |
+| Core, ProjectExplorer, app, network, ADS, scan, online state, SDO, or hardware changes | None; qualification used local ESI/offline Project data only |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-startup-draft-001.XNDmkO`. The evidence manifest
+identifies the authoritative failure-first log and superseded intermediate
+runs. Qt's model, delegate, view-reset, and editor contracts are at
+<https://doc.qt.io/qt-6/qabstractitemmodel.html>,
+<https://doc.qt.io/qt-6/qabstractitemdelegate.html>,
+<https://doc.qt.io/qt-6/qabstractitemview.html#reset>, and
+<https://doc.qt.io/qt-6/qlineedit.html>. Beckhoff's Startup page is referenced
+only for terminology and ordered-request interaction at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345265931.html>.

@@ -11878,6 +11878,466 @@ void EtherCATWorkbenchTests::testStartupDialogProjectRefresh()
     QVERIFY(projectService->project(file.projectId)->slaves.first().startup == deleteRefresh);
 }
 
+void EtherCATWorkbenchTests::testStartupInlineDraftSurvivesNonConflictingRefresh()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("startup-inline-draft.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(deviceEsi()));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.identity.productCode == 0x5678;
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory, *device, "startup-inline-draft.ecatproject", "Startup Inline Draft");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    details.resize(1100, 720);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QPointer<QWidget> page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::STARTUP_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    QTRY_COMPARE(details.tabWidget()->currentWidget(), page.data());
+    QPointer<QTableView> table = page->findChild<QTableView *>("EtherCATStartupTable");
+    QPointer<QPushButton> defaults
+        = page->findChild<QPushButton *>("EtherCATStartupRestoreDefaults");
+    QVERIFY(table);
+    QVERIFY(defaults);
+    QAbstractItemModelTester
+        modelTester(table->model(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+    const auto dataChangeCovers = [](const QSignalSpy &spy, const QModelIndex &index) {
+        return std::any_of(spy.cbegin(), spy.cend(), [&index](const auto &arguments) {
+            const QModelIndex topLeft = arguments.at(0).template value<QModelIndex>();
+            const QModelIndex bottomRight = arguments.at(1).template value<QModelIndex>();
+            return topLeft.parent() == index.parent() && topLeft.row() <= index.row()
+                   && bottomRight.row() >= index.row() && topLeft.column() <= index.column()
+                   && bottomRight.column() >= index.column();
+        });
+    };
+
+    const int commentColumn = columnWithHeader(table->model(), "Comment");
+    QVERIFY(commentColumn >= 0);
+    const QModelIndex proposalIndex = table->model()->index(0, commentColumn);
+    table->setCurrentIndex(proposalIndex);
+    table->edit(proposalIndex);
+    QPointer<QLineEdit> proposalEditor = table->findChild<QLineEdit *>();
+    QTRY_VERIFY(proposalEditor);
+    proposalEditor->selectAll();
+    QTest::keyClicks(proposalEditor, "Stored from inline proposal");
+    QSignalSpy proposalDataChanges(table->model(), &QAbstractItemModel::dataChanged);
+    QTest::keyClick(proposalEditor, Qt::Key_Return);
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 3);
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.first().comment,
+        QString("Stored from inline proposal"));
+    QVERIFY(dataChangeCovers(proposalDataChanges, proposalIndex));
+    QCOMPARE(proposalIndex.data().toString(), QString("Stored from inline proposal"));
+    QTRY_VERIFY(proposalEditor.isNull());
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_VERIFY(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.isEmpty());
+
+    defaults->click();
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 3);
+    const Data::StartupConfiguration baseline
+        = projectService->project(file.projectId)->slaves.first().startup;
+    const QModelIndex commentIndex = table->model()->index(0, commentColumn);
+    QVERIFY(table->model()->flags(commentIndex) & Qt::ItemIsEditable);
+    table->setCurrentIndex(commentIndex);
+    table->edit(commentIndex);
+    QPointer<QLineEdit> editor = table->findChild<QLineEdit *>();
+    QTRY_VERIFY(editor);
+    editor->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), editor.data());
+    editor->selectAll();
+    QTest::keyClicks(editor, "Pending %1 draft / ");
+    editor->insert(QString::fromUtf8("\u542f\u52a8\u8349\u7a3f"));
+    const QString draft = editor->text();
+    QVERIFY(draft.contains("%1"));
+    QVERIFY(editor->isModified());
+    QVERIFY(editor->isUndoAvailable());
+    editor->setSelection(8, 8);
+    const int selectionStart = editor->selectionStart();
+    const int selectionLength = editor->selectedText().size();
+    const int cursorPosition = editor->cursorPosition();
+
+    QSignalSpy modelResets(table->model(), &QAbstractItemModel::modelReset);
+    QSignalSpy indexingChanged(repository, &Core::DeviceRepositoryProvider::indexingChanged);
+    QSignalSpy devicesReset(repository, &Core::DeviceRepositoryProvider::devicesReset);
+    const Data::DeviceImportResult rebuildResult = waitForJob(repository->rebuildIndex());
+    QCOMPARE(rebuildResult.failedFiles, 0);
+    QCOMPARE(indexingChanged.count(), 2);
+    QCOMPARE(devicesReset.count(), 1);
+    QCOMPARE(modelResets.count(), 0);
+    QVERIFY(editor);
+    QCOMPARE(editor->text(), draft);
+    QVERIFY(editor->isModified());
+    QCOMPARE(QApplication::focusWidget(), editor.data());
+    QCOMPARE(editor->selectionStart(), selectionStart);
+    QCOMPARE(editor->selectedText().size(), selectionLength);
+    QCOMPARE(editor->cursorPosition(), cursorPosition);
+    QVERIFY(editor->isUndoAvailable());
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().startup, baseline);
+
+    const QString renamedProject
+        = QString::fromUtf8("Startup Inline Draft / \u540c\u9879\u76ee\u5237\u65b0");
+    QVERIFY_RESULT(projectService->renameProject(file.projectId, renamedProject));
+    QTRY_COMPARE(projectService->project(file.projectId)->name, renamedProject);
+
+    Data::StartupConfiguration siblingRefresh = baseline;
+    siblingRefresh.parameters[1].comment = "Sibling authority refresh";
+    QVERIFY_RESULT(
+        projectService->setStartupConfiguration(file.projectId, file.slaveId, siblingRefresh));
+    QTRY_COMPARE(
+        table->model()->index(1, commentColumn).data().toString(),
+        QString("Sibling authority refresh"));
+    QCOMPARE(modelResets.count(), 0);
+    QVERIFY(editor);
+    QCOMPARE(editor->text(), draft);
+    QVERIFY(editor->isModified());
+    QCOMPARE(QApplication::focusWidget(), editor.data());
+    QCOMPARE(editor->selectionStart(), selectionStart);
+    QCOMPARE(editor->selectedText().size(), selectionLength);
+    QCOMPARE(editor->cursorPosition(), cursorPosition);
+    QVERIFY(editor->isUndoAvailable());
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().startup, siblingRefresh);
+
+    QSignalSpy inlineCommitDataChanges(table->model(), &QAbstractItemModel::dataChanged);
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.first().comment,
+        draft.trimmed());
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.at(1).comment,
+        QString("Sibling authority refresh"));
+    QVERIFY(dataChangeCovers(inlineCommitDataChanges, commentIndex));
+    QCOMPARE(commentIndex.data().toString(), draft.trimmed());
+    QTRY_VERIFY(editor.isNull());
+
+    constexpr int startupStableIdRole = Qt::UserRole + 1;
+    const Data::NodeId editedParameterId
+        = table->model()->index(0, 0).data(startupStableIdRole).value<Data::NodeId>();
+    const Data::NodeId siblingParameterId
+        = table->model()->index(1, 0).data(startupStableIdRole).value<Data::NodeId>();
+    const auto rowForParameter = [&table](const Data::NodeId &parameterId) {
+        if (!table)
+            return -1;
+        for (int row = 0; row < table->model()->rowCount(); ++row) {
+            if (table->model()->index(row, 0).data(startupStableIdRole).value<Data::NodeId>()
+                == parameterId) {
+                return row;
+            }
+        }
+        return -1;
+    };
+
+    QModelIndex structuralIndex = table->model()->index(
+        rowForParameter(editedParameterId), commentColumn);
+    table->setCurrentIndex(structuralIndex);
+    table->edit(structuralIndex);
+    QPointer<QLineEdit> structuralEditor = table->findChild<QLineEdit *>();
+    QTRY_VERIFY(structuralEditor);
+    structuralEditor->setFocus(Qt::OtherFocusReason);
+    structuralEditor->selectAll();
+    QTest::keyClicks(structuralEditor, "Structural %2 draft / ");
+    structuralEditor->insert(QString::fromUtf8("\u884c\u53d8\u5316"));
+    const QString structuralDraft = structuralEditor->text();
+    QVERIFY(structuralEditor->isModified());
+    QVERIFY(structuralEditor->isUndoAvailable());
+
+    Data::StartupConfiguration insertedRefresh
+        = projectService->project(file.projectId)->slaves.first().startup;
+    for (Data::StartupParameterConfiguration &parameter : insertedRefresh.parameters)
+        ++parameter.order;
+    const Data::NodeId insertedParameterId = Data::NodeId::create();
+    insertedRefresh.parameters.append(
+        {insertedParameterId,
+         true,
+         0,
+         "PS",
+         0x6073,
+         0,
+         Data::EtherCATDataType::UnsignedInteger8,
+         "USINT",
+         QByteArray::fromHex("01"),
+         "Inserted sibling"});
+    QSignalSpy structuralResets(table->model(), &QAbstractItemModel::modelReset);
+    QVERIFY_RESULT(
+        projectService->setStartupConfiguration(file.projectId, file.slaveId, insertedRefresh));
+    QTRY_COMPARE(table->model()->rowCount(), 4);
+    QTRY_COMPARE(rowForParameter(editedParameterId), 1);
+    QCOMPARE(rowForParameter(insertedParameterId), 0);
+    QCOMPARE(structuralResets.count(), 0);
+    QVERIFY(structuralEditor);
+    QCOMPARE(structuralEditor->text(), structuralDraft);
+    QVERIFY(structuralEditor->isModified());
+    QVERIFY(structuralEditor->isUndoAvailable());
+
+    Data::StartupConfiguration removedRefresh = insertedRefresh;
+    const auto inserted = std::find_if(
+        removedRefresh.parameters.cbegin(),
+        removedRefresh.parameters.cend(),
+        [&insertedParameterId](const auto &parameter) {
+            return parameter.id == insertedParameterId;
+        });
+    QVERIFY(inserted != removedRefresh.parameters.cend());
+    removedRefresh.parameters.removeAt(int(inserted - removedRefresh.parameters.cbegin()));
+    for (Data::StartupParameterConfiguration &parameter : removedRefresh.parameters)
+        --parameter.order;
+    QVERIFY_RESULT(
+        projectService->setStartupConfiguration(file.projectId, file.slaveId, removedRefresh));
+    QTRY_COMPARE(table->model()->rowCount(), 3);
+    QTRY_COMPARE(rowForParameter(editedParameterId), 0);
+    QCOMPARE(structuralResets.count(), 0);
+    QVERIFY(structuralEditor);
+    QCOMPARE(structuralEditor->text(), structuralDraft);
+    QVERIFY(structuralEditor->isModified());
+    QVERIFY(structuralEditor->isUndoAvailable());
+
+    Data::StartupConfiguration movedRefresh = removedRefresh;
+    auto movedEditedParameter = std::find_if(
+        movedRefresh.parameters.begin(),
+        movedRefresh.parameters.end(),
+        [&editedParameterId](const auto &parameter) {
+            return parameter.id == editedParameterId;
+        });
+    auto movedSiblingParameter = std::find_if(
+        movedRefresh.parameters.begin(),
+        movedRefresh.parameters.end(),
+        [&siblingParameterId](const auto &parameter) {
+            return parameter.id == siblingParameterId;
+        });
+    QVERIFY(movedEditedParameter != movedRefresh.parameters.end());
+    QVERIFY(movedSiblingParameter != movedRefresh.parameters.end());
+    std::swap(movedEditedParameter->order, movedSiblingParameter->order);
+    QSignalSpy structuralMoves(table->model(), &QAbstractItemModel::rowsMoved);
+    QVERIFY_RESULT(
+        projectService->setStartupConfiguration(file.projectId, file.slaveId, movedRefresh));
+    QTRY_COMPARE(rowForParameter(editedParameterId), 1);
+    QCOMPARE(structuralMoves.count(), 1);
+    QCOMPARE(structuralResets.count(), 0);
+    QVERIFY(structuralEditor);
+    QCOMPARE(structuralEditor->text(), structuralDraft);
+    QVERIFY(structuralEditor->isModified());
+    QVERIFY(structuralEditor->isUndoAvailable());
+
+    Data::StartupConfiguration restoredOrderRefresh = movedRefresh;
+    auto restoredEditedParameter = std::find_if(
+        restoredOrderRefresh.parameters.begin(),
+        restoredOrderRefresh.parameters.end(),
+        [&editedParameterId](const auto &parameter) {
+            return parameter.id == editedParameterId;
+        });
+    auto restoredSiblingParameter = std::find_if(
+        restoredOrderRefresh.parameters.begin(),
+        restoredOrderRefresh.parameters.end(),
+        [&siblingParameterId](const auto &parameter) {
+            return parameter.id == siblingParameterId;
+        });
+    QVERIFY(restoredEditedParameter != restoredOrderRefresh.parameters.end());
+    QVERIFY(restoredSiblingParameter != restoredOrderRefresh.parameters.end());
+    std::swap(restoredEditedParameter->order, restoredSiblingParameter->order);
+    QVERIFY_RESULT(
+        projectService->setStartupConfiguration(
+            file.projectId, file.slaveId, restoredOrderRefresh));
+    QTRY_COMPARE(rowForParameter(editedParameterId), 0);
+    QCOMPARE(structuralMoves.count(), 2);
+    QCOMPARE(structuralResets.count(), 0);
+    QVERIFY(structuralEditor);
+    QCOMPARE(structuralEditor->text(), structuralDraft);
+    QVERIFY(structuralEditor->isModified());
+    QVERIFY(structuralEditor->isUndoAvailable());
+
+    QSignalSpy structuralCommitChanges(projectService, &Core::ProjectService::projectChanged);
+    QTest::keyClick(structuralEditor, Qt::Key_Return);
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.first().comment,
+        structuralDraft.trimmed());
+    QCOMPARE(structuralCommitChanges.count(), 1);
+    QTRY_VERIFY(structuralEditor.isNull());
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.first().comment,
+        draft.trimmed());
+    QVERIFY_RESULT(projectService->redoProject(file.projectId));
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.first().comment,
+        structuralDraft.trimmed());
+
+    QModelIndex conflictIndex = table->model()->index(
+        rowForParameter(editedParameterId), commentColumn);
+    table->setCurrentIndex(conflictIndex);
+    table->edit(conflictIndex);
+    QPointer<QLineEdit> conflictEditor = table->findChild<QLineEdit *>();
+    QTRY_VERIFY(conflictEditor);
+    conflictEditor->setFocus(Qt::OtherFocusReason);
+    conflictEditor->selectAll();
+    QTest::keyClicks(conflictEditor, "Conflicting local draft");
+    QVERIFY(conflictEditor->isModified());
+    Data::StartupConfiguration conflictingRefresh
+        = projectService->project(file.projectId)->slaves.first().startup;
+    auto conflictingParameter = std::find_if(
+        conflictingRefresh.parameters.begin(),
+        conflictingRefresh.parameters.end(),
+        [&editedParameterId](const auto &parameter) {
+            return parameter.id == editedParameterId;
+        });
+    QVERIFY(conflictingParameter != conflictingRefresh.parameters.end());
+    conflictingParameter->comment = "Authoritative conflict";
+    QSignalSpy conflictResets(table->model(), &QAbstractItemModel::modelReset);
+    QVERIFY_RESULT(projectService->setStartupConfiguration(
+        file.projectId, file.slaveId, conflictingRefresh));
+    QTRY_COMPARE(conflictResets.count(), 1);
+    QTRY_VERIFY(conflictEditor.isNull());
+    QTRY_COMPARE(
+        table->model()->index(rowForParameter(editedParameterId), commentColumn).data().toString(),
+        QString("Authoritative conflict"));
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.first().comment,
+        QString("Authoritative conflict"));
+
+    const int transitionColumn = columnWithHeader(table->model(), "Transition");
+    QVERIFY(transitionColumn >= 0);
+    const QModelIndex transitionIndex = table->model()->index(
+        rowForParameter(editedParameterId), transitionColumn);
+    table->setCurrentIndex(transitionIndex);
+    table->edit(transitionIndex);
+    QPointer<QComboBox> transitionEditor = table->findChild<QComboBox *>();
+    QTRY_VERIFY(transitionEditor);
+    QPointer<QLineEdit> transitionLineEdit = transitionEditor->lineEdit();
+    QVERIFY(transitionLineEdit);
+    transitionLineEdit->setFocus(Qt::OtherFocusReason);
+    transitionLineEdit->selectAll();
+    QTest::keyClicks(transitionLineEdit, "SO");
+    Data::StartupConfiguration transitionSiblingRefresh = conflictingRefresh;
+    transitionSiblingRefresh.parameters[1].comment = "Second sibling refresh";
+    QSignalSpy transitionResets(table->model(), &QAbstractItemModel::modelReset);
+    QVERIFY_RESULT(projectService->setStartupConfiguration(
+        file.projectId, file.slaveId, transitionSiblingRefresh));
+    QTRY_COMPARE(
+        table->model()->index(1, commentColumn).data().toString(),
+        QString("Second sibling refresh"));
+    QCOMPARE(transitionResets.count(), 0);
+    QVERIFY(transitionEditor);
+    QVERIFY(transitionLineEdit);
+    QCOMPARE(transitionLineEdit->text(), QString("SO"));
+    QVERIFY(transitionEditor->hasFocus() || transitionLineEdit->hasFocus());
+    QTest::keyClick(transitionEditor, Qt::Key_Escape);
+    QTRY_VERIFY(transitionEditor.isNull());
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.first().transition,
+        QString("PS"));
+
+    QModelIndex switchIndex = table->model()->index(
+        rowForParameter(editedParameterId), commentColumn);
+    table->setCurrentIndex(switchIndex);
+    table->edit(switchIndex);
+    QPointer<QLineEdit> switchEditor = table->findChild<QLineEdit *>();
+    QTRY_VERIFY(switchEditor);
+    switchEditor->selectAll();
+    QTest::keyClicks(switchEditor, "Switch-only draft");
+    QTest::keyClick(switchEditor, Qt::Key_Escape);
+    QTRY_VERIFY(switchEditor.isNull());
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.first().comment,
+        QString("Authoritative conflict"));
+    controller.selectionService()->setCurrentNodeId(file.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.projectId);
+    QTRY_VERIFY(page.isNull());
+    QTRY_VERIFY(table.isNull());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.slaveId);
+    page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::STARTUP_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    table = page->findChild<QTableView *>("EtherCATStartupTable");
+    QVERIFY(table);
+    QTRY_COMPARE(
+        table->model()->index(0, commentColumn).data().toString(),
+        QString("Authoritative conflict"));
+
+    const Data::StartupConfiguration beforePageTeardown
+        = projectService->project(file.projectId)->slaves.first().startup;
+    const bool canUndoBeforePageTeardown = projectService->canUndoProject(file.projectId);
+    const bool canRedoBeforePageTeardown = projectService->canRedoProject(file.projectId);
+    auto teardownDetails = new DetailsView(&controller);
+    teardownDetails->resize(1100, 720);
+    teardownDetails->show();
+    QTRY_VERIFY(teardownDetails->isVisible());
+    QPointer<QWidget> teardownPage = teardownDetails->findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::STARTUP_PAGE_ID).toString());
+    QVERIFY(teardownPage);
+    teardownDetails->tabWidget()->setCurrentWidget(teardownPage);
+    QPointer<QTableView> teardownTable
+        = teardownPage->findChild<QTableView *>("EtherCATStartupTable");
+    QVERIFY(teardownTable);
+    const QModelIndex teardownIndex = teardownTable->model()->index(0, commentColumn);
+    teardownTable->setCurrentIndex(teardownIndex);
+    teardownTable->edit(teardownIndex);
+    QPointer<QLineEdit> teardownEditor = teardownTable->findChild<QLineEdit *>();
+    QTRY_VERIFY(teardownEditor);
+    teardownEditor->selectAll();
+    QTest::keyClicks(teardownEditor, "Page teardown draft");
+    QVERIFY(teardownEditor->isModified());
+    delete teardownDetails;
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(teardownPage.isNull());
+    QVERIFY(teardownTable.isNull());
+    QTRY_VERIFY(teardownEditor.isNull());
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().startup, beforePageTeardown);
+    QCOMPARE(projectService->canUndoProject(file.projectId), canUndoBeforePageTeardown);
+    QCOMPARE(projectService->canRedoProject(file.projectId), canRedoBeforePageTeardown);
+
+    QModelIndex closeIndex = table->model()->index(0, commentColumn);
+    table->setCurrentIndex(closeIndex);
+    table->edit(closeIndex);
+    QPointer<QLineEdit> closeEditor = table->findChild<QLineEdit *>();
+    QTRY_VERIFY(closeEditor);
+    closeEditor->selectAll();
+    QTest::keyClicks(closeEditor, "Close-only draft");
+    QTest::keyClick(closeEditor, Qt::Key_Escape);
+    QTRY_VERIFY(closeEditor.isNull());
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QTRY_VERIFY(page.isNull());
+    QTRY_VERIFY(table.isNull());
+}
+
 void EtherCATWorkbenchTests::testEditableStartupWorkflow()
 {
     WorkbenchController controller;
