@@ -12,6 +12,9 @@
 #include <utils/stylehelper.h>
 
 #include <QAbstractItemModel>
+#if QT_CONFIG(accessibility)
+#include <QAccessible>
+#endif
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
@@ -207,7 +210,21 @@ static QString valueText(const CoeObjectItem &item, const QByteArray &value)
     return value.isEmpty() ? QString() : "0x" + QString::fromLatin1(value.toHex().toUpper());
 }
 
-static std::optional<QByteArray> parseRawValue(const QString &source)
+enum class RawValueParseError {
+    None,
+    Empty,
+    IncompleteByte,
+    InvalidHex,
+};
+
+struct RawValueParseResult
+{
+    QByteArray value;
+    RawValueParseError error = RawValueParseError::None;
+    int hexadecimalDigitCount = 0;
+};
+
+static RawValueParseResult parseRawValue(const QString &source)
 {
     QString compact;
     compact.reserve(source.size());
@@ -218,15 +235,35 @@ static std::optional<QByteArray> parseRawValue(const QString &source)
     }
     if (compact.startsWith("0x", Qt::CaseInsensitive))
         compact.remove(0, 2);
-    if (compact.isEmpty() || compact.size() % 2 != 0)
-        return std::nullopt;
+    RawValueParseResult result;
+    result.hexadecimalDigitCount = compact.size();
+    if (compact.isEmpty()) {
+        result.error = RawValueParseError::Empty;
+        return result;
+    }
     static const QString hexadecimal = "0123456789abcdefABCDEF";
     if (std::any_of(compact.cbegin(), compact.cend(), [](QChar character) {
             return !hexadecimal.contains(character);
         })) {
-        return std::nullopt;
+        result.error = RawValueParseError::InvalidHex;
+        return result;
     }
-    return QByteArray::fromHex(compact.toLatin1());
+    if (compact.size() % 2 != 0) {
+        result.error = RawValueParseError::IncompleteByte;
+        return result;
+    }
+    result.value = QByteArray::fromHex(compact.toLatin1());
+    return result;
+}
+
+static QString digitCountText(int count)
+{
+    return count == 1 ? Tr::tr("1 digit") : Tr::tr("%1 digits").arg(count);
+}
+
+static QString byteCountText(int count)
+{
+    return count == 1 ? Tr::tr("1 byte") : Tr::tr("%1 bytes").arg(count);
 }
 
 static QByteArray unsigned32Value(quint32 value)
@@ -246,6 +283,24 @@ class CoeObjectModel final : public QAbstractItemModel
 {
 public:
     enum Column { Index, Name, Flags, Value, Unit, ColumnCount };
+
+    enum class MockValueEditRejection {
+        None,
+        NotEditable,
+        Empty,
+        IncompleteByte,
+        InvalidHex,
+        WidthMismatch,
+    };
+
+    struct MockValueEditValidation
+    {
+        QByteArray value;
+        MockValueEditRejection rejection = MockValueEditRejection::None;
+        int hexadecimalDigitCount = 0;
+        int expectedSize = 0;
+        int actualSize = 0;
+    };
 
     struct MockValueOverride
     {
@@ -393,18 +448,15 @@ public:
 
     bool setData(const QModelIndex &modelIndex, const QVariant &value, int role) final
     {
+        if (role != Qt::EditRole)
+            return false;
+        const MockValueEditValidation validation
+            = validateMockValueEdit(modelIndex, value.toString());
+        if (validation.rejection != MockValueEditRejection::None)
+            return false;
         CoeObjectItem *object = item(modelIndex);
-        if (role != Qt::EditRole || modelIndex.column() != Value || !object
-            || !m_mockValueEditingEnabled || m_showOffline || !object->writable
-            || object->synthetic) {
-            return false;
-        }
-        const std::optional<QByteArray> parsed = parseRawValue(value.toString());
-        const int expectedSize = object->mockValue.isEmpty() ? object->offlineValue.size()
-                                                             : object->mockValue.size();
-        if (!parsed || parsed->isEmpty() || (expectedSize > 0 && parsed->size() != expectedSize))
-            return false;
-        object->mockValue = *parsed;
+        QTC_ASSERT(object, return false);
+        object->mockValue = validation.value;
         object->mockValueEdited = true;
         emit dataChanged(
             modelIndex,
@@ -416,6 +468,40 @@ public:
              Qt::ToolTipRole,
              RawValueRole});
         return true;
+    }
+
+    MockValueEditValidation validateMockValueEdit(
+        const QModelIndex &modelIndex, const QString &text) const
+    {
+        MockValueEditValidation result;
+        const CoeObjectItem *object = item(modelIndex);
+        if (modelIndex.column() != Value || !object || !m_mockValueEditingEnabled || m_showOffline
+            || !object->writable || object->synthetic) {
+            result.rejection = MockValueEditRejection::NotEditable;
+            return result;
+        }
+        const RawValueParseResult parsed = parseRawValue(text);
+        result.value = parsed.value;
+        result.hexadecimalDigitCount = parsed.hexadecimalDigitCount;
+        switch (parsed.error) {
+        case RawValueParseError::Empty:
+            result.rejection = MockValueEditRejection::Empty;
+            return result;
+        case RawValueParseError::IncompleteByte:
+            result.rejection = MockValueEditRejection::IncompleteByte;
+            return result;
+        case RawValueParseError::InvalidHex:
+            result.rejection = MockValueEditRejection::InvalidHex;
+            return result;
+        case RawValueParseError::None:
+            break;
+        }
+        result.expectedSize = object->mockValue.isEmpty() ? object->offlineValue.size()
+                                                          : object->mockValue.size();
+        result.actualSize = parsed.value.size();
+        if (result.expectedSize > 0 && result.actualSize != result.expectedSize)
+            result.rejection = MockValueEditRejection::WidthMismatch;
+        return result;
     }
 
     MockValueOverrides mockValueOverrides() const
@@ -848,13 +934,19 @@ private:
 };
 
 using CoeEditorOpenedHandler = std::function<void(QWidget *, const QModelIndex &)>;
+using CoeEditorSubmittedHandler
+    = std::function<void(const QModelIndex &, const QString &, bool accepted)>;
 
 class CoeItemDelegate final : public QStyledItemDelegate
 {
 public:
-    CoeItemDelegate(CoeEditorOpenedHandler editorOpened, QObject *parent)
+    CoeItemDelegate(
+        CoeEditorOpenedHandler editorOpened,
+        CoeEditorSubmittedHandler editorSubmitted,
+        QObject *parent)
         : QStyledItemDelegate(parent)
         , m_editorOpened(std::move(editorOpened))
+        , m_editorSubmitted(std::move(editorSubmitted))
     {}
 
     QWidget *createEditor(
@@ -866,8 +958,23 @@ public:
         return editor;
     }
 
+    void setModelData(
+        QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const final
+    {
+        auto lineEdit = qobject_cast<QLineEdit *>(editor);
+        if (!lineEdit) {
+            QStyledItemDelegate::setModelData(editor, model, index);
+            return;
+        }
+        const QString text = lineEdit->text();
+        const bool accepted = model && model->setData(index, text, Qt::EditRole);
+        if (m_editorSubmitted)
+            m_editorSubmitted(index, text, accepted);
+    }
+
 private:
     CoeEditorOpenedHandler m_editorOpened;
+    CoeEditorSubmittedHandler m_editorSubmitted;
 };
 
 class CoeTreeView final : public QTreeView
@@ -1085,6 +1192,7 @@ CoeOnlinePage::CoeOnlinePage(WorkbenchController *controller, QWidget *parent)
     m_feedback->setObjectName("EtherCATCoeFeedback");
     m_feedback->setElideMode(Qt::ElideNone);
     m_feedback->setWordWrap(true);
+    m_feedback->setAccessibleName(Tr::tr("CoE operation feedback"));
     m_feedback->hide();
     m_updateList->setObjectName("EtherCATCoeUpdateList");
     m_advanced->setObjectName("EtherCATCoeAdvanced");
@@ -1125,6 +1233,9 @@ CoeOnlinePage::CoeOnlinePage(WorkbenchController *controller, QWidget *parent)
     m_dictionary->setItemDelegate(new CoeItemDelegate(
         [this](QWidget *editor, const QModelIndex &index) {
             trackInlineEditor(editor, index);
+        },
+        [this](const QModelIndex &index, const QString &text, bool accepted) {
+            handleInlineEditorSubmitted(index, text, accepted);
         },
         m_dictionary));
     m_filterModel->setSourceModel(m_model);
@@ -1236,6 +1347,7 @@ CoeOnlinePage::CoeOnlinePage(WorkbenchController *controller, QWidget *parent)
     connect(m_showOffline, &QCheckBox::toggled, this, [this](bool checked) {
         QScopedValueRollback resultChange(
             m_filterResultChangeDepth, m_filterResultChangeDepth + 1);
+        clearInlineEditFeedback();
         discardInlineEditor();
         m_model->setShowOffline(checked);
         m_dataSource->setText(
@@ -1248,7 +1360,11 @@ CoeOnlinePage::CoeOnlinePage(WorkbenchController *controller, QWidget *parent)
         m_dictionary->selectionModel(),
         &QItemSelectionModel::currentRowChanged,
         this,
-        [this](const QModelIndex &current) {
+        [this](const QModelIndex &current, const QModelIndex &previous) {
+            if (current.siblingAtColumn(0).data(AddressRole)
+                != previous.siblingAtColumn(0).data(AddressRole)) {
+                clearInlineEditFeedback();
+            }
             if (current.isValid() && m_filterResultChangeDepth == 0)
                 m_selectedObjectAddress = current.siblingAtColumn(0).data(AddressRole).toUInt();
             updateButtonState();
@@ -1279,6 +1395,87 @@ void CoeOnlinePage::trackInlineEditor(QWidget *editor, const QModelIndex &index)
     });
 }
 
+void CoeOnlinePage::handleInlineEditorSubmitted(
+    const QModelIndex &proxyIndex, const QString &text, bool accepted)
+{
+    if (accepted) {
+        clearInlineEditFeedback();
+        return;
+    }
+    const QVariant objectAddressData = proxyIndex.data(AddressRole);
+    const quint32 objectAddress = objectAddressData.toUInt();
+    const QModelIndex sourceIndex = m_filterModel->mapToSource(proxyIndex);
+    const CoeObjectModel::MockValueEditValidation validation
+        = m_model->validateMockValueEdit(sourceIndex, text);
+    QString reason;
+    switch (validation.rejection) {
+    case CoeObjectModel::MockValueEditRejection::Empty:
+        reason = Tr::tr("Enter at least one complete hexadecimal byte.");
+        break;
+    case CoeObjectModel::MockValueEditRejection::IncompleteByte:
+        reason = Tr::tr("Hexadecimal bytes require an even number of digits; the supplied value "
+                        "contains %1.")
+                     .arg(digitCountText(validation.hexadecimalDigitCount));
+        break;
+    case CoeObjectModel::MockValueEditRejection::InvalidHex:
+        reason = Tr::tr("Use only hexadecimal digits 0-9 or A-F. Spaces, colons, underscores, "
+                        "and an optional 0x prefix are allowed.");
+        break;
+    case CoeObjectModel::MockValueEditRejection::WidthMismatch:
+        reason = Tr::tr("This object expects %1; the supplied value contains %2.")
+                     .arg(
+                         byteCountText(validation.expectedSize),
+                         byteCountText(validation.actualSize));
+        break;
+    case CoeObjectModel::MockValueEditRejection::NotEditable:
+        reason = Tr::tr("This value is no longer editable in the current Mock view.");
+        break;
+    case CoeObjectModel::MockValueEditRejection::None:
+        reason = Tr::tr("The value could not be accepted in the current Mock view.");
+        break;
+    }
+    const QString object = objectAddressData.isValid()
+                               ? indexText(quint16(objectAddress >> 8), quint8(objectAddress))
+                               : Tr::tr("the selected object");
+    showFeedback(
+        Tr::tr("Local Mock value for %1 was not changed. %2").arg(object, reason), true, true);
+}
+
+void CoeOnlinePage::showFeedback(
+    const QString &message, bool error, bool inlineEditFeedback)
+{
+    m_inlineEditFeedbackActive = inlineEditFeedback;
+    m_feedback->setType(error ? Utils::InfoLabel::Error : Utils::InfoLabel::Ok);
+    m_feedback->setText(message);
+    m_feedback->setAccessibleDescription(message);
+    m_feedback->setAdditionalToolTip(message);
+    m_feedback->setToolTip(message);
+    m_feedback->show();
+#if QT_CONFIG(accessibility)
+    if (inlineEditFeedback) {
+        QAccessibleAnnouncementEvent announcement(m_feedback, message);
+        announcement.setPoliteness(QAccessible::AnnouncementPoliteness::Polite);
+        QAccessible::updateAccessibility(&announcement);
+    }
+#endif
+}
+
+void CoeOnlinePage::clearFeedback()
+{
+    m_inlineEditFeedbackActive = false;
+    m_feedback->clear();
+    m_feedback->setAccessibleDescription({});
+    m_feedback->setAdditionalToolTip({});
+    m_feedback->setToolTip({});
+    m_feedback->hide();
+}
+
+void CoeOnlinePage::clearInlineEditFeedback()
+{
+    if (m_inlineEditFeedbackActive)
+        clearFeedback();
+}
+
 void CoeOnlinePage::discardInlineEditor()
 {
     if (m_inlineEditor)
@@ -1306,8 +1503,7 @@ void CoeOnlinePage::setContext(const Core::PropertyPageContext &context)
             m_showOffline->setChecked(false);
         }
     }
-    m_feedback->clear();
-    m_feedback->hide();
+    clearFeedback();
     {
         QScopedValueRollback resultChange(
             m_filterResultChangeDepth, m_filterResultChangeDepth + 1);
@@ -1383,6 +1579,7 @@ void CoeOnlinePage::rebuildObjects(bool preserveMockValues)
 
 void CoeOnlinePage::updateList()
 {
+    clearInlineEditFeedback();
     discardInlineEditor();
     if (!m_showOffline->isChecked()) {
         ++m_mockGeneration;
@@ -1615,18 +1812,19 @@ void CoeOnlinePage::addSelectedToStartup()
             const Utils::Result<> updateResult
                 = m_controller->projectService()->setStartupConfiguration(
                     projectId, slaveId, configuration);
-            m_feedback->show();
             if (!updateResult) {
-                m_feedback->setType(Utils::InfoLabel::Error);
-                m_feedback->setText(
-                    Tr::tr("Startup request was not added: %1").arg(updateResult.error()));
+                showFeedback(
+                    Tr::tr("Startup request was not added: %1").arg(updateResult.error()),
+                    true,
+                    false);
                 return;
             }
-            m_feedback->setType(Utils::InfoLabel::Ok);
-            m_feedback->setText(
+            showFeedback(
                 Tr::tr(
                     "Mock value added as Startup order %1. The project Undo command can remove it.")
-                    .arg(nextOrder));
+                    .arg(nextOrder),
+                false,
+                false);
         });
     messageBox->open();
 }

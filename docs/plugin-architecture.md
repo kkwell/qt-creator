@@ -2226,14 +2226,17 @@ delegate cannot reload and destroy the local draft. The proxy view and its
 internal persistent editor index therefore follow the same object when an
 earlier sibling is inserted or removed.
 
-A cpp-local delegate reports editor creation; a cpp-local tree view exposes
-only a revert-close operation. Eligible refreshes leave the editor alone.
-Update List, Show Offline, authority conflict, read-only transition, object or
-context removal, and teardown close it with `RevertModelCache` before the
-existing reset path. Normal Return and Escape remain the default styled-
-delegate paths. Because a CoE Mock edit is page-local, no ProjectService
-commit/re-entry guard is required. The destructor synchronously deletes a
-delegate editor still queued after revert close.
+A cpp-local delegate reports editor creation and observes the checked Return
+commit; a cpp-local tree view exposes only a revert-close operation. Eligible
+refreshes leave the editor alone. A valid Return keeps the existing page-local
+Mock commit behavior. A rejected Return emits no model change and routes the
+shared private validation result to the page-owned feedback surface. Escape
+retains the styled-delegate revert path. Update List, Show Offline, authority
+conflict, read-only transition, object or context removal, and teardown close
+the editor with `RevertModelCache` before the existing reset path. Because a
+CoE Mock edit is page-local, no ProjectService commit/re-entry guard is
+required. The destructor synchronously deletes a delegate editor still queued
+after revert close.
 
 This boundary adds no generic editor/tree service, public type, public model
 role, Provider/ProjectService contract, Project command, Project format,
@@ -2253,3 +2256,40 @@ terminations reported target status 15, with no residual process, new Embed
 Labs diagnostic report, or matching crash-service event. Every run was
 offscreen with fresh HOME/settings and crash reporting disabled. Evidence is
 under `/private/tmp/embed-labs-wb-coe-inline-draft-001.177q7M`.
+
+## Workbench CoE Mock edit-rejection feedback boundary
+
+`ISSUE-WB-COE-MOCK-EDIT-REJECTION-FEEDBACK-001`, based on local baseline
+`8a0373032093f05ba57af57d70a8cb1bfae404e4`, remains inside the private
+`CoeOnlinePage`, its cpp-local model and delegate, the existing Workbench test,
+and four evidence documents. The model owns a detailed private validation
+result for empty input, incomplete bytes, illegal hexadecimal input, and
+fixed-width mismatch. Both `setData()` and the delegate's checked Return path
+consume that result, avoiding a second parser or a public validation role.
+
+The delegate observes a real `QLineEdit` submission and asks the source model
+to commit once. Success follows the existing source/proxy notification path.
+Failure closes the editor without changing accepted Mock bytes or emitting
+`dataChanged`, then routes the private reason and scalar address to the page's
+existing operation-feedback widget. Programmatic model rejection has no UI
+side effect, and non-editable Offline, Repository, read-only, and synthetic
+cells never enter this feedback path.
+
+Feedback state belongs to the page, not the editor. Reopening the same object
+and Escape preserve it. A successful edit or explicit selection, source,
+Update List, context, Repository, or teardown transition clears it. The
+feedback widget publishes its text through accessible description and
+tooltip; a polite accessibility announcement is compiled and emitted only
+when Qt accessibility support is available. This is an event contract, not a
+claim of manual VoiceOver coverage or audible speech.
+
+The boundary changes no public type, model role, Project value, Undo command,
+Project format, persistence field, Modules or Channels chain,
+Provider/ProjectService contract, source list, dependency, Core or
+ProjectExplorer hook, application bootstrap, production thread or timer,
+network, ADS, scan, online CoE, SDO, controller, PLC, or hardware behavior.
+No CMake or qbs entry changed. Qualification used local ESI/offline/Mock data,
+normal and 2x offscreen tests, the complete six-plugin regression, the
+`WITH_TESTS=OFF` product build with exactly 16 plugin dylibs, and invisible
+enabled/disabled lifecycle acceptance. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-coe-edit-feedback-001.vl5Suz`.

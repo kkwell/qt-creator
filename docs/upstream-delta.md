@@ -1468,8 +1468,10 @@ and row-insertion notifications; matching items remain allocated and the
 active Value column is omitted from data-change notifications. A defensive
 move path is present but is neither reached by sorted production definitions
 nor qualified by this delta. Fresh sibling and non-Value metadata still
-render. Return/Escape retain default delegate semantics and a Mock edit never
-mutates the Project.
+render. Escape retains default revert semantics. Return remains inside the
+page-local Mock boundary but is now checked by the cpp-local delegate: valid
+input is accepted, while rejected input preserves accepted bytes and presents
+local feedback. A Mock edit never mutates the Project.
 
 Update List, Show Offline, authority conflict or read-only transition, object
 removal, node/context change, and page teardown revert the editor and use the
@@ -1501,3 +1503,47 @@ inspection, remote comparison, fetch, pull, merge, rebase, push, PR, or
 publication is part of this delta. The supported baseline remains the local
 `embed-labs` history. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-coe-inline-draft-001.177q7M`.
+
+## Local CoE Mock edit-rejection feedback delta
+
+`ISSUE-WB-COE-MOCK-EDIT-REJECTION-FEEDBACK-001` is a private Workbench
+correction on local baseline
+`8a0373032093f05ba57af57d70a8cb1bfae404e4`. The cpp-local CoE model now
+shares one detailed parser/validation result with the checked delegate Return
+path. Empty, incomplete-byte, illegal-hex, and fixed-width input failures
+leave accepted Mock bytes unchanged and appear on the page-owned CoE feedback
+surface after the transient editor closes.
+
+Reopening the same object and Escape retain current guidance. Valid Return or
+an explicit selection, source, Update List, context, Repository, or teardown
+boundary clears it. Valid normalized input still commits once through the
+private source model, empty baselines retain their established arbitrary-width
+rule, and Mock editing never mutates the Project or its Undo stack. Feedback
+metadata remains accessible; a polite announcement event is conditional on
+Qt accessibility support and does not imply manual VoiceOver or speech
+verification.
+
+The local delta changes only existing private `coeonlinepage.cpp/.h`, the
+Workbench test declaration/implementation, and four evidence documents. It
+introduces no new path, public API or role, source file, dependency,
+CMake/qbs entry, Project format or persistence field, Project mutation,
+Modules or Channels chain, Provider/ProjectService contract, Project command,
+production thread or timer, direct upstream Core patch, Core or
+ProjectExplorer hook, application bootstrap, network, ADS, scan, online CoE,
+SDO, controller, PLC, or hardware behavior.
+
+Final focused 1x/2x and related CoE 1x/2x tests passed 3 and 11 events per
+run. Four complete Workbench runs passed 79 events each, and the six isolated
+EtherCAT suites passed 130 events. The `WITH_TESTS=OFF` Workbench and complete
+product builds passed with exactly 16 plugin dylibs. Invisible enabled and
+explicit `-noload EtherCATWorkbench` runs each remained alive for 37 samples,
+with the plugin loaded in 37 and 0 samples respectively; both ended by intentional
+passed-through SIGTERM with expected status 15. The final audit found zero
+residual processes, matching diagnostic reports, or crash-service events.
+
+No visible/manual UI inspection, online/SDO/controller/network/hardware
+exercise, remote comparison, fetch, pull, merge, rebase, push, PR, or
+publication is part of this delta. No CMake or qbs description changed, so
+qbs was not run. The supported baseline remains the local `embed-labs`
+history. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-coe-edit-feedback-001.vl5Suz`.

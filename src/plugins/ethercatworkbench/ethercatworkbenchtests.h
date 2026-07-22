@@ -66,6 +66,7 @@ private slots:
     void testEditableProcessDataWorkflow();
     void testProcessDataInlineDraftSurvivesNonConflictingRefresh();
     void testCoeOnlineMockWorkflow();
+    void testCoeMockEditRejectionFeedback();
     void testCoeSameContextViewStateContinuity();
     void testCoeMockValueSurvivesNonConflictingRefresh();
     void testCoeInlineDraftSurvivesNonConflictingRefresh();

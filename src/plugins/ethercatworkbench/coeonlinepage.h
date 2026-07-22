@@ -51,7 +51,12 @@ private:
     void showAdvancedSettings();
     void addSelectedToStartup();
     void trackInlineEditor(QWidget *editor, const QModelIndex &index);
+    void handleInlineEditorSubmitted(
+        const QModelIndex &proxyIndex, const QString &text, bool accepted);
     void discardInlineEditor();
+    void showFeedback(const QString &message, bool error, bool inlineEditFeedback);
+    void clearFeedback();
+    void clearInlineEditFeedback();
 
     WorkbenchController *m_controller = nullptr;
     Core::PropertyPageContext m_context;
@@ -80,6 +85,7 @@ private:
     QPointer<QWidget> m_inlineEditor;
     std::optional<quint32> m_inlineEditorAddress;
     quint64 m_inlineEditorGeneration = 0;
+    bool m_inlineEditFeedbackActive = false;
 };
 
 } // namespace EtherCAT::Workbench::Internal

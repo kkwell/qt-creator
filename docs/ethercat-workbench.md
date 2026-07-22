@@ -1038,6 +1038,17 @@ request, and submits the complete candidate through
 undoable. Cancel, invalid hex, wrong width, read-only objects, offline data, and
 repository-device contexts leave the project unchanged.
 
+A rejected inline Return leaves the last accepted Mock bytes and Project state
+unchanged and keeps the existing CoE feedback label visible as an Error. The
+message names the object and distinguishes normalized-empty input, an
+incomplete hexadecimal byte, illegal hexadecimal characters, and an applicable
+fixed-width mismatch. Reopening the same editor or pressing Escape keeps that
+guidance available; a later accepted Return or an explicit selection, source,
+refresh, context, or teardown boundary clears it. When Qt accessibility is
+available, the page also requests a polite accessibility announcement; this is
+an event-path qualification, not a claim of manually verified screen-reader
+speech.
+
 ### Startup workflow
 
 The Startup page follows Beckhoff's documented TwinCAT 3 request-list workflow
@@ -1219,8 +1230,11 @@ workflow covers the
 TwinCAT-inspired object hierarchy and controls, ESI/offline/Mock sources,
 manual refresh, advanced and Unicode filters, offline, object-level, and
 repository-device read-only boundaries, configured-slave raw-value editing,
-cancelled and confirmed Add to Startup, no-overwrite behavior, no-ESI state,
-Project modified state, and Undo. The repository regression preserves ESI `RW`
+real-editor rejection feedback for normalized-empty, incomplete-byte,
+illegal-hex, and applicable fixed-width input, valid normalized correction,
+stale-feedback cleanup, cancelled and confirmed Add to Startup, no-overwrite
+behavior, no-ESI state, Project modified state, and Undo. The repository
+regression preserves ESI `RW`
 metadata while rejecting both the editable item flag and direct proxy-model
 `setData()`, then switches configured-slave / repository contexts in both
 directions to reject stale permissions. Its model is also checked by
@@ -5489,9 +5503,12 @@ text, modified state, focus, selection, cursor position, and Undo history.
 Fresh sibling and non-Value metadata remain visible, and a persistent index
 follows the active object when an earlier sibling is added or removed.
 
-Return still commits only to the page-local Mock model; Escape restores the
-last accepted Mock bytes. Neither path writes the Project or creates a Project
-Undo command. Update List and Show Offline are deliberate clear boundaries.
+Valid Return still commits only to the page-local Mock model. A rejected Return
+leaves the last accepted bytes intact and routes a private validation result to
+the separate edit-rejection feedback boundary. Escape restores the last
+accepted Mock bytes while retaining any current rejection guidance. None of
+these paths writes the Project or creates a Project Undo command. Update List
+and Show Offline are deliberate clear boundaries.
 An offline/final-Mock value or width conflict, parsed/raw type change,
 writable or process-data change, active-root structural conflict, object
 removal, context change, and page destruction close the editor with revert
@@ -5511,8 +5528,8 @@ SDO, controller, PLC, or hardware behavior.
 Qt documents that model reset invalidates current/selected data and resets
 attached views, while an item-view reset closes open editors without
 committing their changes. The implementation therefore avoids reset only for
-the compatible active address and retains normal delegate Return/Escape
-semantics:
+the compatible active address. It retains the existing editor close/revert
+lifecycle while the cpp-local delegate checks the Return result:
 <https://doc.qt.io/qt-6/qabstractitemmodel.html#beginResetModel>,
 <https://doc.qt.io/qt-6/qabstractitemview.html#reset>,
 <https://doc.qt.io/qt-6/qstyleditemdelegate.html#setModelData>, and
@@ -5747,3 +5764,109 @@ cases; the direct read-only evidence is the context switch to a derived page.
 Modules and Channels remain a separate data/API chain.
 `EtherCATWorkbenchPlugin` remains In progress. No CMake or qbs description
 changed, so qbs was not run.
+
+## CoE Mock-value edit-rejection feedback
+
+`ISSUE-WB-COE-MOCK-EDIT-REJECTION-FEEDBACK-001`, based on local baseline
+`8a0373032093f05ba57af57d70a8cb1bfae404e4`, makes a rejected CoE Mock
+Value submission visible without changing the accepted value. A cpp-local
+validation result is shared by `CoeObjectModel::setData()` and the checked
+delegate Return path, so empty input, an incomplete final byte, illegal hex,
+and a fixed-width mismatch receive distinct address-specific guidance. A
+rejected Return closes the transient editor and leaves the prior bytes and
+Project state intact; it does not emit a source or proxy data change.
+
+The page reuses its private CoE operation-feedback surface. Reopening the same
+object and then pressing Escape retains the current rejection guidance. A
+valid Return, explicit object selection change, Mock/Offline source change,
+Update List, context change, Repository refresh, or page teardown clears it.
+Valid input still accepts the existing optional `0x` prefix and embedded
+spaces, underscores, and colons, and an object with an empty offline baseline
+still accepts a non-empty complete byte sequence of arbitrary width. A valid
+submission commits once through the source model, reaches the proxy once, and
+does not write the Project or create an Undo command.
+
+The visible feedback has a stable accessible name and current description and
+tooltip. When Qt accessibility support is enabled, the page also emits a
+polite `QAccessibleAnnouncementEvent`; the guarded test covers that event
+contract but does not claim manual VoiceOver validation or audible speech.
+This follows Qt's documented
+[model edit result](https://doc.qt.io/qt-6/qabstractitemmodel.html#setData)
+and
+[delegate submission](https://doc.qt.io/qt-6/qstyleditemdelegate.html#setModelData)
+contracts. Qt documents the optional announcement event at
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Beckhoff's
+[CoE Online page](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html)
+is used only for Value, RW/RO, Offline-value, and Update List terminology; it
+does not define this local validation wording or accessibility behavior.
+
+Failure-first changed only the real-editor test while production
+`coeonlinepage.cpp` retained SHA-256
+`7f0c8d977575d87f7ad08c6a94fcd0708f03c2d59f5e6891aa719828c4688d15`
+and git blob `8351fff476b0edfed51a09f11c9185dfe81f9c7c`, and
+`coeonlinepage.h` retained SHA-256
+`8efa640a8cf8fad46d396dd22269c7c1a5ea68a448179cd67745e6cb1fc433e2`
+and blob `ee362007d7152e33df3eb8e10f9655a563ab200f`. Initialization and
+cleanup passed, but the old delegate closed after invalid Return with no
+visible feedback; the accepted `6060:00` bytes remained `08`, and Project,
+Undo, and Redo state remained unchanged. The authoritative focused target
+therefore reported two passes, one expected failure, and status 1.
+
+The earlier `failure-first/build.log` was superseded because its test assumed
+`Utils::InfoLabel` supplied its own `Q_OBJECT`; `failure-first/build-valid.log`
+precedes the authoritative red test. `green/build-expanded.log` records a
+superseded test-only QStringBuilder compile error. The first green build
+command created no log because its tee directory did not yet exist, even
+though the target built; `green/build-first-valid.log` records the valid build
+result. No superseded attempt is counted as qualification evidence.
+
+Final focused runs at 1x and 2x scaling each passed three events. Related CoE
+runs at both scales each passed 11 events. Four complete Workbench runs each
+passed 79 events. The six isolated EtherCAT suites passed 130 events: Core
+17, Project 12, Devices 8, Workbench 79, Scan 7, and Diagnostics 7. Every
+final test target exited 0. Complete Workbench still reports the known
+pre-existing ProjectExplorer TaskHub soft assertion in its invalid-project
+path, and the rejection test deliberately triggers warnings while attempting
+to edit non-editable cells; neither condition failed a test or target.
+
+Final production implementation/header SHA-256 values are
+`2af4e22ce91f194055698817f3c3504caf2ae28696ed3425fd52ed86e6799454`
+and
+`72d57a183c1bb8455b9b823a4ea1c1b838ac037e19cc3bdb9224083c43f38d62`,
+with git blobs `4cc42ba6a5c491cd29ebe4b6b7154aaba04a0be3` and
+`5c677b2f40018f430e8c454fe6ed7b62b77bbc1d`. Test implementation/header
+SHA-256 values are
+`f0c53efc78c78d66a5e9631fea47fded4c022139de36fe102a5719ec9743d800`
+and
+`bbb38750f9c380f07ed285633c690a3e917af2afde1dccea91acc254c9db8c24`,
+with blobs `61c554e8c9f32fcd44054bd7d47e047dc9122345` and
+`ced27e5b83c9c0031ce62b409e710141f56a1a81`.
+
+The `WITH_TESTS=OFF` product Workbench target and complete product build both
+passed, and the bundle contains exactly 16 plugin dylibs. The executable,
+product Workbench, and test Workbench SHA-256 values are
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`,
+`d6c5becbcdae5850f8238ec8bb873c35e9a5dafe71ed634e2475aa7abd3b551e`,
+and
+`cd18428efb63c8ea668287dee1c1cc045a1a420fea3f7e622ccbf435a45f8abd`.
+Enabled PID 36133 remained alive for 37 of 37 samples with Workbench loaded in
+all 37; explicit `-noload EtherCATWorkbench` PID 37563 remained alive for 37
+of 37 samples with Workbench loaded in zero samples. Passed-through
+intentional SIGTERM ended both runs with expected target status 15. The audit
+from
+2026-07-23 01:23:54 to 01:26:15 +0800 found zero residual qualification
+processes, new matching diagnostic reports, or matching crash-service events.
+Fresh HOME/settings, offscreen Qt, disabled crash reporting, and the
+process-local launch safeguards kept main-program acceptance invisible and
+non-interrupting; no visible/manual UI inspection was run.
+
+Authoritative evidence is under
+`/private/tmp/embed-labs-wb-coe-edit-feedback-001.vl5Suz`. The issue changes
+only private CoE page/model/delegate behavior, the existing Workbench test
+declaration and implementation, and these four documents. It adds no public
+API or role, source file, dependency, Project format, persistence field,
+Provider or ProjectService contract, Project command, Modules or Channels
+data chain, Core or ProjectExplorer hook, application bootstrap, production
+thread or timer, network, ADS, scan, online CoE, SDO, controller, PLC, or
+hardware behavior. No CMake or qbs description changed, so qbs was not run.
+`EtherCATWorkbenchPlugin` remains In progress.

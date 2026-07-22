@@ -592,7 +592,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Real DetailsView, ProjectService, modified state, Undo, and Redo | Passed |
 | TwinCAT-inspired CoE object hierarchy and five-column layout | Passed under `QAbstractItemModelTester` |
 | CoE manual refresh, search, Unicode, and advanced range filters | Passed |
-| CoE Mock raw-value edit and invalid-width rejection | Passed |
+| CoE Mock raw-value edit and visible input rejection | Passed through a real inline editor for normalized-empty, incomplete-byte, illegal-hex, and applicable fixed-width cases; accepted Mock bytes and Project state remain unchanged on rejection |
 | CoE Add to Startup cancel, confirm, append-only, and Undo | Passed |
 | CoE offline, missing-ESI, and repository read-only boundaries | Passed; repository `RW` capability metadata remains visible while its Mock Value edit flag and direct model mutation are rejected by the separate current qualification below |
 | CoE focused test at `QT_SCALE_FACTOR=2` | 3 passed, 0 failed |
@@ -1444,7 +1444,7 @@ local baseline `d26f695ec7581b7864e87577d0b935997a30546d`.
 | Structural synchronization | Inserting `605F:00` before active `6060:00` moved its persistent proxy index forward one row; removing the sibling moved it back. Both source and proxy remained under `QAbstractItemModelTester`, with row signals and no reset |
 | Structural coverage limit | The test directly qualifies top-level sibling insertion/removal. The same private recursive path handles children under source/proxy model testers, but child insertion/removal and the defensive move branch are not directly exercised or claimed as separate user-facing behavior |
 | Accepted override plus draft | After Return accepted local Mock `5A`, a new uncommitted `6B` survived another metadata refresh; `6072:00` rendered `refreshed over accepted override` through source and proxy `dataChanged()`, while the underlying active value stayed `5A` |
-| Delegate semantics | Escape discarded the preserved draft; Return accepted a valid one-byte value only in the page-local Mock model. Neither changed the Project snapshot |
+| Delegate semantics | Escape discarded the preserved draft; Return accepted a valid one-byte value only in the page-local Mock model. Neither changed the Project snapshot. Rejected-Return presentation is qualified separately by `ISSUE-WB-COE-MOCK-EDIT-REJECTION-FEEDBACK-001` |
 | Explicit clear boundaries | Update List discarded an active draft and regenerated `09`; Show Offline discarded a draft, displayed authoritative `08`, and returned to unedited Mock `09` |
 | Authority conflict | A width/value change closed the editor and rendered generated `0A00`; a fixed/read-only change closed it, removed editability, and rendered `08` |
 | Object removal and context | Removing `6060:00` destroyed its editor; a Project-node switch destroyed the CoE page and editor. Drafts never changed the Project snapshot |
@@ -2959,4 +2959,49 @@ Evidence is under
 reset contract is at <https://doc.qt.io/qt-6/qabstractitemmodel.html>.
 Beckhoff's CoE page is referenced only for object-value, RW/RO, Offline-value,
 and Update List terminology at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
+
+## EtherCATWorkbench CoE Mock edit-rejection feedback qualification
+
+`ISSUE-WB-COE-MOCK-EDIT-REJECTION-FEEDBACK-001` is qualified from local
+baseline `8a0373032093f05ba57af57d70a8cb1bfae404e4`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Only the new real-editor test changed. Production `coeonlinepage.cpp` retained SHA-256 `7f0c8d977575d87f7ad08c6a94fcd0708f03c2d59f5e6891aa719828c4688d15` / blob `8351fff476b0edfed51a09f11c9185dfe81f9c7c`, and the header retained SHA-256 `8efa640a8cf8fad46d396dd22269c7c1a5ea68a448179cd67745e6cb1fc433e2` / blob `ee362007d7152e33df3eb8e10f9655a563ab200f`. Invalid Return closed the editor without visible feedback while `6060:00` stayed `08` and Project/Undo/Redo stayed unchanged; 2 passed, 1 failed, target status 1 |
+| Rejection categories | Empty input, incomplete final byte, illegal hexadecimal input, and fixed-width mismatch produce complete address-specific messages on the existing CoE operation-feedback surface |
+| Invalid submission | Return closes the transient editor, keeps the last accepted bytes, emits no source or proxy `dataChanged`, does not mutate the Project, and creates no Undo/Redo entry |
+| Guidance lifetime | Reopening the same object and Escape retain the error. A valid Return or explicit selection, Mock/Offline source, Update List, context, Repository, or teardown boundary clears it |
+| Valid normalization | `0x` plus embedded spaces, underscores, and colons is accepted and normalized; the final test commits `0x 5_:A` as `5A` exactly once through both source and proxy models |
+| Empty baseline | A writable object with empty baseline bytes accepts the complete non-empty value `C0DE`, preserving the established arbitrary-width rule |
+| Read-only isolation | Offline, Repository, read-only, and synthetic cells remain non-editable and do not fabricate edit-rejection feedback. A direct programmatic invalid `setData()` also does not fabricate page feedback |
+| Accessibility | Feedback carries a stable accessible name, current description, and matching tooltip. A polite `QAccessibleAnnouncementEvent` is covered only when Qt accessibility support is enabled; no manual VoiceOver or audible-speech result is claimed |
+| Model and Project isolation | Invalid cases preserve accepted bytes and produce zero source/proxy changes. The valid case produces one source and one proxy change. Project snapshot and Undo/Redo state remain unchanged throughout Mock editing |
+| Context and lifecycle | Selection, source, Update List, same/different context, actual Repository import/provider refresh, and page teardown establish explicit clear boundaries; teardown is safe with no stale editor or feedback owner |
+| Focused normal and 2x | One reviewed run at each scale passed 3 events, 0 failed, target status 0 |
+| Related CoE normal and 2x | One final run at each scale passed 11 events, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | Two final runs at each scale passed 79 events per run, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 79, Scan 7, Diagnostics 7; 130 passed, 0 failed, every target status 0 |
+| Known non-fatal diagnostics | Complete Workbench retains the pre-existing ProjectExplorer TaskHub soft assertion. Deliberate attempts to edit non-editable cells emit expected warnings. Neither condition failed a test or target |
+| Superseded build artifacts | `failure-first/build.log` used an invalid `InfoLabel` `Q_OBJECT` assumption before `failure-first/build-valid.log`; `green/build-expanded.log` contains a test-only QStringBuilder compile error. The first green build command created no log because its tee directory did not exist, although the target built; `green/build-first-valid.log` is authoritative. No superseded attempt is counted as final qualification |
+| Final source SHA-256 | Implementation `2af4e22ce91f194055698817f3c3504caf2ae28696ed3425fd52ed86e6799454`; header `72d57a183c1bb8455b9b823a4ea1c1b838ac037e19cc3bdb9224083c43f38d62`; tests `f0c53efc78c78d66a5e9631fea47fded4c022139de36fe102a5719ec9743d800`; test header `bbb38750f9c380f07ed285633c690a3e917af2afde1dccea91acc254c9db8c24` |
+| Final git blobs | Implementation `4cc42ba6a5c491cd29ebe4b6b7154aaba04a0be3`; header `5c677b2f40018f430e8c454fe6ed7b62b77bbc1d`; tests `61c554e8c9f32fcd44054bd7d47e047dc9122345`; test header `ced27e5b83c9c0031ce62b409e710141f56a1a81` |
+| Product build and inventory | The `WITH_TESTS=OFF` Workbench target and complete product build both passed; exactly 16 plugin dylibs are present |
+| Product hashes | Executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `d6c5becbcdae5850f8238ec8bb873c35e9a5dafe71ed634e2475aa7abd3b551e`; test Workbench `cd18428efb63c8ea668287dee1c1cc045a1a420fea3f7e622ccbf435a45f8abd` |
+| Enabled startup | PID 36133 remained alive for 37 of 37 samples with Workbench loaded in all 37; intentional passed-through SIGTERM produced expected target status 15 |
+| Explicitly disabled startup | PID 37563 remained alive for 37 of 37 samples with `-noload EtherCATWorkbench`; Workbench was loaded in 0 samples; intentional passed-through SIGTERM produced expected target status 15 |
+| Crash-dialog audit | From 2026-07-23 01:23:54 to 01:26:15 +0800 there were zero residual qualification processes, new matching DiagnosticReports files, or matching crash-service events |
+| Invisible executable policy | Fresh HOME/settings, offscreen Qt, disabled crash reporting, process-local launch safeguards, and passed-through SIGTERM kept main-program acceptance invisible and non-interrupting; no visible/manual UI inspection was run |
+| Deliberate exclusions | No public API/role, Project format or mutation, Modules/Channels completion, Provider/ProjectService contract, network, ADS, scan, online CoE, SDO, controller, PLC, or hardware behavior is claimed |
+| CMake/qbs execution | Neither description changed, so qbs was not run |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-coe-edit-feedback-001.vl5Suz`. Qt's model and
+delegate edit contracts are at
+<https://doc.qt.io/qt-6/qabstractitemmodel.html#setData> and
+<https://doc.qt.io/qt-6/qstyleditemdelegate.html#setModelData>. The optional
+accessibility event is documented at
+<https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Beckhoff's CoE
+page is referenced only for Value, RW/RO, Offline-value, and Update List
+terminology at
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.

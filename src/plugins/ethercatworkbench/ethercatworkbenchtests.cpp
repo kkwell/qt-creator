@@ -40,6 +40,9 @@
 #include <QAbstractButton>
 #include <QAbstractItemModelTester>
 #include <QAbstractProxyModel>
+#if QT_CONFIG(accessibility)
+#include <QAccessible>
+#endif
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
@@ -413,6 +416,27 @@ static Data::DeviceImportResult waitForJob(Core::DeviceImportJob *job)
         finished.wait(15000);
     return job->result();
 }
+
+#if QT_CONFIG(accessibility)
+static QPointer<QObject> s_coeAnnouncementObject;
+static QStringList s_coeAnnouncementMessages;
+static QList<QAccessible::AnnouncementPoliteness> s_coeAnnouncementPoliteness;
+static QAccessible::UpdateHandler s_previousAccessibleUpdateHandler = nullptr;
+
+static void captureCoeAccessibleUpdate(QAccessibleEvent *event)
+{
+    if (event && event->type() == QAccessible::Announcement
+        && event->object() == s_coeAnnouncementObject) {
+        const auto announcement = static_cast<QAccessibleAnnouncementEvent *>(event);
+        s_coeAnnouncementMessages.append(announcement->message());
+        s_coeAnnouncementPoliteness.append(announcement->politeness());
+    }
+    if (s_previousAccessibleUpdateHandler
+        && s_previousAccessibleUpdateHandler != &captureCoeAccessibleUpdate) {
+        s_previousAccessibleUpdateHandler(event);
+    }
+}
+#endif
 
 static QByteArray deviceEsi()
 {
@@ -10258,6 +10282,7 @@ void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
     QLabel *source = page->findChild<QLabel *>("EtherCATCoeDataSource");
     QLineEdit *filter = page->findChild<QLineEdit *>("EtherCATCoeFilter");
     QTreeView *dictionary = page->findChild<QTreeView *>("EtherCATCoeObjectDictionary");
+    QLabel *operationFeedback = page->findChild<QLabel *>("EtherCATCoeFeedback");
     QWidget *filterEmptyState
         = page->findChild<QWidget *>("EtherCATCoeFilterEmptyState");
     QLabel *filterEmptyMessage
@@ -10274,6 +10299,7 @@ void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
     QVERIFY(source);
     QVERIFY(filter);
     QVERIFY(dictionary);
+    QVERIFY(operationFeedback);
     QVERIFY(filterEmptyState);
     QVERIFY(filterEmptyMessage);
     QVERIFY(clearFilters);
@@ -10460,6 +10486,11 @@ void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
     QCOMPARE(copied.subIndex, quint8(0));
     QCOMPARE(copied.rawValue, QByteArray::fromHex("0A"));
     QCOMPARE(copied.transition, QString("PS"));
+    QTRY_VERIFY(operationFeedback->isVisible());
+    QCOMPARE(
+        static_cast<Utils::InfoLabel *>(operationFeedback)->type(), Utils::InfoLabel::Ok);
+    QVERIFY(operationFeedback->text().contains("Mock value added as Startup order"));
+    QCOMPARE(operationFeedback->accessibleDescription(), operationFeedback->text());
     QVERIFY(projectService->project(file.projectId)->modified);
     QVERIFY_RESULT(projectService->undoProject(file.projectId));
     QCOMPARE(projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 0);
@@ -10536,6 +10567,384 @@ void EtherCATWorkbenchTests::testCoeOnlineMockWorkflow()
     QTRY_VERIFY(!projectService->project(file.projectId).has_value());
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testCoeMockEditRejectionFeedback()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray esi = deviceEsi();
+    esi.replace("#x00005678", "#x7A1C0007");
+    esi.replace("#x00000011", "#x0000B407");
+    esi.replace("AX5000", "EL-COE-REJECTION");
+    esi.replace("Workbench Servo", "CoE Rejection Servo");
+    const QByteArray emptyValueCommand
+        = "<InitCmd><Transition>PS</Transition><Index>#x6061</Index><SubIndex>0</SubIndex>"
+          "<Data></Data><Comment>Empty Mock baseline</Comment></InitCmd>";
+    QCOMPARE(esi.count("</InitCmds>"), 1);
+    QByteArray extendedInitCommands = emptyValueCommand;
+    extendedInitCommands.append("</InitCmds>");
+    esi.replace("</InitCmds>", extendedInitCommands);
+    QByteArray updatedEsi = esi;
+    updatedEsi.replace(
+        "Maximum torque commissioning limit", "Maximum torque refreshed for rejection test");
+    const Utils::FilePath testRoot = Utils::FilePath::fromString(directory.path()).canonicalPath();
+    const Utils::FilePath esiPath = testRoot.pathAppended("coe-edit-rejection.xml");
+    const Utils::FilePath updatedEsiPath
+        = testRoot.pathAppended("coe-edit-rejection-updated.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(esi));
+    QVERIFY_RESULT(updatedEsiPath.writeFileContents(updatedEsi));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.typeName == "EL-COE-REJECTION";
+    });
+    QVERIFY(device != devices.cend());
+    const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    const Core::PropertyPageContext context = controller.treeModel()->contextForNodeId(file.slaveId);
+    BuiltinPropertyPageProvider provider(&controller);
+    const Utils::Id coePageId(Constants::COE_ONLINE_PAGE_ID);
+    std::unique_ptr<QWidget> page(provider.createPage(coePageId, nullptr));
+    QVERIFY(page);
+    provider.updatePage(coePageId, page.get(), context);
+    page->resize(1100, 760);
+    page->show();
+    QTRY_VERIFY(page->isVisible());
+
+    QPointer<QTreeView> dictionary
+        = page->findChild<QTreeView *>("EtherCATCoeObjectDictionary");
+    QPointer<QLabel> feedback = page->findChild<QLabel *>("EtherCATCoeFeedback");
+    QPointer<QPushButton> updateList
+        = page->findChild<QPushButton *>("EtherCATCoeUpdateList");
+    QPointer<QCheckBox> showOffline
+        = page->findChild<QCheckBox *>("EtherCATCoeShowOffline");
+    QVERIFY(dictionary);
+    QVERIFY(feedback);
+    QVERIFY(updateList);
+    QVERIFY(showOffline);
+    auto infoFeedback = static_cast<Utils::InfoLabel *>(feedback.data());
+    QCOMPARE(feedback->accessibleName(), QString("CoE operation feedback"));
+
+#if QT_CONFIG(accessibility)
+    s_coeAnnouncementObject = feedback;
+    s_coeAnnouncementMessages.clear();
+    s_coeAnnouncementPoliteness.clear();
+    s_previousAccessibleUpdateHandler
+        = QAccessible::installUpdateHandler(&captureCoeAccessibleUpdate);
+    const auto restoreAccessibleUpdateHandler = qScopeGuard([] {
+        const QAccessible::UpdateHandler previous
+            = std::exchange(s_previousAccessibleUpdateHandler, nullptr);
+        QAccessible::installUpdateHandler(previous);
+        s_coeAnnouncementObject = nullptr;
+        s_coeAnnouncementMessages.clear();
+        s_coeAnnouncementPoliteness.clear();
+    });
+#endif
+
+    QAbstractItemModel *model = dictionary->model();
+    QVERIFY(model);
+    auto proxyModel = qobject_cast<QAbstractProxyModel *>(model);
+    QVERIFY(proxyModel);
+    QAbstractItemModelTester dictionaryTester(
+        model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    const int valueColumn = columnWithHeader(model, "Value");
+    QVERIFY(valueColumn >= 0);
+    QModelIndex object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    QModelIndex value = object.siblingAtColumn(valueColumn);
+    QVERIFY(model->flags(value) & Qt::ItemIsEditable);
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("08"));
+    QVERIFY(!feedback->isVisible());
+
+    const Data::ProjectSnapshot projectBefore = *projectService->project(file.projectId);
+    const bool canUndoBefore = projectService->canUndoProject(file.projectId);
+    const bool canRedoBefore = projectService->canRedoProject(file.projectId);
+    QSignalSpy valueChanges(model, &QAbstractItemModel::dataChanged);
+    QSignalSpy sourceValueChanges(proxyModel->sourceModel(), &QAbstractItemModel::dataChanged);
+    QSignalSpy projectChanges(projectService, &Core::ProjectService::projectChanged);
+
+    const auto openEditor = [dictionary](const QModelIndex &index) {
+        dictionary->setCurrentIndex(index);
+        dictionary->edit(index);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        return QPointer<QLineEdit>(dictionary->findChild<QLineEdit *>());
+    };
+
+    QPointer<QLineEdit> editor = openEditor(value);
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    QTest::keyClicks(editor, "not hex");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("08"));
+    QCOMPARE(valueChanges.count(), 0);
+    QCOMPARE(projectChanges.count(), 0);
+    QCOMPARE(*projectService->project(file.projectId), projectBefore);
+    QCOMPARE(projectService->canUndoProject(file.projectId), canUndoBefore);
+    QCOMPARE(projectService->canRedoProject(file.projectId), canRedoBefore);
+    QTRY_VERIFY(feedback->isVisible());
+    QCOMPARE(infoFeedback->type(), Utils::InfoLabel::Error);
+    QCOMPARE(
+        feedback->text(),
+        QString("Local Mock value for 6060:00 was not changed. Use only hexadecimal digits 0-9 "
+                "or A-F. Spaces, colons, underscores, and an optional 0x prefix are allowed."));
+    QCOMPARE(feedback->accessibleDescription(), feedback->text());
+    QCOMPARE(infoFeedback->additionalToolTip(), feedback->text());
+    QCOMPARE(feedback->toolTip(), feedback->text());
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_coeAnnouncementMessages, QStringList{feedback->text()});
+    QCOMPARE(
+        s_coeAnnouncementPoliteness,
+        QList<QAccessible::AnnouncementPoliteness>{
+            QAccessible::AnnouncementPoliteness::Polite});
+#endif
+
+    editor = openEditor(value);
+    QTRY_VERIFY(editor);
+    QVERIFY(feedback->isVisible());
+    editor->selectAll();
+    QTest::keyClicks(editor, "A");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QTRY_VERIFY(feedback->isVisible());
+    QCOMPARE(
+        feedback->text(),
+        QString("Local Mock value for 6060:00 was not changed. Hexadecimal bytes require an "
+                "even number of digits; the supplied value contains 1 digit."));
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("08"));
+
+    editor = openEditor(value);
+    QTRY_VERIFY(editor);
+    QVERIFY(feedback->isVisible());
+    editor->selectAll();
+    editor->setText(" : _ ");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QTRY_VERIFY(feedback->isVisible());
+    QCOMPARE(
+        feedback->text(),
+        QString("Local Mock value for 6060:00 was not changed. Enter at least one complete "
+                "hexadecimal byte."));
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("08"));
+
+    editor = openEditor(value);
+    QTRY_VERIFY(editor);
+    QVERIFY(feedback->isVisible());
+    editor->selectAll();
+    QTest::keyClicks(editor, "1234");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QTRY_VERIFY(feedback->isVisible());
+    QCOMPARE(
+        feedback->text(),
+        QString("Local Mock value for 6060:00 was not changed. This object expects 1 byte; the "
+                "supplied value contains 2 bytes."));
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("08"));
+    QCOMPARE(valueChanges.count(), 0);
+    QCOMPARE(projectChanges.count(), 0);
+    QCOMPARE(*projectService->project(file.projectId), projectBefore);
+    QCOMPARE(projectService->canUndoProject(file.projectId), canUndoBefore);
+    QCOMPARE(projectService->canRedoProject(file.projectId), canRedoBefore);
+
+    const QModelIndex otherObject = findByDisplayText(model, "6072:00");
+    QVERIFY(otherObject.isValid());
+    dictionary->setCurrentIndex(otherObject);
+    QTRY_VERIFY(!feedback->isVisible());
+    QVERIFY(feedback->text().isEmpty());
+    QVERIFY(feedback->accessibleDescription().isEmpty());
+    QVERIFY(infoFeedback->additionalToolTip().isEmpty());
+    QVERIFY(feedback->toolTip().isEmpty());
+#if QT_CONFIG(accessibility)
+    const int announcementsBeforeDirectSet = s_coeAnnouncementMessages.size();
+#endif
+    const int changesBeforeDirectSet = valueChanges.count();
+    QVERIFY(!model->setData(value, "not hex", Qt::EditRole));
+    QCOMPARE(valueChanges.count(), changesBeforeDirectSet);
+#if QT_CONFIG(accessibility)
+    QCOMPARE(s_coeAnnouncementMessages.size(), announcementsBeforeDirectSet);
+#endif
+    QVERIFY(!feedback->isVisible());
+
+    const int proxyChangesBeforeValidEdit = valueChanges.count();
+    const int sourceChangesBeforeValidEdit = sourceValueChanges.count();
+    editor = openEditor(value);
+    QTRY_VERIFY(editor);
+    editor->selectAll();
+    editor->setText("0x 5_:A");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("5A"));
+    QCOMPARE(valueChanges.count(), proxyChangesBeforeValidEdit + 1);
+    QCOMPARE(sourceValueChanges.count(), sourceChangesBeforeValidEdit + 1);
+    QVERIFY(!feedback->isVisible());
+    QCOMPARE(*projectService->project(file.projectId), projectBefore);
+    QCOMPARE(projectService->canUndoProject(file.projectId), canUndoBefore);
+    QCOMPARE(projectService->canRedoProject(file.projectId), canRedoBefore);
+
+    QModelIndex emptyObject = findByDisplayText(model, "6061:00");
+    QVERIFY(emptyObject.isValid());
+    QModelIndex emptyValue = emptyObject.siblingAtColumn(valueColumn);
+    QVERIFY(model->flags(emptyValue) & Qt::ItemIsEditable);
+    QCOMPARE(emptyValue.data(Qt::EditRole).toString(), QString());
+    editor = openEditor(emptyValue);
+    QTRY_VERIFY(editor);
+    editor->setText("C0DE");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QCOMPARE(emptyValue.data(Qt::EditRole).toString(), QString("C0DE"));
+    QVERIFY(!feedback->isVisible());
+    QCOMPARE(*projectService->project(file.projectId), projectBefore);
+
+    editor = openEditor(value);
+    QTRY_VERIFY(editor);
+    editor->setText("GG");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QTRY_VERIFY(feedback->isVisible());
+    editor = openEditor(value);
+    QTRY_VERIFY(editor);
+    QVERIFY(feedback->isVisible());
+    QTest::keyClick(editor, Qt::Key_Escape);
+    QTRY_VERIFY(editor.isNull());
+    QVERIFY(feedback->isVisible());
+
+    editor = openEditor(value);
+    QTRY_VERIFY(editor);
+    editor->setText("A");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QTRY_VERIFY(feedback->isVisible());
+    dictionary->setCurrentIndex(otherObject);
+    QTRY_VERIFY(!feedback->isVisible());
+
+    editor = openEditor(value);
+    QTRY_VERIFY(editor);
+    editor->setText("A");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QTRY_VERIFY(feedback->isVisible());
+    QTest::mouseClick(updateList, Qt::LeftButton);
+    QTRY_VERIFY(!feedback->isVisible());
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+
+    editor = openEditor(value);
+    QTRY_VERIFY(editor);
+    editor->setText("A");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QTRY_VERIFY(feedback->isVisible());
+    showOffline->setChecked(true);
+    QTRY_VERIFY(!feedback->isVisible());
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QVERIFY(!(model->flags(value) & Qt::ItemIsEditable));
+    editor = openEditor(value);
+    QVERIFY(editor.isNull());
+    QVERIFY(!feedback->isVisible());
+
+    showOffline->setChecked(false);
+    const QModelIndex readOnlyObject = findByDisplayText(model, "1018:01");
+    QVERIFY(readOnlyObject.isValid());
+    const QModelIndex readOnlyValue = readOnlyObject.siblingAtColumn(valueColumn);
+    QVERIFY(!(model->flags(readOnlyValue) & Qt::ItemIsEditable));
+    editor = openEditor(readOnlyValue);
+    QVERIFY(editor.isNull());
+    QVERIFY(!feedback->isVisible());
+
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    editor = openEditor(value);
+    QTRY_VERIFY(editor);
+    editor->setText("A");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QTRY_VERIFY(feedback->isVisible());
+    const Core::PropertyPageContext
+        deviceContext{{}, device->id, Core::WorkbenchNodeKind::Device, device->name};
+    provider.updatePage(coePageId, page.get(), deviceContext);
+    QTRY_VERIFY(!feedback->isVisible());
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QVERIFY(!(model->flags(value) & Qt::ItemIsEditable));
+    editor = openEditor(value);
+    QVERIFY(editor.isNull());
+    QVERIFY(!feedback->isVisible());
+
+    provider.updatePage(coePageId, page.get(), context);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    editor = openEditor(value);
+    QTRY_VERIFY(editor);
+    editor->setText("A");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QTRY_VERIFY(feedback->isVisible());
+    provider.updatePage(coePageId, page.get(), context);
+    QTRY_VERIFY(!feedback->isVisible());
+
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    editor = openEditor(value);
+    QTRY_VERIFY(editor);
+    editor->setText("A");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QTRY_VERIFY(feedback->isVisible());
+    const Data::DeviceImportResult repositoryRefresh
+        = waitForJob(repository->importFiles({updatedEsiPath}));
+    QCOMPARE(repositoryRefresh.updatedDevices, 1);
+    QCOMPARE(repositoryRefresh.failedFiles, 0);
+    provider.updatePage(coePageId, page.get(), context);
+    QTRY_VERIFY(!feedback->isVisible());
+
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    editor = openEditor(value);
+    QTRY_VERIFY(editor);
+    editor->setText("A");
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTRY_VERIFY(editor.isNull());
+    QTRY_VERIFY(feedback->isVisible());
+    page.reset();
+    QTRY_VERIFY(dictionary.isNull());
+    QTRY_VERIFY(feedback.isNull());
+    QTRY_VERIFY(updateList.isNull());
+    QTRY_VERIFY(showOffline.isNull());
+    QCOMPARE(projectChanges.count(), 0);
+    QCOMPARE(*projectService->project(file.projectId), projectBefore);
+    QCOMPARE(projectService->canUndoProject(file.projectId), canUndoBefore);
+    QCOMPARE(projectService->canRedoProject(file.projectId), canRedoBefore);
 }
 
 void EtherCATWorkbenchTests::testCoeSameContextViewStateContinuity()
