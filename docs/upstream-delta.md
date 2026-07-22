@@ -1547,3 +1547,37 @@ publication is part of this delta. No CMake or qbs description changed, so
 qbs was not run. The supported baseline remains the local `embed-labs`
 history. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-coe-edit-feedback-001.vl5Suz`.
+
+## Local visible EtherCAT identity filter delta
+
+`ISSUE-WB-NAV-FILTER-VISIBLE-IDENTITY-001` is a private Workbench correction
+on local baseline `c6f48495263f38a292a780f0955468bf183c692a`. The device
+search projection now mirrors the zero-padded `0x........` Vendor, Product,
+and Revision values already exposed by the tooltip. A user can paste a
+visible Product value such as `0x0000102a` into the navigation filter without
+falling into the no-match state. Former unprefixed searches remain valid.
+
+The local delta changes one existing format string in
+`workbenchtreemodel.cpp`, one focused Workbench test declaration and
+implementation, and four evidence documents. It introduces no new path,
+public API or role, source file, dependency, CMake/qbs entry, Project format
+or persistence field, Project or Repository mutation, Provider/ProjectService
+contract, Project command, direct upstream Core patch, Core or
+ProjectExplorer hook, application bootstrap, production thread or timer,
+network, ADS, scan, online state, CoE/SDO, PLC, controller, or hardware
+behavior.
+
+Focused and navigation-related tests passed at normal and 2x scale. Four
+complete Workbench runs passed 80 events each, and the six isolated EtherCAT
+suites passed 131 events. The `WITH_TESTS=OFF` Workbench and complete product
+builds passed with exactly 16 plugin dylibs. Enabled and explicit
+`-noload EtherCATWorkbench` product runs each remained alive for 37 samples;
+Workbench was loaded in 37 and 0 samples respectively. Both ended by
+intentional passed-through SIGTERM with expected status 15, with zero
+residual process, new matching diagnostic report, or crash-service event.
+
+No visible/manual UI inspection, remote comparison, fetch, pull, merge,
+rebase, push, PR, or publication is part of this delta. No CMake or qbs
+description changed, so qbs was not run. The supported baseline remains the
+local `embed-labs` history. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-nav-visible-identity-001.2G4bre`.

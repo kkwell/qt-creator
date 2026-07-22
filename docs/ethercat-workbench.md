@@ -5870,3 +5870,85 @@ data chain, Core or ProjectExplorer hook, application bootstrap, production
 thread or timer, network, ADS, scan, online CoE, SDO, controller, PLC, or
 hardware behavior. No CMake or qbs description changed, so qbs was not run.
 `EtherCATWorkbenchPlugin` remains In progress.
+
+## Visible EtherCAT identity filtering
+
+`ISSUE-WB-NAV-FILTER-VISIBLE-IDENTITY-001`, based on local baseline
+`c6f48495263f38a292a780f0955468bf183c692a`, makes the navigation filter
+accept the hexadecimal identity text already shown for Repository devices.
+Pasting `0x0000102a` from a device tooltip now keeps that device and its
+Repository ancestor visible instead of showing the no-match page. Vendor,
+Product, and Revision use the same zero-padded `0x........` representation in
+the private search role and the visible tooltip. The complete legacy
+Vendor/Product/Revision/group segment remains unchanged ahead of the new
+tokens, so both single-field and compound unprefixed searches stay compatible.
+
+The filter remains read-only navigation state. It does not change the stable
+selection, Project context, offline data, Undo stack, Repository contents, or
+Mock state. The existing `QSortFilterProxyModel` still owns fixed-string,
+case-insensitive, recursive matching; this change only aligns the source
+model's existing private `SearchTextRole` with text users can see and copy.
+Qt documents that a proxy filter reads its configured role and that recursive
+filtering keeps matching descendants' ancestors visible at
+<https://doc.qt.io/qt-6.11/qsortfilterproxymodel.html>. Beckhoff defines
+Vendor ID, Product Code, and Revision Number as EtherCAT slave identity
+fields at
+<https://infosys.beckhoff.com/content/1033/tcplclib_tc2_ethercat/57119371.html>;
+that reference defines the field meaning, not this local filter interaction.
+
+Failure-first changed only the new Workbench test while production
+`workbenchtreemodel.cpp` retained SHA-256
+`3211b55cffb8762f82f22d78e340ce517595b2e39257e038cdd2e9274a0947aa`
+and git blob `aa23ee6dfe4e8b4cc6c7b996250592521f3b5c97`. Initialization and cleanup
+passed, but filtering with the tooltip's exact `0x0000102a` text hid the
+device; the target therefore recorded two passes, one expected failure, and
+status 1. The final implementation retains the complete legacy identity/group
+segment and appends the three visible `0x` identity tokens.
+
+Final focused runs at 1x and 2x each passed three events. Navigation-related
+runs at both scales each passed six events. Four complete Workbench runs each
+passed 80 events. The six isolated EtherCAT suites passed 131 events: Core
+17, Project 12, Devices 8, Workbench 80, Scan 7, and Diagnostics 7. Every
+final test target exited 0. Complete Workbench retains the known pre-existing
+ProjectExplorer TaskHub category soft assertion in the invalid-project path;
+it did not fail a test or target. Final implementation/test/test-header
+SHA-256 values are
+`96d94e79cb5c938486ac9e81da0d7776614d6e2eb38141ed14a9f3f7fb9c7e71`,
+`47e92628cce83e4ebc0874e4d5882ad112b397b1fa45e6fa0ce0a762fbdc481c`,
+and
+`16070acc603d9394dd1c49fb38c333ce2b6d6e7e15335c4e9bbca08a35ddbf39`;
+their git blobs are `042a51ec04dd84371cde46de18c7e6f98e00f348`,
+`0daf1f517d8256e193dd372f6bf82767ab72071b`, and
+`8f2940e28febba3cfa5bdafde2d289c6fab24f92`.
+
+Test qualification used Qt 6.11.0 Release in
+`qt-creator-build-ethercat-core-qt611`; product qualification used
+`qt-creator-build-ethercat-product-qt611`.
+The `WITH_TESTS=OFF` Workbench target and complete product build passed, and
+the bundle still contains exactly 16 plugin dylibs. Executable, product
+Workbench, and test Workbench SHA-256 values are
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`,
+`2d31365c7181be49486199c403117a6e439fcd6f018bf6a68bad600facb6ae45`,
+and
+`74b736da82d453ab68effd574c56b7e4a37cf27fdd53d206b1bbf308b531bff2`.
+Enabled and explicit `-noload EtherCATWorkbench` product runs each remained
+alive for 37 of 37 samples; Workbench was mapped in 37 and 0 samples
+respectively. Both ended by intentional passed-through SIGTERM with expected
+status 15. The audit from 2026-07-23 02:04:44 to 02:07:05 +0800 found zero
+residual qualification processes, new matching diagnostic reports, or
+matching crash-service events. All execution used fresh HOME/settings,
+offscreen Qt, cleared inherited DYLD variables, disabled crash reporting,
+`-no-crashcheck`, and a process-local Touch Bar bypass; no visible/manual UI
+inspection was run. The explicit-disabled launch emitted the known non-fatal
+`QSharedMemory::handle: doesn't exist` initialization message, then remained
+alive for all 37 samples and ended with the expected status 15.
+
+Authoritative evidence is under
+`/private/tmp/embed-labs-wb-nav-visible-identity-001.2G4bre`. The issue changes
+only private Workbench search text, its test declaration/implementation, and
+these four documents. It adds no public API or model role, source file,
+dependency, Project format, persistence field, Provider or ProjectService
+contract, Project command, Core or ProjectExplorer hook, application
+bootstrap, thread, timer, network, ADS, scan, online state, CoE/SDO, PLC,
+controller, or hardware behavior. No CMake or qbs description changed, so qbs
+was not run. `EtherCATWorkbenchPlugin` remains In progress.

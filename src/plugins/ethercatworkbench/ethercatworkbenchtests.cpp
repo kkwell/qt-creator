@@ -5939,6 +5939,53 @@ void EtherCATWorkbenchTests::testNavigationSelectionAndFiltering()
     controller.selectionService()->clear();
 }
 
+void EtherCATWorkbenchTests::testNavigationVisibleIdentityFiltering()
+{
+    WorkbenchController controller;
+    const Data::ProjectSnapshot project = projectSnapshot("Visible Identity Filter");
+    const QList<Data::DeviceSummary> devices = deviceSummaries(50);
+    controller.treeModel()->setProjects({project});
+    controller.treeModel()->syncDevices(devices);
+
+    WorkbenchNavigationWidget navigation(&controller);
+    const Data::DeviceSummary &device = devices.at(42);
+    const QString visibleProductIdentity = "0x0000102a";
+    const QModelIndex sourceDevice = controller.treeModel()->indexForNodeId(device.id);
+    QVERIFY(sourceDevice.isValid());
+    QVERIFY(sourceDevice.data(Qt::ToolTipRole)
+                .toString()
+                .contains("Product: " + visibleProductIdentity));
+    const Core::PropertyPageContext projectBefore
+        = controller.treeModel()->contextForNodeId(project.id);
+
+    controller.selectionService()->setCurrentNodeId(device.id);
+    navigation.filterEdit()->setText(visibleProductIdentity);
+
+    QTRY_VERIFY(findById(navigation.treeView()->model(), device.id).isValid());
+    QVERIFY(findByKind(
+                navigation.treeView()->model(), Core::WorkbenchNodeKind::DeviceRepository)
+                .isValid());
+    QVERIFY(!findById(navigation.treeView()->model(), devices.at(7).id).isValid());
+    QCOMPARE(controller.selectionService()->currentNodeId(), device.id);
+    QCOMPARE(
+        navigation.treeView()
+            ->currentIndex()
+            .data(WorkbenchTreeModel::NodeIdRole)
+            .value<Data::NodeId>(),
+        device.id);
+    QCOMPARE(controller.treeModel()->contextForNodeId(project.id), projectBefore);
+
+    const QString searchText = sourceDevice.data(WorkbenchTreeModel::SearchTextRole).toString();
+    const QString visibleIdentity = "0x00000002 0x0000102a 0x00000001";
+    const QString legacyIdentity = "00000002 0000102a 00000001 I/O";
+    QVERIFY(searchText.contains(visibleIdentity));
+    QVERIFY(searchText.contains(legacyIdentity));
+    navigation.filterEdit()->setText(legacyIdentity);
+    QTRY_VERIFY(findById(navigation.treeView()->model(), device.id).isValid());
+    QVERIFY(!findById(navigation.treeView()->model(), devices.at(7).id).isValid());
+    controller.selectionService()->clear();
+}
+
 void EtherCATWorkbenchTests::testNavigationExpansionStateLifecycle()
 {
     WorkbenchController controller;

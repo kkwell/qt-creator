@@ -2293,3 +2293,40 @@ normal and 2x offscreen tests, the complete six-plugin regression, the
 `WITH_TESTS=OFF` product build with exactly 16 plugin dylibs, and invisible
 enabled/disabled lifecycle acceptance. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-coe-edit-feedback-001.vl5Suz`.
+
+## Workbench visible-identity search boundary
+
+`ISSUE-WB-NAV-FILTER-VISIBLE-IDENTITY-001`, based on local baseline
+`c6f48495263f38a292a780f0955468bf183c692a`, remains inside the private
+`WorkbenchTreeModel` search projection. Device identity authority continues
+to be the existing `DeviceSummary`; the model formats Vendor, Product, and
+Revision as zero-padded `0x........` tokens for both the visible tooltip and
+the existing private `SearchTextRole`.
+
+`WorkbenchNavigationWidget` still configures the same case-insensitive
+fixed-string `QSortFilterProxyModel` with recursive filtering and automatic
+child acceptance. No proxy subclass, parser, normalization cache, public
+role, or additional state is introduced. A visible prefixed token matches
+directly, while the complete former unprefixed identity/group projection
+remains intact ahead of the new tokens. Matching a Repository device retains
+the ordinary ancestor projection and stable-ID selection; filtering does not
+become Project or Repository authority.
+
+The boundary changes only `workbenchtreemodel.cpp`, the existing Workbench
+test declaration/implementation, and four evidence documents. It adds no
+public type or role, source file, dependency, CMake/qbs entry, Project format
+or persistence field, Provider/ProjectService contract, Project command,
+Core or ProjectExplorer hook, application bootstrap, production thread or
+timer, network, ADS, scan, online state, CoE/SDO execution, PLC, controller,
+or hardware behavior.
+
+Qualification used a synthetic Repository `DeviceSummary` fixture verified
+against its visible tooltip, normal and 2x offscreen tests, all six isolated
+EtherCAT suites, the complete
+`WITH_TESTS=OFF` product build with 16 plugin dylibs, and invisible
+enabled/disabled product lifecycle evidence. Four complete Workbench runs
+passed 80 events each; the isolated suites passed 131 events total. Both
+product lifecycle runs remained alive for all 37 samples, with Workbench
+loaded in all enabled samples and no disabled samples, and produced no new
+matching diagnostic report or crash-service event. Authoritative evidence is
+under `/private/tmp/embed-labs-wb-nav-visible-identity-001.2G4bre`.

@@ -625,7 +625,7 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
         if (!node->presentationDetails.isEmpty())
             text += ' ' + node->presentationDetails.join(' ');
         if (node->kind == Core::WorkbenchNodeKind::Device) {
-            text += QString(" %1 %2 %3 %4")
+            text += QString(" %1 %2 %3 %4 0x%1 0x%2 0x%3")
                         .arg(node->device.identity.vendorId, 8, 16, QLatin1Char('0'))
                         .arg(node->device.identity.productCode, 8, 16, QLatin1Char('0'))
                         .arg(node->device.identity.revisionNumber, 8, 16, QLatin1Char('0'))

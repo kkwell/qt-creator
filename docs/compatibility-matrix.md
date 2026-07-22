@@ -1471,6 +1471,7 @@ delegate, persistent-index, and line-edit contracts are at
 <https://doc.qt.io/qt-6.8/qlineedit.html>. Beckhoff's CoE page is referenced
 only for object-value, RW/RO, Offline-value, and Update List terminology at
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
+
 The atomic clear and address-based restoration are Embed Labs Qt-native
 behavior.
 
@@ -3005,3 +3006,38 @@ accessibility event is documented at
 page is referenced only for Value, RW/RO, Offline-value, and Update List
 terminology at
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.
+
+## EtherCATWorkbench visible-identity filter qualification
+
+`ISSUE-WB-NAV-FILTER-VISIBLE-IDENTITY-001` is qualified from local baseline
+`c6f48495263f38a292a780f0955468bf183c692a`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| User-visible defect | Repository tooltips showed Product `0x0000102a`, but filtering with that exact copied value produced no match because the private search role omitted `0x` |
+| Failure-first | Only the new Workbench test changed; production `workbenchtreemodel.cpp` retained SHA-256 `3211b55cffb8762f82f22d78e340ce517595b2e39257e038cdd2e9274a0947aa` and blob `aa23ee6dfe4e8b4cc6c7b996250592521f3b5c97`; initialization and cleanup passed, the exact visible Product filter failed, and the target exited 1 |
+| Formatting authority | Vendor, Product, and Revision search tokens now use the same zero-padded `0x........` form as the visible tooltip |
+| Compatibility | The complete legacy `Vendor Product Revision group` segment remains unchanged, so both single-field and compound unprefixed searches still match; display-name, status, and provider-detail terms are unchanged |
+| Navigation state | Exact visible-identity filtering retains the selected stable device ID and unchanged Project context, shows its Repository ancestor, and hides unrelated devices |
+| Focused 1x/2x | Each final run passed 3 events, 0 failed, target status 0 |
+| Navigation-related 1x/2x | Each final run passed 6 events, 0 failed, target status 0 |
+| Complete Workbench 1x/2x | Two final runs at each scale passed 80 events per run, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 80, Scan 7, Diagnostics 7; 131 passed, 0 failed, every target status 0 |
+| Known non-fatal diagnostics | Complete Workbench retains the pre-existing ProjectExplorer TaskHub category soft assertion in the invalid-project path. The explicit-disabled launch emitted `QSharedMemory::handle: doesn't exist`, then remained alive for 37/37 samples and ended with expected status 15. Neither condition failed a test, target, or crash audit |
+| Final source SHA-256 | Tree model `96d94e79cb5c938486ac9e81da0d7776614d6e2eb38141ed14a9f3f7fb9c7e71`; tests `47e92628cce83e4ebc0874e4d5882ad112b397b1fa45e6fa0ce0a762fbdc481c`; test header `16070acc603d9394dd1c49fb38c333ce2b6d6e7e15335c4e9bbca08a35ddbf39` |
+| Final git blobs | Tree model `042a51ec04dd84371cde46de18c7e6f98e00f348`; tests `0daf1f517d8256e193dd372f6bf82767ab72071b`; test header `8f2940e28febba3cfa5bdafde2d289c6fab24f92` |
+| Qualified Qt and test build | Qt 6.11.0 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build and inventory | The `WITH_TESTS=OFF` Workbench target and complete product build passed in `qt-creator-build-ethercat-product-qt611`; exactly 16 plugin dylibs are present |
+| Product hashes | Executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `2d31365c7181be49486199c403117a6e439fcd6f018bf6a68bad600facb6ae45`; test Workbench `74b736da82d453ab68effd574c56b7e4a37cf27fdd53d206b1bbf308b531bff2` |
+| Enabled/disabled lifecycle | Both product runs stayed alive for 37/37 samples; Workbench was loaded in 37 enabled samples and 0 explicit-disabled samples; both ended with expected passed-through SIGTERM status 15 |
+| Crash-dialog audit | From 2026-07-23 02:04:44 to 02:07:05 +0800 there were zero residual qualification processes, new matching DiagnosticReports files, or matching crash-service events |
+| Invisible executable policy | Fresh HOME/settings, offscreen Qt, disabled crash reporting, cleared inherited DYLD variables, `-no-crashcheck`, and the process-local Touch Bar bypass kept acceptance invisible and non-interrupting; no visible/manual UI inspection was run |
+| Deliberate exclusions | No public API/role, Project mutation, Repository mutation, Provider/ProjectService contract, Core/ProjectExplorer hook, network, ADS, scan, online state, CoE/SDO, PLC, controller, or hardware behavior is claimed |
+| CMake/qbs execution | Neither description changed, so qbs was not run |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-nav-visible-identity-001.2G4bre`. Qt's configured
+filter-role and recursive-filter behavior is documented at
+<https://doc.qt.io/qt-6.11/qsortfilterproxymodel.html>. Beckhoff's identity
+field definition is at
+<https://infosys.beckhoff.com/content/1033/tcplclib_tc2_ethercat/57119371.html>.
