@@ -2017,3 +2017,40 @@ ESC/EEPROM write, or hardware behavior. No CMake or qbs entry changed.
 Qualification is local ESI/offline Project data plus offscreen product
 lifecycle evidence. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-dc-draft-refresh-001.6ifOHJ`.
+
+## Workbench CoE same-context view-state boundary
+
+`ISSUE-WB-COE-SAME-CONTEXT-VIEW-STATE-001` remains inside the private
+`CoeOnlinePage`. A non-`None` context is stable only when its Project ID, node
+ID, and node kind all match the prior context. That gate lets the existing
+page-owned widgets keep filter editor state, Advanced options, source choice,
+and Mock sample generation while the page-owned scalar object address remains
+the semantic selection anchor.
+
+The anchor is a `quint32` value. The page retains no `QModelIndex`, model item,
+Repository entry, Project QObject, or service object across rebuilds. Current
+Project and ESI definitions still replace the source model on every context
+update. An internal result-change guard prevents the model reset and proxy
+fallback selection from replacing an address that still exists in the fresh
+source model, even when the proxy currently hides it. If the address no longer
+exists, the current valid fallback is adopted or the anchor is cleared.
+
+A different Project, node ID, or node kind resets all page-owned CoE view
+state, so this does not create a cross-node cache. Feedback is transient and
+cleared on refresh; manually edited Mock values are rebuilt from current
+definitions. The context generation continues to increment on every
+`setContext()` call, including same-stable-context refresh, so stale Advanced
+and Add-to-Startup dialog responses remain invalid.
+
+This is not a generic view-state service, Repository signal suppression,
+refresh-reason API, Project revision or generation contract, CAS or merge
+protocol, persistence format, or Provider behavior. Existing Details routing,
+ProjectService commands, Repository signals, public API, and model roles are
+unchanged.
+
+The delta changes private `coeonlinepage.cpp`, the existing Workbench test
+declaration/implementation, and four evidence documents. It adds no header,
+source file, dependency, source-list entry, CMake/qbs entry, Project format,
+thread, timer, network, ADS, scan, online state, SDO, or hardware behavior.
+`EtherCATWorkbenchPlugin` remains In progress. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-coe-view-state-001.4vssYQ`.

@@ -1288,3 +1288,44 @@ PR, or publication occurred. The supported baseline remains the local
 proof is under its `failure-first/` directory, the duplicate-mode red proof is
 under `derived-failure/`, and the isolated intermediate test-harness report is
 under `product/quarantined-test-harness-reports/`.
+
+## Local CoE same-context view-state delta
+
+`ISSUE-WB-COE-SAME-CONTEXT-VIEW-STATE-001` is a private Workbench correction
+on local baseline `2e0bc521205d130ea2d56fe6b88901185977d8c2`. A non-`None`
+CoE page retains page-owned view state only while the Project ID, node ID, and
+node kind are all unchanged. Text-filter editor state, Advanced filters,
+Mock/offline choice, Mock sample generation, and one scalar selected-object
+address can therefore survive a Project or same-identity ESI refresh.
+
+The source model still rebuilds from current Project and Repository data. A
+retained address is restored only as a value lookup in the fresh source model;
+no `QModelIndex`, model item, Repository object, or Project object is retained.
+If a proxy filter temporarily hides the address, its semantic anchor remains;
+if the source object is removed, the page adopts the valid fallback or clears
+the anchor. A genuine context change resets state and establishes no
+cross-node cache.
+
+The private context generation still increments on every refresh, so stale
+Advanced and Add-to-Startup responses remain invalid. Feedback is cleared and
+transient manually edited Mock values are not preserved. This is not a generic
+view-state service, signal-suppression change, refresh-reason API, Repository
+revision, CAS or merge protocol, or persistence mechanism.
+
+The local delta changes only private `coeonlinepage.cpp`, the Workbench test
+declaration/implementation, and four evidence documents. It introduces no new
+path, header, public API, source file, dependency, CMake/qbs entry, Project
+format, persistence field, Provider/ProjectService contract, Project command,
+custom model role, production thread/timer, direct upstream Core patch, Core
+or ProjectExplorer hook, application bootstrap, network, ADS, scan, online
+state, SDO, or hardware behavior. The Workbench path count remains 44 and the
+direct upstream Core patch count remains five. No CMake or qbs description
+changed, so qbs was not run.
+
+Qualification used local ESI, offline Project, and Mock data plus offscreen
+enabled/disabled product lifecycle runs with passed-through SIGTERM. It did
+not exercise online CoE, a controller connection, network transport, SDO, or
+physical hardware. No visible main window, remote comparison, fetch, pull,
+merge, rebase, push, PR, or publication occurred. The supported baseline
+remains the local `embed-labs` history. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-coe-view-state-001.4vssYQ`.

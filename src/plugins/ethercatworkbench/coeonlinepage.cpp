@@ -961,23 +961,41 @@ CoeOnlinePage::CoeOnlinePage(WorkbenchController *controller, QWidget *parent)
 
 void CoeOnlinePage::setContext(const Core::PropertyPageContext &context)
 {
+    const bool sameStableContext
+        = context.nodeKind != Core::WorkbenchNodeKind::None
+          && m_context.projectId == context.projectId && m_context.nodeId == context.nodeId
+          && m_context.nodeKind == context.nodeKind;
+    const std::optional<quint32> selectedObjectAddress
+        = sameStableContext ? m_selectedObjectAddress : std::nullopt;
     ++m_contextGeneration;
     m_context = context;
-    m_mockGeneration = 0;
-    m_selectedObjectAddress.reset();
-    {
-        QScopedValueRollback resultChange(
-            m_filterResultChangeDepth, m_filterResultChangeDepth + 1);
-        m_filterModel->resetAdvancedFilters();
-        m_filter->clear();
-        m_showOffline->setChecked(false);
+    if (!sameStableContext) {
+        m_mockGeneration = 0;
+        m_selectedObjectAddress.reset();
+        {
+            QScopedValueRollback resultChange(
+                m_filterResultChangeDepth, m_filterResultChangeDepth + 1);
+            m_filterModel->resetAdvancedFilters();
+            m_filter->clear();
+            m_showOffline->setChecked(false);
+        }
     }
     m_feedback->clear();
     m_feedback->hide();
-    rebuildObjects();
-    const QModelIndex current = m_dictionary->currentIndex().siblingAtColumn(0);
-    if (current.isValid())
-        m_selectedObjectAddress = current.data(AddressRole).toUInt();
+    {
+        QScopedValueRollback resultChange(
+            m_filterResultChangeDepth, m_filterResultChangeDepth + 1);
+        rebuildObjects();
+    }
+    if (selectedObjectAddress && indexForAddress(m_model, *selectedObjectAddress).isValid()) {
+        m_selectedObjectAddress = selectedObjectAddress;
+    } else {
+        const QModelIndex current = m_dictionary->currentIndex().siblingAtColumn(0);
+        if (current.isValid())
+            m_selectedObjectAddress = current.data(AddressRole).toUInt();
+        else
+            m_selectedObjectAddress.reset();
+    }
 }
 
 void CoeOnlinePage::rebuildObjects()

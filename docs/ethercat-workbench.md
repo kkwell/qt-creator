@@ -2256,8 +2256,10 @@ selection anchor. The page retains only the existing private numeric
 `AddressRole`; it retains no `QModelIndex`, view item, model item, or object
 pointer across the change. When the address is visible again it is restored;
 otherwise the first available row is selected. Keyboard focus returns to the
-dictionary. A new page context clears the old address and advanced-filter
-state, so neither can leak between devices. The Mock/offline source choice,
+dictionary. Switching to a different Project, node ID, or node kind clears the
+old address and advanced-filter state, so neither can leak between devices.
+Same-stable-context refresh continuity is qualified separately by
+`ISSUE-WB-COE-SAME-CONTEXT-VIEW-STATE-001`. The Mock/offline source choice,
 current Project context, and Project snapshot are not changed by Clear Filters.
 
 Qt documents dynamic filtering in
@@ -5241,3 +5243,125 @@ bootstrap change, production thread or timer, network, ADS, scan, online
 state, SDO execution, ESC/EEPROM write, or hardware behavior. No CMake or qbs
 description changed, so qbs was not run. This is offline Project configuration
 editing continuity, not real-time DC or hardware-clock qualification.
+
+## CoE same-context view-state continuity
+
+`ISSUE-WB-COE-SAME-CONTEXT-VIEW-STATE-001`, based on local commit
+`2e0bc521205d130ea2d56fe6b88901185977d8c2`, keeps the CoE page stable while
+fresh Project or ESI data is rendered for the same logical node. A stable
+context is non-`None` and has the same Project ID, node ID, and node kind.
+Within that boundary the page keeps the text filter, its focus, cursor,
+selection and Undo availability, the Advanced range and Hide flags, the
+Mock/offline choice, the Mock sample generation, and a scalar selected-object
+address.
+
+The model is still rebuilt from the latest Project and Repository snapshots.
+A Project rename directly preserved Unicode and literal `%1` filter text,
+focus, selection, cursor, Undo availability, Profile-specific plus Hide
+Standard filtering, Mock sample 2, and the selected `6060:00` address. A
+same-identity ESI update then preserved the filter, offline source, Advanced
+state, and sample generation while exposing the refreshed `6072:00` ESI
+comment. The page therefore retains view state, not stale object definitions.
+
+The selection anchor is the page-owned numeric address, never a
+`QModelIndex`, model item, Repository object, or Project object. If that
+address still exists in the rebuilt source model, a temporary proxy filter
+may hide it without replacing the semantic anchor with the fallback row.
+Clearing the filter restores it; the qualification covers
+`6060:00 -> 6072:00 visible -> refresh -> clear -> 6060:00`. If the address
+has actually disappeared, the page adopts the current valid fallback row or
+clears the anchor.
+
+Switching Project, node ID, or node kind resets the filters, source choice,
+sample generation, and selection state. The existing workflow directly
+verifies this reset on the same page instance; the new lifecycle test also
+switches away so the page is destroyed, re-enters with an empty filter,
+offline disabled and sample 0, and then verifies Project close destroys it.
+There is no cross-node cache. Feedback is still cleared on every refresh.
+Transient manually edited Mock values are intentionally rebuilt from current
+definitions and are not covered by this issue.
+
+Every `setContext()` still increments the private context generation. An old
+Advanced or Add-to-Startup response is therefore rejected after any refresh,
+including a same-stable-context refresh. This continuity is not signal
+suppression, a Repository revision or CAS protocol, persistence, or a generic
+view-state service.
+
+Qt's [QAbstractItemModel](https://doc.qt.io/qt-6/qabstractitemmodel.html),
+[QSortFilterProxyModel](https://doc.qt.io/qt-6/qsortfilterproxymodel.html), and
+[QItemSelectionModel](https://doc.qt.io/qt-6/qitemselectionmodel.html)
+contracts inform the model rebuild, proxy mapping, and explicit scalar-anchor
+handling. Beckhoff's
+[CoE Online](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html)
+and
+[extended CoE Online](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446522251.html)
+pages are terminology and interaction comparisons for the object list,
+Update List, source selection, ranges, and Hide filters. They do not specify
+this Qt refresh-continuity behavior, which is local to Embed Labs.
+
+Failure-first changed only the new test while `coeonlinepage.cpp/.h` retained
+SHA-256 values
+`6b8738ff5e7f245ddb2ad746aa2058b8452343471bd86e85cbeee29d66be5478`
+and
+`542315c7a5ba4f404ec8d2d2edaee15bc519e9f19a7e64e67cf134d2edf53952`.
+The old page cleared the expected `Mode %1 / 模式` filter to an empty string
+after Project rename and exited with status 1. Review then exposed a hidden
+anchor defect while the intermediate implementation/header SHA-256 values
+remained
+`783b87d4e3ee23dd7080c8c3a3777c5b31cfcc1dfc48f5729258481684f0f5af`
+and
+`542315c7a5ba4f404ec8d2d2edaee15bc519e9f19a7e64e67cf134d2edf53952`:
+after refresh and filter clear the page selected `6072:00` instead of
+`6060:00`; that target also exited with status 1.
+
+Final focused runs passed three events twice at normal scale and once at 2x.
+Related CoE runs passed eight events at normal scale and 2x. Complete
+Workbench runs passed 74 events twice at normal scale and once at 2x. The six
+isolated suites passed 125 events: Core 17, Project 12, Devices 8, Workbench
+74, Scan 7, and Diagnostics 7. All final targets exited 0. Complete Workbench
+runs retain the known pre-existing ProjectExplorer TaskHub soft assertion in
+the invalid-project path; it did not fail a test or target.
+
+The final implementation, Workbench tests, and test declaration SHA-256 values
+are
+`2faebb9f5095f4540a7dd1f70fc9dcbaf06958ed6101b524bc66615750da69a4`,
+`a7929f7af05a4a64326b993a7bd26993711c1836375682bb99682810bac72e08`,
+and
+`eae31102217c668bc4e05849e943fedee8f48912629da5103d268bbeebaa60a4`.
+Their git blobs are `253744dc05c01ff3a9f0b2fa754bc9cf5e6291cc`,
+`bbae1e0c1ffe70b18c7461eb2ea4c4998ecaf998`, and
+`c10d27e7c7800630308f7f7212d19f5a0f861f22`.
+
+The full `WITH_TESTS=OFF` product build passed and contains exactly 16 plugin
+dylibs. The executable SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+the product and test Workbench plugin SHA-256 values are
+`68f547b1b7256e1ff1017b06ef50335d24c4ebd6c3ef610ddf8bbd176df4400e`
+and
+`3c0878e9e5065cd2b4258f16ebd403700bc02f48c08e022095fa1a092e193068`.
+
+Enabled product PID 65666 remained alive for 37 consecutive samples with
+Workbench mapped in all 37. Explicitly disabled PID 68023 remained alive for
+37 samples with `-noload EtherCATWorkbench` and Workbench absent in all 37.
+LLDB passed intentional SIGTERM without stopping or notifying, and both
+targets recorded status 15. Fresh HOME/settings, cleared inherited DYLD
+variables, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`,
+`-no-crashcheck`, and the process-local Touch Bar bypass kept the acceptance
+invisible and non-interrupting. The disabled run emitted the existing
+shared-memory initialization message but remained alive for all samples.
+The 2026-07-22 20:21:05 to 20:23:56 +0800 audit found no residual process,
+new matching DiagnosticReports file, matching crash-service event, visible
+main window, or system crash dialog.
+
+Evidence is under
+`/private/tmp/embed-labs-wb-coe-view-state-001.4vssYQ`. The issue changes only
+private `coeonlinepage.cpp`, the Workbench test declaration/implementation,
+and these four documents. It adds no public API, source file, dependency,
+Provider or ProjectService contract, Project format, persistence field,
+Project command, model role, Core or ProjectExplorer hook, application
+bootstrap change, thread, timer, network, ADS, scan, online state, SDO
+execution, or hardware behavior. No CMake or qbs description changed, so qbs
+was not run. The unrelated `WITH_TESTS=ON` all-target build was not rerun
+because the known EasyBoard `extensionmanager_test.h` blocker remains outside
+this private Workbench issue. This is local/offline Mock view continuity, not
+an online CoE, controller, transport, or physical-device qualification.

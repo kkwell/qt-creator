@@ -5,7 +5,7 @@
 | Item | Supported or observed baseline | Evidence status |
 |---|---|---|
 | Product branch | `embed-labs` only | Verified |
-| Issue baseline commit | `03a6abd1c696d34acae685bdf0c340a9a471a837` | Verified |
+| Issue baseline commit | `2e0bc521205d130ea2d56fe6b88901185977d8c2` | Verified |
 | Product version | 20.0.1 | Verified |
 | Recorded Qt Creator merge point | `11ba5cec09dce75db4bc948d98055e338ff59576` | Verified |
 | Qualified product Qt | Homebrew 6.11.0 | Clean Release build and GUI smoke verified |
@@ -2721,3 +2721,51 @@ are referenced only for terminology and interaction at
 <https://infosys.beckhoff.com/content/1033/tcsystemmanager/1092594187.html>,
 and
 <https://infosys.beckhoff.com/content/1033/ethercatsystem/2469120395.html>.
+
+## EtherCATWorkbench CoE same-context view-state qualification
+
+`ISSUE-WB-COE-SAME-CONTEXT-VIEW-STATE-001` is qualified from local baseline
+`2e0bc521205d130ea2d56fe6b88901185977d8c2`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Only the new Workbench test changed; production `coeonlinepage.cpp/.h` retained SHA-256 `6b8738ff5e7f245ddb2ad746aa2058b8452343471bd86e85cbeee29d66be5478` / `542315c7a5ba4f404ec8d2d2edaee15bc519e9f19a7e64e67cf134d2edf53952` and blobs `35ff51e9bcb318a89b1ae31afb238c1bae08fb96` / `e916c21579d01c6558e839632c840c7fc2d2c5af`; after Project rename the old page returned an empty filter instead of `Mode %1 / 模式`, target status 1 |
+| Review-derived failure | With intermediate implementation/header SHA-256 `783b87d4e3ee23dd7080c8c3a3777c5b31cfcc1dfc48f5729258481684f0f5af` / `542315c7a5ba4f404ec8d2d2edaee15bc519e9f19a7e64e67cf134d2edf53952` unchanged, clearing the filter after refresh selected fallback `6072:00` instead of the still-existing hidden anchor `6060:00`; target status 1 |
+| Stable context gate | Preservation requires non-`None` plus equal Project ID, node ID, and node kind |
+| Preserved page-owned state | Text filter, focus, cursor, selection, Undo availability, Advanced range/Hide flags, Mock/offline source, Mock sample generation, and scalar selected address |
+| Fresh Project data | Project rename preserved the view state and Mock sample 2 while the current Project name changed |
+| Fresh ESI data | Same-identity ESI update preserved filter/source/Advanced state and sample generation while the new `6072:00` ESI comment became visible |
+| Hidden selection anchor | An address that remains in the rebuilt source model survives while the proxy hides it; clearing the filter restores `6060:00` rather than adopting visible fallback `6072:00` |
+| Removed-address fallback | If the address no longer exists in the fresh source model, the current valid fallback is adopted or the anchor is cleared |
+| Modal generation | Every `setContext()` still increments the context generation; stale Advanced and Add-to-Startup responses remain invalid after same-context refresh |
+| Genuine context change | Different Project/node/kind resets filter, Advanced state, source, sample generation, and selection on the same page instance; node switch and Project close also destroy the page with no cross-node cache |
+| Deliberate exclusions | Feedback and manually edited Mock values are not retained; no native IME composition, online CoE, SDO, controller, transport, or hardware behavior is claimed |
+| Focused normal and 2x | Two normal runs and one 2x run each passed 3 events, 0 failed, target status 0 |
+| Related CoE normal and 2x | One normal run and one 2x run each passed 8 events, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | Two normal runs and one 2x run each passed 74 events, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 74, Scan 7, Diagnostics 7; 125 passed, 0 failed in six isolated LLDB-supervised processes |
+| Known soft assertion | The existing invalid-project path still emits the pre-existing ProjectExplorer TaskHub category soft assertion; it did not fail a test or target |
+| Final source SHA-256 | Implementation `2faebb9f5095f4540a7dd1f70fc9dcbaf06958ed6101b524bc66615750da69a4`; tests `a7929f7af05a4a64326b993a7bd26993711c1836375682bb99682810bac72e08`; test declaration `eae31102217c668bc4e05849e943fedee8f48912629da5103d268bbeebaa60a4` |
+| Final git blobs | Implementation `253744dc05c01ff3a9f0b2fa754bc9cf5e6291cc`; tests `bbae1e0c1ffe70b18c7461eb2ea4c4998ecaf998`; test declaration `c10d27e7c7800630308f7f7212d19f5a0f861f22` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 plugin dylibs: Core, CppEditor, Debugger, EasyBoard, EtherCATCore, EtherCATDevices, EtherCATDiagnostics, EtherCATProject, EtherCATScan, EtherCATWorkbench, ProjectExplorer, QmakeProjectManager, QtSupport, RemoteLinux, ResourceEditor, and TextEditor |
+| Product hashes | Executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `68f547b1b7256e1ff1017b06ef50335d24c4ebd6c3ef610ddf8bbd176df4400e`; test Workbench `3c0878e9e5065cd2b4258f16ebd403700bc02f48c08e022095fa1a092e193068` |
+| Enabled startup | PID 65666 remained alive for 37 samples with Workbench mapped in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 68023 remained alive for 37 samples with `-noload EtherCATWorkbench`; Workbench was absent in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Known non-fatal launch message | The disabled run emitted the existing shared-memory initialization message, remained alive for all 37 samples, and produced no crash artifact or service event |
+| Final crash-dialog audit | From 2026-07-22 20:21:05 to 20:23:56 +0800 there was no residual qualification process, new matching DiagnosticReports file, matching crash-service event, visible main window, or system crash dialog |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM; launch acceptance was not paused |
+| Visual/manual inspection | Not run by design because executable acceptance had to remain invisible and non-interrupting |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard `extensionmanager_test.h` blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, ProjectService, Project command, model role, or source-list changes | None |
+| Core, ProjectExplorer, app, network, ADS, scan, online state, SDO, or hardware changes | None; this is a private Workbench view-state correction over local ESI/offline Project and Mock data |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-coe-view-state-001.4vssYQ`. Qt's model/view and
+selection contracts are at
+<https://doc.qt.io/qt-6/qabstractitemmodel.html>,
+<https://doc.qt.io/qt-6/qsortfilterproxymodel.html>, and
+<https://doc.qt.io/qt-6/qitemselectionmodel.html>. Beckhoff's CoE pages are
+referenced only for terminology and interaction at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html> and
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1446522251.html>.
