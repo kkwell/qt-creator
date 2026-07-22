@@ -1581,3 +1581,43 @@ rebase, push, PR, or publication is part of this delta. No CMake or qbs
 description changed, so qbs was not run. The supported baseline remains the
 local `embed-labs` history. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-nav-visible-identity-001.2G4bre`.
+
+## Local blank-area context-menu delta
+
+`ISSUE-WB-NAV-MOUSE-BLANK-CONTEXT-001` is a private Workbench correction on
+local baseline `142225dc80ec87032f110d96e4408f425477ff65`. A real mouse request
+that lands inside unused tree viewport space now uses an empty menu context
+instead of the old current node. The stable selection remains untouched, but
+node-specific commands are absent and disabled while the popup exists, then
+restored from the unchanged selection when it closes.
+
+Valid mouse hits continue to select their stable node. Keyboard events and the
+existing out-of-viewport `(-1, -1)` direct-signal convention continue to use
+the current node. Expand, Collapse, and tree-wide actions remain available on
+blank space. The implementation follows Qt's separate hit-test/current-index
+contracts at <https://doc.qt.io/qt-6/qabstractitemview.html#indexAt> and
+<https://doc.qt.io/qt-6/qabstractitemview.html#currentIndex-prop>, and matches
+the selected-object scope in Beckhoff's documented Add New Item workflows
+without importing its code, formats, assets, branding, or communication stack.
+
+The local delta changes only `workbenchnavigation.cpp`, the existing Workbench
+test implementation, and four evidence documents. It introduces no public API
+or model role, source file, dependency, CMake/qbs entry, Project or Repository
+mutation, Project format, persistence field, Provider/ProjectService contract,
+Project command, direct upstream Core patch, Core or ProjectExplorer hook,
+application bootstrap, production thread or timer, network, ADS, scan, online
+state, CoE/SDO, PLC, controller, or hardware behavior.
+
+Focused and related tests passed at normal and 2x scale. Four complete
+Workbench runs passed 80 events each, and the six isolated EtherCAT suites
+passed 131 events. The `WITH_TESTS=OFF` Workbench and complete product builds
+passed with 16 plugin dylibs. Enabled and explicit-disabled product runs each
+remained alive for 37 samples, with Workbench mapped in 37 and 0 samples. Both
+ended with expected status 15 and produced no residual process, new matching
+diagnostic report, or matching crash-service event.
+
+No visible/manual UI inspection, remote comparison, fetch, pull, merge,
+rebase, push, PR, or publication is part of this delta. No CMake or qbs
+description changed. The supported baseline remains the local `embed-labs`
+history. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-nav-blank-context-001.oYIrwR`.

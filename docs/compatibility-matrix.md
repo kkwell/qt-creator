@@ -3041,3 +3041,44 @@ filter-role and recursive-filter behavior is documented at
 <https://doc.qt.io/qt-6.11/qsortfilterproxymodel.html>. Beckhoff's identity
 field definition is at
 <https://infosys.beckhoff.com/content/1033/tcplclib_tc2_ethercat/57119371.html>.
+
+## EtherCATWorkbench blank-area context-menu qualification
+
+`ISSUE-WB-NAV-MOUSE-BLANK-CONTEXT-001` is qualified from local baseline
+`142225dc80ec87032f110d96e4408f425477ff65`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| User-visible defect | A mouse right click on unused tree viewport space reused the prior current index, so a selected Master or slave leaked node-specific commands into a blank-area menu |
+| Failure-first | Only the existing Workbench test changed; production navigation stayed at SHA-256 `84a9aa508d876906a88ff349ef0bd0406bf60f4d6ba7090380d1b834d5ce4b4c` and blob `8a2c6fc675520a9216815c72f0df6f753d5c5a46`; a real in-viewport invalid hit exposed a node action and the target exited 1 |
+| Empty mouse context | An invalid `indexAt()` result inside the viewport produces an empty menu context without clearing or replacing the current index or stable Selection |
+| Generic commands | Expand and Collapse remain present for blank space; global locate behavior retains its existing authority |
+| Node command isolation | Insert, Add, Remove, Move Up, Move Down, Set Active Project, and Copy are absent and disabled for the lifetime of a blank-area popup |
+| Command restoration | Every node command's enabled state after close equals its state immediately before the blank popup |
+| Valid mouse compatibility | A real mouse event on Target still changes both tree and Selection to Target, omits the Master-only Insert action, and retains the valid-row anchor |
+| Keyboard compatibility | A real keyboard event still targets the current Master and uses its row, or the viewport center when that row is fully off-view |
+| Internal sentinel compatibility | The existing direct `customContextMenuRequested(QPoint(-1, -1))` convention remains current-selection based because the point is outside the viewport |
+| Focused normal and 2x | Each authoritative run passed 3 events, 0 failed, target status 0 |
+| Related normal and 2x | Each authoritative run passed 12 events, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | Two authoritative runs at each scale passed 80 events per run, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 80, Scan 7, Diagnostics 7; 131 passed, 0 failed, every target status 0 |
+| Known soft assertion | Complete Workbench retains the pre-existing ProjectExplorer TaskHub category soft assertion in the invalid-project path; it did not fail a test or target |
+| Final source SHA-256 | Navigation `be3fb065bc0b9351314eb98ac4e315482159a28e6527d121c1958fc398479da3`; tests `9deeac93fd33988f17be1fde20fe51b8ca794fc3309e113c19cae93fa7f07ad4`; unchanged test header `16070acc603d9394dd1c49fb38c333ce2b6d6e7e15335c4e9bbca08a35ddbf39` |
+| Final git blobs | Navigation `cd0ce1ad326832165cf99abf7ed788ee68289f78`; tests `b92893fbd3bd1a890caaaa0b4f57f2c1e51c9dc3`; test header `8f2940e28febba3cfa5bdafde2d289c6fab24f92` |
+| Product build and inventory | The `WITH_TESTS=OFF` Workbench target and complete product build passed; exactly 16 plugin dylibs are present |
+| Product hashes | Executable `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `b5d6e148b3855adfcea5a835464e90539d848e4469259c91420c29c6cdb55373`; test Workbench `081f8dbef2464f8f5de1dd5f3a53170d658e2281c597a2a01c71b355d87dd003` |
+| Enabled/disabled lifecycle | Both product runs stayed alive for 37/37 samples; Workbench was loaded in 37 enabled samples and 0 explicit-disabled samples; both ended with expected passed-through SIGTERM status 15 |
+| Crash-dialog audit | From 2026-07-23 02:42:29 to 02:44:52 +0800 there were zero residual processes, new matching DiagnosticReports files, or matching crash-service events |
+| Invisible executable policy | Fresh HOME/settings, offscreen Qt, disabled crash reporting, cleared inherited DYLD variables, `-no-crashcheck`, and the process-local Touch Bar bypass kept acceptance invisible and non-interrupting |
+| Known non-fatal launch output | Explicit-disabled startup emitted the existing shared-memory initialization message, then remained alive for 37/37 samples and ended with expected status 15 |
+| Public/API/system boundary | No public API/role, source list, dependency, Project/Repository mutation, persistence, Provider/ProjectService contract, Project command, Core/ProjectExplorer hook, application bootstrap, network, ADS, scan, online state, CoE/SDO, PLC, controller, or hardware change |
+| CMake/qbs execution | Neither description changed, so qbs was not run; the unrelated known EasyBoard test-all blocker remains outside this issue |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-nav-blank-context-001.oYIrwR`. Qt's item hit-test
+and current-index contracts are at
+<https://doc.qt.io/qt-6/qabstractitemview.html#indexAt> and
+<https://doc.qt.io/qt-6/qabstractitemview.html#currentIndex-prop>. Beckhoff's
+selected Devices/EtherCAT device Add New Item context is referenced at
+<https://infosys.beckhoff.com/content/1033/xts_software/11342363403.html> and
+<https://infosys.beckhoff.com/content/1033/epioconfiguration/6519655307.html>.

@@ -5952,3 +5952,104 @@ contract, Project command, Core or ProjectExplorer hook, application
 bootstrap, thread, timer, network, ADS, scan, online state, CoE/SDO, PLC,
 controller, or hardware behavior. No CMake or qbs description changed, so qbs
 was not run. `EtherCATWorkbenchPlugin` remains In progress.
+
+## Blank-area mouse context menu
+
+`ISSUE-WB-NAV-MOUSE-BLANK-CONTEXT-001`, based on local baseline
+`142225dc80ec87032f110d96e4408f425477ff65`, prevents a mouse request on
+unused tree space from borrowing the previously selected node's menu. The old
+handler changed the current index only when `QTreeView::indexAt()` returned a
+valid row, then always built the menu from `currentIndex()`. Consequently, a
+blank-area right click after selecting a Master could still expose Insert
+Device and Copy Node ID; a configured slave could similarly leak its remove
+and move commands into empty space.
+
+The private navigation widget now keeps a separate menu-context index. A valid
+mouse hit retains the existing behavior and synchronizes both the tree and
+stable `SelectionService` target. An invalid point inside the viewport builds
+an empty context while preserving the real current index and stable selection.
+Expand, Collapse, and other tree-wide commands remain available; Insert, Add,
+Remove, Move, Set Active Project, and Copy are absent and temporarily disabled.
+Closing the menu restores every command to the state derived from the current
+stable selection. Keyboard context events still use the current row. The
+existing internal `customContextMenuRequested(QPoint(-1, -1))` convention is
+also preserved because its sentinel lies outside the viewport.
+
+Qt documents `indexAt()` as the item-view hit test and separately exposes the
+current index at <https://doc.qt.io/qt-6/qabstractitemview.html#indexAt> and
+<https://doc.qt.io/qt-6/qabstractitemview.html#currentIndex-prop>. The local
+Qt Creator Project tree likewise passes a null node when a mouse point does
+not hit an index. Beckhoff documents Add New Item from the selected Devices
+container or EtherCAT device context at
+<https://infosys.beckhoff.com/content/1033/xts_software/11342363403.html> and
+<https://infosys.beckhoff.com/content/1033/epioconfiguration/6519655307.html>.
+Those references define interaction context only; no Beckhoff code, format,
+asset, branding, communication stack, or hardware behavior is copied.
+
+Failure-first changed only the existing Workbench test. Production
+`workbenchnavigation.cpp` retained SHA-256
+`84a9aa508d876906a88ff349ef0bd0406bf60f4d6ba7090380d1b834d5ce4b4c`
+and git blob `8a2c6fc675520a9216815c72f0df6f753d5c5a46`. A real mouse
+`QContextMenuEvent` targeted a point proved to be inside the viewport with an
+invalid `indexAt()` result. The old implementation placed a node-specific
+action in that menu, so the focused target passed initialization and cleanup,
+failed the behavior test, and exited with status 1.
+
+The final test retains the existing real keyboard and valid-row mouse cases,
+then checks a real blank-area mouse request at normal and 2x scale. It verifies
+that the current tree index and stable node do not drift, generic tree actions
+remain, all seven node-specific commands are absent and disabled while the
+menu is open, and their enabled states are restored exactly after close. The
+view-edge point is derived from the first invalid `indexAt()` result rather
+than a hard-coded coordinate; menu placement is left to the window system.
+
+Authoritative focused runs passed 3 events at each scale. The related
+navigation/menu/lifecycle group passed 12 events at each scale. Two complete
+Workbench runs at each scale passed 80 events per run. Six isolated plugin
+suites passed 131 events: Core 17, Project 12, Devices 8, Workbench 80, Scan 7,
+and Diagnostics 7. Every authoritative target exited 0. Complete Workbench
+retains the known pre-existing ProjectExplorer TaskHub category soft assertion
+in its invalid-project path; it did not fail a test or target.
+
+Final SHA-256 values for the navigation implementation, Workbench tests, and
+unchanged test header are
+`be3fb065bc0b9351314eb98ac4e315482159a28e6527d121c1958fc398479da3`,
+`9deeac93fd33988f17be1fde20fe51b8ca794fc3309e113c19cae93fa7f07ad4`,
+and
+`16070acc603d9394dd1c49fb38c333ce2b6d6e7e15335c4e9bbca08a35ddbf39`;
+their git blobs are `cd0ce1ad326832165cf99abf7ed788ee68289f78`,
+`b92893fbd3bd1a890caaaa0b4f57f2c1e51c9dc3`, and
+`8f2940e28febba3cfa5bdafde2d289c6fab24f92`.
+
+Qualification used Qt 6.11.0 Release in
+`qt-creator-build-ethercat-core-qt611`. The `WITH_TESTS=OFF` Workbench target
+and complete product build passed in `qt-creator-build-ethercat-product-qt611`,
+whose bundle contains exactly 16 plugin dylibs. Executable, product Workbench,
+and test Workbench SHA-256 values are
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`,
+`b5d6e148b3855adfcea5a835464e90539d848e4469259c91420c29c6cdb55373`,
+and
+`081f8dbef2464f8f5de1dd5f3a53170d658e2281c597a2a01c71b355d87dd003`.
+
+Enabled and explicit `-noload EtherCATWorkbench` product runs each remained
+alive for 37 of 37 samples; Workbench was mapped in 37 and 0 samples
+respectively. Both ended by intentional passed-through SIGTERM with expected
+status 15. The audit from 2026-07-23 02:42:29 to 02:44:52 +0800 found no
+residual qualification process, new matching DiagnosticReports file, or
+matching crash-service event. Fresh HOME/settings, offscreen Qt, cleared
+inherited DYLD variables, disabled crash reporting, `-no-crashcheck`, and a
+process-local Touch Bar bypass kept both runs invisible and non-interrupting.
+The explicitly disabled run emitted the known non-fatal shared-memory message,
+then stayed alive for every sample and passed the audit.
+
+Authoritative evidence is under
+`/private/tmp/embed-labs-wb-nav-blank-context-001.oYIrwR`. This issue changes
+only private navigation behavior, its existing Workbench test, and these four
+documents. It adds no public API or model role, source file, dependency,
+Project or Repository mutation, Project format, persistence field, Provider
+or ProjectService contract, Project command, Core or ProjectExplorer hook,
+application bootstrap, production thread or timer, network, ADS, scan, online
+state, CoE/SDO, PLC, controller, or hardware behavior. No CMake or qbs
+description changed, so qbs was not run. The unrelated `WITH_TESTS=ON`
+all-target build was not rerun because the known EasyBoard
+`extensionmanager_test.h` blocker remains outside this issue.

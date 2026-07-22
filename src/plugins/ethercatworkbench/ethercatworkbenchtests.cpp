@@ -8275,6 +8275,97 @@ void EtherCATWorkbenchTests::testNavigationKeyboardContextMenuTargetsCurrentNode
     QVERIFY(!mouseInsertActionPresent);
     QCOMPARE(mousePopupPosition.y(), targetAnchor.y());
 
+    tree->setCurrentIndex(masterIndex);
+    tree->scrollTo(masterIndex);
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), masterNodeId);
+    const QRect viewportRect = tree->viewport()->rect();
+    int blankY = viewportRect.top();
+    const int blankX = viewportRect.center().x();
+    while (blankY <= viewportRect.bottom()
+           && tree->indexAt(QPoint(blankX, blankY)).isValid()) {
+        ++blankY;
+    }
+    QVERIFY(blankY <= viewportRect.bottom());
+    const QPoint blankPosition(blankX, blankY);
+    QVERIFY(!tree->indexAt(blankPosition).isValid());
+    const QPoint blankAnchor = tree->viewport()->mapToGlobal(blankPosition);
+
+    ::Core::Command *expandCommand = ::Core::ActionManager::command(
+        Constants::EXPAND_ACTION_ID);
+    ::Core::Command *collapseCommand = ::Core::ActionManager::command(
+        Constants::COLLAPSE_ACTION_ID);
+    ::Core::Command *addCommand = ::Core::ActionManager::command(
+        Constants::ADD_DEVICE_TO_MASTER_ACTION_ID);
+    ::Core::Command *removeCommand = ::Core::ActionManager::command(
+        Constants::REMOVE_OFFLINE_SLAVE_ACTION_ID);
+    ::Core::Command *moveUpCommand = ::Core::ActionManager::command(
+        Constants::MOVE_OFFLINE_SLAVE_UP_ACTION_ID);
+    ::Core::Command *moveDownCommand = ::Core::ActionManager::command(
+        Constants::MOVE_OFFLINE_SLAVE_DOWN_ACTION_ID);
+    ::Core::Command *setActiveCommand = ::Core::ActionManager::command(
+        Constants::SET_ACTIVE_PROJECT_ACTION_ID);
+    ::Core::Command *copyCommand = ::Core::ActionManager::command(
+        Constants::COPY_NODE_ID_ACTION_ID);
+    QVERIFY(expandCommand);
+    QVERIFY(collapseCommand);
+    QVERIFY(addCommand);
+    QVERIFY(removeCommand);
+    QVERIFY(moveUpCommand);
+    QVERIFY(moveDownCommand);
+    QVERIFY(setActiveCommand);
+    QVERIFY(copyCommand);
+
+    const QList<::Core::Command *> nodeCommands{
+        insertCommand,
+        addCommand,
+        removeCommand,
+        moveUpCommand,
+        moveDownCommand,
+        setActiveCommand,
+        copyCommand,
+    };
+    QList<bool> nodeActionStatesBeforeBlank;
+    for (::Core::Command *command : nodeCommands)
+        nodeActionStatesBeforeBlank.append(command->action()->isEnabled());
+    QList<QAction *> blankActions;
+    QList<bool> blankNodeActionStates;
+    bool blankPopupSeen = false;
+    QModelIndex blankPopupCurrentIndex;
+    Data::NodeId blankPopupNodeId;
+    QTimer::singleShot(0, &navigation, [&] {
+        auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (!popup)
+            return;
+        blankPopupSeen = true;
+        blankActions = popup->actions();
+        for (::Core::Command *command : nodeCommands)
+            blankNodeActionStates.append(command->action()->isEnabled());
+        blankPopupCurrentIndex = tree->currentIndex();
+        blankPopupNodeId = controller.selectionService()->currentNodeId();
+        popup->close();
+    });
+    QContextMenuEvent blankMouseMenu(
+        QContextMenuEvent::Mouse, blankPosition, blankAnchor);
+    QApplication::sendEvent(tree->viewport(), &blankMouseMenu);
+
+    QVERIFY(blankPopupSeen);
+    QCOMPARE(tree->currentIndex(), masterIndex);
+    QCOMPARE(controller.selectionService()->currentNodeId(), masterNodeId);
+    QCOMPARE(blankPopupCurrentIndex, masterIndex);
+    QCOMPARE(blankPopupNodeId, masterNodeId);
+    QVERIFY(blankActions.contains(expandCommand->action()));
+    QVERIFY(blankActions.contains(collapseCommand->action()));
+    for (::Core::Command *command : nodeCommands)
+        QVERIFY(!blankActions.contains(command->action()));
+    for (bool actionEnabled : blankNodeActionStates)
+        QVERIFY(!actionEnabled);
+    QCOMPARE(blankNodeActionStates.size(), nodeActionStatesBeforeBlank.size());
+    for (int i = 0; i < nodeCommands.size(); ++i) {
+        QCOMPARE(
+            nodeCommands.at(i)->action()->isEnabled(),
+            nodeActionStatesBeforeBlank.at(i));
+    }
+
     controller.treeModel()->syncDevices(deviceSummaries(50));
     tree->expandAll();
     const QModelIndex scrolledMasterIndex = findByKind(

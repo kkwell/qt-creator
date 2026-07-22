@@ -463,9 +463,11 @@ void WorkbenchNavigationWidget::openDiagnostics()
 
 void WorkbenchNavigationWidget::showContextMenu(const QPoint &position, bool mouseTriggered)
 {
+    QModelIndex contextIndex = m_treeView->currentIndex();
     if (mouseTriggered) {
         const QModelIndex proxyIndex = m_treeView->indexAt(position);
         if (proxyIndex.isValid()) {
+            contextIndex = proxyIndex;
             m_treeView->setCurrentIndex(proxyIndex);
             if (m_controller && m_controller->selectionService()) {
                 const Core::PropertyPageContext clicked = m_sourceModel->contextForIndex(
@@ -473,10 +475,11 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position, bool mou
                 if (clicked.nodeKind != Core::WorkbenchNodeKind::Placeholder)
                     m_controller->selectionService()->setCurrentNodeId(clicked.nodeId);
             }
-        }
+        } else if (m_treeView->viewport()->rect().contains(position))
+            contextIndex = {};
     }
     const Core::PropertyPageContext context = m_sourceModel->contextForIndex(
-        m_proxyModel->mapToSource(m_treeView->currentIndex()));
+        m_proxyModel->mapToSource(contextIndex));
     Core::SelectionService *selectionService
         = m_controller ? m_controller->selectionService() : nullptr;
     const Data::NodeId currentNodeId
@@ -502,26 +505,33 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position, bool mou
     setCommandEnabled(
         Constants::LOCATE_UNSUPPORTED_DEVICE_ACTION_ID,
         m_sourceModel->firstUnsupportedDevice().isValid());
-    const bool canCopyNodeId = m_controller && m_controller->canCopyNodeId(context.nodeId);
+    const bool canCopyNodeId = contextMatchesSelection && m_controller
+                               && m_controller->canCopyNodeId(context.nodeId);
     setCommandEnabled(Constants::COPY_NODE_ID_ACTION_ID, canCopyNodeId);
     const bool canActivateSelectedProject
-        = m_controller && m_controller->canActivateSelectedProject();
+        = contextMatchesSelection && m_controller
+          && m_controller->canActivateSelectedProject();
     setCommandEnabled(Constants::SET_ACTIVE_PROJECT_ACTION_ID, canActivateSelectedProject);
     setCommandEnabled(
         Constants::INSERT_DEVICE_ACTION_ID,
-        m_controller && m_controller->canInsertDeviceOnSelectedMaster());
+        contextMatchesSelection && m_controller
+            && m_controller->canInsertDeviceOnSelectedMaster());
     setCommandEnabled(
         Constants::ADD_DEVICE_TO_MASTER_ACTION_ID,
-        m_controller && m_controller->canAddSelectedDeviceToMaster());
+        contextMatchesSelection && m_controller
+            && m_controller->canAddSelectedDeviceToMaster());
     setCommandEnabled(
         Constants::REMOVE_OFFLINE_SLAVE_ACTION_ID,
-        m_controller && m_controller->canRemoveSelectedOfflineSlave());
+        contextMatchesSelection && m_controller
+            && m_controller->canRemoveSelectedOfflineSlave());
     setCommandEnabled(
         Constants::MOVE_OFFLINE_SLAVE_UP_ACTION_ID,
-        m_controller && m_controller->canMoveSelectedOfflineSlaveUp());
+        contextMatchesSelection && m_controller
+            && m_controller->canMoveSelectedOfflineSlaveUp());
     setCommandEnabled(
         Constants::MOVE_OFFLINE_SLAVE_DOWN_ACTION_ID,
-        m_controller && m_controller->canMoveSelectedOfflineSlaveDown());
+        contextMatchesSelection && m_controller
+            && m_controller->canMoveSelectedOfflineSlaveDown());
 
     QMenu menu(this);
     if (selectionService) {

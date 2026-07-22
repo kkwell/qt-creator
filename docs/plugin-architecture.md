@@ -2330,3 +2330,47 @@ product lifecycle runs remained alive for all 37 samples, with Workbench
 loaded in all enabled samples and no disabled samples, and produced no new
 matching diagnostic report or crash-service event. Authoritative evidence is
 under `/private/tmp/embed-labs-wb-nav-visible-identity-001.2G4bre`.
+
+## Workbench blank mouse-context boundary
+
+`ISSUE-WB-NAV-MOUSE-BLANK-CONTEXT-001`, based on local baseline
+`142225dc80ec87032f110d96e4408f425477ff65`, remains inside the private
+`WorkbenchNavigationWidget`. The widget distinguishes the tree's persistent
+current/selection state from the transient index hit by a context-menu mouse
+event. A valid proxy index is still mapped to its source context and published
+through the existing `SelectionService`. An invalid point inside the viewport
+maps only the menu context to an empty `PropertyPageContext`; it does not write
+Selection, clear the view's current index, or route Details elsewhere.
+
+Menu construction continues to reuse the registered ActionManager commands.
+Context/selection equality gates every selection-owned command while the menu
+is open. An empty context therefore omits and disables Insert, Add, Remove,
+Move, Set Active Project, and Copy, while tree-wide commands remain available.
+The existing post-menu restoration path re-reads the live stable selection and
+recomputes command state, so no temporary blank-context state persists.
+
+Keyboard events retain the current proxy index. A direct compatibility signal
+with the established out-of-viewport `(-1, -1)` sentinel also retains the
+current index, while an actual in-viewport miss is empty. No index, coordinate,
+menu, or transient command state crosses a plugin boundary or is persisted.
+Qt's separate hit-test and current-index contracts are documented at
+<https://doc.qt.io/qt-6/qabstractitemview.html#indexAt> and
+<https://doc.qt.io/qt-6/qabstractitemview.html#currentIndex-prop>.
+
+The boundary changes only private `workbenchnavigation.cpp`, the existing
+Workbench test implementation, and four documents. It adds no public type or
+role, source file, dependency, CMake/qbs entry, Project/Repository mutation,
+Project format, persistence field, Provider/ProjectService contract, Project
+command, Core or ProjectExplorer hook, application bootstrap, production
+thread or timer, network, ADS, scan, online state, CoE/SDO execution, PLC,
+controller, or hardware behavior.
+
+Qualification used real mouse and keyboard context events, normal and 2x
+offscreen tests, all six isolated EtherCAT suites, the complete
+`WITH_TESTS=OFF` product build with 16 plugin dylibs, and invisible
+enabled/disabled lifecycle evidence. Four complete Workbench runs passed 80
+events each; the isolated suites passed 131 total. Both lifecycle runs stayed
+alive for 37 samples, with Workbench loaded in every enabled sample and no
+disabled sample, and produced no new matching diagnostic report or crash
+service event. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-nav-blank-context-001.oYIrwR`.
