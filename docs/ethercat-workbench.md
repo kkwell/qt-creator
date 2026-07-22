@@ -6185,3 +6185,109 @@ online state, CoE/SDO, PLC, controller, or hardware behavior. No visible or
 manual UI inspection, remote comparison, fetch, pull, merge, rebase, push, PR,
 or publication is part of this issue. No CMake or qbs description changed, so
 qbs was not run.
+
+## Mock Scan owning-Project lifecycle cleanup
+
+`ISSUE-WB-SCAN-PROJECT-LIFECYCLE-001`, based on local baseline
+`e1855127275d89914626a632674e08cb88109d98`, prevents a Mock scan from
+outliving the Project that owns its request. Previously, closing a Project
+after a completed scan left the Provider in `Completed`. Compare, Accept, and
+Keep Existing could remain enabled, the mode status could continue to report
+the old Mock result, and reopening the same file could project the stale
+stable IDs back into the Workbench tree.
+
+`EtherCATScan` owns the correction. Its private `MockScanProvider` compares
+`projectAboutToBeRemoved` with the current `ScanRequest::projectId`. An
+unrelated Project close is ignored. A matching close first cancels active
+work, then reuses the existing clear path so the request, timer, progress,
+result, and error converge to `Idle`. Existing public Provider signals refresh
+the shared commands, `StateService`, Mock Scan property page, and Workbench
+projection; no Workbench production source was changed.
+
+The user-visible result is deterministic for Active, Completed, Failed, and
+Cancelled states. An unrelated Project can close without changing the current
+scan or emitting a Provider state, result, or finished signal. Closing the
+owner while another Project remains open clears the difference table, disables
+Compare, Accept, Keep Existing, and Cancel, and removes the Scan status entry.
+An active close emits `Cancelled` before final `Idle` and stops the timer. A
+same-ID reopen starts clean and can complete a new explicit Mock scan. Scan
+state never mutates Project configuration or creates Undo/Redo history.
+
+Qt documents context-bound signal delivery at
+<https://doc.qt.io/qt-6/qobject.html#connect>, timer stopping at
+<https://doc.qt.io/qt-6/qtimer.html#stop>, and ActionManager's user-visible
+command-state reflection at
+<https://doc.qt.io/qtcreator-extending/actionmanager.html>. Beckhoff's
+documented scan/offline comparison is referenced only for familiar workflow
+terminology:
+<https://infosys.beckhoff.com/content/1033/ps2001-2420-1001/10832129675.html>.
+The owning-Project invalidation rule is local Embed Labs behavior; it does not
+claim TwinCAT compatibility beyond that terminology.
+
+Failure-first changed only the Scan test declaration and implementation.
+Production `mockscanprovider.cpp`, its header, and `scanworkflow.cpp` retained
+SHA-256 values
+`aa1e691cf024e36342add1a4d5c83158349d45b66e9f218af26b3a4980f23ff8`,
+`e7339e300db0ac1d58ea7cf7b6a4481da1a4913604148ebaf0f718d6863aef27`,
+and
+`de519d6a76912c71ddc5ac710b8e5906a3737f8a89b318775db569bf0eff6b10`.
+Initialization and cleanup passed; after the owner closed, the old provider
+remained `Completed` (`6`) instead of `Idle` (`0`), and the target exited 1.
+An earlier attempt to instantiate private Workbench implementation classes in
+the Scan binary failed to link and is not red evidence. A later full-snapshot
+equality check across Project format migration was replaced by direct
+configuration, stable-ID, and Undo/Redo assertions; it is not counted as a
+product failure.
+
+The final data-driven test covers all four lifecycle states with two real open
+Projects per row, required state and finished-signal semantics, command and
+status state, the
+difference page, same-ID reopen, a successful new scan, and Project isolation.
+Focused normal/2x runs each passed 6 events; related Scan runs each passed 9.
+Two complete Workbench runs at each scale passed 81 events per run. The six
+isolated suites passed 136 events: Core 17, Project 12, Devices 8, Workbench
+81, Scan 11, and Diagnostics 7; every authoritative target exited 0.
+
+Final SHA-256 values for `mockscanprovider.cpp`, Scan tests, and test header are
+`61d83c8409f0a9aded41507a77036fb9128307bfde9beafeb14b16b18a8d48ad`,
+`93aac13f59ec72d173b8a7e3dcf32c7fcc8fb6b45295bfd0d7fb3c3d398c07f7`,
+and
+`985582e5552d25464863bc2191b90e7820d1a374e02f28e637f562b2a5b3c6e3`;
+their git blobs are `e9ea00afa5470abaca43854ffa1057c4537db8c1`,
+`11d5e1ee9e5a89f63bea46fd743068b4bd5caa32`, and
+`484c4b973c540e497b4734d33f1033eae09c59d6`.
+
+Qualification used Qt 6.11.0 Release in
+`qt-creator-build-ethercat-core-qt611`. The `WITH_TESTS=OFF` Scan target and
+complete product passed in `qt-creator-build-ethercat-product-qt611`, whose
+bundle contains exactly 16 plugin dylibs. Executable, product Scan, and test
+Scan SHA-256 values are
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`,
+`e2c4c797283a9cb5f345bc6533214541a1217cf6f5194fc7a422be737699b274`,
+and
+`0b4140211077357d0894335af00027604ea7a7bfc539b5ebe2f67e4be5119f63`.
+
+Invisible enabled and explicit `-noload EtherCATWorkbench` product runs each
+stayed alive for 37/37 samples. Workbench and Scan were mapped in 37/37
+enabled samples and 0/37 disabled samples. Both ended by intentional
+passed-through SIGTERM with expected status 15. The fail-closed audit from
+2026-07-23 04:14:08 to 04:16:34 +0800 found no residual qualification
+process, new Embed Labs DiagnosticReports file, or matching crash-service
+event. Fresh HOME/settings, offscreen Qt, disabled crash reporting,
+`-no-crashcheck`, cleared inherited DYLD variables, and the process-local
+Touch Bar bypass kept acceptance invisible and non-interrupting.
+The explicit-disabled run emitted the known non-fatal shared-memory
+initialization message, remained alive for all samples, and produced no crash
+artifact or service event.
+
+Authoritative evidence is under
+`/private/tmp/embed-labs-wb-scan-project-lifecycle-001.9fVQNz`. This issue
+changes one private Scan implementation, its existing test declaration and
+implementation, the four required evidence documents, and the directly
+related Scan document. It adds no public API or model role, source file,
+dependency, Project format or command, persistence field, Core or
+ProjectExplorer hook, application bootstrap, production thread, network,
+ADS, online scan, CoE/SDO, PLC, controller, Zynq, or hardware behavior. No
+CMake or qbs description changed, so qbs was not run. No visible/manual UI
+inspection, remote comparison, fetch, pull, merge, rebase, push, PR, or
+publication was performed.

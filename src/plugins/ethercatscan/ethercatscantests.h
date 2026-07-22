@@ -15,6 +15,8 @@ private slots:
     void testTopologyComparison();
     void testBlockingIdentityAndDuplicateDifferences();
     void testMockProviderStateCancellationAndFailure();
+    void testProjectCloseClearsOwnedScanLifecycle_data();
+    void testProjectCloseClearsOwnedScanLifecycle();
     void testWorkflowAcceptUndoAndRedo();
 };
 

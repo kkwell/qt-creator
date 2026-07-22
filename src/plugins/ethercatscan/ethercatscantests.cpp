@@ -12,6 +12,7 @@
 
 #include <ethercatcore/providerregistry.h>
 #include <ethercatcore/selectionservice.h>
+#include <ethercatcore/stateservice.h>
 
 #include <extensionsystem/pluginmanager.h>
 #include <extensionsystem/pluginspec.h>
@@ -29,7 +30,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QPointer>
 #include <QProgressBar>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -450,6 +453,281 @@ void EtherCATScanTests::testMockProviderStateCancellationAndFailure()
     QTest::qWait(100);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     QVERIFY(service->projects().isEmpty());
+}
+
+void EtherCATScanTests::testProjectCloseClearsOwnedScanLifecycle_data()
+{
+    QTest::addColumn<int>("targetStateValue");
+    QTest::newRow("active") << int(Data::ScanState::Preparing);
+    QTest::newRow("completed") << int(Data::ScanState::Completed);
+    QTest::newRow("failed") << int(Data::ScanState::Failed);
+    QTest::newRow("cancelled") << int(Data::ScanState::Cancelled);
+}
+
+void EtherCATScanTests::testProjectCloseClearsOwnedScanLifecycle()
+{
+    QFETCH(int, targetStateValue);
+    const Data::ScanState targetState = Data::ScanState(targetStateValue);
+    auto *provider = ExtensionSystem::PluginManager::getObject<MockScanProvider>();
+    auto *service = ExtensionSystem::PluginManager::getObject<Core::ProjectService>();
+    auto *stateService = ExtensionSystem::PluginManager::getObject<Core::StateService>();
+    auto *pages = ExtensionSystem::PluginManager::getObject<ScanPropertyPageProvider>();
+    QVERIFY(provider);
+    QVERIFY(service);
+    QVERIFY(stateService);
+    QVERIFY(pages);
+    QVERIFY(service->projects().isEmpty());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Data::NodeId ownerProjectId = Data::NodeId::create();
+    const Data::NodeId ownerTargetId = Data::NodeId::create();
+    const Data::NodeId ownerMasterId = Data::NodeId::create();
+    const Data::NodeId otherProjectId = Data::NodeId::create();
+    const Data::NodeId otherTargetId = Data::NodeId::create();
+    const Data::NodeId otherMasterId = Data::NodeId::create();
+    const Utils::FilePath ownerPath = Utils::FilePath::fromString(directory.path())
+                                          .canonicalPath()
+                                          .pathAppended("owner.ecatproject");
+    const Utils::FilePath otherPath = Utils::FilePath::fromString(directory.path())
+                                          .canonicalPath()
+                                          .pathAppended("other.ecatproject");
+    QVERIFY(ownerPath.writeFileContents(
+        projectDocument(ownerProjectId, ownerTargetId, ownerMasterId)));
+    QVERIFY(otherPath.writeFileContents(
+        projectDocument(otherProjectId, otherTargetId, otherMasterId)));
+
+    QPointer<ProjectExplorer::Project> ownerProject;
+    QPointer<ProjectExplorer::Project> otherProject;
+    QPointer<ProjectExplorer::Project> reopenedProject;
+    const QScopeGuard cleanup([&] {
+        provider->clearScanResult();
+        provider->setScenario(MockScanScenario::Normal);
+        provider->setStepIntervalForTests(-1);
+        for (const QPointer<ProjectExplorer::Project> &project :
+             {reopenedProject, otherProject, ownerProject}) {
+            if (project && ProjectExplorer::ProjectManager::hasProject(project))
+                ProjectExplorer::ProjectManager::removeProject(project);
+        }
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    provider->clearScanResult();
+    provider->setScenario(
+        targetState == Data::ScanState::Failed ? MockScanScenario::PartialFailure
+                                               : targetState == Data::ScanState::Completed
+                                                     ? MockScanScenario::Normal
+                                                     : MockScanScenario::Slow);
+    provider->setStepIntervalForTests(
+        targetState == Data::ScanState::Completed || targetState == Data::ScanState::Failed
+            ? 0
+            : 60000);
+
+    const ProjectExplorer::OpenProjectResult ownerOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(ownerPath, false);
+    QVERIFY2(ownerOpened, qPrintable(ownerOpened.errorMessage()));
+    ownerProject = ownerOpened.project();
+    QVERIFY(ownerProject);
+    const ProjectExplorer::OpenProjectResult otherOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(otherPath, false);
+    QVERIFY2(otherOpened, qPrintable(otherOpened.errorMessage()));
+    otherProject = otherOpened.project();
+    QVERIFY(otherProject);
+    ProjectExplorer::ProjectManager::setStartupProject(ownerProject);
+    QTRY_COMPARE(service->projects().size(), 2);
+    const Data::ProjectSnapshot ownerBaseline = *service->project(ownerProjectId);
+    QVERIFY(!service->canUndoProject(ownerProjectId));
+    QVERIFY(!service->canRedoProject(ownerProjectId));
+
+    QWidget pageParent;
+    QWidget *page = pages->createPage(Constants::PAGE_ID, &pageParent);
+    QVERIFY(page);
+    pages->updatePage(
+        Constants::PAGE_ID,
+        page,
+        {ownerProjectId,
+         ownerMasterId,
+         Core::WorkbenchNodeKind::Master,
+         "EtherCAT Master"});
+    QTreeWidget *differences = page->findChild<QTreeWidget *>(
+        "EtherCATMockScanDifferences");
+    QVERIFY(differences);
+
+    const auto commandAction = [](Utils::Id id) {
+        ::Core::Command *command = ::Core::ActionManager::command(id);
+        return command ? command->action() : nullptr;
+    };
+    const auto scanStatus = [stateService]() -> std::optional<Core::StatusEntry> {
+        const QList<Core::StatusEntry> statuses = stateService->statuses();
+        const auto status = std::find_if(
+            statuses.cbegin(), statuses.cend(), [](const Core::StatusEntry &entry) {
+                return entry.sourceId == Utils::Id(Constants::STATUS_SOURCE_ID);
+            });
+        return status == statuses.cend() ? std::nullopt
+                                        : std::optional<Core::StatusEntry>(*status);
+    };
+
+    QAction *compareAction = commandAction(Constants::COMPARE_ACTION_ID);
+    QAction *acceptAction = commandAction(Constants::ACCEPT_ACTION_ID);
+    QAction *keepAction = commandAction(Constants::KEEP_ACTION_ID);
+    QAction *cancelAction = commandAction(Constants::CANCEL_ACTION_ID);
+    QVERIFY(compareAction);
+    QVERIFY(acceptAction);
+    QVERIFY(keepAction);
+    QVERIFY(cancelAction);
+
+    QVERIFY(provider->startScan(
+        {ownerProjectId, ownerMasterId, Data::ScanOperation::Slaves, {}}));
+    if (targetState == Data::ScanState::Cancelled) {
+        QCOMPARE(provider->scanState(), Data::ScanState::Preparing);
+        provider->cancelScan();
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), targetState, 5000);
+
+    if (targetState == Data::ScanState::Completed) {
+        QVERIFY(provider->lastScanResult());
+        QCOMPARE(provider->lastScanResult()->snapshot.projectId, ownerProjectId);
+        QTRY_VERIFY(differences->topLevelItemCount() > 0);
+    } else if (targetState == Data::ScanState::Failed) {
+        QVERIFY(!provider->lastScanResult());
+        QVERIFY(!provider->lastScanError().isEmpty());
+        QTRY_COMPARE(differences->topLevelItemCount(), 1);
+    } else {
+        QVERIFY(!provider->lastScanResult());
+        QTRY_COMPARE(differences->topLevelItemCount(), 0);
+    }
+
+    const bool expectedCompare = targetState == Data::ScanState::Completed;
+    const bool expectedAccept = targetState == Data::ScanState::Completed;
+    const bool expectedKeep = targetState == Data::ScanState::Completed
+                              || targetState == Data::ScanState::Failed
+                              || targetState == Data::ScanState::Cancelled;
+    const bool expectedCancel = targetState == Data::ScanState::Preparing;
+    QTRY_COMPARE(compareAction->isEnabled(), expectedCompare);
+    QTRY_COMPARE(acceptAction->isEnabled(), expectedAccept);
+    QTRY_COMPARE(keepAction->isEnabled(), expectedKeep);
+    QTRY_COMPARE(cancelAction->isEnabled(), expectedCancel);
+
+    const std::optional<Core::StatusEntry> statusBeforeClose = scanStatus();
+    if (targetState == Data::ScanState::Cancelled) {
+        QVERIFY(!statusBeforeClose);
+    } else {
+        QVERIFY(statusBeforeClose);
+        const Core::StatusSeverity expectedSeverity
+            = targetState == Data::ScanState::Preparing
+                  ? Core::StatusSeverity::Busy
+                  : targetState == Data::ScanState::Failed ? Core::StatusSeverity::Error
+                                                          : Core::StatusSeverity::Ready;
+        QCOMPARE(statusBeforeClose->severity, expectedSeverity);
+    }
+
+    QCOMPARE(*service->project(ownerProjectId), ownerBaseline);
+    QVERIFY(!service->canUndoProject(ownerProjectId));
+    QVERIFY(!service->canRedoProject(ownerProjectId));
+    const Data::ScanProgress progressBeforeClose = provider->scanProgress();
+    const std::optional<Data::ScanResult> resultBeforeClose = provider->lastScanResult();
+    const QString errorBeforeClose = provider->lastScanError();
+    const int differencesBeforeClose = differences->topLevelItemCount();
+    QSignalSpy stateChanges(provider, &Core::ScanProvider::scanStateChanged);
+    QSignalSpy resultChanges(provider, &Core::ScanProvider::scanResultChanged);
+    QSignalSpy finished(provider, &Core::ScanProvider::scanFinished);
+
+    ProjectExplorer::ProjectManager::removeProject(otherProject);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_COMPARE(service->projects().size(), 1);
+    QCOMPARE(provider->scanProgress(), progressBeforeClose);
+    QCOMPARE(provider->lastScanResult().has_value(), resultBeforeClose.has_value());
+    QCOMPARE(provider->lastScanError(), errorBeforeClose);
+    QCOMPARE(differences->topLevelItemCount(), differencesBeforeClose);
+    QCOMPARE(compareAction->isEnabled(), expectedCompare);
+    QCOMPARE(acceptAction->isEnabled(), expectedAccept);
+    QCOMPARE(keepAction->isEnabled(), expectedKeep);
+    QCOMPARE(cancelAction->isEnabled(), expectedCancel);
+    QVERIFY(scanStatus() == statusBeforeClose);
+    QCOMPARE(stateChanges.count(), 0);
+    QCOMPARE(resultChanges.count(), 0);
+    QCOMPARE(finished.count(), 0);
+
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const ProjectExplorer::OpenProjectResult otherReopened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(otherPath, false);
+    QVERIFY2(otherReopened, qPrintable(otherReopened.errorMessage()));
+    otherProject = otherReopened.project();
+    QVERIFY(otherProject);
+    QTRY_COMPARE(service->projects().size(), 2);
+
+    ProjectExplorer::ProjectManager::removeProject(ownerProject);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_COMPARE(service->projects().size(), 1);
+    QVERIFY(service->project(otherProjectId));
+    QTRY_COMPARE(provider->scanState(), Data::ScanState::Idle);
+    QCOMPARE(provider->scanProgress(), Data::ScanProgress());
+    QVERIFY(!provider->lastScanResult());
+    QVERIFY(provider->lastScanError().isEmpty());
+    QTRY_COMPARE(differences->topLevelItemCount(), 0);
+    QVERIFY(!compareAction->isEnabled());
+    QVERIFY(!acceptAction->isEnabled());
+    QVERIFY(!keepAction->isEnabled());
+    QVERIFY(!cancelAction->isEnabled());
+    QTRY_VERIFY(!scanStatus());
+
+    const int expectedStateChanges
+        = targetState == Data::ScanState::Preparing ? 2 : 1;
+    QCOMPARE(stateChanges.count(), expectedStateChanges);
+    if (targetState == Data::ScanState::Preparing) {
+        QCOMPARE(
+            stateChanges.at(0).at(0).value<Data::ScanState>(),
+            Data::ScanState::Cancelled);
+        QCOMPARE(finished.count(), 1);
+        QCOMPARE(
+            finished.at(0).at(0).value<Data::ScanState>(),
+            Data::ScanState::Cancelled);
+    } else {
+        QCOMPARE(finished.count(), 0);
+    }
+    QVERIFY(!resultChanges.isEmpty());
+    QCOMPARE(
+        stateChanges.constLast().at(0).value<Data::ScanState>(),
+        Data::ScanState::Idle);
+
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const ProjectExplorer::OpenProjectResult reopened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(ownerPath, false);
+    QVERIFY2(reopened, qPrintable(reopened.errorMessage()));
+    reopenedProject = reopened.project();
+    QVERIFY(reopenedProject);
+    ProjectExplorer::ProjectManager::setStartupProject(reopenedProject);
+    QTRY_COMPARE(service->projects().size(), 2);
+    QVERIFY(service->project(ownerProjectId));
+    const Data::ProjectSnapshot reopenedBaseline = *service->project(ownerProjectId);
+    QCOMPARE(reopenedBaseline.id, ownerBaseline.id);
+    QCOMPARE(reopenedBaseline.name, ownerBaseline.name);
+    QCOMPARE(reopenedBaseline.nodes, ownerBaseline.nodes);
+    QCOMPARE(reopenedBaseline.slaves, ownerBaseline.slaves);
+    QVERIFY(!service->canUndoProject(ownerProjectId));
+    QVERIFY(!service->canRedoProject(ownerProjectId));
+    QCOMPARE(provider->scanState(), Data::ScanState::Idle);
+    QVERIFY(!provider->lastScanResult());
+    QVERIFY(!scanStatus());
+
+    provider->setScenario(MockScanScenario::Normal);
+    provider->setStepIntervalForTests(0);
+    QVERIFY(provider->startScan(
+        {ownerProjectId, ownerMasterId, Data::ScanOperation::Slaves, {}}));
+    QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
+    QVERIFY(provider->lastScanResult());
+    QCOMPARE(provider->lastScanResult()->snapshot.projectId, ownerProjectId);
+    QCOMPARE(*service->project(ownerProjectId), reopenedBaseline);
+    QVERIFY(!service->canUndoProject(ownerProjectId));
+    QVERIFY(!service->canRedoProject(ownerProjectId));
+    provider->clearScanResult();
+    QCOMPARE(provider->scanState(), Data::ScanState::Idle);
 }
 
 void EtherCATScanTests::testWorkflowAcceptUndoAndRedo()

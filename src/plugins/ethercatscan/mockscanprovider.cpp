@@ -28,8 +28,10 @@ MockScanProvider::MockScanProvider(QObject *parent)
             &Core::ProjectService::projectAboutToBeRemoved,
             this,
             [this](const Data::NodeId &projectId) {
-                if (isActive() && m_request.projectId == projectId)
-                    cancelScan();
+                if (m_request.projectId != projectId)
+                    return;
+                cancelScan();
+                clearScanResult();
             });
     }
     setAvailable(m_projectService && m_deviceRepository);

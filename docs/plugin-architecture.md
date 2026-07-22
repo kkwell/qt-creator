@@ -2425,3 +2425,61 @@ The `WITH_TESTS=OFF` Workbench and complete product builds passed with exactly
 Labs report, matching crash-service event, or residual process. No visible UI,
 remote operation, or hardware/online execution was used. Evidence is under
 `/private/tmp/embed-labs-wb-general-rename-feedback-001.M4aWr4`.
+
+## Mock Scan Project-owned transient-state boundary
+
+`ISSUE-WB-SCAN-PROJECT-LIFECYCLE-001` keeps Mock scan lifetime inside the
+existing plugin boundaries. `ProjectService` remains the authority for the set
+of open Projects and emits stable `projectId` lifecycle notifications.
+`MockScanProvider` retains no Project QObject, Workbench widget, or
+`QModelIndex`; it owns only a `ScanRequest`, GUI-thread timer, progress, result,
+and error.
+
+The provider's private Project-close connection applies an exact ownership
+gate. A `projectId` different from the current request returns without a state
+or result signal. A matching close calls the existing cancel path first and
+the existing clear path second. Active work therefore stops its timer, emits
+its established `Cancelled` completion, and then reaches `Idle`; terminal
+Completed, Failed, and Cancelled states go directly through the same clear
+path. No new state-machine branch or duplicate cleanup routine is introduced.
+
+The existing public signal fan-out preserves ownership separation:
+
+- `EtherCATScan::ScanWorkflow` derives command enablement and its
+  `StateService` entry from Provider state and result;
+- the Scan property-page Provider empties its private difference table from
+  `scanResultChanged`;
+- `EtherCATWorkbench` consumes only the exported `ScanProvider` contract and
+  immutable snapshots, so clearing the provider removes its presentation on
+  the next existing refresh;
+- the remaining open Project never inherits the departing Project's result.
+
+A persisted stable Project ID is identity, not a recovery key for transient
+scan state. Reopening the same file creates a new open-Project lifetime and
+requires an explicit new Mock scan. No scan request, result, status, or
+difference is serialized, and scanning continues to leave Project data and
+Undo/Redo untouched.
+
+Qt's context-bound connection and timer-stop contracts are documented at
+<https://doc.qt.io/qt-6/qobject.html#connect> and
+<https://doc.qt.io/qt-6/qtimer.html#stop>. Beckhoff's scan/offline comparison
+at
+<https://infosys.beckhoff.com/content/1033/ps2001-2420-1001/10832129675.html>
+anchors workflow terminology only. The Project-close invalidation policy is a
+local stale-state rule, not a copied TwinCAT contract.
+
+The implementation changes one private Scan cpp file and existing Scan tests.
+It adds no public type, virtual method, Provider contract, model role,
+dependency, source file, Project format field, Project command, persistence,
+thread, process, socket, or upstream Qt Creator hook. `docs/ethercat-core-api.md`
+does not change because the exported provider contract already contains
+`clearScanResult()` and the necessary signals. CMake and qbs descriptions are
+unchanged.
+
+The four-state two-Project matrix, final normal/2x focused and related runs,
+four complete Workbench runs, six isolated suites, `WITH_TESTS=OFF` product
+build, and enabled/disabled invisible lifecycle all passed. The six suites
+totaled 136 pass events. Workbench and Scan mapped in 37/37 enabled samples and
+0/37 explicit-disabled samples; crash-service events, new diagnostic reports,
+and residual processes were 0. Evidence is under
+`/private/tmp/embed-labs-wb-scan-project-lifecycle-001.9fVQNz`.

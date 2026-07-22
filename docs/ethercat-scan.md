@@ -69,16 +69,26 @@ Interface discovery has no slave topology to compare and therefore follows
 `Preparing -> ScanningMaster -> BuildingSnapshot -> Completed`. Its result
 cannot be compared as a slave topology or accepted into the offline project.
 
-Only one operation may be active. Completed, cancelled, and failed results are
-terminal until explicitly cleared. Progress includes a bounded maximum,
-current phase, detail text, and discovered-slave count. A result contains the
-originating operation and selected branch ID so comparison and acceptance keep
-the same scope.
+Only one operation may be active. Completed, Cancelled, and Failed states
+remain terminal until explicitly cleared or until the Project that owns the
+current request is closed. Progress includes a bounded maximum, current phase,
+detail text, and discovered-slave count. A result contains the originating
+operation and selected branch ID so comparison and acceptance keep the same
+scope.
 
 The local provider uses a single-shot GUI-thread `QTimer`; it owns no worker
-thread, future, socket, or process. Project close, plugin shutdown, and explicit
-Cancel stop the timer before object removal. Cancel and failure discard the
-partial result and never invoke a Project command.
+thread, future, socket, or process. Owning Project close, plugin shutdown, and
+explicit Cancel stop the timer before object removal. Cancel and failure
+discard the partial result and never invoke a Project command.
+
+The request and its transient result are scoped to `ScanRequest::projectId`.
+Closing an unrelated Project leaves the current operation or terminal state
+unchanged. Closing the owning Project cancels an active operation and then
+clears the request, progress, result, and error back to `Idle`. Existing
+Provider signals empty the Mock Scan difference table, disable Compare,
+Accept, Keep Existing, and Cancel, and remove the Scan contribution from
+`StateService`. Reopening a file with the same persisted Project ID does not
+restore the old result; a new Mock scan must be started explicitly.
 
 ## Mock scenarios
 
@@ -145,6 +155,14 @@ then registers the property-page Provider. Shutdown removes the page Provider,
 cancels the workflow, marks the scan Provider unavailable, removes it from the
 object pool, and destroys all objects. Each step is idempotent.
 
+The owning-Project connection is context-bound to the provider, and an active
+close stops the existing timer before state is cleared. Qt documents these
+mechanisms in [`QObject::connect()`](https://doc.qt.io/qt-6/qobject.html#connect)
+and [`QTimer::stop()`](https://doc.qt.io/qt-6/qtimer.html#stop). Beckhoff's
+[scan and offline-comparison workflow](https://infosys.beckhoff.com/content/1033/ps2001-2420-1001/10832129675.html)
+anchors only the familiar scan/compare concepts. Project-close invalidation is
+an Embed Labs stale-state prevention rule, not copied TwinCAT behavior.
+
 ## Verification
 
 The focused suite covers metadata and dependency resolution, object-pool
@@ -152,7 +170,12 @@ registration, all commands and page widgets, exact/reordered/added/missing
 comparison, blocking identity and duplicate cases, complete state order,
 interface isolation, normal and slow operation, cancellation, partial failure,
 shutdown cancellation, Revision mismatch, selected-branch merge, stable IDs,
-and Project Undo/Redo.
+and Project Undo/Redo. The owning-Project lifecycle matrix uses two real open
+Projects and covers Active, Completed, Failed, and Cancelled states. It proves
+that closing the unrelated Project emits no Provider state/result/finished
+signal, while closing the owner clears progress/result/error, the difference
+table, commands, and status. Each row reopens the same persisted Project ID,
+starts a new Mock scan successfully, and preserves Project and Undo/Redo data.
 
 Current build, focused/regression test, plugin-enabled/disabled startup, and
 known test limitations are recorded in `docs/compatibility-matrix.md`.

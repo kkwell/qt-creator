@@ -3123,3 +3123,44 @@ terminology at
 <https://infosys.beckhoff.com/content/1033/tc3_userinterface/3434440203.html>,
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1569945995.html>, and
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1341899531.html>.
+
+## EtherCATScan owning-Project lifecycle qualification
+
+`ISSUE-WB-SCAN-PROJECT-LIFECYCLE-001` is qualified from local baseline
+`e1855127275d89914626a632674e08cb88109d98`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| User-visible defect | A terminal local Mock result could outlive its Project, leave Compare/Accept/Keep and the status contribution active, and be projected again after the same stable Project ID reopened |
+| Failure-first | Test-only changes left production cpp/header/workflow hashes unchanged; initialization and cleanup passed, owner close left actual state `Completed` (`6`) instead of `Idle` (`0`), and the target exited 1 |
+| Ownership gate | `projectAboutToBeRemoved` is matched only against the current `ScanRequest::projectId`; no Project QObject or model index is retained |
+| Unrelated Project | Active, Completed, Failed, and Cancelled rows preserve exact progress/result/error, page, command, and status state and emit zero Provider state/result/finished signals when the unrelated Project closes |
+| Owning Project | Active first emits `Cancelled` and one `scanFinished(Cancelled)`, then every row reaches `Idle`; result/error/progress and the difference page clear, and Compare/Accept/Keep/Cancel plus the Scan status are inactive |
+| Multi-Project boundary | The owner closes while another real Project remains open; the remaining Project is preserved and no scan state transfers to it |
+| Same-ID reopen | Reopening the same file does not revive transient scan state; every row completes a new explicit Mock scan and preserves stable Project configuration and empty Undo/Redo history |
+| Focused normal and 2x | Each final run passed 6 events, 0 failed, target status 0 |
+| Related Scan normal and 2x | Each final run passed 9 events, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | Two final runs at each scale passed 81 events per run, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 81, Scan 11, Diagnostics 7; 136 passed, 0 failed, every target status 0 |
+| Final source SHA-256 | Provider `61d83c8409f0a9aded41507a77036fb9128307bfde9beafeb14b16b18a8d48ad`; tests `93aac13f59ec72d173b8a7e3dcf32c7fcc8fb6b45295bfd0d7fb3c3d398c07f7`; test header `985582e5552d25464863bc2191b90e7820d1a374e02f28e637f562b2a5b3c6e3` |
+| Final git blobs | Provider `e9ea00afa5470abaca43854ffa1057c4537db8c1`; tests `11d5e1ee9e5a89f63bea46fd743068b4bd5caa32`; test header `484c4b973c540e497b4734d33f1033eae09c59d6` |
+| Qualified Qt and test build | Qt 6.11.0 Release; `qt-creator-build-ethercat-core-qt611` |
+| Product build and inventory | `WITH_TESTS=OFF` Scan target and complete product passed in `qt-creator-build-ethercat-product-qt611`; exactly 16 plugin dylibs |
+| Product hashes | Executable `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Scan `e2c4c797283a9cb5f345bc6533214541a1217cf6f5194fc7a422be737699b274`; test Scan `0b4140211077357d0894335af00027604ea7a7bfc539b5ebe2f67e4be5119f63` |
+| Enabled/disabled lifecycle | Both invisible product runs stayed alive for 37/37 samples; Workbench and Scan mapped in 37 enabled and 0 disabled samples; each ended with expected passed-through SIGTERM status 15 |
+| Fail-closed crash audit | From 2026-07-23 04:14:08–04:16:34 +0800, residual processes, new Embed Labs DiagnosticReports, and matching ReportCrash/CrashReporter/diagnosticd events were all 0 |
+| Known non-fatal launch message | The explicit-disabled run emitted the existing shared-memory initialization message, stayed alive for 37/37 samples, and produced no diagnostic report or crash-service event |
+| Invisible executable policy | Fresh HOME/settings, offscreen Qt, disabled crash reporting, `-no-crashcheck`, cleared DYLD variables, and process-local Touch Bar bypass; no visible/manual UI inspection |
+| Superseded test setup | A private Workbench-symbol link attempt and a cross-reopen full-snapshot comparison affected only test construction and are not counted as failure-first or product failures |
+| Mock boundary | No physical interface, controller, network, ADS, SDO, online scan, PLC, Zynq, or hardware behavior was exercised or claimed |
+| Local-only policy | No remote comparison, fetch, pull, merge, rebase, push, PR, or publication was performed |
+| CMake/qbs | Neither description changed, so qbs was not run |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-scan-project-lifecycle-001.9fVQNz`. Qt ownership,
+timer, and command-state references are
+<https://doc.qt.io/qt-6/qobject.html#connect>,
+<https://doc.qt.io/qt-6/qtimer.html#stop>, and
+<https://doc.qt.io/qtcreator-extending/actionmanager.html>. Beckhoff's scan
+reference supplies workflow terminology only:
+<https://infosys.beckhoff.com/content/1033/ps2001-2420-1001/10832129675.html>.

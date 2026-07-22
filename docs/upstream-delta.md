@@ -1668,3 +1668,51 @@ publication is part of this delta. No CMake or qbs description changed, so
 qbs was not run. The supported baseline remains the local `embed-labs`
 history. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-general-rename-feedback-001.M4aWr4`.
+
+## Local Mock Scan owning-Project lifecycle delta
+
+`ISSUE-WB-SCAN-PROJECT-LIFECYCLE-001` is a product-owned correction on local
+baseline `e1855127275d89914626a632674e08cb88109d98`. The private Mock Scan
+provider now discards a request and all transient scan state when the Project
+identified by `ScanRequest::projectId` closes. Closing a different Project is
+ignored. Active work is cancelled before clearing; Completed, Failed, and
+Cancelled states reuse the same clear path and end at `Idle`.
+
+Existing Provider signals remove the local result from the Scan difference
+page, ActionManager commands, shared status, and Workbench presentation. A
+same-ID Project reopen stays clean and supports a new explicit Mock scan. The
+change does not mutate Project data, persistence, or Undo/Redo and does not
+introduce a cross-plugin object pointer or model index.
+
+The local source delta is limited to:
+
+- `src/plugins/ethercatscan/mockscanprovider.cpp`;
+- the existing `ethercatscantests.cpp/.h` declaration and implementation;
+- the four required evidence documents and directly related
+  `docs/ethercat-scan.md`.
+
+No file in Qt Creator Core, ProjectExplorer, or the application bootstrap is
+modified. The direct Core patch count remains five. There is no new public
+API or Provider method, Project format or command, dependency, source file,
+thread, timer, network transport, controller protocol, build-system entry, or
+upstream integration surface. CMake/qbs stay unchanged.
+
+Failure-first preserved the three relevant production hashes, reproduced
+`Completed(6)` after owner close instead of `Idle(0)`, and exited 1 after
+passing initialization and cleanup. Final focused and related normal/2x runs,
+four complete Workbench runs, and all six isolated suites passed; the isolated
+total is 136. The `WITH_TESTS=OFF` Scan and full product builds passed with 16
+plugin dylibs.
+
+Invisible enabled and explicit `-noload EtherCATWorkbench` product runs each
+stayed alive for 37 samples. Workbench and Scan mapped in 37/37 and 0/37
+samples respectively, and each run ended with expected status 15. The
+fail-closed audit found zero residual process, new Embed Labs diagnostic
+report, or matching crash-service event. No visible UI, real interface,
+network, ADS, online scan, SDO, controller, PLC, Zynq, or hardware execution
+was used or claimed.
+
+No remote comparison, fetch, pull, merge, rebase, push, PR, or publication was
+performed. The supported source of truth remains the local `embed-labs`
+history. Authoritative evidence is under
+`/private/tmp/embed-labs-wb-scan-project-lifecycle-001.9fVQNz`.
