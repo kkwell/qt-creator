@@ -18,6 +18,7 @@ private slots:
     void testOfflineSlaveRemovalConfirmationProjectRefresh();
     void testConfiguredSlaveTreePhysicalOrder();
     void testTwinCatInsertDeviceWorkflow();
+    void testEsiDeviceSelectionRevisionTogglePreservesSelection();
     void testEsiDeviceSelectionCellAccessibility();
     void testInsertDeviceDialogTargetLifecycle_data();
     void testInsertDeviceDialogTargetLifecycle();

@@ -28,7 +28,7 @@ public:
     Data::NodeId selectedDeviceId() const;
 
 private:
-    void selectFirstVisibleDevice();
+    void selectVisibleDevice(const Data::NodeId &preferredDeviceId = {});
     void updateSelection();
     void accept() final;
 

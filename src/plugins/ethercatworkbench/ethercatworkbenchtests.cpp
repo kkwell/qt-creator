@@ -2046,6 +2046,86 @@ void EtherCATWorkbenchTests::testTwinCatInsertDeviceWorkflow()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 }
 
+void EtherCATWorkbenchTests::testEsiDeviceSelectionRevisionTogglePreservesSelection()
+{
+    const Data::DeviceSummary alphaCurrent{
+        Data::NodeId::create(),
+        {0x00000002, 0x7a140001, 0x00000001},
+        "Alpha Current",
+        "EL-ALPHA",
+        "Selection Test",
+        true};
+    const Data::DeviceSummary zuluLegacy{
+        Data::NodeId::create(),
+        {0x00000002, 0x7a140002, 0x00000001},
+        "Zulu Legacy",
+        "EL-ZULU",
+        "Selection Test",
+        true};
+    const Data::DeviceSummary zuluCurrent{
+        Data::NodeId::create(),
+        {0x00000002, 0x7a140002, 0x00000002},
+        "Zulu Current",
+        "EL-ZULU",
+        "Selection Test",
+        true};
+
+    EsiDeviceSelectionDialog dialog({zuluLegacy, alphaCurrent, zuluCurrent});
+    QTreeView *tree = dialog.findChild<QTreeView *>("EtherCATEsiDeviceSelectionTree");
+    QCheckBox *showPrevious
+        = dialog.findChild<QCheckBox *>("EtherCATEsiDeviceSelectionShowPrevious");
+    QDialogButtonBox *buttons
+        = dialog.findChild<QDialogButtonBox *>("EtherCATEsiDeviceSelectionButtons");
+    QVERIFY(tree);
+    QVERIFY(showPrevious);
+    QVERIFY(buttons);
+    QPushButton *add = buttons->button(QDialogButtonBox::Ok);
+    QVERIFY(add);
+
+    QCOMPARE(tree->model()->rowCount(), 2);
+    QVERIFY(!findByDisplayText(tree->model(), zuluLegacy.name).isValid());
+    const QModelIndex currentIndex = findByDisplayText(tree->model(), zuluCurrent.name);
+    QVERIFY(currentIndex.isValid());
+    tree->setCurrentIndex(currentIndex);
+    QTRY_COMPARE(dialog.selectedDeviceId(), zuluCurrent.id);
+    QVERIFY(add->isEnabled());
+
+    showPrevious->setChecked(true);
+    QTRY_COMPARE(tree->model()->rowCount(), 3);
+    QVERIFY(findByDisplayText(tree->model(), zuluLegacy.name).isValid());
+    QCOMPARE(dialog.selectedDeviceId(), zuluCurrent.id);
+    QCOMPARE(tree->currentIndex().data().toString(), zuluCurrent.name);
+    QVERIFY(add->isEnabled());
+
+    showPrevious->setChecked(false);
+    QTRY_COMPARE(tree->model()->rowCount(), 2);
+    QCOMPARE(dialog.selectedDeviceId(), zuluCurrent.id);
+    QCOMPARE(tree->currentIndex().data().toString(), zuluCurrent.name);
+
+    showPrevious->setChecked(true);
+    QTRY_COMPARE(tree->model()->rowCount(), 3);
+    const QModelIndex legacyIndex = findByDisplayText(tree->model(), zuluLegacy.name);
+    QVERIFY(legacyIndex.isValid());
+    tree->setCurrentIndex(legacyIndex);
+    QTRY_COMPARE(dialog.selectedDeviceId(), zuluLegacy.id);
+
+    showPrevious->setChecked(false);
+    QTRY_COMPARE(tree->model()->rowCount(), 2);
+    QVERIFY(!findByDisplayText(tree->model(), zuluLegacy.name).isValid());
+    QCOMPARE(dialog.selectedDeviceId(), alphaCurrent.id);
+    QCOMPARE(tree->currentIndex().data().toString(), alphaCurrent.name);
+    QVERIFY(add->isEnabled());
+
+    const QModelIndex restoredCurrentIndex
+        = findByDisplayText(tree->model(), zuluCurrent.name);
+    QVERIFY(restoredCurrentIndex.isValid());
+    tree->setCurrentIndex(restoredCurrentIndex);
+    QTRY_COMPARE(dialog.selectedDeviceId(), zuluCurrent.id);
+    add->click();
+    QCOMPARE(dialog.result(), int(QDialog::Accepted));
+    QCOMPARE(dialog.selectedDeviceId(), zuluCurrent.id);
+}
+
 void EtherCATWorkbenchTests::testEsiDeviceSelectionCellAccessibility()
 {
     const QString longName

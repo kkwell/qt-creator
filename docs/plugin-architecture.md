@@ -1737,3 +1737,38 @@ A plugin is complete only when:
 - The change is reviewed and committed locally on `embed-labs`.
 
 The next plugin remains pending if any gate is missing.
+
+## Workbench ESI revision-selection boundary
+
+`ISSUE-WB-ESI-REVISION-TOGGLE-SELECTION-001`, based on
+`42110b4e990baae92fbed37f38ab6aa274b34657`, remains entirely inside the
+product-owned private `EsiDeviceSelectionDialog`. The ESI repository remains
+the authority for device summaries and stable IDs; the Workbench controller
+remains the authority for appending the accepted device to the selected
+offline Master.
+
+The dialog's revision proxy still decides which rows are visible. Immediately
+before `Show Previous Revisions` changes that filter, the dialog records the
+current device ID. Its existing selection helper first looks for that ID in
+the refreshed proxy and restores it if visible, then applies the established
+first-supported/first-visible fallback. This is a local interaction-state
+rule. It does not retain an index across a model reset, cache selections
+between dialogs, alter revision comparison, or override filtering when the
+selected revision becomes hidden.
+
+Qt's selection model makes the current index the item used for navigation and
+focus, while Beckhoff's offline workflow makes explicit revision selection
+part of the item that is appended:
+<https://doc.qt.io/qt-6/qitemselectionmodel.html> and
+<https://infosys.beckhoff.com/content/1033/ethercatsystem/2477595531.html>.
+The implementation therefore preserves stable device identity across the
+visibility-only toggle instead of relying on the proxy row number.
+
+The boundary changes only `esideviceselectiondialog.cpp/.h`, the Workbench
+test declaration/implementation, and four evidence documents. It adds no
+public API, source file, dependency, model role, Provider or ProjectService
+contract, persistence or Project command, Core or ProjectExplorer hook,
+application bootstrap, thread, timer, network, scan, online, SDO, or hardware
+behavior. No CMake or qbs description changed. Qualification is local/offline
+Mock and includes full offscreen enabled/disabled product lifecycle evidence
+with passed-through SIGTERM and no new crash record.

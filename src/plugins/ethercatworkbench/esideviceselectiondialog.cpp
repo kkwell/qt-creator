@@ -248,12 +248,13 @@ EsiDeviceSelectionDialog::EsiDeviceSelectionDialog(
     };
     connect(m_extendedInformation, &QCheckBox::toggled, this, setExtendedInformationVisible);
     connect(m_showPrevious, &QCheckBox::toggled, this, [this, proxy](bool show) {
+        const Data::NodeId selectedDeviceId = m_selectedDeviceId;
         proxy->setShowPreviousRevisions(show);
-        selectFirstVisibleDevice();
+        selectVisibleDevice(selectedDeviceId);
     });
     connect(m_filter, &QLineEdit::textChanged, this, [this](const QString &text) {
         m_proxyModel->setFilterFixedString(text);
-        selectFirstVisibleDevice();
+        selectVisibleDevice();
     });
     connect(
         m_tree->selectionModel(),
@@ -265,7 +266,7 @@ EsiDeviceSelectionDialog::EsiDeviceSelectionDialog(
     connect(m_buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     setExtendedInformationVisible(false);
-    selectFirstVisibleDevice();
+    selectVisibleDevice();
     m_filter->setFocus();
 }
 
@@ -274,15 +275,19 @@ Data::NodeId EsiDeviceSelectionDialog::selectedDeviceId() const
     return m_selectedDeviceId;
 }
 
-void EsiDeviceSelectionDialog::selectFirstVisibleDevice()
+void EsiDeviceSelectionDialog::selectVisibleDevice(const Data::NodeId &preferredDeviceId)
 {
     QModelIndex selected;
     for (int row = 0; row < m_proxyModel->rowCount(); ++row) {
         const QModelIndex candidate = m_proxyModel->index(row, DeviceColumnName);
-        if (candidate.data(DeviceSupportedRole).toBool()) {
+        if (!preferredDeviceId.isNull()
+            && Data::NodeId::fromString(candidate.data(DeviceIdRole).toString())
+                   == preferredDeviceId) {
             selected = candidate;
             break;
         }
+        if (!selected.isValid() && candidate.data(DeviceSupportedRole).toBool())
+            selected = candidate;
     }
     if (!selected.isValid() && m_proxyModel->rowCount() > 0)
         selected = m_proxyModel->index(0, DeviceColumnName);

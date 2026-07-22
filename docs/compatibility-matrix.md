@@ -2414,6 +2414,42 @@ Creator 20.0's persisted/volatile aspect precedent is at
 Beckhoff's General-tab field model is at
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1341899531.html>.
 
+## EtherCATWorkbench ESI revision-toggle selection qualification
+
+`ISSUE-WB-ESI-REVISION-TOGGLE-SELECTION-001` is qualified from local baseline
+`42110b4e990baae92fbed37f38ab6aa274b34657`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Production dialog implementation/header remained at SHA-256 `8645fe5679f3155d09a425fc80eabb0cf185f186aaec6706d3f387e1d4291816` / `dfa2a65a2702b38c15da210d99ae0adbe516a639d72238e0061d8c514f7b7b3a` and blobs `d603080f1fd9b9a6c34d8f2ced8bf0cf3f26e36d` / `03d7ea0b6a7acbf8582e7e8e43544e90c4499fe2`; revealing the legacy Zulu revision silently changed the selected stable ID to sorting-first Alpha, so the intended assertion failed and the target exited 1 |
+| Visible-row continuity | A selected current revision remains current when previous revisions are revealed or hidden and that row stays visible |
+| Hidden-row fallback | If no preferred visible ID exists, the existing first-supported then first-visible fallback remains in force |
+| Accepted identity | The Add button stays enabled for the retained supported device and accepting the dialog returns that same stable device ID |
+| Preserved behavior | Device/revision contents, latest-revision default, sorting, text filter, Extended Information, status text, limited-device guard, Add/Cancel, controller mutation, and Undo/Redo are unchanged |
+| Deliberate exclusions | No cross-dialog selection cache, persistent index contract, repository/model reset policy, revision compatibility change, online lookup, or scan behavior |
+| Focused normal and 2x | Each passed 3 events, 0 failed, target status 0 |
+| Related normal and 2x | Each passed 10 events, 0 failed, target status 0 |
+| Complete Workbench | Normal and 2x each passed 69 events, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 69, Scan 7, Diagnostics 7; 120 passed, 0 failed |
+| Known soft assertion | The existing invalid-project path still emits the pre-existing ProjectExplorer TaskHub category soft assertion; it does not fail a test or target |
+| Final source SHA-256 | Dialog implementation `fd52d33b1bdc7d8b9aa5ce88ddcfe863c16b20054e8d85518ef693a5196148f5`; header `472a6169ba2dfacea350a41b39ce4859b7cb8370244fd60a8c759cbf6c1181fc`; tests `3259aa89d7d388ba1a212e7fef9a24f0c3004a29e00e10259f0196c1e8d4fa53`; test header `8fbe321e0d55aaddb76d51e44c70a7ee34282462753fc95805a46245700b2ccb` |
+| Final git blobs | Dialog implementation `5adb883e4c6bb09ebcd9772ab762261523010069`; header `23eac3adaf0335b3590a28a9da7dbc81378e0968`; tests `da747581823bb9366ecbe12140932b872b55e0f0`; test header `272cf0b738477b17f62c7e8da409a1e726a4363a` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 allow-listed plugin dylibs; executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `759d4904b9a5dae8734e3aaf2fb3eefa10f47e60facdf9003610655b92a89838`; test Workbench `5514510a42c91149247a90edd4ea7d34bd7db846745e4bb3cecf08bf890edaa8` |
+| Enabled startup | PID 40382 remained running for 37 consecutive samples with Workbench loaded in all 37; passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 42145 remained running for 37 consecutive samples with Workbench absent in all 37; passed-through SIGTERM produced target status 15 |
+| Crash-dialog audit | During the 2026-07-22 12:39:57 to 12:47:33 +0800 product-lifecycle audit there was no residual product/LLDB process, new matching DiagnosticReports file, or matching crash-service event |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM; no visible main window or system crash dialog |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard `extensionmanager_test.h` blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, ProjectService, Project command, model role, or source-list changes | None |
+| Core, ProjectExplorer, app, network, scan, online state, SDO, or hardware changes | None; this remains a private Workbench selection-continuity change over local/offline Mock data |
+
+Evidence is under
+`/private/tmp/embed-labs-esi-revision-selection.pcE5YX`. The Qt current-item
+contract is at <https://doc.qt.io/qt-6/qitemselectionmodel.html>. Beckhoff's
+latest/older-revision insertion workflow is at
+<https://infosys.beckhoff.com/content/1033/ethercatsystem/2477595531.html>.
+
 ## Verification states
 
 Use only these evidence labels:

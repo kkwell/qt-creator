@@ -1083,6 +1083,27 @@ local/offline Mock state plus offscreen enabled/disabled product lifecycle
 runs with passed-through SIGTERM. No visible main window, remote comparison,
 fetch, pull, merge, rebase, push, or publication occurred.
 
+`ISSUE-WB-ESI-REVISION-TOGGLE-SELECTION-001`, based on
+`42110b4e990baae92fbed37f38ab6aa274b34657`, changes only the existing
+product-owned private `esideviceselectiondialog.cpp/.h`, Workbench test
+declaration/implementation, and documentation. The dialog now restores a
+selected stable device ID after its previous-revision filter changes whenever
+that device remains visible. If it is hidden or absent, the established
+first-supported/first-visible fallback remains unchanged. Text filtering,
+revision comparison, repository ownership, Add validation, and controller
+mutation are unchanged.
+
+The change introduces no public API, source file, dependency, CMake/qbs
+entry, Project format, persistence field, Provider or ProjectService
+contract, Project command, custom model role, production thread or timer,
+Core or ProjectExplorer hook, application-bootstrap change,
+controller/network transport, online state, scan, SDO execution, or hardware
+behavior. The Workbench path count remains 44 and the direct upstream Core
+patch count remains five. Qualification used only local/offline Mock state
+plus offscreen enabled/disabled product lifecycle runs with passed-through
+SIGTERM. No visible main window, remote comparison, fetch, pull, merge,
+rebase, push, or publication occurred.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

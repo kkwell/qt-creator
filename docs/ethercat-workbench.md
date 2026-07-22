@@ -4552,3 +4552,101 @@ EasyBoard `extensionmanager_test.h` blocker remains outside this private
 Workbench issue. Qualification is local/offline Mock evidence; visible desktop
 inspection was intentionally not run so acceptance did not interrupt desktop
 use.
+
+## ESI revision-toggle selection continuity
+
+`ISSUE-WB-ESI-REVISION-TOGGLE-SELECTION-001` is qualified from local baseline
+`42110b4e990baae92fbed37f38ab6aa274b34657`. It fixes one user-visible Add
+New Item correctness problem. The dialog previously reselected the first
+supported row every time `Show Previous Revisions` changed. A user who had
+selected another current revision could therefore reveal the older rows,
+leave Add enabled, and unknowingly append a different device.
+
+The dialog now captures the selected device's stable `Data::NodeId` before
+the revision filter changes. After the proxy refresh it restores that device
+when the row remains visible. If the device is no longer visible, or there
+was no valid selection, the existing fallback still chooses the first
+supported visible row and then the first visible limited row. Text filtering
+still intentionally chooses the first supported matching row, or the first
+visible limited row when no supported match exists. Sorting, revision
+qualification, the limited-device guard, status text, Add/Cancel behavior,
+and the existing controller mutation and Undo/Redo path are unchanged.
+
+Qt documents that `QItemSelectionModel` owns the view's current item and that
+`setCurrentIndex()` replaces it:
+<https://doc.qt.io/qt-6/qitemselectionmodel.html>. Its proxy model performs
+only the existing row sorting and filtering:
+<https://doc.qt.io/qt-6/qsortfilterproxymodel.html>. Beckhoff documents that
+offline insertion normally offers the latest revision, that older revisions
+must be explicitly revealed and selected, and that the selected revision is
+then appended:
+<https://infosys.beckhoff.com/content/1033/ethercatsystem/2477595531.html>.
+The general Add New Item confirmation contract is at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1096103307.html>.
+
+Failure-first changed only the Workbench test. Production
+`esideviceselectiondialog.cpp/.h` remained at SHA-256
+`8645fe5679f3155d09a425fc80eabb0cf185f186aaec6706d3f387e1d4291816` and
+`dfa2a65a2702b38c15da210d99ae0adbe516a639d72238e0061d8c514f7b7b3a`,
+with git blobs `d603080f1fd9b9a6c34d8f2ced8bf0cf3f26e36d` and
+`03d7ea0b6a7acbf8582e7e8e43544e90c4499fe2`. The test selected a supported
+`Zulu Current` row while `Alpha Current` sorted first, enabled previous
+revisions, and observed the old code replace the selected ID with Alpha. The
+intended ID assertion failed safely and the target exited with status 1 in
+`failure-first/test.log`.
+
+The final focused test proves that the current revision remains selected,
+the previous revision appears, Add remains enabled, and accepting the dialog
+retains the same stable device ID. Focused normal and 2x runs each passed
+three events. The selection, insertion, accessibility, target-lifecycle, and
+asynchronous-dialog related group passed ten events at each scale. Complete
+Workbench runs passed 69 events at each scale. The six isolated suites passed
+120 events: Core 17, Project 12, Devices 8, Workbench 69, Scan 7, and
+Diagnostics 7. The complete Workbench runs retain the known pre-existing
+ProjectExplorer TaskHub soft assertion in the invalid-project path; it did
+not fail a test or target.
+
+Final SHA-256 values for the dialog implementation, dialog header, Workbench
+test implementation, and test declaration are respectively
+`fd52d33b1bdc7d8b9aa5ce88ddcfe863c16b20054e8d85518ef693a5196148f5`,
+`472a6169ba2dfacea350a41b39ce4859b7cb8370244fd60a8c759cbf6c1181fc`,
+`3259aa89d7d388ba1a212e7fef9a24f0c3004a29e00e10259f0196c1e8d4fa53`,
+and `8fbe321e0d55aaddb76d51e44c70a7ee34282462753fc95805a46245700b2ccb`.
+Their git blobs are `5adb883e4c6bb09ebcd9772ab762261523010069`,
+`23eac3adaf0335b3590a28a9da7dbc81378e0968`,
+`da747581823bb9366ecbe12140932b872b55e0f0`, and
+`272cf0b738477b17f62c7e8da409a1e726a4363a`.
+
+The full `WITH_TESTS=OFF` product build passed and contains exactly 16
+allow-listed plugin dylibs. The executable SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+the product and test Workbench plugin SHA-256 values are
+`759d4904b9a5dae8734e3aaf2fb3eefa10f47e60facdf9003610655b92a89838`
+and `5514510a42c91149247a90edd4ea7d34bd7db846745e4bb3cecf08bf890edaa8`.
+
+Enabled product startup observed PID 40382 alive for 37 consecutive samples,
+with the Workbench plugin loaded in all 37. Explicitly disabled startup
+observed PID 42145 alive for 37 consecutive samples, with Workbench absent in
+all 37. LLDB passed SIGTERM directly without
+stopping or notifying, and both targets recorded status 15. Every executable
+run used fresh HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar bypass. No visible main window was opened.
+The 2026-07-22 12:39:57 to 12:47:33 +0800 product-lifecycle audit found no
+residual product or LLDB process, new matching DiagnosticReports file, or
+matching crash-service event.
+
+Evidence is under
+`/private/tmp/embed-labs-esi-revision-selection.pcE5YX`. This issue changes
+only private `esideviceselectiondialog.cpp/.h`, the Workbench test
+declaration/implementation, and these four documents. It adds no public API,
+source file, dependency, Provider or ProjectService contract, Project format,
+persistence field, Project command, custom model role, Core or
+ProjectExplorer hook, application-bootstrap change, production thread or
+timer, network transport, scan, online state, SDO execution, or hardware
+behavior. No CMake or qbs description changed, so qbs was not run. The
+unrelated `WITH_TESTS=ON` all-target build was not rerun because the known
+EasyBoard `extensionmanager_test.h` blocker remains outside this private
+Workbench issue. Qualification is local/offline Mock evidence; visible
+desktop inspection was intentionally not run so acceptance did not interrupt
+desktop use.
