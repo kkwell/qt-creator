@@ -5278,8 +5278,9 @@ verifies this reset on the same page instance; the new lifecycle test also
 switches away so the page is destroyed, re-enters with an empty filter,
 offline disabled and sample 0, and then verifies Project close destroys it.
 There is no cross-node cache. Feedback is still cleared on every refresh.
-Transient manually edited Mock values are intentionally rebuilt from current
-definitions and are not covered by this issue.
+That view-state issue did not retain manually edited Mock values. The separate
+`ISSUE-WB-COE-NONCONFLICTING-MOCK-VALUE-REFRESH-001` boundary below now
+retains only accepted edits whose fresh object authority is still compatible.
 
 Every `setContext()` still increments the private context generation. An old
 Advanced or Add-to-Startup response is therefore rejected after any refresh,
@@ -5456,6 +5457,93 @@ network, ADS, scan, online state, SDO execution, or hardware behavior. Modules
 and Channels remain a separate data/API chain and are not completed here.
 `EtherCATWorkbenchPlugin` remains In progress. No CMake or qbs description
 changed, so qbs was not run.
+
+## CoE non-conflicting Mock-value refresh continuity
+
+`ISSUE-WB-COE-NONCONFLICTING-MOCK-VALUE-REFRESH-001`, based on local commit
+`925b14062f93403cfc9f9552dcaec1e3015ba662`, keeps an accepted local Mock
+value across a refresh of the same configured slave. Preservation requires
+the same non-`None` Project ID, node ID, and node kind, the same scalar object
+address, a writable non-synthetic object, and unchanged offline bytes and
+width, parsed data type, raw data type, writable flag, and process-data role.
+Only values already accepted by the model's `setData()` path qualify; text in
+an active editor that has not been committed is outside this issue.
+
+A real Project rename and a same-identity ESI metadata or sibling-object update
+therefore keep the local override while the page renders fresh Project and ESI
+authority elsewhere. Offline view always shows the authoritative offline
+bytes; returning to Mock view reveals the retained override. Add to Startup
+reads those current Mock bytes after confirmation, but the edit itself never
+changes or persists the Project.
+
+Explicit Update List is the deliberate clear boundary. In Mock view it drops
+all accepted overrides before generating the next sample; in Offline view it
+rebuilds without exporting overrides, so returning to Mock also shows a fresh
+sample. An empty offline baseline is valid: any non-empty byte sequence already
+accepted by `setData()` may survive while the baseline remains empty and all
+other authority matches, while Update List clears it back to empty. A changed
+offline value or width, parsed or raw type, writable or process-data role,
+object removal, genuine context switch, or page destruction discards the
+override.
+
+The private model exports a value-only map keyed by object address before its
+normal reset, installs current definitions, and then replays only compatible
+entries. It retains no `QModelIndex`, model item, Project object, Repository
+object, or cross-node cache. Both source and proxy models are checked by
+`QAbstractItemModelTester`. This follows Qt's
+[model reset contract](https://doc.qt.io/qt-6/qabstractitemmodel.html).
+Beckhoff's
+[CoE Online page](https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html)
+is used only for object-value, RW/RO, Offline-value, and Update List
+interaction terminology; it does not define this local Mock continuity.
+
+Failure-first changed only the new Workbench test while production
+`coeonlinepage.cpp/.h` retained SHA-256 values
+`2faebb9f5095f4540a7dd1f70fc9dcbaf06958ed6101b524bc66615750da69a4`
+and
+`542315c7a5ba4f404ec8d2d2edaee15bc519e9f19a7e64e67cf134d2edf53952`,
+with baseline blobs `253744dc05c01ff3a9f0b2fa754bc9cf5e6291cc` and
+`e916c21579d01c6558e839632c840c7fc2d2c5af`. After a real Project rename,
+the old page returned `08` instead of the accepted `5A`; the target exited 1.
+
+Final focused runs passed three events at normal and 2x scale. Related CoE
+runs passed nine events at both scales. Two complete Workbench runs at each
+scale passed 77 events each. The isolated suites passed 128 events: Core 17,
+Project 12, Devices 8, Workbench 77, Scan 7, and Diagnostics 7. Every target
+exited 0. Complete Workbench retains the known pre-existing ProjectExplorer
+TaskHub soft assertion in the invalid-project path; it did not fail a test or
+target.
+
+Final implementation/header SHA-256 values are
+`4f6a83237a8be1158799242f5e26f31490ee7559349c1aabc9fddc0d95c5fe0d`
+and
+`ef599680bc35e50556b8f222b06eb7b2672dfac01324ef5993e0a857d5ddb66a`;
+test implementation/header values are
+`e996ee623817b12b7f0a062506f797e6e32f4d095bb0fa656126e58a6c906422`
+and
+`7494c2ea202151a14df773805f503e397a42fd284a5dba1a32ec9bb2b9d53e49`.
+
+The complete `WITH_TESTS=OFF` product build passed and contains 16 plugin
+dylibs. Enabled PID 96279 remained alive for 37 samples with Workbench mapped
+in all 37; explicitly disabled PID 97897 remained alive for 37 samples with
+`-noload EtherCATWorkbench` and Workbench absent in all 37. LLDB passed the
+intentional SIGTERM through and both targets recorded status 15. From
+2026-07-22 23:34:30 to 23:36:52 +0800 there was no residual qualification
+process, new Embed Labs diagnostic report, or matching crash-service event.
+Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, disabled
+crash reporting, `-no-crashcheck`, and the process-local Touch Bar bypass kept
+main-program acceptance invisible and non-interrupting. The disabled run's
+known shared-memory initialization message was non-fatal.
+
+Authoritative evidence is under
+`/private/tmp/embed-labs-wb-coe-mock-value-refresh-001.Z9NXQ5`. The issue
+changes only private `coeonlinepage.cpp/.h`, the existing Workbench test
+declaration and implementation, and these four documents. It adds no generic
+model or cache service, public API or role, source file, dependency, Project
+format or persistence field, Provider or ProjectService contract, Project
+command, thread, timer, Core or ProjectExplorer hook, application bootstrap,
+network, ADS, scan, online CoE, SDO, controller, or hardware behavior. No
+CMake or qbs description changed, so qbs was not run.
 
 ## Process Data non-conflicting refresh inline-draft continuity
 

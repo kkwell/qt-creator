@@ -1307,10 +1307,12 @@ the anchor. A genuine context change resets state and establishes no
 cross-node cache.
 
 The private context generation still increments on every refresh, so stale
-Advanced and Add-to-Startup responses remain invalid. Feedback is cleared and
-transient manually edited Mock values are not preserved. This is not a generic
-view-state service, signal-suppression change, refresh-reason API, Repository
-revision, CAS or merge protocol, or persistence mechanism.
+Advanced and Add-to-Startup responses remain invalid. Feedback is cleared.
+That view-state issue did not preserve transient manually edited Mock values;
+their separate compatible-authority boundary is defined by
+`ISSUE-WB-COE-NONCONFLICTING-MOCK-VALUE-REFRESH-001` below. This is not a
+generic view-state service, signal-suppression change, refresh-reason API,
+Repository revision, CAS or merge protocol, or persistence mechanism.
 
 The local delta changes only private `coeonlinepage.cpp`, the Workbench test
 declaration/implementation, and four evidence documents. It introduces no new
@@ -1402,3 +1404,47 @@ visible/manual UI inspection, remote comparison, fetch, pull, merge, rebase,
 push, PR, or publication occurred. The supported baseline remains the local
 `embed-labs` history. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-process-data-draft-001.lx7VcX`.
+
+## Local CoE non-conflicting Mock-value refresh delta
+
+`ISSUE-WB-COE-NONCONFLICTING-MOCK-VALUE-REFRESH-001` is a private Workbench
+correction on local baseline
+`925b14062f93403cfc9f9552dcaec1e3015ba662`. An accepted Mock override can
+survive only within the same Project, configured-slave node, and node kind,
+at the same scalar object address, while offline bytes and width, parsed and
+raw type, writable authority, and process-data role remain compatible.
+
+Project rename and same-identity ESI metadata or sibling refreshes preserve
+eligible bytes while rendering fresh authority. Offline view exposes baseline
+bytes and returning to Mock exposes the override. Add to Startup consumes the
+current bytes through its existing checked command path. Explicit Update List
+is the clear boundary in both Mock and Offline view. Empty offline baselines
+can retain an already accepted non-empty arbitrary width, but Update List
+returns them to empty. Authority conflict, object removal, context change, and
+page teardown discard the override. Uncommitted editor text is excluded.
+
+This is an existing-path, cpp-private value replay, not an upstream Core
+change, generic cache, Repository revision, merge/CAS protocol, persistence
+format, or public interface. The Workbench path count remains 44 and the
+direct upstream Core patch count remains five. The local delta changes only
+existing `coeonlinepage.cpp/.h`, the Workbench test declaration/implementation,
+and four evidence documents. It introduces no source file, dependency,
+CMake/qbs entry, Project format or persistence field, Provider/ProjectService
+contract, Project command, public model role, production thread/timer, Core or
+ProjectExplorer hook, application bootstrap, network, ADS, scan, online CoE,
+SDO, controller, or hardware behavior.
+
+Qualification used local ESI/offline Project and Mock data. Focused and
+related CoE tests passed at normal and 2x scale; two complete Workbench runs at
+each scale passed 77 events per run; the six isolated suites passed 128 events.
+The complete `WITH_TESTS=OFF` product build passed with 16 plugin dylibs.
+Enabled and explicitly disabled main-program runs each stayed alive for 37
+samples, passed intentional SIGTERM through as status 15, left no residual
+process, and produced no new matching diagnostic report or crash-service
+event. All execution was offscreen with fresh HOME/settings and disabled crash
+reporting; no visible/manual UI inspection was run.
+
+No remote comparison, fetch, pull, merge, rebase, push, PR, or publication
+occurred. The supported baseline remains the local `embed-labs` history.
+Authoritative evidence is under
+`/private/tmp/embed-labs-wb-coe-mock-value-refresh-001.Z9NXQ5`.

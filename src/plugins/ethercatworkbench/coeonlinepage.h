@@ -38,7 +38,7 @@ public:
     void setContext(const Core::PropertyPageContext &context);
 
 private:
-    void rebuildObjects();
+    void rebuildObjects(bool preserveMockValues = false);
     void updateList();
     void updateButtonState();
     void refreshFilterResults();

@@ -81,6 +81,7 @@ struct CoeObjectItem
     QString rawDataType;
     QByteArray offlineValue;
     QByteArray mockValue;
+    bool mockValueEdited = false;
     QString unit;
     CoeObjectItem *parent = nullptr;
     int row = 0;
@@ -244,6 +245,18 @@ class CoeObjectModel final : public QAbstractItemModel
 public:
     enum Column { Index, Name, Flags, Value, Unit, ColumnCount };
 
+    struct MockValueOverride
+    {
+        QByteArray value;
+        QByteArray offlineValue;
+        Data::EtherCATDataType dataType = Data::EtherCATDataType::Unknown;
+        QString rawDataType;
+        bool writable = false;
+        bool processData = false;
+    };
+
+    using MockValueOverrides = QMap<quint32, MockValueOverride>;
+
     explicit CoeObjectModel(QObject *parent = nullptr)
         : QAbstractItemModel(parent)
     {}
@@ -390,6 +403,7 @@ public:
         if (!parsed || parsed->isEmpty() || (expectedSize > 0 && parsed->size() != expectedSize))
             return false;
         object->mockValue = *parsed;
+        object->mockValueEdited = true;
         emit dataChanged(
             modelIndex,
             modelIndex,
@@ -400,6 +414,28 @@ public:
              Qt::ToolTipRole,
              RawValueRole});
         return true;
+    }
+
+    MockValueOverrides mockValueOverrides() const
+    {
+        MockValueOverrides result;
+        const auto collect = [&result](auto &&self, const CoeObjectItem *item) -> void {
+            if (item->mockValueEdited && item->writable && !item->synthetic) {
+                result.insert(
+                    address(item->index, item->subIndex),
+                    {item->mockValue,
+                     item->offlineValue,
+                     item->dataType,
+                     item->rawDataType,
+                     item->writable,
+                     item->processData});
+            }
+            for (const auto &child : item->children)
+                self(self, child.get());
+        };
+        for (const auto &root : m_roots)
+            collect(collect, root.get());
+        return result;
     }
 
     void setDefinitions(
@@ -457,15 +493,35 @@ public:
 
     bool showOffline() const { return m_showOffline; }
 
-    void refreshMockValues(int generation)
+    void refreshMockValues(
+        int generation, const MockValueOverrides &preservedOverrides = {})
     {
         beginResetModel();
-        const auto refresh = [generation](auto &&self, CoeObjectItem *item) -> void {
-            if (!item->synthetic && !item->offlineValue.isEmpty()
-                && item->dataType != Data::EtherCATDataType::VisibleString
-                && (item->writable || item->processData)) {
+        const auto refresh = [this, &preservedOverrides, generation](
+                                 auto &&self, CoeObjectItem *item) -> void {
+            item->mockValueEdited = false;
+            if (!item->synthetic) {
                 item->mockValue = item->offlineValue;
-                item->mockValue[0] = char((quint8(item->mockValue.at(0)) + generation) & 0xff);
+                if (!item->mockValue.isEmpty()
+                    && item->dataType != Data::EtherCATDataType::VisibleString
+                    && (item->writable || item->processData)) {
+                    item->mockValue[0]
+                        = char((quint8(item->mockValue.at(0)) + generation) & 0xff);
+                }
+            }
+            const auto preserved = preservedOverrides.constFind(
+                address(item->index, item->subIndex));
+            if (preserved != preservedOverrides.cend() && m_mockValueEditingEnabled
+                && item->writable && !item->synthetic
+                && preserved->offlineValue == item->offlineValue
+                && preserved->dataType == item->dataType
+                && preserved->rawDataType == item->rawDataType
+                && preserved->writable == item->writable
+                && preserved->processData == item->processData
+                && (item->offlineValue.isEmpty()
+                    || preserved->value.size() == item->mockValue.size())) {
+                item->mockValue = preserved->value;
+                item->mockValueEdited = true;
             }
             for (const auto &child : item->children)
                 self(self, child.get());
@@ -985,7 +1041,7 @@ void CoeOnlinePage::setContext(const Core::PropertyPageContext &context)
     {
         QScopedValueRollback resultChange(
             m_filterResultChangeDepth, m_filterResultChangeDepth + 1);
-        rebuildObjects();
+        rebuildObjects(sameStableContext);
     }
     if (selectedObjectAddress && indexForAddress(m_model, *selectedObjectAddress).isValid()) {
         m_selectedObjectAddress = selectedObjectAddress;
@@ -998,8 +1054,11 @@ void CoeOnlinePage::setContext(const Core::PropertyPageContext &context)
     }
 }
 
-void CoeOnlinePage::rebuildObjects()
+void CoeOnlinePage::rebuildObjects(bool preserveMockValues)
 {
+    const CoeObjectModel::MockValueOverrides mockValueOverrides
+        = preserveMockValues ? m_model->mockValueOverrides()
+                             : CoeObjectModel::MockValueOverrides();
     const std::optional<Data::OfflineSlaveConfiguration> slave
         = m_controller ? m_controller->treeModel()->offlineSlave(m_context.nodeId) : std::nullopt;
     std::optional<Data::DeviceDescription> device;
@@ -1016,8 +1075,8 @@ void CoeOnlinePage::rebuildObjects()
           && m_controller->projectService()->project(m_context.projectId).has_value();
     m_model->setDefinitions(objectDefinitions(slave, device), mockValueEditingEnabled);
     m_model->setShowOffline(m_showOffline->isChecked());
-    if (m_mockGeneration > 0)
-        m_model->refreshMockValues(m_mockGeneration);
+    if (m_mockGeneration > 0 || !mockValueOverrides.isEmpty())
+        m_model->refreshMockValues(m_mockGeneration, mockValueOverrides);
     m_dataSource->setText(
         m_showOffline->isChecked() ? Tr::tr("Offline Data")
                                    : Tr::tr("Mock Data - sample %1").arg(m_mockGeneration));

@@ -2739,7 +2739,7 @@ and
 | Removed-address fallback | If the address no longer exists in the fresh source model, the current valid fallback is adopted or the anchor is cleared |
 | Modal generation | Every `setContext()` still increments the context generation; stale Advanced and Add-to-Startup responses remain invalid after same-context refresh |
 | Genuine context change | Different Project/node/kind resets filter, Advanced state, source, sample generation, and selection on the same page instance; node switch and Project close also destroy the page with no cross-node cache |
-| Deliberate exclusions | Feedback and manually edited Mock values are not retained; no native IME composition, online CoE, SDO, controller, transport, or hardware behavior is claimed |
+| Deliberate exclusions | That issue did not retain manually edited Mock values; their separate compatible-authority boundary is qualified by `ISSUE-WB-COE-NONCONFLICTING-MOCK-VALUE-REFRESH-001` below. No native IME composition, online CoE, SDO, controller, transport, or hardware behavior is claimed |
 | Focused normal and 2x | Two normal runs and one 2x run each passed 3 events, 0 failed, target status 0 |
 | Related CoE normal and 2x | One normal run and one 2x run each passed 8 events, 0 failed, target status 0 |
 | Complete Workbench normal and 2x | Two normal runs and one 2x run each passed 74 events, 0 failed, target status 0 |
@@ -2872,3 +2872,48 @@ view-reset, persistent-index, row-move, and line-edit contracts are at
 page is referenced only for hierarchy, fixed-mapping, and interaction
 terminology at
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1344982411.html>.
+
+## EtherCATWorkbench CoE non-conflicting Mock-value refresh qualification
+
+`ISSUE-WB-COE-NONCONFLICTING-MOCK-VALUE-REFRESH-001` is qualified from local
+baseline `925b14062f93403cfc9f9552dcaec1e3015ba662`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Only the new Workbench test changed; production `coeonlinepage.cpp/.h` retained SHA-256 `2faebb9f5095f4540a7dd1f70fc9dcbaf06958ed6101b524bc66615750da69a4` / `542315c7a5ba4f404ec8d2d2edaee15bc519e9f19a7e64e67cf134d2edf53952` and blobs `253744dc05c01ff3a9f0b2fa754bc9cf5e6291cc` / `e916c21579d01c6558e839632c840c7fc2d2c5af`; after a real Project rename the old page returned `08` instead of accepted `5A`, target status 1 |
+| Stable context gate | Preservation requires non-`None` plus equal Project ID, node ID, and configured-slave node kind |
+| Object authority gate | Scalar address, offline bytes and width, parsed type, raw type, writable flag, and process-data role must match; the current object must remain writable and non-synthetic |
+| Accepted values only | Only edits already accepted by model `setData()` qualify; an uncommitted active editor is a separate future issue |
+| Empty offline baseline | An accepted arbitrary non-empty width is retained only while the baseline stays empty and all other authority matches; explicit Update List restores empty |
+| Project rename | A real rename retained `6060:00 = 5A` and the empty-baseline `6061:00 = C0DE` without changing the Project through either edit |
+| Same-identity ESI refresh | Both overrides survived while the fresh `6072:00` sibling comment became visible |
+| Mock/offline toggle | Offline showed authoritative `08` and empty bytes; returning to Mock restored `5A` and `C0DE` |
+| Add to Startup | Confirmed add copied the exact retained `5A`; Undo removed the request while the unrelated retained `C0DE` remained |
+| Explicit Update List | Mock Update List cleared both overrides and generated `09`; Offline Update List also cleared an accepted `B6`, so returning to Mock remained `09` |
+| Authority conflicts | Changed offline value/width discarded `6B`; a fixed/read-only transition discarded `7C`. Parsed type, raw type, and process-data conflicts share the same conjunctive implementation gate and were not repeated as separate ESI variants |
+| Object removal | Removing `6060:00` discarded `3D`; restoring the ESI did not recover it |
+| Context and teardown | Switching to the Project destroyed the page and discarded `4E`; re-entry showed `08`. Project close destroyed the replacement page with no cross-node cache |
+| Model contract | Source and proxy `QAbstractItemModelTester` instances covered definition resets, Mock refreshes, source toggles, Repository refreshes, object removal, and page teardown |
+| Focused normal and 2x | One final run at each scale passed 3 events, 0 failed, target status 0 |
+| Related CoE normal and 2x | One run at each scale passed 9 events, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | Two runs at each scale passed 77 events per run, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 77, Scan 7, Diagnostics 7; 128 passed, 0 failed in six isolated LLDB-supervised processes |
+| Known soft assertion | The existing invalid-project path still emits the pre-existing ProjectExplorer TaskHub category soft assertion; it did not fail a test or target |
+| Final source SHA-256 | Implementation `4f6a83237a8be1158799242f5e26f31490ee7559349c1aabc9fddc0d95c5fe0d`; header `ef599680bc35e50556b8f222b06eb7b2672dfac01324ef5993e0a857d5ddb66a`; tests `e996ee623817b12b7f0a062506f797e6e32f4d095bb0fa656126e58a6c906422`; test header `7494c2ea202151a14df773805f503e397a42fd284a5dba1a32ec9bb2b9d53e49` |
+| Final git blobs | Implementation `c758168bf1fdc7a02634e22546b14d5c54978ae3`; header `83d07f6d006009bebdf70b2a087d8ce7b2231a63`; tests `c95fbaf75767c46fd8a665188633f99b6c089096`; test header `3441528f22135922229cb267572591db59bb24f0` |
+| Product build and inventory | Complete `WITH_TESTS=OFF` build passed; exactly 16 plugin dylibs are present |
+| Product hashes | Executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `b68ebb80352e21e6b6fa558b6708fc3859cf785c96d220c12f838e338c383fc0`; test Workbench `e15232b2d8209a1151dd37591a1567f0caa9390ac98ecf0c8ac1241889d9fda9` |
+| Enabled startup | PID 96279 remained alive for 37 samples with Workbench mapped in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 97897 remained alive for 37 samples with `-noload EtherCATWorkbench`; Workbench was absent in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Crash-dialog audit | From 2026-07-22 23:34:30 to 23:36:52 +0800 there was no residual qualification process, new Embed Labs DiagnosticReports file, or matching ReportCrash/CrashReporter/diagnosticd event |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, disabled crash reporting, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM; acceptance continued without opening or touching a visible user instance |
+| Known non-fatal launch message | The disabled run emitted the existing shared-memory initialization message, remained alive for all 37 samples, and produced no crash artifact or service event |
+| Deliberate exclusions | No active-editor preservation, persistence, cross-node cache, generic merge/CAS service, public API or model role, Provider/ProjectService contract, network, ADS, SDO, controller, or hardware behavior |
+| qbs execution | Not run; no CMake or qbs description changed |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-coe-mock-value-refresh-001.Z9NXQ5`. Qt's model
+reset contract is at <https://doc.qt.io/qt-6/qabstractitemmodel.html>.
+Beckhoff's CoE page is referenced only for object-value, RW/RO, Offline-value,
+and Update List terminology at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1345267851.html>.

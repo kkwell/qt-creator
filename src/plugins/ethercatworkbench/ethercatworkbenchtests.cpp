@@ -39,6 +39,7 @@
 
 #include <QAbstractButton>
 #include <QAbstractItemModelTester>
+#include <QAbstractProxyModel>
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
@@ -10767,6 +10768,320 @@ void EtherCATWorkbenchTests::testCoeSameContextViewStateContinuity()
     QTRY_VERIFY(filter.isNull());
     QTRY_VERIFY(showOffline.isNull());
     QTRY_VERIFY(dataSource.isNull());
+}
+
+void EtherCATWorkbenchTests::testCoeMockValueSurvivesNonConflictingRefresh()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray esi = deviceEsi();
+    esi.replace("#x00005678", "#x7A1C0004");
+    esi.replace("#x00000011", "#x0000B404");
+    esi.replace("AX5000", "EL-COE-MOCK-VALUE");
+    esi.replace("Workbench Servo", "CoE Mock Value Servo");
+    const QByteArray emptyValueCommand
+        = "<InitCmd><Transition>PS</Transition><Index>#x6061</Index><SubIndex>0</SubIndex>"
+          "<Data></Data><Comment>Empty Mock baseline</Comment></InitCmd>";
+    QCOMPARE(esi.count("</InitCmds>"), 1);
+    QByteArray extendedInitCommands = emptyValueCommand;
+    extendedInitCommands.append("</InitCmds>");
+    esi.replace("</InitCmds>", extendedInitCommands);
+    const QByteArray modeCommand
+        = "<InitCmd><Transition>PS</Transition>\n"
+          "<Index>#x6060</Index><SubIndex>0</SubIndex><Data>08</Data><Comment>Mode</Comment>\n"
+          "</InitCmd>";
+    QCOMPARE(esi.count(modeCommand), 1);
+    QByteArray metadataEsi = esi;
+    metadataEsi.replace(
+        "Maximum torque commissioning limit", "Maximum torque refreshed from ESI");
+    QByteArray authorityEsi = metadataEsi;
+    authorityEsi.replace(
+        "<Data>08</Data><Comment>Mode</Comment>",
+        "<Data>0900</Data><Comment>Mode authority changed</Comment>");
+    QByteArray readOnlyEsi = metadataEsi;
+    QByteArray fixedModeCommand = modeCommand;
+    fixedModeCommand.replace("<Transition>PS</Transition>",
+                             "<Transition>&lt;PS&gt;</Transition>");
+    readOnlyEsi.replace(modeCommand, fixedModeCommand);
+    QByteArray removedEsi = metadataEsi;
+    removedEsi.replace(modeCommand, QByteArray());
+    QByteArray authorityRestoreEsi = metadataEsi;
+    authorityRestoreEsi.replace(
+        "Maximum torque refreshed from ESI", "Maximum torque restored after authority change");
+    QByteArray readOnlyRestoreEsi = metadataEsi;
+    readOnlyRestoreEsi.replace(
+        "Maximum torque refreshed from ESI", "Maximum torque restored after read-only change");
+    QByteArray removedRestoreEsi = metadataEsi;
+    removedRestoreEsi.replace(
+        "Maximum torque refreshed from ESI", "Maximum torque restored after object removal");
+    const Utils::FilePath testRoot = Utils::FilePath::fromString(directory.path()).canonicalPath();
+    const Utils::FilePath esiPath = testRoot.pathAppended("coe-mock-value.xml");
+    const Utils::FilePath metadataEsiPath
+        = testRoot.pathAppended("coe-mock-value-metadata.xml");
+    const Utils::FilePath authorityEsiPath
+        = testRoot.pathAppended("coe-mock-value-authority.xml");
+    const Utils::FilePath readOnlyEsiPath
+        = testRoot.pathAppended("coe-mock-value-read-only.xml");
+    const Utils::FilePath removedEsiPath
+        = testRoot.pathAppended("coe-mock-value-removed.xml");
+    const Utils::FilePath authorityRestoreEsiPath
+        = testRoot.pathAppended("coe-mock-value-authority-restore.xml");
+    const Utils::FilePath readOnlyRestoreEsiPath
+        = testRoot.pathAppended("coe-mock-value-read-only-restore.xml");
+    const Utils::FilePath removedRestoreEsiPath
+        = testRoot.pathAppended("coe-mock-value-removed-restore.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(esi));
+    QVERIFY_RESULT(metadataEsiPath.writeFileContents(metadataEsi));
+    QVERIFY_RESULT(authorityEsiPath.writeFileContents(authorityEsi));
+    QVERIFY_RESULT(readOnlyEsiPath.writeFileContents(readOnlyEsi));
+    QVERIFY_RESULT(removedEsiPath.writeFileContents(removedEsi));
+    QVERIFY_RESULT(authorityRestoreEsiPath.writeFileContents(authorityRestoreEsi));
+    QVERIFY_RESULT(readOnlyRestoreEsiPath.writeFileContents(readOnlyRestoreEsi));
+    QVERIFY_RESULT(removedRestoreEsiPath.writeFileContents(removedRestoreEsi));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.typeName == "EL-COE-MOCK-VALUE";
+    });
+    QVERIFY(device != devices.cend());
+    const TestProjectFile file = writeProjectWithSlave(directory, *device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    DetailsView details(&controller);
+    details.resize(1100, 720);
+    details.show();
+    QTRY_COMPARE(details.currentContext().nodeId, file.slaveId);
+
+    QPointer<QWidget> page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::COE_ONLINE_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page.data());
+    QPointer<QTreeView> dictionary
+        = page->findChild<QTreeView *>("EtherCATCoeObjectDictionary");
+    QPointer<QPushButton> updateList
+        = page->findChild<QPushButton *>("EtherCATCoeUpdateList");
+    QPointer<QPushButton> addToStartup
+        = page->findChild<QPushButton *>("EtherCATCoeAddToStartup");
+    QPointer<QCheckBox> showOffline
+        = page->findChild<QCheckBox *>("EtherCATCoeShowOffline");
+    QVERIFY(dictionary);
+    QVERIFY(updateList);
+    QVERIFY(addToStartup);
+    QVERIFY(showOffline);
+    QAbstractItemModel *model = dictionary->model();
+    QVERIFY(model);
+    QAbstractItemModelTester dictionaryTester(
+        model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    auto proxyModel = qobject_cast<QAbstractProxyModel *>(model);
+    QVERIFY(proxyModel);
+    QAbstractItemModelTester sourceDictionaryTester(
+        proxyModel->sourceModel(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+    const int valueColumn = columnWithHeader(model, "Value");
+    QVERIFY(valueColumn >= 0);
+
+    QModelIndex object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    QModelIndex value = object.siblingAtColumn(valueColumn);
+    QVERIFY(model->flags(value) & Qt::ItemIsEditable);
+    const Data::ProjectSnapshot projectBeforeEdit = *projectService->project(file.projectId);
+    QVERIFY(model->setData(value, "5A", Qt::EditRole));
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("5A"));
+    QModelIndex emptyBaselineObject = findByDisplayText(model, "6061:00");
+    QVERIFY(emptyBaselineObject.isValid());
+    QModelIndex emptyBaselineValue = emptyBaselineObject.siblingAtColumn(valueColumn);
+    QCOMPARE(emptyBaselineValue.data(Qt::EditRole).toString(), QString());
+    QVERIFY(model->flags(emptyBaselineValue) & Qt::ItemIsEditable);
+    QVERIFY(model->setData(emptyBaselineValue, "C0DE", Qt::EditRole));
+    QCOMPARE(emptyBaselineValue.data(Qt::EditRole).toString(), QString("C0DE"));
+    QCOMPARE(*projectService->project(file.projectId), projectBeforeEdit);
+
+    const QString renamedProject
+        = QString::fromUtf8("CoE Mock Value / \u540c\u9879\u76ee\u5237\u65b0");
+    QVERIFY_RESULT(projectService->renameProject(file.projectId, renamedProject));
+    QTRY_COMPARE(projectService->project(file.projectId)->name, renamedProject);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("5A"));
+    emptyBaselineObject = findByDisplayText(model, "6061:00");
+    QVERIFY(emptyBaselineObject.isValid());
+    QCOMPARE(
+        emptyBaselineObject.siblingAtColumn(valueColumn).data(Qt::EditRole).toString(),
+        QString("C0DE"));
+
+    const Data::DeviceImportResult metadataRefresh
+        = waitForJob(repository->importFiles({metadataEsiPath}));
+    QCOMPARE(metadataRefresh.updatedDevices, 1);
+    QCOMPARE(metadataRefresh.failedFiles, 0);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("5A"));
+    emptyBaselineObject = findByDisplayText(model, "6061:00");
+    QVERIFY(emptyBaselineObject.isValid());
+    QCOMPARE(
+        emptyBaselineObject.siblingAtColumn(valueColumn).data(Qt::EditRole).toString(),
+        QString("C0DE"));
+    const QModelIndex refreshedSibling = findByDisplayText(model, "6072:00");
+    QVERIFY(refreshedSibling.isValid());
+    QVERIFY(refreshedSibling.siblingAtColumn(1)
+                .data()
+                .toString()
+                .contains("refreshed from ESI", Qt::CaseInsensitive));
+
+    showOffline->setChecked(true);
+    object = findByDisplayText(model, "6060:00");
+    QCOMPARE(object.siblingAtColumn(valueColumn).data(Qt::EditRole).toString(), QString("08"));
+    emptyBaselineObject = findByDisplayText(model, "6061:00");
+    QCOMPARE(
+        emptyBaselineObject.siblingAtColumn(valueColumn).data(Qt::EditRole).toString(),
+        QString());
+    showOffline->setChecked(false);
+    object = findByDisplayText(model, "6060:00");
+    value = object.siblingAtColumn(valueColumn);
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("5A"));
+    emptyBaselineObject = findByDisplayText(model, "6061:00");
+    QCOMPARE(
+        emptyBaselineObject.siblingAtColumn(valueColumn).data(Qt::EditRole).toString(),
+        QString("C0DE"));
+
+    dictionary->setCurrentIndex(object);
+    QTRY_VERIFY(addToStartup->isEnabled());
+    bool addConfirmed = false;
+    QTimer::singleShot(0, page, [&addConfirmed] {
+        if (auto messageBox = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())) {
+            if (QAbstractButton *yes = messageBox->button(QMessageBox::Yes)) {
+                addConfirmed = true;
+                yes->click();
+            }
+        }
+    });
+    QTest::mouseClick(addToStartup, Qt::LeftButton);
+    QTRY_VERIFY(addConfirmed);
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 1);
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.first().rawValue,
+        QByteArray::fromHex("5A"));
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().startup.parameters.size(), 0);
+    emptyBaselineObject = findByDisplayText(model, "6061:00");
+    QVERIFY(emptyBaselineObject.isValid());
+    QCOMPARE(
+        emptyBaselineObject.siblingAtColumn(valueColumn).data(Qt::EditRole).toString(),
+        QString("C0DE"));
+
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QVERIFY(model->setData(value, "A5", Qt::EditRole));
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("A5"));
+    QTest::mouseClick(updateList, Qt::LeftButton);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("09"));
+    emptyBaselineObject = findByDisplayText(model, "6061:00");
+    QVERIFY(emptyBaselineObject.isValid());
+    QCOMPARE(
+        emptyBaselineObject.siblingAtColumn(valueColumn).data(Qt::EditRole).toString(),
+        QString());
+
+    QVERIFY(model->setData(value, "B6", Qt::EditRole));
+    showOffline->setChecked(true);
+    QTest::mouseClick(updateList, Qt::LeftButton);
+    showOffline->setChecked(false);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("09"));
+
+    QVERIFY(model->setData(value, "6B", Qt::EditRole));
+    const Data::DeviceImportResult authorityRefresh
+        = waitForJob(repository->importFiles({authorityEsiPath}));
+    QCOMPARE(authorityRefresh.updatedDevices, 1);
+    QCOMPARE(authorityRefresh.failedFiles, 0);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("0A00"));
+    QVERIFY(value.data(Qt::EditRole).toString() != QString("6B"));
+
+    QCOMPARE(waitForJob(repository->importFiles({authorityRestoreEsiPath})).updatedDevices, 1);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("09"));
+    QVERIFY(model->setData(value, "7C", Qt::EditRole));
+    const Data::DeviceImportResult readOnlyRefresh
+        = waitForJob(repository->importFiles({readOnlyEsiPath}));
+    QCOMPARE(readOnlyRefresh.updatedDevices, 1);
+    QCOMPARE(readOnlyRefresh.failedFiles, 0);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QVERIFY(!(model->flags(value) & Qt::ItemIsEditable));
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("08"));
+
+    QCOMPARE(waitForJob(repository->importFiles({readOnlyRestoreEsiPath})).updatedDevices, 1);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QVERIFY(model->setData(value, "3D", Qt::EditRole));
+    const Data::DeviceImportResult removedRefresh
+        = waitForJob(repository->importFiles({removedEsiPath}));
+    QCOMPARE(removedRefresh.updatedDevices, 1);
+    QCOMPARE(removedRefresh.failedFiles, 0);
+    QVERIFY(!findByDisplayText(model, "6060:00").isValid());
+
+    QCOMPARE(waitForJob(repository->importFiles({removedRestoreEsiPath})).updatedDevices, 1);
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(valueColumn);
+    QVERIFY(model->setData(value, "4E", Qt::EditRole));
+    controller.selectionService()->setCurrentNodeId(file.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.projectId);
+    QTRY_VERIFY(page.isNull());
+    QTRY_VERIFY(dictionary.isNull());
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.slaveId);
+    page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::COE_ONLINE_PAGE_ID).toString());
+    QVERIFY(page);
+    dictionary = page->findChild<QTreeView *>("EtherCATCoeObjectDictionary");
+    QVERIFY(dictionary);
+    model = dictionary->model();
+    object = findByDisplayText(model, "6060:00");
+    QVERIFY(object.isValid());
+    value = object.siblingAtColumn(columnWithHeader(model, "Value"));
+    QCOMPARE(value.data(Qt::EditRole).toString(), QString("08"));
+
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QTRY_VERIFY(page.isNull());
+    QTRY_VERIFY(dictionary.isNull());
 }
 
 void EtherCATWorkbenchTests::testCoeDictionaryCellAccessibility()

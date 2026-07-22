@@ -2037,10 +2037,12 @@ exists, the current valid fallback is adopted or the anchor is cleared.
 
 A different Project, node ID, or node kind resets all page-owned CoE view
 state, so this does not create a cross-node cache. Feedback is transient and
-cleared on refresh; manually edited Mock values are rebuilt from current
-definitions. The context generation continues to increment on every
-`setContext()` call, including same-stable-context refresh, so stale Advanced
-and Add-to-Startup dialog responses remain invalid.
+cleared on refresh. That view-state issue rebuilt manually edited Mock values;
+their separate compatible-authority replay is owned by
+`ISSUE-WB-COE-NONCONFLICTING-MOCK-VALUE-REFRESH-001` below. The context
+generation continues to increment on every `setContext()` call, including
+same-stable-context refresh, so stale Advanced and Add-to-Startup dialog
+responses remain invalid.
 
 This is not a generic view-state service, Repository signal suppression,
 refresh-reason API, Project revision or generation contract, CAS or merge
@@ -2149,3 +2151,44 @@ or hardware behavior. No CMake or qbs entry changed. Qualification used local
 ESI/offline Project data with normal/2x offscreen tests and enabled/disabled
 product lifecycle evidence. Authoritative evidence is under
 `/private/tmp/embed-labs-wb-process-data-draft-001.lx7VcX`.
+
+## Workbench CoE Mock-value refresh authority boundary
+
+`ISSUE-WB-COE-NONCONFLICTING-MOCK-VALUE-REFRESH-001`, based on local commit
+`925b14062f93403cfc9f9552dcaec1e3015ba662`, remains entirely inside the
+private `CoeOnlinePage` and its cpp-local `CoeObjectModel`. The page is the
+only owner of transient Mock overrides; Project and Repository definitions
+remain the fresh object authority.
+
+Before a stable-context definition reset, the model exports accepted override
+values into a private map keyed by scalar object address. After installing
+fresh definitions, it replays an entry only when the current object is
+writable and non-synthetic and its offline bytes and width, parsed data type,
+raw data type, writable flag, and process-data role match the snapshot. An
+empty offline baseline permits the already accepted non-empty override width
+while the baseline remains empty. No `QModelIndex`, model item, Project object,
+Repository object, or service object is retained.
+
+Project rename and same-identity ESI metadata or sibling updates use that
+stable-context replay. Mock/offline display switching does not mutate the
+override, and Add to Startup reads its current bytes through the existing
+private model role. Explicit Update List never carries a snapshot: the Mock
+path refreshes from baselines and the Offline path rebuilds without overrides.
+Authority conflicts, object removal, context change, and page destruction also
+omit or reject replay.
+
+Only values already accepted by `setData()` are represented; an uncommitted
+delegate editor is outside this boundary. The map is page-local and transient,
+not a generic cache, Repository revision, merge/CAS protocol, conflict UI, or
+persistence service. Existing ProjectService commands, Repository routing,
+public model roles, Provider contracts, and Project format are unchanged.
+
+The boundary changes only existing private `coeonlinepage.cpp/.h`, the
+Workbench test declaration/implementation, and four evidence documents. It
+adds no public API, source file, dependency, CMake/qbs entry, thread, timer,
+Core or ProjectExplorer hook, application bootstrap, network, ADS, scan,
+online CoE, SDO, controller, or hardware behavior. Qualification used local
+ESI/offline Project data, source and proxy model contract checkers, normal/2x
+offscreen tests, and enabled/disabled product lifecycle evidence.
+Authoritative evidence is under
+`/private/tmp/embed-labs-wb-coe-mock-value-refresh-001.Z9NXQ5`.
