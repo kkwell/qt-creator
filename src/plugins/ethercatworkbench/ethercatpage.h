@@ -8,6 +8,7 @@
 #include <QWidget>
 
 QT_BEGIN_NAMESPACE
+class QDialog;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -37,6 +38,7 @@ private:
     QString previousPortText(const Data::OfflineSlaveConfiguration &slave) const;
 
     QPointer<WorkbenchController> m_controller;
+    QPointer<QDialog> m_masterTopologyDialog;
     Core::PropertyPageContext m_context;
     QLabel *m_summary;
     QWidget *m_masterForm;

@@ -30,6 +30,7 @@ private slots:
     void testEditableConfiguredSlaveGeneralWorkflow();
     void testGeneralPropertyTreeAccessibility();
     void testTwinCatMasterEtherCATWorkflow();
+    void testMasterTopologyDialogContextLifecycle();
     void testMasterTopologyDialogBounds();
     void testMasterTopologyCellAccessibility();
     void testEtherCATSyncManagerCellAccessibility();

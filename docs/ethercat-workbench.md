@@ -4109,3 +4109,110 @@ private Workbench issue. No upstream Core, ProjectExplorer, or
 application-bootstrap path changed. The Workbench path count remains 44 and
 the direct upstream Core patch count remains five. All behavior and evidence
 in this qualification remain local/offline Mock behavior.
+
+## Topology dialog page and context lifecycle
+
+`ISSUE-WB-TOPOLOGY-DIALOG-PAGE-LIFECYCLE-001`, based on local commit
+`e814edf65c95ef3c5701f7655c1ff0237cdeac26`, makes the read-only master
+Topology dialog asynchronous and page-owned. Opening Topology returns to the
+Workbench event loop immediately. Close or Escape destroys the current
+dialog and permits an immediate reopen, while a selection change, project
+close, page teardown, or EtherCAT page context refresh also closes the old
+snapshot. A Project refresh can therefore no longer leave stale topology rows
+visible or delete the page from inside a nested modal event loop.
+
+The private `EtherCATPage` keeps only a `QPointer<QDialog>`. The dialog is
+allocated on the heap with the page as parent, uses `Qt::WA_DeleteOnClose`,
+and is shown with `open()`. A repeat click raises and activates the existing
+dialog. Its `finished` handler clears the pointer only when it still identifies
+that exact dialog; this preserves an immediately reopened dialog while the
+previous instance awaits deferred deletion. There is no result or apply path:
+the dialog remains a read-only snapshot with the existing ten columns,
+screen-bounded geometry, accessible cell names, configured physical order,
+offline labels, and Mock state.
+
+`EtherCATPage::setContext()` conservatively closes an open topology snapshot
+on every page refresh, including Project refreshes and repository or index
+refreshes. The table is not live-refreshed in place. This deliberately small
+invalidation rule keeps ownership and freshness local to the page without
+adding a Project or Provider revision contract. Earlier topology-bounds and
+cell-accessibility sections described a stack-local or modal lifetime. Those
+lifecycle statements are superseded by this section; their geometry and
+accessibility qualification remains valid.
+
+Qt documents that `QDialog::exec()` creates a nested event loop and recommends
+asynchronous `open()` because deleting the dialog's parent during `exec()` is
+dangerous: <https://doc.qt.io/qt-6/qdialog.html#exec>. Qt object trees retain
+the page-to-dialog destruction contract:
+<https://doc.qt.io/qt-6/objecttrees.html>. Qt Creator 20.0 uses the same
+heap-owned, delete-on-close, asynchronous pattern:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/fontsettingspage.cpp#L527-L540>.
+Beckhoff documents Topology as a page of the selected EtherCAT master and
+distinguishes offline configuration from online topology:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1277974411.html>.
+
+Failure-first qualification kept production unchanged at SHA-256
+`0f264b16c975d3ae86fddf5d7b979a0b40ab49039a23fd30ea565992460426b3`
+and git blob `125159bcec59bb9cc1cf86f880c15a62d405be8e` for
+`ethercatpage.cpp`, and SHA-256
+`e414a1557a76ce5150e8a5f1e2b62131787f2548118699c9d45e7d3f2827f011`
+and git blob `23b20b352bdb2945c4b57474f605e2fa2c1d9f63` for its header.
+The unchanged Workbench tests had SHA-256
+`e86aa10e468855b00ca5952748260d0a1a2614c3fd9729922cf394d0c9a65e36`
+and `083670f9dc98e96a2e05f6ededcd842cb7adb1f19f56c4bd3c66783c915e4b15`,
+with git blobs `5647490e020596fe38cabc413f169143a275c0bb` and
+`996d452da5784cab2d282ca49810f32b4936bb72`. Initialization and cleanup
+passed, but a real same-master Project refresh left `Project Refresh Wins`
+absent while the stale row remained visible. The focused target therefore
+failed with status 1 at
+`/private/tmp/embed-labs-topology-dialog-lifecycle.70Zcr4/failure-first/focused.log`.
+
+Final SHA-256 values for `ethercatpage.cpp`, `ethercatpage.h`, the Workbench
+test implementation, and its declaration are respectively
+`2ee8353e49b0f4071d2f43ae3085e5af4b5d78b5035146f41957391e8852cc5d`,
+`8551cd7031c8084c4dcd2de962adfa03827561d9c6c5bd94c0c87514dda8e6b4`,
+`e1fa20d5cc394c7a6999da8d3274a98b6d0633cc67b5c252968e540ce4bdc2cc`,
+and `d3771690ff204fc6eafab7a3c7f4231ad461ec6301d288731ae665d86a2670f9`.
+Their git blobs are `910465f3a1dde786add222808d502131f5b6bb9e`,
+`dd3751d3b552b6bcb51d8f7aa68e0b9d117e6406`,
+`1a81136d36cfd362562d5b275f21d2ca0a564fd6`, and
+`a7c062a6ab301bb0de0470b2c6bdb0ab8a0296da`.
+
+The final focused lifecycle test passed three events at normal and 2x scale;
+the related topology group passed eleven events at each scale. Complete
+Workbench runs passed 65 events at each scale. The six isolated suites passed
+116 events: Core 17, Project 12, Devices 8, Workbench 65, Scan 7, and
+Diagnostics 7. The complete Workbench runs retain the known pre-existing
+ProjectExplorer TaskHub soft assertion in the invalid-project path; it did not
+occur in the focused lifecycle test and did not fail a test or target.
+
+The full `WITH_TESTS=OFF` product build passed and contains exactly 16
+allow-listed plugin dylibs. The executable SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+the product and test Workbench plugin SHA-256 values are
+`10ba46cb43718a7c38170d7c0aaae8030f4f8a1fbb5ceb92f0825a5f0a3ee8d8`
+and `5f4fe0b35bb31780000928645fc823af44b7d7993578d88714ef0d07af15e541`.
+
+Enabled product startup observed PID 85263 alive for 37 consecutive samples,
+with the Workbench plugin loaded in all 37. Explicitly disabled startup
+observed PID 85262 alive for 37 samples with the plugin absent in all 37.
+Each was ended by an intentional passed-through SIGTERM with target status
+15. Every executable run used fresh HOME/settings, cleared inherited DYLD
+variables, `QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`,
+`-no-crashcheck`, and only the process-local Touch Bar bypass. No visible main
+window was opened. The 2026-07-22 09:27:59 +0800 audit found no residual Embed
+Labs/LLDB process, new matching DiagnosticReports file, or matching crash
+service event after 09:24 +0800. Evidence is under
+`/private/tmp/embed-labs-topology-dialog-lifecycle.70Zcr4`.
+
+This issue changes only the private `ethercatpage.cpp/.h`, Workbench test
+declaration/implementation, and these four documents. It adds no source file,
+dependency, public API, Core or ProjectExplorer hook, application-bootstrap
+change, Provider or ProjectService contract, persistence field, Project
+command, model role, production thread or timer, network transport, scan,
+online topology, port graph, CRC/state control, SDO execution, or hardware
+behavior. No CMake or qbs description changed, so qbs was not run. The
+unrelated `WITH_TESTS=ON` all-target build was not rerun; the known EasyBoard
+`extensionmanager_test.h` blocker remains outside this private Workbench
+issue. All qualification is local/offline Mock evidence, and manual visible
+desktop inspection was intentionally not run.

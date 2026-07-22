@@ -3455,7 +3455,8 @@ void EtherCATWorkbenchTests::testTwinCatMasterEtherCATWorkflow()
         dialog->accept();
     });
     topology->click();
-    QVERIFY(populatedTopologyInspected);
+    QTRY_VERIFY(populatedTopologyInspected);
+    QTRY_VERIFY(!QApplication::activeModalWidget());
 
     QVERIFY_RESULT(projectService->replaceOfflineSlaves(file.projectId, file.masterId, {}));
     QTRY_VERIFY(projectService->project(file.projectId)->slaves.isEmpty());
@@ -3474,13 +3475,176 @@ void EtherCATWorkbenchTests::testTwinCatMasterEtherCATWorkflow()
         dialog->accept();
     });
     topology->click();
-    QVERIFY(emptyTopologyInspected);
+    QTRY_VERIFY(emptyTopologyInspected);
+    QTRY_VERIFY(!QApplication::activeModalWidget());
 
     controller.selectionService()->clear();
     ProjectExplorer::ProjectManager::removeProject(opened.project());
     QTRY_VERIFY(!projectService->project(file.projectId).has_value());
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
+void EtherCATWorkbenchTests::testMasterTopologyDialogContextLifecycle()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Data::DeviceSummary
+        device{Data::NodeId::create(), {2, 0x5678, 0x11}, "Mock Servo", "AX5000", "Drives", true};
+    const TestProjectFile file = writeProjectWithSlave(directory, device);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (projectService->project(file.projectId)) {
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        }
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    DetailsView details(&controller);
+    details.resize(1180, 760);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QWidget *page = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::ETHERCAT_PAGE_ID).toString());
+    QVERIFY(page);
+    details.tabWidget()->setCurrentWidget(page);
+    QTRY_VERIFY(page->isVisible());
+    QPushButton *topology
+        = page->findChild<QPushButton *>("EtherCATMasterEthercatTopology");
+    QVERIFY(topology);
+
+    QList<Data::OfflineSlaveConfiguration> refreshedSlaves
+        = projectService->project(file.projectId)->slaves;
+    QCOMPARE(refreshedSlaves.size(), 1);
+    const QString refreshedName = "Project Refresh Wins";
+    refreshedSlaves[0].name = refreshedName;
+
+    bool dialogSeen = false;
+    bool refreshSucceeded = false;
+    bool staleStateGone = false;
+    bool clickReturned = false;
+    bool clickReturnedBeforeInspection = false;
+    bool inspectionFinished = false;
+    bool dialogTimedOut = false;
+    QString refreshError;
+    QPointer<QDialog> guardedDialog;
+    QTimer inspectionTimer;
+    inspectionTimer.setInterval(0);
+    connect(&inspectionTimer, &QTimer::timeout, &details, [&] {
+        guardedDialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        if (!guardedDialog)
+            return;
+        inspectionTimer.stop();
+        dialogSeen = true;
+        clickReturnedBeforeInspection = clickReturned;
+        QPointer<QTreeWidget> table
+            = guardedDialog->findChild<QTreeWidget *>("EtherCATMasterTopologyTable");
+        const Utils::Result<> refresh = projectService->replaceOfflineSlaves(
+            file.projectId, file.masterId, refreshedSlaves);
+        refreshSucceeded = bool(refresh);
+        if (!refresh)
+            refreshError = refresh.error();
+        const bool tableMatchesRefresh
+            = table && table->topLevelItemCount() == 1
+              && table->topLevelItem(0)->text(1) == refreshedName;
+        staleStateGone = !guardedDialog || !guardedDialog->isVisible() || tableMatchesRefresh;
+        if (guardedDialog)
+            guardedDialog->reject();
+        inspectionFinished = true;
+    });
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
+    connect(&timeoutTimer, &QTimer::timeout, &details, [&] {
+        dialogTimedOut = true;
+        if (guardedDialog)
+            guardedDialog->reject();
+        else if (auto dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+            dialog->reject();
+    });
+    inspectionTimer.start();
+    timeoutTimer.start(5000);
+    topology->click();
+    clickReturned = true;
+    QTRY_VERIFY_WITH_TIMEOUT(inspectionFinished || dialogTimedOut, 5000);
+    inspectionTimer.stop();
+    timeoutTimer.stop();
+
+    QVERIFY(dialogSeen);
+    QVERIFY(!dialogTimedOut);
+    QVERIFY2(refreshSucceeded, qPrintable(refreshError));
+    QVERIFY2(
+        staleStateGone,
+        "An open topology dialog must not retain a stale Project snapshot.");
+    QVERIFY2(
+        clickReturnedBeforeInspection,
+        "Opening the topology dialog must return before modal event processing.");
+    QTRY_VERIFY(guardedDialog.isNull());
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().name, refreshedName);
+
+    const Data::ProjectSnapshot beforeClose = *projectService->project(file.projectId);
+    topology->click();
+    QPointer<QDialog> closeDialog;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (closeDialog = qobject_cast<QDialog *>(QApplication::activeModalWidget())), 2000);
+    QVERIFY(closeDialog->testAttribute(Qt::WA_DeleteOnClose));
+    QDialogButtonBox *closeButtons
+        = closeDialog->findChild<QDialogButtonBox *>("EtherCATMasterTopologyButtons");
+    QVERIFY(closeButtons);
+    QAbstractButton *closeButton = closeButtons->button(QDialogButtonBox::Close);
+    QVERIFY(closeButton);
+    closeButton->click();
+    topology->click();
+    QPointer<QDialog> reopenedDialog;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (reopenedDialog = qobject_cast<QDialog *>(QApplication::activeModalWidget())), 2000);
+    QVERIFY(reopenedDialog != closeDialog);
+    reopenedDialog->reject();
+    QTRY_VERIFY(closeDialog.isNull());
+    QTRY_VERIFY(reopenedDialog.isNull());
+    QVERIFY(*projectService->project(file.projectId) == beforeClose);
+
+    QPointer<QWidget> selectionPage(page);
+    topology->click();
+    QPointer<QDialog> selectionDialog;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (selectionDialog = qobject_cast<QDialog *>(QApplication::activeModalWidget())), 2000);
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    QTRY_VERIFY(selectionPage.isNull());
+    QTRY_VERIFY(selectionDialog.isNull());
+    QTRY_COMPARE(details.currentContext().nodeId, file.slaveId);
+    QVERIFY(*projectService->project(file.projectId) == beforeClose);
+
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.masterId);
+    QPointer<QWidget> projectClosePage = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::ETHERCAT_PAGE_ID).toString());
+    QVERIFY(projectClosePage);
+    details.tabWidget()->setCurrentWidget(projectClosePage);
+    QTRY_VERIFY(projectClosePage->isVisible());
+    QPushButton *projectCloseTopology
+        = projectClosePage->findChild<QPushButton *>("EtherCATMasterEthercatTopology");
+    QVERIFY(projectCloseTopology);
+    projectCloseTopology->click();
+    QPointer<QDialog> projectCloseDialog;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (projectCloseDialog = qobject_cast<QDialog *>(QApplication::activeModalWidget())), 2000);
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(projectClosePage.isNull());
+    QTRY_VERIFY(projectCloseDialog.isNull());
+    QTRY_VERIFY(!controller.treeModel()->indexForNodeId(file.masterId).isValid());
+    QTRY_VERIFY(controller.selectionService()->currentNodeId() != file.masterId);
 }
 
 void EtherCATWorkbenchTests::testMasterTopologyDialogBounds()
@@ -3613,6 +3777,7 @@ void EtherCATWorkbenchTests::testMasterTopologyDialogBounds()
     inspectionTimer.start();
     timeoutTimer.start(5000);
     topology->click();
+    QTRY_VERIFY_WITH_TIMEOUT(dialogOpened || dialogTimedOut, 5000);
     inspectionTimer.stop();
     timeoutTimer.stop();
 
@@ -3873,6 +4038,7 @@ void EtherCATWorkbenchTests::testMasterTopologyCellAccessibility()
     inspectionTimer.start();
     timeoutTimer.start(5000);
     topology->click();
+    QTRY_VERIFY_WITH_TIMEOUT(dialogOpened || dialogTimedOut, 5000);
     inspectionTimer.stop();
     timeoutTimer.stop();
 

@@ -993,6 +993,28 @@ application bootstrap changes, so the direct Core patch budget does not
 increase and no extension-point exception is required. The Workbench path
 count remains 44 and the direct upstream Core patch count remains five.
 
+`ISSUE-WB-TOPOLOGY-DIALOG-PAGE-LIFECYCLE-001`, based on
+`e814edf65c95ef3c5701f7655c1ff0237cdeac26`, changes only the existing
+product-owned private `ethercatpage.cpp/.h`, Workbench test
+declaration/implementation, and documentation. The read-only master Topology
+dialog is now page-owned, delete-on-close, and asynchronous. Any page context
+refresh closes the old snapshot; repeat activation raises the current
+instance; Close, immediate reopen, selection change, project close, and page
+teardown no longer depend on a nested modal event loop. Earlier topology
+bounds and cell-accessibility lifetime descriptions are superseded, while
+their geometry and accessibility results remain valid.
+
+The change introduces no ProjectService or Provider revision, public API,
+source file, dependency, CMake/qbs entry, Project format, persistence field,
+Project command, custom model role, production thread or timer,
+controller/network transport, online topology, port graph, CRC/state control,
+scan, SDO execution, or hardware behavior. No file under Qt Creator's upstream
+Core, ProjectExplorer, or application bootstrap changes, so the direct Core
+patch budget does not increase and no extension-point exception is required.
+The Workbench path count remains 44 and the direct upstream Core patch count
+remains five. Qualification used only local/offline Mock state and offscreen
+product lifecycle runs; no remote comparison or publication occurred.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

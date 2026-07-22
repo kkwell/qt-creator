@@ -227,6 +227,8 @@ EtherCATPage::EtherCATPage(WorkbenchController *controller, QWidget *parent)
 
 void EtherCATPage::setContext(const Core::PropertyPageContext &context)
 {
+    if (m_masterTopologyDialog)
+        m_masterTopologyDialog->reject();
     m_context = context;
     m_updating = true;
 
@@ -456,16 +458,27 @@ void EtherCATPage::showMasterTopology()
 {
     if (!m_controller || m_context.nodeKind != Core::WorkbenchNodeKind::Master)
         return;
+    if (m_masterTopologyDialog) {
+        m_masterTopologyDialog->raise();
+        m_masterTopologyDialog->activateWindow();
+        return;
+    }
 
     const QList<Data::OfflineSlaveConfiguration> slaves
         = m_controller->treeModel()->offlineSlavesForMaster(m_context.nodeId);
 
-    QDialog dialog(this);
-    dialog.setObjectName("EtherCATMasterTopologyDialog");
-    dialog.setWindowTitle(Tr::tr("Offline EtherCAT Topology"));
-    dialog.setSizeGripEnabled(true);
+    auto dialog = new QDialog(this);
+    m_masterTopologyDialog = dialog;
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    connect(dialog, &QDialog::finished, this, [this, dialog] {
+        if (m_masterTopologyDialog == dialog)
+            m_masterTopologyDialog = nullptr;
+    });
+    dialog->setObjectName("EtherCATMasterTopologyDialog");
+    dialog->setWindowTitle(Tr::tr("Offline EtherCAT Topology"));
+    dialog->setSizeGripEnabled(true);
 
-    auto summary = new QLabel(&dialog);
+    auto summary = new QLabel(dialog);
     summary->setObjectName("EtherCATMasterTopologySummary");
     summary->setWordWrap(true);
     summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -477,7 +490,7 @@ void EtherCATPage::showMasterTopology()
                      nullptr,
                      slaves.size()));
 
-    auto table = new QTreeWidget(&dialog);
+    auto table = new QTreeWidget(dialog);
     table->setObjectName("EtherCATMasterTopologyTable");
     table->setAccessibleName(Tr::tr("Offline EtherCAT topology"));
     table->setAccessibleDescription(
@@ -542,11 +555,11 @@ void EtherCATPage::showMasterTopology()
           + table->style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, table)
           + table->frameWidth() * 2;
 
-    auto buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    auto buttons = new QDialogButtonBox(QDialogButtonBox::Close, dialog);
     buttons->setObjectName("EtherCATMasterTopologyButtons");
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
 
-    auto layout = new QVBoxLayout(&dialog);
+    auto layout = new QVBoxLayout(dialog);
     layout->setContentsMargins(
         Utils::StyleHelper::SpacingTokens::PaddingHM,
         Utils::StyleHelper::SpacingTokens::PaddingVM,
@@ -558,7 +571,7 @@ void EtherCATPage::showMasterTopology()
     layout->addWidget(buttons);
 
     layout->activate();
-    QSize preferredSize = dialog.sizeHint();
+    QSize preferredSize = dialog->sizeHint();
     const QMargins layoutMargins = layout->contentsMargins();
     preferredSize.setWidth(
         qMax(preferredSize.width(),
@@ -571,12 +584,12 @@ void EtherCATPage::showMasterTopology()
              Utils::StyleHelper::SpacingTokens::PaddingVM});
         QRect dialogGeometry(QPoint(), preferredSize.boundedTo(availableGeometry.size()));
         dialogGeometry.moveCenter(availableGeometry.center());
-        dialog.setGeometry(dialogGeometry);
+        dialog->setGeometry(dialogGeometry);
     } else {
-        dialog.resize(preferredSize);
+        dialog->resize(preferredSize);
     }
 
-    dialog.exec();
+    dialog->open();
 }
 
 QString EtherCATPage::previousPortText(const Data::OfflineSlaveConfiguration &slave) const

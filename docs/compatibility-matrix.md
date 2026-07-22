@@ -2249,6 +2249,48 @@ tree comparator supplies the host-side semantic-priority-before-name
 precedent:
 <https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/projectexplorer/projectmodels.cpp#L88-L103>.
 
+## EtherCATWorkbench topology dialog page-lifecycle qualification
+
+`ISSUE-WB-TOPOLOGY-DIALOG-PAGE-LIFECYCLE-001` is qualified from local
+baseline `e814edf65c95ef3c5701f7655c1ff0237cdeac26`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Production remained at `ethercatpage.cpp` SHA-256 `0f264b16c975d3ae86fddf5d7b979a0b40ab49039a23fd30ea565992460426b3` / blob `125159bcec59bb9cc1cf86f880c15a62d405be8e` and header SHA-256 `e414a1557a76ce5150e8a5f1e2b62131787f2548118699c9d45e7d3f2827f011` / blob `23b20b352bdb2945c4b57474f605e2fa2c1d9f63`; a real same-master Project refresh left the stale row visible, so the focused target exited 1 under `failure-first/focused.log` |
+| Asynchronous open | Topology uses page-owned heap allocation, `Qt::WA_DeleteOnClose`, and `open()`; the click returns before modal processing |
+| Snapshot freshness | Every `EtherCATPage::setContext()` closes the old snapshot, including Project and repository/index refresh; this is conservative invalidation, not live refresh |
+| Repeat and reopen | A repeat click raises the current dialog; Close or Escape destroys it, and an immediate same-stack reopen creates a distinct retained dialog |
+| Page lifetime | Selection change, project close, and page teardown close and delete the dialog without nested-loop parent deletion |
+| Pointer identity | A private `QPointer<QDialog>` is cleared by `finished` only if it still identifies that dialog; an old deferred deletion cannot clear a reopened instance |
+| Preserved UI contract | Read-only offline/Mock snapshot, ten columns, configured order, screen bounds, cell accessibility, Close button, and Escape remain qualified |
+| Superseded documentation | Prior topology-bounds and cell-accessibility statements about stack or modal lifetime are superseded; their geometry and accessibility evidence remains valid |
+| Focused lifecycle tests | Normal and 2x each passed 3 events, 0 failed, target status 0 under `final3-focused-*` |
+| Related topology tests | Normal and 2x each passed 11 events, 0 failed, target status 0 under `related-*` |
+| Complete Workbench | Normal and 2x each passed 65 events, 0 failed, target status 0 under `final3-workbench-*` |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 65, Scan 7, Diagnostics 7; 116 passed, 0 failed |
+| Known soft assertion | The existing invalid-project Workbench path still emits the pre-existing ProjectExplorer TaskHub category soft assertion; it is absent from the focused test and does not fail a test or target |
+| Final source SHA-256 | Page implementation `2ee8353e49b0f4071d2f43ae3085e5af4b5d78b5035146f41957391e8852cc5d`; page header `8551cd7031c8084c4dcd2de962adfa03827561d9c6c5bd94c0c87514dda8e6b4`; tests `e1fa20d5cc394c7a6999da8d3274a98b6d0633cc67b5c252968e540ce4bdc2cc`; test header `d3771690ff204fc6eafab7a3c7f4231ad461ec6301d288731ae665d86a2670f9` |
+| Final git blobs | Page implementation `910465f3a1dde786add222808d502131f5b6bb9e`; page header `dd3751d3b552b6bcb51d8f7aa68e0b9d117e6406`; tests `1a81136d36cfd362562d5b275f21d2ca0a564fd6`; test header `a7c062a6ab301bb0de0470b2c6bdb0ab8a0296da` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 allow-listed plugin dylibs; executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench SHA-256 `10ba46cb43718a7c38170d7c0aaae8030f4f8a1fbb5ceb92f0825a5f0a3ee8d8`; test Workbench SHA-256 `5f4fe0b35bb31780000928645fc823af44b7d7993578d88714ef0d07af15e541` |
+| Enabled startup | PID 85263 remained running for 37 samples and loaded Workbench in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 85262 remained running for 37 samples with Workbench absent in all 37; intentional passed-through SIGTERM produced target status 15 |
+| Crash-dialog audit | At 2026-07-22 09:27:59 +0800 there was no residual Embed Labs/LLDB process, new matching DiagnosticReports file, or matching crash-service event after 09:24 +0800 |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, and only the process-local Touch Bar bypass; no visible main window or system crash dialog |
+| Visual/manual desktop inspection | Not run by design; product lifecycle acceptance stayed offscreen so it did not interrupt desktop use |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard `extensionmanager_test.h` blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, source list, dependency, persistence, Provider, ProjectService, Project command, or model-role changes | None |
+| Core, ProjectExplorer, app bootstrap, network, controller, online topology, scan, SDO, or hardware changes | None; this remains a private Workbench lifecycle change over local/offline Mock state |
+
+Persisted evidence is under
+`/private/tmp/embed-labs-topology-dialog-lifecycle.70Zcr4`. Qt's nested-loop
+warning is at <https://doc.qt.io/qt-6/qdialog.html#exec>, and QObject parent
+ownership is at <https://doc.qt.io/qt-6/objecttrees.html>. Qt Creator 20.0's
+matching asynchronous delete-on-close precedent is at
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/fontsettingspage.cpp#L527-L540>.
+Beckhoff's offline/online Topology semantics are at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1277974411.html>.
+
 ## Verification states
 
 Use only these evidence labels:

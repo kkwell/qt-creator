@@ -1530,6 +1530,51 @@ behavior. No CMake or qbs description changed. No path under upstream Core,
 ProjectExplorer, or the application bootstrap changed. The Workbench path
 count remains 44 and the direct upstream Core patch count remains five.
 
+## Workbench topology dialog page-lifecycle boundary
+
+`ISSUE-WB-TOPOLOGY-DIALOG-PAGE-LIFECYCLE-001`, based on
+`e814edf65c95ef3c5701f7655c1ff0237cdeac26`, remains entirely inside the
+product-owned private `EtherCATPage`. The page allocates its read-only
+Topology dialog on the heap, parents it to itself, enables
+`Qt::WA_DeleteOnClose`, stores only a `QPointer<QDialog>`, and calls `open()`.
+The `finished` callback clears that pointer only while it still identifies the
+same dialog. This makes Close/Escape and immediate reopen safe across deferred
+deletion, and page destruction retains normal QObject child cleanup.
+
+`setContext()` is the sole freshness boundary: every EtherCAT page context
+refresh closes the current snapshot before applying the new context. This
+includes same-master Project refreshes and repository/index refreshes. It is
+conservative invalidation, not a live table update, and it adds no result,
+apply, generation, ProjectService, or Provider contract. Repeat activation
+raises the existing snapshot. Selection change, project close, and page
+teardown destroy it without a nested event loop.
+
+Qt explicitly recommends asynchronous `open()` over the nested event loop of
+`exec()` and warns about parent deletion during `exec()`:
+<https://doc.qt.io/qt-6/qdialog.html#exec>. QObject ownership is documented at
+<https://doc.qt.io/qt-6/objecttrees.html>, and Qt Creator 20.0 provides the
+matching page-owned, delete-on-close precedent:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/plugins/texteditor/fontsettingspage.cpp#L527-L540>.
+Beckhoff's selected-master Topology page and its offline/online distinction
+remain the product comparison:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1277974411.html>.
+
+Earlier bounds and cell-accessibility documentation described the Topology
+dialog as stack-local or modal. This section supersedes only those lifetime
+statements. The ten-column schema, screen-bounded geometry, accessible cell
+names, configured physical order, Close/Escape behavior, and offline/Mock
+values remain unchanged and qualified.
+
+This boundary changes only `ethercatpage.cpp/.h`, Workbench tests, and the
+four evidence documents. It adds no public API, source file, dependency,
+Provider or ProjectService revision, persistence field, Project command,
+model role, production thread or timer, Core or ProjectExplorer hook,
+application-bootstrap path, network transport, online topology, port graph,
+CRC/state control, scan, SDO execution, or hardware behavior. No CMake or qbs
+description changed. All runtime evidence is local/offline Mock evidence; the
+full product lifecycle was qualified offscreen with the plugin enabled and
+explicitly disabled, without a visible main window or new crash record.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for
