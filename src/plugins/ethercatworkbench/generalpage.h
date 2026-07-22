@@ -33,7 +33,8 @@ public:
     void setContext(const Core::PropertyPageContext &context);
 
 private:
-    void reset(const QString &summary);
+    QLineEdit *nameEditor(Core::WorkbenchNodeKind kind) const;
+    void reset(const QString &summary, QLineEdit *preservedName = nullptr);
     void addRow(const QStringList &values);
     void commitProjectName();
     void commitName();
@@ -91,6 +92,11 @@ private:
     QLineEdit *m_masterSlaveCount;
     QLineEdit *m_masterStatus;
     QTreeWidget *m_tree;
+    Data::NodeId m_nameBaselineProjectId;
+    Data::NodeId m_nameBaselineNodeId;
+    Core::WorkbenchNodeKind m_nameBaselineKind = Core::WorkbenchNodeKind::None;
+    QString m_nameBaseline;
+    bool m_forceAuthoritativeNameReload = false;
     bool m_updating = false;
 };
 

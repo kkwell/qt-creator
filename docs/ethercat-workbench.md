@@ -4426,3 +4426,129 @@ because the known EasyBoard `extensionmanager_test.h` blocker remains outside
 this private Workbench issue. Qualification is local/offline Mock evidence;
 visible desktop inspection was intentionally not run so acceptance did not
 interrupt desktop use.
+
+## General non-conflicting refresh draft continuity
+
+`ISSUE-WB-GENERAL-NONCONFLICTING-REFRESH-DRAFT-001` is qualified from local
+baseline `2fe30622dd971c9c3afd91e78e5addb2fa988340`. It fixes one user-visible
+Workbench form problem: a Device Repository reset, change, or indexing-state
+signal refreshed every Details page, and General then hid, cleared, and
+repopulated its name editor even when the selected node and persisted name had
+not changed. A Project, Target, Master, or configured Slave draft could
+therefore disappear before `editingFinished` submitted it.
+
+General now records only the last authoritative name and its stable
+`projectId`, `nodeId`, and node kind. A refresh preserves the current editor
+only when all three identities still match, the editor is writable and either
+modified or focused, and the newly read persisted name still equals that
+baseline. Focus is a conservative guard against disturbing a possible active
+input-method preedit that has not yet changed `modified`; the regression
+directly proves this clean-focused branch, not platform IME composition. In
+that case the page skips hiding, clearing, and `setText()` for that one editor
+while continuing to refresh every other General field. This also lets a
+configured Slave retain its draft while its ESI type, match, source, and other
+read-only metadata update.
+
+A real same-field change remains authoritative. Project and structural names
+are re-read from `ProjectService`; the configured Slave name is re-read from
+the current offline topology. External rename, Undo, Redo, node switch,
+invalid or unavailable context, and project close do not restore an old
+draft. Each explicit editor commit first clears the local modified flag and
+holds a scoped force-authority guard across the existing checked rename call,
+its synchronous signals, and the final context reload. An empty rejected name
+or a trimmed no-op therefore returns to the persisted value instead of being
+protected by focus. This is a page-private baseline check, not autosave,
+cross-node draft persistence, a revision/CAS protocol, or a general
+conflict-merging framework.
+
+Qt documents that `QLineEdit::setText()` clears selection and Undo/Redo state,
+moves the cursor, and resets `modified`, while user edits set `modified`:
+<https://doc.qt.io/qt-6/qlineedit.html#text-prop> and
+<https://doc.qt.io/qt-6/qlineedit.html#modified-prop>. Qt Creator 20.0 has the
+same persisted-versus-editable distinction in `BaseAspect::value()`,
+`volatileValue()`, and `isDirty()`, and applies string edits on
+`editingFinished`:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/libs/utils/aspects.h#L328-L370>
+and
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/libs/utils/aspects.cpp#L1253-L1320>.
+Beckhoff's General-tab documentation identifies editable Name plus Id, Object
+Id, and Type fields but does not define a Qt refresh-conflict policy:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1341899531.html>.
+
+Failure-first changed only the Workbench test. Production `generalpage.cpp`
+and `.h` remained at SHA-256
+`a8bee2a329e954482ede4130e3005e70e46888251617acc9d9b23a9378f034fc`
+and `c7c5b44b0bc7e9c3bbf9acf22b9a102e32e38e4d67bd50954804ded43a330f92`,
+with git blobs `b07a339f5512acac70a2c80357183041e250e3c2` and
+`f72ee71744e19d99f4a950bb514987282260e0d0`. A real imported ESI and
+`rebuildIndex()` delivered `indexingChanged(true)`, `devicesReset`, and
+`indexingChanged(false)`; the old page replaced a long focused Unicode draft
+containing literal `%1`, `%2`, and `%%` with `General Draft Project`.
+Initialization and cleanup passed, while the intended text assertion failed
+safely and the target exited with status 1 in `failure-first.log`.
+
+The final test covers all four name editors. Project, Target, and Master use
+real repository rebuilds; configured Slave uses a same-identity ESI update and
+proves the Type field changes while its draft text, modified state, focus,
+cursor, selection, and local Undo state remain intact. A clean focused Project
+editor covers the focus gate intended to avoid disturbing a possible preedit;
+it does not synthesize a platform input method. Another Project summary field
+proves non-name data remains fresh. Each row executes the preserved local
+Undo/Redo history, then performs a real authoritative rename. The final Slave
+row also proves Project Undo/Redo, trimmed no-op and empty rejection, node
+switch, and Project close override or destroy the draft correctly.
+
+Final SHA-256 values for `generalpage.cpp`, `generalpage.h`, the Workbench test
+implementation, and its declaration are respectively
+`51195c26f5db3936f2e0ba0935d2564d3b8a0bf2ca95c86328de7d39e6ee16e6`,
+`93760569091e384acb8a68451b8c3ae8c2f6ce2f744bbcab700780bc1423aaca`,
+`b37584e021ef2c81cd2500d46a14f2f2f8f7d77e69908f5d613d1311f44e8123`,
+and `daa78bddcef5def77301b8c610266f1d9ac78bdea7c04e1a20e0ea1e7b8e8ace`.
+Their git blobs are `e2cce8dd0a1fe6f5837de15492ead898246bffb8`,
+`051abe8c5e068d59351cdd8ea7ceba13607f2558`,
+`4f4d9fd4d17300be8761cbebc696cf3237f6f8ff`, and
+`c35e54d7c2e36b24c13a7d4790458d12957c6e7f`.
+
+Focused normal and 2x runs each passed three events. The related General,
+repository, Details-empty-state, and focus-continuity group passed eleven
+events at each scale. Complete Workbench runs passed 68 events at each scale.
+The six isolated suites passed 119 events: Core 17, Project 12, Devices 8,
+Workbench 68, Scan 7, and Diagnostics 7. The complete Workbench runs retain
+the known pre-existing ProjectExplorer TaskHub soft assertion in the invalid
+project path; it is absent from the focused test and did not fail a test or
+target.
+
+The full `WITH_TESTS=OFF` product build passed and contains exactly 16
+allow-listed plugin dylibs. The executable SHA-256 is
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`;
+the product and test Workbench plugin SHA-256 values are
+`03859197305b62f9b06e42e59c9253eefa34cbd112644645d9b0ae413de7fa76`
+and `3ff8a25cd361749e91deff31bf5e41331935b171a612f48cbd7bb61470944d12`.
+
+Enabled product startup observed PID 62199 alive for 37 consecutive samples
+after Workbench became ready, with the plugin loaded in all 37. Explicitly
+disabled startup observed PID 63311 alive for 37 samples after Core became
+ready, with Workbench absent in all 37. LLDB passed SIGTERM directly without
+stopping or notifying, and both targets recorded status 15. Every executable
+run used fresh HOME/settings, cleared inherited DYLD variables,
+`QT_QPA_PLATFORM=offscreen`, `CRASH_REPORTER_DISABLE=1`, `-no-crashcheck`, and
+only the process-local Touch Bar bypass. No visible main window was opened.
+Both lifecycle directories retain all 37 timestamped raw samples as well as
+their summaries and LLDB logs. The 2026-07-22 12:14:15 +0800 audit found no
+residual Embed Labs or LLDB
+process, new matching DiagnosticReports file, or matching crash-service event.
+
+Evidence is under
+`/private/tmp/embed-labs-general-draft-final.bvD4CU`. This issue changes only
+the private `generalpage.cpp/.h`, Workbench test declaration/implementation,
+and these four documents. It changes no repository signal, Details refresh
+route, public API, source file, dependency, ProjectService or Provider
+contract, Project format, persistence field, Project command, model role,
+Core or ProjectExplorer hook, application bootstrap, production thread or
+timer, network transport, scan, online state, SDO execution, or hardware
+behavior. No CMake or qbs description changed, so qbs was not run. The
+unrelated `WITH_TESTS=ON` all-target build was not rerun because the known
+EasyBoard `extensionmanager_test.h` blocker remains outside this private
+Workbench issue. Qualification is local/offline Mock evidence; visible desktop
+inspection was intentionally not run so acceptance did not interrupt desktop
+use.

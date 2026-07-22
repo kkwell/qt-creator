@@ -6792,6 +6792,332 @@ void EtherCATWorkbenchTests::testProjectScopedDetailsRefreshPreservesGeneralDraf
     projectCleanup.dismiss();
 }
 
+void EtherCATWorkbenchTests::testEsiRepositoryRefreshPreservesGeneralDraft()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray esi = deviceEsi();
+    esi.replace("#x00005678", "#x7A1D0001");
+    esi.replace("#x00000011", "#x0000D001");
+    esi.replace("AX5000", "EL-GENERAL-DRAFT");
+    esi.replace("Workbench Servo", "General Draft Servo / \u8349\u7a3f");
+    QByteArray updatedEsi = esi;
+    updatedEsi.replace("EL-GENERAL-DRAFT", "EL-GENERAL-DRAFT-UPDATED");
+    updatedEsi.replace(
+        "General Draft Servo / \u8349\u7a3f", "General Draft Servo Updated / \u66f4\u65b0");
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("general-draft-refresh.xml");
+    const Utils::FilePath updatedEsiPath = Utils::FilePath::fromString(directory.path())
+                                               .canonicalPath()
+                                               .pathAppended("general-draft-refresh-updated.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(esi));
+    QVERIFY_RESULT(updatedEsiPath.writeFileContents(updatedEsi));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &entry) {
+        return entry.typeName == "EL-GENERAL-DRAFT";
+    });
+    QVERIFY(device != devices.cend());
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory, *device, "general-draft-refresh.ecatproject", "General Draft Project");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const auto projectCleanup = qScopeGuard([&] {
+        controller.selectionService()->clear();
+        if (ProjectExplorer::ProjectManager::projects().contains(opened.project()))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.projectId).isValid());
+
+    DetailsView details(&controller);
+    details.resize(1100, 720);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+
+    struct NameCase
+    {
+        Data::NodeId nodeId;
+        Core::WorkbenchNodeKind nodeKind;
+        QString editorObjectName;
+        QString initialName;
+    };
+    QList<NameCase> cases{
+        {file.projectId,
+         Core::WorkbenchNodeKind::Project,
+         "EtherCATProjectGeneralName",
+         "General Draft Project"},
+        {file.targetId,
+         Core::WorkbenchNodeKind::Target,
+         "EtherCATTargetGeneralName",
+         "Offline Controller"},
+        {file.masterId,
+         Core::WorkbenchNodeKind::Master,
+         "EtherCATMasterGeneralName",
+         "EtherCAT Master"},
+        {file.slaveId,
+         Core::WorkbenchNodeKind::ConfiguredSlave,
+         "EtherCATGeneralName",
+         "Configured Servo"},
+    };
+    const auto persistedName = [&](Core::WorkbenchNodeKind kind, const Data::NodeId &nodeId) {
+        const std::optional<Data::ProjectSnapshot> project = projectService->project(file.projectId);
+        if (!project)
+            return QString();
+        if (kind == Core::WorkbenchNodeKind::Project)
+            return project->name;
+        if (kind == Core::WorkbenchNodeKind::ConfiguredSlave) {
+            const auto slave = std::find_if(
+                project->slaves.cbegin(), project->slaves.cend(), [&nodeId](const auto &entry) {
+                    return entry.id == nodeId;
+                });
+            return slave == project->slaves.cend() ? QString() : slave->name;
+        }
+        const auto node = std::find_if(
+            project->nodes.cbegin(), project->nodes.cend(), [&nodeId](const auto &entry) {
+                return entry.id == nodeId;
+            });
+        return node == project->nodes.cend() ? QString() : node->name;
+    };
+
+    QPointer<QLabel> title = details.findChild<QLabel *>("EtherCATWorkbenchDetailsTitle");
+    QVERIFY(title);
+    QPointer<QWidget> lastPage;
+    QPointer<QLineEdit> lastName;
+    QString lastAuthoritativeName;
+    for (qsizetype index = 0; index < cases.size(); ++index) {
+        const NameCase nameCase = cases.at(index);
+        controller.selectionService()->setCurrentNodeId(nameCase.nodeId);
+        QTRY_COMPARE(details.currentContext().nodeId, nameCase.nodeId);
+        QTRY_COMPARE(details.currentContext().nodeKind, nameCase.nodeKind);
+
+        QPointer<QWidget> page = details.findChild<QWidget *>(
+            "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+        QVERIFY(page);
+        QPointer<QLineEdit> name = page->findChild<QLineEdit *>(nameCase.editorObjectName);
+        QVERIFY(name);
+        QCOMPARE(name->text(), nameCase.initialName);
+        QVERIFY(!name->isReadOnly());
+
+        name->setFocus(Qt::OtherFocusReason);
+        QTRY_COMPARE(QApplication::focusWidget(), name.data());
+        if (nameCase.nodeKind == Core::WorkbenchNodeKind::Project) {
+            QVERIFY(!name->isModified());
+            QSignalSpy indexingChanged(
+                repository, &Core::DeviceRepositoryProvider::indexingChanged);
+            QSignalSpy devicesReset(repository, &Core::DeviceRepositoryProvider::devicesReset);
+            const Data::DeviceImportResult cleanRefresh = waitForJob(repository->rebuildIndex());
+            QCOMPARE(cleanRefresh.failedFiles, 0);
+            QCOMPARE(indexingChanged.count(), 2);
+            QCOMPARE(devicesReset.count(), 1);
+            QVERIFY(page);
+            QVERIFY(name);
+            QCOMPARE(name->text(), nameCase.initialName);
+            QVERIFY(!name->isModified());
+            QCOMPARE(QApplication::focusWidget(), name.data());
+        }
+
+        const QString draftPrefix
+            = QString("Pending ") + QString::number(index)
+              + QString::fromUtf8(
+                    " / \u672a\u63d0\u4ea4 / \u041f\u0440\u043e\u0435\u043a\u0442 / \u03a9 / literal %1 / %2 / %% ")
+              + QString(256, QChar(0x754c));
+        const QString typedTail = " user-typed-tail";
+        const QString draft = draftPrefix + typedTail;
+        name->setText(draftPrefix);
+        name->setCursorPosition(name->text().size());
+        QTest::keyClicks(name, typedTail);
+        QCOMPARE(name->text(), draft);
+        QVERIFY(name->isModified());
+        QVERIFY(name->isUndoAvailable());
+        name->setSelection(8, 19);
+        const int selectionStart = name->selectionStart();
+        const int selectionLength = name->selectedText().size();
+        const int cursorPosition = name->cursorPosition();
+
+        if (nameCase.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave) {
+            QSignalSpy devicesChanged(repository, &Core::DeviceRepositoryProvider::devicesChanged);
+            const Data::DeviceImportResult refreshResult
+                = waitForJob(repository->importFiles({updatedEsiPath}));
+            QCOMPARE(refreshResult.requestedFiles, 1);
+            QCOMPARE(refreshResult.importedDevices, 0);
+            QCOMPARE(refreshResult.updatedDevices, 1);
+            QCOMPARE(refreshResult.failedFiles, 0);
+            QCOMPARE(refreshResult.affectedDeviceIds, QList<Data::NodeId>{device->id});
+            QCOMPARE(devicesChanged.count(), 1);
+            QVERIFY(page);
+            QVERIFY(name);
+            QPointer<QLineEdit> type = page->findChild<QLineEdit *>("EtherCATGeneralType");
+            QVERIFY(type);
+            QCOMPARE(type->text(), QString("EL-GENERAL-DRAFT-UPDATED"));
+        } else {
+            QSignalSpy indexingChanged(
+                repository, &Core::DeviceRepositoryProvider::indexingChanged);
+            QSignalSpy devicesReset(repository, &Core::DeviceRepositoryProvider::devicesReset);
+            const Data::DeviceImportResult rebuildResult = waitForJob(repository->rebuildIndex());
+            QCOMPARE(rebuildResult.failedFiles, 0);
+            QCOMPARE(indexingChanged.count(), 2);
+            QCOMPARE(indexingChanged.at(0).at(0).toBool(), true);
+            QCOMPARE(indexingChanged.at(1).at(0).toBool(), false);
+            QCOMPARE(devicesReset.count(), 1);
+        }
+
+        QVERIFY(page);
+        QVERIFY(name);
+        QCOMPARE(persistedName(nameCase.nodeKind, nameCase.nodeId), nameCase.initialName);
+        QCOMPARE(controller.selectionService()->currentNodeId(), nameCase.nodeId);
+        QCOMPARE(details.currentContext().nodeId, nameCase.nodeId);
+        QCOMPARE(name->text(), draft);
+        QVERIFY(name->isModified());
+        QCOMPARE(QApplication::focusWidget(), name.data());
+        QCOMPARE(name->selectionStart(), selectionStart);
+        QCOMPARE(name->selectedText().size(), selectionLength);
+        QCOMPARE(name->cursorPosition(), cursorPosition);
+        QVERIFY(name->isUndoAvailable());
+        name->undo();
+        QVERIFY(name->text() != draft);
+        QVERIFY(name->isRedoAvailable());
+        name->redo();
+        QCOMPARE(name->text(), draft);
+        QVERIFY(name->isModified());
+        QVERIFY(name->isUndoAvailable());
+        name->setSelection(selectionStart, selectionLength);
+        QCOMPARE(name->cursorPosition(), cursorPosition);
+
+        if (nameCase.nodeKind == Core::WorkbenchNodeKind::Project) {
+            QPointer<QLineEdit> targetSummary
+                = page->findChild<QLineEdit *>("EtherCATProjectGeneralTarget");
+            QVERIFY(targetSummary);
+            const QString refreshedTargetName
+                = QString::fromUtf8("Same Project target refresh / \u540c\u9879\u76ee\u5237\u65b0");
+            QVERIFY_RESULT(projectService->renameStructuralNode(
+                file.projectId, file.targetId, refreshedTargetName));
+            QTRY_COMPARE(
+                persistedName(Core::WorkbenchNodeKind::Target, file.targetId),
+                refreshedTargetName);
+            QVERIFY(page);
+            QVERIFY(name);
+            QVERIFY(targetSummary);
+            QTRY_COMPARE(targetSummary->text(), refreshedTargetName);
+            QCOMPARE(name->text(), draft);
+            QVERIFY(name->isModified());
+            QCOMPARE(QApplication::focusWidget(), name.data());
+            QCOMPARE(name->selectionStart(), selectionStart);
+            QCOMPARE(name->selectedText().size(), selectionLength);
+            QCOMPARE(name->cursorPosition(), cursorPosition);
+            QVERIFY(name->isUndoAvailable());
+            cases[1].initialName = refreshedTargetName;
+        }
+
+        const QString authoritativeName
+            = QString::fromUtf8("Authoritative %1 / \u5df2\u6301\u4e45\u5316").arg(index);
+        if (nameCase.nodeKind == Core::WorkbenchNodeKind::Project) {
+            QVERIFY_RESULT(projectService->renameProject(file.projectId, authoritativeName));
+        } else if (nameCase.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave) {
+            QVERIFY_RESULT(controller.renameOfflineSlave(
+                file.projectId, nameCase.nodeId, authoritativeName));
+        } else {
+            QVERIFY_RESULT(projectService->renameStructuralNode(
+                file.projectId, nameCase.nodeId, authoritativeName));
+        }
+        QTRY_COMPARE(persistedName(nameCase.nodeKind, nameCase.nodeId), authoritativeName);
+        QVERIFY(page);
+        QVERIFY(name);
+        QTRY_COMPARE(name->text(), authoritativeName);
+        QVERIFY(!name->isModified());
+        QVERIFY(!name->isUndoAvailable());
+        QTRY_COMPARE(title->text(), authoritativeName);
+
+        lastPage = page;
+        lastName = name;
+        lastAuthoritativeName = authoritativeName;
+    }
+
+    QVERIFY(lastName);
+    const QString undoDraft = QString::fromUtf8("Undo pending / \u64a4\u9500\u524d\u8349\u7a3f %1 %%");
+    lastName->setText(undoDraft);
+    lastName->setModified(true);
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_COMPARE(persistedName(Core::WorkbenchNodeKind::ConfiguredSlave, file.slaveId),
+                 QString("Configured Servo"));
+    QTRY_COMPARE(lastName->text(), QString("Configured Servo"));
+    QVERIFY(!lastName->isModified());
+
+    const QString redoDraft = QString::fromUtf8("Redo pending / \u91cd\u505a\u524d\u8349\u7a3f %2 %%");
+    lastName->setText(redoDraft);
+    lastName->setModified(true);
+    QVERIFY_RESULT(projectService->redoProject(file.projectId));
+    QTRY_COMPARE(
+        persistedName(Core::WorkbenchNodeKind::ConfiguredSlave, file.slaveId),
+        lastAuthoritativeName);
+    QTRY_COMPARE(lastName->text(), lastAuthoritativeName);
+    QVERIFY(!lastName->isModified());
+
+    lastName->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), lastName.data());
+    QSignalSpy noOpProjectChanged(projectService, &Core::ProjectService::projectChanged);
+    lastName->setText("  " + lastAuthoritativeName + "  ");
+    lastName->setModified(true);
+    QVERIFY(QMetaObject::invokeMethod(lastName, "editingFinished"));
+    QCOMPARE(noOpProjectChanged.count(), 0);
+    QCOMPARE(
+        persistedName(Core::WorkbenchNodeKind::ConfiguredSlave, file.slaveId),
+        lastAuthoritativeName);
+    QCOMPARE(lastName->text(), lastAuthoritativeName);
+    QVERIFY(!lastName->isModified());
+
+    lastName->setText("   ");
+    lastName->setModified(true);
+    QVERIFY(QMetaObject::invokeMethod(lastName, "editingFinished"));
+    QTRY_COMPARE(lastName->text(), lastAuthoritativeName);
+    QVERIFY(!lastName->isModified());
+
+    details.tabWidget()->setFocus(Qt::OtherFocusReason);
+    QTRY_VERIFY(QApplication::focusWidget() != lastName.data());
+    QTRY_VERIFY(details.tabWidget()->isAncestorOf(QApplication::focusWidget()));
+    const QString switchedDraft = QString::fromUtf8("Switch pending / \u5207\u6362\u8349\u7a3f %1");
+    lastName->setText(switchedDraft);
+    lastName->setModified(true);
+    controller.selectionService()->setCurrentNodeId(file.projectId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.projectId);
+    QTRY_VERIFY(lastPage.isNull());
+    QTRY_VERIFY(lastName.isNull());
+
+    QPointer<QWidget> projectPage = details.findChild<QWidget *>(
+        "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
+    QVERIFY(projectPage);
+    QPointer<QLineEdit> projectName
+        = projectPage->findChild<QLineEdit *>("EtherCATProjectGeneralName");
+    QVERIFY(projectName);
+    QCOMPARE(projectName->text(), QString::fromUtf8("Authoritative 0 / \u5df2\u6301\u4e45\u5316"));
+    QVERIFY(projectName->text() != switchedDraft);
+
+    projectName->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), projectName.data());
+    projectName->setText(QString::fromUtf8("Close pending / \u5173\u95ed\u8349\u7a3f %2"));
+    projectName->setModified(true);
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QTRY_VERIFY(projectPage.isNull());
+    QTRY_VERIFY(projectName.isNull());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+}
+
 void EtherCATWorkbenchTests::testNavigationSetActiveProjectCommand()
 {
     ::Core::ModeManager::activateMode(Constants::MODE_ID);

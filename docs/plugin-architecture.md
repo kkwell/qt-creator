@@ -1657,6 +1657,65 @@ No CMake or qbs description changed. Qualification is local/offline Mock and
 the product lifecycle was exercised offscreen with the plugin enabled and
 explicitly disabled, without a visible main window or new crash record.
 
+## Workbench General draft-baseline boundary
+
+`ISSUE-WB-GENERAL-NONCONFLICTING-REFRESH-DRAFT-001`, based on
+`2fe30622dd971c9c3afd91e78e5addb2fa988340`, remains entirely inside the
+product-owned private `GeneralPage`. `DetailsView` continues to route
+`devicesReset`, `devicesChanged`, and `indexingChanged` into page refreshes;
+the Device Repository provider, Project provider, and every other property
+page retain their existing freshness behavior.
+
+General owns a single last-loaded name baseline keyed by stable Project ID,
+node ID, and node kind. On a same-node refresh it compares that baseline with
+the current authority from `ProjectService` or the configured offline Slave.
+Only an editable editor that is modified or focused, with unchanged authority,
+is left in place. Focus is a conservative guard against disturbing a possible
+input-method preedit before `modified` changes; the regression proves the
+clean-focused gate rather than synthesizing platform IME composition. Its
+parent remains visible and that editor is not cleared or passed to `setText()`;
+the rest of the page still resets and repopulates. This preserves the actual
+QLineEdit draft state while allowing ESI-derived read-only fields to refresh.
+
+`ProjectService` remains the sole authority for Project and structural names,
+persistence, signals, and Undo/Redo. The existing controller command remains
+the authority for configured-Slave rename validation and topology
+replacement. A changed authoritative name always replaces the draft. Explicit
+commit first marks the editor clean and holds a scoped force-authority guard
+around the existing command, its synchronous signals, and the final context
+reload. Rejected empty input and trimmed no-ops therefore converge on the
+persisted value despite focus. A context switch, invalid/unavailable project,
+project close, or different stable ID cannot reuse the old baseline.
+
+This mechanism is deliberately not a cross-page dirty-form service, autosave,
+cross-node draft cache, Project revision, generation counter, CAS, merge,
+conflict UI, repository refresh-reason API, or Details signal filter. It adds
+no public type and no state to a Project file. The earlier project-scoped
+Details filter still prevents an unrelated Project from refreshing the page;
+this new boundary only narrows same-page refresh behavior when the editable
+name itself has no conflict.
+
+Qt's QLineEdit contract explains why avoiding `setText()` matters: it resets
+modified state and clears selection and Undo/Redo state:
+<https://doc.qt.io/qt-6/qlineedit.html#text-prop>. Qt Creator 20.0's
+`BaseAspect` separates persisted value from volatile edit value and exposes
+`isDirty()`:
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/libs/utils/aspects.h#L328-L370>.
+Beckhoff's General tab supplies the comparable Name/Id/Object Id/Type product
+surface, not the private Qt conflict policy:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1341899531.html>.
+
+The boundary changes only `generalpage.cpp/.h`, the Workbench test
+declaration/implementation, and four evidence documents. It adds no public
+API, source file, dependency, Provider or ProjectService contract, Project
+format, persistence field, Project command, custom model role, production
+thread or timer, Core or ProjectExplorer hook, application-bootstrap path,
+network transport, scan, online state, SDO execution, or hardware behavior.
+No CMake or qbs description changed. Qualification is local/offline Mock and
+the full product lifecycle was exercised offscreen with Workbench enabled and
+explicitly disabled, using passed-through SIGTERM and producing no visible
+main window or new crash record.
+
 ## Existing EasyBoard isolation
 
 EasyBoard is not an EtherCAT plugin and must not become a shared container for

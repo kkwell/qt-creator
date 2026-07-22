@@ -50,6 +50,7 @@ private slots:
     void testDetailsEmptyStateLifecycle();
     void testDetailsKeyboardFocusContinuity();
     void testProjectScopedDetailsRefreshPreservesGeneralDraft();
+    void testEsiRepositoryRefreshPreservesGeneralDraft();
     void testNavigationSetActiveProjectCommand();
     void testNavigationFilterEmptyState();
     void testNavigationKeyboardFocus();

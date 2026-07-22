@@ -2370,6 +2370,50 @@ Creator's matching ownership precedent is at
 Beckhoff's Add New Item and revision-selection workflow is at
 <https://infosys.beckhoff.com/content/1033/ethercatsystem/2477595531.html>.
 
+## EtherCATWorkbench General non-conflicting refresh qualification
+
+`ISSUE-WB-GENERAL-NONCONFLICTING-REFRESH-DRAFT-001` is qualified from local
+baseline `2fe30622dd971c9c3afd91e78e5addb2fa988340`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Failure-first | Production General implementation/header remained at SHA-256 `a8bee2a329e954482ede4130e3005e70e46888251617acc9d9b23a9378f034fc` / `c7c5b44b0bc7e9c3bbf9acf22b9a102e32e38e4d67bd50954804ded43a330f92` and blobs `b07a339f5512acac70a2c80357183041e250e3c2` / `f72ee71744e19d99f4a950bb514987282260e0d0`; a real ESI rebuild replaced the focused Unicode `%1`, `%2`, `%%` Project draft with the persisted name, so the intended assertion failed and the target exited 1 |
+| Stable identity gate | Draft preservation requires equal `projectId`, `nodeId`, node kind, and matching page-owned authoritative baseline |
+| Local-edit gate | Only a writable editor that is modified or focused is eligible; focus conservatively avoids disturbing a possible input-method preedit before `modified` changes, while read-only, invalid, unavailable, switched, or closed context reloads authority |
+| Non-conflicting refresh | Project, Target, Master, and configured Slave drafts retain exact text, modified state, focus, cursor, selection, and executable local Undo/Redo while their persisted name is unchanged |
+| Other data freshness | Repository signals remain connected; configured Slave proves a same-identity ESI update refreshes Type, and Project proves its Target summary refreshes, while the Name editor stays intact |
+| Authoritative conflict | Real Project/structural/Slave rename, Undo, and Redo replace the draft and clear `modified` |
+| Commit rejection/no-op | Commit forces authoritative reload through synchronous command signals and clears local modified state; an empty rejected name and trimmed no-op cannot be preserved by focus |
+| Editor-state safety | The preserved editor is not hidden, cleared, or passed to `setText()`; other General controls continue their normal reset/populate path |
+| Refined prior policy | The earlier project-scoped draft issue still filters unrelated Project signals; its statement that a current-Project refresh may replace a draft is narrowed here to a real same-name-field authority change |
+| Deliberate exclusions | No autosave, cross-node draft cache, generic dirty-form framework, merge/conflict UI, revision, CAS, Details signal suppression, or repository API change |
+| Focused normal and 2x | Each passed 3 events, 0 failed, target status 0 under `focused/normal.log` and `focused/2x.log` |
+| Related normal and 2x | Each passed 11 events, 0 failed, target status 0 under `related/normal.log` and `related/2x.log` |
+| Complete Workbench | Normal and 2x each passed 68 events, 0 failed, target status 0 under `workbench/normal.log` and `workbench/2x.log` |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 68, Scan 7, Diagnostics 7; 119 passed, 0 failed in isolated LLDB-supervised processes |
+| Known soft assertion | The existing invalid-project path still emits the pre-existing ProjectExplorer TaskHub category soft assertion; it is absent from the focused test and does not fail a test or target |
+| Final source SHA-256 | General implementation `51195c26f5db3936f2e0ba0935d2564d3b8a0bf2ca95c86328de7d39e6ee16e6`; header `93760569091e384acb8a68451b8c3ae8c2f6ce2f744bbcab700780bc1423aaca`; tests `b37584e021ef2c81cd2500d46a14f2f2f8f7d77e69908f5d613d1311f44e8123`; test header `daa78bddcef5def77301b8c610266f1d9ac78bdea7c04e1a20e0ea1e7b8e8ace` |
+| Final git blobs | General implementation `e2cce8dd0a1fe6f5837de15492ead898246bffb8`; header `051abe8c5e068d59351cdd8ea7ceba13607f2558`; tests `4f4d9fd4d17300be8761cbebc696cf3237f6f8ff`; test header `c35e54d7c2e36b24c13a7d4790458d12957c6e7f` |
+| Product build and inventory | Full `WITH_TESTS=OFF` build passed; exactly 16 allow-listed plugin dylibs; executable SHA-256 `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench SHA-256 `03859197305b62f9b06e42e59c9253eefa34cbd112644645d9b0ae413de7fa76`; test Workbench SHA-256 `3ff8a25cd361749e91deff31bf5e41331935b171a612f48cbd7bb61470944d12` |
+| Enabled startup | PID 62199 remained running for 37 post-ready samples with Workbench loaded in all 37; every timestamped sample is retained in `lifecycle/enabled-samples.log`; passed-through SIGTERM produced target status 15 |
+| Explicitly disabled startup | PID 63311 remained running for 37 post-ready samples with Workbench absent in all 37; every timestamped sample is retained in `lifecycle/disabled-samples.log`; passed-through SIGTERM produced target status 15 |
+| Crash-dialog audit | At 2026-07-22 12:14:15 +0800 there was no residual Embed Labs/LLDB process, new matching DiagnosticReports file, or matching crash-service event |
+| Invisible executable policy | Fresh HOME/settings, cleared inherited DYLD variables, offscreen Qt, crash reporter disabled, `-no-crashcheck`, process-local Touch Bar bypass, and passed-through SIGTERM; no visible main window or system crash dialog |
+| IME test boundary | The clean-focused regression verifies the conservative focus gate; it does not synthesize or claim a platform input-method composition session |
+| Visual/manual desktop inspection | Not run by design; product acceptance stayed offscreen so it did not interrupt desktop use |
+| `WITH_TESTS=ON` all-target build | Not rerun; the unrelated known EasyBoard `extensionmanager_test.h` blocker remains outside this private Workbench issue |
+| qbs execution | Not run; no CMake or qbs file changed |
+| Public API, dependency, persistence, Provider, ProjectService, Project command, model role, or source-list changes | None |
+| Core, ProjectExplorer, app, network, scan, online state, SDO, or hardware changes | None; this remains a private Workbench form-state change over local/offline Mock data |
+
+Evidence is under
+`/private/tmp/embed-labs-general-draft-final.bvD4CU`. Qt's QLineEdit state
+contract is at <https://doc.qt.io/qt-6/qlineedit.html#modified-prop>. Qt
+Creator 20.0's persisted/volatile aspect precedent is at
+<https://github.com/qt-creator/qt-creator/blob/v20.0.0/src/libs/utils/aspects.h#L328-L370>.
+Beckhoff's General-tab field model is at
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1341899531.html>.
+
 ## Verification states
 
 Use only these evidence labels:

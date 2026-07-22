@@ -1056,6 +1056,33 @@ remains five. Qualification used only local/offline Mock state plus offscreen
 enabled/disabled product lifecycle runs. No visible main window, remote
 comparison, fetch, pull, merge, rebase, push, or publication occurred.
 
+`ISSUE-WB-GENERAL-NONCONFLICTING-REFRESH-DRAFT-001`, based on
+`2fe30622dd971c9c3afd91e78e5addb2fa988340`, changes only the existing
+product-owned private `generalpage.cpp/.h`, Workbench test
+declaration/implementation, and documentation. The page now retains a
+writable modified or focused name editor across a same-stable-node refresh
+only when the newly read persisted name still equals its last baseline. Focus
+conservatively avoids disturbing a possible input-method preedit before
+`modified` changes; qualification directly covers the clean-focused gate, not
+platform IME composition. The page leaves that editor untouched while
+refreshing the other General fields. Identity and authority checks handle real
+name changes, Undo, Redo, invalid or switched context, and project close. A
+scoped force-authority guard handles explicit rejected commits and trimmed
+no-ops.
+
+The change introduces no generic dirty-form or conflict framework, autosave,
+cross-node draft cache, revision/generation or CAS protocol, public API,
+source file, dependency, CMake/qbs entry, Project format, persistence field,
+Provider or ProjectService contract, Project command, custom model role,
+production thread or timer, Core or ProjectExplorer hook,
+application-bootstrap change, controller/network transport, online state,
+scan, SDO execution, or hardware behavior. Device Repository signals and
+Details refresh routing are unchanged. The Workbench path count remains 44
+and the direct upstream Core patch count remains five. Qualification used only
+local/offline Mock state plus offscreen enabled/disabled product lifecycle
+runs with passed-through SIGTERM. No visible main window, remote comparison,
+fetch, pull, merge, rebase, push, or publication occurred.
+
 ## Remote comparison status
 
 A later upstream comparison or merge may only be performed after an explicit

@@ -23,6 +23,7 @@
 #include <QMargins>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QScopedValueRollback>
 #include <QSizePolicy>
 #include <QStyle>
 #include <QTreeWidget>
@@ -59,6 +60,29 @@ static QString firstNodeName(
             return entry.kind == kind;
         });
     return node == project.nodes.cend() ? fallback : node->name;
+}
+
+static std::optional<QString> projectNodeName(
+    const Data::ProjectSnapshot &project,
+    const Data::NodeId &nodeId,
+    Data::ProjectNodeKind kind)
+{
+    const auto node = std::find_if(
+        project.nodes.cbegin(), project.nodes.cend(), [&nodeId, kind](const auto &entry) {
+            return entry.id == nodeId && entry.kind == kind;
+        });
+    return node == project.nodes.cend() ? std::nullopt : std::optional<QString>(node->name);
+}
+
+static std::optional<QString> projectSlaveName(
+    const Data::ProjectSnapshot &project, const Data::NodeId &nodeId)
+{
+    const auto slave = std::find_if(
+        project.slaves.cbegin(), project.slaves.cend(), [&nodeId](const auto &entry) {
+            return entry.id == nodeId;
+        });
+    return slave == project.slaves.cend() ? std::nullopt
+                                           : std::optional<QString>(slave->name);
 }
 
 static QString projectValidityText(const Data::ProjectSnapshot &project)
@@ -451,9 +475,6 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
 
 void GeneralPage::setContext(const Core::PropertyPageContext &context)
 {
-    m_context = context;
-    m_updating = true;
-
     const std::optional<Data::OfflineSlaveConfiguration> offlineSlave
         = m_controller ? m_controller->treeModel()->offlineSlave(context.nodeId) : std::nullopt;
     const std::optional<Data::DeviceDescription> device =
@@ -472,9 +493,48 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
               ? m_controller->projectService()->project(context.projectId)
               : std::nullopt;
 
-    reset(Tr::tr("Offline properties for %1").arg(context.displayName));
     const bool configuredSlave = context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave
                                  && offlineSlave.has_value();
+    const std::optional<QString> authoritativeName = [&]() -> std::optional<QString> {
+        if (!project)
+            return std::nullopt;
+        if (context.nodeKind == Core::WorkbenchNodeKind::Project) {
+            return project->id == context.projectId && project->id == context.nodeId
+                       ? std::optional<QString>(project->name)
+                       : std::nullopt;
+        }
+        if (configuredSlave)
+            return projectSlaveName(*project, context.nodeId);
+        if (context.nodeKind == Core::WorkbenchNodeKind::Target) {
+            return projectNodeName(
+                *project, context.nodeId, Data::ProjectNodeKind::Target);
+        }
+        if (context.nodeKind == Core::WorkbenchNodeKind::Master) {
+            return projectNodeName(
+                *project, context.nodeId, Data::ProjectNodeKind::Master);
+        }
+        return std::nullopt;
+    }();
+    const QString displayedName
+        = authoritativeName.value_or(configuredSlave ? offlineSlave->name : context.displayName);
+    const bool editableName = authoritativeName.has_value() && project && project->valid;
+    QLineEdit *previousName = nameEditor(m_context.nodeKind);
+    const bool preserveName
+        = !m_forceAuthoritativeNameReload && editableName && previousName
+          && !previousName->isReadOnly()
+          && (previousName->isModified() || previousName->hasFocus())
+          && m_context.projectId == context.projectId && m_context.nodeId == context.nodeId
+          && m_context.nodeKind == context.nodeKind
+          && m_nameBaselineProjectId == context.projectId
+          && m_nameBaselineNodeId == context.nodeId && m_nameBaselineKind == context.nodeKind
+          && m_nameBaseline == *authoritativeName;
+
+    m_context = context;
+    m_updating = true;
+
+    reset(
+        Tr::tr("Offline properties for %1").arg(context.displayName),
+        preserveName ? previousName : nullptr);
     if (context.nodeKind == Core::WorkbenchNodeKind::DeviceRepository) {
         m_summary->hide();
         m_repositoryPage->refresh();
@@ -489,8 +549,9 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
         m_summary->hide();
         const QString unavailable = Tr::tr("Unavailable");
         const bool validProject = project && project->valid;
-        m_projectName->setText(project ? project->name : context.displayName);
-        m_projectName->setReadOnly(!validProject);
+        if (!preserveName)
+            m_projectName->setText(displayedName);
+        m_projectName->setReadOnly(!editableName);
         m_projectId->setText(validProject ? project->id.toString() : unavailable);
         m_projectType->setText(Tr::tr("Offline EtherCAT Engineering Project"));
         if (validProject) {
@@ -524,15 +585,18 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
         const QString typeName = !device ? Tr::tr("Unknown ESI device")
                                  : !device->summary.typeName.isEmpty() ? device->summary.typeName
                                                                        : device->summary.name;
-        m_name->setText(offlineSlave->name);
+        if (!preserveName)
+            m_name->setText(displayedName);
+        m_name->setReadOnly(!editableName);
         m_id->setText(QString::number(offlineSlave->position + 1));
         m_objectId->setText(offlineSlave->id.toString());
         m_type->setText(typeName);
         m_identityForm->show();
     } else if (context.nodeKind == Core::WorkbenchNodeKind::Target) {
         m_summary->hide();
-        m_targetName->setText(context.displayName);
-        m_targetName->setReadOnly(!project || !project->valid);
+        if (!preserveName)
+            m_targetName->setText(displayedName);
+        m_targetName->setReadOnly(!editableName);
         m_targetIdentity->setText(
             Tr::tr("Offline / Mock target\nObject Id: %1").arg(context.nodeId.toString()));
         m_targetEngineering->setText(::Core::ICore::versionString());
@@ -552,7 +616,8 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
     } else if (context.nodeKind == Core::WorkbenchNodeKind::Master) {
         m_summary->setText(
             Tr::tr("Offline EtherCAT master properties for %1").arg(context.displayName));
-        m_masterName->setText(context.displayName);
+        if (!preserveName)
+            m_masterName->setText(displayedName);
         const int id
             = project
                   ? structuralNodeOrdinal(*project, Data::ProjectNodeKind::Master, context.nodeId)
@@ -560,7 +625,7 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
         m_masterId->setText(id > 0 ? QString::number(id) : Tr::tr("Unavailable"));
         m_masterObjectId->setText(context.nodeId.toString());
         m_masterType->setText(Tr::tr("EtherCAT Master"));
-        m_masterName->setReadOnly(!project || !project->valid);
+        m_masterName->setReadOnly(!editableName);
         m_masterContent->show();
         m_masterForm->show();
         m_masterSummaryForm->show();
@@ -605,21 +670,54 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
         if (context.nodeKind == Core::WorkbenchNodeKind::Target)
             addRow({Tr::tr("Target type"), Tr::tr("Offline / Mock")});
     }
+    if (editableName) {
+        m_nameBaselineProjectId = context.projectId;
+        m_nameBaselineNodeId = context.nodeId;
+        m_nameBaselineKind = context.nodeKind;
+        m_nameBaseline = *authoritativeName;
+    } else {
+        m_nameBaselineProjectId = {};
+        m_nameBaselineNodeId = {};
+        m_nameBaselineKind = Core::WorkbenchNodeKind::None;
+        m_nameBaseline.clear();
+    }
     m_updating = false;
 }
 
-void GeneralPage::reset(const QString &summary)
+QLineEdit *GeneralPage::nameEditor(Core::WorkbenchNodeKind kind) const
 {
+    switch (kind) {
+    case Core::WorkbenchNodeKind::Project:
+        return m_projectName;
+    case Core::WorkbenchNodeKind::Target:
+        return m_targetName;
+    case Core::WorkbenchNodeKind::Master:
+        return m_masterName;
+    case Core::WorkbenchNodeKind::ConfiguredSlave:
+        return m_name;
+    default:
+        return nullptr;
+    }
+}
+
+void GeneralPage::reset(const QString &summary, QLineEdit *preservedName)
+{
+    const bool preserveProjectName = preservedName == m_projectName;
+    const bool preserveConfiguredSlaveName = preservedName == m_name;
+    const bool preserveTargetName = preservedName == m_targetName;
+    const bool preserveMasterName = preservedName == m_masterName;
     m_summary->setText(summary);
     m_summary->show();
     m_repositoryPage->hide();
     m_esiDevicePage->setDevice(std::nullopt, {});
     m_esiDevicePage->hide();
-    m_projectContent->hide();
-    m_projectForm->hide();
-    m_projectSummaryForm->hide();
-    m_projectName->clear();
-    m_projectName->setReadOnly(true);
+    if (!preserveProjectName) {
+        m_projectContent->hide();
+        m_projectForm->hide();
+        m_projectSummaryForm->hide();
+        m_projectName->clear();
+        m_projectName->setReadOnly(true);
+    }
     m_projectId->clear();
     m_projectType->clear();
     m_projectFormatVersion->clear();
@@ -630,26 +728,37 @@ void GeneralPage::reset(const QString &summary)
     m_projectTarget->clear();
     m_projectMaster->clear();
     m_projectSlaveCount->clear();
-    m_identityForm->hide();
-    m_targetContent->hide();
-    m_masterContent->hide();
-    m_masterForm->hide();
-    m_masterSummaryForm->hide();
+    if (!preserveConfiguredSlaveName)
+        m_identityForm->hide();
+    if (!preserveTargetName)
+        m_targetContent->hide();
+    if (!preserveMasterName) {
+        m_masterContent->hide();
+        m_masterForm->hide();
+        m_masterSummaryForm->hide();
+    }
     m_tree->show();
-    m_name->clear();
+    if (!preserveConfiguredSlaveName) {
+        m_name->clear();
+        m_name->setReadOnly(true);
+    }
     m_id->clear();
     m_objectId->clear();
     m_type->clear();
-    m_targetName->clear();
-    m_targetName->setReadOnly(true);
+    if (!preserveTargetName) {
+        m_targetName->clear();
+        m_targetName->setReadOnly(true);
+    }
     m_targetIdentity->clear();
     m_targetEngineering->clear();
     m_targetRuntime->clear();
     m_targetLocalRuntime->clear();
     m_targetProjectVersion->clear();
     m_targetPinVersion->setChecked(false);
-    m_masterName->clear();
-    m_masterName->setReadOnly(true);
+    if (!preserveMasterName) {
+        m_masterName->clear();
+        m_masterName->setReadOnly(true);
+    }
     m_masterId->clear();
     m_masterObjectId->clear();
     m_masterType->clear();
@@ -689,6 +798,8 @@ void GeneralPage::commitProjectName()
 {
     if (m_updating || !m_controller || m_context.nodeKind != Core::WorkbenchNodeKind::Project)
         return;
+    const QScopedValueRollback forceReload(m_forceAuthoritativeNameReload, true);
+    m_projectName->setModified(false);
     const Utils::Result<> result
         = m_controller->renameProject(m_context.projectId, m_projectName->text());
     if (!result) {
@@ -706,6 +817,8 @@ void GeneralPage::commitName()
         || m_context.nodeKind != Core::WorkbenchNodeKind::ConfiguredSlave) {
         return;
     }
+    const QScopedValueRollback forceReload(m_forceAuthoritativeNameReload, true);
+    m_name->setModified(false);
     const Utils::Result<> result
         = m_controller->renameOfflineSlave(m_context.projectId, m_context.nodeId, m_name->text());
     if (!result) {
@@ -721,6 +834,8 @@ void GeneralPage::commitTargetName()
 {
     if (m_updating || !m_controller || m_context.nodeKind != Core::WorkbenchNodeKind::Target)
         return;
+    const QScopedValueRollback forceReload(m_forceAuthoritativeNameReload, true);
+    m_targetName->setModified(false);
     const Utils::Result<> result
         = m_controller
               ->renameStructuralNode(m_context.projectId, m_context.nodeId, m_targetName->text());
@@ -737,6 +852,8 @@ void GeneralPage::commitMasterName()
 {
     if (m_updating || !m_controller || m_context.nodeKind != Core::WorkbenchNodeKind::Master)
         return;
+    const QScopedValueRollback forceReload(m_forceAuthoritativeNameReload, true);
+    m_masterName->setModified(false);
     const Utils::Result<> result
         = m_controller
               ->renameStructuralNode(m_context.projectId, m_context.nodeId, m_masterName->text());
