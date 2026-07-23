@@ -51,7 +51,9 @@ EtherCATCorePlugin::~EtherCATCorePlugin()
 
 void EtherCATCorePlugin::initialize()
 {
+    qRegisterMetaType<Data::ControllerConnectionProfile>();
     qRegisterMetaType<Data::ControllerConnectionRequest>();
+    qRegisterMetaType<Data::ControllerConnectionScope>();
     qRegisterMetaType<Data::ControllerConnectionSnapshot>();
     qRegisterMetaType<Data::ControllerConnectionState>();
     qRegisterMetaType<Data::ControllerOperationError>();

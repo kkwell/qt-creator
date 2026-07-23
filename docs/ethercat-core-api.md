@@ -3,7 +3,7 @@
 ## Scope and version
 
 This document freezes the stage-1 in-process contract between the EtherCAT
-plugins. It is API version 1 for the current local Qt Creator 20.0.1 product.
+plugins. It is API version 2 for the current local Qt Creator 20.0.1 product.
 It is not a network protocol, controller ABI, project file format, or Zynq
 contract.
 
@@ -34,12 +34,13 @@ and trend records, explicit stream and EtherCAT states, alarm lifecycle, and a
 checked `DiagnosticsProvider` contract. It remains an in-process capability and
 defines no controller session, network command, packet, or private ABI.
 
-The controller-connection API revision adds one semantic prerequisite for a
-future `EtherCATProductApi` plugin. It describes a stable Project/Master scope,
-resolved endpoint, connection and channel states, negotiated session/version,
-read-only state/capability/package/firmware summaries, heartbeat freshness, and
-structured errors. It does not contain a socket, ECAP frame, message number,
-CRC, byte layout, network thread, state-changing command, or bus scan.
+The controller-connection API revision adds one semantic prerequisite for
+controller-adapter plugins. API v2 describes a stable Project/Master scope,
+provider-owned connection profiles, arbitrary named transport channels,
+negotiated session/version, read-only state/capability/package/firmware
+summaries, heartbeat freshness, and structured errors. It does not contain a
+socket, ECAP frame, message number, CRC, byte layout, network thread,
+state-changing command, or bus scan.
 
 The offline-configuration revision adds typed Process Data, Startup, and DC
 values plus UI-independent validation and process-image preview algorithms.
@@ -114,7 +115,7 @@ unique `Utils::Id`, user-visible name, type, and availability flag.
 | `ProjectService` | EtherCATProject |
 | `DeviceRepositoryProvider` | EtherCATDevices |
 | `PropertyPageProvider` | EtherCATWorkbench and optional page contributors |
-| `ControllerConnectionProvider` | Future EtherCATProductApi |
+| `ControllerConnectionProvider` | Independent vendor/protocol adapter plugins |
 | `ScanProvider` | EtherCATScan or a future real-controller provider |
 | `DiagnosticsProvider` | EtherCATDiagnostics or a future real-controller provider |
 
@@ -126,25 +127,47 @@ for later feature data.
 ## Controller connection provider contract
 
 `ControllerConnectionProvider` is the GUI-thread, in-process boundary between
-future Qt Creator pages and a concrete controller transport. One provider
-exposes a current immutable `ControllerConnectionSnapshot` and accepts three
-asynchronous operation requests:
+future Qt Creator pages and one concrete vendor/protocol adapter. Multiple
+providers of this kind may coexist. Each provider exposes profiles for a
+Project/Master scope, one current immutable `ControllerConnectionSnapshot`,
+and three asynchronous operation requests:
 
 - `connectToController(request)`;
 - `refreshController()`; and
 - `disconnectFromController()`.
 
-The returned `Utils::Result` says whether the request was accepted, not whether
-the asynchronous network operation later succeeded. Consumers observe
-`connectionSnapshotChanged()` and re-query the complete snapshot. A concrete
-provider must publish every snapshot on its GUI thread; background socket or
-codec work remains private.
+Profiles are queried with `connectionProfiles(scope)`. Each operation returns
+a `Utils::Result` that says whether the request was accepted, not whether the
+asynchronous transport operation later succeeded. Consumers observe
+`connectionProfilesChanged()` or `connectionSnapshotChanged()` and re-query
+the complete immutable values. A concrete provider must publish every signal
+on its GUI thread; background socket or codec work remains private.
 
-A connect request binds one endpoint to stable `projectId` and `masterId`
-values. Empty IDs, an empty host, or any zero Control/Push/Bulk port are invalid.
-The public endpoint uses a host string and port values so EtherCATCore does not
-depend on Qt Network. Product defaults such as `192.168.3.101:15200..15202`
-belong to the future transport plugin and its settings page.
+A `ControllerConnectionScope` contains stable Project and Master IDs. A
+provider-owned `ControllerConnectionProfile` adds a stable profile ID, display
+name, redacted endpoint summary, configured/supported/default flags, and an
+optional configuration issue. The real host, ports, route, credentials,
+certificates, serial settings, or other protocol-specific configuration remain
+private to that adapter. A connect request therefore carries only the scope
+and one profile ID. Null scope/profile IDs, an ID not returned by that Provider
+for the scope, or an unconfigured/unsupported profile must be rejected without
+starting an operation.
+
+Provider IDs are globally unique; profile IDs are stable only within their
+Provider. Invoking a Provider defines the profile-ID namespace, so two
+Providers may safely use the same profile ID. The future Workbench page selects
+the `{providerId, profileId}` pair explicitly. When multiple connection
+providers are installed it must not silently choose the first one, and removal
+of a selected provider must produce an unavailable state rather than switching
+to another vendor.
+
+Profile and channel IDs are nonempty and stable within their Provider. At most
+one profile for a scope is marked default. Display names and endpoint summaries
+are presentation only. Every outward-facing profile, channel, and error string,
+including configuration issues, endpoint summaries, channel details, code
+names, summaries, and diagnostic details, must omit credentials, tokens,
+certificate material, private keys, and raw transport errors that may contain
+secrets.
 
 Connection states are:
 
@@ -152,22 +175,28 @@ Connection states are:
 - `Connecting`: the transport is opening channels;
 - `Handshaking`: channel role, protocol, SessionId, and BootId are being
   verified;
-- `Connected`: all required channels belong to the same negotiated session and
-  the initial read-only summaries are available;
-- `Degraded`: Control remains usable but Push or Bulk is unavailable;
+- `Connected`: all adapter-required channels belong to the same negotiated
+  session when the protocol has one, and the initial read-only summaries are
+  available for the capabilities supported by that adapter;
+- `Degraded`: the adapter's primary query path remains usable while an
+  optional event, bulk, or auxiliary channel is unavailable;
 - `Disconnecting`: asynchronous shutdown is in progress; and
 - `Failed`: Control, protocol compatibility, or session/BootId validation
   failed.
 
 `Provider::isAvailable()` continues to mean that the provider capability is
 installed and usable. It is not a connected-state flag. Connection lifecycle
-always comes from the snapshot.
+always comes from the snapshot. A Provider may expose profiles while
+unavailable so the UI can explain or repair configuration, but it must reject
+new connect and refresh operations. Disconnect remains valid while unavailable
+so shutdown and partial-initialization cleanup cannot be blocked.
 
 The snapshot contains:
 
-- stable Project/Master scope and the requested endpoint;
-- Control, Push, and Bulk state, negotiated maximum payload, last activity, and
-  detail;
+- stable Project/Master scope, selected profile ID, and redacted endpoint
+  summary;
+- any number of provider-owned named channel states, their negotiated maximum
+  payload when meaningful, last activity, and detail;
 - negotiated protocol major/minor, real SessionId/BootId, observed lease owner,
   default lease duration, and whether this session owns a lease;
 - a local monotonically increasing `sessionGeneration` used to reject callbacks
@@ -178,21 +207,28 @@ The snapshot contains:
 - optional active/staged package and firmware lifecycle summaries; and
 - one optional structured error.
 
+After disconnect, a Provider may retain the last scope, profile, redacted
+endpoint summary, channel names, and decoded summaries as historical context,
+but it must clear the live session/lease identity and heartbeat timestamp.
+Only `Connected` or `Degraded` represents a live query path; retained values
+must never be presented as current merely because they remain in the snapshot.
+
 The capability value keeps the descriptor SHA-256 and named feature support
 instead of exposing a protocol feature-bit mask. State flags, slots, lifecycle,
 faults, WKC, timing, and capability limits are decoded semantic fields, not
 offsets into a wire record.
 
-An error keeps its source, optional channel, operation, optional numeric code,
+An error keeps its source, optional provider-owned channel ID, operation,
+optional numeric code,
 optional operation result, numeric source detail, code name, RequestId, retry
 delay, timestamp, retry disposition, summary, and detail. The source taxonomy
-distinguishes client configuration, local network, Product API protocol,
+distinguishes client configuration, local network, adapter protocol,
 controller-returned status, EtherCAT bus, ESI/device description, and unknown
-origin. For `Controller` source, `code` is the returned Product API status and
-`operationResult` is the returned operation result. A local `Protocol` error
-does not populate those controller fields. Only explicit controller-returned
-evidence may use the `Controller` source; local parsing or connectivity
-failures must not be mislabeled as master defects.
+origin. For `Controller` source, `code` and `operationResult` retain numeric
+values returned by that controller protocol when applicable. A local
+`Protocol` error does not populate those controller fields. Only explicit
+controller-returned evidence may use the `Controller` source; local parsing or
+connectivity failures must not be mislabeled as master defects.
 
 This revision authorizes no control lease, configuration mode, discovery,
 runtime state transition, package mutation, SDO/PDO write, or firmware change.
@@ -446,10 +482,11 @@ The focused plugin test covers:
 - state contribution validation and severity aggregation;
 - dynamic Provider addition, availability, unlink-before-signal removal, and
   nested removal re-entry;
-- typed controller request/snapshot value semantics, invalid endpoint and
-  stable-scope rejection, connection transitions, three-channel/session
-  evidence, structured errors, refresh, idempotent disconnect, and registry
-  filtering;
+- typed controller scope/profile/request/snapshot value semantics, unknown,
+  incomplete, or unsupported profile and stable-scope rejection, connection
+  availability transitions,
+  arbitrary named channels, session evidence, structured errors, refresh,
+  idempotent disconnect, and multiple-provider registry filtering;
 - typed scan request, state, progress, cancellation, and reset behavior;
 - typed diagnostics snapshots, stream transitions, mode request, bounded-data
   metadata, alarm acknowledgement/recovery, and stop/failure behavior;
@@ -492,3 +529,22 @@ The final sequential isolated regression passed 141 events: Core 18, Project
 samples; Core was mapped for 10/10 enabled samples and 0/10 disabled samples,
 and both stopped through intentional target status 15. No matching residual
 qualification process or new Embed Labs DiagnosticReport remained.
+
+For `ISSUE-CORE-CONTROLLER-PROVIDER-PROFILE-002`, based on local commit
+`a6bcd2dfe813e16ccc62fd61afa6b41473b6542e`, failure-first compilation stopped
+at the intentionally missing scope/profile types and provider methods. The
+final Qt 6.11.0 Core suite passed all 18 events. Two fake providers prove
+provider-scoped profile selection and safe profile-ID reuse,
+unknown/incomplete/unsupported profile rejection, availability gates,
+arbitrary named channels, a non-TCP endpoint summary, coexistence, and removal
+isolation.
+
+The sequential six-plugin regression passed the same 141 events, and the
+complete `WITH_TESTS=OFF` product build passed with 16 plugin dylibs. Enabled
+and `-noload EtherCATCore` offscreen lifecycle runs each remained alive for
+10/10 samples; Core was mapped for 10/10 enabled samples and 0/10 disabled
+samples. Both stopped through intentional target status 15, while the existing
+visible product process remained untouched. No matching residual
+qualification process or new Embed Labs DiagnosticReport remained. Evidence
+is under
+`/private/tmp/embed-labs-i18n-compact/controller-profile-v2`.

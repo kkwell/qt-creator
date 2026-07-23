@@ -6783,25 +6783,36 @@ Mock/offline where previously qualified. Evidence is under
 
 ## Online controller connection prerequisite
 
-`ISSUE-CORE-CONTROLLER-CONNECTION-API-001` adds no Workbench widget or command.
-It establishes the public semantic boundary required by the next online UI
-issue:
+`ISSUE-CORE-CONTROLLER-CONNECTION-API-001` and the multi-vendor correction
+`ISSUE-CORE-CONTROLLER-PROVIDER-PROFILE-002` add no Workbench widget or
+command. Together they establish the public semantic boundary required by the
+next online UI issue:
 
-- a connection request is scoped to stable Project/Master IDs and one resolved
-  Control/Push/Bulk endpoint;
+- a connection request is scoped to stable Project/Master IDs, one explicitly
+  selected adapter Provider, and one provider-owned profile;
+- protocol-specific host/ports, routes, credentials, certificates, and channel
+  layout remain private to the selected adapter;
 - an immutable snapshot separates provider availability, connection state,
-  channel/session health, heartbeat, read-only controller summaries, and
-  structured errors;
+  arbitrary named channel/session health, heartbeat, read-only controller
+  summaries, and structured errors;
 - Connect does not acquire control, scan a bus, change the controller state, or
   mutate the offline project; and
-- Workbench will consume the future concrete Provider through object-pool and
-  property-page extension points without owning sockets or Product API frames.
+- Workbench will consume concrete vendor Providers through the object pool
+  without owning sockets or protocol frames.
 
-The next user-visible issue will embed Communication in the existing right-side
-details host and register Connect/Disconnect with ActionManager so the current
-controller command strip remains the state-control surface. Real Scan,
-Current Bus (Actual), config/actual Apply, and embedded topology remain separate
-later issues.
+The Communication page must enumerate Provider ID/display name and its profiles
+for the selected Master. If more than one Provider exists, the user selects
+one explicitly. Removal of the selected Provider reports unavailable and does
+not silently fall back to another vendor. The selected `{providerId,
+profileId}` pair is also the future source anchor for Scan and Diagnostics; the
+current project format does not persist that pair yet.
+
+The next implementation issue adds the headless `EtherCATProductApi` as the
+first Embed Labs adapter. The following user-visible issue embeds Communication
+in the existing right-side details host and registers Connect/Disconnect with
+ActionManager so the current controller command strip remains the
+state-control surface. Real Scan, Current Bus (Actual), config/actual Apply,
+and embedded topology remain separate later issues.
 
 CODESYS supplies the useful workflow separation: install ESI in a managed
 [Device Repository](https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_cmd_device_repository.html),

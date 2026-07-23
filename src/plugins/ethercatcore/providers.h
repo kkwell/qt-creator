@@ -219,6 +219,8 @@ public:
     ControllerConnectionProvider(
         Utils::Id id, const QString &displayName, QObject *parent = nullptr);
 
+    virtual QList<Data::ControllerConnectionProfile> connectionProfiles(
+        const Data::ControllerConnectionScope &scope) const = 0;
     virtual Data::ControllerConnectionSnapshot connectionSnapshot() const = 0;
 
     virtual Utils::Result<> connectToController(
@@ -227,6 +229,7 @@ public:
     virtual Utils::Result<> refreshController() = 0;
 
 signals:
+    void connectionProfilesChanged();
     void connectionSnapshotChanged();
 };
 

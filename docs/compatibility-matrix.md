@@ -5,7 +5,7 @@
 | Item | Supported or observed baseline | Evidence status |
 |---|---|---|
 | Product branch | `embed-labs` only | Verified |
-| Current issue baseline commit | `06538be209e26ff0b8a4b8ad4f231a7d15c0631b` | Verified |
+| Current issue baseline commit | `a6bcd2dfe813e16ccc62fd61afa6b41473b6542e` | Verified |
 | Product version | 20.0.1 | Verified |
 | Recorded Qt Creator merge point | `11ba5cec09dce75db4bc948d98055e338ff59576` | Verified |
 | Qualified product Qt | Homebrew 6.11.0 | Clean Release build and GUI smoke verified |
@@ -46,7 +46,7 @@ local decisions and easier maintenance.
 | EtherCATWorkbench | EtherCAT mode, device tree, selection, master-side ESI insertion, supported-device drag-and-drop, and offline property pages | Stage 4 verified |
 | EtherCATScan | Local Mock scan, topology comparison, and checked acceptance | Stage 5 verified |
 | EtherCATDiagnostics | Local Mock state, WKC, DC, alarm, and performance views | Stage 6 verified |
-| EtherCATProductApi | Planned Product API transport and real-controller connection | Not built; Core semantic API verified separately |
+| EtherCATProductApi | Planned headless Embed Labs Product API v1.9 adapter | Not built; multi-provider/profile Core API verified separately |
 
 ### Phase-1 EtherCAT profile
 
@@ -81,16 +81,17 @@ The online profile is incremental and does not replace qualified offline/Mock
 behavior. Its ordered gates are:
 
 1. semantic controller connection Core API;
-2. concrete ProductApi transport and embedded Communication page;
-3. controlled real discovery;
-4. Project Configuration versus Current Bus comparison and Apply;
-5. truthful embedded topology; and
-6. real diagnostics.
+2. multi-vendor Provider/Profile selection contract;
+3. headless Embed Labs ProductApi adapter;
+4. provider-neutral embedded Communication page;
+5. controlled real discovery;
+6. Project Configuration versus Current Bus comparison and Apply;
+7. truthful embedded topology; and
+8. real diagnostics.
 
-Only the first prerequisite is implemented by the current issue. The product
-still builds 16 plugins; `EtherCATProductApi` is not yet present. A Python
-reference-client read-only hardware audit is protocol input, not Qt product
-qualification.
+The first two prerequisites are implemented. The product still builds 16
+plugins; `EtherCATProductApi` is not yet present. A Python reference-client
+read-only hardware audit is protocol input, not Qt product qualification.
 
 ### Hidden or excluded plugins
 
@@ -134,7 +135,7 @@ function is outside the product target and records migration or recovery.
 | WKC/DC/link diagnostics | Stage 6 verified with Mock provider only |
 | Optional Scan/Diagnostics Provider state | Verified for absent, registered/unavailable, and available states with public `Local Mock` producer names and no installation inference |
 | Product API v1.9 | Windows authoritative sources and read-only reference-client behavior audited; Qt transport pending |
-| Controller connection Core contract | Verified semantic prerequisite; no Qt network or hardware claim |
+| Controller connection Core contract | Verified multi-provider/profile semantic prerequisite with arbitrary named channels; no Qt network or hardware claim |
 | Real EtherCAT scan | Planned after read-only Qt connection; not implemented or Qt-validated |
 | Real controller diagnostics | Existing Mock contract reusable; ProductApi Push/Bulk source pending |
 | Physical topology graph | Linear scan order only with current API; branch/star graph blocked by missing port-neighbor edge ABI |
@@ -3395,7 +3396,7 @@ compact rendering are Qt Creator-native product behavior:
 | Invalid requests | Empty Project ID, Master ID, host, and each zero port are rejected without a snapshot notification |
 | Lifecycle | Disconnected, Connecting, Connected, Degraded, Failed, refresh, idempotent disconnect, reconnect, and connection-generation invalidation passed |
 | Channel/session evidence | Control 4,096-byte limit; Push/Bulk 65,536-byte limits; negotiated protocol, SessionId, BootId, lease observation, heartbeat, and all channel roles retain value semantics |
-| Error attribution | Local Protocol error does not contain Product API status/operation result; explicit controller-returned error preserves those fields separately |
+| Error attribution | Local Protocol errors do not contain controller status/operation results; explicit controller-returned errors preserve those fields separately |
 | Provider registry | New kind registers, filters, unlinks, and removes through the unchanged generic registry |
 | Focused Core suite | EtherCATCore 18 passed, 0 failed |
 | Sequential six-plugin regression | Core 18, Project 12, Devices 8, Workbench 85, Scan 11, Diagnostics 7; 141 passed, 0 failed |
@@ -3416,3 +3417,32 @@ client/master issue handoff are documented in
 `docs/ethercat-online-controller.md`. Test evidence is under
 `/private/tmp/embed-labs-i18n-compact/online-core-api`; lifecycle logs use the
 `/private/tmp/embed-labs-controller-core2-*` prefix.
+
+## Multi-vendor controller Provider/Profile qualification
+
+`ISSUE-CORE-CONTROLLER-PROVIDER-PROFILE-002` is qualified from local baseline
+`a6bcd2dfe813e16ccc62fd61afa6b41473b6542e`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first | The Core target failed first on the intentionally absent scope/profile values, profile query, profile signal, and arbitrary channel fields |
+| Public scope | Provider-owned profiles, stable Project/Master scope, profile-ID connect request, redacted endpoint summary, and arbitrary named channels |
+| Multiple vendors | Two fake connection Providers coexist under distinct global Provider IDs and safely reuse the same Provider-scoped profile ID |
+| Profile validity | Null scope/profile IDs, unknown local IDs, configured=false, supported=false, and unavailable Providers are rejected without starting a connection |
+| Availability cleanup | An unavailable Provider rejects Connect/Refresh but still accepts Disconnect to complete shutdown cleanup |
+| Secret boundary | Every outward-facing profile, channel, and error string must exclude credentials, tokens, certificates, private keys, and raw secret-bearing transport errors |
+| Transport neutrality | A second fake Provider exposes one `ipc://controller-1` channel instead of Product API's three TCP channels |
+| Removal isolation | Removing one connection Provider leaves the other discoverable; removal of the second empties only that Provider kind |
+| Focused Core suite | EtherCATCore 18 passed, 0 failed |
+| Sequential six-plugin regression | Core 18, Project 12, Devices 8, Workbench 85, Scan 11, Diagnostics 7; 141 passed, 0 failed |
+| Product build | Qt 6.11.0 Release, `WITH_TESTS=OFF`, complete build passed with exactly 16 plugin dylibs |
+| Enabled lifecycle | Product stayed alive for 10/10 offscreen samples with `libEtherCATCore.dylib` mapped in 10/10; intentional SIGTERM returned status 15 |
+| Disabled lifecycle | Product stayed alive for 10/10 offscreen samples with `-noload EtherCATCore` and Core mapped in 0/10; intentional SIGTERM returned status 15 |
+| Cleanup/crash boundary | Zero matching residual qualification processes and no new Embed Labs DiagnosticReports; the existing visible product process was untouched |
+| Concrete adapter | Not included; `EtherCATProductApi` remains the next headless Embed Labs vendor-plugin issue |
+| CMake/qbs | No source list or dependency changed; paired build descriptions remain synchronized and qbs was not run |
+| Hardware claim | None; no socket, controller connection, bus operation, PLC, Zynq, or hardware access occurred |
+| Local-only policy | No fetch, pull, merge, rebase, branch switch, push, PR, or publication |
+
+Evidence is under
+`/private/tmp/embed-labs-i18n-compact/controller-profile-v2`.

@@ -30,7 +30,7 @@ documentation, review, and local-commit gates.
 | 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, configured-slave, ESI Repository, individual ESI catalogue-device General, master-side ESI insertion, supported-device drag-and-drop, and explicit active-project selection workflows, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
-| 7 | `EtherCATProductApiPlugin` | Planned; Core connection API complete | Product API transport, three-channel lifecycle, and read-only controller Provider |
+| 7 | `EtherCATProductApiPlugin` | Planned; Core multi-provider/profile API complete | First vendor adapter: Embed Labs Product API transport, three-channel lifecycle, and read-only controller Provider |
 
 `EtherCATData` is an infrastructure library, not a feature container. Its
 offline configuration contract is persisted by EtherCATProject format version
@@ -58,11 +58,14 @@ Dependencies are one-way and explicit. Core cannot depend on Project,
 Devices, Workbench, Scan, Diagnostics, or ProductApi. Scan and Diagnostics
 cannot include Workbench private headers.
 
-The future ProductApi plugin depends only on EtherCATData, EtherCATCore,
-Qt Network, and the Qt Creator platform dependencies it actually uses. Core
-does not depend back on it. ProductApi may implement the public connection,
-Scan, and Diagnostics Providers, but it cannot include Workbench private
-headers.
+Each future controller adapter depends only on EtherCATData, EtherCATCore,
+its transport modules, and the Qt Creator platform dependencies it actually
+uses. Core does not depend back on an adapter. `EtherCATProductApi` is the
+first implementation and the only EtherCAT plugin that will own Embed Labs
+ECAP framing and `Qt Network`. A later vendor uses a separate plugin and
+Provider rather than adding vendor branches to ProductApi, Core, or Workbench.
+An adapter may later implement public connection, Scan, and Diagnostics
+Providers, but it cannot include Workbench private headers.
 
 ## Qt Creator integration rules
 
@@ -102,18 +105,32 @@ Mock Diagnostics plugin.
 
 ## Online controller connection ownership
 
-`EtherCATProductApiPlugin` is the sole planned owner of Product API framing,
-Control/Push/Bulk sockets, channel roles, SessionId/BootId correlation,
-request IDs, CRC validation, heartbeat, timeout, reconnect, control lease, and
-discovery state machines. Those implementation details do not enter
-EtherCATCore, Workbench, Project, Devices, Scan, or Diagnostics.
+`EtherCATProductApiPlugin` is the sole planned owner of Embed Labs Product API
+framing, Control/Push/Bulk sockets, channel roles, SessionId/BootId
+correlation, request IDs, CRC validation, heartbeat, timeout, reconnect,
+control lease, and discovery state machines. Those implementation details do
+not enter EtherCATCore, Workbench, Project, Devices, Scan, or Diagnostics.
+Other controller protocols use independent adapter plugins.
 
 The Core prerequisite exposes only immutable semantic values and
-`ControllerConnectionProvider`. A connect request binds one resolved endpoint
-to stable Project/Master IDs. Its snapshot separately reports provider
-availability, connection lifecycle, all three channel states, negotiated
-session/version, read-only controller summaries, heartbeat freshness,
+`ControllerConnectionProvider`. ProviderRegistry already permits multiple
+providers of this kind. Each adapter owns stable connection profiles and
+resolves its private endpoint, routes, credentials, certificates, and channel
+layout. Profile IDs are namespaced by Provider ID, so different adapters may
+reuse the same profile ID. A connect request carries only a stable
+Project/Master scope plus one profile ID because it is invoked on the selected
+Provider. Its snapshot reports the selected profile, redacted endpoint
+summary, provider-named channel states, negotiated session/version when
+applicable, read-only controller summaries, heartbeat freshness,
 source-classified errors, and Mock/real evidence.
+
+Workbench must explicitly retain `{providerId, profileId}` for the selected
+Master. More than one installed provider never triggers first-provider
+selection, and removal of the selected provider never silently switches the
+controller vendor. The current Project format does not persist this binding;
+that persistence remains a separate UI/Project issue. Scan and Diagnostics
+also require an explicit backend-family association before real providers are
+mixed with the existing Mock sources.
 
 Connect is deliberately not Scan. A successful connection acquires no control
 lease and changes no controller state. Real discovery remains a later explicit
@@ -2839,9 +2856,10 @@ lifecycle claim is made. Evidence is under
 `ISSUE-CORE-CONTROLLER-CONNECTION-API-001` extends only the product-owned
 EtherCATData and EtherCATCore layers:
 
-- `controllerconnection.h` defines stable Project/Master-scoped request,
-  endpoint, channel/session, controller, capability, package, firmware, and
-  structured-error values;
+- `controllerconnection.h` initially defined stable Project/Master-scoped
+  connection, channel/session, controller, capability, package, firmware, and
+  structured-error values; the following revision replaces its
+  Product-API-specific endpoint/channel input;
 - `ProviderKind::ControllerConnection` is appended after all existing kinds;
 - `ControllerConnectionProvider` exposes asynchronous connect, refresh, and
   disconnect acceptance plus one immutable-snapshot invalidation signal; and
@@ -2859,3 +2877,37 @@ The final Qt 6.11.0 qualification passed the 18-event Core suite, the
 141-event sequential six-plugin regression, the complete `WITH_TESTS=OFF`
 16-plugin build, and enabled/disabled Core lifecycle sampling. These tests use
 only a fake in-process Provider and do not claim a Qt network or hardware path.
+
+## Multi-vendor controller Provider/Profile revision
+
+`ISSUE-CORE-CONTROLLER-PROVIDER-PROFILE-002` corrects the remaining
+Product-API-specific assumptions before any connection UI consumes them:
+
+- the existing registry and Provider ID remain the adapter discovery layer;
+- a provider exposes stable profiles for a Project/Master scope;
+- a profile publishes only its stable ID, display name, redacted endpoint
+  summary, configured/supported/default state, and configuration issue;
+- every outward-facing profile, channel, and error string omits credentials,
+  tokens, certificates, private keys, and raw secret-bearing transport errors;
+- connect accepts `{scope, profileId}` and leaves host, ports, ADS routes,
+  credentials, certificates, serial settings, and other transport inputs
+  private to the owning adapter;
+- unavailable providers reject Connect and Refresh while retaining Disconnect
+  for cleanup;
+- channel snapshots use provider-owned stable IDs and display names instead of
+  a fixed Control/Push/Bulk enum; and
+- structured errors refer to the same provider-owned channel ID.
+
+Two fake controller providers prove coexistence, safe reuse of one
+Provider-scoped profile ID, unknown-profile rejection, non-TCP endpoint
+summaries, arbitrary channel counts, availability/profile invalidation, and
+removal of one provider while the other remains registered. There is still
+only one active connection snapshot per Provider. Concurrent
+multi-controller sessions, persistent Provider/Profile selection,
+connection-to-scan/diagnostic backend families, transport code, pages, and
+actions remain later issues.
+
+This is an intentional source/API revision before third-party adapter binaries
+exist. It changes no `ProviderRegistry` branch, Qt Creator Core,
+ProjectExplorer, application bootstrap, CMake/qbs source list, network
+dependency, socket, worker, UI, project file, or hardware state.

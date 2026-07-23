@@ -20,6 +20,7 @@
 #include <ethercatdata/projectsnapshot.h>
 
 #include <QSignalSpy>
+#include <QStringList>
 #include <QTest>
 #include <QWidget>
 
@@ -81,46 +82,68 @@ class TestControllerConnectionProvider final : public ControllerConnectionProvid
 {
 public:
     TestControllerConnectionProvider()
-        : ControllerConnectionProvider("EtherCAT.Connection.Test", "Test controller")
+        : TestControllerConnectionProvider(
+              "EtherCAT.Connection.Test",
+              "Test controller",
+              "192.168.3.101:15200",
+              {"control", "events", "bulk"})
     {}
+
+    TestControllerConnectionProvider(
+        Utils::Id id,
+        const QString &displayName,
+        const QString &endpointSummary,
+        const QStringList &channelIds,
+        Data::NodeId profileId = {})
+        : ControllerConnectionProvider(id, displayName)
+        , m_channelIds(channelIds)
+    {
+        m_profile.id = profileId.isNull() ? Data::NodeId::create() : profileId;
+        m_profile.displayName = displayName + " default";
+        m_profile.endpointSummary = endpointSummary;
+        m_profile.configured = true;
+        m_profile.supported = true;
+        m_profile.defaultProfile = true;
+    }
+
+    QList<Data::ControllerConnectionProfile> connectionProfiles(
+        const Data::ControllerConnectionScope &scope) const final
+    {
+        if (scope.projectId.isNull() || scope.masterId.isNull())
+            return {};
+        return {m_profile};
+    }
 
     Data::ControllerConnectionSnapshot connectionSnapshot() const final { return m_snapshot; }
 
     Utils::Result<> connectToController(const Data::ControllerConnectionRequest &request) final
     {
-        const Data::ControllerEndpoint &endpoint = request.endpoint;
-        if (endpoint.host.trimmed().isEmpty() || endpoint.controlPort == 0
-            || endpoint.pushPort == 0 || endpoint.bulkPort == 0 || request.projectId.isNull()
-            || request.masterId.isNull()) {
-            return Utils::ResultError("Invalid controller endpoint");
-        }
+        if (!isAvailable())
+            return Utils::ResultError("Connection provider is unavailable");
+        if (request.scope.projectId.isNull() || request.scope.masterId.isNull()
+            || request.profileId != m_profile.id || !m_profile.configured || !m_profile.supported)
+            return Utils::ResultError("Invalid controller profile");
         if (m_snapshot.state != Data::ControllerConnectionState::Disconnected)
             return Utils::ResultError("Connection provider is busy");
 
         m_snapshot = {};
-        m_snapshot.projectId = request.projectId;
-        m_snapshot.masterId = request.masterId;
-        m_snapshot.endpoint = endpoint;
+        m_snapshot.scope = request.scope;
+        m_snapshot.profileId = request.profileId;
+        m_snapshot.endpointSummary = m_profile.endpointSummary;
         m_snapshot.state = Data::ControllerConnectionState::Connecting;
         m_snapshot.readOnly = true;
         m_snapshot.sessionGeneration = ++m_generation;
-        m_snapshot.channels = {
-            {Data::ControllerChannel::Control,
-             Data::ControllerChannelState::Connecting,
-             4096,
-             {},
-             "Connecting"},
-            {Data::ControllerChannel::Push,
-             Data::ControllerChannelState::Disconnected,
-             65536,
-             {},
-             {}},
-            {Data::ControllerChannel::Bulk,
-             Data::ControllerChannelState::Disconnected,
-             65536,
-             {},
-             {}},
-        };
+        for (qsizetype index = 0; index < m_channelIds.size(); ++index) {
+            const QString &channelId = m_channelIds.at(index);
+            m_snapshot.channels.append(
+                {channelId,
+                 channelId.toUpper(),
+                 index == 0 ? Data::ControllerChannelState::Connecting
+                            : Data::ControllerChannelState::Disconnected,
+                 channelId == "control" ? 4096 : 65536,
+                 {},
+                 index == 0 ? QString("Connecting") : QString()});
+        }
         emit connectionSnapshotChanged();
         return Utils::ResultOk;
     }
@@ -131,6 +154,8 @@ public:
             return Utils::ResultOk;
         m_snapshot.state = Data::ControllerConnectionState::Disconnected;
         m_snapshot.sessionGeneration = ++m_generation;
+        m_snapshot.session.reset();
+        m_snapshot.lastHeartbeatAt = {};
         for (Data::ControllerChannelStatus &channel : m_snapshot.channels)
             channel.state = Data::ControllerChannelState::Disconnected;
         emit connectionSnapshotChanged();
@@ -139,6 +164,8 @@ public:
 
     Utils::Result<> refreshController() final
     {
+        if (!isAvailable())
+            return Utils::ResultError("Connection provider is unavailable");
         if (m_snapshot.state != Data::ControllerConnectionState::Connected
             && m_snapshot.state != Data::ControllerConnectionState::Degraded) {
             return Utils::ResultError("Controller is not connected");
@@ -146,6 +173,26 @@ public:
         m_snapshot.updatedAt = QDateTime::currentDateTimeUtc();
         emit connectionSnapshotChanged();
         return Utils::ResultOk;
+    }
+
+    void setProfileConfigured(bool configured)
+    {
+        if (m_profile.configured == configured)
+            return;
+        m_profile.configured = configured;
+        m_profile.configurationIssue = configured ? QString()
+                                                  : QString("Controller profile is incomplete");
+        emit connectionProfilesChanged();
+    }
+
+    void setProfileSupported(bool supported)
+    {
+        if (m_profile.supported == supported)
+            return;
+        m_profile.supported = supported;
+        m_profile.configurationIssue = supported ? QString()
+                                                 : QString("Controller profile is not supported");
+        emit connectionProfilesChanged();
     }
 
     void completeHandshake()
@@ -226,7 +273,7 @@ public:
     {
         Data::ControllerOperationError error;
         error.source = Data::ControllerErrorSource::Protocol;
-        error.channel = Data::ControllerChannel::Push;
+        error.channelId = "events";
         error.operation = Data::ControllerOperation::SubscribeEvents;
         error.codeName = "UNEXPECTED_PUSH_FRAME";
         error.requestId = 73;
@@ -239,6 +286,8 @@ public:
     }
 
 private:
+    Data::ControllerConnectionProfile m_profile;
+    QStringList m_channelIds;
     Data::ControllerConnectionSnapshot m_snapshot;
     quint64 m_generation = 0;
 };
@@ -846,59 +895,97 @@ void EtherCATCoreTests::testWorkbenchDerivedNodeKinds()
 
 void EtherCATCoreTests::testControllerConnectionProviderContract()
 {
-    const Data::ControllerEndpoint endpoint{"192.168.3.101", 15200, 15201, 15202};
-    const Data::ControllerEndpoint endpointCopy = endpoint;
-    QCOMPARE(endpointCopy, endpoint);
-    const Data::ControllerConnectionRequest request{
-        Data::NodeId::create(), Data::NodeId::create(), endpoint};
-    QCOMPARE(Data::ControllerConnectionRequest(request), request);
-
+    const Data::ControllerConnectionScope scope{Data::NodeId::create(), Data::NodeId::create()};
+    QCOMPARE(Data::ControllerConnectionScope(scope), scope);
     TestControllerConnectionProvider provider;
     QCOMPARE(int(ProviderKind::ControllerConnection), 5);
     QCOMPARE(provider.kind(), ProviderKind::ControllerConnection);
-    QCOMPARE(
-        provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected);
+    const QList<Data::ControllerConnectionProfile> profiles = provider.connectionProfiles(scope);
+    QCOMPARE(profiles.size(), 1);
+    const Data::ControllerConnectionProfile profile = profiles.constFirst();
+    QVERIFY(!profile.id.isNull());
+    QVERIFY(profile.configured);
+    QVERIFY(profile.supported);
+    QVERIFY(profile.defaultProfile);
+    QCOMPARE(profile.endpointSummary, QString("192.168.3.101:15200"));
+    QCOMPARE(Data::ControllerConnectionProfile(profile), profile);
+    const Data::ControllerConnectionRequest request{scope, profile.id};
+    QCOMPARE(Data::ControllerConnectionRequest(request), request);
+
+    TestControllerConnectionProvider alternateProvider(
+        "EtherCAT.Connection.VendorIpc",
+        "Vendor IPC controller",
+        "ipc://controller-1",
+        {"primary"},
+        profile.id);
+    const Data::ControllerConnectionProfile alternateProfile
+        = alternateProvider.connectionProfiles(scope).constFirst();
+    QCOMPARE(alternateProfile.id, profile.id);
+    alternateProvider.setAvailable(true);
+    QVERIFY_RESULT(alternateProvider.connectToController(request));
+    QCOMPARE(alternateProvider.connectionSnapshot().channels.size(), 1);
+    QCOMPARE(alternateProvider.connectionSnapshot().channels.constFirst().id, QString("primary"));
+    QCOMPARE(alternateProvider.connectionSnapshot().endpointSummary, QString("ipc://controller-1"));
+    QVERIFY_RESULT(alternateProvider.disconnectFromController());
+
+    QCOMPARE(provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected);
     QVERIFY(provider.connectionSnapshot().readOnly);
     QVERIFY(!provider.refreshController());
 
-    QSignalSpy snapshotSpy(
-        &provider, &ControllerConnectionProvider::connectionSnapshotChanged);
+    QSignalSpy profilesSpy(&provider, &ControllerConnectionProvider::connectionProfilesChanged);
+    QSignalSpy snapshotSpy(&provider, &ControllerConnectionProvider::connectionSnapshotChanged);
+    QVERIFY(!provider.isAvailable());
+    QVERIFY(!provider.connectToController(request));
+    QCOMPARE(snapshotSpy.count(), 0);
+    provider.setAvailable(true);
+    QVERIFY(provider.isAvailable());
     QVERIFY(!provider.connectToController({}));
     Data::ControllerConnectionRequest invalidRequest = request;
-    invalidRequest.projectId = {};
+    invalidRequest.scope.projectId = {};
     QVERIFY(!provider.connectToController(invalidRequest));
     invalidRequest = request;
-    invalidRequest.masterId = {};
+    invalidRequest.scope.masterId = {};
     QVERIFY(!provider.connectToController(invalidRequest));
     invalidRequest = request;
-    invalidRequest.endpoint.host.clear();
+    invalidRequest.profileId = {};
     QVERIFY(!provider.connectToController(invalidRequest));
-    invalidRequest = request;
-    invalidRequest.endpoint.controlPort = 0;
+    invalidRequest.profileId = Data::NodeId::create();
+    QVERIFY(invalidRequest.profileId != profile.id);
     QVERIFY(!provider.connectToController(invalidRequest));
-    invalidRequest = request;
-    invalidRequest.endpoint.pushPort = 0;
-    QVERIFY(!provider.connectToController(invalidRequest));
-    invalidRequest = request;
-    invalidRequest.endpoint.bulkPort = 0;
-    QVERIFY(!provider.connectToController(invalidRequest));
+    provider.setProfileConfigured(false);
+    QCOMPARE(profilesSpy.count(), 1);
+    const Data::ControllerConnectionProfile incompleteProfile
+        = provider.connectionProfiles(scope).constFirst();
+    QVERIFY(!incompleteProfile.configured);
+    QVERIFY(!incompleteProfile.configurationIssue.isEmpty());
+    QVERIFY(!provider.connectToController(request));
+    provider.setProfileConfigured(true);
+    QCOMPARE(profilesSpy.count(), 2);
+    provider.setProfileSupported(false);
+    QCOMPARE(profilesSpy.count(), 3);
+    QVERIFY(!provider.connectionProfiles(scope).constFirst().supported);
+    QVERIFY(!provider.connectToController(request));
+    provider.setProfileSupported(true);
+    QCOMPARE(profilesSpy.count(), 4);
+    QVERIFY(provider.connectionProfiles({}).isEmpty());
     QCOMPARE(snapshotSpy.count(), 0);
 
     const Utils::Result<> connectResult = provider.connectToController(request);
     QVERIFY_RESULT(connectResult);
     const Data::ControllerConnectionSnapshot connecting = provider.connectionSnapshot();
-    QCOMPARE(connecting.projectId, request.projectId);
-    QCOMPARE(connecting.masterId, request.masterId);
-    QCOMPARE(connecting.endpoint, endpoint);
+    QCOMPARE(connecting.scope, request.scope);
+    QCOMPARE(connecting.profileId, request.profileId);
+    QCOMPARE(connecting.endpointSummary, profile.endpointSummary);
     QCOMPARE(connecting.state, Data::ControllerConnectionState::Connecting);
     QCOMPARE(connecting.sessionGeneration, quint64(1));
     QCOMPARE(connecting.channels.size(), 3);
-    QCOMPARE(connecting.channels.at(0).channel, Data::ControllerChannel::Control);
+    QCOMPARE(connecting.channels.at(0).id, QString("control"));
+    QCOMPARE(connecting.channels.at(0).displayName, QString("CONTROL"));
     QCOMPARE(connecting.channels.at(0).state, Data::ControllerChannelState::Connecting);
     QCOMPARE(connecting.channels.at(0).maximumPayloadBytes, 4096);
-    QCOMPARE(connecting.channels.at(1).channel, Data::ControllerChannel::Push);
+    QCOMPARE(connecting.channels.at(1).id, QString("events"));
     QCOMPARE(connecting.channels.at(1).maximumPayloadBytes, 65536);
-    QCOMPARE(connecting.channels.at(2).channel, Data::ControllerChannel::Bulk);
+    QCOMPARE(connecting.channels.at(2).id, QString("bulk"));
     QCOMPARE(connecting.channels.at(2).maximumPayloadBytes, 65536);
     QVERIFY(connecting.readOnly);
     QCOMPARE(snapshotSpy.count(), 1);
@@ -913,8 +1000,7 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
     QCOMPARE(connected.session->bootId, quint64(42));
     QVERIFY(!connected.session->ownsControlLease);
     QVERIFY(connected.controllerState);
-    QCOMPARE(
-        connected.controllerState->serviceState, Data::ControllerServiceState::Shutdown);
+    QCOMPARE(connected.controllerState->serviceState, Data::ControllerServiceState::Shutdown);
     QVERIFY(connected.controllerState->ready);
     QVERIFY(connected.capability);
     QCOMPARE(connected.capability->maximumSlaves, 64);
@@ -935,17 +1021,18 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
     QCOMPARE(Data::ControllerConnectionSnapshot(connected), connected);
     QCOMPARE(snapshotSpy.count(), 2);
 
+    provider.setAvailable(false);
+    QVERIFY(!provider.refreshController());
+    QCOMPARE(snapshotSpy.count(), 2);
+    provider.setAvailable(true);
     const Utils::Result<> refreshResult = provider.refreshController();
     QVERIFY_RESULT(refreshResult);
     QVERIFY(provider.connectionSnapshot().updatedAt.isValid());
     QCOMPARE(snapshotSpy.count(), 3);
 
     provider.degradePush();
-    QCOMPARE(
-        provider.connectionSnapshot().state, Data::ControllerConnectionState::Degraded);
-    QCOMPARE(
-        provider.connectionSnapshot().channels.at(1).state,
-        Data::ControllerChannelState::Failed);
+    QCOMPARE(provider.connectionSnapshot().state, Data::ControllerConnectionState::Degraded);
+    QCOMPARE(provider.connectionSnapshot().channels.at(1).state, Data::ControllerChannelState::Failed);
     QCOMPARE(snapshotSpy.count(), 4);
     const Utils::Result<> degradedRefreshResult = provider.refreshController();
     QVERIFY_RESULT(degradedRefreshResult);
@@ -956,7 +1043,7 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
     QCOMPARE(failed.state, Data::ControllerConnectionState::Failed);
     QVERIFY(failed.lastError);
     QCOMPARE(failed.lastError->source, Data::ControllerErrorSource::Protocol);
-    QCOMPARE(failed.lastError->channel, Data::ControllerChannel::Push);
+    QCOMPARE(failed.lastError->channelId, QString("events"));
     QCOMPARE(failed.lastError->operation, Data::ControllerOperation::SubscribeEvents);
     QVERIFY(!failed.lastError->code);
     QVERIFY(!failed.lastError->operationResult);
@@ -964,13 +1051,12 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
     QVERIFY(!failed.lastError->sourceDetail);
     QVERIFY(failed.lastError->requestId);
     QCOMPARE(*failed.lastError->requestId, quint64(73));
-    QCOMPARE(
-        failed.lastError->retryDisposition, Data::ControllerRetryDisposition::Reconnect);
+    QCOMPARE(failed.lastError->retryDisposition, Data::ControllerRetryDisposition::Reconnect);
     QCOMPARE(snapshotSpy.count(), 6);
 
     Data::ControllerOperationError controllerError;
     controllerError.source = Data::ControllerErrorSource::Controller;
-    controllerError.channel = Data::ControllerChannel::Control;
+    controllerError.channelId = "control";
     controllerError.operation = Data::ControllerOperation::QueryState;
     controllerError.code = -6;
     controllerError.operationResult = -2;
@@ -982,15 +1068,22 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
     QCOMPARE(*controllerErrorCopy.sourceDetail, quint64(17));
     QCOMPARE(*controllerErrorCopy.retryAfterMs, 250);
 
+    provider.setAvailable(false);
     const Utils::Result<> failedDisconnectResult = provider.disconnectFromController();
     QVERIFY_RESULT(failedDisconnectResult);
-    QCOMPARE(
-        provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected);
+    QCOMPARE(provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected);
     for (const Data::ControllerChannelStatus &channel : provider.connectionSnapshot().channels)
         QCOMPARE(channel.state, Data::ControllerChannelState::Disconnected);
+    QCOMPARE(provider.connectionSnapshot().scope, request.scope);
+    QCOMPARE(provider.connectionSnapshot().profileId, request.profileId);
+    QVERIFY(!provider.connectionSnapshot().session);
+    QVERIFY(!provider.connectionSnapshot().lastHeartbeatAt.isValid());
     QCOMPARE(provider.connectionSnapshot().sessionGeneration, quint64(2));
     QCOMPARE(snapshotSpy.count(), 7);
+    QVERIFY(!provider.connectToController(request));
+    QCOMPARE(snapshotSpy.count(), 7);
 
+    provider.setAvailable(true);
     const Utils::Result<> reconnectResult = provider.connectToController(request);
     QVERIFY_RESULT(reconnectResult);
     QCOMPARE(provider.connectionSnapshot().sessionGeneration, quint64(3));
@@ -1175,6 +1268,8 @@ void EtherCATCoreTests::testProviderRegistryTracksObjectPool()
     TestScanProvider provider;
     TestPropertyPageProvider reentrantProvider;
     TestControllerConnectionProvider connectionProvider;
+    TestControllerConnectionProvider alternateConnectionProvider(
+        "EtherCAT.Connection.VendorIpc", "Vendor IPC controller", "ipc://controller-1", {"primary"});
 
     ExtensionSystem::PluginManager::addObject(&provider);
     QCOMPARE(registry->provider(provider.id()), &provider);
@@ -1194,6 +1289,13 @@ void EtherCATCoreTests::testProviderRegistryTracksObjectPool()
         registry->providers(ProviderKind::ControllerConnection),
         QList<Provider *>({&connectionProvider}));
     QCOMPARE(addedSpy.count(), 3);
+
+    ExtensionSystem::PluginManager::addObject(&alternateConnectionProvider);
+    QCOMPARE(registry->provider(alternateConnectionProvider.id()), &alternateConnectionProvider);
+    QCOMPARE(
+        registry->providers(ProviderKind::ControllerConnection),
+        QList<Provider *>({&connectionProvider, &alternateConnectionProvider}));
+    QCOMPARE(addedSpy.count(), 4);
 
     bool departingProviderUnlinked = false;
     bool nestedRemovalObserved = false;
@@ -1220,8 +1322,15 @@ void EtherCATCoreTests::testProviderRegistryTracksObjectPool()
 
     ExtensionSystem::PluginManager::removeObject(&connectionProvider);
     QVERIFY(!registry->provider(connectionProvider.id()));
-    QVERIFY(registry->providers(ProviderKind::ControllerConnection).isEmpty());
+    QCOMPARE(
+        registry->providers(ProviderKind::ControllerConnection),
+        QList<Provider *>({&alternateConnectionProvider}));
     QCOMPARE(removedSpy.count(), 3);
+
+    ExtensionSystem::PluginManager::removeObject(&alternateConnectionProvider);
+    QVERIFY(!registry->provider(alternateConnectionProvider.id()));
+    QVERIFY(registry->providers(ProviderKind::ControllerConnection).isEmpty());
+    QCOMPARE(removedSpy.count(), 4);
 }
 
 void EtherCATCoreTests::testSettingsPageIsRegistered()

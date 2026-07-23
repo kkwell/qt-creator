@@ -25,8 +25,6 @@ enum class ControllerConnectionState {
     Failed,
 };
 
-enum class ControllerChannel { Unknown, Control, Push, Bulk };
-
 enum class ControllerChannelState {
     Disconnected,
     Connecting,
@@ -101,21 +99,33 @@ enum class ControllerOperation {
 
 enum class ControllerRetryDisposition { Unknown, Retryable, Reconnect, NotRetryable };
 
-struct ETHERCATDATA_EXPORT ControllerEndpoint
+struct ETHERCATDATA_EXPORT ControllerConnectionScope
 {
-    QString host;
-    quint16 controlPort = 0;
-    quint16 pushPort = 0;
-    quint16 bulkPort = 0;
+    NodeId projectId;
+    NodeId masterId;
 
-    friend bool operator==(const ControllerEndpoint &, const ControllerEndpoint &) = default;
+    friend bool operator==(const ControllerConnectionScope &, const ControllerConnectionScope &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT ControllerConnectionProfile
+{
+    NodeId id;
+    QString displayName;
+    QString endpointSummary;
+    bool configured = false;
+    bool supported = false;
+    bool defaultProfile = false;
+    QString configurationIssue;
+
+    friend bool operator==(const ControllerConnectionProfile &, const ControllerConnectionProfile &)
+        = default;
 };
 
 struct ETHERCATDATA_EXPORT ControllerConnectionRequest
 {
-    NodeId projectId;
-    NodeId masterId;
-    ControllerEndpoint endpoint;
+    ControllerConnectionScope scope;
+    NodeId profileId;
 
     friend bool operator==(const ControllerConnectionRequest &, const ControllerConnectionRequest &)
         = default;
@@ -132,7 +142,8 @@ struct ETHERCATDATA_EXPORT ControllerProtocolVersion
 
 struct ETHERCATDATA_EXPORT ControllerChannelStatus
 {
-    ControllerChannel channel = ControllerChannel::Unknown;
+    QString id;
+    QString displayName;
     ControllerChannelState state = ControllerChannelState::Disconnected;
     int maximumPayloadBytes = 0;
     QDateTime lastActivityAt;
@@ -252,7 +263,7 @@ struct ETHERCATDATA_EXPORT ControllerFirmwareSummary
 struct ETHERCATDATA_EXPORT ControllerOperationError
 {
     ControllerErrorSource source = ControllerErrorSource::Unknown;
-    ControllerChannel channel = ControllerChannel::Unknown;
+    QString channelId;
     ControllerOperation operation = ControllerOperation::None;
     std::optional<qint32> code;
     std::optional<qint32> operationResult;
@@ -271,9 +282,9 @@ struct ETHERCATDATA_EXPORT ControllerOperationError
 
 struct ETHERCATDATA_EXPORT ControllerConnectionSnapshot
 {
-    NodeId projectId;
-    NodeId masterId;
-    ControllerEndpoint endpoint;
+    ControllerConnectionScope scope;
+    NodeId profileId;
+    QString endpointSummary;
     ControllerConnectionState state = ControllerConnectionState::Disconnected;
     QList<ControllerChannelStatus> channels;
     ControllerProtocolVersion protocolVersion;
@@ -297,7 +308,6 @@ struct ETHERCATDATA_EXPORT ControllerConnectionSnapshot
 } // namespace EtherCAT::Data
 
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerConnectionState)
-Q_DECLARE_METATYPE(EtherCAT::Data::ControllerChannel)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerChannelState)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerServiceState)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerSeverity)
@@ -307,7 +317,8 @@ Q_DECLARE_METATYPE(EtherCAT::Data::ControllerFirmwareState)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerErrorSource)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerOperation)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerRetryDisposition)
-Q_DECLARE_METATYPE(EtherCAT::Data::ControllerEndpoint)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerConnectionScope)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerConnectionProfile)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerConnectionRequest)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerProtocolVersion)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerChannelStatus)

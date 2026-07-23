@@ -2033,3 +2033,37 @@ Enabled and `-noload EtherCATCore` offscreen samples remained alive 10/10 with
 Core mapped 10/10 and 0/10 respectively; both exited through the intentional
 SIGTERM target status 15 with no residual qualification process or new
 Embed Labs DiagnosticReport.
+
+## Multi-vendor controller Provider/Profile API delta
+
+`ISSUE-CORE-CONTROLLER-PROVIDER-PROFILE-002` starts from local baseline
+`a6bcd2dfe813e16ccc62fd61afa6b41473b6542e`. It revises only the existing
+product-owned EtherCATData connection values, EtherCATCore abstract Provider,
+metatype registration, fake contract tests, and product documentation.
+
+The revision removes Product-API-specific host plus Control/Push/Bulk ports
+from the cross-plugin request. A concrete vendor Provider now owns stable
+connection profiles and all private endpoint configuration. The common request
+contains only a Project/Master scope and profile ID; the snapshot contains a
+redacted endpoint summary and arbitrary provider-named channels. Two fake
+providers exercise coexistence, safe Provider-scoped profile-ID reuse,
+unknown-profile rejection, non-TCP summaries, availability and profile
+configuration/support gates, arbitrary channel counts, and independent
+removal. The public text contract requires every profile, channel, and error
+diagnostic to omit secrets.
+
+No path under upstream `src/plugins/coreplugin`, ProjectExplorer, or `src/app`
+changes. `ProviderRegistry` is unchanged, the direct Core intrusion count
+remains five, and no concrete adapter, Qt Network dependency, socket, protocol
+frame, page, action, Project format, Scan/Diagnostics source, controller
+connection, or hardware operation is added. No CMake/qbs source list changes,
+so their paired descriptions remain synchronized and qbs is not run.
+
+Failure-first compilation, the 18-event focused Core suite, the 141-event
+sequential six-plugin regression, and the complete Qt 6.11.0
+`WITH_TESTS=OFF` 16-plugin product build passed. Enabled and
+`-noload EtherCATCore` offscreen lifecycle samples remained alive 10/10 with
+Core mapped 10/10 and 0/10 respectively. Both intentional SIGTERM exits
+returned status 15, with no matching residual process or new Embed Labs
+DiagnosticReport. Evidence is under
+`/private/tmp/embed-labs-i18n-compact/controller-profile-v2`.

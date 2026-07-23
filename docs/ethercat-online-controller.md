@@ -16,7 +16,26 @@ integration. It separates five evidence classes:
 contract required by a future controller plugin. It adds no socket, protocol
 codec, UI, bus scan, state transition, or hardware execution.
 
-## Controller endpoints
+`ISSUE-CORE-CONTROLLER-PROVIDER-PROFILE-002` revises that semantic contract
+before a concrete plugin consumes it. A controller manufacturer or wire
+protocol is represented by an independent Provider plugin with provider-owned
+profiles and arbitrary named channels. Protocol-specific endpoint data never
+enters the common Workbench/Core request.
+
+## Multi-vendor adapter boundary
+
+`EtherCATProductApi` is the first headless adapter and owns only the Embed Labs
+Product API v1.9 implementation. ECAP framing, the three sockets, numeric
+message types, CRC32C, SessionId/BootId, request correlation, and Product API
+error codes remain private to that plugin.
+
+Future controller protocols use independent plugins that register their own
+`ControllerConnectionProvider`. Workbench consumes only provider/profile IDs
+and semantic snapshots. It must not downcast a Provider, branch on vendor
+names, manufacture protocol defaults, or silently switch to another Provider
+when the selected one disappears.
+
+## Embed Labs Product API endpoints
 
 | Channel | Endpoint | Intended use |
 |---|---|---|
@@ -25,7 +44,7 @@ codec, UI, bus scan, state transition, or hardware execution.
 | Bulk | `192.168.3.101:15202` | Capability and bulk transfer |
 | Base endpoint | `192.168.3.101:15200` | User-facing Qt/Python connection value |
 
-The future `EtherCATProductApi` plugin owns these defaults and all
+The future `EtherCATProductApi` adapter owns these defaults and all
 `Qt::Network` use. `EtherCATData`, `EtherCATCore`, Project, Devices,
 Workbench, Scan, and Diagnostics do not own sockets or ECAP frames.
 
@@ -107,7 +126,7 @@ the Qt product already connects to hardware.
 
 ## Confirmed issues and handoff
 
-### Client defect: firmware push before event-resume result
+### Client defect: firmware push before event-resume result (`ISSUE-API-011`)
 
 The reference Python client's `resume_events(0)` can fail with:
 
@@ -127,6 +146,25 @@ Recommended controller-client repository change:
 4. add a regression where FirmwareProgress precedes ResumeEventsResult.
 
 This is a confirmed reference-client defect, not evidence of a server defect.
+
+### Protocol contract gap: opaque Capability payload (`ISSUE-API-012`)
+
+The authoritative protocol defines `GetCapability` (`0x0400`) and Capability
+(`0x0480`) but does not define a payload size, version, field layout, or strict
+decoder. The audited Python client likewise returns only opaque bytes.
+
+The observed 64-slave, 125,000-ns, eight-frame, and 4,096-byte limits therefore
+remain hardware evidence, not a wire-layout contract that the Qt adapter may
+guess. Until the Windows controller task publishes a versioned Capability
+descriptor schema and golden fixture, the adapter may validate and hash the
+opaque response but must leave decoded `ControllerCapabilitySummary` limits
+unknown.
+
+The same documentation audit, tracked as `ISSUE-API-013`, found that the first
+`quint64` in the 16-byte PushHeartbeat payload is not defined. Only its
+replaceable response flags and second BootId field are currently authoritative.
+ControllerState and PerformanceSnapshot push flags also require an explicit
+contract statement.
 
 ### Master API gap: no physical topology edges
 
@@ -201,13 +239,15 @@ internal directory directly.
 ## Delivery order
 
 1. `ISSUE-CORE-CONTROLLER-CONNECTION-API-001`
-2. `ISSUE-ONLINE-CONNECTION-PAGE-001`
-3. Provider-neutral Scan workflow
-4. Product API discovery state machine
-5. ESI match/import/re-match
-6. Project Configuration versus Current Bus tree and Apply
-7. Embedded Project/Actual/Overlay topology
-8. Real diagnostics Provider
+2. `ISSUE-CORE-CONTROLLER-PROVIDER-PROFILE-002`
+3. headless `EtherCATProductApi` Embed Labs adapter
+4. provider-neutral embedded Communication page and Connect/Disconnect
+5. Provider-neutral Scan workflow
+6. Product API discovery state machine
+7. ESI match/import/re-match
+8. Project Configuration versus Current Bus tree and Apply
+9. Embedded Project/Actual/Overlay topology
+10. Real diagnostics Provider
 
 Each issue is independently tested and committed locally on `embed-labs`.
 No Qt product commit is pushed to a remote repository.
