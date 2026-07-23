@@ -30,7 +30,7 @@ documentation, review, and local-commit gates.
 | 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, configured-slave, ESI Repository, individual ESI catalogue-device General, master-side ESI insertion, supported-device drag-and-drop, and explicit active-project selection workflows, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
-| 7 | `EtherCATProductApiPlugin` | Planned; Core multi-provider/profile API complete | First vendor adapter: Embed Labs Product API transport, three-channel lifecycle, and read-only controller Provider |
+| 7 | `EtherCATProductApiPlugin` | Complete; locally qualified | First vendor adapter: Embed Labs Product API transport, three-channel lifecycle, and read-only controller Provider |
 
 `EtherCATData` is an infrastructure library, not a feature container. Its
 offline configuration contract is persisted by EtherCATProject format version
@@ -46,8 +46,8 @@ Qt Creator Core / ExtensionSystem / Utils / ProjectExplorer
                          EtherCATData
                               ^
                     EtherCATCorePlugin
-                         ^       ^
-              ProjectPlugin  DevicesPlugin
+                     ^    ^       ^
+      ProductApiPlugin ProjectPlugin  DevicesPlugin
                          ^       ^
                          WorkbenchPlugin
                           ^          ^
@@ -61,7 +61,7 @@ cannot include Workbench private headers.
 Each future controller adapter depends only on EtherCATData, EtherCATCore,
 its transport modules, and the Qt Creator platform dependencies it actually
 uses. Core does not depend back on an adapter. `EtherCATProductApi` is the
-first implementation and the only EtherCAT plugin that will own Embed Labs
+first implementation and the only EtherCAT plugin that owns Embed Labs
 ECAP framing and `Qt Network`. A later vendor uses a separate plugin and
 Provider rather than adding vendor branches to ProductApi, Core, or Workbench.
 An adapter may later implement public connection, Scan, and Diagnostics
@@ -105,12 +105,29 @@ Mock Diagnostics plugin.
 
 ## Online controller connection ownership
 
-`EtherCATProductApiPlugin` is the sole planned owner of Embed Labs Product API
+`EtherCATProductApiPlugin` is the sole current owner of Embed Labs Product API
 framing, Control/Push/Bulk sockets, channel roles, SessionId/BootId
-correlation, request IDs, CRC validation, heartbeat, timeout, reconnect,
-control lease, and discovery state machines. Those implementation details do
-not enter EtherCATCore, Workbench, Project, Devices, Scan, or Diagnostics.
-Other controller protocols use independent adapter plugins.
+correlation, request IDs, CRC validation, inbound Push heartbeat, timeout, and
+bounded read-only reconnect. It remains the intended owner of later
+control-lease and discovery state machines, but this issue implements neither.
+Those implementation details do not enter EtherCATCore, Workbench, Project,
+Devices, Scan, or Diagnostics. Other controller protocols use independent
+adapter plugins.
+
+Its current outbound allow-list is closed to HELLO, GetState, GetCapability,
+GetPackageState, capability-gated GetFirmwareState, and feature-gated
+ResumeEvents on their defined channels. No profile, Workbench command, or
+generic Provider value can inject another numeric Product API request. In
+particular, Control Heartbeat is excluded because it renews a lease, and
+discovery, SDO/PDO, state transition, package, and firmware-write operations
+remain outside this adapter issue.
+
+The adapter currently recovers an auxiliary Push or Bulk failure by
+invalidating the semantic generation, closing all three sockets, and
+attempting a bounded resume of the complete Control/Push/Bulk session. It does
+not independently reconnect one auxiliary channel. That behavior is not a Core
+rule: another Provider may have one channel, no session identity, or a
+different recovery strategy.
 
 The Core prerequisite exposes only immutable semantic values and
 `ControllerConnectionProvider`. ProviderRegistry already permits multiple
@@ -138,11 +155,21 @@ operation with separate authorization, package/state preflight,
 configuration-mode transitions, cancellation, before/after audit, and lease
 cleanup.
 
+The implemented adapter boundary, strict outbound allow-list, semantic mapping,
+generation cleanup, and remaining protocol gaps are recorded in
+`docs/ethercat-product-api.md`.
+
 Workbench will consume the Provider and host ProductApi-contributed pages
 through public extension points. It will not retain sockets, codec objects,
 threads, internal ProductApi objects, or network callbacks. Scan and
 Diagnostics remain independent Provider contracts, so connection success does
 not fabricate scan results or diagnostic health.
+
+Local codec and loopback validation is Mock protocol evidence only. The
+Windows Python reference-client audit is separate protocol/hardware input and
+does not qualify the Qt adapter on real hardware. Final integrated test totals
+and product-build acceptance remain outside this architecture statement until
+issue-wide validation is complete.
 
 The full source, safety, endpoint, CODESYS workflow, and controller/client issue
 handoff is recorded in `docs/ethercat-online-controller.md`.
@@ -2905,7 +2932,9 @@ removal of one provider while the other remains registered. There is still
 only one active connection snapshot per Provider. Concurrent
 multi-controller sessions, persistent Provider/Profile selection,
 connection-to-scan/diagnostic backend families, transport code, pages, and
-actions remain later issues.
+actions were outside that Core revision. The separate ProductApi issue now
+supplies the first headless transport Provider; UI, Scan, Diagnostics, and
+controlled-write integration remain later issues.
 
 This is an intentional source/API revision before third-party adapter binaries
 exist. It changes no `ProviderRegistry` branch, Qt Creator Core,

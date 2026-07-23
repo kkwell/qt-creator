@@ -53504,4 +53504,215 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>未分配的输入</translation>
     </message>
 </context>
+<context>
+    <name>QtC::EtherCATProductApi</name>
+    <message>
+        <source>Embed Labs Product API</source>
+        <translation>Embed Labs 产品 API</translation>
+    </message>
+    <message>
+        <source>Embed Labs Product API v1.9</source>
+        <translation>Embed Labs 产品 API v1.9</translation>
+    </message>
+    <message>
+        <source>The controller endpoint is not configured.</source>
+        <translation>尚未配置控制器端点。</translation>
+    </message>
+    <message>
+        <source>The controller connection profile is unavailable.</source>
+        <translation>控制器连接配置不可用。</translation>
+    </message>
+    <message>
+        <source>The Embed Labs controller provider is unavailable.</source>
+        <translation>Embed Labs 控制器提供程序不可用。</translation>
+    </message>
+    <message>
+        <source>Select an EtherCAT project and master before connecting.</source>
+        <translation>连接前请选择 EtherCAT 项目和主站。</translation>
+    </message>
+    <message>
+        <source>The selected controller profile is not available.</source>
+        <translation>所选控制器配置不可用。</translation>
+    </message>
+    <message>
+        <source>Control</source>
+        <translation>控制通道</translation>
+    </message>
+    <message>
+        <source>Push</source>
+        <translation>推送通道</translation>
+    </message>
+    <message>
+        <source>Bulk</source>
+        <translation>批量通道</translation>
+    </message>
+    <message>
+        <source>The controller returned a malformed protocol frame.</source>
+        <translation>控制器返回了格式错误的协议帧。</translation>
+    </message>
+    <message>
+        <source>The controller channel connection failed.</source>
+        <translation>控制器通道连接失败。</translation>
+    </message>
+    <message>
+        <source>The controller closed the channel.</source>
+        <translation>控制器关闭了通道。</translation>
+    </message>
+    <message>
+        <source>The controller channel connection timed out.</source>
+        <translation>控制器通道连接超时。</translation>
+    </message>
+    <message>
+        <source>The controller request could not be queued.</source>
+        <translation>控制器请求无法加入发送队列。</translation>
+    </message>
+    <message>
+        <source>The controller response timed out.</source>
+        <translation>等待控制器响应超时。</translation>
+    </message>
+    <message>
+        <source>The controller handshake could not be encoded.</source>
+        <translation>无法编码控制器握手请求。</translation>
+    </message>
+    <message>
+        <source>The controller request could not be encoded.</source>
+        <translation>无法编码控制器请求。</translation>
+    </message>
+    <message>
+        <source>The event subscription could not be encoded.</source>
+        <translation>无法编码事件订阅请求。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid handshake error.</source>
+        <translation>控制器返回了无效的握手错误。</translation>
+    </message>
+    <message>
+        <source>The controller session capacity is exhausted.</source>
+        <translation>控制器会话容量已用尽。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid handshake.</source>
+        <translation>控制器返回了无效的握手响应。</translation>
+    </message>
+    <message>
+        <source>The controller is missing required protocol features.</source>
+        <translation>控制器缺少必需的协议功能。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid channel payload limit.</source>
+        <translation>控制器返回了无效的通道负载上限。</translation>
+    </message>
+    <message>
+        <source>The resumed controller session changed BootId.</source>
+        <translation>恢复的控制器会话更改了 BootId。</translation>
+    </message>
+    <message>
+        <source>The controller channels disagree on session identity.</source>
+        <translation>控制器各通道的会话标识不一致。</translation>
+    </message>
+    <message>
+        <source>The controller response has a stale session identity.</source>
+        <translation>控制器响应包含过期的会话标识。</translation>
+    </message>
+    <message>
+        <source>The controller rejected a read-only request.</source>
+        <translation>控制器拒绝了只读请求。</translation>
+    </message>
+    <message>
+        <source>The controller returned an unknown RequestId.</source>
+        <translation>控制器返回了未知的 RequestId。</translation>
+    </message>
+    <message>
+        <source>The controller returned a malformed error status.</source>
+        <translation>控制器返回了格式错误的状态响应。</translation>
+    </message>
+    <message>
+        <source>The package-state response does not match the request.</source>
+        <translation>软件包状态响应与请求不匹配。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid operation result.</source>
+        <translation>控制器返回了无效的操作结果。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid event subscription result.</source>
+        <translation>控制器返回了无效的事件订阅结果。</translation>
+    </message>
+    <message>
+        <source>The event subscription checkpoint does not match the request.</source>
+        <translation>事件订阅检查点与请求不匹配。</translation>
+    </message>
+    <message>
+        <source>The controller event history has a gap.</source>
+        <translation>控制器事件历史存在缺口。</translation>
+    </message>
+    <message>
+        <source>The controller could not establish event recovery.</source>
+        <translation>控制器无法建立事件恢复。</translation>
+    </message>
+    <message>
+        <source>An unrelated frame interrupted the event replay.</source>
+        <translation>无关帧中断了事件重放。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid alarm event.</source>
+        <translation>控制器返回了无效的告警事件。</translation>
+    </message>
+    <message>
+        <source>The controller event replay is not contiguous.</source>
+        <translation>控制器事件重放不连续。</translation>
+    </message>
+    <message>
+        <source>The controller event replay ended at the wrong checkpoint.</source>
+        <translation>控制器事件重放在错误的检查点结束。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid replaceable push frame.</source>
+        <translation>控制器返回了无效的可替换推送帧。</translation>
+    </message>
+    <message>
+        <source>The controller returned an uncorrelated channel frame.</source>
+        <translation>控制器返回了无法关联请求的通道帧。</translation>
+    </message>
+    <message>
+        <source>The push frame has a stale session identity.</source>
+        <translation>推送帧包含过期的会话标识。</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid asynchronous event status.</source>
+        <translation>控制器返回了无效的异步事件状态。</translation>
+    </message>
+    <message>
+        <source>A live alarm arrived before an event checkpoint.</source>
+        <translation>建立事件检查点前收到了实时告警。</translation>
+    </message>
+    <message>
+        <source>The live controller alarm sequence has a gap.</source>
+        <translation>控制器实时告警序列存在缺口。</translation>
+    </message>
+    <message>
+        <source>The controller returned an unknown push message.</source>
+        <translation>控制器返回了未知的推送消息。</translation>
+    </message>
+    <message>
+        <source>The controller session is shutting down.</source>
+        <translation>控制器会话正在关闭。</translation>
+    </message>
+    <message>
+        <source>The controller connection request is incomplete.</source>
+        <translation>控制器连接请求不完整。</translation>
+    </message>
+    <message>
+        <source>A controller connection operation is already active.</source>
+        <translation>已有控制器连接操作正在进行。</translation>
+    </message>
+    <message>
+        <source>Connect to the controller before refreshing.</source>
+        <translation>刷新前请先连接控制器。</translation>
+    </message>
+    <message>
+        <source>A controller refresh is already active.</source>
+        <translation>已有控制器刷新操作正在进行。</translation>
+    </message>
+</context>
 </TS>

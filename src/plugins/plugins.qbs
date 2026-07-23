@@ -46,6 +46,7 @@ Project {
         "easyboard/easyboard.qbs",
         "ethercatcore/ethercatcore.qbs",
         "ethercatdevices/ethercatdevices.qbs",
+        "ethercatproductapi/ethercatproductapi.qbs",
         "ethercatproject/ethercatproject.qbs",
         "ethercatworkbench/ethercatworkbench.qbs",
         "ethercatscan/ethercatscan.qbs",

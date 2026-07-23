@@ -2067,3 +2067,52 @@ Core mapped 10/10 and 0/10 respectively. Both intentional SIGTERM exits
 returned status 15, with no matching residual process or new Embed Labs
 DiagnosticReport. Evidence is under
 `/private/tmp/embed-labs-i18n-compact/controller-profile-v2`.
+
+## Headless Product API adapter delta
+
+`ISSUE-ONLINE-PRODUCTAPI-READONLY-ADAPTER-001` adds the product-owned
+`EtherCATProductApi` plugin as the first concrete implementation of the
+generic `ControllerConnectionProvider` contract. The plugin depends on
+EtherCATData, EtherCATCore, Utils, and Qt Network; its CMake and qbs
+descriptions list the same target, sources, and dependencies.
+
+The adapter owns only the Embed Labs Product API v1.9 protocol. ECAP framing,
+CRC32C, numeric message and status values, Control/Push/Bulk sockets, endpoint
+defaults, SessionId/BootId/RequestId/Sequence correlation, timeout, retry, and
+resume behavior stay private to that plugin. A later controller family uses a
+separate adapter plugin and globally unique Provider ID. EtherCATCore and
+Workbench gain no vendor enum, protocol switch, fixed channel count, host,
+port, credential, or byte-layout dependency.
+
+The current outbound policy is a closed read-only allow-list: HELLO on each
+required channel, GetState, GetCapability, GetPackageState, capability-gated
+GetFirmwareState, and feature-gated ResumeEvents. The adapter sends no control
+lease, control heartbeat, discovery, SDO/PDO, state transition, package
+mutation, firmware mutation, or other write request. Connect and Refresh
+therefore cannot scan the bus or mutate the offline Project.
+
+Control creates one Product API session and Push/Bulk join it. The current
+recovery policy does not reconnect an auxiliary socket independently: loss of
+Push or Bulk invalidates the local semantic generation, closes all three
+channels, and starts a bounded full-session resume sequence across Control,
+Push, and Bulk. A matching resumed SessionId/BootId retains the last alarm
+checkpoint so replay continues from the last accepted sequence; replay
+rejection, a live sequence gap, a new identity, terminal failure, explicit
+Disconnect, or shutdown clears it. That policy is ProductApi-private and does
+not constrain a future Provider whose protocol has one channel, another
+channel layout, or no session-resume concept.
+
+The delta adds no Workbench page, action, Project format field, Scan provider,
+Diagnostics provider, controlled discovery, or path under upstream
+`src/plugins/coreplugin`, ProjectExplorer, or `src/app`. Local codec and
+loopback checks are Mock protocol evidence. Final local qualification passed
+36 focused ProductApi events and 177 sequential events across the seven
+EtherCAT suites. Translation validation covered 1,301 messages with no
+unfinished or empty entries, and the complete Qt 6.11.0 `WITH_TESTS=OFF`
+product build passed with exactly 17 plugin dylibs. Enabled and
+`-noload EtherCATProductApi` offscreen lifecycle checks stayed alive for 10/10
+samples with the adapter mapped 10/10 and 0/10 respectively, then left no
+matching process or new Embed Labs DiagnosticReport after intentional
+termination. These results do not establish that the Qt adapter connected to
+the real controller; that hardware qualification remains a later,
+explicitly authorized issue.

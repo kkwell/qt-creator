@@ -34,13 +34,14 @@ and trend records, explicit stream and EtherCAT states, alarm lifecycle, and a
 checked `DiagnosticsProvider` contract. It remains an in-process capability and
 defines no controller session, network command, packet, or private ABI.
 
-The controller-connection API revision adds one semantic prerequisite for
-controller-adapter plugins. API v2 describes a stable Project/Master scope,
-provider-owned connection profiles, arbitrary named transport channels,
-negotiated session/version, read-only state/capability/package/firmware
-summaries, heartbeat freshness, and structured errors. It does not contain a
-socket, ECAP frame, message number, CRC, byte layout, network thread,
-state-changing command, or bus scan.
+The controller-connection API revision adds a product-neutral semantic
+prerequisite for controller-adapter plugins. API v2 describes a stable
+Project/Master scope, provider-owned connection profiles, arbitrary named
+transport channels, optional negotiated session/version identity, read-only
+state/capability/package/firmware summaries, heartbeat freshness, and
+structured errors. It does not require three channels or a session protocol,
+and it contains no socket, ECAP frame, message number, CRC, byte layout,
+network thread, state-changing command, or bus scan.
 
 The offline-configuration revision adds typed Process Data, Startup, and DC
 values plus UI-independent validation and process-image preview algorithms.
@@ -110,7 +111,7 @@ its entry and must clear it when its operation ends or its plugin shuts down.
 All optional EtherCAT capabilities derive from `Provider` and have a globally
 unique `Utils::Id`, user-visible name, type, and availability flag.
 
-| Provider type | Owning future plugin |
+| Provider type | Owning plugin |
 |---|---|
 | `ProjectService` | EtherCATProject |
 | `DeviceRepositoryProvider` | EtherCATDevices |
@@ -127,10 +128,10 @@ for later feature data.
 ## Controller connection provider contract
 
 `ControllerConnectionProvider` is the GUI-thread, in-process boundary between
-future Qt Creator pages and one concrete vendor/protocol adapter. Multiple
-providers of this kind may coexist. Each provider exposes profiles for a
-Project/Master scope, one current immutable `ControllerConnectionSnapshot`,
-and three asynchronous operation requests:
+Qt Creator pages and one concrete vendor/protocol adapter registered by an
+independent plugin. Multiple providers of this kind may coexist. Each provider
+exposes profiles for a Project/Master scope, one current immutable
+`ControllerConnectionSnapshot`, and three asynchronous operation requests:
 
 - `connectToController(request)`;
 - `refreshController()`; and
@@ -160,6 +161,14 @@ the `{providerId, profileId}` pair explicitly. When multiple connection
 providers are installed it must not silently choose the first one, and removal
 of a selected provider must produce an unavailable state rather than switching
 to another vendor.
+
+The common contract has no vendor enum, protocol selector, fixed endpoint
+shape, or Control/Push/Bulk channel enum. It also does not define an outbound
+command set. Each adapter owns its private transport, request allow-list,
+status decoder, reconnect/resume policy, and any later write authorization.
+A new manufacturer or incompatible protocol therefore adds another plugin and
+Provider instead of branching in EtherCATCore, Workbench, or an existing
+adapter.
 
 Profile and channel IDs are nonempty and stable within their Provider. At most
 one profile for a scope is marked default. Display names and endpoint summaries
@@ -207,6 +216,12 @@ The snapshot contains:
 - optional active/staged package and firmware lifecycle summaries; and
 - one optional structured error.
 
+The `readOnly` marker is a Provider assertion about the currently exposed
+connection workflow, not a generic Core command permission. Core neither
+derives it from a wire protocol nor offers an arbitrary-message escape hatch;
+the concrete adapter remains responsible for enforcing its outbound
+allow-list.
+
 After disconnect, a Provider may retain the last scope, profile, redacted
 endpoint summary, channel names, and decoded summaries as historical context,
 but it must clear the live session/lease identity and heartbeat timestamp.
@@ -230,11 +245,20 @@ values returned by that controller protocol when applicable. A local
 controller-returned evidence may use the `Controller` source; local parsing or
 connectivity failures must not be mislabeled as master defects.
 
-This revision authorizes no control lease, configuration mode, discovery,
+This Core revision authorizes no control lease, configuration mode, discovery,
 runtime state transition, package mutation, SDO/PDO write, or firmware change.
-The concrete Product API implementation, settings, reconnection policy, and
-read-only message mapping are a later independent issue documented in
-`docs/ethercat-online-controller.md`.
+The first concrete implementation is the independent, headless
+`EtherCATProductApi` plugin documented in `docs/ethercat-product-api.md` and
+`docs/ethercat-online-controller.md`. It consumes this generic contract while
+keeping its fixed endpoints, three-channel ECAP session, strict read-only
+outbound allow-list, and full-session resume policy private.
+
+The ProductApi adapter's current auxiliary-channel recovery closes Control,
+Push, and Bulk together and attempts a bounded resume of the complete session;
+that is an adapter decision, not a `ControllerConnectionProvider` requirement.
+Local codec and loopback validation remains Mock protocol evidence. Until an
+explicit Qt hardware run is authorized and recorded, neither this Core
+contract nor the concrete plugin claims a real Qt-to-controller connection.
 
 ## Scan provider contract
 

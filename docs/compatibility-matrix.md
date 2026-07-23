@@ -5,7 +5,7 @@
 | Item | Supported or observed baseline | Evidence status |
 |---|---|---|
 | Product branch | `embed-labs` only | Verified |
-| Current issue baseline commit | `a6bcd2dfe813e16ccc62fd61afa6b41473b6542e` | Verified |
+| Current issue baseline commit | `6ed90a6d5134abab9e1c1d000647b0724ca39c88` | Verified |
 | Product version | 20.0.1 | Verified |
 | Recorded Qt Creator merge point | `11ba5cec09dce75db4bc948d98055e338ff59576` | Verified |
 | Qualified product Qt | Homebrew 6.11.0 | Clean Release build and GUI smoke verified |
@@ -46,7 +46,7 @@ local decisions and easier maintenance.
 | EtherCATWorkbench | EtherCAT mode, device tree, selection, master-side ESI insertion, supported-device drag-and-drop, and offline property pages | Stage 4 verified |
 | EtherCATScan | Local Mock scan, topology comparison, and checked acceptance | Stage 5 verified |
 | EtherCATDiagnostics | Local Mock state, WKC, DC, alarm, and performance views | Stage 6 verified |
-| EtherCATProductApi | Planned headless Embed Labs Product API v1.9 adapter | Not built; multi-provider/profile Core API verified separately |
+| EtherCATProductApi | Headless Embed Labs Product API v1.9 adapter | Locally qualified; real Qt hardware qualification pending |
 
 ### Phase-1 EtherCAT profile
 
@@ -89,9 +89,12 @@ behavior. Its ordered gates are:
 7. truthful embedded topology; and
 8. real diagnostics.
 
-The first two prerequisites are implemented. The product still builds 16
-plugins; `EtherCATProductApi` is not yet present. A Python reference-client
-read-only hardware audit is protocol input, not Qt product qualification.
+The first three prerequisites are implemented and locally qualified. The
+synchronized product profile includes the headless `EtherCATProductApi`, and
+the final Qt 6.11.0 `WITH_TESTS=OFF` product build contains exactly 17 plugin
+dylibs. Its codec and local loopback checks remain Mock protocol evidence; the
+Python reference-client read-only hardware audit is protocol input, not Qt
+product qualification.
 
 ### Hidden or excluded plugins
 
@@ -134,7 +137,7 @@ function is outside the product target and records migration or recovery.
 | Scan UI and topology comparison | Stage 5 verified with Mock provider only |
 | WKC/DC/link diagnostics | Stage 6 verified with Mock provider only |
 | Optional Scan/Diagnostics Provider state | Verified for absent, registered/unavailable, and available states with public `Local Mock` producer names and no installation inference |
-| Product API v1.9 | Windows authoritative sources and read-only reference-client behavior audited; Qt transport pending |
+| Product API v1.9 | Headless Qt transport and semantic connection Provider present; local codec/loopback validation only, real Qt hardware validation pending |
 | Controller connection Core contract | Verified multi-provider/profile semantic prerequisite with arbitrary named channels; no Qt network or hardware claim |
 | Real EtherCAT scan | Planned after read-only Qt connection; not implemented or Qt-validated |
 | Real controller diagnostics | Existing Mock contract reusable; ProductApi Push/Bulk source pending |
@@ -3391,7 +3394,7 @@ compact rendering are Qt Creator-native product behavior:
 | Qualification | Current evidence |
 |---|---|
 | Failure-first | The Core target failed first because the contract test required the intentionally absent `ethercatdata/controllerconnection.h` |
-| Public scope | Stable Project/Master request, endpoint, three-channel/session snapshot, controller/capability/package/firmware summaries, structured error, and `ControllerConnectionProvider` |
+| Initial public scope | Stable Project/Master request, fixed endpoint/three-channel session snapshot, controller/capability/package/firmware summaries, structured error, and `ControllerConnectionProvider`; the Provider/Profile revision below replaces the fixed transport assumptions |
 | Existing enum compatibility | `ProviderKind::ControllerConnection` is appended as value 5; prior Provider kinds are unchanged |
 | Invalid requests | Empty Project ID, Master ID, host, and each zero port are rejected without a snapshot notification |
 | Lifecycle | Disconnected, Connecting, Connected, Degraded, Failed, refresh, idempotent disconnect, reconnect, and connection-generation invalidation passed |
@@ -3439,10 +3442,52 @@ client/master issue handoff are documented in
 | Enabled lifecycle | Product stayed alive for 10/10 offscreen samples with `libEtherCATCore.dylib` mapped in 10/10; intentional SIGTERM returned status 15 |
 | Disabled lifecycle | Product stayed alive for 10/10 offscreen samples with `-noload EtherCATCore` and Core mapped in 0/10; intentional SIGTERM returned status 15 |
 | Cleanup/crash boundary | Zero matching residual qualification processes and no new Embed Labs DiagnosticReports; the existing visible product process was untouched |
-| Concrete adapter | Not included; `EtherCATProductApi` remains the next headless Embed Labs vendor-plugin issue |
+| Concrete adapter | Not part of this Core revision; the later independent `EtherCATProductApi` issue supplies the first headless Embed Labs Provider |
 | CMake/qbs | No source list or dependency changed; paired build descriptions remain synchronized and qbs was not run |
 | Hardware claim | None; no socket, controller connection, bus operation, PLC, Zynq, or hardware access occurred |
 | Local-only policy | No fetch, pull, merge, rebase, branch switch, push, PR, or publication |
 
 Evidence is under
 `/private/tmp/embed-labs-i18n-compact/controller-profile-v2`.
+
+## Headless Embed Labs ProductApi adapter boundary
+
+`ISSUE-ONLINE-PRODUCTAPI-READONLY-ADAPTER-001` supplies the first concrete
+connection Provider without changing the generic multi-vendor contract.
+
+| Compatibility boundary | Current adapter status |
+|---|---|
+| Plugin ownership | Product API v1.9 framing, endpoints, Control/Push/Bulk sockets, status mapping, and resume policy remain private to `EtherCATProductApi` |
+| Multi-vendor extension | Another manufacturer or incompatible protocol adds an independent plugin and Provider ID; Core and Workbench gain no vendor switch or fixed-channel assumption |
+| Generic request | The cross-plugin request remains `{Project/Master scope, provider-owned profile ID}`; it contains no host, port, credentials, role enum, or numeric Product API message |
+| Strict outbound allow-list | HELLO, GetState, GetCapability, GetPackageState, capability-gated GetFirmwareState, and feature-gated ResumeEvents only |
+| Explicit exclusions | No AcquireControl, Control Heartbeat, discovery, SDO/PDO, runtime transition, package mutation, firmware mutation, scan, or offline Project mutation |
+| Auxiliary recovery | Loss of Push or Bulk invalidates the local generation, closes Control/Push/Bulk, and attempts a bounded resume of the complete session while retaining a still-valid alarm checkpoint only for the same SessionId/BootId; replay rejection or a live sequence gap clears it |
+| Provider neutrality | Full three-channel resume is ProductApi-private; another Provider may use another channel topology or no session identity |
+| Validation evidence | Focused ProductApi suite passed 36 events; sequential seven-suite regression passed 177 events; the Qt 6.11.0 product build passed with exactly 17 plugin dylibs |
+| Hardware evidence | No real Qt-to-controller hardware connection is claimed; the separate Windows Python reference-client audit remains protocol input only |
+
+Final local qualification for
+`ISSUE-ONLINE-PRODUCTAPI-READONLY-ADAPTER-001`:
+
+| Gate | Result |
+|---|---|
+| Failure-first | Focused target failed on the intentionally missing private codec header before implementation |
+| Focused behavior | ProductApi loopback suite passed 36 events with zero failures or skips, including retained same-session and cleared invalid alarm checkpoints |
+| Regression | Core, Project, Devices, Workbench, Scan, Diagnostics, and ProductApi passed 177 sequential events with zero failures |
+| Translation | Seven EtherCAT contexts contain 1,301 messages with no unfinished or empty translations; ProductApi contributes 52 messages and `lrelease` succeeds |
+| Product build | Qt 6.11.0 configured build, `WITH_TESTS=OFF`, completed with exactly 17 plugin dylibs; `CMAKE_BUILD_TYPE` is unset, so this is not labeled a Release build |
+| Enabled lifecycle | Product stayed alive for 10/10 offscreen samples with `libEtherCATProductApi.dylib` mapped in 10/10 |
+| Disabled lifecycle | Product stayed alive for 10/10 offscreen samples with `-noload EtherCATProductApi` and the plugin mapped in 0/10 |
+| Cleanup/crash boundary | Both runs ended with intentional SIGTERM status 15, zero matching residual processes, and no new Embed Labs DiagnosticReports |
+| CMake/qbs | Target, sources, dependencies, and plugin-profile entries are synchronized; qbs was not available to run |
+| Hardware claim | None; no real controller socket, bus, PLC, Zynq, or hardware operation occurred |
+| Local-only policy | No fetch, pull, merge, rebase, branch switch, push, PR, or publication |
+
+Focused evidence is under
+`/private/tmp/embed-labs-productapi-api014-focused-final.6WO1vp`; sequential
+evidence is under
+`/private/tmp/embed-labs-productapi-api014-regression.7JluHU`; final
+enabled/disabled samples, mapping checks, exit status, crash-report diff, and
+residual-process audit are under
+`/private/tmp/embed-labs-productapi-api014-lifecycle.m87DYb`.

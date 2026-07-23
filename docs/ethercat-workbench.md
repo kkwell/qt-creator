@@ -6807,9 +6807,30 @@ not silently fall back to another vendor. The selected `{providerId,
 profileId}` pair is also the future source anchor for Scan and Diagnostics; the
 current project format does not persist that pair yet.
 
-The next implementation issue adds the headless `EtherCATProductApi` as the
-first Embed Labs adapter. The following user-visible issue embeds Communication
-in the existing right-side details host and registers Connect/Disconnect with
+The headless `EtherCATProductApi` is now the first concrete Embed Labs adapter.
+Its private outbound policy is limited to channel HELLO plus GetState,
+GetCapability, GetPackageState, capability-gated GetFirmwareState, and
+feature-gated ResumeEvents. Workbench receives no arbitrary-message API and
+must not infer that a protocol-read-only operation is enabled unless the
+selected Provider exposes it through a later typed contract. Connect and
+Refresh do not authorize discovery, a control heartbeat, SDO/PDO access, state
+transitions, or any package/firmware write.
+
+The current ProductApi Provider also treats loss of Push or Bulk as a complete
+session event: it closes all three channels and attempts a bounded
+Control/Push/Bulk SessionId resume rather than reconnecting one auxiliary
+channel. Workbench must render the resulting Provider snapshot and must not
+preserve a locally inferred connected channel state. This behavior is private
+to ProductApi; another vendor Provider may expose another channel topology and
+recovery model.
+
+Current codec and loopback validation is Mock protocol evidence. The separate
+Windows Python reference-client observation does not prove that this Qt
+adapter has connected to real hardware, so the Communication page must not
+label the path hardware-verified before an explicitly authorized Qt run.
+
+The next user-visible issue embeds a provider-neutral Communication page in
+the existing right-side details host and registers Connect/Disconnect with
 ActionManager so the current controller command strip remains the
 state-control surface. Real Scan, Current Bus (Actual), config/actual Apply,
 and embedded topology remain separate later issues.

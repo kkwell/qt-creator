@@ -22,6 +22,11 @@ protocol is represented by an independent Provider plugin with provider-owned
 profiles and arbitrary named channels. Protocol-specific endpoint data never
 enters the common Workbench/Core request.
 
+`ISSUE-ONLINE-PRODUCTAPI-READONLY-ADAPTER-001` implements the first concrete,
+headless Provider. It owns the Embed Labs ECAP codec and three-channel Qt
+Network lifecycle, but adds no UI, scan, control lease, state change, or
+hardware-write operation.
+
 ## Multi-vendor adapter boundary
 
 `EtherCATProductApi` is the first headless adapter and owns only the Embed Labs
@@ -44,7 +49,7 @@ when the selected one disappears.
 | Bulk | `192.168.3.101:15202` | Capability and bulk transfer |
 | Base endpoint | `192.168.3.101:15200` | User-facing Qt/Python connection value |
 
-The future `EtherCATProductApi` adapter owns these defaults and all
+The `EtherCATProductApi` adapter owns these defaults and all
 `Qt::Network` use. `EtherCATData`, `EtherCATCore`, Project, Devices,
 Workbench, Scan, and Diagnostics do not own sockets or ECAP frames.
 
@@ -73,11 +78,12 @@ are reused. The Windows repository is not modified by this Qt product.
 ## Product API safety boundary
 
 Product API v1.9 uses a fixed ECAP frame contract and one SessionId/BootId
-across Control, Push, and Bulk. The future implementation must validate channel
+across Control, Push, and Bulk. The implementation validates channel
 role, negotiated version, payload limit, SessionId, BootId, RequestId,
 Sequence, message length, and CRC before publishing a semantic snapshot.
 
-These operations are read-only and require no control lease:
+The protocol defines these operations as read-only and requiring no control
+lease:
 
 - handshake;
 - `GetState`;
@@ -86,6 +92,24 @@ These operations are read-only and require no control lease:
 - `GetTimeCorrelation`;
 - `GetFirmwareState`; and
 - event subscription/recovery.
+
+The current Qt adapter deliberately exposes a smaller, closed outbound
+allow-list:
+
+| Channel | Current adapter request |
+|---|---|
+| All required channels | `HELLO (0x0001)` |
+| Control | `GetState (0x0108)` |
+| Bulk | `GetCapability (0x0400)` |
+| Control | `GetPackageState (0x0403)` |
+| Control | capability-gated `GetFirmwareState (0x0504)` |
+| Push | feature-gated `ResumeEvents (0x0210)` |
+
+`GetTimeCorrelation` is therefore protocol-read-only but is not sent by the
+current adapter. Neither a generic Provider consumer nor a Workbench action
+may add a numeric message outside this list. AcquireControl, Control Heartbeat,
+discovery, SDO/PDO, state transitions, package operations, firmware writes,
+and every other command remain excluded.
 
 `DiscoverTopology` and `DiscoverModules` are not ordinary read-only refreshes.
 They require:
@@ -166,6 +190,22 @@ replaceable response flags and second BootId field are currently authoritative.
 ControllerState and PerformanceSnapshot push flags also require an explicit
 contract statement.
 
+### Response-form status alignment (`ISSUE-API-014`)
+
+The coordinated Windows controller task found that recognizable errors from
+GetPackageState were being degraded into CommandStatus and that
+`UNSUPPORTED (-14)` was documented as reserved even though the service can
+deliver it. Controller commit
+`e23722da4265311f09a0d89125b76f0f6bfec93e` aligns the protocol document,
+reference client, server, and tests.
+
+The Qt adapter now follows the forwarded exact response-form status sets.
+CommandStatus accepts `UNSUPPORTED`; PackageState retains BAD_MESSAGE,
+BAD_SESSION, STALE_BOOT, BAD_SEQUENCE, and INTERNAL as controller-originated
+typed errors; FirmwareState retains BAD_SEQUENCE. Statuses that do not belong
+to the specific response form remain protocol errors. The controller task
+reported no hardware interaction for this documentation and host-test change.
+
 ### Master API gap: no physical topology edges
 
 The current topology result exposes position, station address, AL state,
@@ -200,11 +240,18 @@ safety precondition conflict that must be resolved and explicitly authorized
 before a real scan. It is not classified as a master defect without a failed
 request and controller-returned diagnostic evidence.
 
-### Qt product gaps
+### Qt adapter status and remaining product gaps
+
+The headless Qt adapter now implements private ECAP framing, three asynchronous
+channels, the read-only request allow-list, semantic connection snapshots,
+bounded reconnect, and generation-based cleanup. An auxiliary Push or Bulk
+loss currently tears down Control, Push, and Bulk together and attempts a
+bounded resume of the complete Product API session; it is not an independent
+single-channel reconnect. Local codec and loopback validation is Mock protocol
+evidence only; no real Qt-controller result is claimed.
 
 The current Qt product still lacks:
 
-- the concrete `EtherCATProductApi` transport plugin;
 - an embedded Communication page and Connect/Disconnect actions;
 - Provider-neutral real/Mock scan routing;
 - the leased discovery state machine;
@@ -238,9 +285,10 @@ internal directory directly.
 
 ## Delivery order
 
-1. `ISSUE-CORE-CONTROLLER-CONNECTION-API-001`
-2. `ISSUE-CORE-CONTROLLER-PROVIDER-PROFILE-002`
-3. headless `EtherCATProductApi` Embed Labs adapter
+1. `ISSUE-CORE-CONTROLLER-CONNECTION-API-001` — implemented prerequisite
+2. `ISSUE-CORE-CONTROLLER-PROVIDER-PROFILE-002` — implemented prerequisite
+3. `ISSUE-ONLINE-PRODUCTAPI-READONLY-ADAPTER-001` — implemented and locally
+   qualified; real Qt hardware qualification pending
 4. provider-neutral embedded Communication page and Connect/Disconnect
 5. Provider-neutral Scan workflow
 6. Product API discovery state machine
@@ -251,3 +299,6 @@ internal directory directly.
 
 Each issue is independently tested and committed locally on `embed-labs`.
 No Qt product commit is pushed to a remote repository.
+
+The exact adapter ownership, outbound allow-list, unknown-field policy, and
+lifecycle contract are in `docs/ethercat-product-api.md`.
