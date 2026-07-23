@@ -108,6 +108,7 @@ private:
     Node *nodeForIndex(const QModelIndex &index) const;
     Node *findNode(const Data::NodeId &nodeId) const;
     QString visibleStatus(const Node *node) const;
+    QString visibleCompactStatus(const Node *node) const;
     Data::NodeId deviceIdFromMimeData(const QMimeData *data) const;
     void updateOptionalProviderStatus();
     void updateProviderPresentation();

@@ -649,7 +649,7 @@ limits are documented in `docs/ethercat-workbench.md`.
 | Derived Process Data focus and read-only mutation boundary | Passed |
 | Explicit unsupported Modules/Channels empty state | Passed |
 | 128 configured slaves under `QAbstractItemModelTester` | Passed |
-| Non-elided content-sized tree columns in a narrow navigation area | Passed in widget test and desktop inspection |
+| Bounded right-elided tree columns in a narrow navigation area | Passed in normal/2x widget tests; complete values remain in tooltip, accessibility, Filter, and Find roles |
 | Accessible tree name, description, and five process-data branches | Passed in widget test and macOS accessibility inspection |
 | Navigation activation focus and arrow-key selection | Passed at normal scale and `QT_SCALE_FACTOR=2` with outer-widget focus transfer, a real Down-arrow event, and stable `NodeId` publication |
 | Navigation filter direct Qt renders | Passed at normal 420 x 480 and 2x 840 x 960 output with the full long Unicode query, centred no-match message, and Clear Filter action visible without overlap, clipping, or scale drift |
@@ -3327,4 +3327,36 @@ Find-versus-Filter references are
 <https://doc.qt.io/qtcreator/creator-how-to-view-output.html>. The local API is
 <https://code.qt.io/cgit/qt-creator/qt-creator.git/tree/src/plugins/coreplugin/find/itemviewfind.h?h=20.0>.
 Beckhoff's tree workflow reference supplies terminology only:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>.
+
+## EtherCAT bilingual and compact-navigation qualification
+
+`ISSUE-WB-I18N-COMPACT-NAV-001` is qualified from local baseline
+`2af6b18704b13f9b2cb2a06af18b4dfcfb658c7d`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| Language selection | Reuses Qt Creator's existing `General/OverrideLanguage` setting at `Preferences > Environment > Interface > Language`; English is source text, Simplified Chinese is `qtcreator_zh_CN`, and the existing restart prompt applies |
+| EtherCAT Chinese coverage | Six contexts and 1249 current unique source messages; 0 missing, extra, unfinished, empty, obsolete, or placeholder-mismatched messages |
+| Scope of language claim | Complete for product-owned EtherCAT contexts only; unrelated upstream Qt Creator contexts retain their existing partial translation state |
+| Compact visible state | Status-column `DisplayRole` is concise; Name and Status columns stretch inside the viewport and use `ElideRight`, with no horizontal range in the narrow long-Chinese widget case |
+| Complete-value recovery | `StatusRole`, status-cell `AccessibleTextRole`, tooltip, accessible description, device identity, Provider details, and recovery guidance retain complete text |
+| Filter and native Find | Both consume column-zero `SearchTextRole`, which combines name, full and compact status, identity, and detail-only text; Find remains limited to the visible proxy projection |
+| Stable behavior | Search selection still publishes only stable `NodeId`; no Project mutation, activation, persistence, Undo command, ESI import, or Provider ownership changes |
+| Failure-first | The focused test failed on the old full status `DisplayRole` and `ElideNone` behavior before production changes |
+| Focused normal and 2x | Ten tests plus init/cleanup passed 12 events at each scale; the final full/compact/details Find selector passed 4 events at each scale |
+| Complete Workbench | 85 passed, 0 failed |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 85, Scan 11, Diagnostics 7; 140 passed, 0 failed |
+| Translation gates | `lupdate` found 1249 existing and 0 new strings; XML, placeholder, empty-value, `lrelease`, `.qm` round-trip, and six-context/message-count checks passed |
+| Qualified product build | Qt 6.11.0 Release, `WITH_TESTS=OFF`, complete build passed with exactly 16 plugin dylibs |
+| Current Chinese artifact | `qtcreator_zh_CN.qm` contains all 1249 EtherCAT messages; SHA-256 `3b93ff1ef832ad55676db250f44e2272ec63df58b77f1ad6ddb4485cef5a0e52` |
+| Deliberate runtime exclusion | At the user's explicit request the normal product was not launched; no visible language-switch or current-artifact enabled/disabled lifecycle smoke is claimed |
+| Test isolation | Executable tests used offscreen Qt, fresh HOME/settings, disabled crash reporting, cleared DYLD variables, `-no-crashcheck`, and LLDB supervision |
+| Public/API/system boundary | Existing shared TS catalogue plus private Workbench tree/navigation/tests and four documents only; no Core/ProjectExplorer/app change, public API, Project format, Provider contract, thread, timer, network, ADS, controller, PLC, Zynq, or hardware behavior |
+| Build descriptions | No CMake or qbs file changed; no paired source-list update was required and qbs was not run |
+| Local-only policy | No remote comparison, fetch, pull, merge, rebase, push, PR, or publication was performed |
+
+Evidence is under `/private/tmp/embed-labs-i18n-compact`. Beckhoff's tree
+references provide hierarchy terminology only; the bilingual selector and
+compact rendering are Qt Creator-native product behavior:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>.

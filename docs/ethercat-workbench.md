@@ -272,12 +272,13 @@ Those Beckhoff pages do not specify a persistent main-tree no-result state;
 this feedback is a native Qt Creator usability and accessibility completion,
 not copied or claimed TwinCAT behavior.
 
-Both columns resize to their visible contents and node text is not elided.
-This gives the hierarchical name priority in Qt Creator's narrow navigation
-area while retaining the explicit status column through standard horizontal
-scrolling. The tree also publishes a translated accessible name and
-description; macOS accessibility exposes the tree and all five process-data
-branches.
+Both columns share the available navigation width and use right elision.
+Long names and status summaries therefore stay bounded instead of widening the
+left pane or requiring horizontal scrolling. Complete names, statuses,
+provider details, device identity, and recovery guidance remain available
+through tooltips, accessibility roles, the permanent filter, and native Find.
+The tree also publishes a translated accessible name and description; macOS
+accessibility exposes the tree and all five process-data branches.
 
 Project topology changes use a bounded model reset. Accepted offline slaves are
 read from immutable Project snapshots, appear below their master with stable
@@ -1216,8 +1217,8 @@ offline Master, dynamic property-page removal, and dynamic
 Scan/Diagnostics availability and removal. The process-data tree
 coverage verifies the exact five-branch order, input/output direction,
 active-PDO projection, unique deterministic view IDs, retained source IDs,
-empty modular state, recursive filtering, derived Details routing, non-elided
-content-sized navigation columns, accessible tree metadata, and 128 configured
+empty modular state, recursive filtering, derived Details routing, bounded
+right-elided navigation columns, accessible tree metadata, and 128 configured
 slaves. The Process Data workflow additionally covers RxPDO/TxPDO SM selection,
 read-only repository and fixed/mandatory mappings, an empty no-ESI state,
 ESI-derived initial mapping, assignment and entry edits,
@@ -6694,3 +6695,88 @@ inspection, manual VoiceOver, real EtherCAT interface, or hardware execution is
 claimed. The qualified boundary remains local Mock/offline behavior, and no
 remote comparison, fetch, pull, merge, rebase, push, PR, or publication was
 performed.
+
+## English, Simplified Chinese, and compact navigation
+
+`ISSUE-WB-I18N-COMPACT-NAV-001`, based on local baseline
+`2af6b18704b13f9b2cb2a06af18b4dfcfb658c7d`, completes the product-owned
+EtherCAT language catalogue and bounds the left navigation presentation.
+
+Qt Creator's existing `Preferences > Environment > Interface > Language`
+setting remains the only language selector. English uses the compiled source
+text. Simplified Chinese uses the existing `qtcreator_zh_CN` catalogue and
+takes effect after Qt Creator's normal restart prompt. No duplicate Workbench
+setting, live widget retranslation path, application-bootstrap branch, or Core
+patch was added.
+
+The Simplified Chinese catalogue now contains all 1249 current source messages
+in these six product contexts:
+
+- `QtC::EtherCATCore`
+- `QtC::EtherCATProject`
+- `QtC::EtherCATDevices`
+- `QtC::EtherCATWorkbench`
+- `QtC::EtherCATScan`
+- `QtC::EtherCATDiagnostics`
+
+All six contexts have zero unfinished or empty translations and zero
+placeholder mismatches. EtherCAT, ESI, PDO, SDO, DC, SM, INIT, PREOP, SAFEOP,
+OP, Workbench, Mock, and MOCK remain explicit technical terms.
+This qualifies the product-owned EtherCAT UI; it does not claim that every
+unrelated upstream Qt Creator context has a finished Simplified Chinese
+translation.
+
+The navigation model now separates concise presentation from complete
+information. The Status column's `Qt::DisplayRole` uses compact values such as
+`Active · Offline`, `MOCK · Differences: 4`, `Unavailable`, and
+`Configure mappings`. `StatusRole` and the Status cell's
+`AccessibleTextRole` retain the complete status. `ToolTipRole` and
+`AccessibleDescriptionRole` retain the full node name, status, Provider
+details, topology-difference details, device type/group/identity, and
+drag/drop or recovery guidance.
+
+Both Name and Status sections stretch within the available navigation width,
+and the view uses `Qt::ElideRight`. A long English or Chinese name therefore
+cannot make the navigation pane grow or create a horizontal-scroll recovery
+task. Hover and accessibility still expose the complete value.
+
+The private `SearchTextRole` is published only from column zero and contains
+the union of the full name, full status, compact status, Provider details, and
+device type/group/identity. The permanent recursive Filter is fixed to that
+column, and the existing `Core::ItemViewFind` now consumes the same role.
+Filter and native Find can therefore locate both the visible compact wording
+and full detail-only text without searching the same row twice through its
+second column. Matching still acts only on the current proxy projection and
+propagates the existing stable `NodeId`; it does not mutate Project data.
+
+The failure-first selector proved both missing behaviors: the Provider row
+still exposed its full unbounded status through `DisplayRole`, and the tree
+still used `ElideNone`. Final normal and 2x focused runs passed 12 events each.
+A final details-only Find selector passed 4 events at each scale. The complete
+Workbench suite passed 85 events, and the final sequential isolated suites
+passed 140 events: Core 17, Project 12, Devices 8, Workbench 85, Scan 11, and
+Diagnostics 7.
+
+Qt 6.11.0 Release builds passed for the Workbench test target and the complete
+`WITH_TESTS=OFF` product. The product contains 16 plugin dylibs. The generated
+`qtcreator_zh_CN.qm` round-trips all six EtherCAT contexts and all 1249
+messages; its SHA-256 is
+`3b93ff1ef832ad55676db250f44e2272ec63df58b77f1ad6ddb4485cef5a0e52`.
+No CMake or qbs description changed, so no paired build-description update was
+required and qbs was not run.
+
+At the user's explicit request, the normal product executable was not launched
+for this issue. No visible language-switch, enabled/disabled startup, or
+current-artifact lifecycle smoke is claimed. All executable tests used a fresh
+HOME/settings directory, `QT_QPA_PLATFORM=offscreen`, disabled crash reporting,
+cleared inherited DYLD variables, `-no-crashcheck`, and LLDB supervision; no
+application window was shown.
+
+This issue changes only the shared existing translation source, private
+Workbench tree/navigation implementation, existing Workbench tests, and the
+four required documents. It adds no public API, plugin dependency, source
+file, Project format, persistence, Undo command, Provider contract, thread,
+timer, network, ADS, real scan, SDO, controller, PLC, Zynq, or hardware
+behavior. Scan, Online, CoE, and Diagnostics remain explicitly local
+Mock/offline where previously qualified. Evidence is under
+`/private/tmp/embed-labs-i18n-compact`.

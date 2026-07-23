@@ -88,6 +88,7 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
         &WorkbenchNavigationWidget::handleModelAboutToBeReset);
     m_proxyModel->setSourceModel(m_sourceModel);
     m_proxyModel->setFilterRole(WorkbenchTreeModel::SearchTextRole);
+    m_proxyModel->setFilterKeyColumn(0);
     m_proxyModel->setFilterCaseSensitivity(Qt::CaseInsensitive);
     m_proxyModel->setRecursiveFilteringEnabled(true);
     m_proxyModel->setAutoAcceptChildRows(true);
@@ -100,7 +101,7 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_treeView->setModel(m_proxyModel);
     m_treeView->setAlternatingRowColors(true);
     m_treeView->setUniformRowHeights(true);
-    m_treeView->setTextElideMode(Qt::ElideNone);
+    m_treeView->setTextElideMode(Qt::ElideRight);
     m_treeView->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_treeView->setSelectionMode(QAbstractItemView::SingleSelection);
     m_treeView->setDragEnabled(true);
@@ -113,10 +114,11 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_treeView->viewport()->installEventFilter(this);
     m_treeView->setHeaderHidden(false);
     m_treeView->header()->setStretchLastSection(false);
-    m_treeView->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    m_treeView->header()->setSectionResizeMode(QHeaderView::Stretch);
     setFocusProxy(m_treeView);
 
-    auto findSupport = new WorkbenchItemViewFind(m_treeView);
+    auto findSupport = new WorkbenchItemViewFind(
+        m_treeView, WorkbenchTreeModel::SearchTextRole);
     const auto resetIncrementalSearch = [findSupport] {
         findSupport->resetIncrementalSearch();
     };

@@ -3431,11 +3431,17 @@ void EtherCATWorkbenchTests::testEsiRepositoryEmptyGuidance()
     const QString guidance
         = QString("Select Device Repository, then choose Import ESI Files...");
     QCOMPARE(placeholder.data().toString(), QString("No ESI devices imported"));
-    QCOMPARE(placeholder.siblingAtColumn(1).data().toString(), guidance);
-    QCOMPARE(placeholder.data(WorkbenchTreeModel::StatusRole).toString(), guidance);
     QCOMPARE(
-        placeholder.data(WorkbenchTreeModel::SearchTextRole).toString(),
-        QString("No ESI devices imported ") + guidance);
+        placeholder.siblingAtColumn(1).data().toString(),
+        QString("Import ESI files"));
+    QCOMPARE(
+        placeholder.siblingAtColumn(1).data(Qt::AccessibleTextRole).toString(),
+        guidance);
+    QCOMPARE(placeholder.data(WorkbenchTreeModel::StatusRole).toString(), guidance);
+    const QString searchText
+        = placeholder.data(WorkbenchTreeModel::SearchTextRole).toString();
+    QVERIFY(searchText.contains(guidance));
+    QVERIFY(searchText.contains("Import ESI files"));
     QVERIFY(placeholder.data(Qt::ToolTipRole).toString().contains(guidance));
     QVERIFY(controller.treeModel()->flags(placeholder) & Qt::ItemIsEnabled);
     QVERIFY(!(controller.treeModel()->flags(placeholder) & Qt::ItemIsSelectable));
@@ -3448,6 +3454,15 @@ void EtherCATWorkbenchTests::testEsiRepositoryEmptyGuidance()
     QTRY_VERIFY(findByKind(
                     navigation.treeView()->model(), Core::WorkbenchNodeKind::Placeholder)
                     .isValid());
+    navigation.filterEdit()->setText("Import ESI files");
+    QTRY_VERIFY(findByKind(
+                    navigation.treeView()->model(), Core::WorkbenchNodeKind::Placeholder)
+                    .isValid());
+    navigation.filterEdit()->setText("choose Import ESI Files");
+    QTRY_VERIFY(findByKind(
+                    navigation.treeView()->model(), Core::WorkbenchNodeKind::Placeholder)
+                    .isValid());
+    navigation.filterEdit()->clear();
 
     DetailsView details(&controller);
     details.resize(1100, 760);
@@ -5760,10 +5775,15 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
     scan.publishResult(scanResult);
 
     const int iconSize = QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize);
-    QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("topology matches"));
+    QTRY_COMPARE(master.siblingAtColumn(1).data().toString(), QString("MOCK Match"));
+    const QString fullMatchStatus
+        = master.data(WorkbenchTreeModel::StatusRole).toString();
+    QVERIFY(fullMatchStatus.contains("Local Mock test scanner"));
+    QVERIFY(fullMatchStatus.contains("topology matches"));
     QCOMPARE(
-        master.siblingAtColumn(1).data(Qt::AccessibleTextRole),
-        master.siblingAtColumn(1).data(Qt::DisplayRole));
+        master.siblingAtColumn(1).data(Qt::AccessibleTextRole).toString(),
+        fullMatchStatus);
+    QVERIFY(master.data(Qt::ToolTipRole).toString().contains(fullMatchStatus));
     QVERIFY(!controller.treeModel()->firstTopologyDifference().isValid());
     QTRY_COMPARE(
         master.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
@@ -5807,12 +5827,26 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
     QSignalSpy providerChanged(controller.treeModel(), &QAbstractItemModel::dataChanged);
     scan.publishResult(scanResult);
 
-    QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("MOCK"));
-    QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("4"));
-    QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("Added"));
-    QTRY_VERIFY(missing.siblingAtColumn(1).data().toString().contains("Missing"));
-    QTRY_VERIFY(revision.siblingAtColumn(1).data().toString().contains("Revision"));
-    QTRY_VERIFY(revision.siblingAtColumn(1).data().toString().contains("Vendor"));
+    QTRY_COMPARE(
+        master.siblingAtColumn(1).data().toString(),
+        QString::fromUtf8("MOCK · Differences: 4"));
+    QTRY_COMPARE(
+        missing.siblingAtColumn(1).data().toString(),
+        QString::fromUtf8("MOCK · Missing"));
+    QTRY_COMPARE(
+        revision.siblingAtColumn(1).data().toString(),
+        QString::fromUtf8("MOCK · Revision, Vendor"));
+    QVERIFY(master.data(WorkbenchTreeModel::StatusRole).toString().contains("Added"));
+    QVERIFY(master.data(Qt::ToolTipRole).toString().contains("Unexpected I/O"));
+    QCOMPARE(
+        master.siblingAtColumn(1).data(Qt::AccessibleTextRole),
+        master.data(WorkbenchTreeModel::StatusRole));
+    QVERIFY(master.data(WorkbenchTreeModel::SearchTextRole)
+                .toString()
+                .contains("Unexpected I/O"));
+    QVERIFY(!master.siblingAtColumn(1)
+                 .data(WorkbenchTreeModel::SearchTextRole)
+                 .isValid());
     QTRY_VERIFY(revision.data(Qt::AccessibleDescriptionRole)
                     .toString()
                     .contains("Offline 0x21, scanned 0x22"));
@@ -5845,6 +5879,13 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
     QVERIFY(proxyRevision.data(Qt::AccessibleDescriptionRole)
                 .toString()
                 .contains("Offline 0x21, scanned 0x22"));
+    ::Core::IFindSupport *findSupport
+        = Aggregation::query<::Core::IFindSupport>(navigation.treeView());
+    QVERIFY(findSupport);
+    QCOMPARE(
+        findSupport->findStep("Unexpected I/O", {}),
+        ::Core::IFindSupport::Found);
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), masterId(fixture.project));
     emit controller.locateFirstTopologyDifferenceRequested();
     QTRY_COMPARE(
         navigation.treeView()
@@ -5855,7 +5896,9 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
 
     scanResult.comparison.differences.removeAt(2);
     scan.publishResult(scanResult);
-    QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("3"));
+    QTRY_COMPARE(
+        master.siblingAtColumn(1).data().toString(),
+        QString::fromUtf8("MOCK · Differences: 3"));
 
     Data::DiagnosticsSnapshot diagnosticsSnapshot;
     diagnosticsSnapshot.projectId = fixture.project.id;
@@ -5889,10 +5932,18 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
         navigation.treeView()->model(), Core::WorkbenchNodeKind::Diagnostics);
     QVERIFY(proxyMissing.isValid());
     QVERIFY(proxyDiagnostics.isValid());
-    QTRY_VERIFY(missing.siblingAtColumn(1).data().toString().contains("SAFEOP"));
-    QTRY_VERIFY(missing.siblingAtColumn(1).data().toString().contains("Error"));
-    QTRY_VERIFY(revision.siblingAtColumn(1).data().toString().contains("not present"));
-    QTRY_VERIFY(diagnosticsNode.siblingAtColumn(1).data().toString().contains("2 active"));
+    QTRY_COMPARE(
+        missing.siblingAtColumn(1).data().toString(),
+        QString::fromUtf8("MOCK SAFEOP · Error · MOCK · Missing"));
+    QTRY_COMPARE(
+        revision.siblingAtColumn(1).data().toString(),
+        QString::fromUtf8("MOCK not present · MOCK · Revision"));
+    QTRY_COMPARE(
+        diagnosticsNode.siblingAtColumn(1).data().toString(),
+        QString::fromUtf8("MOCK Running · Alarms: 2 · Error"));
+    QCOMPARE(
+        missing.siblingAtColumn(1).data(Qt::AccessibleTextRole),
+        missing.data(WorkbenchTreeModel::StatusRole));
     QTRY_VERIFY(missing.data(Qt::AccessibleDescriptionRole)
                     .toString()
                     .contains("MOCK slave fault"));
@@ -5922,8 +5973,9 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
          {},
          {}});
     diagnostics.publishSnapshot(diagnosticsSnapshot);
-    QTRY_VERIFY(revision.siblingAtColumn(1).data().toString().contains("MOCK OP"));
-    QTRY_VERIFY(!revision.siblingAtColumn(1).data().toString().contains("not present"));
+    QTRY_COMPARE(
+        revision.siblingAtColumn(1).data().toString(),
+        QString::fromUtf8("MOCK OP · MOCK · Revision"));
 
     emit controller.locateFirstIssueRequested();
     QTRY_COMPARE(
@@ -5940,8 +5992,10 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
             .value<Core::WorkbenchNodeKind>(),
         Core::WorkbenchNodeKind::Diagnostics);
     diagnostics.setStreamState(Data::DiagnosticsStreamState::Stopped);
-    QTRY_VERIFY(master.siblingAtColumn(1).data().toString().contains("last"));
-    QTRY_VERIFY(diagnosticsNode.siblingAtColumn(1).data().toString().contains("Stopped"));
+    QTRY_VERIFY(master.data(WorkbenchTreeModel::StatusRole).toString().contains("last"));
+    QTRY_COMPARE(
+        diagnosticsNode.siblingAtColumn(1).data().toString(),
+        QString::fromUtf8("MOCK Stopped · Alarms: 2 · Error"));
 
     navigation.resize(1200, 800);
     const QString renderPath
@@ -6449,7 +6503,8 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
             .data(Qt::DisplayRole)
             .toString();
     };
-    QTRY_COMPARE(projectStatus(first.projectId), QString("Active project | Offline"));
+    QTRY_COMPARE(
+        projectStatus(first.projectId), QString::fromUtf8("Active · Offline"));
     QCOMPARE(projectStatus(second.projectId), QString("Offline"));
     QCOMPARE(
         controller.treeModel()->indexForNodeId(first.projectId).data(WorkbenchTreeModel::StatusRole),
@@ -6524,7 +6579,8 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
     QCOMPARE(secondTarget->projectId, second.projectId);
     QCOMPARE(secondTarget->masterId, second.masterId);
     QTRY_COMPARE(projectStatus(first.projectId), QString("Offline"));
-    QTRY_COMPARE(projectStatus(second.projectId), QString("Active project | Offline"));
+    QTRY_COMPARE(
+        projectStatus(second.projectId), QString::fromUtf8("Active · Offline"));
     QCOMPARE(modelResetSpy.count(), resetCount);
     QVERIFY(firstPersistent.isValid());
     QVERIFY(secondPersistent.isValid());
@@ -6600,7 +6656,8 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
     QTRY_VERIFY(!controller.treeModel()->indexForNodeId(second.projectId).isValid());
     QTRY_VERIFY(controller.selectionService()->currentNodeId().isNull());
     QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
-    QTRY_COMPARE(projectStatus(first.projectId), QString("Active project | Offline"));
+    QTRY_COMPARE(
+        projectStatus(first.projectId), QString::fromUtf8("Active · Offline"));
     QTRY_VERIFY(controller.treeModel()->flags(controller.treeModel()->indexForNodeId(first.masterId))
                 & Qt::ItemIsDropEnabled);
     const std::optional<OfflineMasterTarget> fallbackTarget
@@ -6716,7 +6773,7 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
         invalidRoot.data(WorkbenchTreeModel::ProjectIdRole).value<Data::NodeId>(), invalid.id);
     QCOMPARE(
         invalidRoot.siblingAtColumn(1).data().toString(),
-        QString("Invalid project | Offline data unavailable"));
+        QString::fromUtf8("Invalid · Offline"));
     QCOMPARE(
         invalidRoot.data(WorkbenchTreeModel::StatusRole).toString(),
         QString("Invalid project | Offline data unavailable"));
@@ -6744,7 +6801,7 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
         std::nullopt);
     QCOMPARE(
         invalidRoot.siblingAtColumn(1).data().toString(),
-        QString("Invalid project | Offline data unavailable"));
+        QString::fromUtf8("Invalid · Offline"));
     QVERIFY(invalidRoot.data(Qt::ToolTipRole).toString().contains(invalid.error));
     QCOMPARE(
         invalidRoot.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
@@ -6756,6 +6813,9 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QCOMPARE(recovery.data().toString(), QString("Project configuration unavailable"));
     QCOMPARE(
         recovery.siblingAtColumn(1).data().toString(),
+        QString("Fix and reopen"));
+    QCOMPARE(
+        recovery.siblingAtColumn(1).data(Qt::AccessibleTextRole).toString(),
         QString("Fix the project file and reopen it"));
     QCOMPARE(
         recovery.data(WorkbenchTreeModel::NodeKindRole).value<Core::WorkbenchNodeKind>(),
@@ -6990,6 +7050,12 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QTRY_COMPARE(projectService->activeProjectId(), invalid.id);
     QTRY_COMPARE(
         controller.treeModel()->indexForNodeId(invalid.id, 1).data().toString(),
+        QString::fromUtf8("Active · Invalid · Offline"));
+    QCOMPARE(
+        controller.treeModel()
+            ->indexForNodeId(invalid.id)
+            .data(WorkbenchTreeModel::StatusRole)
+            .toString(),
         QString("Active project | Invalid project | Offline data unavailable"));
     QVERIFY(!controller.canActivateSelectedProject());
     QTRY_VERIFY(!setActiveCommand->action()->isEnabled());
@@ -7034,7 +7100,7 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
     QCOMPARE(
         controller.treeModel()->indexForNodeId(valid.projectId, 1).data().toString(),
-        QString("Active project | Offline"));
+        QString::fromUtf8("Active · Offline"));
     QVERIFY(controller.treeModel()->indexForNodeId(valid.masterId).isValid());
 
     QTRY_VERIFY(openDiagnosticsCommand->action()->isEnabled());
@@ -8271,7 +8337,7 @@ void EtherCATWorkbenchTests::testNavigationSetActiveProjectCommand()
         QString("Offline"));
     QTRY_COMPARE(
         controller.treeModel()->indexForNodeId(second.projectId, 1).data().toString(),
-        QString("Active project | Offline"));
+        QString::fromUtf8("Active · Offline"));
     QCOMPARE(modelResetSpy.count(), resetCount);
     QVERIFY(firstPersistent.isValid());
     QVERIFY(secondPersistent.isValid());
@@ -8538,6 +8604,20 @@ void EtherCATWorkbenchTests::testNavigationNativeFindIntegration()
 
         const Core::PropertyPageContext projectBefore
             = controller.treeModel()->contextForNodeId(project.id);
+        const QModelIndex diagnostics
+            = findByKind(tree->model(), Core::WorkbenchNodeKind::Diagnostics);
+        QVERIFY(diagnostics.isValid());
+        const Data::NodeId diagnosticsId
+            = diagnostics.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+        QCOMPARE(
+            findSupport->findStep("Diagnostics Provider registered", {}),
+            ::Core::IFindSupport::Found);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), diagnosticsId);
+        QCOMPARE(
+            findSupport->findStep(QString::fromUtf8("No provider · Mock only"), {}),
+            ::Core::IFindSupport::Found);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), diagnosticsId);
+
         const QModelIndex firstDevice = findById(tree->model(), devices.first().id);
         QVERIFY(firstDevice.isValid());
         tree->setCurrentIndex(firstDevice);
@@ -9237,16 +9317,41 @@ void EtherCATWorkbenchTests::testTwinCatProcessDataTree()
         QList<Core::PropertyPageDescriptor>(
             {{Utils::Id(Constants::GENERAL_PAGE_ID), "General", 100}}));
 
+    Data::ProjectSnapshot compactProject = fixture.project;
+    const QString longSlaveName
+        = QString::fromUtf8("超长中文从站名称—用于验证左侧导航省略显示—")
+          + QString(128, QChar(0x957f));
+    compactProject.slaves.first().name = longSlaveName;
+    for (Data::ProjectNodeSnapshot &node : compactProject.nodes) {
+        if (node.id == fixture.slaveId)
+            node.name = longSlaveName;
+    }
+    controller.treeModel()->setProjects({compactProject});
+
     WorkbenchNavigationWidget navigation(&controller);
-    QCOMPARE(navigation.treeView()->textElideMode(), Qt::ElideNone);
+    QCOMPARE(navigation.treeView()->textElideMode(), Qt::ElideRight);
     QCOMPARE(
         navigation.treeView()->header()->sectionResizeMode(0),
-        QHeaderView::ResizeToContents);
+        QHeaderView::Stretch);
     QCOMPARE(
         navigation.treeView()->header()->sectionResizeMode(1),
-        QHeaderView::ResizeToContents);
+        QHeaderView::Stretch);
     QVERIFY(!navigation.treeView()->accessibleName().isEmpty());
     QVERIFY(!navigation.treeView()->accessibleDescription().isEmpty());
+    navigation.resize(360, 300);
+    navigation.show();
+    QTRY_VERIFY(navigation.isVisible());
+    QTRY_VERIFY(navigation.treeView()->viewport()->width() > 0);
+    QVERIFY(navigation.treeView()->header()->sectionSize(0) > 0);
+    QVERIFY(navigation.treeView()->header()->sectionSize(1) > 0);
+    QTRY_COMPARE(navigation.treeView()->horizontalScrollBar()->maximum(), 0);
+    const QModelIndex compactSlave
+        = findById(navigation.treeView()->model(), fixture.slaveId);
+    QVERIFY(compactSlave.isValid());
+    QVERIFY(
+        navigation.treeView()->fontMetrics().horizontalAdvance(longSlaveName)
+        > navigation.treeView()->header()->sectionSize(0));
+    QVERIFY(compactSlave.data(Qt::ToolTipRole).toString().contains(longSlaveName));
     navigation.filterEdit()->setText("Controlword");
     QTRY_VERIFY(findById(navigation.treeView()->model(), outputEntryViewId).isValid());
     controller.selectionService()->setCurrentNodeId(outputEntryViewId);
@@ -17584,10 +17689,17 @@ void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
     QSignalSpy modelResetSpy(controller.treeModel(), &QAbstractItemModel::modelReset);
 
     const auto status = [](const QModelIndex &index) {
-        return index.siblingAtColumn(1).data().toString();
+        return index.data(WorkbenchTreeModel::StatusRole).toString();
+    };
+    const auto compactStatus = [](const QModelIndex &index) {
+        return index.siblingAtColumn(1).data(Qt::DisplayRole).toString();
     };
     QCOMPARE(status(diagnostics), QString("No Diagnostics Provider registered | Local Mock only"));
     QCOMPARE(status(noSlaves), QString("No Scan Provider registered | Local Mock only"));
+    QCOMPARE(
+        compactStatus(diagnostics), QString::fromUtf8("No provider · Mock only"));
+    QCOMPARE(
+        compactStatus(noSlaves), QString::fromUtf8("No provider · Mock only"));
     QVERIFY(!diagnostics.data(WorkbenchTreeModel::SearchTextRole)
                  .toString()
                  .contains("installed", Qt::CaseInsensitive));
@@ -17647,6 +17759,8 @@ void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
     backupDiagnosticsRegistered = true;
     QTRY_COMPARE(status(noSlaves), QString("Local Mock test scanner unavailable"));
     QTRY_COMPARE(status(diagnostics), QString("Local Mock test diagnostics unavailable"));
+    QTRY_COMPARE(compactStatus(noSlaves), QString("Unavailable"));
+    QTRY_COMPARE(compactStatus(diagnostics), QString("Unavailable"));
     QTRY_VERIFY(details.tabWidget()->count() > 0);
     summary = details.findChild<QLabel *>("EtherCATWorkbenchPageSummary");
     QVERIFY(summary);
@@ -17701,8 +17815,10 @@ void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
 
     backupScan.setAvailable(true);
     QTRY_COMPARE(status(noSlaves), QString("Backup Local Mock test scanner available"));
+    QTRY_COMPARE(compactStatus(noSlaves), QString("Available"));
     scan.setAvailable(true);
     QTRY_COMPARE(status(noSlaves), QString("Renamed Local Mock test scanner available"));
+    QTRY_COMPARE(compactStatus(noSlaves), QString("Available"));
 
     Data::ScanResult backupScanResult;
     backupScanResult.snapshot.projectId = project.id;
@@ -17727,6 +17843,8 @@ void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
         QString("Backup Local Mock test scanner"));
     QTRY_COMPARE(status(noSlaves), QString("Backup Local Mock test scanner available"));
     QTRY_VERIFY(status(master).contains("1 topology difference"));
+    QTRY_COMPARE(
+        compactStatus(master), QString::fromUtf8("MOCK · Differences: 1"));
     backupScan.clearPublishedResult();
     QTRY_COMPARE(
         controller.scanProviderPresentation().displayName,
@@ -17798,6 +17916,7 @@ void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
     QTRY_VERIFY(status(diagnostics).contains("2 active"));
     backupDiagnostics.setAvailable(false);
     QTRY_COMPARE(status(diagnostics), QString("Renamed Local Mock diagnostics unavailable"));
+    QTRY_COMPARE(compactStatus(diagnostics), QString("Unavailable"));
     QVERIFY(!status(diagnostics).contains("active"));
     QVERIFY(!status(diagnostics).contains("Running"));
     QTRY_VERIFY(details.tabWidget()->count() > 0);
@@ -17813,11 +17932,15 @@ void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
     backupDiagnosticsRegistered = false;
     QTRY_COMPARE(
         status(diagnostics), QString("No Diagnostics Provider registered | Local Mock only"));
+    QTRY_COMPARE(
+        compactStatus(diagnostics), QString::fromUtf8("No provider · Mock only"));
     ExtensionSystem::PluginManager::removeObject(&backupScan);
     backupScanRegistered = false;
     ExtensionSystem::PluginManager::removeObject(&scan);
     scanRegistered = false;
     QTRY_COMPARE(status(noSlaves), QString("No Scan Provider registered | Local Mock only"));
+    QTRY_COMPARE(
+        compactStatus(noSlaves), QString::fromUtf8("No provider · Mock only"));
     QCOMPARE(modelResetSpy.count(), 0);
     QCOMPARE(
         controller.selectionService()->currentNodeId(),
@@ -17835,12 +17958,23 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
         = findByKind(controller.treeModel(), Core::WorkbenchNodeKind::Diagnostics);
     QVERIFY(master.isValid());
     QVERIFY(diagnostics.isValid());
+    const auto fullStatus = [](const QModelIndex &index) {
+        return index.data(WorkbenchTreeModel::StatusRole).toString();
+    };
+    const auto compactStatus = [](const QModelIndex &index) {
+        return index.siblingAtColumn(1).data(Qt::DisplayRole).toString();
+    };
     QCOMPARE(
-        diagnostics.siblingAtColumn(1).data().toString(),
+        fullStatus(diagnostics),
         QString("No Diagnostics Provider registered | Local Mock only"));
     QCOMPARE(
-        controller.treeModel()->index(1, 1, master).data().toString(),
+        fullStatus(controller.treeModel()->index(1, 0, master)),
         QString("No Scan Provider registered | Local Mock only"));
+    QCOMPARE(
+        compactStatus(diagnostics), QString::fromUtf8("No provider · Mock only"));
+    QCOMPARE(
+        compactStatus(controller.treeModel()->index(1, 0, master)),
+        QString::fromUtf8("No provider · Mock only"));
 
     BuiltinPropertyPageProvider pages(&controller);
     const Core::PropertyPageContext masterContext = controller.treeModel()->contextForIndex(master);
@@ -17856,18 +17990,22 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
     QTRY_VERIFY(controller.scanAvailable());
     QTRY_VERIFY(controller.diagnosticsAvailable());
     QCOMPARE(
-        diagnostics.siblingAtColumn(1).data().toString(),
+        fullStatus(diagnostics),
         QString("Local Mock test diagnostics available"));
     QCOMPARE(
-        controller.treeModel()->index(1, 1, master).data().toString(),
+        fullStatus(controller.treeModel()->index(1, 0, master)),
         QString("Local Mock test scanner available"));
+    QCOMPARE(compactStatus(diagnostics), QString("Available"));
+    QCOMPARE(
+        compactStatus(controller.treeModel()->index(1, 0, master)), QString("Available"));
     QCOMPARE(pages.pages(masterContext).size(), 2);
 
     diagnosticsProvider.setAvailable(false);
     QTRY_VERIFY(!controller.diagnosticsAvailable());
     QCOMPARE(
-        diagnostics.siblingAtColumn(1).data().toString(),
+        fullStatus(diagnostics),
         QString("Local Mock test diagnostics unavailable"));
+    QCOMPARE(compactStatus(diagnostics), QString("Unavailable"));
     QCOMPARE(pages.pages(masterContext).size(), 4);
     diagnosticsProvider.setAvailable(true);
     QTRY_VERIFY(controller.diagnosticsAvailable());
@@ -17877,11 +18015,16 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
     QTRY_VERIFY(!controller.diagnosticsAvailable());
     QTRY_VERIFY(!controller.scanAvailable());
     QCOMPARE(
-        diagnostics.siblingAtColumn(1).data().toString(),
+        fullStatus(diagnostics),
         QString("No Diagnostics Provider registered | Local Mock only"));
     QCOMPARE(
-        controller.treeModel()->index(1, 1, master).data().toString(),
+        fullStatus(controller.treeModel()->index(1, 0, master)),
         QString("No Scan Provider registered | Local Mock only"));
+    QCOMPARE(
+        compactStatus(diagnostics), QString::fromUtf8("No provider · Mock only"));
+    QCOMPARE(
+        compactStatus(controller.treeModel()->index(1, 0, master)),
+        QString::fromUtf8("No provider · Mock only"));
 }
 
 } // namespace EtherCAT::Workbench::Internal

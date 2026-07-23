@@ -1959,3 +1959,45 @@ Qt Creator references:
 Beckhoff terminology reference:
 
 - <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>
+
+## Bilingual and compact-navigation delta
+
+`ISSUE-WB-I18N-COMPACT-NAV-001` adds one bounded product-language and
+Workbench-presentation delta on local baseline
+`2af6b18704b13f9b2cb2a06af18b4dfcfb658c7d`:
+
+- the existing `qtcreator_zh_CN.ts` gains complete translations for the six
+  product-owned EtherCAT contexts and all 1249 current unique source messages;
+- the Workbench tree stores parallel full and compact status presentation;
+- the status column displays the compact form while tooltip, accessibility,
+  status, identity, and Provider detail surfaces retain complete information;
+- both tree columns share the available viewport and right-elide long English
+  or Chinese text instead of expanding to content width;
+- Filter and native Find share one column-zero private search corpus containing
+  name, full/compact status, identity, and detail-only text; and
+- stable-`NodeId` selection, Project snapshots, Providers, and every existing
+  Mock/offline capability boundary remain unchanged.
+
+The language selector, persisted override, translator installation, and restart
+prompt are existing upstream Qt Creator behavior. No file under `src/app`,
+`src/plugins/coreplugin`, or `src/plugins/projectexplorer` changed, so the
+direct Core patch count and application-bootstrap delta do not increase.
+
+The source delta is limited to the existing shared Chinese translation file,
+four private Workbench implementation/test files, and the four qualification
+documents. It adds no public API, plugin dependency, source list, Project
+format, persistence field, command, Provider contract, thread, timer, network,
+ADS, real scan, online CoE/SDO, controller, PLC, Zynq, or hardware behavior.
+CMake and qbs descriptions remain unchanged.
+
+Failure-first, normal/2x focused testing, the 85-event complete Workbench suite,
+the 140-event sequential six-plugin regression, translation extraction and
+compilation, and the Qt 6.11.0 `WITH_TESTS=OFF` product build passed. The
+generated product has 16 plugin dylibs and a Simplified Chinese catalogue that
+round-trips all six EtherCAT contexts.
+
+At the user's explicit request, the normal product was not launched during this
+issue. Visible language switching and enabled/disabled lifecycle smoke for the
+current artifact are intentionally not claimed. No remote comparison, fetch,
+pull, merge, rebase, push, PR, or publication was performed. Evidence is under
+`/private/tmp/embed-labs-i18n-compact`.

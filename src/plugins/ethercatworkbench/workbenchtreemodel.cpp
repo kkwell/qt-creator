@@ -29,8 +29,11 @@ struct WorkbenchTreeModel::Node
     Core::WorkbenchNodeKind kind = Core::WorkbenchNodeKind::None;
     QString name;
     QString baseStatus;
+    QString baseCompactStatus;
     QString status;
+    QString compactStatus;
     QStringList presentationStatus;
+    QStringList presentationCompactStatus;
     QStringList presentationDetails;
     Data::DeviceSummary device;
     Data::NodeId ownerSlaveId;
@@ -107,13 +110,22 @@ static QString optionalProviderStatus(
                : Tr::tr("%1 unavailable").arg(displayName);
 }
 
+static QString optionalProviderCompactStatus(const OptionalProviderPresentation &provider)
+{
+    if (provider.state == OptionalProviderState::Absent)
+        return Tr::tr("No provider · Mock only");
+    return provider.state == OptionalProviderState::Available ? Tr::tr("Available")
+                                                              : Tr::tr("Unavailable");
+}
+
 static std::unique_ptr<WorkbenchTreeModel::Node> makeNode(
     WorkbenchTreeModel::Node *parent,
     const Data::NodeId &id,
     const Data::NodeId &projectId,
     Core::WorkbenchNodeKind kind,
     const QString &name,
-    const QString &status)
+    const QString &status,
+    const QString &compactStatus = {})
 {
     auto node = std::make_unique<WorkbenchTreeModel::Node>();
     node->parent = parent;
@@ -122,7 +134,9 @@ static std::unique_ptr<WorkbenchTreeModel::Node> makeNode(
     node->kind = kind;
     node->name = name;
     node->baseStatus = status;
+    node->baseCompactStatus = compactStatus.isEmpty() ? status : compactStatus;
     node->status = status;
+    node->compactStatus = node->baseCompactStatus;
     return node;
 }
 
@@ -162,10 +176,14 @@ static void raiseMarker(WorkbenchTreeModel::Node *node, StateMarker marker)
         node->marker = marker;
 }
 
-static void appendPresentationStatus(WorkbenchTreeModel::Node *node, const QString &status)
+static void appendPresentationStatus(
+    WorkbenchTreeModel::Node *node, const QString &status, const QString &compactStatus = {})
 {
-    if (node && !status.isEmpty() && !node->presentationStatus.contains(status))
+    if (node && !status.isEmpty() && !node->presentationStatus.contains(status)) {
         node->presentationStatus.append(status);
+        node->presentationCompactStatus.append(
+            compactStatus.isEmpty() ? status : compactStatus);
+    }
 }
 
 static void appendPresentationDetail(WorkbenchTreeModel::Node *node, const QString &detail)
@@ -344,7 +362,8 @@ static std::unique_ptr<WorkbenchTreeModel::Node> makeSlaveChild(
     const QString &key,
     const QString &name,
     const QString &status,
-    const Data::NodeId &sourceId = {})
+    const Data::NodeId &sourceId = {},
+    const QString &compactStatus = {})
 {
     auto node = makeNode(
         parent,
@@ -352,7 +371,8 @@ static std::unique_ptr<WorkbenchTreeModel::Node> makeSlaveChild(
         parent->projectId,
         kind,
         name,
-        status);
+        status,
+        compactStatus);
     node->ownerSlaveId = slave.id;
     node->sourceId = sourceId;
     return node;
@@ -363,10 +383,18 @@ static void appendEmptyState(
     const Data::OfflineSlaveConfiguration &slave,
     const QString &key,
     const QString &name,
-    const QString &status)
+    const QString &status,
+    const QString &compactStatus = {})
 {
     parent->children.push_back(makeSlaveChild(
-        parent, slave, Core::WorkbenchNodeKind::Placeholder, key, name, status));
+        parent,
+        slave,
+        Core::WorkbenchNodeKind::Placeholder,
+        key,
+        name,
+        status,
+        {},
+        compactStatus));
 }
 
 static void appendProcessImageBranch(
@@ -419,7 +447,11 @@ static void appendProcessImageBranch(
                       .arg(entry.subIndex, 2, 16, QLatin1Char('0'))
                 : entry.name,
             statusText,
-            entry.entryId));
+            entry.entryId,
+            Tr::tr("@%1.%2 · %3")
+                .arg(entry.byteOffset)
+                .arg(entry.bitOffsetInByte)
+                .arg(dataTypeName(entry.dataType))));
     }
     if (branchPointer->children.empty())
         appendEmptyState(branchPointer, slave, key + ":empty", emptyName, emptyStatus);
@@ -466,7 +498,8 @@ static void appendPdoBranch(
                 .arg(hexValue(pdo.index, 4))
                 .arg(pdo.syncManager)
                 .arg(pdoBitSize(pdo)),
-            pdo.id);
+            pdo.id,
+            Tr::tr("%1 · SM%2").arg(hexValue(pdo.index, 4)).arg(pdo.syncManager));
         WorkbenchTreeModel::Node *pdoPointer = pdoNode.get();
         branchPointer->children.push_back(std::move(pdoNode));
         for (int row = 0; row < pdo.entries.size(); ++row) {
@@ -485,7 +518,10 @@ static void appendPdoBranch(
                     .arg(entry.subIndex, 2, 16, QLatin1Char('0'))
                     .arg(dataTypeName(entry.dataType))
                     .arg(entry.bitLength),
-                entry.id));
+                entry.id,
+                Tr::tr("%1:%2")
+                    .arg(hexValue(entry.index, 4))
+                    .arg(entry.subIndex, 2, 16, QLatin1Char('0'))));
         }
         if (pdoPointer->children.empty()) {
             appendEmptyState(
@@ -493,7 +529,8 @@ static void appendPdoBranch(
                 slave,
                 key + ":pdo:" + pdoKey + ":empty",
                 Tr::tr("No PDO entries"),
-                Tr::tr("The assigned PDO has no mapped entries"));
+                Tr::tr("The assigned PDO has no mapped entries"),
+                Tr::tr("No mapped entries"));
         }
     }
     if (branchPointer->children.empty()) {
@@ -503,7 +540,8 @@ static void appendPdoBranch(
             key + ":empty",
             direction == Data::PdoDirection::Rx ? Tr::tr("No assigned RxPDOs")
                                                 : Tr::tr("No assigned TxPDOs"),
-            Tr::tr("Select mappings on the Process Data page"));
+            Tr::tr("Select mappings on the Process Data page"),
+            Tr::tr("Configure mappings"));
     }
 }
 
@@ -551,7 +589,9 @@ static void appendConfiguredSlaveChildren(
         Core::WorkbenchNodeKind::Modules,
         "modules",
         Tr::tr("Modules / Channels"),
-        Tr::tr("No configured modules"));
+        Tr::tr("No configured modules"),
+        {},
+        Tr::tr("No modular data"));
     WorkbenchTreeModel::Node *modulesPointer = modules.get();
     slaveNode->children.push_back(std::move(modules));
     appendEmptyState(
@@ -559,7 +599,8 @@ static void appendConfiguredSlaveChildren(
         slave,
         "modules:empty",
         Tr::tr("No module or channel data"),
-        Tr::tr("No modular profile is stored in this project"));
+        Tr::tr("No modular profile is stored in this project"),
+        Tr::tr("No modular data"));
 }
 
 WorkbenchTreeModel::WorkbenchTreeModel(QObject *parent)
@@ -610,7 +651,9 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
         return {};
 
     const QString status = visibleStatus(node);
-    if (role == Qt::DisplayRole || role == Qt::AccessibleTextRole)
+    if (role == Qt::DisplayRole)
+        return index.column() == 0 ? node->name : visibleCompactStatus(node);
+    if (role == Qt::AccessibleTextRole)
         return index.column() == 0 ? node->name : status;
     if (role == NodeIdRole)
         return QVariant::fromValue(node->id);
@@ -621,25 +664,37 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
     if (role == StatusRole)
         return status;
     if (role == SearchTextRole) {
+        if (index.column() != 0)
+            return {};
         QString text = node->name + ' ' + status;
+        const QString compactStatus = visibleCompactStatus(node);
+        if (compactStatus != status)
+            text += ' ' + compactStatus;
         if (!node->presentationDetails.isEmpty())
             text += ' ' + node->presentationDetails.join(' ');
         if (node->kind == Core::WorkbenchNodeKind::Device) {
-            text += QString(" %1 %2 %3 %4 0x%1 0x%2 0x%3")
+            text += QString(" %1 %2 %3 %4 %5 0x%1 0x%2 0x%3")
                         .arg(node->device.identity.vendorId, 8, 16, QLatin1Char('0'))
                         .arg(node->device.identity.productCode, 8, 16, QLatin1Char('0'))
                         .arg(node->device.identity.revisionNumber, 8, 16, QLatin1Char('0'))
-                        .arg(node->device.group);
+                        .arg(node->device.group)
+                        .arg(node->device.typeName);
         }
         return text;
     }
     if (role == Qt::ToolTipRole || role == Qt::AccessibleDescriptionRole) {
         QString text = node->name;
         if (!status.isEmpty())
-            text += "\n" + status;
-        if (!node->presentationDetails.isEmpty())
+            text += "\n" + Tr::tr("Status: %1").arg(status);
+        if (!node->presentationDetails.isEmpty()) {
+            text += "\n" + Tr::tr("Details:");
             text += "\n" + node->presentationDetails.join("\n");
+        }
         if (node->kind == Core::WorkbenchNodeKind::Device) {
+            if (!node->device.typeName.isEmpty())
+                text += Tr::tr("\nType: %1").arg(node->device.typeName);
+            if (!node->device.group.isEmpty())
+                text += Tr::tr("\nGroup: %1").arg(node->device.group);
             text += Tr::tr("\nVendor: 0x%1\nProduct: 0x%2\nRevision: 0x%3")
                         .arg(node->device.identity.vendorId, 8, 16, QLatin1Char('0'))
                         .arg(node->device.identity.productCode, 8, 16, QLatin1Char('0'))
@@ -909,7 +964,8 @@ void WorkbenchTreeModel::syncDevices(const QList<Data::DeviceSummary> &devices)
             {},
             Core::WorkbenchNodeKind::Placeholder,
             Tr::tr("No ESI devices imported"),
-            Tr::tr("Select Device Repository, then choose Import ESI Files...")));
+            Tr::tr("Select Device Repository, then choose Import ESI Files..."),
+            Tr::tr("Import ESI files")));
         endInsertRows();
         return;
     }
@@ -984,7 +1040,9 @@ void WorkbenchTreeModel::syncDevices(const QList<Data::DeviceSummary> &devices)
         if (node->name != summary.name || node->status != status || node->device != summary) {
             node->name = summary.name;
             node->baseStatus = status;
+            node->baseCompactStatus = status;
             node->status = status;
+            node->compactStatus = status;
             node->device = summary;
             emit dataChanged(
                 index(desiredRow, 0, repositoryIndex),
@@ -1044,6 +1102,15 @@ QString WorkbenchTreeModel::visibleStatus(const Node *node) const
     if (node->kind == Core::WorkbenchNodeKind::Project && node->projectId == m_activeProjectId)
         return Tr::tr("Active project | %1").arg(node->status);
     return node->status;
+}
+
+QString WorkbenchTreeModel::visibleCompactStatus(const Node *node) const
+{
+    if (!node)
+        return {};
+    if (node->kind == Core::WorkbenchNodeKind::Project && node->projectId == m_activeProjectId)
+        return Tr::tr("Active · %1").arg(node->compactStatus);
+    return node->compactStatus;
 }
 
 QModelIndex WorkbenchTreeModel::firstUnsupportedDevice() const
@@ -1235,6 +1302,13 @@ void WorkbenchTreeModel::updateOptionalProviderStatus()
                 status = optionalProviderStatus(m_scanProvider, Core::ProviderKind::Scan);
             }
             child->baseStatus = status;
+            if (child->kind == Core::WorkbenchNodeKind::Diagnostics) {
+                child->baseCompactStatus = optionalProviderCompactStatus(m_diagnosticsProvider);
+            } else if (
+                child->kind == Core::WorkbenchNodeKind::Placeholder && child->parent
+                && child->parent->kind == Core::WorkbenchNodeKind::Master) {
+                child->baseCompactStatus = optionalProviderCompactStatus(m_scanProvider);
+            }
             self(self, child.get());
         }
     };
@@ -1250,6 +1324,7 @@ void WorkbenchTreeModel::updateProviderPresentation()
     {
         Node *node = nullptr;
         QString status;
+        QString compactStatus;
         QStringList details;
         StateMarker marker = StateMarker::None;
         bool topologyDifference = false;
@@ -1262,13 +1337,16 @@ void WorkbenchTreeModel::updateProviderPresentation()
             previous.append(
                 {child.get(),
                  child->status,
+                 child->compactStatus,
                  child->presentationDetails,
                  child->marker,
                  child->topologyDifference,
                  child->issue,
                  child->differenceOrder});
             child->status = child->baseStatus;
+            child->compactStatus = child->baseCompactStatus;
             child->presentationStatus.clear();
+            child->presentationCompactStatus.clear();
             child->presentationDetails.clear();
             child->marker = StateMarker::None;
             child->topologyDifference = false;
@@ -1311,7 +1389,27 @@ void WorkbenchTreeModel::updateProviderPresentation()
                 status += Tr::tr(" - Error");
             else if (snapshot.activeAlarmCount > 0)
                 status += Tr::tr(" - %n active alarm(s)", nullptr, snapshot.activeAlarmCount);
-            appendPresentationStatus(master, status);
+            QString compactStatus
+                = Tr::tr("%1 %2 / %3")
+                      .arg(
+                          source,
+                          runModeName(snapshot.runMode),
+                          etherCATStateName(snapshot.masterState));
+            if (m_diagnosticsState != Data::DiagnosticsStreamState::Running) {
+                compactStatus
+                    = Tr::tr("%1 %2 · last %3 / %4")
+                          .arg(
+                              source,
+                              streamStateName(m_diagnosticsState),
+                              runModeName(snapshot.runMode),
+                              etherCATStateName(snapshot.masterState));
+            }
+            if (snapshot.masterHasError) {
+                compactStatus += Tr::tr(" · Error");
+            } else if (snapshot.activeAlarmCount > 0) {
+                compactStatus += Tr::tr(" · Alarms: %1").arg(snapshot.activeAlarmCount);
+            }
+            appendPresentationStatus(master, status, compactStatus);
             appendPresentationDetail(master, snapshot.masterAlStatusText);
             const StateMarker masterMarker = snapshot.masterHasError
                                                      || m_diagnosticsState
@@ -1334,7 +1432,16 @@ void WorkbenchTreeModel::updateProviderPresentation()
                           .arg(providerName, source, streamStateName(m_diagnosticsState));
                 if (snapshot.masterHasError)
                     diagnosticsStatus += Tr::tr(" - Error");
-                appendPresentationStatus(diagnostics, diagnosticsStatus);
+                QString diagnosticsCompactStatus
+                    = Tr::tr("%1 %2").arg(source, streamStateName(m_diagnosticsState));
+                if (snapshot.activeAlarmCount > 0) {
+                    diagnosticsCompactStatus
+                        += Tr::tr(" · Alarms: %1").arg(snapshot.activeAlarmCount);
+                }
+                if (snapshot.masterHasError)
+                    diagnosticsCompactStatus += Tr::tr(" · Error");
+                appendPresentationStatus(
+                    diagnostics, diagnosticsStatus, diagnosticsCompactStatus);
                 const StateMarker diagnosticsMarker
                     = snapshot.masterHasError
                               || m_diagnosticsState == Data::DiagnosticsStreamState::Failed
@@ -1356,7 +1463,11 @@ void WorkbenchTreeModel::updateProviderPresentation()
                 QString slaveStatus = Tr::tr("%1 %2").arg(source, etherCATStateName(slave.state));
                 if (slave.hasError)
                     slaveStatus += Tr::tr(" - Error");
-                appendPresentationStatus(node, slaveStatus);
+                QString slaveCompactStatus
+                    = Tr::tr("%1 %2").arg(source, etherCATStateName(slave.state));
+                if (slave.hasError)
+                    slaveCompactStatus += Tr::tr(" · Error");
+                appendPresentationStatus(node, slaveStatus, slaveCompactStatus);
                 appendPresentationDetail(node, slave.alStatusText);
                 raiseMarker(
                     node,
@@ -1371,7 +1482,8 @@ void WorkbenchTreeModel::updateProviderPresentation()
                     || reportedSlaves.contains(child->id)) {
                     continue;
                 }
-                appendPresentationStatus(child.get(), Tr::tr("%1 not present").arg(source));
+                const QString absentStatus = Tr::tr("%1 not present").arg(source);
+                appendPresentationStatus(child.get(), absentStatus, absentStatus);
                 appendPresentationDetail(
                     child.get(),
                     Tr::tr("The configured slave is absent from the diagnostics snapshot."));
@@ -1390,7 +1502,9 @@ void WorkbenchTreeModel::updateProviderPresentation()
                           optionalProviderDisplayName(
                               m_diagnosticsProvider, Core::ProviderKind::Diagnostics),
                           streamStateName(m_diagnosticsState));
-            appendPresentationStatus(master, status);
+            const QString compactStatus
+                = Tr::tr("Diagnostics %1").arg(streamStateName(m_diagnosticsState));
+            appendPresentationStatus(master, status, compactStatus);
             raiseMarker(
                 master,
                 m_diagnosticsState == Data::DiagnosticsStreamState::Failed
@@ -1399,7 +1513,7 @@ void WorkbenchTreeModel::updateProviderPresentation()
             master->issue = m_diagnosticsState == Data::DiagnosticsStreamState::Failed;
             Node *diagnostics = nodeForIndex(diagnosticsForProject(m_diagnosticsRequest.projectId));
             if (diagnostics && diagnostics != m_root.get()) {
-                appendPresentationStatus(diagnostics, status);
+                appendPresentationStatus(diagnostics, status, compactStatus);
                 raiseMarker(diagnostics, master->marker);
                 diagnostics->issue = master->issue;
             }
@@ -1416,7 +1530,9 @@ void WorkbenchTreeModel::updateProviderPresentation()
             const QString source = result.snapshot.mock ? Tr::tr("MOCK") : Tr::tr("Online");
             if (result.snapshot.operation == Data::ScanOperation::Interfaces) {
                 appendPresentationStatus(
-                    master, Tr::tr("%1 | %2 interface scan").arg(providerName, source));
+                    master,
+                    Tr::tr("%1 | %2 interface scan").arg(providerName, source),
+                    Tr::tr("%1 interface scan").arg(source));
                 raiseMarker(master, StateMarker::Information);
             } else {
                 QList<const Data::TopologyDifference *> differences;
@@ -1477,7 +1593,13 @@ void WorkbenchTreeModel::updateProviderPresentation()
                     }
                     master->topologyDifference = true;
                 }
-                appendPresentationStatus(master, masterStatus);
+                const QString masterCompactStatus
+                    = differences.isEmpty()
+                          ? Tr::tr("%1 Match").arg(source)
+                          : Tr::tr("%1 · Differences: %2")
+                                .arg(source)
+                                .arg(differences.size());
+                appendPresentationStatus(master, masterStatus, masterCompactStatus);
                 raiseMarker(master, aggregateMarker);
                 master->issue = master->issue || aggregateMarker == StateMarker::Warning
                                 || aggregateMarker == StateMarker::Error;
@@ -1486,7 +1608,8 @@ void WorkbenchTreeModel::updateProviderPresentation()
                      ++iterator) {
                     appendPresentationStatus(
                         iterator.key(),
-                        Tr::tr("%1 scan: %2").arg(source, iterator.value().join(", ")));
+                        Tr::tr("%1 scan: %2").arg(source, iterator.value().join(", ")),
+                        Tr::tr("%1 · %2").arg(source, iterator.value().join(", ")));
                 }
 
                 const bool fullMasterScan
@@ -1502,7 +1625,10 @@ void WorkbenchTreeModel::updateProviderPresentation()
                                              && result.snapshot.branchNodeId == child->id);
                     if (!inScope || affectedOfflineSlaves.contains(child->id))
                         continue;
-                    appendPresentationStatus(child.get(), Tr::tr("%1 scan: Matched").arg(source));
+                    appendPresentationStatus(
+                        child.get(),
+                        Tr::tr("%1 scan: Matched").arg(source),
+                        Tr::tr("%1 Match").arg(source));
                     raiseMarker(child.get(), StateMarker::Healthy);
                 }
             }
@@ -1513,7 +1639,12 @@ void WorkbenchTreeModel::updateProviderPresentation()
         Node *node = entry.node;
         node->status = node->presentationStatus.isEmpty() ? node->baseStatus
                                                           : node->presentationStatus.join(" | ");
-        if (entry.status == node->status && entry.details == node->presentationDetails
+        node->compactStatus
+            = node->presentationCompactStatus.isEmpty()
+                  ? node->baseCompactStatus
+                  : node->presentationCompactStatus.join(" · ");
+        if (entry.status == node->status && entry.compactStatus == node->compactStatus
+            && entry.details == node->presentationDetails
             && entry.marker == node->marker && entry.topologyDifference == node->topologyDifference
             && entry.issue == node->issue && entry.differenceOrder == node->differenceOrder) {
             continue;
@@ -1548,7 +1679,8 @@ void WorkbenchTreeModel::rebuild()
             {},
             Core::WorkbenchNodeKind::Placeholder,
             Tr::tr("No EtherCAT project is open"),
-            Tr::tr("Create or open an .ecatproject file")));
+            Tr::tr("Create or open an .ecatproject file"),
+            Tr::tr("Open/create project")));
     }
 
     for (const Data::ProjectSnapshot &project : std::as_const(projects)) {
@@ -1559,7 +1691,8 @@ void WorkbenchTreeModel::rebuild()
                 project.id,
                 Core::WorkbenchNodeKind::Project,
                 project.name,
-                Tr::tr("Invalid project | Offline data unavailable"));
+                Tr::tr("Invalid project | Offline data unavailable"),
+                Tr::tr("Invalid · Offline"));
             applyInvalidProjectPresentation(projectNode.get(), project);
             projectNode->children.push_back(makeNode(
                 projectNode.get(),
@@ -1567,7 +1700,8 @@ void WorkbenchTreeModel::rebuild()
                 project.id,
                 Core::WorkbenchNodeKind::Placeholder,
                 Tr::tr("Project configuration unavailable"),
-                Tr::tr("Fix the project file and reopen it")));
+                Tr::tr("Fix the project file and reopen it"),
+                Tr::tr("Fix and reopen")));
             m_root->children.push_back(std::move(projectNode));
             continue;
         }
@@ -1652,7 +1786,9 @@ void WorkbenchTreeModel::rebuild()
                     if (slaveCount > 0) {
                         nodePointer->baseStatus
                             = Tr::tr("%n configured slave(s)", nullptr, slaveCount);
+                        nodePointer->baseCompactStatus = nodePointer->baseStatus;
                         nodePointer->status = nodePointer->baseStatus;
+                        nodePointer->compactStatus = nodePointer->baseCompactStatus;
                     }
                     nodePointer->children.push_back(makeNode(
                         nodePointer,
@@ -1661,7 +1797,8 @@ void WorkbenchTreeModel::rebuild()
                         Core::WorkbenchNodeKind::Diagnostics,
                         Tr::tr("Diagnostics"),
                         optionalProviderStatus(
-                            m_diagnosticsProvider, Core::ProviderKind::Diagnostics)));
+                            m_diagnosticsProvider, Core::ProviderKind::Diagnostics),
+                        optionalProviderCompactStatus(m_diagnosticsProvider)));
                     if (slaveCount == 0) {
                         nodePointer->children.push_back(makeNode(
                             nodePointer,
@@ -1670,7 +1807,8 @@ void WorkbenchTreeModel::rebuild()
                             Core::WorkbenchNodeKind::Placeholder,
                             Tr::tr("No configured slaves"),
                             optionalProviderStatus(
-                                m_scanProvider, Core::ProviderKind::Scan)));
+                                m_scanProvider, Core::ProviderKind::Scan),
+                            optionalProviderCompactStatus(m_scanProvider)));
                     }
                 }
             }

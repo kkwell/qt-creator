@@ -2736,3 +2736,58 @@ and
 Beckhoff's device-tree pages are terminology references, not evidence of a
 TwinCAT or hardware integration:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>.
+
+## Workbench bilingual and compact-navigation boundary
+
+`ISSUE-WB-I18N-COMPACT-NAV-001` uses Qt Creator's existing application
+translation lifecycle. `src/app/main.cpp` already resolves
+`General/OverrideLanguage`, loads `qtcreator_<locale>.qm` plus the matching Qt
+catalogue, and installs both translators before plugin initialization.
+`Core::GeneralSettings` already exposes the language aspect and asks for a
+restart when it changes. The EtherCAT plugins therefore contribute translated
+source messages to the existing `qtcreator_zh_CN.ts`; they do not own a second
+setting, translator, restart mechanism, or live widget-retranslation graph.
+
+English remains the source-language fallback. The shared Simplified Chinese
+catalogue now has complete entries for the six product-owned EtherCAT
+translation contexts. This changes presentation resources only. It does not
+change the product's locale persistence, application bootstrap, Qt translation
+lookup, plugin initialization order, or shutdown lifecycle.
+
+Inside `EtherCATWorkbench`, each private tree node keeps paired full and compact
+base/presentation status values. Provider refresh first resets both pairs, then
+composes Diagnostics followed by Scan overlays into parallel lists. The final
+full status remains the `StatusRole`, status-cell accessible text, tooltip,
+accessible description, and search source. The compact status alone becomes
+the status-cell `DisplayRole`. `dataChanged` publishes both presentation and
+accessibility/search roles whenever either representation changes.
+
+The navigation view fixes both Name and Status sections to the available
+viewport through `QHeaderView::Stretch` and uses `Qt::ElideRight`. No
+hard-coded color, font, spacing, padding, or pixel width is introduced. Full
+names, statuses, Provider details, identity, and recovery guidance remain in
+standard tooltip and accessibility roles.
+
+`SearchTextRole` is valid only on column zero and combines name, full status,
+compact status, presentation details, and device type/group/identity. The
+proxy filter explicitly searches only that column. The existing private
+`WorkbenchItemViewFind` now receives the same role, superseding the earlier
+Display-only native-Find behavior without changing Core. It still walks only
+rows in the current proxy projection and hands a match to the unchanged
+selection-model bridge, which publishes the stable `NodeId`.
+
+The source boundary is the existing shared Chinese TS file,
+`workbenchtreemodel.cpp/.h`, `workbenchnavigation.cpp`, the existing Workbench
+test source, and four documents. There is no new source file, public model role,
+plugin dependency, Project/data format, persistence field, service/Provider
+contract, ActionManager command, Core or ProjectExplorer patch, application
+bootstrap hook, thread, timer, future, network transport, ADS, real scan,
+online CoE/SDO, controller, PLC, Zynq, or hardware behavior. CMake and qbs
+descriptions remain unchanged.
+
+The translation catalogue, normal/2x focused tests, complete Workbench suite,
+six isolated suites, and Qt 6.11.0 `WITH_TESTS=OFF` product build passed. The
+normal product executable was deliberately not launched for this issue at the
+user's request, so no visible runtime language switch or current-artifact
+lifecycle claim is made. Evidence is under
+`/private/tmp/embed-labs-i18n-compact`.
