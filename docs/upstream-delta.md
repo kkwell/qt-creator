@@ -1892,3 +1892,70 @@ Qt references:
 Beckhoff terminology reference:
 
 - <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>
+
+## Local navigation native-Find delta
+
+`ISSUE-WB-NAV-NATIVE-FIND-001` adds one bounded local Workbench integration on
+baseline `9d33e6535bcb140b1fb0e2d2b66e61e7797c3bf6`:
+
+- the existing left tree is hosted in Qt Creator's standard
+  `Core::ItemViewFind` searchable wrapper;
+- native Find walks visible Name/Status cells and propagates a match through the
+  existing stable-`NodeId` selection path;
+- the permanent Workbench filter remains independent and keeps its broader
+  private identity/detail matching semantics;
+- structural proxy-model changes clear the incremental search anchor before an
+  index can become stale; and
+- a private finder suppresses the inherited, locally broken Whole Words flag
+  without changing Core; and
+- navigation destruction releases both finder and tree without a residual
+  object.
+
+There is no new shortcut, ActionManager command, Locator integration,
+replacement support, or search-history implementation. The wrapper consumes an
+existing exported Core API and follows the local AutoTest precedent. No direct
+Core, ProjectExplorer, or application patch was made. The source delta is
+limited to `workbenchnavigation.cpp/.h`, the existing Workbench test source and
+header, and these four qualification documents. CMake and qbs already express
+the Core dependency and did not change.
+
+Failure-first retained unchanged production hashes and failed only because the
+tree had no aggregated `IFindSupport`, with target status 1. Final focused and
+ten-test navigation groups passed at normal and 2x scale. The complete
+Workbench suite passed twice per scale with 85 events per run. Six isolated
+suites passed 140 events, and the `WITH_TESTS=OFF` complete product built with
+exactly 16 plugin dylibs.
+
+The focused test also triggers the registered current-document Find command and
+verifies that Core attaches its visible `findEdit` to the local placeholder. A
+three-device reorder distinguishes a reset incremental anchor from a stale
+ordinary `QModelIndex`. One initial concurrent Diagnostics run emitted two
+timer-thread teardown warnings; two isolated reruns and the final sequential
+six-suite run passed without either warning, and no Diagnostics source changed.
+
+Enabled and explicit `-noload EtherCATWorkbench` product starts remained alive
+for 37/37 samples, with Workbench mapped in 37 and 0 samples respectively.
+Both were intentionally terminated through passed-through SIGTERM status 15.
+Artifact identity remained fixed, and residual-process, new-diagnostic-report,
+and matching crash-service-event counts were all zero. The acceptance used
+fresh HOME/settings, offscreen Qt, disabled crash reporting, cleared inherited
+DYLD variables, `-no-crashcheck`, and a process-local Touch Bar bypass.
+
+The delta adds no public API/model role, source list, plugin dependency, Project
+format or persistence, Provider contract, Project command, thread, timer,
+future, network, ADS, scan, online CoE/SDO, PLC, controller, Zynq, or hardware
+behavior. It qualifies only local Mock/offline navigation. No visible/manual
+Find-toolbar or VoiceOver inspection and no real EtherCAT or hardware execution
+is claimed. No remote comparison, fetch, pull, merge, rebase, push, PR, or
+publication was performed. The local `embed-labs` history remains authoritative.
+Evidence is under `/private/tmp/embed-labs-wb-nav-native-find-001.i4nnnB`.
+
+Qt Creator references:
+
+- <https://doc.qt.io/qtcreator/creator-editor-finding.html>
+- <https://doc.qt.io/qtcreator/creator-how-to-view-output.html>
+- <https://code.qt.io/cgit/qt-creator/qt-creator.git/tree/src/plugins/coreplugin/find/itemviewfind.h?h=20.0>
+
+Beckhoff terminology reference:
+
+- <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>

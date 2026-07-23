@@ -2665,3 +2665,74 @@ Evidence is under
 <https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Beckhoff's DC
 reference is used for UI terminology, not as evidence of live integration:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>.
+
+## Workbench native-Find boundary
+
+`ISSUE-WB-NAV-NATIVE-FIND-001` stays inside the private
+`EtherCATWorkbench` navigation widget. The existing
+`QSortFilterProxyModel` remains the only filtering boundary and still consumes
+the Workbench-private `SearchTextRole`. A standard `Core::ItemViewFind` is
+created for the existing `QTreeView`, and its searchable wrapper replaces only
+the tree page inside the existing tree/empty-state stack.
+
+The wrapper aggregates `IFindSupport` with the view, so Qt Creator's existing
+Current Document Find discovers it through focused-widget aggregation. No new
+ActionManager command, shortcut, Locator filter, Output Pane, or replacement
+surface is registered. `ItemViewFind` uses the proxy model's public
+`Qt::DisplayRole`; therefore native Find walks visible Name and Status cells,
+while the permanent filter retains its broader name/status/identity/detail
+semantics. This matches Qt Creator's own AutoTest pattern, which composes a
+domain filter and `ItemViewFind` rather than conflating the two operations.
+The focused integration test activates the registered current-document command
+and verifies that Core reparents its visible `findEdit` into this wrapper's
+`FindToolBarPlaceHolder`; it does not substitute a direct finder call for the
+user-visible attachment contract.
+
+The existing selection-model bridge maps a found proxy index back to the source
+context and publishes only its stable `NodeId`. The Details area continues to
+consume that service; Find never receives a ProjectService, Provider, snapshot,
+Undo stack, persistence object, or cross-plugin internal pointer. Model reset,
+row insertion/removal/movement, source row movement, and layout-change signals
+synchronously clear the finder's private incremental anchor before an index can
+become stale. A private `WorkbenchItemViewFind` also removes the Whole Words
+capability flag: the current local Core finder builds that regular-expression
+boundary with a backspace character, and this Workbench-only issue cannot
+advertise a known nonworking option or patch Core.
+
+Qt's wrapper/aggregation owns cleanup. Destruction coverage proves the finder
+and tree disappear with the navigation widget, and the standard Find toolbar
+placeholder detaches through Core's existing lifecycle. No Workbench thread,
+timer, future, queued callback, singleton, or retained QObject was added.
+
+The source boundary is only `workbenchnavigation.cpp/.h`, the existing
+Workbench test declaration/implementation, and four documents. There is no new
+source file, public type, virtual interface, model role, plugin dependency,
+Project format or persistence field, Provider/ProjectService contract,
+ProjectExplorer or application-bootstrap hook, network transport, ADS, scan,
+online CoE/SDO, PLC, controller, Zynq, or hardware surface. Existing Core is
+consumed without modification. CMake and qbs already depend on Core and remain
+unchanged.
+
+Failure-first proved that the tree had no `IFindSupport` and exited 1 while
+production hashes remained fixed. Final normal/2x focused and navigation groups,
+four complete Workbench runs, six isolated suites, the Qt 6.11.0
+`WITH_TESTS=OFF` product, and enabled/disabled invisible lifecycle all passed.
+The six suites totaled 140 pass events. Workbench mapped in 37/37 enabled and
+0/37 disabled samples; residual processes, new diagnostic reports, and matching
+crash-service events were zero. Evidence is under
+`/private/tmp/embed-labs-wb-nav-native-find-001.i4nnnB`.
+
+An initial concurrent suite batch emitted two Diagnostics timer-thread warnings
+after its tests passed. Two isolated Diagnostics reruns and the final sequential
+six-suite run were warning-free; the clean sequential run is the final lifecycle
+evidence, and no Diagnostics implementation was changed by this issue.
+
+Qt Creator documents standard current-item Find at
+<https://doc.qt.io/qtcreator/creator-editor-finding.html>. The reused API and
+Find-plus-filter precedent are
+<https://code.qt.io/cgit/qt-creator/qt-creator.git/tree/src/plugins/coreplugin/find/itemviewfind.h?h=20.0>
+and
+<https://code.qt.io/cgit/qt-creator/qt-creator.git/tree/src/plugins/autotest/testnavigationwidget.cpp?h=20.0#n119>.
+Beckhoff's device-tree pages are terminology references, not evidence of a
+TwinCAT or hardware integration:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>.

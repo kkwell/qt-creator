@@ -13,11 +13,15 @@
 #include "workbenchnavigation.h"
 #include "workbenchtreemodel.h"
 
+#include <aggregation/aggregate.h>
+
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/coreicons.h>
+#include <coreplugin/find/ifindsupport.h>
+#include <coreplugin/findplaceholder.h>
 #include <coreplugin/icore.h>
 #include <coreplugin/imode.h>
 #include <coreplugin/modemanager.h>
@@ -8476,6 +8480,144 @@ void EtherCATWorkbenchTests::testNavigationKeyboardFocus()
                                        .value<Data::NodeId>();
     QCOMPARE(currentId, project.nodes.at(1).id);
     QCOMPARE(controller.selectionService()->currentNodeId(), currentId);
+    controller.selectionService()->clear();
+}
+
+void EtherCATWorkbenchTests::testNavigationNativeFindIntegration()
+{
+    WorkbenchController controller;
+    const Data::ProjectSnapshot project = projectSnapshot("Native Find Project");
+    const QList<Data::DeviceSummary> devices = deviceSummaries(2);
+    controller.treeModel()->setProjects({project});
+    controller.treeModel()->syncDevices(devices);
+    controller.selectionService()->clear();
+
+    QPointer<::Core::IFindSupport> findGuard;
+    QPointer<::Core::FindToolBarPlaceHolder> findPlaceHolderGuard;
+    QPointer<QTreeView> treeGuard;
+    {
+        WorkbenchNavigationWidget navigation(&controller);
+        navigation.resize(700, 500);
+        navigation.show();
+        QTRY_VERIFY(navigation.isVisible());
+
+        QTreeView *tree = navigation.treeView();
+        treeGuard = tree;
+        QWidget *searchableTree
+            = navigation.findChild<QWidget *>("EtherCATWorkbenchSearchableTree");
+        QVERIFY(searchableTree);
+        ::Core::FindToolBarPlaceHolder *findPlaceHolder
+            = searchableTree->findChild<::Core::FindToolBarPlaceHolder *>();
+        QVERIFY(findPlaceHolder);
+        findPlaceHolderGuard = findPlaceHolder;
+        QCOMPARE(findPlaceHolder->owner(), searchableTree);
+        ::Core::IFindSupport *findSupport
+            = Aggregation::query<::Core::IFindSupport>(tree);
+        QVERIFY(findSupport);
+        findGuard = findSupport;
+        QVERIFY(!findSupport->supportsReplace());
+        const Utils::FindFlags supportedFlags = findSupport->supportedFindFlags();
+        QVERIFY(supportedFlags.testFlag(Utils::FindBackward));
+        QVERIFY(supportedFlags.testFlag(Utils::FindCaseSensitively));
+        QVERIFY(!supportedFlags.testFlag(Utils::FindWholeWords));
+        QVERIFY(supportedFlags.testFlag(Utils::FindRegularExpression));
+
+        navigation.activateWindow();
+        tree->setFocus(Qt::OtherFocusReason);
+        QTRY_COMPARE(QApplication::focusWidget(), tree);
+        ::Core::Command *findCommand
+            = ::Core::ActionManager::command(Utils::Id("Find.FindInCurrentDocument"));
+        QVERIFY(findCommand);
+        QTRY_VERIFY(findCommand->action()->isEnabled());
+        findCommand->action()->trigger();
+        QTRY_COMPARE(::Core::FindToolBarPlaceHolder::getCurrent(), findPlaceHolder);
+        QTRY_VERIFY(findPlaceHolder->isVisible());
+        QLineEdit *nativeFindEdit = searchableTree->findChild<QLineEdit *>("findEdit");
+        QVERIFY(nativeFindEdit);
+        QTRY_VERIFY(nativeFindEdit->isVisible());
+
+        const Core::PropertyPageContext projectBefore
+            = controller.treeModel()->contextForNodeId(project.id);
+        const QModelIndex firstDevice = findById(tree->model(), devices.first().id);
+        QVERIFY(firstDevice.isValid());
+        tree->setCurrentIndex(firstDevice);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.first().id);
+
+        QCOMPARE(
+            findSupport->findStep("Device 0001", {}),
+            ::Core::IFindSupport::Found);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.last().id);
+        QCOMPARE(tree->currentIndex().column(), 0);
+
+        QCOMPARE(
+            findSupport->findStep("Device 0000", Utils::FindBackward),
+            ::Core::IFindSupport::Found);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.first().id);
+
+        navigation.filterEdit()->setText("Device 0000");
+        QTRY_VERIFY(findById(tree->model(), devices.first().id).isValid());
+        QVERIFY(!findById(tree->model(), devices.last().id).isValid());
+        QCOMPARE(
+            findSupport->findStep("Device 0001", {}),
+            ::Core::IFindSupport::NotFound);
+        QCOMPARE(navigation.filterEdit()->text(), QString("Device 0000"));
+        QCOMPARE(controller.selectionService()->currentNodeId(), devices.first().id);
+        QCOMPARE(controller.treeModel()->contextForNodeId(project.id), projectBefore);
+
+        navigation.filterEdit()->clear();
+        QCOMPARE(
+            findSupport->findStep("device 0001", Utils::FindCaseSensitively),
+            ::Core::IFindSupport::NotFound);
+        QCOMPARE(
+            findSupport->findStep("Device 0001", {}),
+            ::Core::IFindSupport::Found);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.last().id);
+
+        QCOMPARE(
+            findSupport->findIncremental("Device 0001", {}),
+            ::Core::IFindSupport::Found);
+        QList<Data::DeviceSummary> refreshedDevices = devices;
+        refreshedDevices.last().name = "Refreshed Device";
+        controller.treeModel()->syncDevices(refreshedDevices);
+        QCOMPARE(
+            findSupport->findIncremental("Refreshed Device", {}),
+            ::Core::IFindSupport::Found);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.last().id);
+
+        QList<Data::DeviceSummary> anchorDevices = refreshedDevices;
+        anchorDevices.first().name = "Alpha Match";
+        anchorDevices.last().name = "Beta Anchor";
+        Data::DeviceSummary gammaDevice = deviceSummaries(1).first();
+        gammaDevice.name = "Gamma Match";
+        anchorDevices.append(gammaDevice);
+        controller.treeModel()->syncDevices(anchorDevices);
+        controller.selectionService()->setCurrentNodeId(devices.last().id);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.last().id);
+        findSupport->resetIncrementalSearch();
+        QCOMPARE(
+            findSupport->findIncremental("Beta Anchor", {}),
+            ::Core::IFindSupport::Found);
+
+        QSignalSpy rowsMoved(controller.treeModel(), &QAbstractItemModel::rowsMoved);
+        QList<Data::DeviceSummary> movedDevices = anchorDevices;
+        movedDevices[1].name = "Zulu Anchor";
+        controller.treeModel()->syncDevices(movedDevices);
+        QCOMPARE(rowsMoved.count(), 1);
+        QCOMPARE(
+            findSupport->findIncremental("Match", {}),
+            ::Core::IFindSupport::Found);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.first().id);
+        QCOMPARE(
+            findSupport->findStep("Zulu Anchor", Utils::FindBackward),
+            ::Core::IFindSupport::Found);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.last().id);
+        QCOMPARE(controller.treeModel()->contextForNodeId(project.id), projectBefore);
+    }
+
+    QVERIFY(treeGuard.isNull());
+    QVERIFY(findGuard.isNull());
+    QVERIFY(findPlaceHolderGuard.isNull());
+    QVERIFY(!::Core::FindToolBarPlaceHolder::getCurrent());
     controller.selectionService()->clear();
 }
 

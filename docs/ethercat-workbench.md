@@ -6579,3 +6579,118 @@ editing-finished, accessible-description, and announcement contracts are at
 <https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Beckhoff's
 Distributed Clocks page supplies field and interaction terminology only:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>.
+
+## Native Find in the navigation tree
+
+`ISSUE-WB-NAV-NATIVE-FIND-001` separates the two V1 navigation operations
+that previously shared only the permanent filter field. The existing field
+continues to filter the proxy tree by the private `SearchTextRole`, including
+node name, status, presented identity, and provider details. When focus is in
+the tree, Qt Creator's standard Find in Current Document command can now attach
+to an aggregated `Core::ItemViewFind`. It walks the currently visible Name and
+Status cells, selects the matching proxy index, and lets the existing
+`SelectionService` stable `NodeId` path update Details.
+
+Find does not clear or rewrite the permanent filter. If filtering has hidden a
+node, native Find cannot select that node until the filter projection exposes
+it again. Find also does not activate a Project, mutate a Project snapshot,
+create an Undo command, import ESI data, or replace text. Next and Previous,
+case sensitivity, and regular-expression capability remain those of the
+existing Qt Creator finder; no Workbench action or shortcut is duplicated. A
+private Workbench finder suppresses the inherited Whole Words flag because the
+current local Core implementation constructs that boundary with a backspace
+character and does not match a known visible multi-token name. The normal
+platform shortcut remains owned by Qt Creator, including Command+F on macOS.
+
+The searchable wrapper is the normal result page in the existing filter/empty-
+state stack. The wrapper aggregates the tree and finder and owns the standard
+Find toolbar placeholder. The focused test gives the tree focus, triggers the
+registered `Find.FindInCurrentDocument` command, and verifies that the visible
+`findEdit` is attached to this wrapper. Before model reset, row
+insertion/removal/movement, or layout change, Workbench clears the finder's
+incremental anchor so a stale
+`QModelIndex` cannot cross a topology refresh. The focused test changes a
+device's visible name while Find is active, finds the refreshed name with the
+same stable `NodeId`, then proves the tree and finder are both destroyed with
+the navigation widget. No production thread, timer, future, queued callback,
+or Provider object was added.
+
+Failure-first changed only the Workbench test declaration and implementation.
+The unchanged production navigation cpp/header retained SHA-256 values
+`be3fb065bc0b9351314eb98ac4e315482159a28e6527d121c1958fc398479da3`
+and
+`e874a45f55f16a8bd5f1db9113eaaadfc96c36c6ea690bf99fc0740219e45ffc`;
+initialization and cleanup passed, the missing `IFindSupport` assertion failed,
+and the target exited 1. One prequalification test-only run tried to prove the
+inherited Core whole-word implementation with a multi-token phrase and received
+`NotFound`. That run is not counted as a Workbench pass and did not justify a
+Core change in this private UI issue. Staged review instead required the private
+finder to stop advertising that broken option. Final coverage verifies the
+flag is absent plus Workbench-owned toolbar-placeholder, forward/backward,
+case-sensitive, filtered-projection, row-movement, stable-selection, refresh,
+and destruction behavior.
+
+Focused normal and 2x runs passed 3 events each. Ten navigation-related tests
+passed 12 events at each scale. Two complete Workbench runs at each scale passed
+85 events per run. Six isolated suites passed 140 events: Core 17, Project 12,
+Devices 8, Workbench 85, Scan 11, and Diagnostics 7. The Qt 6.11.0 Release test
+build was `qt-creator-build-ethercat-core-qt611`. The `WITH_TESTS=OFF` complete
+product build passed in `qt-creator-build-ethercat-product-qt611` with exactly
+16 plugin dylibs. One initial concurrent six-suite batch emitted two Diagnostics
+timer-thread teardown warnings after all seven events had passed. Diagnostics
+then passed two isolated 7-event reruns and the final sequential six-suite run
+with zero such warnings; no Diagnostics source was changed.
+
+Final SHA-256 values for navigation cpp/header, Workbench tests, and the test
+header are
+`0ed26fa0c08eff697bad8fbc44bfe406721281d538010eaca9901e85be55356e`,
+`f372c045c8e8cb8117060a15129f5c0dbfe3acaea5c071e636c2ef4ebd469ef5`,
+`90bf459eae7c2e56863d24a983bd121cc7754ddbeafb9fed5b5c12c2a63af06d`,
+and
+`f6d3a61377d8e3fae185b61f2ffdf1fe8513dfe24451d1d3be25eb34a8a55da9`.
+Their git blobs are `90e46c9b9b58aabce0a2cac7061d3023f5cd6979`,
+`fe7d693279e2a169e89c5b750a5d733fde3c0022`,
+`6e0142fbdb45e27cd4b3d5a56a9833a9a71860da`, and
+`90465c5a81b9fdb6a6483278515b3e5fa6ef1f9c`. Product executable,
+product Workbench, and test Workbench SHA-256 values are
+`c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`,
+`c89ce5c0cfb64697a4996ccef3a5bbc279d6ab5014a38c9db06c5c68a80fa97b`,
+and
+`74259a3cb7fcc54070f2167ff38e5f806582c3d3ac959debbf60f598a115e787`.
+
+Invisible enabled and explicit `-noload EtherCATWorkbench` product starts each
+stayed alive for 37/37 samples. Workbench mapped in 37/37 enabled samples and
+0/37 disabled samples. Both ended through the intentional passed-through
+SIGTERM status 15. The 2026-07-23 08:01:22 to 08:03:51 +0800 audit found zero
+residual process, new Embed Labs DiagnosticReports file, or matching
+ReportCrash, CrashReporter, or diagnosticd event; pre/post binary SHA-256,
+mtime, size, and Mach-O UUID manifests were identical. Fresh HOME/settings,
+offscreen Qt, disabled crash reporting, cleared inherited DYLD variables,
+`-no-crashcheck`, and a process-local Touch Bar bypass kept acceptance
+non-interrupting.
+
+Qt Creator documents current-item Find and its standard flags at
+<https://doc.qt.io/qtcreator/creator-editor-finding.html> and separately
+documents Find and Filter controls at
+<https://doc.qt.io/qtcreator/creator-how-to-view-output.html>. The reused local
+API and closest Find-plus-filter precedent are
+<https://code.qt.io/cgit/qt-creator/qt-creator.git/tree/src/plugins/coreplugin/find/itemviewfind.h?h=20.0>
+and
+<https://code.qt.io/cgit/qt-creator/qt-creator.git/tree/src/plugins/autotest/testnavigationwidget.cpp?h=20.0#n119>.
+Beckhoff's tree and device-selection pages supply hierarchy and workflow
+terminology only; they do not define this Qt Creator Find integration:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html> and
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1096103307.html>.
+
+Evidence is under
+`/private/tmp/embed-labs-wb-nav-native-find-001.i4nnnB`. This issue changes only
+private Workbench navigation implementation, existing Workbench tests, and the
+four required documents. It adds no public API or model role, source file,
+dependency, Project format or persistence field, Provider/ProjectService
+contract, Core or ProjectExplorer patch, application bootstrap, network, ADS,
+scan, online CoE/SDO, controller, PLC, Zynq, or hardware behavior. CMake and qbs
+descriptions did not change, so qbs was not run. No visible/manual Find-toolbar
+inspection, manual VoiceOver, real EtherCAT interface, or hardware execution is
+claimed. The qualified boundary remains local Mock/offline behavior, and no
+remote comparison, fetch, pull, merge, rebase, push, PR, or publication was
+performed.

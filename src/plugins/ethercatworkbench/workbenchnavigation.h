@@ -60,6 +60,7 @@ private:
     QSortFilterProxyModel *m_proxyModel = nullptr;
     QLineEdit *m_filterEdit = nullptr;
     QTreeView *m_treeView = nullptr;
+    QWidget *m_treeResults = nullptr;
     QStackedWidget *m_resultsStack = nullptr;
     QWidget *m_emptyState = nullptr;
     QPushButton *m_clearFilter = nullptr;

@@ -58,6 +58,7 @@ private slots:
     void testEthercatAliasDraftSurvivesNonConflictingRefresh();
     void testNavigationSetActiveProjectCommand();
     void testNavigationFilterEmptyState();
+    void testNavigationNativeFindIntegration();
     void testNavigationKeyboardFocus();
     void testNavigationKeyboardContextMenuTargetsCurrentNode();
     void testBuiltInDevicePages();

@@ -8,6 +8,7 @@
 
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
+#include <coreplugin/find/itemviewfind.h>
 #include <coreplugin/icontext.h>
 
 #include <ethercatcore/selectionservice.h>
@@ -35,6 +36,17 @@
 #include <optional>
 
 namespace EtherCAT::Workbench::Internal {
+
+class WorkbenchItemViewFind final : public ::Core::ItemViewFind
+{
+public:
+    using ItemViewFind::ItemViewFind;
+
+    Utils::FindFlags supportedFindFlags() const final
+    {
+        return ItemViewFind::supportedFindFlags() & ~Utils::FindWholeWords;
+    }
+};
 
 static std::optional<Data::NodeId> currentLocateProjectId(
     WorkbenchController *controller, const WorkbenchTreeModel *model)
@@ -104,6 +116,43 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_treeView->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     setFocusProxy(m_treeView);
 
+    auto findSupport = new WorkbenchItemViewFind(m_treeView);
+    const auto resetIncrementalSearch = [findSupport] {
+        findSupport->resetIncrementalSearch();
+    };
+    connect(
+        m_proxyModel,
+        &QAbstractItemModel::modelAboutToBeReset,
+        findSupport,
+        resetIncrementalSearch);
+    connect(
+        m_proxyModel,
+        &QAbstractItemModel::rowsAboutToBeInserted,
+        findSupport,
+        resetIncrementalSearch);
+    connect(
+        m_proxyModel,
+        &QAbstractItemModel::rowsAboutToBeRemoved,
+        findSupport,
+        resetIncrementalSearch);
+    connect(
+        m_proxyModel,
+        &QAbstractItemModel::rowsAboutToBeMoved,
+        findSupport,
+        resetIncrementalSearch);
+    connect(
+        m_sourceModel,
+        &QAbstractItemModel::rowsAboutToBeMoved,
+        findSupport,
+        resetIncrementalSearch);
+    connect(
+        m_proxyModel,
+        &QAbstractItemModel::layoutAboutToBeChanged,
+        findSupport,
+        resetIncrementalSearch);
+    m_treeResults = ::Core::ItemViewFind::createSearchableWrapper(findSupport);
+    m_treeResults->setObjectName("EtherCATWorkbenchSearchableTree");
+
     m_emptyState = new QWidget(this);
     m_emptyState->setObjectName("EtherCATWorkbenchFilterEmptyState");
     m_emptyState->setAccessibleName(Tr::tr("No matching EtherCAT nodes"));
@@ -136,7 +185,7 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
 
     m_resultsStack = new QStackedWidget(this);
     m_resultsStack->setObjectName("EtherCATWorkbenchNavigationResults");
-    m_resultsStack->addWidget(m_treeView);
+    m_resultsStack->addWidget(m_treeResults);
     m_resultsStack->addWidget(m_emptyState);
 
     auto layout = new QVBoxLayout(this);
@@ -381,7 +430,7 @@ void WorkbenchNavigationWidget::updateFilterState()
 {
     const bool noMatches
         = !m_filterEdit->text().isEmpty() && m_proxyModel->rowCount() == 0;
-    m_resultsStack->setCurrentWidget(noMatches ? m_emptyState : m_treeView);
+    m_resultsStack->setCurrentWidget(noMatches ? m_emptyState : m_treeResults);
     setFocusProxy(noMatches ? static_cast<QWidget *>(m_clearFilter)
                             : static_cast<QWidget *>(m_treeView));
 }

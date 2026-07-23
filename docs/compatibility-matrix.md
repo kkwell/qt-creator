@@ -3287,3 +3287,44 @@ Evidence is under
 <https://doc.qt.io/qt-6/qaccessibleannouncementevent.html>. Beckhoff's DC
 reference supplies terminology only:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1358002571.html>.
+
+## EtherCATWorkbench native navigation Find qualification
+
+`ISSUE-WB-NAV-NATIVE-FIND-001` is qualified from local baseline
+`9d33e6535bcb140b1fb0e2d2b66e61e7797c3bf6`.
+
+| Qualification | Current evidence |
+| --- | --- |
+| User-visible gap | The left tree had a permanent recursive Filter but no aggregated Qt Creator `IFindSupport`, so standard current-item Find could not attach |
+| Native integration | The existing tree is wrapped by `Core::ItemViewFind`; automation focuses the tree, triggers `Find.FindInCurrentDocument`, and verifies the visible `findEdit` is attached to this wrapper; command, toolbar, Next/Previous, and platform shortcut remain Core-owned |
+| Find versus Filter | Filter still searches private Name, Status, identity, and presentation details and hides nonmatching rows; Find walks visible `Qt::DisplayRole` Name/Status cells in the current proxy projection and never changes filter text |
+| Selection boundary | A match changes the tree current index and propagates only its stable `NodeId` through the existing `SelectionService`; no Project activation, snapshot mutation, Undo command, ESI import, or replacement occurs |
+| Refresh lifecycle | Model reset, row insertion/removal/movement, and layout change reset the incremental anchor; a three-device move test distinguishes the reset start point from a stale ordinary `QModelIndex` and retains stable `NodeId` selection |
+| Ownership and cleanup | Standard aggregation owns the finder/tree relationship; `QPointer` coverage proves both finder and tree are destroyed with the navigation widget |
+| Empty/error behavior | A filtered-out visible name returns `NotFound`, preserves the filter and selection, and leaves Project context unchanged; the existing no-match Filter page remains separate |
+| Core flags | Backward and case-sensitive operation is exercised; backward, case-sensitive, and regex flags remain available; replace is unsupported |
+| Deliberate Core exclusion | A superseded test-only multi-token whole-word assertion returned `NotFound`; no direct Core patch was authorized, so the private Workbench finder suppresses the broken Whole Words flag and the final test verifies its absence |
+| Failure-first | Test-only changes retained production navigation hashes `be3fb065bc0b9351314eb98ac4e315482159a28e6527d121c1958fc398479da3` and `e874a45f55f16a8bd5f1db9113eaaadfc96c36c6ea690bf99fc0740219e45ffc`; missing `IFindSupport` failed and target status was 1 |
+| Focused normal and 2x | Each final run passed 3 events, 0 failed, target status 0 |
+| Navigation-related normal and 2x | Ten tests plus init/cleanup passed 12 events per run, 0 failed, target status 0 |
+| Complete Workbench normal and 2x | Two runs at each scale passed 85 events per run, 0 failed, target status 0 |
+| Six-plugin regression | Core 17, Project 12, Devices 8, Workbench 85, Scan 11, Diagnostics 7; 140 passed, 0 failed, every target status 0 |
+| Diagnostics teardown audit | One initial concurrent batch emitted two timer-thread warnings after Diagnostics passed; two isolated reruns and the final sequential six-suite run each passed 7 events with zero warnings, so final lifecycle evidence uses the clean sequential run |
+| Final source SHA-256 | Navigation cpp `0ed26fa0c08eff697bad8fbc44bfe406721281d538010eaca9901e85be55356e`; header `f372c045c8e8cb8117060a15129f5c0dbfe3acaea5c071e636c2ef4ebd469ef5`; tests `90bf459eae7c2e56863d24a983bd121cc7754ddbeafb9fed5b5c12c2a63af06d`; test header `f6d3a61377d8e3fae185b61f2ffdf1fe8513dfe24451d1d3be25eb34a8a55da9` |
+| Final git blobs | Navigation cpp `90e46c9b9b58aabce0a2cac7061d3023f5cd6979`; header `fe7d693279e2a169e89c5b750a5d733fde3c0022`; tests `6e0142fbdb45e27cd4b3d5a56a9833a9a71860da`; test header `90465c5a81b9fdb6a6483278515b3e5fa6ef1f9c` |
+| Qualified build | Qt 6.11.0 Release tests; `WITH_TESTS=OFF` complete product passed with exactly 16 plugin dylibs |
+| Product hashes | Executable `c6f36b6a3f01cd97b59dc82a4a1ccd420be3939311cf59ebd9b5f11b767cb4db`; product Workbench `c89ce5c0cfb64697a4996ccef3a5bbc279d6ab5014a38c9db06c5c68a80fa97b`; test Workbench `74259a3cb7fcc54070f2167ff38e5f806582c3d3ac959debbf60f598a115e787` |
+| Enabled/disabled lifecycle | Both invisible product starts stayed alive 37/37 samples; Workbench mapped 37/37 enabled and 0/37 disabled; each ended with expected passed-through SIGTERM status 15 |
+| Crash-dialog audit | From 2026-07-23 08:01:22–08:03:51 +0800, residual processes, new Embed Labs DiagnosticReports, and matching crash-service events were all 0; product artifacts were unchanged |
+| Deliberate exclusions | No visible/manual Find-toolbar or VoiceOver check, physical interface, network, ADS, real scan, online CoE/SDO, controller, PLC, Zynq, or hardware execution is claimed |
+| Public/build boundary | Private Workbench cpp/header and existing tests only; no public API/role, Core/ProjectExplorer patch, dependency, source list, Project format, Provider contract, CMake, or qbs change |
+| Local-only policy | No remote comparison, fetch, pull, merge, rebase, push, PR, or publication was performed |
+
+Evidence is under
+`/private/tmp/embed-labs-wb-nav-native-find-001.i4nnnB`. Qt Creator's Find and
+Find-versus-Filter references are
+<https://doc.qt.io/qtcreator/creator-editor-finding.html> and
+<https://doc.qt.io/qtcreator/creator-how-to-view-output.html>. The local API is
+<https://code.qt.io/cgit/qt-creator/qt-creator.git/tree/src/plugins/coreplugin/find/itemviewfind.h?h=20.0>.
+Beckhoff's tree workflow reference supplies terminology only:
+<https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>.
