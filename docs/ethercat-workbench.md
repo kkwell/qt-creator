@@ -6780,3 +6780,34 @@ timer, network, ADS, real scan, SDO, controller, PLC, Zynq, or hardware
 behavior. Scan, Online, CoE, and Diagnostics remain explicitly local
 Mock/offline where previously qualified. Evidence is under
 `/private/tmp/embed-labs-i18n-compact`.
+
+## Online controller connection prerequisite
+
+`ISSUE-CORE-CONTROLLER-CONNECTION-API-001` adds no Workbench widget or command.
+It establishes the public semantic boundary required by the next online UI
+issue:
+
+- a connection request is scoped to stable Project/Master IDs and one resolved
+  Control/Push/Bulk endpoint;
+- an immutable snapshot separates provider availability, connection state,
+  channel/session health, heartbeat, read-only controller summaries, and
+  structured errors;
+- Connect does not acquire control, scan a bus, change the controller state, or
+  mutate the offline project; and
+- Workbench will consume the future concrete Provider through object-pool and
+  property-page extension points without owning sockets or Product API frames.
+
+The next user-visible issue will embed Communication in the existing right-side
+details host and register Connect/Disconnect with ActionManager so the current
+controller command strip remains the state-control surface. Real Scan,
+Current Bus (Actual), config/actual Apply, and embedded topology remain separate
+later issues.
+
+CODESYS supplies the useful workflow separation: install ESI in a managed
+[Device Repository](https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_cmd_device_repository.html),
+run an explicit
+[Scan for Devices](https://content.helpme-codesys.com/en/CODESYS%20EtherCAT/_ecat_cmd_scan_devices.html),
+and compare actual devices before applying them to the project. It does not
+require copying the CODESYS window layout. Product API sources, endpoint
+details, safety gates, real read-only evidence, and controller/client issue
+handoff are in `docs/ethercat-online-controller.md`.

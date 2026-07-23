@@ -2,9 +2,12 @@
 
 ## Scope
 
-The first phase builds a TwinCAT-inspired EtherCAT engineering experience on
-the current local Qt Creator product. It does not implement a Zynq protocol,
-real EtherCAT communication, ECPKG deployment, or a PLC language environment.
+The completed offline phase builds a CODESYS/TwinCAT-informed EtherCAT
+engineering experience on the current local Qt Creator product. The online
+phase now proceeds through read-only controller connection, controlled bus
+discovery, a separate actual-bus tree and comparison, embedded topology, and
+real diagnostics. ECPKG deployment and a PLC language environment remain
+outside the current automatic scope.
 
 All user-visible EtherCAT functionality belongs to product-owned Qt Creator
 plugins. The upstream Core, ProjectExplorer, and application bootstrap must
@@ -12,8 +15,9 @@ not contain EtherCAT-specific branches.
 
 ## Serial delivery rule
 
-Only one EtherCAT feature plugin may be in progress at a time. The next plugin
-cannot start until the current plugin passes its build, lifecycle, behavior,
+Only one bounded EtherCAT ISSUE may be in progress at a time. A prerequisite
+Core/API issue may precede its consuming UI plugin, but the next issue cannot
+start until the current issue passes its build, lifecycle, behavior,
 documentation, review, and local-commit gates.
 
 | Order | Component | Current state | Exclusive responsibility |
@@ -26,6 +30,7 @@ documentation, review, and local-commit gates.
 | 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, configured-slave, ESI Repository, individual ESI catalogue-device General, master-side ESI insertion, supported-device drag-and-drop, and explicit active-project selection workflows, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
+| 7 | `EtherCATProductApiPlugin` | Planned; Core connection API complete | Product API transport, three-channel lifecycle, and read-only controller Provider |
 
 `EtherCATData` is an infrastructure library, not a feature container. Its
 offline configuration contract is persisted by EtherCATProject format version
@@ -50,8 +55,14 @@ Qt Creator Core / ExtensionSystem / Utils / ProjectExplorer
 ```
 
 Dependencies are one-way and explicit. Core cannot depend on Project,
-Devices, Workbench, Scan, or Diagnostics. Scan and Diagnostics cannot include
-Workbench private headers.
+Devices, Workbench, Scan, Diagnostics, or ProductApi. Scan and Diagnostics
+cannot include Workbench private headers.
+
+The future ProductApi plugin depends only on EtherCATData, EtherCATCore,
+Qt Network, and the Qt Creator platform dependencies it actually uses. Core
+does not depend back on it. ProductApi may implement the public connection,
+Scan, and Diagnostics Providers, but it cannot include Workbench private
+headers.
 
 ## Qt Creator integration rules
 
@@ -77,6 +88,7 @@ The Core API exposes narrowly scoped services and extension points:
 - project service
 - selection service
 - device repository provider
+- controller connection provider
 - scan provider
 - diagnostics provider
 - property-page provider
@@ -87,6 +99,36 @@ serialization, or Zynq ABI concepts. Later feature-specific typed methods are
 added only by a dedicated Core/API change in the owning serial plugin stage.
 The typed Diagnostics contract is frozen there and implemented by the local
 Mock Diagnostics plugin.
+
+## Online controller connection ownership
+
+`EtherCATProductApiPlugin` is the sole planned owner of Product API framing,
+Control/Push/Bulk sockets, channel roles, SessionId/BootId correlation,
+request IDs, CRC validation, heartbeat, timeout, reconnect, control lease, and
+discovery state machines. Those implementation details do not enter
+EtherCATCore, Workbench, Project, Devices, Scan, or Diagnostics.
+
+The Core prerequisite exposes only immutable semantic values and
+`ControllerConnectionProvider`. A connect request binds one resolved endpoint
+to stable Project/Master IDs. Its snapshot separately reports provider
+availability, connection lifecycle, all three channel states, negotiated
+session/version, read-only controller summaries, heartbeat freshness,
+source-classified errors, and Mock/real evidence.
+
+Connect is deliberately not Scan. A successful connection acquires no control
+lease and changes no controller state. Real discovery remains a later explicit
+operation with separate authorization, package/state preflight,
+configuration-mode transitions, cancellation, before/after audit, and lease
+cleanup.
+
+Workbench will consume the Provider and host ProductApi-contributed pages
+through public extension points. It will not retain sockets, codec objects,
+threads, internal ProductApi objects, or network callbacks. Scan and
+Diagnostics remain independent Provider contracts, so connection success does
+not fabricate scan results or diagnostic health.
+
+The full source, safety, endpoint, CODESYS workflow, and controller/client issue
+handoff is recorded in `docs/ethercat-online-controller.md`.
 
 ## Cross-plugin data rules
 
@@ -2791,3 +2833,29 @@ normal product executable was deliberately not launched for this issue at the
 user's request, so no visible runtime language switch or current-artifact
 lifecycle claim is made. Evidence is under
 `/private/tmp/embed-labs-i18n-compact`.
+
+## Controller connection Core/API prerequisite
+
+`ISSUE-CORE-CONTROLLER-CONNECTION-API-001` extends only the product-owned
+EtherCATData and EtherCATCore layers:
+
+- `controllerconnection.h` defines stable Project/Master-scoped request,
+  endpoint, channel/session, controller, capability, package, firmware, and
+  structured-error values;
+- `ProviderKind::ControllerConnection` is appended after all existing kinds;
+- `ControllerConnectionProvider` exposes asynchronous connect, refresh, and
+  disconnect acceptance plus one immutable-snapshot invalidation signal; and
+- the existing ProviderRegistry discovers and removes the new kind without a
+  special-case branch.
+
+The concrete ProductApi plugin, Qt Network dependency, default endpoint
+settings, Communication page, commands, codec, and hardware behavior do not
+exist in this issue. No Qt Creator Core, ProjectExplorer, application bootstrap,
+Project format, Workbench UI, Scan workflow, Diagnostics source, network thread,
+or controller state change is added. CMake and qbs contain the same new Data
+header.
+
+The final Qt 6.11.0 qualification passed the 18-event Core suite, the
+141-event sequential six-plugin regression, the complete `WITH_TESTS=OFF`
+16-plugin build, and enabled/disabled Core lifecycle sampling. These tests use
+only a fake in-process Provider and do not claim a Qt network or hardware path.

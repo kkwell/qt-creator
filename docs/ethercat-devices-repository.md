@@ -83,14 +83,36 @@ before removing the provider from the object pool.
 does not parse an ESI library on the GUI thread. Rebuild replaces the in-memory
 index atomically after all usable sources have been parsed.
 
-## Deliberate phase-1 limits
+## Online scan matching boundary
+
+The repository remains the sole ESI/XML owner when real discovery is added.
+The future ProductApi scan source publishes actual identity values; a separate
+matching service resolves Vendor ID, Product Code, Revision Number, and
+available serial constraints against immutable repository descriptions.
+
+An absent or ambiguous match remains an Unknown Device with its position,
+station address, AL state, and complete reported identity. The user can invoke
+the existing Import ESI workflow and re-match the same actual snapshot. The
+scan source must not guess a nearest revision, write XML into the repository
+directly, or mutate the project merely because a description becomes
+available.
+
+This follows the CODESYS
+[Device Repository](https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_cmd_device_repository.html)
+and
+[Scan for Devices](https://content.helpme-codesys.com/en/CODESYS%20EtherCAT/_ecat_cmd_scan_devices.html)
+separation while retaining the current Qt Creator plugin ownership.
+
+## Deliberate repository limits
 
 - No ESI editor, device tree, details panel, or import dialog is owned here.
 - No modular terminal composition is expanded yet.
 - No vendor profile dictionary is converted into executable behavior.
 - No DC formula is evaluated against a configured master cycle.
 - No device is written into an EtherCAT project yet.
-- No live scan, controller connection, ECPKG, or Zynq protocol is present.
+- No live scan, controller connection, ECPKG, or Product API transport is
+  owned by EtherCATDevices.
 
-These limits preserve a small offline contract for Workbench and later
-plugins without coupling the repository to UI or controller implementation.
+These limits preserve a small repository contract for Workbench and later
+plugins without coupling ESI parsing/storage to UI or controller
+implementation.

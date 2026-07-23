@@ -16,6 +16,8 @@
 #include <extensionsystem/iplugin.h>
 #include <extensionsystem/pluginmanager.h>
 
+#include <ethercatdata/controllerconnection.h>
+
 #include <memory>
 
 namespace EtherCAT::Core::Internal {
@@ -49,6 +51,10 @@ EtherCATCorePlugin::~EtherCATCorePlugin()
 
 void EtherCATCorePlugin::initialize()
 {
+    qRegisterMetaType<Data::ControllerConnectionRequest>();
+    qRegisterMetaType<Data::ControllerConnectionSnapshot>();
+    qRegisterMetaType<Data::ControllerConnectionState>();
+    qRegisterMetaType<Data::ControllerOperationError>();
     qRegisterMetaType<Data::NodeId>();
     qRegisterMetaType<Data::DeviceDescription>();
     qRegisterMetaType<Data::DeviceImportResult>();

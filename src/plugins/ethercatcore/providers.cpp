@@ -117,6 +117,11 @@ PropertyPageProvider::PropertyPageProvider(Utils::Id id, const QString &displayN
     : Provider(ProviderKind::PropertyPage, id, displayName, parent)
 {}
 
+ControllerConnectionProvider::ControllerConnectionProvider(
+    Utils::Id id, const QString &displayName, QObject *parent)
+    : Provider(ProviderKind::ControllerConnection, id, displayName, parent)
+{}
+
 ScanProvider::ScanProvider(Utils::Id id, const QString &displayName, QObject *parent)
     : Provider(ProviderKind::Scan, id, displayName, parent)
 {}

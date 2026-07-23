@@ -5,7 +5,7 @@
 | Item | Supported or observed baseline | Evidence status |
 |---|---|---|
 | Product branch | `embed-labs` only | Verified |
-| Issue baseline commit | `a835d3340e0a3d644928adb445a8c916fda17e23` | Verified |
+| Current issue baseline commit | `06538be209e26ff0b8a4b8ad4f231a7d15c0631b` | Verified |
 | Product version | 20.0.1 | Verified |
 | Recorded Qt Creator merge point | `11ba5cec09dce75db4bc948d98055e338ff59576` | Verified |
 | Qualified product Qt | Homebrew 6.11.0 | Clean Release build and GUI smoke verified |
@@ -46,6 +46,7 @@ local decisions and easier maintenance.
 | EtherCATWorkbench | EtherCAT mode, device tree, selection, master-side ESI insertion, supported-device drag-and-drop, and offline property pages | Stage 4 verified |
 | EtherCATScan | Local Mock scan, topology comparison, and checked acceptance | Stage 5 verified |
 | EtherCATDiagnostics | Local Mock state, WKC, DC, alarm, and performance views | Stage 6 verified |
+| EtherCATProductApi | Planned Product API transport and real-controller connection | Not built; Core semantic API verified separately |
 
 ### Phase-1 EtherCAT profile
 
@@ -73,6 +74,23 @@ details routing. Multiple open project roots now expose one explicit
 inactive-root `Set as Active Project` command while retaining independent
 selection and offline state. Real modular-profile data, additional UI coverage,
 and the user-policy-deferred upstream rehearsal remain open.
+
+### Online EtherCAT profile
+
+The online profile is incremental and does not replace qualified offline/Mock
+behavior. Its ordered gates are:
+
+1. semantic controller connection Core API;
+2. concrete ProductApi transport and embedded Communication page;
+3. controlled real discovery;
+4. Project Configuration versus Current Bus comparison and Apply;
+5. truthful embedded topology; and
+6. real diagnostics.
+
+Only the first prerequisite is implemented by the current issue. The product
+still builds 16 plugins; `EtherCATProductApi` is not yet present. A Python
+reference-client read-only hardware audit is protocol input, not Qt product
+qualification.
 
 ### Hidden or excluded plugins
 
@@ -115,8 +133,11 @@ function is outside the product target and records migration or recovery.
 | Scan UI and topology comparison | Stage 5 verified with Mock provider only |
 | WKC/DC/link diagnostics | Stage 6 verified with Mock provider only |
 | Optional Scan/Diagnostics Provider state | Verified for absent, registered/unavailable, and available states with public `Local Mock` producer names and no installation inference |
-| Zynq protocol | Explicitly out of scope |
-| Real EtherCAT scan | Explicitly out of scope |
+| Product API v1.9 | Windows authoritative sources and read-only reference-client behavior audited; Qt transport pending |
+| Controller connection Core contract | Verified semantic prerequisite; no Qt network or hardware claim |
+| Real EtherCAT scan | Planned after read-only Qt connection; not implemented or Qt-validated |
+| Real controller diagnostics | Existing Mock contract reusable; ProductApi Push/Bulk source pending |
+| Physical topology graph | Linear scan order only with current API; branch/star graph blocked by missing port-neighbor edge ABI |
 | ECPKG/ECFG/ETIR | Explicitly out of scope |
 | ST/LD/FBD | Explicitly out of scope |
 
@@ -3360,3 +3381,38 @@ Evidence is under `/private/tmp/embed-labs-i18n-compact`. Beckhoff's tree
 references provide hierarchy terminology only; the bilingual selector and
 compact rendering are Qt Creator-native product behavior:
 <https://infosys.beckhoff.com/content/1033/tc3_io_intro/1084406539.html>.
+
+## EtherCAT controller connection Core/API qualification
+
+`ISSUE-CORE-CONTROLLER-CONNECTION-API-001` is qualified from local baseline
+`06538be209e26ff0b8a4b8ad4f231a7d15c0631b`.
+
+| Qualification | Current evidence |
+|---|---|
+| Failure-first | The Core target failed first because the contract test required the intentionally absent `ethercatdata/controllerconnection.h` |
+| Public scope | Stable Project/Master request, endpoint, three-channel/session snapshot, controller/capability/package/firmware summaries, structured error, and `ControllerConnectionProvider` |
+| Existing enum compatibility | `ProviderKind::ControllerConnection` is appended as value 5; prior Provider kinds are unchanged |
+| Invalid requests | Empty Project ID, Master ID, host, and each zero port are rejected without a snapshot notification |
+| Lifecycle | Disconnected, Connecting, Connected, Degraded, Failed, refresh, idempotent disconnect, reconnect, and connection-generation invalidation passed |
+| Channel/session evidence | Control 4,096-byte limit; Push/Bulk 65,536-byte limits; negotiated protocol, SessionId, BootId, lease observation, heartbeat, and all channel roles retain value semantics |
+| Error attribution | Local Protocol error does not contain Product API status/operation result; explicit controller-returned error preserves those fields separately |
+| Provider registry | New kind registers, filters, unlinks, and removes through the unchanged generic registry |
+| Focused Core suite | EtherCATCore 18 passed, 0 failed |
+| Sequential six-plugin regression | Core 18, Project 12, Devices 8, Workbench 85, Scan 11, Diagnostics 7; 141 passed, 0 failed |
+| Test isolation | Qt 6.11.0 Release, fresh HOME/settings, offscreen Qt, disabled crash reporting, cleared inherited DYLD variables, `-no-crashcheck`, and LLDB Touch Bar bypass |
+| Product build | `WITH_TESTS=OFF` complete product passed with exactly 16 plugin dylibs |
+| Enabled lifecycle | Product stayed alive for 10/10 samples with `libEtherCATCore.dylib` mapped in 10/10; intentional SIGTERM returned target status 15 |
+| Disabled lifecycle | Product stayed alive for 10/10 samples with `-noload EtherCATCore` and Core mapped in 0/10; intentional SIGTERM returned target status 15 |
+| Cleanup/crash boundary | Zero matching residual qualification processes and no new Embed Labs DiagnosticReports in the final audit window |
+| CMake/qbs | New Data header is listed in both; qbs execution not run because the executable remains unavailable |
+| Dependency boundary | EtherCATData remains Qt Core-only; EtherCATCore adds no direct Qt Network dependency, socket, codec, or worker |
+| Upstream boundary | No Qt Creator Core, ProjectExplorer, or application-bootstrap change; direct Core intrusion count remains five |
+| Hardware claim | None; the fake Provider qualifies only the in-process API, while Python read-only results remain separate protocol input |
+| Local-only policy | No fetch, pull, merge, rebase, branch switch, push, PR, or publication |
+
+The controller endpoint, authoritative Windows protocol hashes, read-only
+hardware observations, discovery safety gate, CODESYS workflow mapping, and
+client/master issue handoff are documented in
+`docs/ethercat-online-controller.md`. Test evidence is under
+`/private/tmp/embed-labs-i18n-compact/online-core-api`; lifecycle logs use the
+`/private/tmp/embed-labs-controller-core2-*` prefix.

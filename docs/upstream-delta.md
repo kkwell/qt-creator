@@ -24,7 +24,7 @@ relative to that recorded comparison point.
 | Plugin top-level CMake/qbs | 2 | Required to register EasyBoard |
 | Branding/qbs support | 2 | Product identity support |
 | `.gitignore` | 1 | Product repository policy |
-| `src/libs/ethercatdata` | 9 | Product-owned stable identity, project, device, scan, and diagnostics values |
+| `src/libs/ethercatdata` | 10 | Product-owned stable identity, project, device, scan, diagnostics, and controller-connection values |
 | `src/plugins/ethercatcore` | 19 | Product-owned Core services and extension points |
 | `src/plugins/ethercatproject` | 18 | Product-owned offline project plugin |
 | `src/plugins/ethercatdevices` | 12 | Product-owned offline ESI repository plugin |
@@ -2001,3 +2001,35 @@ issue. Visible language switching and enabled/disabled lifecycle smoke for the
 current artifact are intentionally not claimed. No remote comparison, fetch,
 pull, merge, rebase, push, PR, or publication was performed. Evidence is under
 `/private/tmp/embed-labs-i18n-compact`.
+
+## Controller connection Core/API delta
+
+`ISSUE-CORE-CONTROLLER-CONNECTION-API-001` starts from local baseline
+`06538be209e26ff0b8a4b8ad4f231a7d15c0631b`. It adds one product-owned
+`EtherCATData` header, synchronized Data CMake/qbs entries, one appended
+EtherCATCore Provider kind and abstract Provider, metatype registration,
+existing Core contract-test coverage, and documentation.
+
+The public values contain decoded connection semantics only: stable
+Project/Master scope, endpoint, three-channel/session state, read-only
+controller/capability/package/firmware summaries, heartbeat freshness, and
+source-classified errors. They contain no socket, ECAP frame, message ID, CRC,
+wire offset, background worker, network policy, or controller implementation.
+
+No path under upstream `src/plugins/coreplugin`, ProjectExplorer, or `src/app`
+changes. The direct Core intrusion count remains five. The product still
+contains 16 plugin dylibs because the concrete `EtherCATProductApi` plugin is a
+later issue. No Project format, Workbench page, command, scan, diagnostic
+source, controller state, or hardware behavior changes in this prerequisite.
+
+The new Data header is listed identically in CMake and qbs. qbs execution
+remains unavailable, so synchronization is source-reviewed rather than claimed
+as an executed qbs build. No remote comparison, fetch, pull, merge, rebase,
+push, PR, or publication is performed.
+
+The focused Core suite passed 18 events and the sequential six-plugin
+regression passed 141. The `WITH_TESTS=OFF` product built 16 plugin dylibs.
+Enabled and `-noload EtherCATCore` offscreen samples remained alive 10/10 with
+Core mapped 10/10 and 0/10 respectively; both exited through the intentional
+SIGTERM target status 15 with no residual qualification process or new
+Embed Labs DiagnosticReport.

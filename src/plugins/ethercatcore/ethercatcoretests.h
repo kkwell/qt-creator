@@ -20,6 +20,7 @@ private slots:
     void testDeviceDescriptionAndImportJobContract();
     void testPropertyPageProviderContract();
     void testWorkbenchDerivedNodeKinds();
+    void testControllerConnectionProviderContract();
     void testScanProviderContract();
     void testDiagnosticsProviderContract();
     void testSelectionServicePublishesStableIds();

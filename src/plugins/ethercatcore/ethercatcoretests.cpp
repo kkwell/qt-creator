@@ -14,6 +14,7 @@
 #include <extensionsystem/pluginmanager.h>
 #include <extensionsystem/pluginspec.h>
 
+#include <ethercatdata/controllerconnection.h>
 #include <ethercatdata/nodeid.h>
 #include <ethercatdata/offlineconfiguration.h>
 #include <ethercatdata/projectsnapshot.h>
@@ -74,6 +75,172 @@ public:
         if (pageId == Utils::Id("EtherCAT.Test.General") && page)
             page->setObjectName(context.nodeId.toString());
     }
+};
+
+class TestControllerConnectionProvider final : public ControllerConnectionProvider
+{
+public:
+    TestControllerConnectionProvider()
+        : ControllerConnectionProvider("EtherCAT.Connection.Test", "Test controller")
+    {}
+
+    Data::ControllerConnectionSnapshot connectionSnapshot() const final { return m_snapshot; }
+
+    Utils::Result<> connectToController(const Data::ControllerConnectionRequest &request) final
+    {
+        const Data::ControllerEndpoint &endpoint = request.endpoint;
+        if (endpoint.host.trimmed().isEmpty() || endpoint.controlPort == 0
+            || endpoint.pushPort == 0 || endpoint.bulkPort == 0 || request.projectId.isNull()
+            || request.masterId.isNull()) {
+            return Utils::ResultError("Invalid controller endpoint");
+        }
+        if (m_snapshot.state != Data::ControllerConnectionState::Disconnected)
+            return Utils::ResultError("Connection provider is busy");
+
+        m_snapshot = {};
+        m_snapshot.projectId = request.projectId;
+        m_snapshot.masterId = request.masterId;
+        m_snapshot.endpoint = endpoint;
+        m_snapshot.state = Data::ControllerConnectionState::Connecting;
+        m_snapshot.readOnly = true;
+        m_snapshot.sessionGeneration = ++m_generation;
+        m_snapshot.channels = {
+            {Data::ControllerChannel::Control,
+             Data::ControllerChannelState::Connecting,
+             4096,
+             {},
+             "Connecting"},
+            {Data::ControllerChannel::Push,
+             Data::ControllerChannelState::Disconnected,
+             65536,
+             {},
+             {}},
+            {Data::ControllerChannel::Bulk,
+             Data::ControllerChannelState::Disconnected,
+             65536,
+             {},
+             {}},
+        };
+        emit connectionSnapshotChanged();
+        return Utils::ResultOk;
+    }
+
+    Utils::Result<> disconnectFromController() final
+    {
+        if (m_snapshot.state == Data::ControllerConnectionState::Disconnected)
+            return Utils::ResultOk;
+        m_snapshot.state = Data::ControllerConnectionState::Disconnected;
+        m_snapshot.sessionGeneration = ++m_generation;
+        for (Data::ControllerChannelStatus &channel : m_snapshot.channels)
+            channel.state = Data::ControllerChannelState::Disconnected;
+        emit connectionSnapshotChanged();
+        return Utils::ResultOk;
+    }
+
+    Utils::Result<> refreshController() final
+    {
+        if (m_snapshot.state != Data::ControllerConnectionState::Connected
+            && m_snapshot.state != Data::ControllerConnectionState::Degraded) {
+            return Utils::ResultError("Controller is not connected");
+        }
+        m_snapshot.updatedAt = QDateTime::currentDateTimeUtc();
+        emit connectionSnapshotChanged();
+        return Utils::ResultOk;
+    }
+
+    void completeHandshake()
+    {
+        m_snapshot.state = Data::ControllerConnectionState::Connected;
+        m_snapshot.protocolVersion = Data::ControllerProtocolVersion{1, 9};
+        m_snapshot.connectedAt = QDateTime::currentDateTimeUtc();
+        m_snapshot.updatedAt = m_snapshot.connectedAt;
+        m_snapshot.lastHeartbeatAt = m_snapshot.connectedAt;
+        m_snapshot.session = Data::ControllerSessionSummary{17, 42, 0, 5000, false};
+        for (Data::ControllerChannelStatus &channel : m_snapshot.channels) {
+            channel.state = Data::ControllerChannelState::Connected;
+            channel.lastActivityAt = m_snapshot.connectedAt;
+            channel.detail.clear();
+        }
+
+        Data::ControllerStateSummary state;
+        state.serviceState = Data::ControllerServiceState::Shutdown;
+        state.severity = Data::ControllerSeverity::None;
+        state.ready = true;
+        state.controllerBootId = 42;
+        m_snapshot.controllerState = state;
+
+        Data::ControllerCapabilitySummary capability;
+        capability.maximumSlaves = 64;
+        capability.minimumCycleTimeNs = 125000;
+        capability.maximumCyclicFrames = 8;
+        capability.maximumProcessInputBytes = 4096;
+        capability.maximumProcessOutputBytes = 4096;
+        capability.descriptorSha256 = QByteArray::fromHex(
+            "74ea5e67b3e1d7ba575339b636abb5432ecf6790d3504d32ce1756bcfec49568");
+        capability.controlLease = true;
+        capability.resumablePush = true;
+        capability.transactionalBulk = true;
+        capability.capabilityQuery = true;
+        capability.exactAlarmReplay = true;
+        capability.linkDiagnostics = true;
+        capability.timeCorrelation = true;
+        capability.firmwareUpdate = true;
+        capability.coe = true;
+        capability.distributedClocks = true;
+        m_snapshot.capability = capability;
+
+        Data::ControllerPackageSummary package;
+        package.stagedSlot = Data::ControllerSlot::A;
+        package.stagedGeneration = 11;
+        package.stagedConfigurationId = 810;
+        package.activeSlot = Data::ControllerSlot::A;
+        package.activeGeneration = 11;
+        package.activeConfigurationId = 810;
+        package.controllerState = Data::ControllerPackageState::Empty;
+        package.controllerBootId = 42;
+        m_snapshot.package = package;
+
+        Data::ControllerFirmwareSummary firmware;
+        firmware.state = Data::ControllerFirmwareState::Confirmed;
+        firmware.activeSlot = Data::ControllerSlot::A;
+        firmware.previousSlot = Data::ControllerSlot::B;
+        firmware.targetSlot = Data::ControllerSlot::A;
+        firmware.packageVerified = true;
+        firmware.confirmed = true;
+        firmware.progressPerMille = 1000;
+        firmware.generation = 2517;
+        firmware.updatedAt = m_snapshot.connectedAt;
+        m_snapshot.firmware = firmware;
+        emit connectionSnapshotChanged();
+    }
+
+    void degradePush()
+    {
+        m_snapshot.state = Data::ControllerConnectionState::Degraded;
+        m_snapshot.channels[1].state = Data::ControllerChannelState::Failed;
+        m_snapshot.channels[1].detail = "Push channel unavailable";
+        emit connectionSnapshotChanged();
+    }
+
+    void failProtocol()
+    {
+        Data::ControllerOperationError error;
+        error.source = Data::ControllerErrorSource::Protocol;
+        error.channel = Data::ControllerChannel::Push;
+        error.operation = Data::ControllerOperation::SubscribeEvents;
+        error.codeName = "UNEXPECTED_PUSH_FRAME";
+        error.requestId = 73;
+        error.occurredAt = QDateTime::currentDateTimeUtc();
+        error.retryDisposition = Data::ControllerRetryDisposition::Reconnect;
+        error.summary = "Unexpected push frame";
+        m_snapshot.state = Data::ControllerConnectionState::Failed;
+        m_snapshot.lastError = error;
+        emit connectionSnapshotChanged();
+    }
+
+private:
+    Data::ControllerConnectionSnapshot m_snapshot;
+    quint64 m_generation = 0;
 };
 
 class TestScanProvider final : public ScanProvider
@@ -677,6 +844,166 @@ void EtherCATCoreTests::testWorkbenchDerivedNodeKinds()
     QCOMPARE(PropertyPageContext(context), context);
 }
 
+void EtherCATCoreTests::testControllerConnectionProviderContract()
+{
+    const Data::ControllerEndpoint endpoint{"192.168.3.101", 15200, 15201, 15202};
+    const Data::ControllerEndpoint endpointCopy = endpoint;
+    QCOMPARE(endpointCopy, endpoint);
+    const Data::ControllerConnectionRequest request{
+        Data::NodeId::create(), Data::NodeId::create(), endpoint};
+    QCOMPARE(Data::ControllerConnectionRequest(request), request);
+
+    TestControllerConnectionProvider provider;
+    QCOMPARE(int(ProviderKind::ControllerConnection), 5);
+    QCOMPARE(provider.kind(), ProviderKind::ControllerConnection);
+    QCOMPARE(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected);
+    QVERIFY(provider.connectionSnapshot().readOnly);
+    QVERIFY(!provider.refreshController());
+
+    QSignalSpy snapshotSpy(
+        &provider, &ControllerConnectionProvider::connectionSnapshotChanged);
+    QVERIFY(!provider.connectToController({}));
+    Data::ControllerConnectionRequest invalidRequest = request;
+    invalidRequest.projectId = {};
+    QVERIFY(!provider.connectToController(invalidRequest));
+    invalidRequest = request;
+    invalidRequest.masterId = {};
+    QVERIFY(!provider.connectToController(invalidRequest));
+    invalidRequest = request;
+    invalidRequest.endpoint.host.clear();
+    QVERIFY(!provider.connectToController(invalidRequest));
+    invalidRequest = request;
+    invalidRequest.endpoint.controlPort = 0;
+    QVERIFY(!provider.connectToController(invalidRequest));
+    invalidRequest = request;
+    invalidRequest.endpoint.pushPort = 0;
+    QVERIFY(!provider.connectToController(invalidRequest));
+    invalidRequest = request;
+    invalidRequest.endpoint.bulkPort = 0;
+    QVERIFY(!provider.connectToController(invalidRequest));
+    QCOMPARE(snapshotSpy.count(), 0);
+
+    const Utils::Result<> connectResult = provider.connectToController(request);
+    QVERIFY_RESULT(connectResult);
+    const Data::ControllerConnectionSnapshot connecting = provider.connectionSnapshot();
+    QCOMPARE(connecting.projectId, request.projectId);
+    QCOMPARE(connecting.masterId, request.masterId);
+    QCOMPARE(connecting.endpoint, endpoint);
+    QCOMPARE(connecting.state, Data::ControllerConnectionState::Connecting);
+    QCOMPARE(connecting.sessionGeneration, quint64(1));
+    QCOMPARE(connecting.channels.size(), 3);
+    QCOMPARE(connecting.channels.at(0).channel, Data::ControllerChannel::Control);
+    QCOMPARE(connecting.channels.at(0).state, Data::ControllerChannelState::Connecting);
+    QCOMPARE(connecting.channels.at(0).maximumPayloadBytes, 4096);
+    QCOMPARE(connecting.channels.at(1).channel, Data::ControllerChannel::Push);
+    QCOMPARE(connecting.channels.at(1).maximumPayloadBytes, 65536);
+    QCOMPARE(connecting.channels.at(2).channel, Data::ControllerChannel::Bulk);
+    QCOMPARE(connecting.channels.at(2).maximumPayloadBytes, 65536);
+    QVERIFY(connecting.readOnly);
+    QCOMPARE(snapshotSpy.count(), 1);
+    QVERIFY(!provider.connectToController(request));
+
+    provider.completeHandshake();
+    const Data::ControllerConnectionSnapshot connected = provider.connectionSnapshot();
+    QCOMPARE(connected.state, Data::ControllerConnectionState::Connected);
+    QCOMPARE(connected.protocolVersion, Data::ControllerProtocolVersion(1, 9));
+    QVERIFY(connected.session);
+    QCOMPARE(connected.session->sessionId, quint64(17));
+    QCOMPARE(connected.session->bootId, quint64(42));
+    QVERIFY(!connected.session->ownsControlLease);
+    QVERIFY(connected.controllerState);
+    QCOMPARE(
+        connected.controllerState->serviceState, Data::ControllerServiceState::Shutdown);
+    QVERIFY(connected.controllerState->ready);
+    QVERIFY(connected.capability);
+    QCOMPARE(connected.capability->maximumSlaves, 64);
+    QCOMPARE(connected.capability->descriptorSha256.size(), 32);
+    QVERIFY(connected.capability->controlLease);
+    QVERIFY(connected.capability->resumablePush);
+    QVERIFY(connected.capability->transactionalBulk);
+    QVERIFY(connected.capability->firmwareUpdate);
+    QVERIFY(connected.capability->coe);
+    QVERIFY(connected.capability->distributedClocks);
+    QVERIFY(connected.package);
+    QCOMPARE(connected.package->activeSlot, Data::ControllerSlot::A);
+    QCOMPARE(connected.package->activeConfigurationId, quint64(810));
+    QCOMPARE(connected.package->controllerState, Data::ControllerPackageState::Empty);
+    QVERIFY(connected.firmware);
+    QCOMPARE(connected.firmware->state, Data::ControllerFirmwareState::Confirmed);
+    QCOMPARE(connected.firmware->generation, quint64(2517));
+    QCOMPARE(Data::ControllerConnectionSnapshot(connected), connected);
+    QCOMPARE(snapshotSpy.count(), 2);
+
+    const Utils::Result<> refreshResult = provider.refreshController();
+    QVERIFY_RESULT(refreshResult);
+    QVERIFY(provider.connectionSnapshot().updatedAt.isValid());
+    QCOMPARE(snapshotSpy.count(), 3);
+
+    provider.degradePush();
+    QCOMPARE(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Degraded);
+    QCOMPARE(
+        provider.connectionSnapshot().channels.at(1).state,
+        Data::ControllerChannelState::Failed);
+    QCOMPARE(snapshotSpy.count(), 4);
+    const Utils::Result<> degradedRefreshResult = provider.refreshController();
+    QVERIFY_RESULT(degradedRefreshResult);
+    QCOMPARE(snapshotSpy.count(), 5);
+
+    provider.failProtocol();
+    const Data::ControllerConnectionSnapshot failed = provider.connectionSnapshot();
+    QCOMPARE(failed.state, Data::ControllerConnectionState::Failed);
+    QVERIFY(failed.lastError);
+    QCOMPARE(failed.lastError->source, Data::ControllerErrorSource::Protocol);
+    QCOMPARE(failed.lastError->channel, Data::ControllerChannel::Push);
+    QCOMPARE(failed.lastError->operation, Data::ControllerOperation::SubscribeEvents);
+    QVERIFY(!failed.lastError->code);
+    QVERIFY(!failed.lastError->operationResult);
+    QCOMPARE(failed.lastError->codeName, QString("UNEXPECTED_PUSH_FRAME"));
+    QVERIFY(!failed.lastError->sourceDetail);
+    QVERIFY(failed.lastError->requestId);
+    QCOMPARE(*failed.lastError->requestId, quint64(73));
+    QCOMPARE(
+        failed.lastError->retryDisposition, Data::ControllerRetryDisposition::Reconnect);
+    QCOMPARE(snapshotSpy.count(), 6);
+
+    Data::ControllerOperationError controllerError;
+    controllerError.source = Data::ControllerErrorSource::Controller;
+    controllerError.channel = Data::ControllerChannel::Control;
+    controllerError.operation = Data::ControllerOperation::QueryState;
+    controllerError.code = -6;
+    controllerError.operationResult = -2;
+    controllerError.sourceDetail = 17;
+    controllerError.codeName = "BAD_MESSAGE";
+    controllerError.retryAfterMs = 250;
+    const Data::ControllerOperationError controllerErrorCopy = controllerError;
+    QCOMPARE(controllerErrorCopy, controllerError);
+    QCOMPARE(*controllerErrorCopy.sourceDetail, quint64(17));
+    QCOMPARE(*controllerErrorCopy.retryAfterMs, 250);
+
+    const Utils::Result<> failedDisconnectResult = provider.disconnectFromController();
+    QVERIFY_RESULT(failedDisconnectResult);
+    QCOMPARE(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected);
+    for (const Data::ControllerChannelStatus &channel : provider.connectionSnapshot().channels)
+        QCOMPARE(channel.state, Data::ControllerChannelState::Disconnected);
+    QCOMPARE(provider.connectionSnapshot().sessionGeneration, quint64(2));
+    QCOMPARE(snapshotSpy.count(), 7);
+
+    const Utils::Result<> reconnectResult = provider.connectToController(request);
+    QVERIFY_RESULT(reconnectResult);
+    QCOMPARE(provider.connectionSnapshot().sessionGeneration, quint64(3));
+    QCOMPARE(snapshotSpy.count(), 8);
+    const Utils::Result<> reconnectDisconnectResult = provider.disconnectFromController();
+    QVERIFY_RESULT(reconnectDisconnectResult);
+    QCOMPARE(provider.connectionSnapshot().sessionGeneration, quint64(4));
+    QCOMPARE(snapshotSpy.count(), 9);
+    const Utils::Result<> repeatedDisconnectResult = provider.disconnectFromController();
+    QVERIFY_RESULT(repeatedDisconnectResult);
+    QCOMPARE(snapshotSpy.count(), 9);
+}
+
 void EtherCATCoreTests::testScanProviderContract()
 {
     TestScanProvider provider;
@@ -847,6 +1174,7 @@ void EtherCATCoreTests::testProviderRegistryTracksObjectPool()
     QSignalSpy removedSpy(registry, &ProviderRegistry::providerAboutToBeRemoved);
     TestScanProvider provider;
     TestPropertyPageProvider reentrantProvider;
+    TestControllerConnectionProvider connectionProvider;
 
     ExtensionSystem::PluginManager::addObject(&provider);
     QCOMPARE(registry->provider(provider.id()), &provider);
@@ -859,6 +1187,13 @@ void EtherCATCoreTests::testProviderRegistryTracksObjectPool()
     ExtensionSystem::PluginManager::addObject(&reentrantProvider);
     QCOMPARE(registry->provider(reentrantProvider.id()), &reentrantProvider);
     QCOMPARE(addedSpy.count(), 2);
+
+    ExtensionSystem::PluginManager::addObject(&connectionProvider);
+    QCOMPARE(registry->provider(connectionProvider.id()), &connectionProvider);
+    QCOMPARE(
+        registry->providers(ProviderKind::ControllerConnection),
+        QList<Provider *>({&connectionProvider}));
+    QCOMPARE(addedSpy.count(), 3);
 
     bool departingProviderUnlinked = false;
     bool nestedRemovalObserved = false;
@@ -882,6 +1217,11 @@ void EtherCATCoreTests::testProviderRegistryTracksObjectPool()
     QVERIFY(registry->providers(ProviderKind::Scan).isEmpty());
     QVERIFY(!registry->providers(ProviderKind::PropertyPage).contains(&reentrantProvider));
     QCOMPARE(removedSpy.count(), 2);
+
+    ExtensionSystem::PluginManager::removeObject(&connectionProvider);
+    QVERIFY(!registry->provider(connectionProvider.id()));
+    QVERIFY(registry->providers(ProviderKind::ControllerConnection).isEmpty());
+    QCOMPARE(removedSpy.count(), 3);
 }
 
 void EtherCATCoreTests::testSettingsPageIsRegistered()

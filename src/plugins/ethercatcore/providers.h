@@ -4,6 +4,7 @@
 
 #include "ethercatcore_global.h"
 
+#include <ethercatdata/controllerconnection.h>
 #include <ethercatdata/devicedescription.h>
 #include <ethercatdata/diagnosticssnapshot.h>
 #include <ethercatdata/projectsnapshot.h>
@@ -23,7 +24,14 @@ QT_END_NAMESPACE
 
 namespace EtherCAT::Core {
 
-enum class ProviderKind { Project, DeviceRepository, PropertyPage, Scan, Diagnostics };
+enum class ProviderKind {
+    Project,
+    DeviceRepository,
+    PropertyPage,
+    Scan,
+    Diagnostics,
+    ControllerConnection,
+};
 enum class DeviceImportState { Pending, Running, Canceling, Finished };
 enum class WorkbenchNodeKind {
     None = 0,
@@ -201,6 +209,25 @@ public:
     virtual QList<PropertyPageDescriptor> pages(const PropertyPageContext &context) const = 0;
     virtual QWidget *createPage(Utils::Id pageId, QWidget *parent) = 0;
     virtual void updatePage(Utils::Id pageId, QWidget *page, const PropertyPageContext &context) = 0;
+};
+
+class ETHERCATCORE_EXPORT ControllerConnectionProvider : public Provider
+{
+    Q_OBJECT
+
+public:
+    ControllerConnectionProvider(
+        Utils::Id id, const QString &displayName, QObject *parent = nullptr);
+
+    virtual Data::ControllerConnectionSnapshot connectionSnapshot() const = 0;
+
+    virtual Utils::Result<> connectToController(
+        const Data::ControllerConnectionRequest &request) = 0;
+    virtual Utils::Result<> disconnectFromController() = 0;
+    virtual Utils::Result<> refreshController() = 0;
+
+signals:
+    void connectionSnapshotChanged();
 };
 
 class ETHERCATCORE_EXPORT ScanProvider : public Provider

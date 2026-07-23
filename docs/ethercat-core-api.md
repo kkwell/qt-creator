@@ -34,6 +34,13 @@ and trend records, explicit stream and EtherCAT states, alarm lifecycle, and a
 checked `DiagnosticsProvider` contract. It remains an in-process capability and
 defines no controller session, network command, packet, or private ABI.
 
+The controller-connection API revision adds one semantic prerequisite for a
+future `EtherCATProductApi` plugin. It describes a stable Project/Master scope,
+resolved endpoint, connection and channel states, negotiated session/version,
+read-only state/capability/package/firmware summaries, heartbeat freshness, and
+structured errors. It does not contain a socket, ECAP frame, message number,
+CRC, byte layout, network thread, state-changing command, or bus scan.
+
 The offline-configuration revision adds typed Process Data, Startup, and DC
 values plus UI-independent validation and process-image preview algorithms.
 The Project format-version-2 revision embeds those values in each offline slave
@@ -107,6 +114,7 @@ unique `Utils::Id`, user-visible name, type, and availability flag.
 | `ProjectService` | EtherCATProject |
 | `DeviceRepositoryProvider` | EtherCATDevices |
 | `PropertyPageProvider` | EtherCATWorkbench and optional page contributors |
+| `ControllerConnectionProvider` | Future EtherCATProductApi |
 | `ScanProvider` | EtherCATScan or a future real-controller provider |
 | `DiagnosticsProvider` | EtherCATDiagnostics or a future real-controller provider |
 
@@ -114,6 +122,85 @@ Stage 1 froze discovery and lifecycle only. The Project API revision adds typed
 project methods before the Project implementation. It deliberately does not
 expose generic `QVariant`, byte arrays, network messages, or placeholder methods
 for later feature data.
+
+## Controller connection provider contract
+
+`ControllerConnectionProvider` is the GUI-thread, in-process boundary between
+future Qt Creator pages and a concrete controller transport. One provider
+exposes a current immutable `ControllerConnectionSnapshot` and accepts three
+asynchronous operation requests:
+
+- `connectToController(request)`;
+- `refreshController()`; and
+- `disconnectFromController()`.
+
+The returned `Utils::Result` says whether the request was accepted, not whether
+the asynchronous network operation later succeeded. Consumers observe
+`connectionSnapshotChanged()` and re-query the complete snapshot. A concrete
+provider must publish every snapshot on its GUI thread; background socket or
+codec work remains private.
+
+A connect request binds one endpoint to stable `projectId` and `masterId`
+values. Empty IDs, an empty host, or any zero Control/Push/Bulk port are invalid.
+The public endpoint uses a host string and port values so EtherCATCore does not
+depend on Qt Network. Product defaults such as `192.168.3.101:15200..15202`
+belong to the future transport plugin and its settings page.
+
+Connection states are:
+
+- `Disconnected`: no live channel or operation;
+- `Connecting`: the transport is opening channels;
+- `Handshaking`: channel role, protocol, SessionId, and BootId are being
+  verified;
+- `Connected`: all required channels belong to the same negotiated session and
+  the initial read-only summaries are available;
+- `Degraded`: Control remains usable but Push or Bulk is unavailable;
+- `Disconnecting`: asynchronous shutdown is in progress; and
+- `Failed`: Control, protocol compatibility, or session/BootId validation
+  failed.
+
+`Provider::isAvailable()` continues to mean that the provider capability is
+installed and usable. It is not a connected-state flag. Connection lifecycle
+always comes from the snapshot.
+
+The snapshot contains:
+
+- stable Project/Master scope and the requested endpoint;
+- Control, Push, and Bulk state, negotiated maximum payload, last activity, and
+  detail;
+- negotiated protocol major/minor, real SessionId/BootId, observed lease owner,
+  default lease duration, and whether this session owns a lease;
+- a local monotonically increasing `sessionGeneration` used to reject callbacks
+  from an older connection attempt;
+- connected, updated, and last-heartbeat timestamps;
+- explicit `readOnly` and `mock` evidence markers;
+- semantic ControllerState and Capability values;
+- optional active/staged package and firmware lifecycle summaries; and
+- one optional structured error.
+
+The capability value keeps the descriptor SHA-256 and named feature support
+instead of exposing a protocol feature-bit mask. State flags, slots, lifecycle,
+faults, WKC, timing, and capability limits are decoded semantic fields, not
+offsets into a wire record.
+
+An error keeps its source, optional channel, operation, optional numeric code,
+optional operation result, numeric source detail, code name, RequestId, retry
+delay, timestamp, retry disposition, summary, and detail. The source taxonomy
+distinguishes client configuration, local network, Product API protocol,
+controller-returned status, EtherCAT bus, ESI/device description, and unknown
+origin. For `Controller` source, `code` is the returned Product API status and
+`operationResult` is the returned operation result. A local `Protocol` error
+does not populate those controller fields. Only explicit controller-returned
+evidence may use the `Controller` source; local parsing or connectivity
+failures must not be mislabeled as master defects.
+
+This revision authorizes no control lease, configuration mode, discovery,
+runtime state transition, package mutation, SDO/PDO write, or firmware change.
+The concrete Product API implementation, settings, reconnection policy, and
+read-only message mapping are a later independent issue documented in
+`docs/ethercat-online-controller.md`.
+
+## Scan provider contract
 
 `ScanProvider` is a GUI-thread capability with one operation at a time. A
 consumer starts a typed request for interface discovery, slave discovery, or a
@@ -323,6 +410,10 @@ a collision is a plugin defect, not a selection mechanism.
   violation guarded by `QTC_ASSERT`.
 - Background work must deliver immutable data back to the GUI thread before
   changing these services.
+- A concrete controller plugin may own private sockets, workers, codecs, and
+  timers, but it may publish only immutable semantic connection snapshots on
+  the Provider's GUI thread. Disconnect, plugin removal, and shutdown must
+  invalidate older connection generations before those resources are released.
 - `ProviderRegistry` stores guarded pointers. On the object-pool removal
   notification it unlinks the Provider before emitting
   `providerAboutToBeRemoved`, so registry queries and nested removal are
@@ -355,6 +446,10 @@ The focused plugin test covers:
 - state contribution validation and severity aggregation;
 - dynamic Provider addition, availability, unlink-before-signal removal, and
   nested removal re-entry;
+- typed controller request/snapshot value semantics, invalid endpoint and
+  stable-scope rejection, connection transitions, three-channel/session
+  evidence, structured errors, refresh, idempotent disconnect, and registry
+  filtering;
 - typed scan request, state, progress, cancellation, and reset behavior;
 - typed diagnostics snapshots, stream transitions, mode request, bounded-data
   metadata, alarm acknowledgement/recovery, and stop/failure behavior;
@@ -380,3 +475,20 @@ exposes an unrelated EasyBoard baseline error: `easyboardbrowser.cpp` includes
 the unavailable `extensionmanager_test.h` when `WITH_TESTS` is on. The normal
 product build with tests off succeeds and is the integration-build evidence
 for stage 1.
+
+For `ISSUE-CORE-CONTROLLER-CONNECTION-API-001`, based on local commit
+`06538be209e26ff0b8a4b8ad4f231a7d15c0631b`, failure-first compilation stopped
+at the intentionally missing `ethercatdata/controllerconnection.h`. After the
+minimal Data/Core implementation, the Qt 6.11.0 Release EtherCATCore suite
+passed all 18 events under offscreen, crash-reporter-disabled LLDB supervision.
+The fake Provider proves only the in-process contract. No Qt socket, Product API
+frame, controller connection, discovery, or hardware result is claimed by this
+test.
+
+The final sequential isolated regression passed 141 events: Core 18, Project
+12, Devices 8, Workbench 85, Scan 11, and Diagnostics 7. The complete
+`WITH_TESTS=OFF` product build passed with 16 plugin dylibs. Enabled and
+`-noload EtherCATCore` offscreen lifecycle runs each remained alive for 10/10
+samples; Core was mapped for 10/10 enabled samples and 0/10 disabled samples,
+and both stopped through intentional target status 15. No matching residual
+qualification process or new Embed Labs DiagnosticReport remained.
