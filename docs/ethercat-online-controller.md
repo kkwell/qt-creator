@@ -27,6 +27,12 @@ headless Provider. It owns the Embed Labs ECAP codec and three-channel Qt
 Network lifecycle, but adds no UI, scan, control lease, state change, or
 hardware-write operation.
 
+`ISSUE-WORKBENCH-CONTROLLER-COMMUNICATION-001` is the first consuming UI issue.
+It embeds a provider-neutral Communication page for a selected Master and
+exposes only explicit Connect, Refresh, and Disconnect commands. It adds no
+new Product API message, control lease, discovery, configuration, or runtime
+transition.
+
 ## Multi-vendor adapter boundary
 
 `EtherCATProductApi` is the first headless adapter and owns only the Embed Labs
@@ -52,6 +58,12 @@ when the selected one disappears.
 The `EtherCATProductApi` adapter owns these defaults and all
 `Qt::Network` use. `EtherCATData`, `EtherCATCore`, Project, Devices,
 Workbench, Scan, and Diagnostics do not own sockets or ECAP frames.
+
+The three Control, Push, and Bulk TCP endpoints were reachable from the Mac
+during `ISSUE-WORKBENCH-CONTROLLER-COMMUNICATION-001` qualification. This is
+only a network prerequisite by itself. The separate 2026-07-24 UI acceptance
+record below proves the completed Qt Product API session and must not be
+inferred from reachability alone.
 
 ## Authoritative protocol sources
 
@@ -145,8 +157,35 @@ Observed:
 - Firmware state was `CONFIRMED`, active slot A, with no failure.
 - A persistent active configuration package exists.
 
-This proves only the reference-client read-only path. It is not evidence that
-the Qt product already connects to hardware.
+This proves only the reference-client read-only path. By itself it was not
+evidence that the Qt product connected to hardware; the later UI acceptance
+below is the independent Qt evidence.
+
+## 2026-07-24 Qt read-only UI hardware acceptance
+
+The real-controller flow was exercised through the embedded Workbench
+Communication page with Provider `Embed Labs Product API`, Profile `v1.9`, and
+endpoint `192.168.3.101:15200`.
+
+| Step | Observed evidence |
+|---|---|
+| Connect | Succeeded; negotiated protocol v1.9 with `sessionGeneration=1`, `sessionId=10990663912902164094`, and `bootId=5715996203977591977` |
+| Lease and controller | No lease held, owner 0; controller `SHUTDOWN`/关停, ready yes, WKC 0/0, DC lock no, OP no, fault `0x0` |
+| Channels | Control, Push, and Bulk all Connected; reported limits were 4,096, 65,536, and 65,536 bytes |
+| Refresh | Succeeded; the displayed update time changed to `12:18` |
+| Disconnect | Succeeded; Control, Push, and Bulk all became Disconnected |
+| Process cleanup | Product exit status 0, no matching residual process, and no new Embed Labs DiagnosticReports file |
+| Safety | No Scan, configuration write, controller-state transition, FreeRun, DC mode, Run, or Stop was invoked |
+
+One client presentation defect was observed: the status bar briefly continued
+to show Disconnected while the Communication page and Provider snapshot showed
+the connected three-channel session. The client correction now projects
+Provider connection state into the unified status control, and automated
+regression covers Connected, Degraded, and Disconnect-to-Offline presentation.
+A second real-controller UI revalidation passed on 2026-07-24: the status bar
+showed Handshaking, then `Embed Labs Product API — Connected` with
+real-controller read-only evidence, and returned to Disconnected after
+explicit Disconnect.
 
 ## Confirmed issues and handoff
 
@@ -248,17 +287,85 @@ bounded reconnect, and generation-based cleanup. An auxiliary Push or Bulk
 loss currently tears down Control, Push, and Bulk together and attempts a
 bounded resume of the complete Product API session; it is not an independent
 single-channel reconnect. Local codec and loopback validation is Mock protocol
-evidence only; no real Qt-controller result is claimed.
+evidence only. The 2026-07-24 Workbench acceptance above separately verifies
+the real Qt-controller read-only Connect/Refresh/Disconnect path.
 
 The current Qt product still lacks:
 
-- an embedded Communication page and Connect/Disconnect actions;
 - Provider-neutral real/Mock scan routing;
 - the leased discovery state machine;
 - a separate Current Bus (Actual) tree;
 - ESI re-match and config/actual Apply;
 - an embedded Project/Actual/Overlay topology page; and
 - real Push/Bulk diagnostics mapping.
+
+### Embedded Communication page boundary
+
+`ISSUE-WORKBENCH-CONTROLLER-COMMUNICATION-001` consumes only
+`ControllerConnectionProvider`. The Workbench page displays the selected
+Provider and profile, redacted endpoint summary, connection state,
+provider-named channels, negotiated session/version when present, read-only
+controller summaries, freshness, and structured errors from the immutable
+snapshot. Workbench does not downcast the Provider or assume
+Control/Push/Bulk; another adapter may publish a different channel topology.
+
+Provider and profile selection are explicit for the selected Project/Master
+scope. More than one installed Provider never causes first-provider
+selection, and removing the selected Provider leaves an unavailable selection
+instead of switching controller vendors. The pair is not persisted in the
+current project format.
+
+Connect, Refresh, and Disconnect are shared ActionManager commands. Connect
+uses the selected Provider/profile and remains read-only. Refresh asks that
+Provider for a new snapshot. Disconnect explicitly asks that same Provider to
+clean up; it remains distinct from merely navigating away from the page.
+Opening or closing the page, selecting another node, switching property pages,
+opening a Project, or starting the application never connects or disconnects
+automatically.
+
+Closing a Project is the sole automatic safety cleanup. Workbench clears every
+in-memory controller selection belonging to that Project and requests
+Disconnect from every Provider whose current snapshot belongs to it and is
+not already Disconnected or Disconnecting. An unrelated Project close does
+not affect the selected or connected scope.
+
+If a Provider rejects that Disconnect request, Workbench performs no more than
+five total Disconnect attempts. The retry identity is the Provider
+registration epoch plus the exact connection scope and `sessionGeneration`
+captured at Project close. Provider removal/re-registration, a scope change,
+or a new session generation makes the old retry stale and cancels it, so
+cleanup cannot disconnect a replacement Provider instance or a newer session.
+
+If all five attempts are rejected, automatic cleanup stops and reports the
+manual recovery path. The user can select the residual adapter explicitly from
+the Communication page of any open EtherCAT Master and invoke Disconnect. A
+residual Failed session remains visible with this cleanup guidance; it is not
+reported as already disconnected.
+
+This page does not implement or authorize Scan, configuration or Apply,
+controller-state transitions, FreeRun, DC mode, Run, Stop, control heartbeat,
+leased discovery, ECPKG activation, SDO/PDO access, or real diagnostics.
+Existing Mock Scan and Diagnostics buttons retain their Mock meaning until
+later provider-neutral contracts bind them to an explicitly selected backend.
+
+Local qualification is complete:
+
+- Communication-focused behavior passed 6/6 at normal scale and 6/6 at 2x;
+- the complete Workbench suite passed 89/89;
+- the other six isolated plugin suites passed 92/92, for a seven-suite total
+  of 181/181;
+- the Qt 6.11.0 `WITH_TESTS=OFF` product build passed;
+- enabled and explicitly disabled Workbench lifecycle checks passed; and
+- `qtcreator_zh_CN.qm` generation and every newly added Communication
+  translation check passed.
+
+The reachable three TCP ports remain only network evidence by themselves. The
+2026-07-24 UI acceptance separately verified real Qt
+Connect/Refresh/Disconnect, clean three-channel teardown, and clean process
+exit. The observed status-bar Disconnected presentation defect is fixed in the
+client and covered by automated regression. Its second real-controller UI
+revalidation also passed, including Handshaking, Connected, and
+Disconnect-to-Offline presentation.
 
 ## CODESYS-informed workflow
 
@@ -288,8 +395,12 @@ internal directory directly.
 1. `ISSUE-CORE-CONTROLLER-CONNECTION-API-001` — implemented prerequisite
 2. `ISSUE-CORE-CONTROLLER-PROVIDER-PROFILE-002` — implemented prerequisite
 3. `ISSUE-ONLINE-PRODUCTAPI-READONLY-ADAPTER-001` — implemented and locally
-   qualified; real Qt hardware qualification pending
-4. provider-neutral embedded Communication page and Connect/Disconnect
+   qualified; later real read-only hardware use verified through Workbench
+4. `ISSUE-WORKBENCH-CONTROLLER-COMMUNICATION-001` — provider-neutral embedded
+   Communication page and explicit Connect/Refresh/Disconnect; locally
+   qualified and real read-only hardware flow verified; status-bar client
+   correction passed automated regression and second real-controller UI
+   revalidation
 5. Provider-neutral Scan workflow
 6. Product API discovery state machine
 7. ESI match/import/re-match

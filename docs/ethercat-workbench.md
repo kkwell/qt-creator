@@ -83,16 +83,20 @@ navigation controls.
 The Workbench registers one Qt Creator status-bar control in the standard
 `LastLeftAligned` area. It is visible only in EtherCAT Mode and merges the
 existing `StateService` entries with a value-only projection from the
-deterministically preferred public Diagnostics Provider. The highest severity
-selects a Ready, Busy, Warning, or Fault icon and a short textual state; an
-empty service with no active Diagnostics state displays `Offline`.
+deterministically preferred public Diagnostics Provider and active immutable
+controller-connection Provider snapshots. The highest severity selects a
+Ready, Busy, Warning, or Fault icon and a short textual state; an active
+controller connection remains visible at equal severity. An empty service with
+no active Diagnostics or controller connection state displays `Offline`.
 
 Local phase-1 Diagnostics snapshots remain explicitly labeled `MOCK`. While
 the preferred local Mock stream is running, the compact text distinguishes
 `MOCK Config / PREOP`, `MOCK FreeRun / SAFEOP`, and `MOCK Run / OP`. A future
 or test Provider that reports `mock=false` uses neutral `Diagnostics` wording
 and is identified as Provider-reported only; the Workbench does not infer a
-controller or physical-hardware connection from that value.
+controller or physical-hardware connection from that value. Controller
+connection wording is likewise derived only from the connection Provider's
+snapshot and does not fabricate transport or hardware evidence.
 
 The button tooltip and drop-down list retain every contributing summary and
 detail, so the compact visible state does not discard its source information.
@@ -6781,12 +6785,19 @@ behavior. Scan, Online, CoE, and Diagnostics remain explicitly local
 Mock/offline where previously qualified. Evidence is under
 `/private/tmp/embed-labs-i18n-compact`.
 
-## Online controller connection prerequisite
+## Embedded controller Communication page
+
+`ISSUE-WORKBENCH-CONTROLLER-COMMUNICATION-001` consumes the existing
+controller-connection contract without extending it. For a selected EtherCAT
+Master, Workbench embeds a provider-neutral **Communication** page in the
+existing right-side Details host. It does not open a separate controller
+window, own a socket, decode a protocol frame, or branch on a controller
+manufacturer.
 
 `ISSUE-CORE-CONTROLLER-CONNECTION-API-001` and the multi-vendor correction
 `ISSUE-CORE-CONTROLLER-PROVIDER-PROFILE-002` add no Workbench widget or
-command. Together they establish the public semantic boundary required by the
-next online UI issue:
+command. Together they establish the public semantic boundary consumed by this
+UI issue:
 
 - a connection request is scoped to stable Project/Master IDs, one explicitly
   selected adapter Provider, and one provider-owned profile;
@@ -6800,12 +6811,51 @@ next online UI issue:
 - Workbench will consume concrete vendor Providers through the object pool
   without owning sockets or protocol frames.
 
-The Communication page must enumerate Provider ID/display name and its profiles
-for the selected Master. If more than one Provider exists, the user selects
-one explicitly. Removal of the selected Provider reports unavailable and does
-not silently fall back to another vendor. The selected `{providerId,
-profileId}` pair is also the future source anchor for Scan and Diagnostics; the
-current project format does not persist that pair yet.
+The Communication page enumerates Provider ID/display name and provider-owned
+profiles for the selected Master. Provider and profile selection are explicit:
+the page never chooses the first Provider when more than one exists, and
+removal of the selected Provider reports unavailable without silently falling
+back to another vendor. The selected `{providerId, profileId}` pair is
+Workbench session state for that Master; the current project format does not
+persist it. It is also only a future source anchor for Scan and Diagnostics,
+not permission to change either existing Mock workflow.
+
+The shared ActionManager commands are deliberately limited to **Connect**,
+**Refresh**, and **Disconnect**. The existing EtherCAT menu and compact
+controller command strip may expose the same command objects, while the
+Communication page uses those commands instead of private button-only
+callbacks. Connect requires a valid selected Master, an explicitly selected
+available Provider, and a usable profile. Refresh requests a new immutable
+snapshot from that same Provider. Disconnect requests cleanup from that same
+Provider, including when it has become unavailable but can still accept
+cleanup.
+
+Opening the project, selecting a Master, opening or closing the Communication
+page, switching Details pages, changing the left-tree selection, or shutting
+down a page never connects or disconnects implicitly. Connection lifecycle
+changes occur through the three explicit commands, the Project-close safety
+cleanup described below, or the Provider's own reported transport/recovery
+lifecycle. The UI renders the Provider snapshot as evidence; it does not infer
+a locally connected state.
+
+Project close is the sole automatic safety cleanup. Workbench clears every
+`{providerId, profileId}` selection owned by that Project and requests
+Disconnect from every Provider whose current snapshot belongs to it and is
+not already Disconnected or Disconnecting. Closing an unrelated Project leaves
+the current connection and selections unchanged.
+
+A rejected Project-close cleanup performs no more than five total Disconnect
+attempts. Each retry is bound to the Provider registration epoch, exact
+connection scope, and `sessionGeneration` captured by that cleanup request.
+Provider removal/re-registration, scope replacement, or a new session
+generation invalidates the old retry, preventing it from acting on a
+replacement adapter instance or newer session.
+
+If all five attempts are rejected, automatic cleanup stops and publishes the
+manual recovery route. From the Communication page of any open EtherCAT
+Master, the user can explicitly select the residual adapter and invoke
+Disconnect. If the residual session is Failed, the page continues to show
+cleanup guidance rather than claiming that disconnection completed.
 
 The headless `EtherCATProductApi` is now the first concrete Embed Labs adapter.
 Its private outbound policy is limited to channel HELLO plus GetState,
@@ -6824,16 +6874,46 @@ preserve a locally inferred connected channel state. This behavior is private
 to ProductApi; another vendor Provider may expose another channel topology and
 recovery model.
 
-Current codec and loopback validation is Mock protocol evidence. The separate
-Windows Python reference-client observation does not prove that this Qt
-adapter has connected to real hardware, so the Communication page must not
-label the path hardware-verified before an explicitly authorized Qt run.
+Codec and loopback validation remains Mock protocol evidence, and the separate
+Windows Python reference-client observation did not by itself prove that this
+Qt adapter connected to hardware. Implementation alone is likewise not
+hardware evidence. The explicitly authorized 2026-07-24 UI run below supplies
+the independent real Qt evidence.
 
-The next user-visible issue embeds a provider-neutral Communication page in
-the existing right-side details host and registers Connect/Disconnect with
-ActionManager so the current controller command strip remains the
-state-control surface. Real Scan, Current Bus (Actual), config/actual Apply,
-and embedded topology remain separate later issues.
+The Mac reached the configured Control, Push, and Bulk TCP ports. Reachability
+alone still qualifies only the network prerequisite and does not prove Product
+API HELLO, SessionId/BootId correlation, semantic snapshot publication,
+Refresh, or Disconnect through the Qt Provider.
+
+This issue does not add bus Scan, device configuration or Apply, a Current Bus
+(Actual) tree, controller-state transitions, FreeRun, DC-mode run control,
+Run, Stop, leased discovery, ECPKG activation, SDO/PDO access, real
+diagnostics, or embedded actual topology. Those require later typed Provider
+contracts and independently authorized issues; the existing Mock Scan and
+Diagnostics commands must not be rebound to real hardware by this page.
+
+Local qualification for this issue is complete:
+
+| Gate | Result |
+|---|---|
+| Focused normal scale | Communication selection, presentation, scope, lifecycle, Project-close cleanup, and status-bar connection projection passed 6/6 |
+| Focused 2x scale | The same focused set passed 6/6 with `QT_SCALE_FACTOR=2` |
+| Complete Workbench | EtherCATWorkbench passed 89/89 |
+| Other isolated suites | Core, Project, Devices, Scan, Diagnostics, and ProductApi passed 92/92 |
+| Isolated seven-suite regression | Workbench 89/89 plus the other six suites 92/92 passed 181/181 |
+| Product build | Qt 6.11.0 `WITH_TESTS=OFF` complete product build passed |
+| Plugin lifecycle | Enabled and explicit `-noload EtherCATWorkbench` product lifecycle checks passed |
+| Simplified Chinese | `qtcreator_zh_CN.qm` generation succeeded; every new Communication source string has a non-empty Simplified Chinese translation |
+| Hardware selection | On 2026-07-24 Provider `Embed Labs Product API`, Profile `v1.9`, and endpoint `192.168.3.101:15200` were selected in the embedded page |
+| Connect | Succeeded with protocol v1.9, `sessionGeneration=1`, `sessionId=10990663912902164094`, and `bootId=5715996203977591977` |
+| Read-only snapshot | No lease held, owner 0; controller `SHUTDOWN`/关停, ready yes, WKC 0/0, DC lock no, OP no, fault `0x0` |
+| Channels | Control, Push, and Bulk all Connected with reported limits 4,096, 65,536, and 65,536 bytes |
+| Refresh | Succeeded and changed the displayed update time to `12:18` |
+| Disconnect | Succeeded and left Control, Push, and Bulk all Disconnected |
+| Process cleanup | Product exited with status 0; no matching residual process or new Embed Labs DiagnosticReports file was found |
+| Hardware safety | No Scan, configuration write, state transition, FreeRun, DC mode, Run, or Stop was invoked |
+| Status-bar correction | Provider connection state now reaches the unified status control; automated regression covers Connected, Degraded, and Disconnect-to-Offline presentation |
+| Secondary hardware UI revalidation | Passed on 2026-07-24; the status bar showed Handshaking, then `Embed Labs Product API — Connected` with real-controller read-only evidence, and returned to Disconnected after explicit Disconnect |
 
 CODESYS supplies the useful workflow separation: install ESI in a managed
 [Device Repository](https://content.helpme-codesys.com/en/CODESYS%20Development%20System/_cds_cmd_device_repository.html),

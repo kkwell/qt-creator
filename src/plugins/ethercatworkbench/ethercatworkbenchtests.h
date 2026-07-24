@@ -41,6 +41,7 @@ private slots:
     void testEtherCATRepositoryEmptyState();
     void testEditableConfiguredSlaveEtherCATWorkflow();
     void testStatusBarTracksStateService();
+    void testStatusBarTracksControllerConnection();
     void testStatusBarTracksPreferredDiagnosticsMode();
     void testTreeModelLargeIncrementalUpdate();
     void testConfiguredSlaveStateIcon();
@@ -90,6 +91,9 @@ private slots:
     void testEditableDcWorkflow();
     void testDcDraftsSurviveNonConflictingRefresh();
     void testDynamicPropertyProviderRemoval();
+    void testControllerCommunicationSelectionAndScope();
+    void testControllerCommunicationPagePresentation();
+    void testControllerCommunicationLifecycleAndProviderRemoval();
     void testOptionalProviderAvailabilityPresentation();
     void testDynamicOptionalProviders();
 };

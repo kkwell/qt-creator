@@ -3,6 +3,7 @@
 #include "builtinpropertypages.h"
 
 #include "coeonlinepage.h"
+#include "communicationpage.h"
 #include "dcpage.h"
 #include "ethercatpage.h"
 #include "ethercatworkbenchconstants.h"
@@ -96,9 +97,10 @@ QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
         return {{Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100}};
     case Kind::Master:
     {
-        QList<Core::PropertyPageDescriptor> result = {
-            {Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100},
-            {Utils::Id(Constants::ETHERCAT_PAGE_ID), Tr::tr("EtherCAT"), 200}};
+        QList<Core::PropertyPageDescriptor> result
+            = {{Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100},
+               {Utils::Id(Constants::COMMUNICATION_PAGE_ID), Tr::tr("Communication"), 150},
+               {Utils::Id(Constants::ETHERCAT_PAGE_ID), Tr::tr("EtherCAT"), 200}};
         if (!m_controller || !m_controller->diagnosticsAvailable()) {
             result.append(
                 {Utils::Id(Constants::ONLINE_PAGE_ID), Tr::tr("Online"), 800});
@@ -145,6 +147,7 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
 {
     const QList<Utils::Id> knownPages = {
         Constants::GENERAL_PAGE_ID,
+        Constants::COMMUNICATION_PAGE_ID,
         Constants::ETHERCAT_PAGE_ID,
         Constants::PROCESS_DATA_PAGE_ID,
         Constants::COE_ONLINE_PAGE_ID,
@@ -157,6 +160,11 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
         return nullptr;
     if (pageId == Utils::Id(Constants::GENERAL_PAGE_ID)) {
         auto page = new GeneralPage(m_controller, parent);
+        page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
+        return page;
+    }
+    if (pageId == Utils::Id(Constants::COMMUNICATION_PAGE_ID)) {
+        auto page = new CommunicationPage(m_controller, parent);
         page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
         return page;
     }
@@ -196,6 +204,11 @@ void BuiltinPropertyPageProvider::updatePage(
     if (pageId == Utils::Id(Constants::GENERAL_PAGE_ID)) {
         if (auto generalPage = qobject_cast<GeneralPage *>(page))
             generalPage->setContext(context);
+        return;
+    }
+    if (pageId == Utils::Id(Constants::COMMUNICATION_PAGE_ID)) {
+        if (auto communicationPage = qobject_cast<CommunicationPage *>(page))
+            communicationPage->setContext(context);
         return;
     }
     if (pageId == Utils::Id(Constants::ETHERCAT_PAGE_ID)) {

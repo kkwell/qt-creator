@@ -125,6 +125,65 @@ void EtherCATWorkbenchPlugin::setupActions()
     menu->addAction(refreshCommand);
     connect(refreshAction, &QAction::triggered, m_controller.get(), &WorkbenchController::refresh);
 
+    auto connectControllerAction
+        = new QAction(Utils::Icons::LINK.icon(), Tr::tr("Connect Controller (Read-only)"), this);
+    const QString connectControllerDescription = Tr::tr(
+        "Connect the selected controller profile and query its read-only state. This does not "
+        "acquire control, scan the bus, change controller state, or write configuration.");
+    connectControllerAction->setToolTip(connectControllerDescription);
+    connectControllerAction->setStatusTip(connectControllerDescription);
+    ::Core::Command *connectControllerCommand = ::Core::ActionManager::registerAction(
+        connectControllerAction,
+        Constants::CONNECT_CONTROLLER_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    connectControllerCommand->setDescription(connectControllerAction->text());
+    menu->addAction(connectControllerCommand);
+    connect(connectControllerAction, &QAction::triggered, m_controller.get(), [this] {
+        if (const Utils::Result<> result = m_controller->connectSelectedController(); !result) {
+            ::Core::MessageManager::writeFlashing(
+                Tr::tr("Cannot connect to the controller: %1").arg(result.error()));
+        }
+    });
+
+    auto refreshControllerAction
+        = new QAction(Utils::Icons::RELOAD.icon(), Tr::tr("Refresh Controller Snapshot"), this);
+    const QString refreshControllerDescription = Tr::tr(
+        "Refresh the read-only state snapshot for the controller connected to the selected "
+        "EtherCAT Master.");
+    refreshControllerAction->setToolTip(refreshControllerDescription);
+    refreshControllerAction->setStatusTip(refreshControllerDescription);
+    ::Core::Command *refreshControllerCommand = ::Core::ActionManager::registerAction(
+        refreshControllerAction,
+        Constants::REFRESH_CONTROLLER_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    refreshControllerCommand->setDescription(refreshControllerAction->text());
+    menu->addAction(refreshControllerCommand);
+    connect(refreshControllerAction, &QAction::triggered, m_controller.get(), [this] {
+        if (const Utils::Result<> result = m_controller->refreshSelectedController(); !result) {
+            ::Core::MessageManager::writeFlashing(
+                Tr::tr("Cannot refresh the controller snapshot: %1").arg(result.error()));
+        }
+    });
+
+    auto disconnectControllerAction
+        = new QAction(Utils::Icons::STOP_SMALL.icon(), Tr::tr("Disconnect Controller"), this);
+    const QString disconnectControllerDescription = Tr::tr(
+        "Close the read-only controller connection for the selected EtherCAT Master.");
+    disconnectControllerAction->setToolTip(disconnectControllerDescription);
+    disconnectControllerAction->setStatusTip(disconnectControllerDescription);
+    ::Core::Command *disconnectControllerCommand = ::Core::ActionManager::registerAction(
+        disconnectControllerAction,
+        Constants::DISCONNECT_CONTROLLER_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    disconnectControllerCommand->setDescription(disconnectControllerAction->text());
+    menu->addAction(disconnectControllerCommand);
+    connect(disconnectControllerAction, &QAction::triggered, m_controller.get(), [this] {
+        if (const Utils::Result<> result = m_controller->disconnectSelectedController(); !result) {
+            ::Core::MessageManager::writeFlashing(
+                Tr::tr("Cannot disconnect from the controller: %1").arg(result.error()));
+        }
+    });
+
     auto expandAction = new QAction(
         Utils::Icons::EXPAND_ALL_TOOLBAR.icon(), Tr::tr("Expand Device Tree"), this);
     ::Core::Command *expandCommand = ::Core::ActionManager::registerAction(
@@ -394,6 +453,9 @@ void EtherCATWorkbenchPlugin::setupActions()
     const auto updateNavigationActions =
         [this,
          updateQuickAddPresentation,
+         connectControllerAction,
+         refreshControllerAction,
+         disconnectControllerAction,
          locateDifferenceAction,
          locateIssueAction,
          openDiagnosticsAction,
@@ -407,6 +469,9 @@ void EtherCATWorkbenchPlugin::setupActions()
          moveSlaveDownAction] {
             updateQuickAddPresentation();
             if (!m_controller) {
+                connectControllerAction->setEnabled(false);
+                refreshControllerAction->setEnabled(false);
+                disconnectControllerAction->setEnabled(false);
                 locateDifferenceAction->setEnabled(false);
                 locateIssueAction->setEnabled(false);
                 openDiagnosticsAction->setEnabled(false);
@@ -420,6 +485,9 @@ void EtherCATWorkbenchPlugin::setupActions()
                 moveSlaveDownAction->setEnabled(false);
                 return;
             }
+            connectControllerAction->setEnabled(m_controller->canConnectSelectedController());
+            refreshControllerAction->setEnabled(m_controller->canRefreshSelectedController());
+            disconnectControllerAction->setEnabled(m_controller->canDisconnectSelectedController());
             Core::SelectionService *selectionService = m_controller->selectionService();
             const Data::NodeId currentNodeId
                 = selectionService ? selectionService->currentNodeId() : Data::NodeId();
@@ -466,6 +534,11 @@ void EtherCATWorkbenchPlugin::setupActions()
     connect(
         m_controller->selectionService(),
         &Core::SelectionService::currentNodeChanged,
+        this,
+        updateNavigationActions);
+    connect(
+        m_controller.get(),
+        &WorkbenchController::controllerConnectionChanged,
         this,
         updateNavigationActions);
     connect(

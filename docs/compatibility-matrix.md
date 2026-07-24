@@ -5,7 +5,7 @@
 | Item | Supported or observed baseline | Evidence status |
 |---|---|---|
 | Product branch | `embed-labs` only | Verified |
-| Current issue baseline commit | `6ed90a6d5134abab9e1c1d000647b0724ca39c88` | Verified |
+| Current issue baseline commit | `1ba2305e0701387fd12e34b07f895d8218108c13` | Verified |
 | Product version | 20.0.1 | Verified |
 | Recorded Qt Creator merge point | `11ba5cec09dce75db4bc948d98055e338ff59576` | Verified |
 | Qualified product Qt | Homebrew 6.11.0 | Clean Release build and GUI smoke verified |
@@ -43,10 +43,10 @@ local decisions and easier maintenance.
 | EtherCATCore | EtherCAT services and extension points | Stage 1 verified |
 | EtherCATProject | Offline project lifecycle and persistence | Stage 2 verified |
 | EtherCATDevices | Offline ESI repository and immutable device data | Stage 3 verified |
-| EtherCATWorkbench | EtherCAT mode, device tree, selection, master-side ESI insertion, supported-device drag-and-drop, and offline property pages | Stage 4 verified |
+| EtherCATWorkbench | EtherCAT mode, device tree, selection, master-side ESI insertion, supported-device drag-and-drop, offline property pages, and the current provider-neutral Communication-page issue | Stage 4 offline scope plus Communication local and read-only hardware flow verified; the status-bar client correction passed automated regression and a second real-controller UI revalidation |
 | EtherCATScan | Local Mock scan, topology comparison, and checked acceptance | Stage 5 verified |
 | EtherCATDiagnostics | Local Mock state, WKC, DC, alarm, and performance views | Stage 6 verified |
-| EtherCATProductApi | Headless Embed Labs Product API v1.9 adapter | Locally qualified; real Qt hardware qualification pending |
+| EtherCATProductApi | Headless Embed Labs Product API v1.9 adapter | Locally qualified and exercised through the 2026-07-24 real-controller read-only UI flow |
 
 ### Phase-1 EtherCAT profile
 
@@ -89,12 +89,17 @@ behavior. Its ordered gates are:
 7. truthful embedded topology; and
 8. real diagnostics.
 
-The first three prerequisites are implemented and locally qualified. The
-synchronized product profile includes the headless `EtherCATProductApi`, and
-the final Qt 6.11.0 `WITH_TESTS=OFF` product build contains exactly 17 plugin
-dylibs. Its codec and local loopback checks remain Mock protocol evidence; the
-Python reference-client read-only hardware audit is protocol input, not Qt
-product qualification.
+The first three gates are complete. Gate 4 is implemented and its focused
+normal- and 2x-scale tests, complete Workbench suite, isolated seven-suite
+regression, product build, plugin lifecycle, translation gates, and real Qt
+Connect/Refresh/Disconnect hardware flow passed. The synchronized product
+profile includes the headless `EtherCATProductApi`. Its codec and local
+loopback checks remain Mock protocol evidence, while the 2026-07-24 UI flow is
+separate real-controller evidence. The status-bar presentation defect observed
+during that acceptance is fixed in the client and covered by automated
+regression. A second real-controller UI pass then verified Handshaking,
+Connected/real-controller read-only evidence, and Disconnect-to-Offline in the
+status bar against the same controller.
 
 ### Hidden or excluded plugins
 
@@ -137,9 +142,10 @@ function is outside the product target and records migration or recovery.
 | Scan UI and topology comparison | Stage 5 verified with Mock provider only |
 | WKC/DC/link diagnostics | Stage 6 verified with Mock provider only |
 | Optional Scan/Diagnostics Provider state | Verified for absent, registered/unavailable, and available states with public `Local Mock` producer names and no installation inference |
-| Product API v1.9 | Headless Qt transport and semantic connection Provider present; local codec/loopback validation only, real Qt hardware validation pending |
+| Product API v1.9 | Headless Qt transport and semantic connection Provider present; local codec/loopback validation plus the 2026-07-24 real-controller read-only UI flow verified |
 | Controller connection Core contract | Verified multi-provider/profile semantic prerequisite with arbitrary named channels; no Qt network or hardware claim |
-| Real EtherCAT scan | Planned after read-only Qt connection; not implemented or Qt-validated |
+| Provider-neutral Communication page | Locally and on real hardware qualified embedded Master Details page with explicit Provider/Profile and read-only Connect/Refresh/Disconnect; status-bar correction passed automated regression and a second real-controller UI revalidation |
+| Real EtherCAT scan | Planned after read-only Qt connection and separate typed control/discovery APIs; not implemented or Qt-validated |
 | Real controller diagnostics | Existing Mock contract reusable; ProductApi Push/Bulk source pending |
 | Physical topology graph | Linear scan order only with current API; branch/star graph blocked by missing port-neighbor edge ABI |
 | ECPKG/ECFG/ETIR | Explicitly out of scope |
@@ -3465,7 +3471,7 @@ connection Provider without changing the generic multi-vendor contract.
 | Auxiliary recovery | Loss of Push or Bulk invalidates the local generation, closes Control/Push/Bulk, and attempts a bounded resume of the complete session while retaining a still-valid alarm checkpoint only for the same SessionId/BootId; replay rejection or a live sequence gap clears it |
 | Provider neutrality | Full three-channel resume is ProductApi-private; another Provider may use another channel topology or no session identity |
 | Validation evidence | Focused ProductApi suite passed 36 events; sequential seven-suite regression passed 177 events; the Qt 6.11.0 product build passed with exactly 17 plugin dylibs |
-| Hardware evidence | No real Qt-to-controller hardware connection is claimed; the separate Windows Python reference-client audit remains protocol input only |
+| Hardware evidence | This adapter issue's original qualification was local only; the later 2026-07-24 Workbench Communication acceptance separately verified the Qt Provider against the real controller |
 
 Final local qualification for
 `ISSUE-ONLINE-PRODUCTAPI-READONLY-ADAPTER-001`:
@@ -3491,3 +3497,42 @@ evidence is under
 enabled/disabled samples, mapping checks, exit status, crash-report diff, and
 residual-process audit are under
 `/private/tmp/embed-labs-productapi-api014-lifecycle.m87DYb`.
+
+## Workbench controller Communication page boundary
+
+`ISSUE-WORKBENCH-CONTROLLER-COMMUNICATION-001` consumes the qualified
+connection API and headless adapter without widening either contract.
+
+| Compatibility boundary | Current issue scope |
+|---|---|
+| UI integration | One provider-neutral Communication page in the existing right-side Master Details host; no separate controller window |
+| Provider choice | Explicit Provider and provider-owned profile selection for the selected Project/Master; no first-provider or cross-vendor fallback |
+| Shared commands | ActionManager Connect, Refresh, and Disconnect are shared by the page, EtherCAT menu, and compact controller strip |
+| Read-only behavior | Connect and Refresh can request only operations already exposed by `ControllerConnectionProvider`; Workbench has no arbitrary Product API message path |
+| Snapshot display | Provider availability, redacted profile endpoint, connection/channel/session state, read-only controller summaries, freshness, and structured errors |
+| No hidden lifecycle | Application startup, Project open, Master selection, page open/close, Details navigation, and left-tree navigation do not connect or disconnect |
+| Explicit exclusions | No Scan, configuration/Apply, state transition, FreeRun, DC mode, Run, Stop, lease heartbeat, discovery, ECPKG, SDO/PDO, or real diagnostics |
+| Existing Mock behavior | Scan and Diagnostics retain their existing Mock Providers and are not rebound by a controller connection |
+| Persistence | `{providerId, profileId}` remains Workbench session state; no Project format change |
+| Automatic cleanup | On Project close, Workbench clears that Project's in-memory controller selections and requests Disconnect from every Provider whose current snapshot belongs to it and is not already Disconnected or Disconnecting; unrelated Projects are untouched |
+| Rejected cleanup | A Project-close cleanup performs no more than five total Disconnect attempts after rejection; every attempt remains bound to the Provider registration epoch, exact scope, and `sessionGeneration` captured for that cleanup |
+| Stale retry rejection | Provider removal/re-registration, scope replacement, or `sessionGeneration` change invalidates the pending retry instead of disconnecting a newer or different session |
+| Manual cleanup | If all five attempts are rejected, automatic cleanup stops and reports how to recover; from any open EtherCAT Master the user may explicitly select the residual adapter and invoke Disconnect |
+| Residual presentation | A residual Failed session remains visible with cleanup guidance instead of being presented as a completed disconnect |
+| Focused behavior | Communication-focused tests passed 6/6 at normal scale and 6/6 at 2x scale |
+| Workbench regression | Complete EtherCATWorkbench suite passed 89/89 |
+| Other isolated suites | Core, Project, Devices, Scan, Diagnostics, and ProductApi passed 92/92 |
+| Isolated product regression | Workbench 89/89 plus the other six suites 92/92 passed 181/181 in isolated sequential runs |
+| Product acceptance | The Qt 6.11.0 `WITH_TESTS=OFF` product build and enabled/explicitly-disabled Workbench lifecycle checks passed |
+| Simplified Chinese | `qtcreator_zh_CN.qm` generation succeeded and every newly added Communication source string passed the non-empty Simplified Chinese translation check |
+| Network prerequisite | Control, Push, and Bulk TCP endpoints were reachable; reachability proves only the network path, not a Qt Product API session |
+| Hardware selection | On 2026-07-24 the UI selected Provider `Embed Labs Product API`, Profile `v1.9`, endpoint `192.168.3.101:15200` |
+| Connect evidence | Connect succeeded with protocol v1.9, `sessionGeneration=1`, `sessionId=10990663912902164094`, and `bootId=5715996203977591977` |
+| Read-only snapshot | No lease was held and owner was 0; controller was `SHUTDOWN`/关停 and ready; WKC was 0/0, DC lock and OP were false, and fault was `0x0` |
+| Channel evidence | Control, Push, and Bulk were all Connected with reported limits 4,096, 65,536, and 65,536 bytes |
+| Refresh evidence | Explicit Refresh succeeded and the displayed update time changed to `12:18` |
+| Disconnect evidence | Explicit Disconnect succeeded and Control, Push, and Bulk all became Disconnected |
+| Process acceptance | The product exited with status 0; no matching residual process or new Embed Labs DiagnosticReports file remained |
+| Safety boundary | No Scan, configuration write, state transition, FreeRun, DC mode, Run, or Stop was invoked |
+| Status-bar correction | The client now projects Provider connection state into the unified status control; automated regression covers Connected, Degraded, and Disconnect-to-Offline presentation |
+| Secondary hardware UI revalidation | Passed on 2026-07-24; the status bar showed Handshaking, then `Embed Labs Product API — Connected` with real-controller read-only evidence, and returned to Disconnected after explicit Disconnect |

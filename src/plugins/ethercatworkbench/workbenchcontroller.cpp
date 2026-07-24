@@ -14,6 +14,9 @@
 
 #include <utils/qtcassert.h>
 
+#include <QScopedValueRollback>
+#include <QTimer>
+
 #include <algorithm>
 #include <utility>
 
@@ -209,6 +212,17 @@ static OptionalProviderPresentation optionalProviderPresentation(
     return presentation;
 }
 
+static bool connectionProfileUsable(const Data::ControllerConnectionProfile &profile)
+{
+    return !profile.id.isNull() && profile.configured && profile.supported;
+}
+
+static bool connectionStateLocksSelection(Data::ControllerConnectionState state)
+{
+    return state != Data::ControllerConnectionState::Disconnected
+           && state != Data::ControllerConnectionState::Failed;
+}
+
 WorkbenchController::WorkbenchController(QObject *parent)
     : QObject(parent)
 {
@@ -242,8 +256,11 @@ WorkbenchController::WorkbenchController(QObject *parent)
         m_projectService,
         &Core::ProjectService::projectAboutToBeRemoved,
         this,
-        [this] { refreshProjects(); },
-        Qt::QueuedConnection));
+        [this](const Data::NodeId &projectId) {
+            handleProjectAboutToBeRemoved(projectId);
+            QMetaObject::invokeMethod(
+                this, &WorkbenchController::refreshProjects, Qt::QueuedConnection);
+        }));
     m_connections.append(connect(
         m_projectService,
         &Core::ProjectService::projectChanged,
@@ -254,6 +271,10 @@ WorkbenchController::WorkbenchController(QObject *parent)
         &Core::ProjectService::activeProjectChanged,
         this,
         [this] { refreshProjects(); }));
+    m_connections.append(
+        connect(m_selectionService, &Core::SelectionService::currentNodeChanged, this, [this] {
+            handleControllerConnectionChanged();
+        }));
     m_connections.append(connect(
         m_deviceRepository,
         &Core::DeviceRepositoryProvider::devicesReset,
@@ -270,7 +291,10 @@ WorkbenchController::WorkbenchController(QObject *parent)
         this,
         [this](Core::Provider *provider) {
             watchOptionalProvider(provider);
+            watchControllerConnectionProvider(provider);
             refreshOptionalProviders();
+            if (provider && provider->kind() == Core::ProviderKind::ControllerConnection)
+                handleControllerConnectionChanged();
         }));
     m_connections.append(connect(
         m_providerRegistry,
@@ -278,9 +302,18 @@ WorkbenchController::WorkbenchController(QObject *parent)
         this,
         [this](Core::Provider *provider) {
             refreshOptionalProviders(provider);
+            if (provider && provider->kind() == Core::ProviderKind::ControllerConnection) {
+                if (auto connectionProvider = qobject_cast<Core::ControllerConnectionProvider *>(
+                        provider)) {
+                    m_controllerConnectionProviderEpochs.remove(connectionProvider);
+                }
+                handleControllerConnectionChanged();
+            }
         }));
-    for (Core::Provider *provider : m_providerRegistry->providers())
+    for (Core::Provider *provider : m_providerRegistry->providers()) {
         watchOptionalProvider(provider);
+        watchControllerConnectionProvider(provider);
+    }
     refreshOptionalProviders();
     refresh();
 }
@@ -328,6 +361,288 @@ OptionalProviderPresentation WorkbenchController::diagnosticsProviderPresentatio
 DiagnosticsStatusPresentation WorkbenchController::diagnosticsStatusPresentation() const
 {
     return m_diagnosticsStatus;
+}
+
+QList<Core::ControllerConnectionProvider *> WorkbenchController::controllerConnectionProviders() const
+{
+    QList<Core::ControllerConnectionProvider *> result;
+    if (!m_providerRegistry)
+        return result;
+    for (Core::Provider *provider :
+         m_providerRegistry->providers(Core::ProviderKind::ControllerConnection)) {
+        if (auto connectionProvider = qobject_cast<Core::ControllerConnectionProvider *>(provider))
+            result.append(connectionProvider);
+    }
+    std::sort(result.begin(), result.end(), [](const auto *left, const auto *right) {
+        const int displayOrder
+            = left->displayName().compare(right->displayName(), Qt::CaseInsensitive);
+        if (displayOrder != 0)
+            return displayOrder < 0;
+        return left->id().toString() < right->id().toString();
+    });
+    return result;
+}
+
+std::optional<Data::ControllerConnectionScope>
+WorkbenchController::selectedControllerConnectionScope() const
+{
+    if (m_shuttingDown || !m_selectionService || !m_projectService)
+        return std::nullopt;
+    const Core::PropertyPageContext context = m_treeModel.contextForNodeId(
+        m_selectionService->currentNodeId());
+    if (context.nodeKind != Core::WorkbenchNodeKind::Master || context.projectId.isNull()
+        || context.nodeId.isNull()) {
+        return std::nullopt;
+    }
+    const std::optional<Data::ProjectSnapshot> project = m_projectService->project(
+        context.projectId);
+    if (!project || !project->valid)
+        return std::nullopt;
+    const bool masterExists
+        = std::any_of(project->nodes.cbegin(), project->nodes.cend(), [&context](const auto &node) {
+              return node.id == context.nodeId && node.kind == Data::ProjectNodeKind::Master;
+          });
+    if (!masterExists)
+        return std::nullopt;
+    return Data::ControllerConnectionScope{context.projectId, context.nodeId};
+}
+
+ControllerConnectionSelection WorkbenchController::prepareControllerConnection(
+    const Data::ControllerConnectionScope &scope)
+{
+    return controllerConnectionSelection(scope);
+}
+
+ControllerConnectionSelection WorkbenchController::controllerConnectionSelection(
+    const Data::ControllerConnectionScope &scope) const
+{
+    const auto selection = std::find_if(
+        m_controllerConnectionSelections.cbegin(),
+        m_controllerConnectionSelections.cend(),
+        [&scope](const ControllerConnectionSelection &candidate) {
+            return candidate.scope == scope;
+        });
+    if (selection != m_controllerConnectionSelections.cend())
+        return *selection;
+    ControllerConnectionSelection unselected;
+    unselected.scope = scope;
+    return unselected;
+}
+
+Core::ControllerConnectionProvider *WorkbenchController::controllerConnectionProvider(
+    const Data::ControllerConnectionScope &scope) const
+{
+    const Utils::Id providerId = controllerConnectionSelection(scope).providerId;
+    if (!providerId.isValid())
+        return nullptr;
+    const QList<Core::ControllerConnectionProvider *> providers = controllerConnectionProviders();
+    const auto provider
+        = std::find_if(providers.cbegin(), providers.cend(), [providerId](const auto *candidate) {
+              return candidate->id() == providerId;
+          });
+    return provider == providers.cend() ? nullptr : *provider;
+}
+
+QList<Data::ControllerConnectionProfile> WorkbenchController::controllerConnectionProfiles(
+    const Data::ControllerConnectionScope &scope) const
+{
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    return provider ? provider->connectionProfiles(scope)
+                    : QList<Data::ControllerConnectionProfile>();
+}
+
+Data::ControllerConnectionSnapshot WorkbenchController::controllerConnectionSnapshot(
+    const Data::ControllerConnectionScope &scope) const
+{
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (provider)
+        return provider->connectionSnapshot();
+    Data::ControllerConnectionSnapshot result;
+    result.scope = scope;
+    return result;
+}
+
+bool WorkbenchController::controllerConnectionProjectIsOpen(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (!m_projectService || scope.projectId.isNull())
+        return false;
+    return m_projectService->project(scope.projectId).has_value();
+}
+
+Utils::Result<> WorkbenchController::selectControllerConnectionProvider(
+    const Data::ControllerConnectionScope &scope, Utils::Id providerId)
+{
+    if (m_shuttingDown)
+        return Utils::ResultError(Tr::tr("The controller connection workflow is shutting down."));
+    if (controllerConnectionSelectionLocked(scope)) {
+        return Utils::ResultError(
+            Tr::tr("Disconnect the current controller session before changing its adapter."));
+    }
+
+    if (providerId.isValid()) {
+        const QList<Core::ControllerConnectionProvider *> providers
+            = controllerConnectionProviders();
+        const auto provider
+            = std::find_if(providers.cbegin(), providers.cend(), [providerId](const auto *candidate) {
+                  return candidate->id() == providerId;
+              });
+        if (provider == providers.cend())
+            return Utils::ResultError(Tr::tr("The selected controller adapter is unavailable."));
+    }
+
+    ControllerConnectionSelection *selection = mutableControllerConnectionSelection(scope);
+    const bool providerExplicitlySelected = providerId.isValid();
+    if (selection && selection->providerId == providerId
+        && selection->providerExplicitlySelected == providerExplicitlySelected) {
+        return Utils::ResultOk;
+    }
+    if (!selection) {
+        ControllerConnectionSelection unselected;
+        unselected.scope = scope;
+        m_controllerConnectionSelections.append(unselected);
+        selection = &m_controllerConnectionSelections.last();
+    }
+    selection->providerId = providerId;
+    selection->profileId = {};
+    selection->providerExplicitlySelected = providerExplicitlySelected;
+    selection->profileExplicitlySelected = false;
+    emit controllerConnectionChanged();
+    return Utils::ResultOk;
+}
+
+Utils::Result<> WorkbenchController::selectControllerConnectionProfile(
+    const Data::ControllerConnectionScope &scope, const Data::NodeId &profileId)
+{
+    if (m_shuttingDown)
+        return Utils::ResultError(Tr::tr("The controller connection workflow is shutting down."));
+    if (controllerConnectionSelectionLocked(scope)) {
+        return Utils::ResultError(
+            Tr::tr("Disconnect the current controller session before changing its profile."));
+    }
+    ControllerConnectionSelection *selection = mutableControllerConnectionSelection(scope);
+    if (!selection || !selection->providerExplicitlySelected || !selection->providerId.isValid()) {
+        return Utils::ResultError(Tr::tr("Select a controller adapter before selecting a profile."));
+    }
+    if (!profileId.isNull()) {
+        const QList<Data::ControllerConnectionProfile> profiles = controllerConnectionProfiles(
+            scope);
+        const auto profile
+            = std::find_if(profiles.cbegin(), profiles.cend(), [&profileId](const auto &candidate) {
+                  return candidate.id == profileId;
+              });
+        if (profile == profiles.cend())
+            return Utils::ResultError(Tr::tr("The selected connection profile is unavailable."));
+    }
+    const bool profileExplicitlySelected = !profileId.isNull();
+    if (selection->profileId == profileId
+        && selection->profileExplicitlySelected == profileExplicitlySelected) {
+        return Utils::ResultOk;
+    }
+    selection->profileId = profileId;
+    selection->profileExplicitlySelected = profileExplicitlySelected;
+    emit controllerConnectionChanged();
+    return Utils::ResultOk;
+}
+
+bool WorkbenchController::controllerConnectionSelectionLocked(
+    const Data::ControllerConnectionScope &scope) const
+{
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider)
+        return false;
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    return snapshot.scope == scope && connectionStateLocksSelection(snapshot.state);
+}
+
+bool WorkbenchController::canConnectSelectedController() const
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    if (!scope)
+        return false;
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
+    if (!provider || !provider->isAvailable())
+        return false;
+    const ControllerConnectionSelection selection = controllerConnectionSelection(*scope);
+    if (!selection.providerExplicitlySelected || !selection.profileExplicitlySelected)
+        return false;
+    const QList<Data::ControllerConnectionProfile> profiles = provider->connectionProfiles(*scope);
+    const auto profile
+        = std::find_if(profiles.cbegin(), profiles.cend(), [&selection](const auto &candidate) {
+              return candidate.id == selection.profileId;
+          });
+    if (profile == profiles.cend() || !connectionProfileUsable(*profile))
+        return false;
+    const Data::ControllerConnectionState state = provider->connectionSnapshot().state;
+    return state == Data::ControllerConnectionState::Disconnected
+           || state == Data::ControllerConnectionState::Failed;
+}
+
+bool WorkbenchController::canDisconnectSelectedController() const
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    if (!scope)
+        return false;
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
+    if (!provider)
+        return false;
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    return (snapshot.scope == *scope || !controllerConnectionProjectIsOpen(snapshot.scope))
+           && snapshot.state != Data::ControllerConnectionState::Disconnected
+           && snapshot.state != Data::ControllerConnectionState::Disconnecting;
+}
+
+bool WorkbenchController::canRefreshSelectedController() const
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    if (!scope)
+        return false;
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
+    if (!provider || !provider->isAvailable())
+        return false;
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    return snapshot.scope == *scope
+           && (snapshot.state == Data::ControllerConnectionState::Connected
+               || snapshot.state == Data::ControllerConnectionState::Degraded);
+}
+
+Utils::Result<> WorkbenchController::connectSelectedController()
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    if (!scope)
+        return Utils::ResultError(Tr::tr("Select a valid EtherCAT Master before connecting."));
+    if (!canConnectSelectedController())
+        return Utils::ResultError(Tr::tr("The selected controller connection is not ready."));
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
+    QTC_ASSERT(provider, return Utils::ResultError(Tr::tr("The controller adapter is unavailable.")));
+    return provider->connectToController({*scope, controllerConnectionSelection(*scope).profileId});
+}
+
+Utils::Result<> WorkbenchController::disconnectSelectedController()
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    if (!scope)
+        return Utils::ResultError(Tr::tr("Select the connected EtherCAT Master first."));
+    if (!canDisconnectSelectedController()) {
+        return Utils::ResultError(
+            Tr::tr("The selected EtherCAT Master does not own an active connection."));
+    }
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
+    if (!provider)
+        return Utils::ResultError(Tr::tr("The selected controller adapter is unavailable."));
+    return provider->disconnectFromController();
+}
+
+Utils::Result<> WorkbenchController::refreshSelectedController()
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    if (!scope)
+        return Utils::ResultError(Tr::tr("Select the connected EtherCAT Master first."));
+    if (!canRefreshSelectedController())
+        return Utils::ResultError(Tr::tr("The controller connection is not ready to refresh."));
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
+    QTC_ASSERT(provider, return Utils::ResultError(Tr::tr("The controller adapter is unavailable.")));
+    return provider->refreshController();
 }
 
 bool WorkbenchController::scanAvailable() const
@@ -786,6 +1101,46 @@ void WorkbenchController::watchOptionalProvider(Core::Provider *provider)
     }
 }
 
+void WorkbenchController::watchControllerConnectionProvider(Core::Provider *provider)
+{
+    auto connectionProvider = qobject_cast<Core::ControllerConnectionProvider *>(provider);
+    if (!connectionProvider)
+        return;
+    ++m_nextControllerConnectionProviderEpoch;
+    if (!m_nextControllerConnectionProviderEpoch)
+        ++m_nextControllerConnectionProviderEpoch;
+    m_controllerConnectionProviderEpochs
+        .insert(connectionProvider, m_nextControllerConnectionProviderEpoch);
+    for (const QMetaObject::Connection &connection :
+         {connect(
+              connectionProvider,
+              &Core::Provider::availabilityChanged,
+              this,
+              &WorkbenchController::handleControllerConnectionChanged,
+              Qt::UniqueConnection),
+          connect(
+              connectionProvider,
+              &Core::Provider::displayNameChanged,
+              this,
+              &WorkbenchController::handleControllerConnectionChanged,
+              Qt::UniqueConnection),
+          connect(
+              connectionProvider,
+              &Core::ControllerConnectionProvider::connectionProfilesChanged,
+              this,
+              &WorkbenchController::handleControllerConnectionChanged,
+              Qt::UniqueConnection),
+          connect(
+              connectionProvider,
+              &Core::ControllerConnectionProvider::connectionSnapshotChanged,
+              this,
+              &WorkbenchController::handleControllerConnectionChanged,
+              Qt::UniqueConnection)}) {
+        if (connection)
+            m_connections.append(connection);
+    }
+}
+
 void WorkbenchController::refreshOptionalProviders(Core::Provider *excluding)
 {
     if (m_shuttingDown || !m_providerRegistry)
@@ -858,6 +1213,122 @@ void WorkbenchController::refreshOptionalProviders(Core::Provider *excluding)
 void WorkbenchController::handleOptionalAvailabilityChanged()
 {
     refreshOptionalProviders();
+}
+
+void WorkbenchController::handleProjectAboutToBeRemoved(const Data::NodeId &projectId)
+{
+    if (m_shuttingDown || projectId.isNull())
+        return;
+
+    const QScopedValueRollback suppressChanges(m_suppressControllerConnectionChanges, true);
+    bool changed = m_controllerConnectionSelections.removeIf(
+                       [&projectId](const ControllerConnectionSelection &selection) {
+                           return selection.scope.projectId == projectId;
+                       })
+                   > 0;
+    for (Core::ControllerConnectionProvider *provider : controllerConnectionProviders()) {
+        const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+        if (snapshot.scope.projectId != projectId
+            || snapshot.state == Data::ControllerConnectionState::Disconnected
+            || snapshot.state == Data::ControllerConnectionState::Disconnecting) {
+            continue;
+        }
+        changed = true;
+        requestControllerDisconnect(provider, snapshot.scope, snapshot.sessionGeneration);
+    }
+    if (changed)
+        emit controllerConnectionChanged();
+}
+
+void WorkbenchController::handleControllerConnectionChanged()
+{
+    if (m_shuttingDown || m_suppressControllerConnectionChanges)
+        return;
+    emit controllerConnectionChanged();
+}
+
+void WorkbenchController::requestControllerDisconnect(
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionScope &expectedScope,
+    quint64 expectedGeneration)
+{
+    if (!provider)
+        return;
+    const quint64 providerEpoch = m_controllerConnectionProviderEpochs.value(provider);
+    if (!providerEpoch)
+        return;
+    requestControllerDisconnectAttempt(provider, expectedScope, expectedGeneration, providerEpoch, 0);
+}
+
+void WorkbenchController::requestControllerDisconnectAttempt(
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionScope &expectedScope,
+    quint64 expectedGeneration,
+    quint64 expectedProviderEpoch,
+    int retryStep)
+{
+    if (m_shuttingDown || !provider
+        || m_controllerConnectionProviderEpochs.value(provider) != expectedProviderEpoch) {
+        return;
+    }
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (snapshot.scope != expectedScope || snapshot.sessionGeneration != expectedGeneration)
+        return;
+    const Data::ControllerConnectionState state = snapshot.state;
+    if (state == Data::ControllerConnectionState::Disconnected
+        || state == Data::ControllerConnectionState::Disconnecting) {
+        return;
+    }
+
+    const Utils::Result<> result = provider->disconnectFromController();
+    if (result)
+        return;
+    if (retryStep == 0) {
+        ::Core::MessageManager::writeFlashing(
+            Tr::tr("Cannot disconnect from the controller: %1").arg(result.error()));
+    }
+
+    constexpr int maximumAttempts = 5;
+    if (retryStep + 1 >= maximumAttempts) {
+        ::Core::MessageManager::writeFlashing(
+            Tr::tr(
+                "Automatic disconnect cleanup stopped after repeated failures: %1. Select any "
+                "EtherCAT Master, choose this controller adapter, and click Disconnect.")
+                .arg(result.error()));
+        return;
+    }
+
+    const QPointer<Core::ControllerConnectionProvider> guardedProvider(provider);
+    const int nextRetryStep = retryStep + 1;
+    const int retryDelayMs = 100 * (1 << qMin(retryStep, 3));
+    QTimer::singleShot(
+        retryDelayMs,
+        this,
+        [this,
+         guardedProvider,
+         expectedScope,
+         expectedGeneration,
+         expectedProviderEpoch,
+         nextRetryStep] {
+            requestControllerDisconnectAttempt(
+                guardedProvider,
+                expectedScope,
+                expectedGeneration,
+                expectedProviderEpoch,
+                nextRetryStep);
+        });
+}
+
+ControllerConnectionSelection *WorkbenchController::mutableControllerConnectionSelection(
+    const Data::ControllerConnectionScope &scope)
+{
+    const auto selection = std::find_if(
+        m_controllerConnectionSelections.begin(),
+        m_controllerConnectionSelections.end(),
+        [&scope](const ControllerConnectionSelection &candidate) {
+            return candidate.scope == scope;
+        });
+    return selection == m_controllerConnectionSelections.end() ? nullptr : &*selection;
 }
 
 } // namespace EtherCAT::Workbench::Internal

@@ -8,6 +8,7 @@
 
 #include <coreplugin/modemanager.h>
 
+#include <ethercatcore/providers.h>
 #include <ethercatcore/stateservice.h>
 
 #include <utils/utilsicons.h>
@@ -186,6 +187,124 @@ static QString diagnosticsDetails(const DiagnosticsStatusPresentation &diagnosti
     return details.join('\n');
 }
 
+struct ControllerConnectionStatusPresentation
+{
+    QString providerName;
+    Data::ControllerConnectionSnapshot snapshot;
+};
+
+static int controllerConnectionPriority(Data::ControllerConnectionState state)
+{
+    switch (state) {
+    case Data::ControllerConnectionState::Disconnected:
+        return 0;
+    case Data::ControllerConnectionState::Connected:
+        return 1;
+    case Data::ControllerConnectionState::Connecting:
+    case Data::ControllerConnectionState::Handshaking:
+    case Data::ControllerConnectionState::Disconnecting:
+        return 2;
+    case Data::ControllerConnectionState::Degraded:
+        return 3;
+    case Data::ControllerConnectionState::Failed:
+        return 4;
+    }
+    return 0;
+}
+
+static QString controllerConnectionStateText(Data::ControllerConnectionState state)
+{
+    switch (state) {
+    case Data::ControllerConnectionState::Disconnected:
+        return Tr::tr("Disconnected");
+    case Data::ControllerConnectionState::Connecting:
+        return Tr::tr("Connecting");
+    case Data::ControllerConnectionState::Handshaking:
+        return Tr::tr("Handshaking");
+    case Data::ControllerConnectionState::Connected:
+        return Tr::tr("Connected");
+    case Data::ControllerConnectionState::Degraded:
+        return Tr::tr("Degraded");
+    case Data::ControllerConnectionState::Disconnecting:
+        return Tr::tr("Disconnecting");
+    case Data::ControllerConnectionState::Failed:
+        return Tr::tr("Failed");
+    }
+    return {};
+}
+
+static std::optional<Core::StatusSeverity> controllerConnectionSeverity(
+    const std::optional<ControllerConnectionStatusPresentation> &connection)
+{
+    if (!connection)
+        return std::nullopt;
+    switch (connection->snapshot.state) {
+    case Data::ControllerConnectionState::Disconnected:
+        return std::nullopt;
+    case Data::ControllerConnectionState::Connected:
+        return Core::StatusSeverity::Ready;
+    case Data::ControllerConnectionState::Connecting:
+    case Data::ControllerConnectionState::Handshaking:
+    case Data::ControllerConnectionState::Disconnecting:
+        return Core::StatusSeverity::Busy;
+    case Data::ControllerConnectionState::Degraded:
+        return Core::StatusSeverity::Warning;
+    case Data::ControllerConnectionState::Failed:
+        return Core::StatusSeverity::Error;
+    }
+    return std::nullopt;
+}
+
+static std::optional<ControllerConnectionStatusPresentation> controllerConnectionStatus(
+    WorkbenchController *controller)
+{
+    if (!controller)
+        return std::nullopt;
+
+    std::optional<ControllerConnectionStatusPresentation> result;
+    int resultPriority = 0;
+    for (Core::ControllerConnectionProvider *provider :
+         controller->controllerConnectionProviders()) {
+        const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+        const int priority = controllerConnectionPriority(snapshot.state);
+        if (priority <= resultPriority)
+            continue;
+        QString providerName = provider->displayName().trimmed();
+        if (providerName.isEmpty())
+            providerName = Tr::tr("Unnamed controller adapter");
+        result = ControllerConnectionStatusPresentation{providerName, snapshot};
+        resultPriority = priority;
+    }
+    return result;
+}
+
+static QString controllerConnectionSummary(
+    const ControllerConnectionStatusPresentation &connection)
+{
+    return Tr::tr("Controller %1").arg(controllerConnectionStateText(connection.snapshot.state));
+}
+
+static QString controllerConnectionDetails(
+    const ControllerConnectionStatusPresentation &connection)
+{
+    const Data::ControllerConnectionSnapshot &snapshot = connection.snapshot;
+    QStringList details{
+        Tr::tr("%1 — %2")
+            .arg(connection.providerName, controllerConnectionStateText(snapshot.state)),
+    };
+    if (snapshot.state == Data::ControllerConnectionState::Connected
+        || snapshot.state == Data::ControllerConnectionState::Degraded) {
+        details.append(
+            snapshot.mock
+                ? Tr::tr("Mock controller connection")
+                : (snapshot.readOnly ? Tr::tr("Read-only real controller")
+                                     : Tr::tr("Controlled real controller")));
+    }
+    if (!snapshot.endpointSummary.isEmpty())
+        details.append(Tr::tr("Endpoint: %1").arg(snapshot.endpointSummary));
+    return details.join('\n');
+}
+
 static const Core::StatusEntry *primaryStatus(const QList<Core::StatusEntry> &statuses)
 {
     if (statuses.isEmpty())
@@ -229,6 +348,9 @@ WorkbenchStatusWidget::WorkbenchStatusWidget(
         connect(m_controller, &WorkbenchController::diagnosticsStatusChanged, this, [this] {
             updateStatus();
         });
+        connect(m_controller, &WorkbenchController::controllerConnectionChanged, this, [this] {
+            updateStatus();
+        });
     }
     updateStatus();
 }
@@ -241,20 +363,33 @@ void WorkbenchStatusWidget::updateStatus()
     const DiagnosticsStatusPresentation diagnostics
         = m_controller ? m_controller->diagnosticsStatusPresentation()
                        : DiagnosticsStatusPresentation();
+    const std::optional<ControllerConnectionStatusPresentation> connection
+        = controllerConnectionStatus(m_controller);
+    const std::optional<Core::StatusSeverity> connectionSeverity
+        = controllerConnectionSeverity(connection);
     const std::optional<Core::StatusSeverity> providerSeverity = diagnosticsSeverity(diagnostics);
     std::optional<Core::StatusSeverity> severity = primary
                                                        ? std::optional(primary->severity)
                                                        : std::nullopt;
+    bool connectionDefinesSeverity = false;
+    if (connectionSeverity && (!severity || int(*connectionSeverity) >= int(*severity))) {
+        severity = connectionSeverity;
+        connectionDefinesSeverity = true;
+    }
     bool providerDefinesSeverity = false;
     if (providerSeverity && (!severity || int(*providerSeverity) > int(*severity))) {
         severity = providerSeverity;
+        connectionDefinesSeverity = false;
         providerDefinesSeverity = true;
     } else if (providerSeverity && severity && *providerSeverity == *severity
-               && !diagnostics.mock) {
+               && !diagnostics.mock && !connectionDefinesSeverity) {
+        connectionDefinesSeverity = false;
         providerDefinesSeverity = true;
     }
     const QString mode = diagnosticsModeText(diagnostics);
     const QString providerDetails = diagnosticsDetails(diagnostics);
+    const QString connectionDetails
+        = connection ? controllerConnectionDetails(*connection) : QString();
 
     m_menu->clear();
     if (!severity) {
@@ -272,7 +407,9 @@ void WorkbenchStatusWidget::updateStatus()
         return;
     }
 
-    if (*severity == Core::StatusSeverity::Ready && !mode.isEmpty())
+    if (connectionDefinesSeverity)
+        setText(controllerConnectionSummary(*connection));
+    else if (*severity == Core::StatusSeverity::Ready && !mode.isEmpty())
         setText(mode);
     else if (providerDefinesSeverity)
         setText(diagnosticsStatusText(*severity, diagnostics.mock));
@@ -281,6 +418,13 @@ void WorkbenchStatusWidget::updateStatus()
     setIcon(statusIcon(*severity));
 
     QStringList details;
+    if (connection) {
+        details.append(connectionDetails);
+        QAction *connectionEntry = m_menu->addAction(
+            statusIcon(*connectionSeverity), controllerConnectionSummary(*connection));
+        connectionEntry->setToolTip(connectionDetails);
+        connectionEntry->setEnabled(false);
+    }
     if (!providerDetails.isEmpty()) {
         details.append(providerDetails);
         const QString providerSummary

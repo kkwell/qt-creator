@@ -27,10 +27,10 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Configuration persistence and structural-name API complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, configured-slave, ESI Repository, individual ESI catalogue-device General, master-side ESI insertion, supported-device drag-and-drop, and explicit active-project selection workflows, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, and public Scan/Diagnostics state overlays are complete; remaining UI qualification is open |
+| 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, configured-slave, ESI Repository, individual ESI catalogue-device General, master-side ESI insertion, supported-device drag-and-drop, and explicit active-project selection workflows, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, public Scan/Diagnostics state overlays, and the locally plus real-hardware qualified read-only Communication page; its status-bar correction passed automated regression and second hardware UI revalidation, while later stateful online work remains open |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
-| 7 | `EtherCATProductApiPlugin` | Complete; locally qualified | First vendor adapter: Embed Labs Product API transport, three-channel lifecycle, and read-only controller Provider |
+| 7 | `EtherCATProductApiPlugin` | Complete; locally and read-only hardware qualified | First vendor adapter: Embed Labs Product API transport, three-channel lifecycle, and read-only controller Provider |
 
 `EtherCATData` is an infrastructure library, not a feature container. Its
 offline configuration contract is persisted by EtherCATProject format version
@@ -159,20 +159,99 @@ The implemented adapter boundary, strict outbound allow-list, semantic mapping,
 generation cleanup, and remaining protocol gaps are recorded in
 `docs/ethercat-product-api.md`.
 
-Workbench will consume the Provider and host ProductApi-contributed pages
-through public extension points. It will not retain sockets, codec objects,
+The current Workbench Communication issue consumes the public Provider through
+the existing Details extension surface. It does not host
+ProductApi-internal widgets and does not retain sockets, codec objects,
 threads, internal ProductApi objects, or network callbacks. Scan and
 Diagnostics remain independent Provider contracts, so connection success does
 not fabricate scan results or diagnostic health.
 
 Local codec and loopback validation is Mock protocol evidence only. The
-Windows Python reference-client audit is separate protocol/hardware input and
-does not qualify the Qt adapter on real hardware. Final integrated test totals
-and product-build acceptance remain outside this architecture statement until
-issue-wide validation is complete.
+Windows Python reference-client audit and the Mac's three-port TCP reachability
+check also do not by themselves qualify the Qt adapter. The independent
+2026-07-24 Workbench UI acceptance verified real Qt
+Connect/Refresh/Disconnect and clean three-channel teardown. The status-bar
+presentation defect observed during that flow is fixed in the client and
+covered by automated regression. A second real-controller UI revalidation
+passed with Handshaking, Connected/real-controller read-only, and
+Disconnect-to-Offline status-bar presentation.
 
 The full source, safety, endpoint, CODESYS workflow, and controller/client issue
 handoff is recorded in `docs/ethercat-online-controller.md`.
+
+## Workbench controller Communication boundary
+
+`ISSUE-WORKBENCH-CONTROLLER-COMMUNICATION-001` adds a provider-neutral
+Communication page to the existing right-side Details host for an EtherCAT
+Master. The page obtains Providers from the generic object-pool registry,
+retains only stable `{providerId, profileId}` selection for the Master in the
+Workbench session, and displays only copied immutable connection snapshots.
+It has no dependency on the ProductApi plugin and no vendor-ID or channel-role
+branch.
+
+The page and compact controller strip share ActionManager commands for
+Connect, Refresh, and Disconnect. Connect is enabled only for a valid selected
+Master, explicit available Provider, and explicitly selected usable profile.
+Refresh remains a read-only request to that Provider. Disconnect is explicit
+and targets the same Provider; provider unavailability does not force a vendor
+fallback and does not remove the cleanup path.
+
+No ordinary navigation or page-lifetime event is a connection command. Project
+open, application startup, Master selection, Details-page
+creation/destruction, Details-page switching, and left-tree selection changes
+do not connect or disconnect. The Provider alone publishes transport loss,
+recovery, and final connection state; Workbench does not synthesize those
+transitions.
+
+Project close is the sole automatic safety cleanup. Workbench clears all
+in-memory controller selections for that Project and requests Disconnect from
+every Provider whose current snapshot belongs to it and is not already
+Disconnected or Disconnecting. It does not disconnect or clear another
+Project's scope.
+
+If Disconnect is rejected, Workbench makes no more than five total attempts. A
+pending attempt carries the Provider registration epoch, exact scope, and
+`sessionGeneration` captured for the cleanup. Provider
+removal/re-registration, scope replacement, or session-generation advancement
+invalidates that attempt before it can affect a replacement Provider or newer
+session. If all five attempts are rejected, automatic cleanup stops and
+reports a manual entry point: the user may open any EtherCAT Master,
+explicitly select the residual adapter, and invoke Disconnect. A residual
+Failed session remains presented with cleanup guidance.
+
+This issue does not extend the Core Provider ABI. It adds no typed Scan,
+configuration, control-lease, controller-state, FreeRun, DC-mode, Run, Stop,
+SDO/PDO, package, firmware, or diagnostics operation. The existing Scan and
+Diagnostics providers remain Mock-only, and their actions are not routed
+through `ControllerConnectionProvider`.
+
+Local qualification passed 6/6 focused events at normal scale, 6/6 at 2x,
+89/89 complete Workbench events, and 92/92 events across the other six
+isolated Core, Project, Devices, Scan, Diagnostics, and ProductApi suites. The
+seven-suite total is 181/181. The Qt 6.11.0 `WITH_TESTS=OFF` product build,
+enabled/explicitly-disabled Workbench lifecycle checks,
+`qtcreator_zh_CN.qm` generation, and all newly added Communication
+translations also passed. The real Qt
+Connect/Refresh/Disconnect hardware run then passed on 2026-07-24 using
+Provider `Embed Labs Product API`, Profile `v1.9`, and endpoint
+`192.168.3.101:15200`. Protocol v1.9 negotiated
+`sessionGeneration=1`, `sessionId=10990663912902164094`, and
+`bootId=5715996203977591977`; no lease was held and owner was 0. Controller
+state was `SHUTDOWN`/关停 and ready, with WKC 0/0, DC lock false, OP false,
+and fault `0x0`. Control, Push, and Bulk were Connected at reported limits
+4,096/65,536/65,536 bytes; Refresh advanced the displayed time to `12:18`;
+Disconnect left all three channels Disconnected. The product exited with
+status 0 with no residual process or new Embed Labs DiagnosticReports file.
+No Scan, configuration write, state transition, FreeRun, DC mode, Run, or
+Stop was invoked.
+
+During that acceptance the status bar briefly still showed Disconnected while
+the Communication snapshot was connected. The client correction now projects
+Provider connection state into the unified status control, and automated
+regression covers Connected, Degraded, and Disconnect-to-Offline presentation.
+A second real-controller UI revalidation passed on 2026-07-24 and confirmed
+Handshaking, Connected/real-controller read-only, and Disconnect-to-Offline
+presentation.
 
 ## Cross-plugin data rules
 
@@ -295,10 +374,12 @@ command strip. It reuses the same actions and discovers optional
 Scan/Diagnostics commands without reverse dependencies or private UI access.
 EtherCATCore now provides the shared `StateService`; the Workbench renders its
 highest-severity Scan/Diagnostics contribution and a value-only semantic
-projection from the preferred Diagnostics Provider through one mode-scoped Qt
+projection from the preferred Diagnostics Provider together with active
+immutable controller-connection Provider snapshots through one mode-scoped Qt
 Creator status-bar control, while producer plugins retain ownership of their
 state. It uses standard icons, preserves explicit `MOCK` labeling for local
-snapshots, and uses neutral Provider-reported wording otherwise. The same
+snapshots, and derives controller connection wording only from Provider
+evidence. The same
 Workbench controller now copies public immutable Scan and Diagnostics
 snapshots into a presentation-only tree overlay. It exposes topology
 differences, live Mock

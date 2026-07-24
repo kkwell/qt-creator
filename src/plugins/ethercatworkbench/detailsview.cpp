@@ -66,7 +66,9 @@ DetailsView::DetailsView(WorkbenchController *controller, QWidget *parent)
     setObjectName("EtherCATWorkbenchDetails");
     setAccessibleName(Tr::tr("EtherCAT Workbench details"));
     setAccessibleDescription(
-        Tr::tr("Shows offline properties for the EtherCAT node selected in the device tree."));
+        Tr::tr(
+            "Shows engineering properties and available controller communication for the "
+            "EtherCAT node selected in the device tree."));
     m_title->setObjectName("EtherCATWorkbenchDetailsTitle");
     m_title->setTextFormat(Qt::PlainText);
     m_title->setFont(Utils::StyleHelper::uiFont(Utils::StyleHelper::UiElementH4));
@@ -81,7 +83,7 @@ DetailsView::DetailsView(WorkbenchController *controller, QWidget *parent)
     m_tabs->setDocumentMode(true);
     m_tabs->setAccessibleName(Tr::tr("EtherCAT property pages"));
     m_tabs->setAccessibleDescription(
-        Tr::tr("Switch between offline property pages for the selected EtherCAT node."));
+        Tr::tr("Switch between engineering property pages for the selected EtherCAT node."));
     connect(qApp, &QApplication::focusChanged, this, [this](QWidget *, QWidget *focusWidget) {
         if (m_internalFocusChange
             || (!m_rebuildTransactionActive && !m_rebuildPending

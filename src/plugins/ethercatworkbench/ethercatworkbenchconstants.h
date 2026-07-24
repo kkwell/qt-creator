@@ -11,6 +11,9 @@ const char NAVIGATION_ID[] = "EtherCAT.Workbench.Tree";
 const char MENU_ID[] = "EtherCAT.Menu";
 const char OPEN_ACTION_ID[] = "EtherCAT.Workbench.Open";
 const char REFRESH_ACTION_ID[] = "EtherCAT.Workbench.Refresh";
+const char CONNECT_CONTROLLER_ACTION_ID[] = "EtherCAT.Workbench.ConnectController";
+const char REFRESH_CONTROLLER_ACTION_ID[] = "EtherCAT.Workbench.RefreshController";
+const char DISCONNECT_CONTROLLER_ACTION_ID[] = "EtherCAT.Workbench.DisconnectController";
 const char EXPAND_ACTION_ID[] = "EtherCAT.Workbench.ExpandAll";
 const char COLLAPSE_ACTION_ID[] = "EtherCAT.Workbench.CollapseAll";
 const char LOCATE_DIFFERENCE_ACTION_ID[] = "EtherCAT.Workbench.LocateDifference";
@@ -27,6 +30,7 @@ const char MOVE_OFFLINE_SLAVE_DOWN_ACTION_ID[] = "EtherCAT.Workbench.MoveOffline
 
 const char BUILTIN_PAGE_PROVIDER_ID[] = "EtherCAT.Workbench.BuiltinPages";
 const char GENERAL_PAGE_ID[] = "EtherCAT.Workbench.General";
+const char COMMUNICATION_PAGE_ID[] = "EtherCAT.Workbench.Communication";
 const char ETHERCAT_PAGE_ID[] = "EtherCAT.Workbench.EtherCAT";
 const char PROCESS_DATA_PAGE_ID[] = "EtherCAT.Workbench.ProcessData";
 const char COE_ONLINE_PAGE_ID[] = "EtherCAT.Workbench.CoEOnline";

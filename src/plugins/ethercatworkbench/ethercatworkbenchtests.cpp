@@ -3,14 +3,17 @@
 #include "ethercatworkbenchtests.h"
 
 #include "builtinpropertypages.h"
+#include "communicationpage.h"
 #include "detailsview.h"
 #include "esiconfigurationfactory.h"
 #include "esideviceselectiondialog.h"
 #include "esirepositorypage.h"
 #include "ethercatworkbenchconstants.h"
+#include "ethercatworkbenchtr.h"
 #include "generalpage.h"
 #include "workbenchcontroller.h"
 #include "workbenchnavigation.h"
+#include "workbenchstatuswidget.h"
 #include "workbenchtreemodel.h"
 
 #include <aggregation/aggregate.h>
@@ -702,6 +705,122 @@ public:
     ControlledDeviceImportJob *job = nullptr;
 };
 
+class ControlledControllerConnectionProvider final : public Core::ControllerConnectionProvider
+{
+public:
+    ControlledControllerConnectionProvider(Utils::Id id, const QString &displayName)
+        : ControllerConnectionProvider(id, displayName)
+    {
+        m_primaryProfile.id = Data::NodeId::create();
+        m_primaryProfile.displayName = displayName + " primary";
+        m_primaryProfile.endpointSummary = "192.0.2.10:15200";
+        m_primaryProfile.configured = true;
+        m_primaryProfile.supported = true;
+        m_primaryProfile.defaultProfile = true;
+
+        m_alternateProfile.id = Data::NodeId::create();
+        m_alternateProfile.displayName = displayName + " alternate";
+        m_alternateProfile.endpointSummary = "192.0.2.11:15200";
+        m_alternateProfile.configured = true;
+        m_alternateProfile.supported = true;
+    }
+
+    QList<Data::ControllerConnectionProfile> connectionProfiles(
+        const Data::ControllerConnectionScope &scope) const final
+    {
+        m_profileScopes.append(scope);
+        return {m_primaryProfile, m_alternateProfile};
+    }
+
+    Data::ControllerConnectionSnapshot connectionSnapshot() const final { return m_snapshot; }
+
+    Utils::Result<> connectToController(const Data::ControllerConnectionRequest &request) final
+    {
+        ++connectCalls;
+        lastConnectRequest = request;
+        m_snapshot.scope = request.scope;
+        m_snapshot.profileId = request.profileId;
+        m_snapshot.state = Data::ControllerConnectionState::Connecting;
+        m_snapshot.readOnly = true;
+        const QList<Data::ControllerConnectionProfile> profiles = connectionProfiles(request.scope);
+        const auto profile = std::find_if(
+            profiles.cbegin(),
+            profiles.cend(),
+            [&request](const Data::ControllerConnectionProfile &candidate) {
+                return candidate.id == request.profileId;
+            });
+        if (profile == profiles.cend())
+            return Utils::ResultError("Unknown controller profile");
+        m_snapshot.endpointSummary = profile->endpointSummary;
+        emit connectionSnapshotChanged();
+        return Utils::ResultOk;
+    }
+
+    Utils::Result<> disconnectFromController() final
+    {
+        ++disconnectCalls;
+        if (disconnectFailuresRemaining > 0) {
+            --disconnectFailuresRemaining;
+            return Utils::ResultError("Injected disconnect failure");
+        }
+        m_snapshot.state = Data::ControllerConnectionState::Disconnected;
+        emit connectionSnapshotChanged();
+        return Utils::ResultOk;
+    }
+
+    Utils::Result<> refreshController() final
+    {
+        ++refreshCalls;
+        if (m_snapshot.state != Data::ControllerConnectionState::Connected
+            && m_snapshot.state != Data::ControllerConnectionState::Degraded) {
+            return Utils::ResultError("Controller is not connected");
+        }
+        m_snapshot.updatedAt = QDateTime::currentDateTimeUtc();
+        emit connectionSnapshotChanged();
+        return Utils::ResultOk;
+    }
+
+    Data::NodeId primaryProfileId() const { return m_primaryProfile.id; }
+    Data::NodeId alternateProfileId() const { return m_alternateProfile.id; }
+
+    void setPrimaryProfileConfigured(bool configured)
+    {
+        m_primaryProfile.configured = configured;
+        m_primaryProfile.configurationIssue = configured ? QString()
+                                                         : QString("Primary profile is incomplete");
+        emit connectionProfilesChanged();
+    }
+
+    void publishState(
+        Data::ControllerConnectionState state, const Data::ControllerConnectionScope &scope)
+    {
+        m_snapshot.scope = scope;
+        m_snapshot.state = state;
+        m_snapshot.readOnly = true;
+        emit connectionSnapshotChanged();
+    }
+
+    void publishSnapshot(const Data::ControllerConnectionSnapshot &snapshot)
+    {
+        m_snapshot = snapshot;
+        emit connectionSnapshotChanged();
+    }
+
+    void notifySnapshotChanged() { emit connectionSnapshotChanged(); }
+
+    mutable QList<Data::ControllerConnectionScope> m_profileScopes;
+    Data::ControllerConnectionRequest lastConnectRequest;
+    int connectCalls = 0;
+    int disconnectCalls = 0;
+    int disconnectFailuresRemaining = 0;
+    int refreshCalls = 0;
+
+private:
+    Data::ControllerConnectionProfile m_primaryProfile;
+    Data::ControllerConnectionProfile m_alternateProfile;
+    Data::ControllerConnectionSnapshot m_snapshot;
+};
+
 class AvailableScanProvider final : public Core::ScanProvider
 {
 public:
@@ -836,6 +955,9 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
 
     QVERIFY(::Core::ActionManager::command(Constants::OPEN_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::REFRESH_ACTION_ID));
+    QVERIFY(::Core::ActionManager::command(Constants::CONNECT_CONTROLLER_ACTION_ID));
+    QVERIFY(::Core::ActionManager::command(Constants::REFRESH_CONTROLLER_ACTION_ID));
+    QVERIFY(::Core::ActionManager::command(Constants::DISCONNECT_CONTROLLER_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::LOCATE_DIFFERENCE_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::LOCATE_ISSUE_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::OPEN_DIAGNOSTICS_ACTION_ID));
@@ -887,6 +1009,9 @@ void EtherCATWorkbenchTests::testModeCommandStripMirrorsRegisteredActions()
 
     for (const Utils::Id id :
          {Utils::Id(Constants::REFRESH_ACTION_ID),
+          Utils::Id(Constants::CONNECT_CONTROLLER_ACTION_ID),
+          Utils::Id(Constants::REFRESH_CONTROLLER_ACTION_ID),
+          Utils::Id(Constants::DISCONNECT_CONTROLLER_ACTION_ID),
           Utils::Id(Constants::EXPAND_ACTION_ID),
           Utils::Id(Constants::COLLAPSE_ACTION_ID),
           Utils::Id(Constants::LOCATE_DIFFERENCE_ACTION_ID),
@@ -5399,6 +5524,86 @@ void EtherCATWorkbenchTests::testStatusBarTracksStateService()
     QTRY_COMPARE(statusButton->text(), QString("MOCK Busy"));
     stateService->clearStatus(busySource);
     QTRY_VERIFY(statusButton->text().contains("Offline", Qt::CaseInsensitive));
+}
+
+void EtherCATWorkbenchTests::testStatusBarTracksControllerConnection()
+{
+    WorkbenchController controller;
+    Core::StateService stateService;
+    WorkbenchStatusWidget status(&stateService, &controller);
+    ControlledControllerConnectionProvider provider(
+        Utils::Id("EtherCAT.Workbench.StatusControllerConnection"),
+        "Status test controller");
+    AvailableDiagnosticsProvider diagnostics(
+        Utils::Id("EtherCAT.Workbench.StatusControllerDiagnostics"),
+        "Status test diagnostics");
+    provider.setAvailable(true);
+    diagnostics.setAvailable(true);
+    bool providerRegistered = false;
+    bool diagnosticsRegistered = false;
+    const QScopeGuard cleanup([&] {
+        if (diagnosticsRegistered)
+            ExtensionSystem::PluginManager::removeObject(&diagnostics);
+        if (providerRegistered)
+            ExtensionSystem::PluginManager::removeObject(&provider);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    QCOMPARE(status.text(), Tr::tr("Offline"));
+    const Utils::Id stateSource("EtherCAT.Workbench.StatusControllerState");
+    QVERIFY(stateService.setStatus(
+        {stateSource, Core::StatusSeverity::Ready, "Equal ready status", {}}));
+    QTRY_COMPARE(status.text(), Tr::tr("MOCK Ready"));
+    ExtensionSystem::PluginManager::addObject(&provider);
+    providerRegistered = true;
+
+    Data::ControllerConnectionSnapshot snapshot;
+    snapshot.scope = {Data::NodeId::create(), Data::NodeId::create()};
+    snapshot.profileId = provider.primaryProfileId();
+    snapshot.endpointSummary = "192.0.2.10:15200";
+    snapshot.state = Data::ControllerConnectionState::Connected;
+    snapshot.readOnly = true;
+    snapshot.mock = false;
+    provider.publishSnapshot(snapshot);
+
+    const QString connectedText = Tr::tr("Controller %1").arg(Tr::tr("Connected"));
+    QTRY_COMPARE(status.text(), connectedText);
+    QVERIFY(status.toolTip().contains("Status test controller"));
+    QVERIFY(status.toolTip().contains(Tr::tr("Read-only real controller")));
+    QVERIFY(status.toolTip().contains("192.0.2.10:15200"));
+    QVERIFY(status.menu());
+    QCOMPARE(status.menu()->actions().size(), 2);
+    QCOMPARE(status.menu()->actions().constFirst()->text(), connectedText);
+    QVERIFY(
+        !status.menu()->actions().constFirst()->text().contains(
+            Tr::tr("Offline"), Qt::CaseInsensitive));
+
+    ExtensionSystem::PluginManager::addObject(&diagnostics);
+    diagnosticsRegistered = true;
+    Data::DiagnosticsSnapshot diagnosticsSnapshot;
+    diagnosticsSnapshot.projectId = snapshot.scope.projectId;
+    diagnosticsSnapshot.masterId = snapshot.scope.masterId;
+    diagnosticsSnapshot.mock = true;
+    diagnosticsSnapshot.runMode = Data::DiagnosticsRunMode::Config;
+    diagnosticsSnapshot.masterState = Data::EtherCATState::PreOperational;
+    diagnostics.publishSnapshot(diagnosticsSnapshot);
+    QTRY_COMPARE(status.text(), connectedText);
+
+    ExtensionSystem::PluginManager::removeObject(&diagnostics);
+    diagnosticsRegistered = false;
+    QVERIFY(stateService.setStatus(
+        {stateSource, Core::StatusSeverity::Warning, "Higher warning status", {}}));
+    QTRY_COMPARE(status.text(), Tr::tr("MOCK Warning"));
+
+    snapshot.state = Data::ControllerConnectionState::Degraded;
+    provider.publishSnapshot(snapshot);
+    QTRY_COMPARE(status.text(), Tr::tr("Controller %1").arg(Tr::tr("Degraded")));
+
+    stateService.clearStatus(stateSource);
+    snapshot.state = Data::ControllerConnectionState::Disconnected;
+    provider.publishSnapshot(snapshot);
+    QTRY_COMPARE(status.text(), Tr::tr("Offline"));
 }
 
 void EtherCATWorkbenchTests::testStatusBarTracksPreferredDiagnosticsMode()
@@ -17673,6 +17878,593 @@ void EtherCATWorkbenchTests::testDynamicPropertyProviderRemoval()
     QCOMPARE(details.currentContext().nodeId, stableContextId);
 }
 
+void EtherCATWorkbenchTests::testControllerCommunicationSelectionAndScope()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+    controller.selectionService()->clear();
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        deviceSummaries(1).constFirst(),
+        "controller-communication-selection.ecatproject",
+        "Controller Communication Selection");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+
+    ControlledControllerConnectionProvider
+        providerA(Utils::Id("EtherCAT.Workbench.TestControllerConnection.A"), "Test controller A");
+    ControlledControllerConnectionProvider
+        providerB(Utils::Id("EtherCAT.Workbench.TestControllerConnection.B"), "Test controller B");
+    providerA.setAvailable(true);
+    providerB.setAvailable(true);
+    bool providerARegistered = false;
+    bool providerBRegistered = false;
+    const QScopeGuard cleanup([&] {
+        controller.selectionService()->clear();
+        if (providerBRegistered)
+            ExtensionSystem::PluginManager::removeObject(&providerB);
+        if (providerARegistered)
+            ExtensionSystem::PluginManager::removeObject(&providerA);
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    ExtensionSystem::PluginManager::addObject(&providerA);
+    providerARegistered = true;
+    ExtensionSystem::PluginManager::addObject(&providerB);
+    providerBRegistered = true;
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.masterId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
+    QTRY_VERIFY(controller.selectedControllerConnectionScope().has_value());
+    QCOMPARE(*controller.selectedControllerConnectionScope(), scope);
+    QVERIFY(!controller.controllerConnectionSelection(scope).providerId.isValid());
+    QSignalSpy connectionChangedSpy(&controller, &WorkbenchController::controllerConnectionChanged);
+    QCOMPARE(controller.prepareControllerConnection(scope).scope, scope);
+    QCOMPARE(controller.prepareControllerConnection(scope).scope, scope);
+    QCOMPARE(connectionChangedSpy.count(), 0);
+
+    const Utils::Result<> selectProviderB
+        = controller.selectControllerConnectionProvider(scope, providerB.id());
+    QVERIFY_RESULT(selectProviderB);
+    ControllerConnectionSelection selection = controller.controllerConnectionSelection(scope);
+    QCOMPARE(selection.scope, scope);
+    QCOMPARE(selection.providerId, providerB.id());
+    QVERIFY(selection.profileId.isNull());
+    QVERIFY(selection.providerExplicitlySelected);
+    QVERIFY(!selection.profileExplicitlySelected);
+    QCOMPARE(connectionChangedSpy.count(), 1);
+    QCOMPARE(controller.controllerConnectionProvider(scope), &providerB);
+    QVERIFY(!controller.canConnectSelectedController());
+    QVERIFY_RESULT(controller.selectControllerConnectionProvider(scope, providerB.id()));
+    QCOMPARE(connectionChangedSpy.count(), 1);
+
+    const Utils::Result<> selectProviderBAlternate
+        = controller.selectControllerConnectionProfile(scope, providerB.alternateProfileId());
+    QVERIFY_RESULT(selectProviderBAlternate);
+    selection = controller.controllerConnectionSelection(scope);
+    QCOMPARE(selection.profileId, providerB.alternateProfileId());
+    QVERIFY(selection.profileExplicitlySelected);
+    QCOMPARE(connectionChangedSpy.count(), 2);
+    QVERIFY_RESULT(
+        controller.selectControllerConnectionProfile(scope, providerB.alternateProfileId()));
+    QCOMPARE(connectionChangedSpy.count(), 2);
+
+    const Utils::Result<> selectProviderA
+        = controller.selectControllerConnectionProvider(scope, providerA.id());
+    QVERIFY_RESULT(selectProviderA);
+    selection = controller.controllerConnectionSelection(scope);
+    QCOMPARE(selection.providerId, providerA.id());
+    QVERIFY(selection.profileId.isNull());
+    QVERIFY(!selection.profileExplicitlySelected);
+    QCOMPARE(connectionChangedSpy.count(), 3);
+    QVERIFY(!controller.canConnectSelectedController());
+    const Utils::Result<> selectProviderAAlternate
+        = controller.selectControllerConnectionProfile(scope, providerA.alternateProfileId());
+    QVERIFY_RESULT(selectProviderAAlternate);
+    QCOMPARE(connectionChangedSpy.count(), 4);
+    QTRY_VERIFY(controller.canConnectSelectedController());
+
+    bool nestedNotificationSent = false;
+    const QMetaObject::Connection nestedNotification
+        = connect(&controller, &WorkbenchController::controllerConnectionChanged, &controller, [&] {
+              if (nestedNotificationSent)
+                  return;
+              nestedNotificationSent = true;
+              providerA.notifySnapshotChanged();
+          });
+    const int signalsBeforeNotification = connectionChangedSpy.count();
+    providerA.notifySnapshotChanged();
+    QCOMPARE(connectionChangedSpy.count(), signalsBeforeNotification + 2);
+    disconnect(nestedNotification);
+
+    const Utils::Result<> connectController = controller.connectSelectedController();
+    QVERIFY_RESULT(connectController);
+    QCOMPARE(providerA.connectCalls, 1);
+    const Data::ControllerConnectionRequest expectedRequest{
+        scope,
+        providerA.alternateProfileId(),
+    };
+    QCOMPARE(providerA.lastConnectRequest, expectedRequest);
+    QVERIFY(!providerA.m_profileScopes.isEmpty());
+    for (const Data::ControllerConnectionScope &queriedScope :
+         std::as_const(providerA.m_profileScopes)) {
+        QCOMPARE(queriedScope, scope);
+    }
+    QVERIFY(!controller.canConnectSelectedController());
+    QVERIFY(controller.canDisconnectSelectedController());
+    QVERIFY(!controller.canRefreshSelectedController());
+    const Utils::Result<> disconnectController = controller.disconnectSelectedController();
+    QVERIFY_RESULT(disconnectController);
+
+    const Data::ControllerConnectionScope otherScope{
+        file.projectId,
+        Data::NodeId::create(),
+    };
+    QVERIFY_RESULT(controller.selectControllerConnectionProvider(otherScope, providerB.id()));
+    QVERIFY_RESULT(
+        controller.selectControllerConnectionProfile(otherScope, providerB.primaryProfileId()));
+    providerA.publishState(Data::ControllerConnectionState::Connected, scope);
+    QTRY_VERIFY(controller.controllerConnectionSelectionLocked(scope));
+    QVERIFY(!controller.controllerConnectionSelectionLocked(otherScope));
+    providerB.publishState(Data::ControllerConnectionState::Connected, otherScope);
+    QTRY_VERIFY(controller.controllerConnectionSelectionLocked(otherScope));
+    QVERIFY(controller.controllerConnectionSelectionLocked(scope));
+    QVERIFY_RESULT(providerA.disconnectFromController());
+    QVERIFY_RESULT(providerB.disconnectFromController());
+}
+
+void EtherCATWorkbenchTests::testControllerCommunicationPagePresentation()
+{
+    WorkbenchController controller;
+    ControlledControllerConnectionProvider provider(
+        Utils::Id("EtherCAT.Workbench.TestControllerConnection.Presentation"),
+        "Presentation controller");
+    provider.setAvailable(true);
+    bool providerRegistered = false;
+    const QScopeGuard cleanup([&] {
+        if (providerRegistered)
+            ExtensionSystem::PluginManager::removeObject(&provider);
+    });
+    ExtensionSystem::PluginManager::addObject(&provider);
+    providerRegistered = true;
+
+    const Data::ControllerConnectionScope scope{
+        Data::NodeId::create(),
+        Data::NodeId::create(),
+    };
+    const Core::PropertyPageContext context{
+        scope.projectId,
+        scope.masterId,
+        Core::WorkbenchNodeKind::Master,
+        "Presentation Master",
+    };
+    BuiltinPropertyPageProvider pages(&controller);
+    const QList<Core::PropertyPageDescriptor> descriptors = pages.pages(context);
+    const auto communicationDescriptor
+        = std::find_if(descriptors.cbegin(), descriptors.cend(), [](const auto &descriptor) {
+              return descriptor.id == Utils::Id(Constants::COMMUNICATION_PAGE_ID);
+          });
+    QVERIFY(communicationDescriptor != descriptors.cend());
+    QCOMPARE(communicationDescriptor->priority, 150);
+
+    CommunicationPage page(&controller);
+    page.setContext(context);
+
+    QComboBox *providerCombo = page.findChild<QComboBox *>("EtherCATCommunicationProvider");
+    QComboBox *profileCombo = page.findChild<QComboBox *>("EtherCATCommunicationProfile");
+    QLabel *endpoint = page.findChild<QLabel *>("EtherCATCommunicationEndpoint");
+    auto banner = dynamic_cast<Utils::InfoLabel *>(
+        page.findChild<QWidget *>("EtherCATCommunicationBanner"));
+    QTreeWidget *summary = page.findChild<QTreeWidget *>("EtherCATCommunicationSummary");
+    QTreeWidget *channels = page.findChild<QTreeWidget *>("EtherCATCommunicationChannels");
+    QLabel *error = page.findChild<QLabel *>("EtherCATCommunicationError");
+    QVERIFY(providerCombo);
+    QVERIFY(profileCombo);
+    QVERIFY(endpoint);
+    QVERIFY(banner);
+    QVERIFY(summary);
+    QVERIFY(channels);
+    QVERIFY(error);
+    QVERIFY(!page.accessibleName().isEmpty());
+    QVERIFY(!providerCombo->accessibleName().isEmpty());
+    QVERIFY(!profileCombo->accessibleName().isEmpty());
+    const auto summaryItem = [summary](const QString &name) {
+        for (int row = 0; row < summary->topLevelItemCount(); ++row) {
+            if (summary->topLevelItem(row)->text(0) == name)
+                return summary->topLevelItem(row);
+        }
+        return static_cast<QTreeWidgetItem *>(nullptr);
+    };
+    const auto summaryValue = [&summaryItem](const QString &name) {
+        const QTreeWidgetItem *item = summaryItem(name);
+        return item ? item->text(1) : QString();
+    };
+    QCOMPARE(summaryValue(Tr::tr("Adapter")), Tr::tr("Not available"));
+    QCOMPARE(summaryValue(Tr::tr("Access")), Tr::tr("Not available"));
+
+    const int providerIndex = providerCombo->findData(provider.id().toSetting());
+    QVERIFY(providerIndex >= 0);
+    providerCombo->setCurrentIndex(providerIndex);
+    QTRY_COMPARE(controller.controllerConnectionSelection(scope).providerId, provider.id());
+    QVERIFY(controller.controllerConnectionSelection(scope).profileId.isNull());
+    const int profileIndex = profileCombo->findData(
+        QVariant::fromValue(provider.primaryProfileId()));
+    QVERIFY(profileIndex >= 0);
+    profileCombo->setCurrentIndex(profileIndex);
+    QTRY_COMPARE(
+        controller.controllerConnectionSelection(scope).profileId, provider.primaryProfileId());
+    QCOMPARE(endpoint->text(), QString("192.0.2.10:15200"));
+    QCOMPARE(summaryValue(Tr::tr("Project ID")), scope.projectId.toString());
+    QCOMPARE(summaryValue(Tr::tr("Master ID")), scope.masterId.toString());
+    QCOMPARE(summaryValue(Tr::tr("Access")), Tr::tr("Not available"));
+
+    Data::ControllerConnectionSnapshot snapshot;
+    snapshot.scope = scope;
+    snapshot.profileId = provider.primaryProfileId();
+    snapshot.endpointSummary = "192.0.2.10:15200";
+    snapshot.state = Data::ControllerConnectionState::Connected;
+    snapshot.protocolVersion = {1, 9};
+    snapshot.sessionGeneration = 3;
+    snapshot.readOnly = true;
+    snapshot.mock = false;
+    Data::ControllerSessionSummary session;
+    session.sessionId = 42;
+    session.bootId = 73;
+    session.defaultControlLeaseDurationMs = 5000;
+    snapshot.session = session;
+    Data::ControllerStateSummary controllerState;
+    controllerState.serviceState = Data::ControllerServiceState::Running;
+    controllerState.ready = true;
+    controllerState.busOperational = true;
+    controllerState.applicationActive = true;
+    controllerState.expectedWorkingCounter = 6;
+    controllerState.actualWorkingCounter = 6;
+    controllerState.distributedClocksLocked = true;
+    snapshot.controllerState = controllerState;
+    snapshot.channels = {
+        {"control",
+         "Control",
+         Data::ControllerChannelState::Connected,
+         4096,
+         QDateTime::currentDateTimeUtc(),
+         "Read-only requests"},
+        {"events",
+         "Events",
+         Data::ControllerChannelState::Connected,
+         2048,
+         QDateTime::currentDateTimeUtc(),
+         "Subscribed"},
+    };
+    Data::ControllerFirmwareSummary firmware;
+    firmware.state = Data::ControllerFirmwareState::Confirmed;
+    firmware.activeSlot = Data::ControllerSlot::A;
+    firmware.generation = 11;
+    snapshot.firmware = firmware;
+    Data::ControllerOperationError operationError;
+    operationError.channelId = "control";
+    operationError.code = -14;
+    operationError.codeName = "UNSUPPORTED";
+    operationError.retryDisposition = Data::ControllerRetryDisposition::Reconnect;
+    operationError.summary = "Previous optional query was not supported";
+    snapshot.lastError = operationError;
+    provider.publishSnapshot(snapshot);
+
+    QTRY_VERIFY(banner->text().contains(Tr::tr("Read-only real controller")));
+    QTRY_COMPARE(channels->topLevelItemCount(), 2);
+    QTRY_VERIFY(error->text().contains("UNSUPPORTED"));
+    QVERIFY(error->text().contains(Tr::tr("Reconnect before retrying")));
+    QCOMPARE(summaryValue(Tr::tr("Project ID")), scope.projectId.toString());
+    QCOMPARE(summaryValue(Tr::tr("Master ID")), scope.masterId.toString());
+    QCOMPARE(summaryValue(Tr::tr("Session ID")), QString("42"));
+    QCOMPARE(summaryValue(Tr::tr("Controller state")), Tr::tr("Running"));
+    QCOMPARE(summaryValue(Tr::tr("Working counter")), QString("6 / 6"));
+    QCOMPARE(summaryValue(Tr::tr("Firmware state")), Tr::tr("Confirmed"));
+
+    Data::ControllerConnectionSnapshot controlledSnapshot = snapshot;
+    controlledSnapshot.readOnly = false;
+    provider.publishSnapshot(controlledSnapshot);
+    QTRY_VERIFY(banner->text().contains(Tr::tr("Controlled real controller")));
+    QCOMPARE(banner->type(), Utils::InfoLabel::Warning);
+    QCOMPARE(summaryValue(Tr::tr("Access")), Tr::tr("Controlled"));
+
+    const auto verifyButtonAction = [&page](const char *objectName, Utils::Id actionId) {
+        QToolButton *button = page.findChild<QToolButton *>(objectName);
+        ::Core::Command *command = ::Core::ActionManager::command(actionId);
+        QVERIFY(button);
+        QVERIFY(command);
+        QCOMPARE(button->defaultAction(), command->action());
+    };
+    verifyButtonAction(
+        "EtherCATCommunicationConnect", Utils::Id(Constants::CONNECT_CONTROLLER_ACTION_ID));
+    verifyButtonAction(
+        "EtherCATCommunicationRefresh", Utils::Id(Constants::REFRESH_CONTROLLER_ACTION_ID));
+    verifyButtonAction(
+        "EtherCATCommunicationDisconnect", Utils::Id(Constants::DISCONNECT_CONTROLLER_ACTION_ID));
+
+    Data::ControllerConnectionSnapshot foreignSnapshot = controlledSnapshot;
+    foreignSnapshot.scope = {Data::NodeId::create(), Data::NodeId::create()};
+    provider.publishSnapshot(foreignSnapshot);
+    QTRY_COMPARE(
+        banner->text(),
+        Tr::tr(
+            "This adapter is still connected for a Project that is no longer open. Click "
+            "Disconnect to finish cleanup."));
+    QVERIFY(!controller.canDisconnectSelectedController());
+
+    foreignSnapshot.state = Data::ControllerConnectionState::Disconnected;
+    provider.publishSnapshot(foreignSnapshot);
+    QTRY_COMPARE(
+        banner->text(),
+        Tr::tr("This adapter is showing a historical snapshot for another EtherCAT Master."));
+    QCOMPARE(banner->type(), Utils::InfoLabel::Warning);
+    QCOMPARE(summaryValue(Tr::tr("Project ID")), foreignSnapshot.scope.projectId.toString());
+    QCOMPARE(summaryValue(Tr::tr("Master ID")), foreignSnapshot.scope.masterId.toString());
+
+    foreignSnapshot.state = Data::ControllerConnectionState::Failed;
+    provider.publishSnapshot(foreignSnapshot);
+    QTRY_COMPARE(
+        banner->text(),
+        Tr::tr(
+            "This adapter is still connected for a Project that is no longer open. Click "
+            "Disconnect to finish cleanup."));
+    QCOMPARE(banner->type(), Utils::InfoLabel::Warning);
+
+    QVERIFY_RESULT(controller.selectControllerConnectionProfile(scope, {}));
+    QVERIFY(controller.controllerConnectionSelection(scope).profileId.isNull());
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(banner->text().contains(Tr::tr("Read-only real controller")));
+    QVERIFY(!profileCombo->isEnabled());
+
+    ExtensionSystem::PluginManager::removeObject(&provider);
+    providerRegistered = false;
+    QTRY_COMPARE(banner->text(), Tr::tr("The selected controller adapter is no longer available."));
+    QCOMPARE(controller.controllerConnectionSelection(scope).providerId, provider.id());
+}
+
+void EtherCATWorkbenchTests::testControllerCommunicationLifecycleAndProviderRemoval()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+    controller.selectionService()->clear();
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        deviceSummaries(1).constFirst(),
+        "controller-communication-lifecycle.ecatproject",
+        "Controller Communication Lifecycle");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+
+    ControlledControllerConnectionProvider provider(
+        Utils::Id("EtherCAT.Workbench.TestControllerConnection.Lifecycle"), "Lifecycle controller");
+    bool providerRegistered = false;
+    ProjectExplorer::Project *manualCleanupProject = nullptr;
+    Data::NodeId manualCleanupProjectId;
+    const QScopeGuard cleanup([&] {
+        controller.selectionService()->clear();
+        if (providerRegistered)
+            ExtensionSystem::PluginManager::removeObject(&provider);
+        if (manualCleanupProject && projectService->project(manualCleanupProjectId))
+            ProjectExplorer::ProjectManager::removeProject(manualCleanupProject);
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    ExtensionSystem::PluginManager::addObject(&provider);
+    providerRegistered = true;
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.masterId).isValid());
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
+    QTRY_VERIFY(controller.selectedControllerConnectionScope().has_value());
+    const Utils::Result<> selectProvider
+        = controller.selectControllerConnectionProvider(scope, provider.id());
+    QVERIFY_RESULT(selectProvider);
+    QVERIFY(controller.controllerConnectionSelection(scope).profileId.isNull());
+    QVERIFY_RESULT(controller.selectControllerConnectionProfile(scope, provider.primaryProfileId()));
+
+    QVERIFY(!controller.canConnectSelectedController());
+    QVERIFY(!controller.canDisconnectSelectedController());
+    QVERIFY(!controller.canRefreshSelectedController());
+
+    provider.setAvailable(true);
+    QTRY_VERIFY(controller.canConnectSelectedController());
+    provider.setPrimaryProfileConfigured(false);
+    QTRY_VERIFY(!controller.canConnectSelectedController());
+    provider.setPrimaryProfileConfigured(true);
+    QTRY_VERIFY(controller.canConnectSelectedController());
+
+    const Utils::Result<> connectController = controller.connectSelectedController();
+    QVERIFY_RESULT(connectController);
+    QTRY_VERIFY(!controller.canConnectSelectedController());
+    QTRY_VERIFY(controller.canDisconnectSelectedController());
+    QTRY_VERIFY(!controller.canRefreshSelectedController());
+    const Utils::Result<> lockedProfileSelection
+        = controller.selectControllerConnectionProfile(scope, provider.alternateProfileId());
+    QVERIFY(!lockedProfileSelection);
+    QCOMPARE(
+        lockedProfileSelection.error(),
+        Tr::tr("Disconnect the current controller session before changing its profile."));
+
+    const Data::ControllerConnectionScope otherScope{
+        file.projectId,
+        Data::NodeId::create(),
+    };
+    provider.publishState(Data::ControllerConnectionState::Connected, otherScope);
+    QTRY_VERIFY(!controller.canRefreshSelectedController());
+    QVERIFY(!controller.canDisconnectSelectedController());
+    const Utils::Result<> foreignScopeDisconnect = controller.disconnectSelectedController();
+    QVERIFY(!foreignScopeDisconnect);
+    QCOMPARE(
+        foreignScopeDisconnect.error(),
+        Tr::tr("The selected EtherCAT Master does not own an active connection."));
+    QCOMPARE(provider.disconnectCalls, 0);
+
+    provider.publishState(Data::ControllerConnectionState::Connected, scope);
+    QTRY_VERIFY(controller.canRefreshSelectedController());
+    const Utils::Result<> refreshController = controller.refreshSelectedController();
+    QVERIFY_RESULT(refreshController);
+    QCOMPARE(provider.refreshCalls, 1);
+
+    provider.publishState(Data::ControllerConnectionState::Degraded, scope);
+    QTRY_VERIFY(controller.canRefreshSelectedController());
+    provider.setAvailable(false);
+    QTRY_VERIFY(!controller.canRefreshSelectedController());
+    QVERIFY(controller.canDisconnectSelectedController());
+
+    provider.publishState(Data::ControllerConnectionState::Disconnecting, scope);
+    QTRY_VERIFY(!controller.canDisconnectSelectedController());
+    const Utils::Result<> repeatedDisconnect = controller.disconnectSelectedController();
+    QVERIFY(!repeatedDisconnect);
+    QCOMPARE(provider.disconnectCalls, 0);
+    provider.publishState(Data::ControllerConnectionState::Degraded, scope);
+    QTRY_VERIFY(controller.canDisconnectSelectedController());
+    const Utils::Result<> disconnectController = controller.disconnectSelectedController();
+    QVERIFY_RESULT(disconnectController);
+    QCOMPARE(provider.disconnectCalls, 1);
+    QTRY_VERIFY(!controller.canConnectSelectedController());
+    QTRY_VERIFY(!controller.canDisconnectSelectedController());
+    QTRY_VERIFY(!controller.canRefreshSelectedController());
+    provider.setAvailable(true);
+    QTRY_VERIFY(controller.canConnectSelectedController());
+
+    const ControllerConnectionSelection retainedSelection
+        = controller.controllerConnectionSelection(scope);
+    ExtensionSystem::PluginManager::removeObject(&provider);
+    providerRegistered = false;
+    QTRY_VERIFY(!controller.controllerConnectionProvider(scope));
+    QCOMPARE(controller.controllerConnectionSelection(scope), retainedSelection);
+    QVERIFY(controller.controllerConnectionProfiles(scope).isEmpty());
+    QCOMPARE(controller.controllerConnectionSnapshot(scope).scope, scope);
+    QVERIFY(!controller.canConnectSelectedController());
+    QVERIFY(!controller.canDisconnectSelectedController());
+    QVERIFY(!controller.canRefreshSelectedController());
+
+    ExtensionSystem::PluginManager::addObject(&provider);
+    providerRegistered = true;
+    QTRY_COMPARE(controller.controllerConnectionProvider(scope), &provider);
+    QCOMPARE(controller.controllerConnectionSelection(scope), retainedSelection);
+    QTRY_VERIFY(controller.canConnectSelectedController());
+
+    QVERIFY_RESULT(controller.connectSelectedController());
+    const int disconnectCallsBeforeProjectClose = provider.disconnectCalls;
+    provider.disconnectFailuresRemaining = 1;
+    ProjectExplorer::ProjectManager::removeProject(opened.project());
+    QTRY_COMPARE(provider.disconnectCalls, disconnectCallsBeforeProjectClose + 2);
+    QCOMPARE(provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected);
+    QVERIFY(!projectService->project(file.projectId));
+    const ControllerConnectionSelection removedSelection = controller.controllerConnectionSelection(
+        scope);
+    QVERIFY(!removedSelection.providerId.isValid());
+    QVERIFY(removedSelection.profileId.isNull());
+    QVERIFY(!removedSelection.providerExplicitlySelected);
+    QVERIFY(!removedSelection.profileExplicitlySelected);
+
+    const Data::ControllerConnectionScope staleScope{
+        Data::NodeId::create(),
+        Data::NodeId::create(),
+    };
+    Data::ControllerConnectionSnapshot staleSnapshot;
+    staleSnapshot.scope = staleScope;
+    staleSnapshot.state = Data::ControllerConnectionState::Connected;
+    staleSnapshot.sessionGeneration = 10;
+    provider.publishSnapshot(staleSnapshot);
+    provider.disconnectFailuresRemaining = 1;
+    const int disconnectCallsBeforeStaleRetry = provider.disconnectCalls;
+    controller
+        .requestControllerDisconnect(&provider, staleSnapshot.scope, staleSnapshot.sessionGeneration);
+    QCOMPARE(provider.disconnectCalls, disconnectCallsBeforeStaleRetry + 1);
+    staleSnapshot.scope = {Data::NodeId::create(), Data::NodeId::create()};
+    provider.publishSnapshot(staleSnapshot);
+    QTest::qWait(150);
+    QCOMPARE(provider.disconnectCalls, disconnectCallsBeforeStaleRetry + 1);
+
+    staleSnapshot.scope = {Data::NodeId::create(), Data::NodeId::create()};
+    staleSnapshot.sessionGeneration = 11;
+    provider.publishSnapshot(staleSnapshot);
+    provider.disconnectFailuresRemaining = 1;
+    const int disconnectCallsBeforeGenerationRetry = provider.disconnectCalls;
+    controller
+        .requestControllerDisconnect(&provider, staleSnapshot.scope, staleSnapshot.sessionGeneration);
+    QCOMPARE(provider.disconnectCalls, disconnectCallsBeforeGenerationRetry + 1);
+    ++staleSnapshot.sessionGeneration;
+    provider.publishSnapshot(staleSnapshot);
+    QTest::qWait(150);
+    QCOMPARE(provider.disconnectCalls, disconnectCallsBeforeGenerationRetry + 1);
+
+    Data::ControllerConnectionSnapshot boundedSnapshot;
+    boundedSnapshot.scope = {Data::NodeId::create(), Data::NodeId::create()};
+    boundedSnapshot.state = Data::ControllerConnectionState::Connected;
+    boundedSnapshot.sessionGeneration = 20;
+    provider.publishSnapshot(boundedSnapshot);
+    provider.disconnectFailuresRemaining = 100;
+    const int disconnectCallsBeforeBoundedRetry = provider.disconnectCalls;
+    controller.requestControllerDisconnect(
+        &provider, boundedSnapshot.scope, boundedSnapshot.sessionGeneration);
+    QTRY_COMPARE_WITH_TIMEOUT(provider.disconnectCalls, disconnectCallsBeforeBoundedRetry + 5, 3000);
+    QTest::qWait(900);
+    QCOMPARE(provider.disconnectCalls, disconnectCallsBeforeBoundedRetry + 5);
+
+    const TestProjectFile manualCleanupFile = writeProjectWithSlave(
+        directory,
+        deviceSummaries(1).constFirst(),
+        "controller-communication-manual-cleanup.ecatproject",
+        "Controller Communication Manual Cleanup");
+    QVERIFY(!manualCleanupFile.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult manualCleanupOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(manualCleanupFile.path, false);
+    QVERIFY2(manualCleanupOpened, qPrintable(manualCleanupOpened.errorMessage()));
+    manualCleanupProject = manualCleanupOpened.project();
+    manualCleanupProjectId = manualCleanupFile.projectId;
+    QTRY_VERIFY(projectService->project(manualCleanupFile.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(manualCleanupFile.masterId).isValid());
+    controller.selectionService()->setCurrentNodeId(manualCleanupFile.masterId);
+    const Data::ControllerConnectionScope manualCleanupScope{
+        manualCleanupFile.projectId,
+        manualCleanupFile.masterId,
+    };
+    QVERIFY_RESULT(controller.selectControllerConnectionProvider(manualCleanupScope, provider.id()));
+    QTRY_VERIFY(controller.canDisconnectSelectedController());
+    provider.disconnectFailuresRemaining = 0;
+    QVERIFY_RESULT(controller.disconnectSelectedController());
+    QCOMPARE(provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected);
+
+    Data::ControllerConnectionSnapshot removalSnapshot;
+    removalSnapshot.scope = manualCleanupScope;
+    removalSnapshot.state = Data::ControllerConnectionState::Connected;
+    removalSnapshot.sessionGeneration = 30;
+    provider.publishSnapshot(removalSnapshot);
+    provider.disconnectFailuresRemaining = 1;
+    const int disconnectCallsBeforeProviderRemoval = provider.disconnectCalls;
+    controller.requestControllerDisconnect(
+        &provider, removalSnapshot.scope, removalSnapshot.sessionGeneration);
+    QCOMPARE(provider.disconnectCalls, disconnectCallsBeforeProviderRemoval + 1);
+    ExtensionSystem::PluginManager::removeObject(&provider);
+    providerRegistered = false;
+    ExtensionSystem::PluginManager::addObject(&provider);
+    providerRegistered = true;
+    QTest::qWait(150);
+    QCOMPARE(provider.disconnectCalls, disconnectCallsBeforeProviderRemoval + 1);
+}
+
 void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
 {
     WorkbenchController controller;
@@ -17978,7 +18770,7 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
 
     BuiltinPropertyPageProvider pages(&controller);
     const Core::PropertyPageContext masterContext = controller.treeModel()->contextForIndex(master);
-    QCOMPARE(pages.pages(masterContext).size(), 4);
+    QCOMPARE(pages.pages(masterContext).size(), 5);
 
     AvailableScanProvider scan;
     AvailableDiagnosticsProvider diagnosticsProvider;
@@ -17998,7 +18790,7 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
     QCOMPARE(compactStatus(diagnostics), QString("Available"));
     QCOMPARE(
         compactStatus(controller.treeModel()->index(1, 0, master)), QString("Available"));
-    QCOMPARE(pages.pages(masterContext).size(), 2);
+    QCOMPARE(pages.pages(masterContext).size(), 3);
 
     diagnosticsProvider.setAvailable(false);
     QTRY_VERIFY(!controller.diagnosticsAvailable());
@@ -18006,7 +18798,7 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
         fullStatus(diagnostics),
         QString("Local Mock test diagnostics unavailable"));
     QCOMPARE(compactStatus(diagnostics), QString("Unavailable"));
-    QCOMPARE(pages.pages(masterContext).size(), 4);
+    QCOMPARE(pages.pages(masterContext).size(), 5);
     diagnosticsProvider.setAvailable(true);
     QTRY_VERIFY(controller.diagnosticsAvailable());
 

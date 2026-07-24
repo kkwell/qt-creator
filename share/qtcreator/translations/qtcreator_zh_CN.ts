@@ -53260,6 +53260,18 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>诊断 %1</translation>
     </message>
     <message>
+        <source>Controller %1</source>
+        <translation>控制器%1</translation>
+    </message>
+    <message>
+        <source>Mock controller connection</source>
+        <translation>Mock 控制器连接</translation>
+    </message>
+    <message>
+        <source>Endpoint: %1</source>
+        <translation>端点：%1</translation>
+    </message>
+    <message>
         <source>EtherCAT</source>
         <translation>EtherCAT</translation>
     </message>
@@ -53448,10 +53460,6 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>EtherCAT Workbench 详情</translation>
     </message>
     <message>
-        <source>Shows offline properties for the EtherCAT node selected in the device tree.</source>
-        <translation>显示设备树中所选 EtherCAT 节点的离线属性。</translation>
-    </message>
-    <message>
         <source>Current EtherCAT Workbench selection</source>
         <translation>当前 EtherCAT Workbench 选择</translation>
     </message>
@@ -53462,10 +53470,6 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     <message>
         <source>EtherCAT property pages</source>
         <translation>EtherCAT 属性页面</translation>
-    </message>
-    <message>
-        <source>Switch between offline property pages for the selected EtherCAT node.</source>
-        <translation>在所选 EtherCAT 节点的各离线属性页面之间切换。</translation>
     </message>
     <message>
         <source>EtherCAT Workbench</source>
@@ -53502,6 +53506,534 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     <message>
         <source>Unassigned inputs</source>
         <translation>未分配的输入</translation>
+    </message>
+    <message>
+        <source>%1 after %2 ms</source>
+        <translation>%1，%2 毫秒后</translation>
+    </message>
+    <message>
+        <source>%1 ms</source>
+        <translation>%1 毫秒</translation>
+    </message>
+    <message>
+        <source>%1 ns</source>
+        <translation>%1 纳秒</translation>
+    </message>
+    <message>
+        <source>%1 — the controller adapter is unavailable.</source>
+        <translation>%1 — 控制器适配器不可用。</translation>
+    </message>
+    <message>
+        <source>%1 — the read-only connection failed.</source>
+        <translation>%1 — 只读连接失败。</translation>
+    </message>
+    <message>
+        <source>%1 — unavailable</source>
+        <translation>%1 — 不可用</translation>
+    </message>
+    <message>
+        <source>%1, generation %2</source>
+        <translation>%1，第 %2 代</translation>
+    </message>
+    <message>
+        <source>Active package</source>
+        <translation>活动包</translation>
+    </message>
+    <message>
+        <source>Adapter</source>
+        <translation>适配器</translation>
+    </message>
+    <message>
+        <source>Application active</source>
+        <translation>应用程序活动</translation>
+    </message>
+    <message>
+        <source>Boot ID</source>
+        <translation>启动 ID</translation>
+    </message>
+    <message>
+        <source>Boot</source>
+        <translation>启动</translation>
+    </message>
+    <message>
+        <source>Bus operational</source>
+        <translation>总线处于 OP</translation>
+    </message>
+    <message>
+        <source>Cannot connect to the controller: %1</source>
+        <translation>无法连接控制器：%1</translation>
+    </message>
+    <message>
+        <source>Cannot disconnect from the controller: %1</source>
+        <translation>无法断开控制器：%1</translation>
+    </message>
+    <message>
+        <source>Automatic disconnect cleanup stopped after repeated failures: %1. Select any EtherCAT Master, choose this controller adapter, and click Disconnect.</source>
+        <translation>自动断开清理在多次失败后已停止：%1。请选择任意 EtherCAT 主站，再选择此控制器适配器并点击“断开”。</translation>
+    </message>
+    <message>
+        <source>Cannot refresh the controller snapshot: %1</source>
+        <translation>无法刷新控制器快照：%1</translation>
+    </message>
+    <message>
+        <source>Channel: %1</source>
+        <translation>通道：%1</translation>
+    </message>
+    <message>
+        <source>Channel</source>
+        <translation>通道</translation>
+    </message>
+    <message>
+        <source>Close the read-only controller connection for the selected EtherCAT Master.</source>
+        <translation>关闭所选 EtherCAT 主站的只读控制器连接。</translation>
+    </message>
+    <message>
+        <source>Code: %1</source>
+        <translation>代码：%1</translation>
+    </message>
+    <message>
+        <source>Configures a controller adapter and shows its current read-only connection.</source>
+        <translation>配置控制器适配器并显示其当前只读连接。</translation>
+    </message>
+    <message>
+        <source>Configuring</source>
+        <translation>正在配置</translation>
+    </message>
+    <message>
+        <source>Confirmed</source>
+        <translation>已确认</translation>
+    </message>
+    <message>
+        <source>Connect Controller (Read-only)</source>
+        <translation>连接控制器（只读）</translation>
+    </message>
+    <message>
+        <source>Connect and Refresh are read-only. They do not acquire control, scan the bus, change controller state, or write configuration and outputs.</source>
+        <translation>连接和刷新均为只读操作。它们不会获取控制权、扫描总线、更改控制器状态，也不会写入配置和输出。</translation>
+    </message>
+    <message>
+        <source>Connect the selected controller profile and query its read-only state. This does not acquire control, scan the bus, change controller state, or write configuration.</source>
+        <translation>连接所选控制器配置并查询其只读状态。此操作不会获取控制权、扫描总线、更改控制器状态或写入配置。</translation>
+    </message>
+    <message>
+        <source>Connected at</source>
+        <translation>连接时间</translation>
+    </message>
+    <message>
+        <source>Connecting</source>
+        <translation>正在连接</translation>
+    </message>
+    <message>
+        <source>Connection profile:</source>
+        <translation>连接配置：</translation>
+    </message>
+    <message>
+        <source>Connection profile</source>
+        <translation>连接配置</translation>
+    </message>
+    <message>
+        <source>Control lease owner</source>
+        <translation>控制租约所有者</translation>
+    </message>
+    <message>
+        <source>Controlled</source>
+        <translation>受控</translation>
+    </message>
+    <message>
+        <source>Controller adapter:</source>
+        <translation>控制器适配器：</translation>
+    </message>
+    <message>
+        <source>Controller adapter</source>
+        <translation>控制器适配器</translation>
+    </message>
+    <message>
+        <source>Controller communication channels</source>
+        <translation>控制器通信通道</translation>
+    </message>
+    <message>
+        <source>Controller communication</source>
+        <translation>控制器通信</translation>
+    </message>
+    <message>
+        <source>Controller connection error</source>
+        <translation>控制器连接错误</translation>
+    </message>
+    <message>
+        <source>Controller connection summary</source>
+        <translation>控制器连接摘要</translation>
+    </message>
+    <message>
+        <source>Controller state</source>
+        <translation>控制器状态</translation>
+    </message>
+    <message>
+        <source>Current faults</source>
+        <translation>当前故障</translation>
+    </message>
+    <message>
+        <source>DC difference</source>
+        <translation>DC 偏差</translation>
+    </message>
+    <message>
+        <source>Default lease duration</source>
+        <translation>默认租约时长</translation>
+    </message>
+    <message>
+        <source>Degraded</source>
+        <translation>已降级</translation>
+    </message>
+    <message>
+        <source>Disconnect Controller</source>
+        <translation>断开控制器</translation>
+    </message>
+    <message>
+        <source>Disconnect the current controller session before changing its adapter.</source>
+        <translation>更改适配器前，请先断开当前控制器会话。</translation>
+    </message>
+    <message>
+        <source>Disconnect the current controller session before changing its profile.</source>
+        <translation>更改连接配置前，请先断开当前控制器会话。</translation>
+    </message>
+    <message>
+        <source>Disconnected</source>
+        <translation>已断开</translation>
+    </message>
+    <message>
+        <source>Disconnecting</source>
+        <translation>正在断开</translation>
+    </message>
+    <message>
+        <source>Distributed clocks locked</source>
+        <translation>分布式时钟已锁定</translation>
+    </message>
+    <message>
+        <source>Do not retry automatically</source>
+        <translation>不要自动重试</translation>
+    </message>
+    <message>
+        <source>Endpoint:</source>
+        <translation>端点：</translation>
+    </message>
+    <message>
+        <source>Evidence</source>
+        <translation>证据</translation>
+    </message>
+    <message>
+        <source>Fault</source>
+        <translation>故障</translation>
+    </message>
+    <message>
+        <source>Firmware generation</source>
+        <translation>固件代次</translation>
+    </message>
+    <message>
+        <source>Firmware slot</source>
+        <translation>固件插槽</translation>
+    </message>
+    <message>
+        <source>Firmware state</source>
+        <translation>固件状态</translation>
+    </message>
+    <message>
+        <source>Handshaking</source>
+        <translation>正在握手</translation>
+    </message>
+    <message>
+        <source>Last activity</source>
+        <translation>最近活动</translation>
+    </message>
+    <message>
+        <source>Last heartbeat</source>
+        <translation>最近心跳</translation>
+    </message>
+    <message>
+        <source>Latched faults</source>
+        <translation>锁存故障</translation>
+    </message>
+    <message>
+        <source>Master ID</source>
+        <translation>主站 ID</translation>
+    </message>
+    <message>
+        <source>Maximum payload</source>
+        <translation>最大载荷</translation>
+    </message>
+    <message>
+        <source>No live controller evidence</source>
+        <translation>无实时控制器证据</translation>
+    </message>
+    <message>
+        <source>No retry guidance</source>
+        <translation>无重试建议</translation>
+    </message>
+    <message>
+        <source>Not negotiated</source>
+        <translation>未协商</translation>
+    </message>
+    <message>
+        <source>Operational safe</source>
+        <translation>OP 安全</translation>
+    </message>
+    <message>
+        <source>Owns control lease</source>
+        <translation>持有控制租约</translation>
+    </message>
+    <message>
+        <source>Paused</source>
+        <translation>已暂停</translation>
+    </message>
+    <message>
+        <source>Project ID</source>
+        <translation>项目 ID</translation>
+    </message>
+    <message>
+        <source>Read-only real controller</source>
+        <translation>真实控制器（只读）</translation>
+    </message>
+    <message>
+        <source>Read-only safety boundary</source>
+        <translation>只读安全边界</translation>
+    </message>
+    <message>
+        <source>Read-only</source>
+        <translation>只读</translation>
+    </message>
+    <message>
+        <source>Ready to reboot</source>
+        <translation>可重启</translation>
+    </message>
+    <message>
+        <source>Real controller</source>
+        <translation>真实控制器</translation>
+    </message>
+    <message>
+        <source>Receiving</source>
+        <translation>正在接收</translation>
+    </message>
+    <message>
+        <source>Reconnect before retrying</source>
+        <translation>重连后再重试</translation>
+    </message>
+    <message>
+        <source>Recovering</source>
+        <translation>正在恢复</translation>
+    </message>
+    <message>
+        <source>Recovery: %1</source>
+        <translation>恢复建议：%1</translation>
+    </message>
+    <message>
+        <source>Refresh Controller Snapshot</source>
+        <translation>刷新控制器快照</translation>
+    </message>
+    <message>
+        <source>Refresh the read-only state snapshot for the controller connected to the selected EtherCAT Master.</source>
+        <translation>刷新连接到所选 EtherCAT 主站的控制器只读状态快照。</translation>
+    </message>
+    <message>
+        <source>Rejected</source>
+        <translation>已拒绝</translation>
+    </message>
+    <message>
+        <source>Retry is allowed</source>
+        <translation>可以重试</translation>
+    </message>
+    <message>
+        <source>Rolled back</source>
+        <translation>已回滚</translation>
+    </message>
+    <message>
+        <source>Safe operational</source>
+        <translation>安全运行</translation>
+    </message>
+    <message>
+        <source>Safe output</source>
+        <translation>安全输出</translation>
+    </message>
+    <message>
+        <source>Select a connection profile...</source>
+        <translation>选择连接配置...</translation>
+    </message>
+    <message>
+        <source>Select a connection profile.</source>
+        <translation>请选择连接配置。</translation>
+    </message>
+    <message>
+        <source>Select a controller adapter before selecting a profile.</source>
+        <translation>选择连接配置前，请先选择控制器适配器。</translation>
+    </message>
+    <message>
+        <source>Select a controller adapter...</source>
+        <translation>选择控制器适配器...</translation>
+    </message>
+    <message>
+        <source>Select a controller adapter.</source>
+        <translation>请选择控制器适配器。</translation>
+    </message>
+    <message>
+        <source>Select a valid EtherCAT Master before connecting.</source>
+        <translation>连接前，请先选择有效的 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>Select a valid EtherCAT Master.</source>
+        <translation>请选择有效的 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>Select the connected EtherCAT Master first.</source>
+        <translation>请先选择已连接的 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>Session ID</source>
+        <translation>会话 ID</translation>
+    </message>
+    <message>
+        <source>Session generation</source>
+        <translation>会话代次</translation>
+    </message>
+    <message>
+        <source>Shows engineering properties and available controller communication for the EtherCAT node selected in the device tree.</source>
+        <translation>显示设备树中所选 EtherCAT 节点的工程属性及可用控制器通信。</translation>
+    </message>
+    <message>
+        <source>Shutdown</source>
+        <translation>关停</translation>
+    </message>
+    <message>
+        <source>Slot A</source>
+        <translation>插槽 A</translation>
+    </message>
+    <message>
+        <source>Slot B</source>
+        <translation>插槽 B</translation>
+    </message>
+    <message>
+        <source>Staged package</source>
+        <translation>暂存包</translation>
+    </message>
+    <message>
+        <source>Staged</source>
+        <translation>已暂存</translation>
+    </message>
+    <message>
+        <source>Switch between engineering property pages for the selected EtherCAT node.</source>
+        <translation>在所选 EtherCAT 节点的各工程属性页面之间切换。</translation>
+    </message>
+    <message>
+        <source>The controller adapter is unavailable.</source>
+        <translation>控制器适配器不可用。</translation>
+    </message>
+    <message>
+        <source>The controller connection is not ready to refresh.</source>
+        <translation>控制器连接尚未准备好刷新。</translation>
+    </message>
+    <message>
+        <source>The controller connection workflow is shutting down.</source>
+        <translation>控制器连接工作流正在关闭。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT Master does not own an active connection.</source>
+        <translation>所选 EtherCAT 主站没有活动连接。</translation>
+    </message>
+    <message>
+        <source>The selected connection profile is unavailable.</source>
+        <translation>所选连接配置不可用。</translation>
+    </message>
+    <message>
+        <source>The selected controller adapter is no longer available.</source>
+        <translation>所选控制器适配器已不可用。</translation>
+    </message>
+    <message>
+        <source>The selected controller adapter is unavailable.</source>
+        <translation>所选控制器适配器不可用。</translation>
+    </message>
+    <message>
+        <source>The selected controller connection is not ready.</source>
+        <translation>所选控制器连接尚未就绪。</translation>
+    </message>
+    <message>
+        <source>This adapter is connected for another EtherCAT Master. Select that Master to refresh or disconnect it.</source>
+        <translation>此适配器已连接到另一个 EtherCAT 主站。请选择该主站进行刷新或断开。</translation>
+    </message>
+    <message>
+        <source>This adapter is still connected for a Project that is no longer open. Click Disconnect to finish cleanup.</source>
+        <translation>此适配器仍连接到已关闭的项目。请点击“断开”完成清理。</translation>
+    </message>
+    <message>
+        <source>Trial boot</source>
+        <translation>试运行启动</translation>
+    </message>
+    <message>
+        <source>Unavailable adapter — %1</source>
+        <translation>不可用的适配器 — %1</translation>
+    </message>
+    <message>
+        <source>Unavailable profile — %1</source>
+        <translation>不可用的连接配置 — %1</translation>
+    </message>
+    <message>
+        <source>Unnamed connection profile</source>
+        <translation>未命名连接配置</translation>
+    </message>
+    <message>
+        <source>Unnamed controller adapter</source>
+        <translation>未命名控制器适配器</translation>
+    </message>
+    <message>
+        <source>Updated at</source>
+        <translation>更新时间</translation>
+    </message>
+    <message>
+        <source>Verified</source>
+        <translation>已验证</translation>
+    </message>
+    <message>
+        <source>Working counter</source>
+        <translation>工作计数器</translation>
+    </message>
+    <message>
+        <source>v%1.%2</source>
+        <translation>v%1.%2</translation>
+    </message>
+    <message>
+        <source>Connected</source>
+        <translation>已连接</translation>
+    </message>
+    <message>
+        <source>Idle</source>
+        <translation>空闲</translation>
+    </message>
+    <message>
+        <source>Installing</source>
+        <translation>正在安装</translation>
+    </message>
+    <message>
+        <source>State</source>
+        <translation>状态</translation>
+    </message>
+    <message>
+        <source>Detail</source>
+        <translation>详细信息</translation>
+    </message>
+    <message>
+        <source>Connection</source>
+        <translation>连接</translation>
+    </message>
+    <message>
+        <source>Access</source>
+        <translation>访问</translation>
+    </message>
+    <message>
+        <source>Communication</source>
+        <translation>通信</translation>
+    </message>
+    <message>
+        <source>Controlled real controller</source>
+        <translation>真实控制器（受控）</translation>
+    </message>
+    <message>
+        <source>This adapter is showing a historical snapshot for another EtherCAT Master.</source>
+        <translation>此适配器正在显示另一个 EtherCAT 主站的历史快照。</translation>
     </message>
 </context>
 <context>

@@ -4,8 +4,10 @@
 
 #include "workbenchtreemodel.h"
 
+#include <utils/id.h>
 #include <utils/result.h>
 
+#include <QHash>
 #include <QList>
 #include <QObject>
 #include <QPointer>
@@ -14,11 +16,14 @@
 #include <optional>
 
 namespace EtherCAT::Core {
+class ControllerConnectionProvider;
 class ProviderRegistry;
 class SelectionService;
-}
+} // namespace EtherCAT::Core
 
 namespace EtherCAT::Workbench::Internal {
+
+class EtherCATWorkbenchTests;
 
 struct OfflineSlaveRemovalCandidate
 {
@@ -50,8 +55,19 @@ struct DiagnosticsStatusPresentation
     int activeAlarmCount = 0;
 
     friend bool operator==(
-        const DiagnosticsStatusPresentation &, const DiagnosticsStatusPresentation &)
-        = default;
+        const DiagnosticsStatusPresentation &, const DiagnosticsStatusPresentation &) = default;
+};
+
+struct ControllerConnectionSelection
+{
+    Data::ControllerConnectionScope scope;
+    Utils::Id providerId;
+    Data::NodeId profileId;
+    bool providerExplicitlySelected = false;
+    bool profileExplicitlySelected = false;
+
+    friend bool operator==(
+        const ControllerConnectionSelection &, const ControllerConnectionSelection &) = default;
 };
 
 class WorkbenchController final : public QObject
@@ -70,6 +86,30 @@ public:
     OptionalProviderPresentation scanProviderPresentation() const;
     OptionalProviderPresentation diagnosticsProviderPresentation() const;
     DiagnosticsStatusPresentation diagnosticsStatusPresentation() const;
+    QList<Core::ControllerConnectionProvider *> controllerConnectionProviders() const;
+    std::optional<Data::ControllerConnectionScope> selectedControllerConnectionScope() const;
+    ControllerConnectionSelection prepareControllerConnection(
+        const Data::ControllerConnectionScope &scope);
+    ControllerConnectionSelection controllerConnectionSelection(
+        const Data::ControllerConnectionScope &scope) const;
+    Core::ControllerConnectionProvider *controllerConnectionProvider(
+        const Data::ControllerConnectionScope &scope) const;
+    QList<Data::ControllerConnectionProfile> controllerConnectionProfiles(
+        const Data::ControllerConnectionScope &scope) const;
+    Data::ControllerConnectionSnapshot controllerConnectionSnapshot(
+        const Data::ControllerConnectionScope &scope) const;
+    bool controllerConnectionProjectIsOpen(const Data::ControllerConnectionScope &scope) const;
+    Utils::Result<> selectControllerConnectionProvider(
+        const Data::ControllerConnectionScope &scope, Utils::Id providerId);
+    Utils::Result<> selectControllerConnectionProfile(
+        const Data::ControllerConnectionScope &scope, const Data::NodeId &profileId);
+    bool controllerConnectionSelectionLocked(const Data::ControllerConnectionScope &scope) const;
+    bool canConnectSelectedController() const;
+    bool canDisconnectSelectedController() const;
+    bool canRefreshSelectedController() const;
+    Utils::Result<> connectSelectedController();
+    Utils::Result<> disconnectSelectedController();
+    Utils::Result<> refreshSelectedController();
     bool scanAvailable() const;
     bool diagnosticsAvailable() const;
     bool canInsertDeviceOnSelectedMaster() const;
@@ -84,8 +124,7 @@ public:
     void shutdown();
     std::optional<OfflineMasterTarget> activeOfflineMasterTarget() const;
     Data::NodeId selectedOfflineMasterId() const;
-    Utils::Result<> addDeviceToMaster(
-        const Data::NodeId &deviceId, const Data::NodeId &masterId);
+    Utils::Result<> addDeviceToMaster(const Data::NodeId &deviceId, const Data::NodeId &masterId);
     Utils::Result<> addSelectedDeviceToMaster(const OfflineMasterTarget &target);
     std::optional<OfflineSlaveRemovalCandidate> selectedOfflineSlaveRemovalCandidate() const;
     Utils::Result<> removeOfflineSlave(const OfflineSlaveRemovalCandidate &candidate);
@@ -111,13 +150,31 @@ signals:
     void insertDeviceRequested();
     void diagnosticsProviderChanged(bool availabilityChanged);
     void diagnosticsStatusChanged();
+    void controllerConnectionChanged();
 
 private:
+    friend class EtherCATWorkbenchTests;
+
     void refreshProjects();
     void refreshDevices();
     void watchOptionalProvider(Core::Provider *provider);
+    void watchControllerConnectionProvider(Core::Provider *provider);
     void refreshOptionalProviders(Core::Provider *excluding = nullptr);
     void handleOptionalAvailabilityChanged();
+    void handleProjectAboutToBeRemoved(const Data::NodeId &projectId);
+    void handleControllerConnectionChanged();
+    void requestControllerDisconnect(
+        Core::ControllerConnectionProvider *provider,
+        const Data::ControllerConnectionScope &expectedScope,
+        quint64 expectedGeneration);
+    void requestControllerDisconnectAttempt(
+        Core::ControllerConnectionProvider *provider,
+        const Data::ControllerConnectionScope &expectedScope,
+        quint64 expectedGeneration,
+        quint64 expectedProviderEpoch,
+        int retryStep);
+    ControllerConnectionSelection *mutableControllerConnectionSelection(
+        const Data::ControllerConnectionScope &scope);
 
     WorkbenchTreeModel m_treeModel;
     QPointer<Core::SelectionService> m_selectionService;
@@ -129,6 +186,10 @@ private:
     OptionalProviderPresentation m_scanProvider;
     OptionalProviderPresentation m_diagnosticsProvider;
     DiagnosticsStatusPresentation m_diagnosticsStatus;
+    QList<ControllerConnectionSelection> m_controllerConnectionSelections;
+    QHash<Core::ControllerConnectionProvider *, quint64> m_controllerConnectionProviderEpochs;
+    quint64 m_nextControllerConnectionProviderEpoch = 0;
+    bool m_suppressControllerConnectionChanges = false;
 };
 
 } // namespace EtherCAT::Workbench::Internal
