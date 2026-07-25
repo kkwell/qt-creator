@@ -1944,25 +1944,17 @@ void EtherCATProductApiTests::testConnectionProfileEndpointConfiguration_data()
     QTest::newRow("default-port")
         << QStringLiteral("192.168.3.101") << true
         << QStringLiteral("192.168.3.101:15200") << 15200 << 15201 << 15202;
-    QTest::newRow("explicit-port")
-        << QStringLiteral("10.20.30.40:24000") << true
-        << QStringLiteral("10.20.30.40:24000") << 24000 << 24001 << 24002;
     QTest::newRow("trimmed")
-        << QStringLiteral(" 10.20.30.41 : 24001 ") << true
-        << QStringLiteral("10.20.30.41:24001") << 24001 << 24002 << 24003;
+        << QStringLiteral(" 10.20.30.41 ") << true
+        << QStringLiteral("10.20.30.41:15200") << 15200 << 15201 << 15202;
     QTest::newRow("decimal-leading-zeroes")
-        << QStringLiteral("010.020.030.040:024000") << true
-        << QStringLiteral("10.20.30.40:24000") << 24000 << 24001 << 24002;
-    QTest::newRow("minimum-port")
-        << QStringLiteral("127.0.0.1:1") << true << QStringLiteral("127.0.0.1:1")
-        << 1 << 2 << 3;
-    QTest::newRow("maximum-port")
-        << QStringLiteral("255.255.255.255:65533") << true
-        << QStringLiteral("255.255.255.255:65533") << 65533 << 65534 << 65535;
+        << QStringLiteral("010.020.030.040") << true
+        << QStringLiteral("10.20.30.40:15200") << 15200 << 15201 << 15202;
 
     const QList<QString> invalidInputs{
         {},
         QStringLiteral("controller.local"),
+        QStringLiteral("10.20.30.40:24000"),
         QStringLiteral("127.0.0.1:"),
         QStringLiteral(":15200"),
         QStringLiteral("127.0.0.1:0"),
@@ -2038,8 +2030,15 @@ void EtherCATProductApiTests::testConnectionProfileEndpointConfiguration()
     const auto configuration
         = provider.connectionProfileConfiguration(request.scope, request.profileId);
     QVERIFY(configuration);
-    QCOMPARE(configuration->endpoint, summary);
+    QCOMPARE(configuration->endpoint, summary.section(QLatin1Char(':'), 0, 0));
     QVERIFY(configuration->editable);
+    QCOMPARE(configuration->endpointLabel, Tr::tr("Controller IP:"));
+    QCOMPARE(configuration->endpointAccessibleName, Tr::tr("Controller IP address"));
+    QCOMPARE(
+        configuration->endpointDescription,
+        Tr::tr(
+            "Enter only the IPv4 controller address. Control, Push, and Bulk always use ports "
+            "15200, 15201, and 15202."));
 }
 
 void EtherCATProductApiTests::testConnectionProfileEndpointReconfigurationGuards()
@@ -2060,7 +2059,7 @@ void EtherCATProductApiTests::testConnectionProfileEndpointReconfigurationGuards
     QVERIFY(connectedConfiguration);
     QVERIFY(!connectedConfiguration->editable);
     const Utils::Result<> connectedChange = provider.setConnectionProfileEndpoint(
-        request.scope, request.profileId, QStringLiteral("10.20.30.40:24000"));
+        request.scope, request.profileId, QStringLiteral("10.20.30.40"));
     QVERIFY(!connectedChange);
     QCOMPARE(provider.sessionForTests()->endpointsForTests(), connectedEndpoints);
 
@@ -2075,10 +2074,10 @@ void EtherCATProductApiTests::testConnectionProfileEndpointReconfigurationGuards
     };
 
     QVERIFY(provider.setConnectionProfileEndpoint(
-        request.scope, request.profileId, QStringLiteral("10.20.30.40:24000")));
+        request.scope, request.profileId, QStringLiteral("10.20.30.40")));
     const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
     QCOMPARE(snapshot.state, Data::ControllerConnectionState::Disconnected);
-    QCOMPARE(snapshot.endpointSummary, QStringLiteral("10.20.30.40:24000"));
+    QCOMPARE(snapshot.endpointSummary, QStringLiteral("10.20.30.40:15200"));
     QVERIFY(snapshot.sessionGeneration > disconnectedGeneration);
     QVERIFY(snapshot.scope.projectId.isNull());
     QVERIFY(snapshot.scope.masterId.isNull());
@@ -2145,7 +2144,7 @@ void EtherCATProductApiTests::testConnectionProfileEndpointPersistence()
             ProductApiSession::EndpointSet::productionDefaults(), testOptions());
         const Data::ControllerConnectionRequest request = requestFor(injectedProvider);
         QVERIFY(injectedProvider.setConnectionProfileEndpoint(
-            request.scope, request.profileId, QStringLiteral("10.20.30.40:25000")));
+            request.scope, request.profileId, QStringLiteral("10.20.30.40")));
         QCOMPARE(
             Utils::userSettings().value(settingsKey).toString(),
             QStringLiteral("203.0.113.7:24000"));
@@ -2156,17 +2155,17 @@ void EtherCATProductApiTests::testConnectionProfileEndpointPersistence()
         const ProductApiSession::EndpointSet loaded
             = defaultProvider.sessionForTests()->endpointsForTests();
         QCOMPARE(loaded.host, QStringLiteral("203.0.113.7"));
-        QCOMPARE(loaded.controlPort, quint16(24000));
-        QCOMPARE(loaded.pushPort, quint16(24001));
-        QCOMPARE(loaded.bulkPort, quint16(24002));
-        QCOMPARE(loaded.endpointSummary, QStringLiteral("203.0.113.7:24000"));
+        QCOMPARE(loaded.controlPort, quint16(15200));
+        QCOMPARE(loaded.pushPort, quint16(15201));
+        QCOMPARE(loaded.bulkPort, quint16(15202));
+        QCOMPARE(loaded.endpointSummary, QStringLiteral("203.0.113.7:15200"));
 
         const Data::ControllerConnectionRequest request = requestFor(defaultProvider);
         QVERIFY(defaultProvider.setConnectionProfileEndpoint(
             request.scope, request.profileId, QStringLiteral("10.20.30.41")));
         QCOMPARE(
             Utils::userSettings().value(settingsKey).toString(),
-            QStringLiteral("10.20.30.41:15200"));
+            QStringLiteral("10.20.30.41"));
     }
 }
 

@@ -129,6 +129,7 @@ public:
         const Data::NodeId &profileId,
         const QString &endpoint);
     bool controllerConnectionSelectionLocked(const Data::ControllerConnectionScope &scope) const;
+    bool canConnectController(const Data::ControllerConnectionScope &scope) const;
     bool canConnectSelectedController() const;
     bool canDisconnectSelectedController() const;
     bool canRefreshSelectedController() const;
@@ -145,6 +146,7 @@ public:
     bool controllerStartupInProgress(const Data::ControllerConnectionScope &scope) const;
     Utils::Result<> executeQuickControllerControl(
         const Data::ControllerConnectionScope &scope, ControllerQuickControlAction action);
+    Utils::Result<> connectController(const Data::ControllerConnectionScope &scope);
     Utils::Result<> connectSelectedController();
     Utils::Result<> disconnectSelectedController();
     Utils::Result<> refreshSelectedController();
@@ -222,8 +224,10 @@ private:
         Data::ControllerConnectionScope scope;
         Data::NodeId profileId;
         quint64 sessionGeneration = 0;
-        bool queued = false;
-        bool attempted = false;
+        bool acquireQueued = false;
+        bool acquireAttempted = false;
+        bool discoveryQueued = false;
+        bool discoveryAttempted = false;
     };
 
     enum class ControllerStartupPhase {
@@ -287,6 +291,12 @@ private:
     void refreshControllerConnectionPresentation();
     void scheduleControllerAutoAcquire();
     void executeControllerAutoAcquire(
+        Core::ControllerConnectionProvider *provider,
+        const Data::ControllerConnectionScope &expectedScope,
+        const Data::NodeId &expectedProfileId,
+        quint64 expectedGeneration,
+        quint64 expectedProviderEpoch);
+    void executeControllerAutoDiscovery(
         Core::ControllerConnectionProvider *provider,
         const Data::ControllerConnectionScope &expectedScope,
         const Data::NodeId &expectedProfileId,

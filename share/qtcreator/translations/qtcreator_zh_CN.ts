@@ -50373,11 +50373,19 @@ Discovered slaves: %3</source>
     </message>
     <message>
         <source>Read-only offline property and value pairs for the selected EtherCAT node. No controller, network, or physical hardware is accessed.</source>
-        <translation>所选 EtherCAT 节点的只读离线属性和值对。不会访问控制器、网络或物理硬件。</translation>
+        <translation type="vanished">所选 EtherCAT 节点的只读离线属性和值对。不会访问控制器、网络或物理硬件。</translation>
+    </message>
+    <message>
+        <source>Read-only engineering and live identity values for the selected EtherCAT node. Viewing these values does not perform a controller operation.</source>
+        <translation>所选 EtherCAT 节点的只读工程数据和在线身份信息。查看这些值不会执行控制器操作。</translation>
     </message>
     <message>
         <source>Offline properties for %1</source>
         <translation>%1 的离线属性</translation>
+    </message>
+    <message>
+        <source>Live EtherCAT identity and scan state for %1</source>
+        <translation>%1 的在线 EtherCAT 身份与扫描状态</translation>
     </message>
     <message>
         <source>Unavailable</source>
@@ -50462,6 +50470,14 @@ Object Id: %1</source>
         <translation>位置</translation>
     </message>
     <message>
+        <source>Station address</source>
+        <translation>站地址</translation>
+    </message>
+    <message>
+        <source>AL state</source>
+        <translation>AL 状态</translation>
+    </message>
+    <message>
         <source>Vendor ID</source>
         <translation>厂商 ID</translation>
     </message>
@@ -50488,6 +50504,10 @@ Object Id: %1</source>
     <message>
         <source>No matching ESI device</source>
         <translation>没有匹配的 ESI 设备</translation>
+    </message>
+    <message>
+        <source>%1 column. Property: %2. Complete value: %3. Read-only Workbench data. Viewing this value does not perform a controller operation.</source>
+        <translation>%1 列。属性：%2。完整值：%3。Workbench 只读数据。查看此值不会执行控制器操作。</translation>
     </message>
     <message>
         <source>Type</source>
@@ -53097,7 +53117,11 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Filter the offline EtherCAT tree by node, status, or identity.</source>
-        <translation>按节点、状态或标识筛选离线 EtherCAT 树。</translation>
+        <translation type="vanished">按节点、状态或标识筛选离线 EtherCAT 树。</translation>
+    </message>
+    <message>
+        <source>Filter the EtherCAT device tree by device, status, or identity.</source>
+        <translation>按设备、状态或身份筛选 EtherCAT 设备树。</translation>
     </message>
     <message>
         <source>Filter nodes, status, or identity</source>
@@ -53109,7 +53133,11 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Browse offline projects, masters, slaves, process data, and ESI devices. Drag a supported ESI device to the active offline Master to append it.</source>
-        <translation>浏览离线项目、主站、从站、过程数据和 ESI 设备。将受支持的 ESI 设备拖到活动离线主站以追加该设备。</translation>
+        <translation type="vanished">浏览离线项目、主站、从站、过程数据和 ESI 设备。将受支持的 ESI 设备拖到活动离线主站以追加该设备。</translation>
+    </message>
+    <message>
+        <source>Browse projects, EtherCAT Masters, and the configured or detected bus devices. Select a node to inspect and configure it in the right panel.</source>
+        <translation>浏览项目、EtherCAT 主站以及已配置或已检测的总线设备。选择节点后可在右侧面板查看和配置。</translation>
     </message>
     <message>
         <source>No matching EtherCAT nodes</source>
@@ -53117,7 +53145,11 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>No offline EtherCAT tree nodes match the current filter.</source>
-        <translation>没有离线 EtherCAT 树节点与当前筛选条件匹配。</translation>
+        <translation type="vanished">没有离线 EtherCAT 树节点与当前筛选条件匹配。</translation>
+    </message>
+    <message>
+        <source>No EtherCAT device tree nodes match the current filter.</source>
+        <translation>当前筛选条件没有匹配的 EtherCAT 设备树节点。</translation>
     </message>
     <message>
         <source>No EtherCAT nodes match the current filter.</source>
@@ -53129,7 +53161,11 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Clear the navigation filter and return to the offline EtherCAT tree.</source>
-        <translation>清除导航筛选条件并返回离线 EtherCAT 树。</translation>
+        <translation type="vanished">清除导航筛选条件并返回离线 EtherCAT 树。</translation>
+    </message>
+    <message>
+        <source>Clear the navigation filter and return to the EtherCAT device tree.</source>
+        <translation>清除导航筛选条件并返回 EtherCAT 设备树。</translation>
     </message>
     <message>
         <source>EtherCAT Devices</source>
@@ -53450,6 +53486,10 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     <message>
         <source>Cannot automatically acquire controller control: %1</source>
         <translation>无法自动取得控制器控制权：%1</translation>
+    </message>
+    <message>
+        <source>Cannot automatically scan the EtherCAT bus: %1</source>
+        <translation>无法自动扫描 EtherCAT 总线：%1</translation>
     </message>
     <message>
         <source>The controller adapter instance changed during cleanup.</source>
@@ -53777,7 +53817,11 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Establish the Control, Push, and Bulk channels, read the authoritative controller snapshot, then automatically request the exclusive control lease. Connecting does not scan the bus, change controller state, or write configuration.</source>
-        <translation>建立 Control、Push 和 Bulk 通道，读取权威控制器快照，然后自动请求独占控制租约。连接操作不会扫描总线、切换控制器状态或写入配置。</translation>
+        <translation type="vanished">建立 Control、Push 和 Bulk 通道，读取权威控制器快照，然后自动请求独占控制租约。连接操作不会扫描总线、切换控制器状态或写入配置。</translation>
+    </message>
+    <message>
+        <source>Establish the Control, Push, and Bulk channels, read the authoritative controller snapshot, then automatically request the exclusive control lease. When the controller is safely in Shutdown, the EtherCAT bus is scanned automatically without writing the offline project.</source>
+        <translation>建立 Control、Push 和 Bulk 通道，读取权威控制器快照，然后自动请求独占控制租约。控制器安全处于关停状态时，将自动扫描 EtherCAT 总线，但不会写入离线工程。</translation>
     </message>
     <message>
         <source>Close the controller connection for the selected EtherCAT Master.</source>
@@ -53908,6 +53952,10 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>常规</translation>
     </message>
     <message>
+        <source>Device Descriptions</source>
+        <translation>设备描述</translation>
+    </message>
+    <message>
         <source>Process Data</source>
         <translation>过程数据</translation>
     </message>
@@ -53977,11 +54025,19 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Select an EtherCAT node in the tree to inspect its offline details.</source>
-        <translation>在树中选择 EtherCAT 节点以查看其离线详情。</translation>
+        <translation type="vanished">在树中选择 EtherCAT 节点以查看其离线详情。</translation>
     </message>
     <message>
         <source>No EtherCAT project is open. Create or open an EtherCAT project (.ecatproject), or select Device Repository to inspect local ESI descriptions.</source>
-        <translation>没有打开的 EtherCAT 项目。请创建或打开 EtherCAT 项目（.ecatproject），或选择设备存储库以查看本地 ESI 描述。</translation>
+        <translation type="vanished">没有打开的 EtherCAT 项目。请创建或打开 EtherCAT 项目（.ecatproject），或选择设备存储库以查看本地 ESI 描述。</translation>
+    </message>
+    <message>
+        <source>Select an EtherCAT node in the tree to inspect and configure it.</source>
+        <translation>在树中选择 EtherCAT 节点以查看和配置。</translation>
+    </message>
+    <message>
+        <source>No EtherCAT project is open. Create or open an EtherCAT project (.ecatproject).</source>
+        <translation>没有打开的 EtherCAT 项目。请创建或打开 EtherCAT 项目（.ecatproject）。</translation>
     </message>
     <message>
         <source>No property page provider supports this node.</source>
@@ -54100,36 +54156,96 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>连接配置：</translation>
     </message>
     <message>
+        <source>Controller IP:</source>
+        <translation type="vanished">控制器 IP：</translation>
+    </message>
+    <message>
+        <source>Controller address:</source>
+        <translation>控制器地址：</translation>
+    </message>
+    <message>
         <source>Connection profile</source>
         <translation>连接配置</translation>
     </message>
     <message>
         <source>Controller IP address</source>
-        <translation>控制器 IP 地址</translation>
+        <translation type="vanished">控制器 IP 地址</translation>
+    </message>
+    <message>
+        <source>Controller address</source>
+        <translation>控制器地址</translation>
     </message>
     <message>
         <source>Save controller IP address</source>
-        <translation>保存控制器 IP 地址</translation>
+        <translation type="vanished">保存控制器 IP 地址</translation>
     </message>
     <message>
         <source>Save the controller IP address or base endpoint.</source>
-        <translation>保存控制器 IP 地址或基础端点。</translation>
+        <translation type="vanished">保存控制器 IP 地址或基础端点。</translation>
     </message>
     <message>
         <source>Enter an IPv4 address or IPv4:basePort. Push and Bulk use the next two ports.</source>
-        <translation>输入 IPv4 地址或 IPv4:基础端口。Push 和 Bulk 使用后续两个端口。</translation>
+        <translation type="vanished">输入 IPv4 地址或 IPv4:基础端口。Push 和 Bulk 使用后续两个端口。</translation>
     </message>
     <message>
         <source>Cannot save the controller endpoint: %1</source>
-        <translation>无法保存控制器端点：%1</translation>
+        <translation type="vanished">无法保存控制器端点：%1</translation>
     </message>
     <message>
         <source>Controller endpoint saved.</source>
-        <translation>已保存控制器端点。</translation>
+        <translation type="vanished">已保存控制器端点。</translation>
     </message>
     <message>
         <source>Controller endpoint saved: %1</source>
-        <translation>已保存控制器端点：%1</translation>
+        <translation type="vanished">已保存控制器端点：%1</translation>
+    </message>
+    <message>
+        <source>Save controller IP address and connect</source>
+        <translation type="vanished">保存控制器 IP 并连接</translation>
+    </message>
+    <message>
+        <source>Save the controller IP address, then connect and scan automatically.</source>
+        <translation type="vanished">保存控制器 IP 地址，然后自动连接并扫描总线。</translation>
+    </message>
+    <message>
+        <source>Save controller address and connect</source>
+        <translation>保存控制器地址并连接</translation>
+    </message>
+    <message>
+        <source>Save the controller address, then connect and scan automatically.</source>
+        <translation>保存控制器地址，然后自动连接并扫描总线。</translation>
+    </message>
+    <message>
+        <source>Enter only the IPv4 controller address. Control, Push, and Bulk always use ports 15200, 15201, and 15202.</source>
+        <translation type="vanished">仅输入控制器 IPv4 地址。Control、Push 和 Bulk 始终使用端口 15200、15201 和 15202。</translation>
+    </message>
+    <message>
+        <source>Enter the controller address required by the selected adapter.</source>
+        <translation>请输入所选适配器要求的控制器地址。</translation>
+    </message>
+    <message>
+        <source>Cannot save the controller IP address: %1</source>
+        <translation type="vanished">无法保存控制器 IP 地址：%1</translation>
+    </message>
+    <message>
+        <source>Controller IP address saved.</source>
+        <translation type="vanished">控制器 IP 地址已保存。</translation>
+    </message>
+    <message>
+        <source>Controller IP address saved: %1</source>
+        <translation type="vanished">控制器 IP 地址已保存：%1</translation>
+    </message>
+    <message>
+        <source>Cannot save the controller address: %1</source>
+        <translation>无法保存控制器地址：%1</translation>
+    </message>
+    <message>
+        <source>Controller address saved.</source>
+        <translation>控制器地址已保存。</translation>
+    </message>
+    <message>
+        <source>Controller address saved: %1</source>
+        <translation>控制器地址已保存：%1</translation>
     </message>
     <message>
         <source>Control lease owner</source>
@@ -54775,7 +54891,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Actual bus</source>
-        <translation>实际总线</translation>
+        <translation type="vanished">实际总线</translation>
     </message>
     <message numerus="yes">
         <source>Actual bus scan: %n responding device(s).</source>
@@ -54797,7 +54913,43 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Bus device %1</source>
-        <translation>总线设备 %1</translation>
+        <translation type="vanished">总线设备 %1</translation>
+    </message>
+    <message>
+        <source>
+Position: %1
+Station: 0x%2
+AL state: %3
+Vendor: 0x%4
+Product: 0x%5
+Revision: 0x%6
+Serial: 0x%7</source>
+        <translation>
+位置：%1
+站地址：0x%2
+AL 状态：%3
+厂商：0x%4
+产品：0x%5
+修订版本：0x%6
+序列号：0x%7</translation>
+    </message>
+    <message>
+        <source>The controller bus scan returned result %1.</source>
+        <translation>控制器总线扫描返回结果 %1。</translation>
+    </message>
+    <message>
+        <source>EtherCAT device</source>
+        <translation>EtherCAT 设备</translation>
+    </message>
+    <message>
+        <source>[%1] %2</source>
+        <translation>[%1] %2</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n detected device(s)</source>
+        <translation>
+            <numerusform>检测到 %n 个设备</numerusform>
+        </translation>
     </message>
     <message>
         <source>Connected controller Product API endpoint.</source>
@@ -54964,7 +55116,23 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Use an IPv4 address with an optional base port.</source>
-        <translation>请使用 IPv4 地址，可选择附加基础端口。</translation>
+        <translation type="vanished">请使用 IPv4 地址，可选择附加基础端口。</translation>
+    </message>
+    <message>
+        <source>Enter only the IPv4 controller address. Ports are fixed automatically.</source>
+        <translation>仅输入控制器 IPv4 地址。端口将自动固定配置。</translation>
+    </message>
+    <message>
+        <source>Controller IP:</source>
+        <translation>控制器 IP：</translation>
+    </message>
+    <message>
+        <source>Controller IP address</source>
+        <translation>控制器 IP 地址</translation>
+    </message>
+    <message>
+        <source>Enter only the IPv4 controller address. Control, Push, and Bulk always use ports 15200, 15201, and 15202.</source>
+        <translation>仅输入控制器 IPv4 地址。Control、Push 和 Bulk 始终使用端口 15200、15201 和 15202。</translation>
     </message>
     <message>
         <source>Enter a valid IPv4 controller address.</source>
@@ -54972,7 +55140,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>The base port must be between 1 and 65533.</source>
-        <translation>基础端口必须介于 1 到 65533 之间。</translation>
+        <translation type="vanished">基础端口必须介于 1 到 65533 之间。</translation>
     </message>
     <message>
         <source>Embed Labs Product API</source>

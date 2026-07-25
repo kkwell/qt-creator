@@ -318,8 +318,8 @@ QString EtherCATWorkbenchPlugin::activeControllerControlScopeUnavailableReason()
 void EtherCATWorkbenchPlugin::updateControllerControlContext()
 {
     const bool shouldBeActive
-        = !m_shuttingDown
-          && ::Core::ModeManager::currentModeId() == Utils::Id(Constants::MODE_ID);
+        = !m_shuttingDown && m_controller && m_controller->projectService()
+          && !m_controller->projectService()->projects().isEmpty();
 
     if (shouldBeActive == m_controllerControlContextActive)
         return;
@@ -327,7 +327,7 @@ void EtherCATWorkbenchPlugin::updateControllerControlContext()
     const ::Core::Context context(Constants::CONTROLLER_CONTROL_CONTEXT_ID);
     if (m_controllerControlContextActive) {
         ::Core::ICore::addAdditionalContext(
-            context, ::Core::ICore::ContextPriority::Low);
+            context, ::Core::ICore::ContextPriority::High);
     } else {
         ::Core::ICore::removeAdditionalContext(context);
     }
@@ -524,8 +524,9 @@ void EtherCATWorkbenchPlugin::setupActions()
         = new QAction(Utils::Icons::LINK.icon(), Tr::tr("Connect Controller"), this);
     const QString connectControllerDescription = Tr::tr(
         "Establish the Control, Push, and Bulk channels, read the authoritative controller "
-        "snapshot, then automatically request the exclusive control lease. Connecting does not "
-        "scan the bus, change controller state, or write configuration.");
+        "snapshot, then automatically request the exclusive control lease. When the controller "
+        "is safely in Shutdown, the EtherCAT bus is scanned automatically without writing the "
+        "offline project.");
     connectControllerAction->setToolTip(connectControllerDescription);
     connectControllerAction->setStatusTip(connectControllerDescription);
     ::Core::Command *connectControllerCommand = ::Core::ActionManager::registerAction(

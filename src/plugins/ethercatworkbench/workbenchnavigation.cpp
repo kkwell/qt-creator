@@ -48,6 +48,41 @@ public:
     }
 };
 
+class WorkbenchNavigationFilterModel final : public QSortFilterProxyModel
+{
+public:
+    using QSortFilterProxyModel::QSortFilterProxyModel;
+
+protected:
+    bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const final
+    {
+        const QModelIndex sourceIndex = sourceModel()->index(sourceRow, 0, sourceParent);
+        const Core::WorkbenchNodeKind kind
+            = sourceIndex.data(WorkbenchTreeModel::NodeKindRole)
+                  .value<Core::WorkbenchNodeKind>();
+        switch (kind) {
+        case Core::WorkbenchNodeKind::Project:
+        case Core::WorkbenchNodeKind::Master:
+        case Core::WorkbenchNodeKind::ConfiguredSlave:
+            break;
+        case Core::WorkbenchNodeKind::Module:
+            if (sourceParent.data(WorkbenchTreeModel::NodeKindRole)
+                    .value<Core::WorkbenchNodeKind>()
+                != Core::WorkbenchNodeKind::Master) {
+                return false;
+            }
+            break;
+        case Core::WorkbenchNodeKind::Placeholder:
+            if (sourceParent.isValid())
+                return false;
+            break;
+        default:
+            return false;
+        }
+        return QSortFilterProxyModel::filterAcceptsRow(sourceRow, sourceParent);
+    }
+};
+
 static std::optional<Data::NodeId> currentLocateProjectId(
     WorkbenchController *controller, const WorkbenchTreeModel *model)
 {
@@ -68,7 +103,7 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     : QWidget(parent)
     , m_controller(controller)
     , m_sourceModel(controller->treeModel())
-    , m_proxyModel(new QSortFilterProxyModel(this))
+    , m_proxyModel(new WorkbenchNavigationFilterModel(this))
     , m_filterEdit(new QLineEdit(this))
     , m_treeView(new QTreeView(this))
 {
@@ -77,7 +112,7 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_filterEdit->setObjectName("EtherCATWorkbenchFilter");
     m_filterEdit->setAccessibleName(Tr::tr("Filter EtherCAT nodes"));
     m_filterEdit->setAccessibleDescription(
-        Tr::tr("Filter the offline EtherCAT tree by node, status, or identity."));
+        Tr::tr("Filter the EtherCAT device tree by device, status, or identity."));
     m_filterEdit->setPlaceholderText(Tr::tr("Filter nodes, status, or identity"));
     m_filterEdit->setClearButtonEnabled(true);
 
@@ -91,13 +126,14 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_proxyModel->setFilterKeyColumn(0);
     m_proxyModel->setFilterCaseSensitivity(Qt::CaseInsensitive);
     m_proxyModel->setRecursiveFilteringEnabled(true);
-    m_proxyModel->setAutoAcceptChildRows(true);
+    m_proxyModel->setAutoAcceptChildRows(false);
 
     m_treeView->setObjectName("EtherCATWorkbenchTree");
     m_treeView->setAccessibleName(Tr::tr("EtherCAT device tree"));
     m_treeView->setAccessibleDescription(
-        Tr::tr("Browse offline projects, masters, slaves, process data, and ESI devices. Drag a "
-               "supported ESI device to the active offline Master to append it."));
+        Tr::tr(
+            "Browse projects, EtherCAT Masters, and the configured or detected bus devices. "
+            "Select a node to inspect and configure it in the right panel."));
     m_treeView->setModel(m_proxyModel);
     m_treeView->setAlternatingRowColors(true);
     m_treeView->setUniformRowHeights(true);
@@ -159,7 +195,7 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_emptyState->setObjectName("EtherCATWorkbenchFilterEmptyState");
     m_emptyState->setAccessibleName(Tr::tr("No matching EtherCAT nodes"));
     m_emptyState->setAccessibleDescription(
-        Tr::tr("No offline EtherCAT tree nodes match the current filter."));
+        Tr::tr("No EtherCAT device tree nodes match the current filter."));
 
     auto emptyMessage = new QLabel(
         Tr::tr("No EtherCAT nodes match the current filter."), m_emptyState);
@@ -171,7 +207,7 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_clearFilter = new QPushButton(Tr::tr("Clear Filter"), m_emptyState);
     m_clearFilter->setObjectName("EtherCATWorkbenchClearFilter");
     m_clearFilter->setAccessibleDescription(
-        Tr::tr("Clear the navigation filter and return to the offline EtherCAT tree."));
+        Tr::tr("Clear the navigation filter and return to the EtherCAT device tree."));
 
     auto emptyLayout = new QVBoxLayout(m_emptyState);
     emptyLayout->setContentsMargins(

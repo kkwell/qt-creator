@@ -1233,8 +1233,9 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
     ::Core::ModeManager::activateMode(::Core::Constants::MODE_EDIT);
     QTRY_COMPARE(
         ::Core::ModeManager::currentModeId(), Utils::Id(::Core::Constants::MODE_EDIT));
-    QTRY_COMPARE(runCommand->action()->text(), ordinaryRunAction->text());
-    QTRY_COMPARE(debugCommand->action()->text(), ordinaryDebugAction->text());
+    QTRY_COMPARE(runCommand->action()->text(), Tr::tr("Run Controller"));
+    QTRY_COMPARE(
+        debugCommand->action()->text(), Tr::tr("Pause / Resume Controller"));
     QTRY_VERIFY(!controlledStopCommand->action()->isVisible());
 
     ::Core::ModeManager::activateMode(Constants::MODE_ID);
@@ -1269,9 +1270,10 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
     ::Core::ModeManager::activateMode(::Core::Constants::MODE_EDIT);
     QTRY_COMPARE(
         ::Core::ModeManager::currentModeId(), Utils::Id(::Core::Constants::MODE_EDIT));
-    QTRY_COMPARE(runCommand->action()->text(), ordinaryRunAction->text());
-    QTRY_COMPARE(debugCommand->action()->text(), ordinaryDebugAction->text());
-    QTRY_VERIFY(!controlledStopCommand->action()->isVisible());
+    QTRY_COMPARE(runCommand->action()->text(), Tr::tr("Run Controller"));
+    QTRY_COMPARE(
+        debugCommand->action()->text(), Tr::tr("Pause / Resume Controller"));
+    QTRY_VERIFY(controlledStopCommand->action()->isVisible());
 }
 
 void EtherCATWorkbenchTests::testQuickControllerScopeResolution()
@@ -1433,9 +1435,9 @@ void EtherCATWorkbenchTests::testQuickControllerScopeResolution()
     ::Core::ModeManager::activateMode(::Core::Constants::MODE_EDIT);
     QTRY_COMPARE(
         ::Core::ModeManager::currentModeId(), Utils::Id(::Core::Constants::MODE_EDIT));
-    QTRY_COMPARE(runCommand->action()->text(), ordinaryRunAction->text());
-    QTRY_COMPARE(debugCommand->action()->text(), ordinaryDebugAction->text());
-    QTRY_VERIFY(!controlledStopCommand->action()->isVisible());
+    QTRY_COMPARE(runCommand->action()->text(), controllerRunAction->text());
+    QTRY_COMPARE(debugCommand->action()->text(), controllerDebugAction->text());
+    QTRY_VERIFY(controlledStopCommand->action()->isVisible());
 }
 
 void EtherCATWorkbenchTests::testModeCommandStripMirrorsRegisteredActions()
@@ -9710,15 +9712,15 @@ void EtherCATWorkbenchTests::testBuiltInDevicePages()
     QTableView *startupTable = startupPage->findChild<QTableView *>("EtherCATStartupTable");
     QVERIFY(startupTable);
     QCOMPARE(startupTable->model()->rowCount(), 3);
-    QVERIFY(columnWithHeader(startupTable->model(), "Enabled") >= 0);
-    QVERIFY(columnWithHeader(startupTable->model(), "Order") >= 0);
-    QVERIFY(columnWithHeader(startupTable->model(), "Transition") >= 0);
-    QVERIFY(columnWithHeader(startupTable->model(), "Protocol") >= 0);
-    QVERIFY(columnWithHeader(startupTable->model(), "Index") >= 0);
-    QVERIFY(columnWithHeader(startupTable->model(), "Subindex") >= 0);
-    QVERIFY(columnWithHeader(startupTable->model(), "Type") >= 0);
-    QVERIFY(columnWithHeader(startupTable->model(), "Data") >= 0);
-    QVERIFY(columnWithHeader(startupTable->model(), "Comment") >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), Tr::tr("Enabled")) >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), Tr::tr("Order")) >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), Tr::tr("Transition")) >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), Tr::tr("Protocol")) >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), Tr::tr("Index")) >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), Tr::tr("Subindex")) >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), Tr::tr("Type")) >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), Tr::tr("Data")) >= 0);
+    QVERIFY(columnWithHeader(startupTable->model(), Tr::tr("Comment")) >= 0);
     QVERIFY(!(
         startupTable->model()->flags(startupTable->model()->index(0, 0)) & Qt::ItemIsUserCheckable));
 
@@ -9765,9 +9767,11 @@ void EtherCATWorkbenchTests::testBuiltInDevicePages()
 
     std::unique_ptr<QWidget> onlinePage(provider.createPage(Constants::ONLINE_PAGE_ID, nullptr));
     provider.updatePage(Constants::ONLINE_PAGE_ID, onlinePage.get(), context);
-    QVERIFY(onlinePage->findChild<QLabel *>("EtherCATWorkbenchPageSummary")
-                ->text()
-                .contains("unavailable", Qt::CaseInsensitive));
+    QCOMPARE(
+        onlinePage->findChild<QLabel *>("EtherCATWorkbenchPageSummary")->text(),
+        Tr::tr(
+            "Online data is unavailable. No Diagnostics Provider is registered. V1 "
+            "provides only local Mock diagnostics and contains no controller protocol."));
 }
 
 void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
@@ -18600,6 +18604,7 @@ void EtherCATWorkbenchTests::testControllerCommunicationPagePresentation()
 
     QComboBox *providerCombo = page.findChild<QComboBox *>("EtherCATCommunicationProvider");
     QComboBox *profileCombo = page.findChild<QComboBox *>("EtherCATCommunicationProfile");
+    QLabel *endpointLabel = page.findChild<QLabel *>("EtherCATCommunicationEndpointLabel");
     QLineEdit *endpoint = page.findChild<QLineEdit *>("EtherCATCommunicationEndpoint");
     QToolButton *saveEndpoint
         = page.findChild<QToolButton *>("EtherCATCommunicationSaveEndpoint");
@@ -18608,6 +18613,7 @@ void EtherCATWorkbenchTests::testControllerCommunicationPagePresentation()
     QSignalSpy controllerOutput(&controller, &WorkbenchController::controllerOutputRequested);
     QVERIFY(providerCombo);
     QVERIFY(profileCombo);
+    QVERIFY(endpointLabel);
     QVERIFY(endpoint);
     QVERIFY(saveEndpoint);
     QVERIFY(summary);
@@ -18648,6 +18654,11 @@ void EtherCATWorkbenchTests::testControllerCommunicationPagePresentation()
     QTRY_COMPARE(
         controller.controllerConnectionSelection(scope).profileId, provider.primaryProfileId());
     QCOMPARE(endpoint->text(), QString("192.0.2.10:15200"));
+    QCOMPARE(endpointLabel->text(), Tr::tr("Controller address:"));
+    QCOMPARE(endpoint->accessibleName(), Tr::tr("Controller address"));
+    QCOMPARE(
+        endpoint->toolTip(),
+        Tr::tr("Enter the controller address required by the selected adapter."));
     QVERIFY(endpoint->isEnabled());
     QVERIFY(!saveEndpoint->isEnabled());
     QCOMPARE(summaryValue(Tr::tr("Project ID")), scope.projectId.toString());
@@ -18677,16 +18688,24 @@ void EtherCATWorkbenchTests::testControllerCommunicationPagePresentation()
     QTest::keyClicks(endpoint, "192.000.002.044:016200");
     QTRY_VERIFY(saveEndpoint->isEnabled());
     saveEndpoint->click();
-    QTRY_COMPARE(controllerOutput.count(), 2);
+    QTRY_VERIFY(controllerOutput.count() >= 2);
     QCOMPARE(provider.setEndpointCalls, 2);
     QCOMPARE(provider.lastEndpoint, QString("192.000.002.044:016200"));
     QCOMPARE(endpoint->text(), QString("192.0.2.44:16200"));
-    QVERIFY(!saveEndpoint->isEnabled());
-    QVERIFY(controllerOutput.constLast().at(0).toString().contains(
-        Tr::tr("Controller endpoint saved: %1").arg("192.0.2.44:16200")));
-    QCOMPARE(
-        controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
-        ControllerOutputLevel::Information);
+    QTRY_VERIFY(!saveEndpoint->isEnabled());
+    QTRY_COMPARE(provider.connectCalls, 1);
+    QCOMPARE(provider.lastConnectRequest.scope, scope);
+    QCOMPARE(provider.lastConnectRequest.profileId, provider.primaryProfileId());
+    QVERIFY(std::any_of(
+        controllerOutput.cbegin(),
+        controllerOutput.cend(),
+        [](const QList<QVariant> &arguments) {
+            return arguments.constFirst().toString().contains(
+                       Tr::tr("Controller address saved: %1")
+                           .arg("192.0.2.44:16200"))
+                   && arguments.at(1).value<ControllerOutputLevel>()
+                          == ControllerOutputLevel::Information;
+        }));
     controllerOutput.clear();
 
     Data::ControllerConnectionSnapshot snapshot;
@@ -18811,8 +18830,9 @@ void EtherCATWorkbenchTests::testControllerCommunicationPagePresentation()
     QCOMPARE(connectAction->text(), Tr::tr("Connect Controller"));
     const QString connectDescription = Tr::tr(
         "Establish the Control, Push, and Bulk channels, read the authoritative controller "
-        "snapshot, then automatically request the exclusive control lease. Connecting does not "
-        "scan the bus, change controller state, or write configuration.");
+        "snapshot, then automatically request the exclusive control lease. When the controller "
+        "is safely in Shutdown, the EtherCAT bus is scanned automatically without writing the "
+        "offline project.");
     QVERIFY(connectAction->toolTip().contains(connectDescription));
     QVERIFY(!connectAction->toolTip().contains("read-only", Qt::CaseInsensitive));
     QVERIFY(!disconnectAction->toolTip().contains("read-only", Qt::CaseInsensitive));
@@ -19547,19 +19567,84 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
             && !masterStatus.contains(Tr::tr("Offline")),
         qPrintable(masterStatus));
 
-    const auto childByName =
-        [](QAbstractItemModel *model, const QModelIndex &parent, const QString &name) {
-            for (int row = 0; row < model->rowCount(parent); ++row) {
-                const QModelIndex child = model->index(row, 0, parent);
-                if (model->data(child).toString() == name)
-                    return child;
-            }
-            return QModelIndex();
-        };
-    const QModelIndex actualBus
-        = childByName(controller.treeModel(), masterIndex, Tr::tr("Actual bus"));
-    QVERIFY(actualBus.isValid());
-    QCOMPARE(controller.treeModel()->rowCount(actualBus), 2);
+    const QModelIndex projectIndex
+        = controller.treeModel()->indexForNodeId(file.projectId);
+    QVERIFY(projectIndex.isValid());
+    QCOMPARE(masterIndex.parent(), projectIndex);
+
+    QList<QModelIndex> liveDevices;
+    for (int row = 0; row < controller.treeModel()->rowCount(masterIndex); ++row) {
+        const QModelIndex child = controller.treeModel()->index(row, 0, masterIndex);
+        const Data::NodeId nodeId
+            = child.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+        const Core::WorkbenchNodeKind kind
+            = child.data(WorkbenchTreeModel::NodeKindRole).value<Core::WorkbenchNodeKind>();
+        QVERIFY(kind != Core::WorkbenchNodeKind::Modules);
+        if (controller.treeModel()->controllerTopologySlave(nodeId))
+            liveDevices.append(child);
+    }
+    QCOMPARE(liveDevices.size(), 2);
+    QCOMPARE(
+        controller.treeModel()
+            ->controllerTopologySlave(
+                liveDevices.at(0).data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>())
+            ->position,
+        quint32(0));
+    QCOMPARE(
+        controller.treeModel()
+            ->controllerTopologySlave(
+                liveDevices.at(1).data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>())
+            ->position,
+        quint32(1));
+
+    WorkbenchNavigationWidget navigation(&controller);
+    QAbstractItemModel *navigationModel = navigation.treeView()->model();
+    const QModelIndex visibleProject = findById(navigationModel, file.projectId);
+    const QModelIndex visibleMaster = findById(navigationModel, file.masterId);
+    QVERIFY(visibleProject.isValid());
+    QVERIFY(visibleMaster.isValid());
+    QCOMPARE(visibleMaster.parent(), visibleProject);
+    QCOMPARE(navigationModel->rowCount(visibleMaster), 2);
+    QVERIFY(!findByKind(navigationModel, Core::WorkbenchNodeKind::Target).isValid());
+    QVERIFY(!findByKind(navigationModel, Core::WorkbenchNodeKind::Diagnostics).isValid());
+    QVERIFY(!findByKind(navigationModel, Core::WorkbenchNodeKind::DeviceRepository).isValid());
+    for (int row = 0; row < navigationModel->rowCount(visibleMaster); ++row) {
+        const QModelIndex visibleDevice = navigationModel->index(row, 0, visibleMaster);
+        const Core::WorkbenchNodeKind kind
+            = visibleDevice.data(WorkbenchTreeModel::NodeKindRole)
+                  .value<Core::WorkbenchNodeKind>();
+        QVERIFY(
+            kind == Core::WorkbenchNodeKind::ConfiguredSlave
+            || kind == Core::WorkbenchNodeKind::Module);
+        QCOMPARE(navigationModel->rowCount(visibleDevice), 0);
+    }
+
+    GeneralPage generalPage(&controller);
+    const Core::PropertyPageContext liveDeviceContext
+        = controller.treeModel()->contextForIndex(liveDevices.at(1));
+    generalPage.setContext(liveDeviceContext);
+    QLabel *generalSummary
+        = generalPage.findChild<QLabel *>("EtherCATWorkbenchPageSummary");
+    QTreeWidget *generalProperties
+        = generalPage.findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
+    QVERIFY(generalSummary);
+    QVERIFY(generalProperties);
+    QCOMPARE(
+        generalSummary->text(),
+        Tr::tr("Live EtherCAT identity and scan state for %1")
+            .arg(liveDeviceContext.displayName));
+    const auto generalValue = [generalProperties](const QString &property) {
+        for (int row = 0; row < generalProperties->topLevelItemCount(); ++row) {
+            QTreeWidgetItem *item = generalProperties->topLevelItem(row);
+            if (item->text(0) == property)
+                return item->text(1);
+        }
+        return QString();
+    };
+    QCOMPARE(generalValue(Tr::tr("Position")), QString("1"));
+    QCOMPARE(generalValue(Tr::tr("Station address")), QString("0x1002"));
+    QCOMPARE(generalValue(Tr::tr("AL state")), QString("OP"));
+    QCOMPARE(generalValue(Tr::tr("Vendor ID")), QString("0x00000003"));
 
     EtherCATPage page(&controller);
     page.setContext(
@@ -19737,6 +19822,130 @@ void EtherCATWorkbenchTests::testControllerCommunicationAutoAcquire()
     provider.publishSnapshot(snapshot);
     flushQueuedCalls();
     QCOMPARE(provider.controlCalls, 3);
+}
+
+void EtherCATWorkbenchTests::testControllerCommunicationAutoDiscovery()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+    controller.selectionService()->clear();
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        deviceSummaries(1).constFirst(),
+        "controller-auto-discovery.ecatproject",
+        "Controller Auto Discovery");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    ProjectExplorer::ProjectManager::setStartupProject(opened.project());
+
+    ControlledControllerConnectionProvider provider(
+        Utils::Id("EtherCAT.Workbench.TestControllerConnection.AutoDiscovery"),
+        "Auto discovery controller");
+    provider.setAvailable(true);
+    provider.setSupportedControlCommands(
+        {Data::ControllerControlCommand::AcquireControl,
+         Data::ControllerControlCommand::DiscoverTopology});
+    provider.publishControlPendingOnExecute = true;
+    bool providerRegistered = false;
+    const QScopeGuard cleanup([&] {
+        controller.selectionService()->clear();
+        if (providerRegistered)
+            ExtensionSystem::PluginManager::removeObject(&provider);
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    ExtensionSystem::PluginManager::addObject(&provider);
+    providerRegistered = true;
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+
+    const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
+    QVERIFY_RESULT(controller.selectControllerConnectionProvider(scope, provider.id()));
+    QVERIFY_RESULT(
+        controller.selectControllerConnectionProfile(scope, provider.primaryProfileId()));
+
+    Data::ControllerSessionSummary session;
+    session.sessionId = 52;
+    session.bootId = 83;
+    session.defaultControlLeaseDurationMs = 30000;
+
+    Data::ControllerStateSummary state;
+    state.serviceState = Data::ControllerServiceState::Shutdown;
+    state.ready = true;
+    state.controllerBootId = session.bootId;
+
+    Data::ControllerPackageSummary package;
+    package.controllerState = Data::ControllerPackageState::Empty;
+
+    Data::ControllerConnectionSnapshot snapshot;
+    snapshot.scope = scope;
+    snapshot.profileId = provider.primaryProfileId();
+    snapshot.endpointSummary = "192.0.2.10:15200";
+    snapshot.state = Data::ControllerConnectionState::Connected;
+    snapshot.protocolVersion = {1, 10};
+    snapshot.sessionGeneration = 1;
+    snapshot.readOnly = false;
+    snapshot.mock = false;
+    snapshot.session = session;
+    snapshot.controllerState = state;
+    snapshot.package = package;
+    provider.publishSnapshot(snapshot);
+
+    QTRY_COMPARE(provider.controlCalls, 1);
+    QCOMPARE(
+        provider.lastControlRequest.command,
+        Data::ControllerControlCommand::AcquireControl);
+
+    snapshot = provider.connectionSnapshot();
+    snapshot.session->controlLeaseOwnerSessionId = snapshot.session->sessionId;
+    snapshot.session->ownsControlLease = true;
+    snapshot.controlProgress.command = Data::ControllerControlCommand::AcquireControl;
+    snapshot.controlProgress.state = Data::ControllerControlState::Succeeded;
+    snapshot.controlProgress.final = true;
+    provider.publishSnapshot(snapshot);
+
+    QTRY_COMPARE(provider.controlCalls, 2);
+    QCOMPARE(
+        provider.lastControlRequest.command,
+        Data::ControllerControlCommand::DiscoverTopology);
+
+    snapshot.controlProgress = {};
+    provider.publishSnapshot(snapshot);
+    provider.notifySnapshotChanged();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCOMPARE(provider.controlCalls, 2);
+
+    Data::ControllerTopologySnapshot topology;
+    topology.firstStationAddress = 0x1001;
+    topology.respondingCount = 1;
+    topology.result = 0;
+    topology.discoveredAt = QDateTime::currentDateTimeUtc();
+    topology.slaves = {
+        {0, 0x1001, 0x0008, 0, 0x00000002, 0x12345678, 0x00000011, 0x00000021},
+    };
+    snapshot.topology = topology;
+    provider.publishSnapshot(snapshot);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCOMPARE(provider.controlCalls, 2);
+
+    snapshot.sessionGeneration = 2;
+    snapshot.topology.reset();
+    snapshot.controlProgress = {};
+    provider.publishSnapshot(snapshot);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCOMPARE(provider.controlCalls, 2);
 }
 
 void EtherCATWorkbenchTests::testControllerCommunicationAutoAcquireAcrossProjects()

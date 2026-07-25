@@ -22,20 +22,17 @@ static bool isAsciiDecimal(QStringView value)
     return true;
 }
 
-static Utils::Result<ProductApiSession::EndpointSet> endpointsFromBaseEndpoint(
+static Utils::Result<ProductApiSession::EndpointSet> endpointsFromControllerAddress(
     const QString &input)
 {
-    const QString endpoint = input.trimmed();
-    if (endpoint.isEmpty())
+    const QString host = input.trimmed();
+    if (host.isEmpty())
         return Utils::ResultError(Tr::tr("Enter a controller IP address."));
-    if (endpoint.count(QLatin1Char(':')) > 1) {
+    if (host.contains(QLatin1Char(':'))) {
         return Utils::ResultError(
-            Tr::tr("Use an IPv4 address with an optional base port."));
+            Tr::tr("Enter only the IPv4 controller address. Ports are fixed automatically."));
     }
 
-    const qsizetype separator = endpoint.indexOf(QLatin1Char(':'));
-    const QString host
-        = (separator < 0 ? endpoint : endpoint.first(separator)).trimmed();
     const QStringList octets = host.split(QLatin1Char('.'));
     if (octets.size() != 4) {
         return Utils::ResultError(Tr::tr("Enter a valid IPv4 controller address."));
@@ -56,24 +53,13 @@ static Utils::Result<ProductApiSession::EndpointSet> endpointsFromBaseEndpoint(
         return Utils::ResultError(Tr::tr("Enter a valid IPv4 controller address."));
     }
 
-    int basePort = 15200;
-    if (separator >= 0) {
-        const QString port = endpoint.sliced(separator + 1).trimmed();
-        bool portOk = false;
-        basePort = port.toInt(&portOk);
-        if (!isAsciiDecimal(port) || !portOk || basePort < 1 || basePort > 65533) {
-            return Utils::ResultError(
-                Tr::tr("The base port must be between 1 and 65533."));
-        }
-    }
-
     const QString canonicalHost = address.toString();
     return ProductApiSession::EndpointSet{
         canonicalHost,
-        quint16(basePort),
-        quint16(basePort + 1),
-        quint16(basePort + 2),
-        QStringLiteral("%1:%2").arg(canonicalHost).arg(basePort),
+        15200,
+        15201,
+        15202,
+        QStringLiteral("%1:15200").arg(canonicalHost),
     };
 }
 
@@ -85,8 +71,10 @@ static ProductApiSession::EndpointSet configuredProductionEndpoints()
                                    .value(Constants::BASE_ENDPOINT_SETTINGS_KEY,
                                           defaults.endpointSummary)
                                    .toString();
+    // Migrate the legacy editable base-port setting to the fixed product ports.
+    const QString configuredHost = configured.section(QLatin1Char(':'), 0, 0);
     const Utils::Result<ProductApiSession::EndpointSet> parsed
-        = endpointsFromBaseEndpoint(configured);
+        = endpointsFromControllerAddress(configuredHost);
     return parsed ? *parsed : defaults;
 }
 
@@ -148,12 +136,16 @@ ProductApiConnectionProvider::connectionProfileConfiguration(
     const Data::ControllerConnectionSnapshot snapshot = m_session->snapshot();
     Data::ControllerConnectionProfileConfiguration configuration;
     configuration.profileId = profileId;
-    configuration.endpoint = snapshot.endpointSummary;
-    configuration.placeholder
-        = ProductApiSession::EndpointSet::productionDefaults().endpointSummary;
+    configuration.endpoint = snapshot.endpointSummary.section(QLatin1Char(':'), 0, 0);
+    configuration.placeholder = ProductApiSession::EndpointSet::productionDefaults().host;
     configuration.editable
         = snapshot.state == Data::ControllerConnectionState::Disconnected
           || snapshot.state == Data::ControllerConnectionState::Failed;
+    configuration.endpointLabel = Tr::tr("Controller IP:");
+    configuration.endpointAccessibleName = Tr::tr("Controller IP address");
+    configuration.endpointDescription = Tr::tr(
+        "Enter only the IPv4 controller address. Control, Push, and Bulk always use ports "
+        "15200, 15201, and 15202.");
     return configuration;
 }
 
@@ -168,7 +160,7 @@ Utils::Result<> ProductApiConnectionProvider::setConnectionProfileEndpoint(
         return Utils::ResultError(Tr::tr("The selected controller profile is not available."));
 
     const Utils::Result<ProductApiSession::EndpointSet> endpoints
-        = endpointsFromBaseEndpoint(endpoint);
+        = endpointsFromControllerAddress(endpoint);
     if (!endpoints)
         return Utils::ResultError(endpoints.error());
     const Utils::Result<> configured = m_session->setEndpoints(*endpoints);
@@ -177,7 +169,7 @@ Utils::Result<> ProductApiConnectionProvider::setConnectionProfileEndpoint(
 
     if (m_persistEndpoint) {
         Utils::userSettings().setValue(
-            Constants::BASE_ENDPOINT_SETTINGS_KEY, endpoints->endpointSummary);
+            Constants::BASE_ENDPOINT_SETTINGS_KEY, endpoints->host);
     }
     emit connectionProfilesChanged();
     return {};

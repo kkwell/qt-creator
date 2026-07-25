@@ -232,22 +232,25 @@ CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *p
     setAccessibleDescription(
         Tr::tr("Configures a controller adapter and controls its connected EtherCAT Master."));
 
-    auto providerLabel = new QLabel(Tr::tr("Controller adapter:"), this);
-    providerLabel->setBuddy(m_provider);
-    auto profileLabel = new QLabel(Tr::tr("Connection profile:"), this);
-    profileLabel->setBuddy(m_profile);
-    auto endpointLabel = new QLabel(Tr::tr("Endpoint:"), this);
+    m_providerLabel = new QLabel(Tr::tr("Controller adapter:"), this);
+    m_providerLabel->setBuddy(m_provider);
+    m_profileLabel = new QLabel(Tr::tr("Connection profile:"), this);
+    m_profileLabel->setBuddy(m_profile);
+    m_endpointLabel = new QLabel(Tr::tr("Controller address:"), this);
+    m_endpointLabel->setObjectName("EtherCATCommunicationEndpointLabel");
+    m_endpointLabel->setBuddy(m_endpoint);
     m_provider->setObjectName("EtherCATCommunicationProvider");
     m_provider->setAccessibleName(Tr::tr("Controller adapter"));
     m_profile->setObjectName("EtherCATCommunicationProfile");
     m_profile->setAccessibleName(Tr::tr("Connection profile"));
     m_endpoint->setObjectName("EtherCATCommunicationEndpoint");
-    m_endpoint->setAccessibleName(Tr::tr("Controller IP address"));
+    m_endpoint->setAccessibleName(Tr::tr("Controller address"));
     m_endpoint->setClearButtonEnabled(true);
     m_saveEndpoint->setObjectName("EtherCATCommunicationSaveEndpoint");
-    m_saveEndpoint->setAccessibleName(Tr::tr("Save controller IP address"));
-    m_saveEndpoint->setToolTip(Tr::tr("Save the controller IP address or base endpoint."));
-    m_saveEndpoint->setIcon(Utils::Icons::SAVEFILE_TOOLBAR.icon());
+    m_saveEndpoint->setAccessibleName(Tr::tr("Save controller address and connect"));
+    m_saveEndpoint->setToolTip(
+        Tr::tr("Save the controller address, then connect and scan automatically."));
+    m_saveEndpoint->setIcon(Utils::Icons::LINK.icon());
     m_saveEndpoint->setAutoRaise(true);
 
     auto endpointWidget = new QWidget(this);
@@ -261,9 +264,9 @@ CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *p
     form->setContentsMargins(QMargins());
     form->setHorizontalSpacing(Utils::StyleHelper::SpacingTokens::GapHM);
     form->setVerticalSpacing(Utils::StyleHelper::SpacingTokens::GapVS);
-    form->addRow(providerLabel, m_provider);
-    form->addRow(profileLabel, m_profile);
-    form->addRow(endpointLabel, endpointWidget);
+    form->addRow(m_providerLabel, m_provider);
+    form->addRow(m_profileLabel, m_profile);
+    form->addRow(m_endpointLabel, endpointWidget);
 
     const auto configureButton =
         [](QToolButton *button, const char *objectName, Utils::Id actionId) {
@@ -556,6 +559,14 @@ void CommunicationPage::refresh()
     const Data::ControllerConnectionSnapshot snapshot = m_controller->controllerConnectionSnapshot(
         scope);
     const bool locked = m_controller->controllerConnectionSelectionLocked(scope);
+    const bool showProviderSelection
+        = providers.size() != 1 || !selection.providerExplicitlySelected;
+    const bool showProfileSelection
+        = profiles.size() != 1 || !selection.profileExplicitlySelected;
+    m_providerLabel->setVisible(showProviderSelection);
+    m_provider->setVisible(showProviderSelection);
+    m_profileLabel->setVisible(showProfileSelection);
+    m_profile->setVisible(showProfileSelection);
     m_provider->setEnabled(!locked && !providers.isEmpty());
     m_profile->setEnabled(!locked && provider && !profiles.isEmpty());
     updateSummary(snapshot, provider);
@@ -577,6 +588,14 @@ void CommunicationPage::refresh()
               ? m_controller->controllerConnectionProfileConfiguration(
                     scope, selection.profileId)
               : std::nullopt;
+    m_endpointLabel->setText(
+        configuration && !configuration->endpointLabel.isEmpty()
+            ? configuration->endpointLabel
+            : Tr::tr("Controller address:"));
+    m_endpoint->setAccessibleName(
+        configuration && !configuration->endpointAccessibleName.isEmpty()
+            ? configuration->endpointAccessibleName
+            : Tr::tr("Controller address"));
     if (!m_endpointDirty) {
         m_endpoint->setText(configuration ? configuration->endpoint : endpoint);
     }
@@ -590,7 +609,9 @@ void CommunicationPage::refresh()
         endpointEditable && m_endpointDirty && !m_endpoint->text().trimmed().isEmpty());
     m_endpoint->setToolTip(
         endpointEditable
-            ? Tr::tr("Enter an IPv4 address or IPv4:basePort. Push and Bulk use the next two ports.")
+            ? (configuration && !configuration->endpointDescription.isEmpty()
+                   ? configuration->endpointDescription
+                   : Tr::tr("Enter the controller address required by the selected adapter."))
             : m_endpoint->text());
 }
 
@@ -636,7 +657,7 @@ void CommunicationPage::saveEndpoint()
         = m_controller->setControllerConnectionProfileEndpoint(scope, profileId, endpoint);
     if (!result) {
         m_controller->writeControllerOutput(
-            Tr::tr("Cannot save the controller endpoint: %1").arg(result.error()),
+            Tr::tr("Cannot save the controller address: %1").arg(result.error()),
             ControllerOutputLevel::Error);
         return;
     }
@@ -648,9 +669,16 @@ void CommunicationPage::saveEndpoint()
         = savedConfiguration ? savedConfiguration->endpoint.trimmed() : QString();
     m_controller->writeControllerOutput(
         savedEndpoint.isEmpty()
-            ? Tr::tr("Controller endpoint saved.")
-            : Tr::tr("Controller endpoint saved: %1").arg(savedEndpoint));
+            ? Tr::tr("Controller address saved.")
+            : Tr::tr("Controller address saved: %1").arg(savedEndpoint));
     refresh();
+    if (!m_controller->canConnectController(scope))
+        return;
+    if (const Utils::Result<> connected = m_controller->connectController(scope); !connected) {
+        m_controller->writeControllerOutput(
+            Tr::tr("Cannot connect to the controller: %1").arg(connected.error()),
+            ControllerOutputLevel::Error);
+    }
 }
 
 void CommunicationPage::updateSummary(

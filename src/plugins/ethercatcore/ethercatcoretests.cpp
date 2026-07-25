@@ -938,12 +938,11 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
     QCOMPARE(Data::ControllerConnectionProfile(profile), profile);
     const Data::ControllerConnectionRequest request{scope, profile.id};
     QCOMPARE(Data::ControllerConnectionRequest(request), request);
-    Data::ControllerConnectionProfileConfiguration configuration{
-        profile.id,
-        profile.endpointSummary,
-        QStringLiteral("192.168.3.101:15200"),
-        true,
-    };
+    Data::ControllerConnectionProfileConfiguration configuration;
+    configuration.profileId = profile.id;
+    configuration.endpoint = profile.endpointSummary;
+    configuration.placeholder = QStringLiteral("192.168.3.101:15200");
+    configuration.editable = true;
     QCOMPARE(Data::ControllerConnectionProfileConfiguration(configuration), configuration);
     QVERIFY(!provider.connectionProfileConfiguration(scope, profile.id));
     const Utils::Result<> unsupportedEndpointEdit

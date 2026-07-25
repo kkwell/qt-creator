@@ -1243,18 +1243,18 @@ bool WorkbenchController::controllerConnectionSelectionLocked(
     return snapshot.scope == scope && connectionStateLocksSelection(snapshot.state);
 }
 
-bool WorkbenchController::canConnectSelectedController() const
+bool WorkbenchController::canConnectController(
+    const Data::ControllerConnectionScope &scope) const
 {
-    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
-    if (!scope)
+    if (!controllerConnectionScopeIsValid(scope))
         return false;
-    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
     if (!provider || !provider->isAvailable())
         return false;
-    const ControllerConnectionSelection selection = controllerConnectionSelection(*scope);
+    const ControllerConnectionSelection selection = controllerConnectionSelection(scope);
     if (!selection.providerExplicitlySelected || !selection.profileExplicitlySelected)
         return false;
-    const QList<Data::ControllerConnectionProfile> profiles = provider->connectionProfiles(*scope);
+    const QList<Data::ControllerConnectionProfile> profiles = provider->connectionProfiles(scope);
     const auto profile
         = std::find_if(profiles.cbegin(), profiles.cend(), [&selection](const auto &candidate) {
               return candidate.id == selection.profileId;
@@ -1264,6 +1264,12 @@ bool WorkbenchController::canConnectSelectedController() const
     const Data::ControllerConnectionState state = provider->connectionSnapshot().state;
     return state == Data::ControllerConnectionState::Disconnected
            || state == Data::ControllerConnectionState::Failed;
+}
+
+bool WorkbenchController::canConnectSelectedController() const
+{
+    const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
+    return scope && canConnectController(*scope);
 }
 
 bool WorkbenchController::canDisconnectSelectedController() const
@@ -1480,16 +1486,24 @@ Utils::Result<> WorkbenchController::executeQuickControllerControl(
     return executeControllerControl(scope, request);
 }
 
+Utils::Result<> WorkbenchController::connectController(
+    const Data::ControllerConnectionScope &scope)
+{
+    if (!controllerConnectionScopeIsValid(scope))
+        return Utils::ResultError(Tr::tr("Select a valid EtherCAT Master before connecting."));
+    if (!canConnectController(scope))
+        return Utils::ResultError(Tr::tr("The selected controller connection is not ready."));
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    QTC_ASSERT(provider, return Utils::ResultError(Tr::tr("The controller adapter is unavailable.")));
+    return provider->connectToController({scope, controllerConnectionSelection(scope).profileId});
+}
+
 Utils::Result<> WorkbenchController::connectSelectedController()
 {
     const std::optional<Data::ControllerConnectionScope> scope = selectedControllerConnectionScope();
     if (!scope)
         return Utils::ResultError(Tr::tr("Select a valid EtherCAT Master before connecting."));
-    if (!canConnectSelectedController())
-        return Utils::ResultError(Tr::tr("The selected controller connection is not ready."));
-    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
-    QTC_ASSERT(provider, return Utils::ResultError(Tr::tr("The controller adapter is unavailable.")));
-    return provider->connectToController({*scope, controllerConnectionSelection(*scope).profileId});
+    return connectController(*scope);
 }
 
 Utils::Result<> WorkbenchController::disconnectSelectedController()
@@ -2250,15 +2264,49 @@ void WorkbenchController::scheduleControllerAutoAcquire()
                 snapshot.sessionGeneration,
                 false,
                 false,
+                false,
+                false,
             };
         }
-        if (state.queued || state.attempted
+
+        if (snapshot.session->ownsControlLease) {
+            if (!state.acquireAttempted || snapshot.topology || state.discoveryQueued
+                || state.discoveryAttempted
+                || !canExecuteControllerControl(
+                    scope, Data::ControllerControlCommand::DiscoverTopology)) {
+                continue;
+            }
+
+            state.discoveryQueued = true;
+            const QPointer<Core::ControllerConnectionProvider> guardedProvider(provider);
+            const Data::NodeId expectedProfileId = selection.profileId;
+            const quint64 expectedGeneration = snapshot.sessionGeneration;
+            QMetaObject::invokeMethod(
+                this,
+                [this,
+                 guardedProvider,
+                 scope,
+                 expectedProfileId,
+                 expectedGeneration,
+                 providerEpoch] {
+                    executeControllerAutoDiscovery(
+                        guardedProvider,
+                        scope,
+                        expectedProfileId,
+                        expectedGeneration,
+                        providerEpoch);
+                },
+                Qt::QueuedConnection);
+            continue;
+        }
+
+        if (state.acquireQueued || state.acquireAttempted
             || !canExecuteControllerControl(
                 scope, Data::ControllerControlCommand::AcquireControl)) {
             continue;
         }
 
-        state.queued = true;
+        state.acquireQueued = true;
         const QPointer<Core::ControllerConnectionProvider> guardedProvider(provider);
         const Data::NodeId expectedProfileId = selection.profileId;
         const quint64 expectedGeneration = snapshot.sessionGeneration;
@@ -2294,13 +2342,14 @@ void WorkbenchController::executeControllerAutoAcquire(
     }
 
     auto state = m_controllerAutoAcquireStates.find(provider);
-    if (state == m_controllerAutoAcquireStates.end() || !state->queued || state->attempted
+    if (state == m_controllerAutoAcquireStates.end() || !state->acquireQueued
+        || state->acquireAttempted
         || state->providerEpoch != expectedProviderEpoch || state->scope != expectedScope
         || state->profileId != expectedProfileId
         || state->sessionGeneration != expectedGeneration) {
         return;
     }
-    state->queued = false;
+    state->acquireQueued = false;
 
     if (!controllerConnectionScopeIsValid(expectedScope)
         || controllerConnectionProvider(expectedScope) != provider) {
@@ -2318,7 +2367,7 @@ void WorkbenchController::executeControllerAutoAcquire(
         return;
     }
 
-    state->attempted = true;
+    state->acquireAttempted = true;
     Data::ControllerControlRequest request;
     request.command = Data::ControllerControlCommand::AcquireControl;
     const Utils::Result<> result = executeControllerControl(expectedScope, request);
@@ -2327,6 +2376,55 @@ void WorkbenchController::executeControllerAutoAcquire(
             Tr::tr("Cannot automatically acquire controller control: %1").arg(result.error()),
             ControllerOutputLevel::Error);
         return;
+    }
+}
+
+void WorkbenchController::executeControllerAutoDiscovery(
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionScope &expectedScope,
+    const Data::NodeId &expectedProfileId,
+    quint64 expectedGeneration,
+    quint64 expectedProviderEpoch)
+{
+    if (m_shuttingDown || !provider
+        || m_controllerConnectionProviderEpochs.value(provider) != expectedProviderEpoch) {
+        return;
+    }
+
+    auto state = m_controllerAutoAcquireStates.find(provider);
+    if (state == m_controllerAutoAcquireStates.end() || !state->discoveryQueued
+        || state->discoveryAttempted || !state->acquireAttempted
+        || state->providerEpoch != expectedProviderEpoch || state->scope != expectedScope
+        || state->profileId != expectedProfileId
+        || state->sessionGeneration != expectedGeneration) {
+        return;
+    }
+    state->discoveryQueued = false;
+
+    if (!controllerConnectionScopeIsValid(expectedScope)
+        || controllerConnectionProvider(expectedScope) != provider) {
+        return;
+    }
+    const ControllerConnectionSelection selection = controllerConnectionSelection(expectedScope);
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (!selection.providerExplicitlySelected || selection.providerId != provider->id()
+        || !selection.profileExplicitlySelected || selection.profileId != expectedProfileId
+        || snapshot.scope != expectedScope || snapshot.profileId != expectedProfileId
+        || snapshot.sessionGeneration != expectedGeneration || !snapshot.session
+        || !snapshot.session->ownsControlLease || snapshot.topology
+        || !canExecuteControllerControl(
+            expectedScope, Data::ControllerControlCommand::DiscoverTopology)) {
+        return;
+    }
+
+    state->discoveryAttempted = true;
+    Data::ControllerControlRequest request;
+    request.command = Data::ControllerControlCommand::DiscoverTopology;
+    const Utils::Result<> result = executeControllerControl(expectedScope, request);
+    if (!result) {
+        writeControllerOutput(
+            Tr::tr("Cannot automatically scan the EtherCAT bus: %1").arg(result.error()),
+            ControllerOutputLevel::Error);
     }
 }
 

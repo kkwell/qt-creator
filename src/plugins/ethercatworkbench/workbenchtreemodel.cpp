@@ -36,6 +36,7 @@ struct WorkbenchTreeModel::Node
     QStringList presentationCompactStatus;
     QStringList presentationDetails;
     Data::DeviceSummary device;
+    std::optional<Data::ControllerTopologySlave> controllerTopologySlave;
     Data::NodeId ownerSlaveId;
     Data::NodeId sourceId;
     StateMarker marker = StateMarker::None;
@@ -372,18 +373,26 @@ static QString controllerAlStateName(quint32 alState)
     return hexValue(alState, 4);
 }
 
-static Data::NodeId actualBusGroupId(const Data::NodeId &masterId)
-{
-    return derivedNodeId(masterId.toString() + ":actual-bus");
-}
-
-static Data::NodeId actualBusSlaveId(
+static Data::NodeId controllerBusSlaveId(
     const Data::NodeId &masterId, const Data::ControllerTopologySlave &slave)
 {
-    return derivedNodeId(QStringLiteral("%1:actual-bus:%2:%3")
+    return derivedNodeId(QStringLiteral("%1:bus-device:%2:%3")
                              .arg(masterId.toString())
                              .arg(slave.position)
                              .arg(slave.stationAddress));
+}
+
+static const Data::DeviceSummary *matchingDeviceSummary(
+    const QList<Data::DeviceSummary> &devices,
+    const Data::ControllerTopologySlave &slave)
+{
+    const auto match = std::find_if(
+        devices.cbegin(), devices.cend(), [&slave](const Data::DeviceSummary &device) {
+            return device.identity.vendorId == slave.vendorId
+                   && device.identity.productCode == slave.productCode
+                   && device.identity.revisionNumber == slave.revision;
+        });
+    return match == devices.cend() ? nullptr : &*match;
 }
 
 static QString controllerTopologyFingerprint(
@@ -831,6 +840,19 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
                 text += Tr::tr(
                     "\nDrag this ESI device to the active offline EtherCAT Master to append it.");
             }
+        } else if (node->controllerTopologySlave) {
+            const Data::ControllerTopologySlave &slave = *node->controllerTopologySlave;
+            text += Tr::tr(
+                        "\nPosition: %1\nStation: 0x%2\nAL state: %3"
+                        "\nVendor: 0x%4\nProduct: 0x%5\nRevision: 0x%6"
+                        "\nSerial: 0x%7")
+                        .arg(slave.position)
+                        .arg(slave.stationAddress, 4, 16, QLatin1Char('0'))
+                        .arg(controllerAlStateName(slave.alState))
+                        .arg(slave.vendorId, 8, 16, QLatin1Char('0'))
+                        .arg(slave.productCode, 8, 16, QLatin1Char('0'))
+                        .arg(slave.revision, 8, 16, QLatin1Char('0'))
+                        .arg(slave.serial, 8, 16, QLatin1Char('0'));
         } else if (
             node->kind == Core::WorkbenchNodeKind::Master
             && node->id == m_dropTargetMasterId) {
@@ -1068,10 +1090,6 @@ void WorkbenchTreeModel::syncDevices(const QList<Data::DeviceSummary> &devices)
         return left.id.toString() < right.id.toString();
     });
     m_devices = desired;
-    if (!m_repositoryNode) {
-        rebuild();
-        return;
-    }
 
     const QModelIndex repositoryIndex = indexForNode(m_repositoryNode);
     auto &current = m_repositoryNode->children;
@@ -1381,6 +1399,14 @@ std::optional<Data::OfflineSlaveConfiguration> WorkbenchTreeModel::offlineSlave(
     return std::nullopt;
 }
 
+std::optional<Data::ControllerTopologySlave> WorkbenchTreeModel::controllerTopologySlave(
+    const Data::NodeId &nodeId) const
+{
+    const Node *node = findNode(nodeId);
+    return node ? node->controllerTopologySlave
+                : std::optional<Data::ControllerTopologySlave>();
+}
+
 QList<Data::OfflineSlaveConfiguration> WorkbenchTreeModel::offlineSlavesForMaster(
     const Data::NodeId &masterId) const
 {
@@ -1592,7 +1618,14 @@ void WorkbenchTreeModel::updateProviderPresentation()
             marker = StateMarker::Error;
         }
         raiseMarker(master, marker);
-        master->issue = marker == StateMarker::Error;
+        if (connection.topology && connection.topology->result) {
+            raiseMarker(master, StateMarker::Error);
+            appendPresentationDetail(
+                master,
+                Tr::tr("The controller bus scan returned result %1.")
+                    .arg(connection.topology->result));
+        }
+        master->issue = master->marker == StateMarker::Error;
 
         for (Node *ancestor = master->parent; ancestor && ancestor != m_root.get();
              ancestor = ancestor->parent) {
@@ -1606,20 +1639,19 @@ void WorkbenchTreeModel::updateProviderPresentation()
 
         if (!connection.topology)
             continue;
-        Node *actualBus = findNode(actualBusGroupId(connection.scope.masterId));
-        if (actualBus) {
-            appendPresentationStatus(
-                actualBus,
-                Tr::tr("%n online device(s)", nullptr, int(connection.topology->respondingCount)),
-                Tr::tr("%n online", nullptr, int(connection.topology->respondingCount)));
-            raiseMarker(
-                actualBus, connection.topology->result ? StateMarker::Error : StateMarker::Healthy);
-            actualBus->issue = connection.topology->result != 0;
-        }
         for (const Data::ControllerTopologySlave &slave : connection.topology->slaves) {
-            Node *actualSlave = findNode(actualBusSlaveId(connection.scope.masterId, slave));
-            if (!actualSlave)
+            const auto topologyNode = std::find_if(
+                master->children.cbegin(),
+                master->children.cend(),
+                [&slave](const std::unique_ptr<Node> &child) {
+                    return child->controllerTopologySlave
+                           && child->controllerTopologySlave->position == slave.position
+                           && child->controllerTopologySlave->stationAddress
+                                  == slave.stationAddress;
+                });
+            if (topologyNode == master->children.cend())
                 continue;
+            Node *actualSlave = topologyNode->get();
             appendPresentationStatus(
                 actualSlave,
                 Tr::tr("Online | AL %1").arg(controllerAlStateName(slave.alState)),
@@ -1634,7 +1666,10 @@ void WorkbenchTreeModel::updateProviderPresentation()
                     .arg(hexValue(slave.serial, 8)));
             raiseMarker(
                 actualSlave,
-                (slave.alState & 0x08) ? StateMarker::Healthy : StateMarker::Information);
+                slave.flags ? StateMarker::Warning
+                            : ((slave.alState & 0x08) ? StateMarker::Healthy
+                                                    : StateMarker::Information));
+            actualSlave->issue = slave.flags != 0;
         }
     }
 
@@ -2025,6 +2060,10 @@ void WorkbenchTreeModel::rebuild()
                     return usePhysicalSlaveOrder && left->id.toString() < right->id.toString();
                 });
             for (const Data::ProjectNodeSnapshot *snapshot : std::as_const(children)) {
+                if (snapshot->kind == Data::ProjectNodeKind::Target) {
+                    self(self, parent, snapshot->id);
+                    continue;
+                }
                 const Core::WorkbenchNodeKind kind = workbenchKind(snapshot->kind);
                 auto node = makeNode(
                     parent,
@@ -2039,8 +2078,10 @@ void WorkbenchTreeModel::rebuild()
                         project.slaves.cbegin(),
                         project.slaves.cend(),
                         [snapshot](const auto &slave) { return slave.id == snapshot->id; });
-                    if (offlineSlave != project.slaves.cend())
+                    if (offlineSlave != project.slaves.cend()) {
                         node->ownerSlaveId = offlineSlave->id;
+                        node->sourceId = offlineSlave->deviceDescriptionId;
+                    }
                 }
                 parent->children.push_back(std::move(node));
                 self(self, nodePointer, snapshot->id);
@@ -2093,26 +2134,80 @@ void WorkbenchTreeModel::rebuild()
                     if (controllerConnection != m_controllerConnections.cend()) {
                         const Data::ControllerTopologySnapshot &topology
                             = *controllerConnection->topology;
-                        auto actualBus = makeNode(
-                            nodePointer,
-                            actualBusGroupId(nodePointer->id),
-                            project.id,
-                            Core::WorkbenchNodeKind::Modules,
-                            Tr::tr("Actual bus"),
-                            Tr::tr("%n responding device(s)", nullptr, int(topology.respondingCount)),
-                            Tr::tr("%n responding", nullptr, int(topology.respondingCount)));
-                        Node *actualBusPointer = actualBus.get();
                         for (const Data::ControllerTopologySlave &slave : topology.slaves) {
-                            actualBusPointer->children.push_back(makeNode(
-                                actualBusPointer,
-                                actualBusSlaveId(nodePointer->id, slave),
-                                project.id,
-                                Core::WorkbenchNodeKind::Module,
-                                Tr::tr("Bus device %1").arg(slave.position),
-                                Tr::tr("Online | AL %1").arg(controllerAlStateName(slave.alState)),
-                                Tr::tr("AL %1").arg(controllerAlStateName(slave.alState))));
+                            const auto configured = std::find_if(
+                                project.slaves.cbegin(),
+                                project.slaves.cend(),
+                                [nodePointer, &slave](const Data::OfflineSlaveConfiguration &entry) {
+                                    return entry.masterId == nodePointer->id
+                                           && entry.position == int(slave.position);
+                                });
+                            Node *deviceNode = nullptr;
+                            if (configured != project.slaves.cend()) {
+                                const auto configuredNode = std::find_if(
+                                    nodePointer->children.begin(),
+                                    nodePointer->children.end(),
+                                    [&configured](const std::unique_ptr<Node> &child) {
+                                        return child->id == configured->id
+                                               && child->kind
+                                                      == Core::WorkbenchNodeKind::ConfiguredSlave;
+                                    });
+                                if (configuredNode != nodePointer->children.end())
+                                    deviceNode = configuredNode->get();
+                            }
+                            if (!deviceNode) {
+                                const Data::DeviceSummary *esiDevice = matchingDeviceSummary(
+                                    m_devices, slave);
+                                const QString deviceName
+                                    = esiDevice && !esiDevice->name.isEmpty()
+                                          ? esiDevice->name
+                                          : Tr::tr("EtherCAT device");
+                                auto onlineDevice = makeNode(
+                                    nodePointer,
+                                    controllerBusSlaveId(nodePointer->id, slave),
+                                    project.id,
+                                    Core::WorkbenchNodeKind::Module,
+                                    Tr::tr("[%1] %2").arg(slave.position).arg(deviceName),
+                                    Tr::tr("Online | AL %1")
+                                        .arg(controllerAlStateName(slave.alState)),
+                                    Tr::tr("AL %1").arg(controllerAlStateName(slave.alState)));
+                                if (esiDevice) {
+                                    onlineDevice->device = *esiDevice;
+                                    onlineDevice->sourceId = esiDevice->id;
+                                }
+                                deviceNode = onlineDevice.get();
+                                nodePointer->children.push_back(std::move(onlineDevice));
+                            }
+                            deviceNode->controllerTopologySlave = slave;
                         }
-                        nodePointer->children.push_back(std::move(actualBus));
+
+                        const auto physicalPosition =
+                            [&project](const std::unique_ptr<Node> &child) {
+                                if (child->controllerTopologySlave)
+                                    return int(child->controllerTopologySlave->position);
+                                const auto offline = std::find_if(
+                                    project.slaves.cbegin(),
+                                    project.slaves.cend(),
+                                    [&child](const Data::OfflineSlaveConfiguration &entry) {
+                                        return entry.id == child->id;
+                                    });
+                                return offline == project.slaves.cend()
+                                           ? std::numeric_limits<int>::max()
+                                           : offline->position;
+                            };
+                        std::stable_sort(
+                            nodePointer->children.begin(),
+                            nodePointer->children.end(),
+                            [&physicalPosition](
+                                const std::unique_ptr<Node> &left,
+                                const std::unique_ptr<Node> &right) {
+                                return physicalPosition(left) < physicalPosition(right);
+                            });
+                        nodePointer->baseStatus = Tr::tr(
+                            "%n detected device(s)", nullptr, int(topology.slaves.size()));
+                        nodePointer->baseCompactStatus = nodePointer->baseStatus;
+                        nodePointer->status = nodePointer->baseStatus;
+                        nodePointer->compactStatus = nodePointer->baseCompactStatus;
                     }
                     if (slaveCount == 0) {
                         nodePointer->children.push_back(makeNode(

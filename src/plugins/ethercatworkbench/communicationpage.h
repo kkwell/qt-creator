@@ -45,6 +45,9 @@ private:
 
     QPointer<WorkbenchController> m_controller;
     Core::PropertyPageContext m_context;
+    QLabel *m_providerLabel = nullptr;
+    QLabel *m_profileLabel = nullptr;
+    QLabel *m_endpointLabel = nullptr;
     QComboBox *m_provider = nullptr;
     QComboBox *m_profile = nullptr;
     QLineEdit *m_endpoint = nullptr;

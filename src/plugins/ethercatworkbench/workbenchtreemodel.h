@@ -102,6 +102,8 @@ public:
     Data::NodeId sourceNodeId(const Data::NodeId &nodeId) const;
     std::optional<Data::OfflineSlaveConfiguration> offlineSlave(
         const Data::NodeId &nodeId) const;
+    std::optional<Data::ControllerTopologySlave> controllerTopologySlave(
+        const Data::NodeId &nodeId) const;
     QList<Data::OfflineSlaveConfiguration> offlineSlavesForMaster(
         const Data::NodeId &masterId) const;
 

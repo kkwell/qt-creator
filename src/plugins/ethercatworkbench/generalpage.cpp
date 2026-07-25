@@ -42,6 +42,19 @@ static QString hexValue(quint64 value, int width)
     return QString("0x%1").arg(value, width, 16, QLatin1Char('0'));
 }
 
+static QString controllerAlStateName(quint32 alState)
+{
+    if (alState & 0x08)
+        return "OP";
+    if (alState & 0x04)
+        return "SAFEOP";
+    if (alState & 0x02)
+        return "PREOP";
+    if (alState & 0x01)
+        return "INIT";
+    return hexValue(alState, 4);
+}
+
 static int structuralNodeOrdinal(
     const Data::ProjectSnapshot &project, Data::ProjectNodeKind kind, const Data::NodeId &nodeId)
 {
@@ -439,8 +452,8 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     m_tree->setObjectName("EtherCATWorkbenchPageTree");
     m_tree->setAccessibleName(Tr::tr("EtherCAT General properties"));
     m_tree->setAccessibleDescription(Tr::tr(
-        "Read-only offline property and value pairs for the selected EtherCAT node. No "
-        "controller, network, or physical hardware is accessed."));
+        "Read-only engineering and live identity values for the selected EtherCAT node. "
+        "Viewing these values does not perform a controller operation."));
     m_tree->setAlternatingRowColors(true);
     m_tree->setRootIsDecorated(false);
     m_tree->setUniformRowHeights(true);
@@ -492,12 +505,22 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
     clearNameFeedback();
     const std::optional<Data::OfflineSlaveConfiguration> offlineSlave
         = m_controller ? m_controller->treeModel()->offlineSlave(context.nodeId) : std::nullopt;
+    const std::optional<Data::ControllerTopologySlave> controllerSlave
+        = m_controller
+              ? m_controller->treeModel()->controllerTopologySlave(context.nodeId)
+              : std::nullopt;
     const std::optional<Data::DeviceDescription> device =
-        [this, &context, &offlineSlave]() -> std::optional<Data::DeviceDescription> {
+        [this, &context, &offlineSlave, &controllerSlave]()
+        -> std::optional<Data::DeviceDescription> {
         if (!m_controller || !m_controller->deviceRepository())
             return std::nullopt;
         if (context.nodeKind == Core::WorkbenchNodeKind::Device)
             return m_controller->deviceRepository()->device(context.nodeId);
+        if (controllerSlave) {
+            const Data::NodeId sourceId = m_controller->treeModel()->sourceNodeId(context.nodeId);
+            if (!sourceId.isNull())
+                return m_controller->deviceRepository()->device(sourceId);
+        }
         if (offlineSlave && !offlineSlave->deviceDescriptionId.isNull()) {
             return m_controller->deviceRepository()->device(offlineSlave->deviceDescriptionId);
         }
@@ -548,7 +571,9 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
     m_updating = true;
 
     reset(
-        Tr::tr("Offline properties for %1").arg(context.displayName),
+        controllerSlave
+            ? Tr::tr("Live EtherCAT identity and scan state for %1").arg(context.displayName)
+            : Tr::tr("Offline properties for %1").arg(context.displayName),
         preserveName ? previousName : nullptr);
     if (context.nodeKind == Core::WorkbenchNodeKind::DeviceRepository) {
         m_summary->hide();
@@ -651,7 +676,21 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
         addRow({Tr::tr("Node ID"), context.nodeId.toString()});
     }
 
-    if (offlineSlave) {
+    if (controllerSlave) {
+        addRow({Tr::tr("Position"), QString::number(controllerSlave->position)});
+        addRow(
+            {Tr::tr("Station address"), hexValue(controllerSlave->stationAddress, 4)});
+        addRow(
+            {Tr::tr("AL state"), controllerAlStateName(controllerSlave->alState)});
+        addRow({Tr::tr("Flags"), hexValue(controllerSlave->flags, 8)});
+        addRow({Tr::tr("Vendor ID"), hexValue(controllerSlave->vendorId, 8)});
+        addRow({Tr::tr("Product Code"), hexValue(controllerSlave->productCode, 8)});
+        addRow({Tr::tr("Revision"), hexValue(controllerSlave->revision, 8)});
+        addRow({Tr::tr("Serial Number"), hexValue(controllerSlave->serial, 8)});
+        addRow(
+            {Tr::tr("ESI match"),
+             device ? device->summary.name : Tr::tr("No matching ESI device")});
+    } else if (offlineSlave) {
         if (!configuredSlave)
             addRow({Tr::tr("Owner slave"), offlineSlave->name});
         addRow({Tr::tr("Position"), QString::number(offlineSlave->position)});
@@ -799,8 +838,8 @@ void GeneralPage::addRow(const QStringList &values)
         const QString header = m_tree->headerItem()->text(column);
         const QString description
             = Tr::tr(
-                  "%1 column. Property: %2. Complete value: %3. Read-only offline Workbench "
-                  "data. No controller, network, or physical hardware is accessed.")
+                  "%1 column. Property: %2. Complete value: %3. Read-only Workbench data. "
+                  "Viewing this value does not perform a controller operation.")
                   .arg(header, property, describedValue);
         item->setData(column, Qt::AccessibleTextRole, display);
         item->setData(column, Qt::AccessibleDescriptionRole, description);

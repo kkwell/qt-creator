@@ -8,6 +8,7 @@
 #include "ethercatpage.h"
 #include "ethercatworkbenchconstants.h"
 #include "ethercatworkbenchtr.h"
+#include "esirepositorypage.h"
 #include "generalpage.h"
 #include "processdatapage.h"
 #include "startuppage.h"
@@ -108,7 +109,10 @@ QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
         QList<Core::PropertyPageDescriptor> result
             = {{Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100},
                {Utils::Id(Constants::COMMUNICATION_PAGE_ID), Tr::tr("Communication"), 150},
-               {Utils::Id(Constants::ETHERCAT_PAGE_ID), Tr::tr("EtherCAT"), 200}};
+               {Utils::Id(Constants::ETHERCAT_PAGE_ID), Tr::tr("EtherCAT"), 200},
+               {Utils::Id(Constants::ESI_REPOSITORY_PAGE_ID),
+                Tr::tr("Device Descriptions"),
+                600}};
         if ((!m_controller || !m_controller->diagnosticsAvailable())
             && shouldExposeDiagnosticsFallback(m_controller)) {
             result.append(
@@ -171,6 +175,7 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
         Constants::COE_ONLINE_PAGE_ID,
         Constants::STARTUP_PAGE_ID,
         Constants::DC_PAGE_ID,
+        Constants::ESI_REPOSITORY_PAGE_ID,
         Constants::ONLINE_PAGE_ID,
         Constants::DIAGNOSTICS_PAGE_ID,
     };
@@ -208,6 +213,12 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
     }
     if (pageId == Utils::Id(Constants::DC_PAGE_ID)) {
         auto page = new DcPage(m_controller, parent);
+        page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
+        return page;
+    }
+    if (pageId == Utils::Id(Constants::ESI_REPOSITORY_PAGE_ID)) {
+        auto page = new EsiRepositoryPage(
+            m_controller ? m_controller->deviceRepository() : nullptr, parent);
         page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
         return page;
     }
@@ -252,6 +263,11 @@ void BuiltinPropertyPageProvider::updatePage(
     if (pageId == Utils::Id(Constants::DC_PAGE_ID)) {
         if (auto dcPage = qobject_cast<DcPage *>(page))
             dcPage->setContext(context);
+        return;
+    }
+    if (pageId == Utils::Id(Constants::ESI_REPOSITORY_PAGE_ID)) {
+        if (page)
+            static_cast<EsiRepositoryPage *>(page)->refresh();
         return;
     }
     BuiltinPageWidget *widget = pageWidget(page);

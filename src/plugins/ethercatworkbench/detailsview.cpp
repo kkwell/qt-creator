@@ -624,10 +624,10 @@ void DetailsView::updateEmptyState()
                               && !m_controller->projectService()->projects().isEmpty();
     m_emptyState->setText(
         haveProjects
-            ? Tr::tr("Select an EtherCAT node in the tree to inspect its offline details.")
-            : Tr::tr("No EtherCAT project is open. Create or open an EtherCAT project "
-                     "(.ecatproject), or select Device Repository to inspect local ESI "
-                     "descriptions."));
+            ? Tr::tr("Select an EtherCAT node in the tree to inspect and configure it.")
+            : Tr::tr(
+                  "No EtherCAT project is open. Create or open an EtherCAT project "
+                  "(.ecatproject)."));
     m_emptyState->setAccessibleDescription(m_emptyState->text());
 }
 

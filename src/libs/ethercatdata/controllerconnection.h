@@ -220,6 +220,9 @@ struct ETHERCATDATA_EXPORT ControllerConnectionProfileConfiguration
     QString endpoint;
     QString placeholder;
     bool editable = false;
+    QString endpointLabel;
+    QString endpointAccessibleName;
+    QString endpointDescription;
 
     friend bool operator==(
         const ControllerConnectionProfileConfiguration &,

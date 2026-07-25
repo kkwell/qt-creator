@@ -40,6 +40,7 @@ const char PROCESS_DATA_PAGE_ID[] = "EtherCAT.Workbench.ProcessData";
 const char COE_ONLINE_PAGE_ID[] = "EtherCAT.Workbench.CoEOnline";
 const char STARTUP_PAGE_ID[] = "EtherCAT.Workbench.Startup";
 const char DC_PAGE_ID[] = "EtherCAT.Workbench.DC";
+const char ESI_REPOSITORY_PAGE_ID[] = "EtherCAT.Workbench.EsiRepository";
 const char ONLINE_PAGE_ID[] = "EtherCAT.Workbench.Online";
 const char DIAGNOSTICS_PAGE_ID[] = "EtherCAT.Workbench.Diagnostics";
 
