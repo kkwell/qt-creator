@@ -1,10 +1,10 @@
 {
   "graphVersion": 1,
-  "updatedAt": "2026-07-25T00:00:00Z",
+  "updatedAt": "2026-07-25T12:00:00Z",
   "baseline": {
     "repository": "qt-creator",
     "branch": "embed-labs",
-    "commit": "e9f64673da80545b6927f28fc9ba26a18caa88da",
+    "commit": "857320a7e2018974fb702b32d92361fcd4dee635",
     "remoteImported": false,
     "hardwareContacted": false
   },
@@ -110,8 +110,9 @@
     {
       "id": "ISSUE-AI-CONTROLLER-002",
       "type": "issue",
-      "status": "unresolved",
+      "status": "superseded",
       "title": "Bridge authenticated read-only Product API snapshots into the Gateway",
+      "supersededBy": "ISSUE-IDE-AUTOMATION-GATEWAY-001",
       "constraints": [
         "loopback-controller-simulation-first",
         "no-scan",
@@ -121,6 +122,43 @@
         "no-start",
         "no-motion"
       ]
+    },
+    {
+      "id": "ISSUE-IDE-AUTOMATION-GATEWAY-001",
+      "type": "issue",
+      "status": "implemented-offline",
+      "title": "Embed the mock-only Automation Gateway in the IDE",
+      "commitRef": "SELF",
+      "scopeRoot": "src/plugins/ethercatautomationgateway",
+      "realHardwareAllowed": false,
+      "acceptanceOwnerThread": "019f690f-8a0a-7002-a272-38f7b13e853e"
+    },
+    {
+      "id": "service.ide-automation-snapshot",
+      "type": "in-process-service",
+      "status": "implemented",
+      "stateOwnership": "ide-workbench",
+      "providerPointersExposed": false
+    },
+    {
+      "id": "gateway.ide.mock-readonly",
+      "type": "capability",
+      "status": "implemented-offline",
+      "defaultEnabled": false,
+      "loopbackOnly": true,
+      "mockOnly": true,
+      "readOnly": true,
+      "hardwareContacted": false
+    },
+    {
+      "id": "evidence.ide-gateway.qt",
+      "type": "test-evidence",
+      "status": "passed",
+      "suite": "EtherCATAutomationGateway",
+      "passed": 11,
+      "failed": 0,
+      "environment": "macOS-arm64-offscreen-loopback",
+      "hardwareVerified": false
     }
   ],
   "edges": [
@@ -191,9 +229,34 @@
     },
     {
       "from": "ISSUE-AI-CONTROLLER-001",
-      "relation": "next",
-      "to": "ISSUE-AI-CONTROLLER-002"
+      "relation": "superseded-next-by",
+      "to": "ISSUE-IDE-AUTOMATION-GATEWAY-001"
+    },
+    {
+      "from": "ISSUE-IDE-AUTOMATION-GATEWAY-001",
+      "relation": "implements",
+      "to": "service.ide-automation-snapshot"
+    },
+    {
+      "from": "ISSUE-IDE-AUTOMATION-GATEWAY-001",
+      "relation": "implements",
+      "to": "gateway.ide.mock-readonly"
+    },
+    {
+      "from": "gateway.ide.mock-readonly",
+      "relation": "serves",
+      "to": "protocol.controller-tools.v1"
+    },
+    {
+      "from": "gateway.ide.mock-readonly",
+      "relation": "reads",
+      "to": "service.ide-automation-snapshot"
+    },
+    {
+      "from": "ISSUE-IDE-AUTOMATION-GATEWAY-001",
+      "relation": "qualified-by",
+      "to": "evidence.ide-gateway.qt"
     }
   ],
-  "nextIssue": "ISSUE-AI-CONTROLLER-002"
+  "nextIssue": null
 }

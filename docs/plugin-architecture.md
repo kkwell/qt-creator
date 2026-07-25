@@ -31,6 +31,7 @@ documentation, review, and local-commit gates.
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 | 7 | `EtherCATProductApiPlugin` | In progress | First vendor adapter: Product API transport, three-channel lifecycle, exclusive lease, typed commissioning/runtime commands, and bounded v1.9 compatibility |
+| 8 | `EtherCATAutomationGatewayPlugin` | Offline/Mock-only | Dedicated closed MCP and REST facade over fresh Workbench semantic values; default off and loopback-only |
 
 `EtherCATData` is an infrastructure library, not a feature container. Its
 offline configuration contract is persisted by EtherCATProject format version
@@ -52,6 +53,8 @@ Qt Creator Core / ExtensionSystem / Utils / ProjectExplorer
                          WorkbenchPlugin
                           ^          ^
                    ScanPlugin  DiagnosticsPlugin
+                          ^
+             AutomationGatewayPlugin
 ```
 
 Dependencies are one-way and explicit. Core cannot depend on Project,
@@ -95,6 +98,7 @@ The Core API exposes narrowly scoped services and extension points:
 - scan provider
 - diagnostics provider
 - property-page provider
+- automation service (fresh value snapshots, no Provider pointers)
 
 The exact discovery, lifecycle, and typed Project contract is frozen in
 `docs/ethercat-core-api.md`. It contains no network transport, message IDs,

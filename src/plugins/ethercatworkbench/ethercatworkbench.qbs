@@ -47,6 +47,8 @@ QtcPlugin {
         "workbenchcontroller.h",
         "workbenchcommandstrip.cpp",
         "workbenchcommandstrip.h",
+        "workbenchautomationservice.cpp",
+        "workbenchautomationservice.h",
         "workbenchmode.cpp",
         "workbenchmode.h",
         "workbenchnavigation.cpp",

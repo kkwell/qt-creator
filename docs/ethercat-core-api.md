@@ -43,6 +43,14 @@ structured errors. It does not require three channels or a session protocol,
 and it contains no socket, ECAP frame, message number, CRC, byte layout,
 network thread, state-changing command, or bus scan.
 
+The automation revision adds `AutomationService`, a read-only value-snapshot
+boundary implemented by Workbench. Each call rebuilds
+`AutomationContextSnapshot` from the authoritative Project service and current
+Workbench-selected connection, Scan, Diagnostics, and device-description
+values. The aggregate contains no Provider pointer or operation callback.
+Automation consumers therefore cannot construct a second project, topology,
+connection, lease, or controller state machine.
+
 The offline-configuration revision adds typed Process Data, Startup, and DC
 values plus UI-independent validation and process-image preview algorithms.
 The Project format-version-2 revision embeds those values in each offline slave
@@ -97,6 +105,7 @@ The plugin registers these owned objects in the Qt Creator object pool during
 | `SelectionService` | Stores one current `NodeId` and emits old and new IDs only when the value changes. |
 | `StateService` | Stores one status contribution per stable source ID and exposes the highest severity. |
 | `ProviderRegistry` | Tracks typed EtherCAT Providers dynamically as Qt Creator adds and removes them from the object pool; removal unlinks the Provider before the registry emits its removal signal. |
+| `AutomationService` | Returns fresh, provider-neutral Project/Master context values for read-only IDE automation; Workbench owns the only implementation. |
 
 Consumers retrieve services with
 `ExtensionSystem::PluginManager::getObject<T>()`. They must not construct a

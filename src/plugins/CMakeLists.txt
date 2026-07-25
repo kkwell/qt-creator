@@ -91,6 +91,7 @@ add_subdirectory(cmakeprojectmanager)
 
 # Level 7:
 add_subdirectory(ethercatworkbench)
+add_subdirectory(ethercatautomationgateway)
 add_subdirectory(android)
 add_subdirectory(autotest)
 add_subdirectory(axivion)

@@ -847,6 +847,44 @@ DiagnosticsStatusPresentation WorkbenchController::diagnosticsStatusPresentation
     return m_diagnosticsStatus;
 }
 
+std::optional<Data::ScanResult> WorkbenchController::automationScanResult(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (m_shuttingDown)
+        return std::nullopt;
+    Core::Provider *provider
+        = preferredOptionalProvider(m_providerRegistry, Core::ProviderKind::Scan, nullptr);
+    const auto scan = qobject_cast<Core::ScanProvider *>(provider);
+    if (!scan || !scan->isAvailable())
+        return std::nullopt;
+    const std::optional<Data::ScanResult> result = scan->lastScanResult();
+    if (!result || result->snapshot.projectId != scope.projectId
+        || result->snapshot.masterId != scope.masterId) {
+        return std::nullopt;
+    }
+    return result;
+}
+
+std::optional<Data::DiagnosticsSnapshot>
+WorkbenchController::automationDiagnosticsSnapshot(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (m_shuttingDown)
+        return std::nullopt;
+    Core::Provider *provider
+        = preferredOptionalProvider(m_providerRegistry, Core::ProviderKind::Diagnostics, nullptr);
+    const auto diagnostics = qobject_cast<Core::DiagnosticsProvider *>(provider);
+    if (!diagnostics || !diagnostics->isAvailable())
+        return std::nullopt;
+    const std::optional<Data::DiagnosticsSnapshot> snapshot
+        = diagnostics->latestSnapshot();
+    if (!snapshot || snapshot->projectId != scope.projectId
+        || snapshot->masterId != scope.masterId) {
+        return std::nullopt;
+    }
+    return snapshot;
+}
+
 QList<Core::ControllerConnectionProvider *> WorkbenchController::controllerConnectionProviders() const
 {
     QList<Core::ControllerConnectionProvider *> result;

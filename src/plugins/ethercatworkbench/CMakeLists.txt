@@ -35,6 +35,8 @@ add_qtc_plugin(EtherCATWorkbench
     workbenchcontroller.h
     workbenchcommandstrip.cpp
     workbenchcommandstrip.h
+    workbenchautomationservice.cpp
+    workbenchautomationservice.h
     workbenchmode.cpp
     workbenchmode.h
     workbenchnavigation.cpp

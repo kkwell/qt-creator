@@ -9,6 +9,8 @@ QtcPlugin {
     Depends { name: "Core" }
 
     files: [
+        "automationservice.cpp",
+        "automationservice.h",
         "ethercatcore_global.h",
         "ethercatcoreconstants.h",
         "ethercatcoreplugin.cpp",

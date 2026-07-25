@@ -98,6 +98,10 @@ public:
     OptionalProviderPresentation scanProviderPresentation() const;
     OptionalProviderPresentation diagnosticsProviderPresentation() const;
     DiagnosticsStatusPresentation diagnosticsStatusPresentation() const;
+    std::optional<Data::ScanResult> automationScanResult(
+        const Data::ControllerConnectionScope &scope) const;
+    std::optional<Data::DiagnosticsSnapshot> automationDiagnosticsSnapshot(
+        const Data::ControllerConnectionScope &scope) const;
     QList<Core::ControllerConnectionProvider *> controllerConnectionProviders() const;
     static std::optional<Data::ControllerConnectionScope> uniqueMasterControllerConnectionScope(
         const Data::ProjectSnapshot &project);

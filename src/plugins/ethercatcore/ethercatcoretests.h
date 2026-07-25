@@ -12,6 +12,7 @@ class EtherCATCoreTests final : public QObject
 
 private slots:
     void testMetadataAndServices();
+    void testAutomationServiceValueLookup();
     void testMockUiVisibility();
     void testNodeIdRoundTrip();
     void testProjectSnapshotValueSemantics();

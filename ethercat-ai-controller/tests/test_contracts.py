@@ -106,7 +106,7 @@ class ContractTests(unittest.TestCase):
             )
         )
 
-    def test_knowledge_graph_binds_one_issue_and_one_successor(self) -> None:
+    def test_knowledge_graph_binds_completed_gateway_issue(self) -> None:
         graph = load_json(
             self.repository.root / "knowledge-graph" / "graph.json"
         )
@@ -121,8 +121,8 @@ class ContractTests(unittest.TestCase):
             for node in graph["nodes"]
             if node["type"] == "issue" and node["status"] == "unresolved"
         ]
-        self.assertEqual(unresolved, ["ISSUE-AI-CONTROLLER-002"])
-        self.assertEqual(graph["nextIssue"], unresolved[0])
+        self.assertEqual(unresolved, [])
+        self.assertIsNone(graph["nextIssue"])
         for node in graph["nodes"]:
             if node["type"] == "data-format":
                 self.assertTrue((self.repository.root / node["path"]).is_file())

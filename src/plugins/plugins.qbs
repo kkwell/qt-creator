@@ -49,6 +49,7 @@ Project {
         "debugger/debugger.qbs",
         "debugger/ptracepreload.qbs",
         "ethercatworkbench/ethercatworkbench.qbs",
+        "ethercatautomationgateway/ethercatautomationgateway.qbs",
         "ethercatscan/ethercatscan.qbs",
         "ethercatdiagnostics/ethercatdiagnostics.qbs",
         "effectcomposer/effectcomposer.qbs",

@@ -6,6 +6,7 @@
 #ifdef WITH_TESTS
 #include "ethercatworkbenchtests.h"
 #endif
+#include "workbenchautomationservice.h"
 #include "workbenchcontroller.h"
 #include "workbenchmode.h"
 #include "workbenchnavigation.h"
@@ -142,6 +143,7 @@ private:
     void shutdown();
 
     std::unique_ptr<WorkbenchController> m_controller;
+    std::unique_ptr<WorkbenchAutomationService> m_automationService;
     std::unique_ptr<BuiltinPropertyPageProvider> m_builtinPages;
     std::unique_ptr<WorkbenchNavigationFactory> m_navigationFactory;
     std::unique_ptr<WorkbenchMode> m_mode;
@@ -151,6 +153,7 @@ private:
     QPointer<QAction> m_stopControllerAction;
     bool m_controllerControlContextActive = false;
     bool m_providerRegistered = false;
+    bool m_automationServiceRegistered = false;
     bool m_shuttingDown = false;
 };
 
@@ -166,6 +169,9 @@ void EtherCATWorkbenchPlugin::initialize()
     QTC_ASSERT(stateService, return);
 
     m_controller = std::make_unique<WorkbenchController>();
+    m_automationService = std::make_unique<WorkbenchAutomationService>(m_controller.get());
+    ExtensionSystem::PluginManager::addObject(m_automationService.get());
+    m_automationServiceRegistered = true;
     connect(
         m_controller.get(),
         &WorkbenchController::controllerOutputRequested,
@@ -966,6 +972,11 @@ void EtherCATWorkbenchPlugin::shutdown()
     }
     m_mode.reset();
     m_navigationFactory.reset();
+    if (m_automationServiceRegistered) {
+        ExtensionSystem::PluginManager::removeObject(m_automationService.get());
+        m_automationServiceRegistered = false;
+    }
+    m_automationService.reset();
     if (m_providerRegistered) {
         ExtensionSystem::PluginManager::removeObject(m_builtinPages.get());
         m_providerRegistered = false;

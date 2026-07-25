@@ -2,6 +2,7 @@
 
 #include "ethercatcoretests.h"
 
+#include "automationservice.h"
 #include "ethercatcoreconstants.h"
 #include "ethercatcoresettings.h"
 #include "ethercatcoretr.h"
@@ -31,6 +32,21 @@
 
 namespace EtherCAT::Core::Internal {
 
+class TestAutomationService final : public AutomationService
+{
+public:
+    using AutomationService::AutomationService;
+
+    QList<AutomationContextSnapshot> contexts() const final
+    {
+        ++readCount;
+        return snapshots;
+    }
+
+    mutable int readCount = 0;
+    QList<AutomationContextSnapshot> snapshots;
+};
+
 class TestDeviceImportJob final : public DeviceImportJob
 {
 public:
@@ -51,6 +67,31 @@ public:
         finish(result);
     }
 };
+
+void EtherCATCoreTests::testAutomationServiceValueLookup()
+{
+    TestAutomationService service;
+    AutomationContextSnapshot snapshot;
+    snapshot.scope = {Data::NodeId::create(), Data::NodeId::create()};
+    snapshot.controllerId = automationControllerId(snapshot.scope);
+    snapshot.identitySource = "ide-project-master";
+    snapshot.project.id = snapshot.scope.projectId;
+    snapshot.project.valid = true;
+    snapshot.connection.scope = snapshot.scope;
+    snapshot.mock = true;
+    service.snapshots = {snapshot};
+
+    const std::optional<AutomationContextSnapshot> first
+        = service.context(snapshot.controllerId);
+    QVERIFY(first);
+    QCOMPARE(*first, snapshot);
+    QCOMPARE(service.readCount, 1);
+
+    service.snapshots.clear();
+    QVERIFY(!service.context(snapshot.controllerId));
+    QCOMPARE(service.readCount, 2);
+    QCOMPARE(snapshot.identitySource, "ide-project-master");
+}
 
 class TestPropertyPageProvider final : public PropertyPageProvider
 {

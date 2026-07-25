@@ -2,6 +2,8 @@ add_qtc_plugin(EtherCATCore
   DEPENDS EtherCATData Qt::Widgets Utils
   PLUGIN_DEPENDS Core
   SOURCES
+    automationservice.cpp
+    automationservice.h
     ethercatcore_global.h
     ethercatcoreconstants.h
     ethercatcoreplugin.cpp
