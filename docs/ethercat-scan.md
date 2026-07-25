@@ -12,6 +12,12 @@ The UI and every output message use explicit `Mock` or `MOCK SCAN` wording. A
 future real implementation must be a separate Provider plugin implementing the
 public in-process `ScanProvider` contract.
 
+The local Mock UI is hidden by default in production. Its Provider, actions,
+tree nodes, pages, and status contribution are registered only in a
+`WITH_TESTS` build or when the process is started explicitly with
+`QTC_ETHER_CAT_ENABLE_MOCK_UI=1`. This opt-in does not authorize a physical
+scan or turn Mock results into controller evidence.
+
 ## Dependencies and ownership
 
 The plugin has hard metadata dependencies on `Core`, `EtherCATCore`,
@@ -179,3 +185,23 @@ starts a new Mock scan successfully, and preserves Project and Undo/Redo data.
 
 Current build, focused/regression test, plugin-enabled/disabled startup, and
 known test limitations are recorded in `docs/compatibility-matrix.md`.
+
+The current English regression passed 11 Scan tests and 226 tests across the
+seven EtherCAT suites, with one ProductApi hardware test skipped and no
+failures. The
+`WITH_TESTS=OFF` product build passed with exactly 17 plugin dylibs, and all
+EtherCAT Simplified Chinese contexts contain no unfinished or empty
+translations. The generic Start and explicit DC real-controller lifecycle
+results belong to ProductApi/Workbench and do not qualify this Mock-only Scan
+Provider. Windows `ISSUE-RT-009` isolated the current `cfg812` failure after a
+successful LRW cycle: `OP_REQUEST` for station `0x1002` returned WKC 0/1 on
+all four attempts. `cfg812` was not activated, no FreeRun lifecycle ran, and
+the controller was safely rolled back to `B/12/813`, `OP_SAFE`, WKC 11/11,
+faults 0, and lease 0. The Windows session continues with `ISSUE-API-016` and
+the smallest isolated fix.
+
+The earlier single-instance product observation showed Workbench, Simplified
+Chinese, hidden production Mock UI, and the compact tree. The current
+endpoint/output round used widget-level Workbench and passive-output tests
+without connecting a controller. These observations do not qualify this
+Mock-only Scan Provider.

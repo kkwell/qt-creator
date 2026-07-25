@@ -43,17 +43,19 @@ EtherCATScanPlugin::~EtherCATScanPlugin()
 
 void EtherCATScanPlugin::initialize()
 {
-    m_scanProvider = std::make_unique<MockScanProvider>();
-    ExtensionSystem::PluginManager::addObject(m_scanProvider.get());
-    m_scanProviderRegistered = true;
+    if (Core::isMockUiEnabled()) {
+        m_scanProvider = std::make_unique<MockScanProvider>();
+        ExtensionSystem::PluginManager::addObject(m_scanProvider.get());
+        m_scanProviderRegistered = true;
 
-    m_workflow = std::make_unique<ScanWorkflow>(m_scanProvider.get());
-    m_workflow->setupActions();
+        m_workflow = std::make_unique<ScanWorkflow>(m_scanProvider.get());
+        m_workflow->setupActions();
 
-    m_pageProvider = std::make_unique<ScanPropertyPageProvider>(
-        m_scanProvider.get(), m_workflow.get());
-    ExtensionSystem::PluginManager::addObject(m_pageProvider.get());
-    m_pageProviderRegistered = true;
+        m_pageProvider = std::make_unique<ScanPropertyPageProvider>(
+            m_scanProvider.get(), m_workflow.get());
+        ExtensionSystem::PluginManager::addObject(m_pageProvider.get());
+        m_pageProviderRegistered = true;
+    }
 
 #ifdef WITH_TESTS
     addTest<EtherCATScanTests>();

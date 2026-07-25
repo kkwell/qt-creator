@@ -913,6 +913,7 @@ Result<> ProjectExplorerPlugin::initialize(const QStringList &arguments)
     addTestCreator(createMsvcParserTest);
     addTestCreator(createOutputParserTest);
     addTestCreator(createProjectTest);
+    addTestCreator(createProjectWindowTest);
     addTestCreator(createRunWorkerConflictTest);
     addTestCreator(createSanitizerOutputParserTest);
     addTestCreator(createSessionTest);
@@ -3388,6 +3389,19 @@ void ProjectExplorerPlugin::runRunConfiguration(RunConfiguration *rc,
 QList<RunControl *> ProjectExplorerPlugin::allRunControls()
 {
     return appOutputPane().allRunControls();
+}
+
+void ProjectExplorerPlugin::postApplicationOutput(Id channelId,
+                                                  const QString &displayName,
+                                                  const QString &message,
+                                                  OutputFormat format)
+{
+    appOutputPane().postApplicationOutput(channelId, displayName, message, format);
+}
+
+void ProjectExplorerPlugin::showApplicationOutput(Id channelId)
+{
+    appOutputPane().showApplicationOutput(channelId);
 }
 
 void ProjectExplorerPluginPrivate::projectAdded(Project *pro)

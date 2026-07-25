@@ -22,11 +22,22 @@ public:
 
     QList<Data::ControllerConnectionProfile> connectionProfiles(
         const Data::ControllerConnectionScope &scope) const override;
+    std::optional<Data::ControllerConnectionProfileConfiguration>
+    connectionProfileConfiguration(
+        const Data::ControllerConnectionScope &scope,
+        const Data::NodeId &profileId) const override;
+    Utils::Result<> setConnectionProfileEndpoint(
+        const Data::ControllerConnectionScope &scope,
+        const Data::NodeId &profileId,
+        const QString &endpoint) override;
     Data::ControllerConnectionSnapshot connectionSnapshot() const override;
 
     Utils::Result<> connectToController(const Data::ControllerConnectionRequest &request) override;
     Utils::Result<> disconnectFromController() override;
     Utils::Result<> refreshController() override;
+    bool supportsControlCommand(Data::ControllerControlCommand command) const override;
+    Utils::Result<> executeControlCommand(
+        const Data::ControllerControlRequest &request) override;
 
     void shutdown();
 
@@ -38,6 +49,7 @@ private:
     Data::NodeId defaultProfileId() const;
 
     ProductApiSession *m_session = nullptr;
+    bool m_persistEndpoint = false;
 };
 
 } // namespace EtherCAT::ProductApi::Internal

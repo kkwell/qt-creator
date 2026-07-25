@@ -25,6 +25,7 @@ public:
     const Data::ProjectSnapshot &snapshot() const;
     EtherCATProjectDocument *document() const;
     Utils::Result<> renameProject(const QString &name);
+    bool needsConfiguration() const final;
 
 signals:
     void snapshotChanged(const EtherCAT::Data::ProjectSnapshot &snapshot);

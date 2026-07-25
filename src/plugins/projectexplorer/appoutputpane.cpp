@@ -374,8 +374,12 @@ private:
     QList<QPair<QString, QLoggingCategory *>> m_categories;
 };
 
-AppOutputPane::RunControlTab::RunControlTab(RunControl *runControl, Core::OutputWindow *w) :
-    runControl(runControl), window(w)
+AppOutputPane::RunControlTab::RunControlTab(RunControl *runControl,
+                                           Core::OutputWindow *w,
+                                           Id passiveChannelId) :
+    runControl(runControl),
+    window(w),
+    passiveChannelId(passiveChannelId)
 {
     if (runControl && w) {
         w->reset();
@@ -518,6 +522,19 @@ AppOutputPane::RunControlTab *AppOutputPane::tabFor(const RunControl *rc)
     return &*it;
 }
 
+AppOutputPane::RunControlTab *AppOutputPane::tabFor(Id passiveChannelId)
+{
+    const auto it = std::find_if(
+        m_runControlTabs.begin(),
+        m_runControlTabs.end(),
+        [passiveChannelId](RunControlTab &tab) {
+            return tab.passiveChannelId == passiveChannelId;
+        });
+    if (it == m_runControlTabs.end())
+        return nullptr;
+    return &*it;
+}
+
 AppOutputPane::RunControlTab *AppOutputPane::tabFor(const QWidget *outputWindow)
 {
     const auto it = std::find_if(m_runControlTabs.begin(), m_runControlTabs.end(),
@@ -621,81 +638,103 @@ void AppOutputPane::ensureWindowVisible(Core::OutputWindow *ow)
     m_tabWidget->setCurrentWidget(ow);
 }
 
-void AppOutputPane::createNewOutputWindow(RunControl *rc)
+void AppOutputPane::createNewOutputWindow(RunControl *rc,
+                                          Id passiveChannelId,
+                                          const QString &displayName)
 {
-    QTC_ASSERT(rc, return);
+    QTC_ASSERT(rc || passiveChannelId.isValid(), return);
+    QTC_ASSERT(!rc || !passiveChannelId.isValid(), return);
 
-    auto runControlChanged = [this, rc] {
-        RunControl *current = currentRunControl();
-        if (current && current == rc)
-            enableButtons(current); // RunControl::isRunning() cannot be trusted in signal handler.
-    };
-
-    connect(rc, &RunControl::aboutToStart, this, runControlChanged);
-    connect(rc, &RunControl::started, this, runControlChanged);
-    connect(rc, &RunControl::stopped, this, [this, rc] {
-        QTimer::singleShot(0, this, [this, rc] { runControlFinished(rc); });
-        for (const RunControlTab &t : std::as_const(m_runControlTabs)) {
-            if (t.runControl == rc) {
-                if (t.window)
-                    t.window->flush();
-                break;
-            }
-        }
-    });
-    connect(rc, &RunControl::applicationProcessHandleChanged,
-            this, &AppOutputPane::enableDefaultButtons);
-    connect(rc, &RunControl::appendMessage,
-            this, [this, rc](const QString &out, OutputFormat format) {
-                appendMessage(rc, out, format);
-            });
-
-    // First look if we can reuse a tab
-    const CommandLine thisCommand = rc->commandLine();
-    const FilePath thisWorkingDirectory = rc->workingDirectory();
-    const Environment thisEnvironment = rc->environment();
-    const auto tab = std::find_if(
-        m_runControlTabs.begin(), m_runControlTabs.end(), [&](const RunControlTab &tab) {
-            if (!tab.runControl || !tab.runControl->isStopped())
-                return false;
-            return thisCommand == tab.runControl->commandLine()
-                   && thisWorkingDirectory == tab.runControl->workingDirectory()
-                   && thisEnvironment == tab.runControl->environment();
-        });
-    const auto updateOutputFileName = [this](int index, RunControl *rc) {
+    const QString outputDisplayName = rc
+        ? rc->displayName()
+        : displayName.isEmpty() ? passiveChannelId.toString() : displayName;
+    const auto updateOutputFileName = [this](int index, const QString &name) {
         qobject_cast<OutputWindow *>(m_tabWidget->widget(index))
-        //: file name suggested for saving application output, %1 = run configuration display name
-        ->setOutputFileNameHint(Tr::tr("application-output-%1.txt").arg(rc->displayName()));
+            //: file name suggested for saving application output, %1 = output channel display name
+            ->setOutputFileNameHint(Tr::tr("application-output-%1.txt").arg(name));
     };
-    const auto updateOutputFiltersWidget = [this](int index, RunControl *rc) {
-        const auto aspect = rc->aspectData<EnableCategoriesFilterAspect>();
+    const auto updateOutputFiltersWidget = [this](int index, RunControl *runControl) {
+        const auto aspect = runControl
+            ? runControl->aspectData<EnableCategoriesFilterAspect>()
+            : nullptr;
         const bool filterEnabled = aspect && aspect->value;
         m_tabWidget->filtersWidget(index)->setVisible(filterEnabled);
-        qobject_cast<AppOutputWindow *>(m_tabWidget->widget(index))->setFilterEnabled(filterEnabled);
+        qobject_cast<AppOutputWindow *>(m_tabWidget->widget(index))
+            ->setFilterEnabled(filterEnabled);
     };
-    if (tab != m_runControlTabs.end()) {
-        // Reuse this tab
-        if (tab->runControl)
-            delete tab->runControl;
 
-        tab->runControl = rc;
-        tab->window->reset();
-        rc->setupFormatter(tab->window->outputFormatter());
+    if (rc) {
+        auto runControlChanged = [this, rc] {
+            RunControl *current = currentRunControl();
+            if (current && current == rc) {
+                // RunControl::isRunning() cannot be trusted in the signal handler.
+                enableButtons(current);
+            }
+        };
 
-        handleOldOutput(tab->window);
+        connect(rc, &RunControl::aboutToStart, this, runControlChanged);
+        connect(rc, &RunControl::started, this, runControlChanged);
+        connect(rc, &RunControl::stopped, this, [this, rc] {
+            QTimer::singleShot(0, this, [this, rc] { runControlFinished(rc); });
+            for (const RunControlTab &t : std::as_const(m_runControlTabs)) {
+                if (t.runControl == rc) {
+                    if (t.window)
+                        t.window->flush();
+                    break;
+                }
+            }
+        });
+        connect(rc,
+                &RunControl::applicationProcessHandleChanged,
+                this,
+                &AppOutputPane::enableDefaultButtons);
+        connect(rc,
+                &RunControl::appendMessage,
+                this,
+                [this, rc](const QString &out, OutputFormat format) {
+                    appendMessage(rc, out, format);
+                });
 
-        // Update the title.
-        const int tabIndex = m_tabWidget->indexOf(tab->window);
-        QTC_ASSERT(tabIndex != -1, return);
-        m_tabWidget->setTabText(tabIndex, rc->displayName());
-        updateOutputFileName(tabIndex, rc);
-        updateOutputFiltersWidget(tabIndex, rc);
+        // First look if we can reuse a stopped run-control tab. Passive output
+        // tabs have no RunControl and are therefore never considered here.
+        const CommandLine thisCommand = rc->commandLine();
+        const FilePath thisWorkingDirectory = rc->workingDirectory();
+        const Environment thisEnvironment = rc->environment();
+        const auto tab = std::find_if(
+            m_runControlTabs.begin(),
+            m_runControlTabs.end(),
+            [&](const RunControlTab &candidate) {
+                if (!candidate.runControl || !candidate.runControl->isStopped())
+                    return false;
+                return thisCommand == candidate.runControl->commandLine()
+                       && thisWorkingDirectory == candidate.runControl->workingDirectory()
+                       && thisEnvironment == candidate.runControl->environment();
+            });
+        if (tab != m_runControlTabs.end()) {
+            // Reuse this tab
+            if (tab->runControl)
+                delete tab->runControl;
 
-        tab->window->scrollToBottom();
-        qCDebug(appOutputLog) << "AppOutputPane::createNewOutputWindow: Reusing tab"
-                              << tabIndex << "for" << rc;
-        return;
+            tab->runControl = rc;
+            tab->window->reset();
+            rc->setupFormatter(tab->window->outputFormatter());
+
+            handleOldOutput(tab->window);
+
+            // Update the title.
+            const int tabIndex = m_tabWidget->indexOf(tab->window);
+            QTC_ASSERT(tabIndex != -1, return);
+            m_tabWidget->setTabText(tabIndex, outputDisplayName);
+            updateOutputFileName(tabIndex, outputDisplayName);
+            updateOutputFiltersWidget(tabIndex, rc);
+
+            tab->window->scrollToBottom();
+            qCDebug(appOutputLog) << "AppOutputPane::createNewOutputWindow: Reusing tab"
+                                  << tabIndex << "for" << rc;
+            return;
+        }
     }
+
     // Create new
     static int counter = 0;
     Id contextId = Id(C_APP_OUTPUT).withSuffix(counter++);
@@ -865,11 +904,15 @@ void AppOutputPane::createNewOutputWindow(RunControl *rc)
     }.attachTo(cv);
     // clang-format on
 
-    m_runControlTabs.push_back(RunControlTab(rc, ow));
-    m_tabWidget->addTab(ow, cv, rc->displayName());
-    updateOutputFileName(m_tabWidget->count() - 1, rc);
+    m_runControlTabs.push_back(RunControlTab(rc, ow, passiveChannelId));
+    m_tabWidget->addTab(ow, cv, outputDisplayName);
+    updateOutputFileName(m_tabWidget->count() - 1, outputDisplayName);
     updateOutputFiltersWidget(m_tabWidget->count() - 1, rc);
-    qCDebug(appOutputLog) << "AppOutputPane::createNewOutputWindow: Adding tab for" << rc;
+    if (rc)
+        qCDebug(appOutputLog) << "AppOutputPane::createNewOutputWindow: Adding tab for" << rc;
+    else
+        qCDebug(appOutputLog) << "AppOutputPane::createNewOutputWindow: Adding passive tab for"
+                              << passiveChannelId;
     updateCloseActions();
     setFilteringEnabled(m_tabWidget->count() > 0);
 }
@@ -896,9 +939,45 @@ void AppOutputPane::updateFromSettings()
     }
 }
 
+void AppOutputPane::postApplicationOutput(Id channelId,
+                                          const QString &displayName,
+                                          const QString &message,
+                                          OutputFormat format)
+{
+    QTC_ASSERT(channelId.isValid(), return);
+
+    RunControlTab *tab = tabFor(channelId);
+    if (!tab) {
+        createNewOutputWindow(nullptr, channelId, displayName);
+        tab = tabFor(channelId);
+    }
+    QTC_ASSERT(tab, return);
+    QTC_ASSERT(!tab->runControl, return);
+
+    appendMessage(tab, message, format);
+}
+
+void AppOutputPane::showApplicationOutput(Id channelId)
+{
+    QTC_ASSERT(channelId.isValid(), return);
+
+    const RunControlTab *tab = tabFor(channelId);
+    if (!tab || !tab->window)
+        return;
+
+    m_tabWidget->setCurrentWidget(tab->window);
+    popup(IOutputPane::NoModeSwitch | IOutputPane::WithFocus);
+}
+
 void AppOutputPane::appendMessage(RunControl *rc, const QString &out, OutputFormat format)
 {
-    RunControlTab * const tab = tabFor(rc);
+    appendMessage(tabFor(rc), out, format);
+}
+
+void AppOutputPane::appendMessage(RunControlTab *tab,
+                                  const QString &out,
+                                  OutputFormat format)
+{
     if (!tab)
         return;
 
@@ -1052,10 +1131,10 @@ void AppOutputPane::closeTab(int tabIndex, CloseTabMode closeTabMode)
     }
 
     m_tabWidget->removeTab(tabIndex);
+    Utils::erase(m_runControlTabs, [window](const RunControlTab &t) {
+        return t.window == window;
+    });
     delete window;
-
-    Utils::erase(m_runControlTabs, [runControl](const RunControlTab &t) {
-        return t.runControl == runControl; });
     if (runControl) {
         if (runControl->isRunning()) {
             connect(runControl, &RunControl::stopped, runControl, &QObject::deleteLater);

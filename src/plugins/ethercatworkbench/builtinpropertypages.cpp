@@ -77,6 +77,14 @@ static BuiltinPageWidget *pageWidget(QWidget *page)
                : nullptr;
 }
 
+static bool shouldExposeDiagnosticsFallback(WorkbenchController *controller)
+{
+    return Core::isMockUiEnabled()
+           || (controller
+               && controller->diagnosticsProviderPresentation().state
+                      != OptionalProviderState::Absent);
+}
+
 BuiltinPropertyPageProvider::BuiltinPropertyPageProvider(
     WorkbenchController *controller, QObject *parent)
     : Core::PropertyPageProvider(
@@ -101,7 +109,8 @@ QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
             = {{Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100},
                {Utils::Id(Constants::COMMUNICATION_PAGE_ID), Tr::tr("Communication"), 150},
                {Utils::Id(Constants::ETHERCAT_PAGE_ID), Tr::tr("EtherCAT"), 200}};
-        if (!m_controller || !m_controller->diagnosticsAvailable()) {
+        if ((!m_controller || !m_controller->diagnosticsAvailable())
+            && shouldExposeDiagnosticsFallback(m_controller)) {
             result.append(
                 {Utils::Id(Constants::ONLINE_PAGE_ID), Tr::tr("Online"), 800});
             result.append(
@@ -119,8 +128,10 @@ QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
                {Utils::Id(Constants::COE_ONLINE_PAGE_ID), Tr::tr("CoE Online"), 350},
                {Utils::Id(Constants::STARTUP_PAGE_ID), Tr::tr("Startup"), 400},
                {Utils::Id(Constants::DC_PAGE_ID), Tr::tr("DC"), 500}};
-        if (!m_controller || !m_controller->diagnosticsAvailable())
+        if ((!m_controller || !m_controller->diagnosticsAvailable())
+            && shouldExposeDiagnosticsFallback(m_controller)) {
             result.append({Utils::Id(Constants::ONLINE_PAGE_ID), Tr::tr("Online"), 800});
+        }
         return result;
     }
     case Kind::ProcessInputs:
@@ -137,6 +148,8 @@ QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
     case Kind::Diagnostics:
         if (m_controller && m_controller->diagnosticsAvailable())
             return {};
+        if (!shouldExposeDiagnosticsFallback(m_controller))
+            return {};
         return {{Utils::Id(Constants::DIAGNOSTICS_PAGE_ID), Tr::tr("Diagnostics"), 900}};
     default:
         return {};
@@ -145,6 +158,11 @@ QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
 
 QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *parent)
 {
+    if ((pageId == Utils::Id(Constants::ONLINE_PAGE_ID)
+         || pageId == Utils::Id(Constants::DIAGNOSTICS_PAGE_ID))
+        && !shouldExposeDiagnosticsFallback(m_controller)) {
+        return nullptr;
+    }
     const QList<Utils::Id> knownPages = {
         Constants::GENERAL_PAGE_ID,
         Constants::COMMUNICATION_PAGE_ID,

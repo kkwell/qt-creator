@@ -12,6 +12,7 @@ class EtherCATWorkbenchTests final : public QObject
 
 private slots:
     void testMetadataModeActionsAndProvider();
+    void testQuickControllerScopeResolution();
     void testModeCommandStripMirrorsRegisteredActions();
     void testNavigationCommandsUseActionManager();
     void testOfflineTopologyEditingWorkflow();
@@ -41,7 +42,7 @@ private slots:
     void testEtherCATRepositoryEmptyState();
     void testEditableConfiguredSlaveEtherCATWorkflow();
     void testStatusBarTracksStateService();
-    void testStatusBarTracksControllerConnection();
+    void testStatusBarIgnoresControllerConnection();
     void testStatusBarTracksPreferredDiagnosticsMode();
     void testTreeModelLargeIncrementalUpdate();
     void testConfiguredSlaveStateIcon();
@@ -93,7 +94,12 @@ private slots:
     void testDynamicPropertyProviderRemoval();
     void testControllerCommunicationSelectionAndScope();
     void testControllerCommunicationPagePresentation();
+    void testControllerCommunicationControlWorkflow();
+    void testControllerCommunicationAutoAcquire();
+    void testControllerCommunicationAutoAcquireAcrossProjects();
+    void testControllerProjectRemovalSafetyCleanup();
     void testControllerCommunicationLifecycleAndProviderRemoval();
+    void testProductionMockUiBoundary();
     void testOptionalProviderAvailabilityPresentation();
     void testDynamicOptionalProviders();
 };

@@ -27,6 +27,11 @@
 #include <extensionsystem/iplugin.h>
 #include <extensionsystem/pluginmanager.h>
 
+#include <projectexplorer/projectexplorerconstants.h>
+#include <projectexplorer/projectexplorericons.h>
+#include <projectexplorer/projectexplorer.h>
+#include <projectexplorer/projectmanager.h>
+
 #include <utils/qtcassert.h>
 #include <utils/stringutils.h>
 #include <utils/utilsicons.h>
@@ -35,10 +40,85 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPointer>
+#include <QStringList>
 
 #include <memory>
 
 namespace EtherCAT::Workbench::Internal {
+
+static QString quickConnectionStateName(Data::ControllerConnectionState state)
+{
+    using State = Data::ControllerConnectionState;
+    switch (state) {
+    case State::Disconnected:
+        return Tr::tr("Disconnected");
+    case State::Connecting:
+        return Tr::tr("Connecting");
+    case State::Handshaking:
+        return Tr::tr("Handshaking");
+    case State::Connected:
+        return Tr::tr("Connected");
+    case State::Degraded:
+        return Tr::tr("Degraded");
+    case State::Disconnecting:
+        return Tr::tr("Disconnecting");
+    case State::Failed:
+        return Tr::tr("Failed");
+    }
+    return Tr::tr("Unknown");
+}
+
+static QString quickServiceStateName(Data::ControllerServiceState state)
+{
+    using State = Data::ControllerServiceState;
+    switch (state) {
+    case State::Unknown:
+        return Tr::tr("Unknown");
+    case State::Boot:
+        return Tr::tr("Boot");
+    case State::Configuring:
+        return Tr::tr("Configuring");
+    case State::SafeOperational:
+        return Tr::tr("Safe operational");
+    case State::OperationalSafe:
+        return Tr::tr("Operational safe");
+    case State::Running:
+        return Tr::tr("Running");
+    case State::Stopping:
+        return Tr::tr("Stopping");
+    case State::Fault:
+        return Tr::tr("Fault");
+    case State::Recovering:
+        return Tr::tr("Recovering");
+    case State::Shutdown:
+        return Tr::tr("Shutdown");
+    case State::Paused:
+        return Tr::tr("Paused");
+    }
+    return Tr::tr("Unknown");
+}
+
+static QString quickControllerStateDescription(
+    const Data::ControllerConnectionSnapshot &snapshot)
+{
+    QStringList details{
+        Tr::tr("Connection: %1").arg(quickConnectionStateName(snapshot.state)),
+    };
+    if (snapshot.controllerState) {
+        details.append(
+            Tr::tr("Service: %1")
+                .arg(quickServiceStateName(snapshot.controllerState->serviceState)));
+    }
+    if (snapshot.session) {
+        details.append(
+            snapshot.session->ownsControlLease
+                ? Tr::tr("Control: exclusive")
+                : snapshot.session->controlLeaseOwnerSessionId
+                      ? Tr::tr("Control: owned by another session")
+                      : Tr::tr("Control: not acquired"));
+    }
+    return details.join(QStringLiteral("; "));
+}
 
 class EtherCATWorkbenchPlugin final : public ExtensionSystem::IPlugin
 {
@@ -53,6 +133,12 @@ public:
 
 private:
     void setupActions();
+    void setupQuickControllerActions();
+    std::optional<Data::ControllerConnectionScope> activeControllerControlScope() const;
+    QString activeControllerControlScopeUnavailableReason() const;
+    void updateControllerControlContext();
+    void updateQuickControllerActions();
+    void triggerQuickControllerAction(ControllerQuickControlAction action);
     void shutdown();
 
     std::unique_ptr<WorkbenchController> m_controller;
@@ -60,6 +146,10 @@ private:
     std::unique_ptr<WorkbenchNavigationFactory> m_navigationFactory;
     std::unique_ptr<WorkbenchMode> m_mode;
     QPointer<WorkbenchStatusWidget> m_statusWidget;
+    QPointer<QAction> m_runControllerAction;
+    QPointer<QAction> m_debugControllerAction;
+    QPointer<QAction> m_stopControllerAction;
+    bool m_controllerControlContextActive = false;
     bool m_providerRegistered = false;
     bool m_shuttingDown = false;
 };
@@ -76,6 +166,21 @@ void EtherCATWorkbenchPlugin::initialize()
     QTC_ASSERT(stateService, return);
 
     m_controller = std::make_unique<WorkbenchController>();
+    connect(
+        m_controller.get(),
+        &WorkbenchController::controllerOutputRequested,
+        this,
+        [](const QString &message, ControllerOutputLevel level) {
+            const Utils::OutputFormat format
+                = level == ControllerOutputLevel::Error
+                      ? Utils::ErrorMessageFormat
+                      : Utils::NormalMessageFormat;
+            ProjectExplorer::ProjectExplorerPlugin::postApplicationOutput(
+                Utils::Id(Constants::CONTROLLER_OUTPUT_CHANNEL_ID),
+                Tr::tr("EtherCAT Controller"),
+                message + QLatin1Char('\n'),
+                format);
+        });
     m_builtinPages = std::make_unique<BuiltinPropertyPageProvider>(m_controller.get());
     ExtensionSystem::PluginManager::addObject(m_builtinPages.get());
     m_providerRegistered = true;
@@ -100,6 +205,302 @@ ExtensionSystem::IPlugin::ShutdownFlag EtherCATWorkbenchPlugin::aboutToShutdown(
     return SynchronousShutdown;
 }
 
+void EtherCATWorkbenchPlugin::setupQuickControllerActions()
+{
+    m_runControllerAction = new QAction(
+        ProjectExplorer::Icons::RUN.icon(), Tr::tr("Run Controller"), this);
+    m_runControllerAction->setObjectName("EtherCATWorkbenchRunController");
+    ::Core::Command *runCommand = ::Core::ActionManager::registerAction(
+        m_runControllerAction,
+        ProjectExplorer::Constants::RUN,
+        ::Core::Context(Constants::CONTROLLER_CONTROL_CONTEXT_ID));
+    runCommand->setAttribute(::Core::Command::CA_UpdateText);
+    runCommand->setAttribute(::Core::Command::CA_UpdateIcon);
+
+    m_debugControllerAction = new QAction(
+        ProjectExplorer::Icons::DEBUG_START.icon(), Tr::tr("Pause / Resume Controller"), this);
+    m_debugControllerAction->setObjectName("EtherCATWorkbenchDebugController");
+    ::Core::Command *debugCommand = ::Core::ActionManager::registerAction(
+        m_debugControllerAction,
+        Constants::DEBUG_ACTION_ID,
+        ::Core::Context(Constants::CONTROLLER_CONTROL_CONTEXT_ID));
+    debugCommand->setAttribute(::Core::Command::CA_UpdateText);
+    debugCommand->setAttribute(::Core::Command::CA_UpdateIcon);
+
+    m_stopControllerAction = new QAction(
+        Utils::Icons::STOP_SMALL.icon(), Tr::tr("Controlled Stop"), this);
+    m_stopControllerAction->setObjectName("EtherCATWorkbenchControlledStop");
+    ::Core::Command *stopCommand = ::Core::ActionManager::registerAction(
+        m_stopControllerAction,
+        Constants::CONTROLLED_STOP_ACTION_ID,
+        ::Core::Context(Constants::CONTROLLER_CONTROL_CONTEXT_ID));
+    stopCommand->setAttribute(::Core::Command::CA_Hide);
+    stopCommand->setAttribute(::Core::Command::CA_UpdateText);
+    stopCommand->setAttribute(::Core::Command::CA_UpdateIcon);
+    ::Core::ModeManager::addAction(stopCommand->action(), 80);
+
+    connect(
+        m_runControllerAction,
+        &QAction::triggered,
+        this,
+        [this] { triggerQuickControllerAction(ControllerQuickControlAction::Run); });
+    connect(
+        m_debugControllerAction,
+        &QAction::triggered,
+        this,
+        [this] { triggerQuickControllerAction(ControllerQuickControlAction::Debug); });
+    connect(
+        m_stopControllerAction,
+        &QAction::triggered,
+        this,
+        [this] { triggerQuickControllerAction(ControllerQuickControlAction::Stop); });
+
+    connect(
+        m_controller.get(),
+        &WorkbenchController::controllerConnectionChanged,
+        this,
+        &EtherCATWorkbenchPlugin::updateQuickControllerActions);
+    connect(
+        m_controller->projectService(),
+        &Core::ProjectService::projectAdded,
+        this,
+        [this] { updateQuickControllerActions(); });
+    connect(
+        m_controller->projectService(),
+        &Core::ProjectService::projectChanged,
+        this,
+        [this] { updateQuickControllerActions(); });
+    connect(
+        m_controller->projectService(),
+        &Core::ProjectService::projectAboutToBeRemoved,
+        this,
+        [this] {
+            QMetaObject::invokeMethod(
+                this, &EtherCATWorkbenchPlugin::updateQuickControllerActions, Qt::QueuedConnection);
+        });
+    connect(
+        m_controller->selectionService(),
+        &Core::SelectionService::currentNodeChanged,
+        this,
+        [this] { updateQuickControllerActions(); });
+    connect(
+        ::Core::ModeManager::instance(),
+        &::Core::ModeManager::currentModeChanged,
+        this,
+        [this] { updateQuickControllerActions(); });
+    connect(
+        ProjectExplorer::ProjectManager::instance(),
+        &ProjectExplorer::ProjectManager::projectAdded,
+        this,
+        [this] {
+            QMetaObject::invokeMethod(
+                this, &EtherCATWorkbenchPlugin::updateQuickControllerActions, Qt::QueuedConnection);
+        });
+    connect(
+        ProjectExplorer::ProjectManager::instance(),
+        &ProjectExplorer::ProjectManager::projectRemoved,
+        this,
+        [this] { updateQuickControllerActions(); });
+    updateQuickControllerActions();
+}
+
+std::optional<Data::ControllerConnectionScope>
+EtherCATWorkbenchPlugin::activeControllerControlScope() const
+{
+    return m_controller ? m_controller->quickControllerControlScope() : std::nullopt;
+}
+
+QString EtherCATWorkbenchPlugin::activeControllerControlScopeUnavailableReason() const
+{
+    return m_controller ? m_controller->quickControllerControlScopeUnavailableReason()
+                        : Tr::tr("The controller run control service is unavailable.");
+}
+
+void EtherCATWorkbenchPlugin::updateControllerControlContext()
+{
+    const bool shouldBeActive
+        = !m_shuttingDown
+          && ::Core::ModeManager::currentModeId() == Utils::Id(Constants::MODE_ID);
+
+    if (shouldBeActive == m_controllerControlContextActive)
+        return;
+    m_controllerControlContextActive = shouldBeActive;
+    const ::Core::Context context(Constants::CONTROLLER_CONTROL_CONTEXT_ID);
+    if (m_controllerControlContextActive) {
+        ::Core::ICore::addAdditionalContext(
+            context, ::Core::ICore::ContextPriority::Low);
+    } else {
+        ::Core::ICore::removeAdditionalContext(context);
+    }
+}
+
+void EtherCATWorkbenchPlugin::updateQuickControllerActions()
+{
+    if (!m_runControllerAction || !m_debugControllerAction || !m_stopControllerAction)
+        return;
+
+    updateControllerControlContext();
+    const bool controllerContextActive = m_controllerControlContextActive;
+    const std::optional<Data::ControllerConnectionScope> scope
+        = activeControllerControlScope();
+    const std::optional<Data::ControllerConnectionSnapshot> controllerSnapshot
+        = scope && m_controller
+              ? std::optional(m_controller->controllerConnectionSnapshot(*scope))
+              : std::nullopt;
+    const QString controllerStateDescription
+        = controllerSnapshot
+              ? quickControllerStateDescription(*controllerSnapshot)
+              : QString();
+
+    const auto updateAction =
+        [this,
+         controllerContextActive,
+         &scope,
+         &controllerSnapshot,
+         &controllerStateDescription](
+            QAction *action, ControllerQuickControlAction quickAction) {
+            std::optional<Data::ControllerControlCommand> command;
+            QString reason;
+            if (!scope) {
+                reason = activeControllerControlScopeUnavailableReason();
+            } else if (!m_controller) {
+                reason = Tr::tr("The controller run control service is unavailable.");
+            } else {
+                command = m_controller->quickControllerControlCommand(*scope, quickAction);
+                reason = m_controller->quickControllerControlUnavailableReason(
+                    *scope, quickAction);
+            }
+
+            QString text;
+            QString availableDescription;
+            switch (quickAction) {
+            case ControllerQuickControlAction::Run:
+                action->setIcon(ProjectExplorer::Icons::RUN.icon());
+                if (command == Data::ControllerControlCommand::Start) {
+                    text = Tr::tr("Start Controller");
+                    availableDescription = Tr::tr(
+                        "Start the active controller package using its configured FreeRun or "
+                        "Distributed Clocks timing mode.");
+                } else if (command == Data::ControllerControlCommand::Resume) {
+                    text = Tr::tr("Resume Controller");
+                    availableDescription = Tr::tr("Resume the paused controller application.");
+                } else if (
+                    controllerSnapshot
+                    && controllerSnapshot->scope == *scope
+                    && controllerSnapshot->state
+                           != Data::ControllerConnectionState::Disconnected) {
+                    using State = Data::ControllerConnectionState;
+                    switch (controllerSnapshot->state) {
+                    case State::Connected:
+                        action->setIcon(Utils::Icons::LINK.icon());
+                        break;
+                    case State::Degraded:
+                        action->setIcon(Utils::Icons::WARNING_TOOLBAR.icon());
+                        break;
+                    case State::Failed:
+                        action->setIcon(Utils::Icons::CRITICAL_TOOLBAR.icon());
+                        break;
+                    default:
+                        action->setIcon(Utils::Icons::RELOAD.icon());
+                        break;
+                    }
+                    text = Tr::tr("%1: %2")
+                               .arg(
+                                   Tr::tr("Controller"),
+                                   quickConnectionStateName(controllerSnapshot->state));
+                } else {
+                    text = Tr::tr("Run Controller");
+                }
+                break;
+            case ControllerQuickControlAction::Debug:
+                if (command == Data::ControllerControlCommand::Pause) {
+                    action->setIcon(Utils::Icons::INTERRUPT_SMALL_TOOLBAR.icon());
+                    text = Tr::tr("Pause Controller");
+                    availableDescription = Tr::tr("Pause the running controller application.");
+                } else if (command == Data::ControllerControlCommand::Resume) {
+                    action->setIcon(ProjectExplorer::Icons::RUN.icon());
+                    text = Tr::tr("Resume Controller");
+                    availableDescription = Tr::tr("Resume the paused controller application.");
+                } else {
+                    action->setIcon(ProjectExplorer::Icons::DEBUG_START.icon());
+                    text = Tr::tr("Pause / Resume Controller");
+                }
+                break;
+            case ControllerQuickControlAction::Stop:
+                action->setIcon(Utils::Icons::STOP_SMALL.icon());
+                text = Tr::tr("Controlled Stop");
+                availableDescription = Tr::tr(
+                    "Request a controlled stop of the running or paused controller application. "
+                    "This is not an emergency stop.");
+                break;
+            }
+
+            const bool enabled
+                = controllerContextActive && m_controller && scope && command && reason.isEmpty()
+                  && m_controller->canExecuteControllerControl(*scope, *command);
+            if (!controllerContextActive && reason.isEmpty())
+                reason = Tr::tr("Open the EtherCAT Workbench to use controller run controls.");
+            QString description
+                = enabled
+                      ? availableDescription
+                      : Tr::tr("%1 is unavailable: %2").arg(text, reason);
+            if (!controllerStateDescription.isEmpty()) {
+                description += QLatin1Char('\n') + controllerStateDescription;
+            }
+            action->setText(text);
+            action->setToolTip(description);
+            action->setStatusTip(description);
+            action->setEnabled(enabled);
+            if (quickAction == ControllerQuickControlAction::Stop)
+                action->setVisible(controllerContextActive && scope.has_value());
+            else
+                action->setVisible(true);
+        };
+
+    updateAction(m_runControllerAction, ControllerQuickControlAction::Run);
+    updateAction(m_debugControllerAction, ControllerQuickControlAction::Debug);
+    updateAction(m_stopControllerAction, ControllerQuickControlAction::Stop);
+}
+
+void EtherCATWorkbenchPlugin::triggerQuickControllerAction(ControllerQuickControlAction action)
+{
+    if (!m_controller)
+        return;
+    const std::optional<Data::ControllerConnectionScope> scope
+        = activeControllerControlScope();
+    if (!scope) {
+        m_controller->writeControllerOutput(
+            Tr::tr("Cannot control the controller: %1")
+                .arg(activeControllerControlScopeUnavailableReason()),
+            ControllerOutputLevel::Error);
+        updateQuickControllerActions();
+        return;
+    }
+
+    const std::optional<Data::ControllerControlCommand> command
+        = m_controller->quickControllerControlCommand(*scope, action);
+    const QString unavailableReason
+        = m_controller->quickControllerControlUnavailableReason(*scope, action);
+    if (!command || !unavailableReason.isEmpty()
+        || !m_controller->canExecuteControllerControl(*scope, *command)) {
+        m_controller->writeControllerOutput(
+            Tr::tr("Cannot control the controller: %1").arg(unavailableReason),
+            ControllerOutputLevel::Error);
+        updateQuickControllerActions();
+        return;
+    }
+
+    Data::ControllerControlRequest request;
+    request.command = *command;
+    if (const Utils::Result<> result = m_controller->executeControllerControl(*scope, request);
+        !result) {
+        m_controller->writeControllerOutput(
+            Tr::tr("Cannot control the controller: %1").arg(result.error()),
+            ControllerOutputLevel::Error);
+    }
+    updateQuickControllerActions();
+}
+
 void EtherCATWorkbenchPlugin::setupActions()
 {
     ::Core::ActionContainer *menu = ::Core::ActionManager::actionContainer(Constants::MENU_ID);
@@ -108,6 +509,8 @@ void EtherCATWorkbenchPlugin::setupActions()
         menu->menu()->setTitle(Tr::tr("EtherCAT"));
         ::Core::ActionManager::actionContainer(::Core::Constants::M_TOOLS)->addMenu(menu);
     }
+
+    setupQuickControllerActions();
 
     auto openAction = new QAction(Utils::Icons::SETTINGS.icon(), Tr::tr("Open Workbench"), this);
     ::Core::Command *openCommand = ::Core::ActionManager::registerAction(
@@ -126,10 +529,11 @@ void EtherCATWorkbenchPlugin::setupActions()
     connect(refreshAction, &QAction::triggered, m_controller.get(), &WorkbenchController::refresh);
 
     auto connectControllerAction
-        = new QAction(Utils::Icons::LINK.icon(), Tr::tr("Connect Controller (Read-only)"), this);
+        = new QAction(Utils::Icons::LINK.icon(), Tr::tr("Connect Controller"), this);
     const QString connectControllerDescription = Tr::tr(
-        "Connect the selected controller profile and query its read-only state. This does not "
-        "acquire control, scan the bus, change controller state, or write configuration.");
+        "Establish the Control, Push, and Bulk channels, read the authoritative controller "
+        "snapshot, then automatically request the exclusive control lease. Connecting does not "
+        "scan the bus, change controller state, or write configuration.");
     connectControllerAction->setToolTip(connectControllerDescription);
     connectControllerAction->setStatusTip(connectControllerDescription);
     ::Core::Command *connectControllerCommand = ::Core::ActionManager::registerAction(
@@ -140,8 +544,9 @@ void EtherCATWorkbenchPlugin::setupActions()
     menu->addAction(connectControllerCommand);
     connect(connectControllerAction, &QAction::triggered, m_controller.get(), [this] {
         if (const Utils::Result<> result = m_controller->connectSelectedController(); !result) {
-            ::Core::MessageManager::writeFlashing(
-                Tr::tr("Cannot connect to the controller: %1").arg(result.error()));
+            m_controller->writeControllerOutput(
+                Tr::tr("Cannot connect to the controller: %1").arg(result.error()),
+                ControllerOutputLevel::Error);
         }
     });
 
@@ -160,15 +565,16 @@ void EtherCATWorkbenchPlugin::setupActions()
     menu->addAction(refreshControllerCommand);
     connect(refreshControllerAction, &QAction::triggered, m_controller.get(), [this] {
         if (const Utils::Result<> result = m_controller->refreshSelectedController(); !result) {
-            ::Core::MessageManager::writeFlashing(
-                Tr::tr("Cannot refresh the controller snapshot: %1").arg(result.error()));
+            m_controller->writeControllerOutput(
+                Tr::tr("Cannot refresh the controller snapshot: %1").arg(result.error()),
+                ControllerOutputLevel::Error);
         }
     });
 
     auto disconnectControllerAction
         = new QAction(Utils::Icons::STOP_SMALL.icon(), Tr::tr("Disconnect Controller"), this);
     const QString disconnectControllerDescription = Tr::tr(
-        "Close the read-only controller connection for the selected EtherCAT Master.");
+        "Close the controller connection for the selected EtherCAT Master.");
     disconnectControllerAction->setToolTip(disconnectControllerDescription);
     disconnectControllerAction->setStatusTip(disconnectControllerDescription);
     ::Core::Command *disconnectControllerCommand = ::Core::ActionManager::registerAction(
@@ -179,8 +585,9 @@ void EtherCATWorkbenchPlugin::setupActions()
     menu->addAction(disconnectControllerCommand);
     connect(disconnectControllerAction, &QAction::triggered, m_controller.get(), [this] {
         if (const Utils::Result<> result = m_controller->disconnectSelectedController(); !result) {
-            ::Core::MessageManager::writeFlashing(
-                Tr::tr("Cannot disconnect from the controller: %1").arg(result.error()));
+            m_controller->writeControllerOutput(
+                Tr::tr("Cannot disconnect from the controller: %1").arg(result.error()),
+                ControllerOutputLevel::Error);
         }
     });
 
@@ -559,6 +966,7 @@ void EtherCATWorkbenchPlugin::shutdown()
     if (m_shuttingDown)
         return;
     m_shuttingDown = true;
+    updateControllerControlContext();
     if (m_statusWidget) {
         ::Core::StatusBarManager::destroyStatusBarWidget(m_statusWidget);
         m_statusWidget = nullptr;

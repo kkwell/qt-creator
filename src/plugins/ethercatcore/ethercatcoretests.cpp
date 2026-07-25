@@ -4,6 +4,7 @@
 
 #include "ethercatcoreconstants.h"
 #include "ethercatcoresettings.h"
+#include "ethercatcoretr.h"
 #include "providerregistry.h"
 #include "providers.h"
 #include "selectionservice.h"
@@ -20,6 +21,7 @@
 #include <ethercatdata/projectsnapshot.h>
 
 #include <QSignalSpy>
+#include <QScopeGuard>
 #include <QStringList>
 #include <QTest>
 #include <QWidget>
@@ -563,6 +565,31 @@ void EtherCATCoreTests::testMetadataAndServices()
     QVERIFY(ExtensionSystem::PluginManager::getObject<ProviderRegistry>());
 }
 
+void EtherCATCoreTests::testMockUiVisibility()
+{
+    static constexpr char environmentVariable[] = "QTC_ETHER_CAT_ENABLE_MOCK_UI";
+    const bool wasSet = qEnvironmentVariableIsSet(environmentVariable);
+    const QByteArray previousValue = qgetenv(environmentVariable);
+    const QScopeGuard restoreEnvironment([wasSet, previousValue] {
+        if (wasSet)
+            qputenv(environmentVariable, previousValue);
+        else
+            qunsetenv(environmentVariable);
+    });
+
+    qunsetenv(environmentVariable);
+    QVERIFY(isMockUiEnabled());
+
+    qputenv(environmentVariable, "0");
+    QVERIFY(!isMockUiEnabled());
+
+    qputenv(environmentVariable, "1");
+    QVERIFY(isMockUiEnabled());
+
+    qputenv(environmentVariable, "true");
+    QVERIFY(!isMockUiEnabled());
+}
+
 void EtherCATCoreTests::testNodeIdRoundTrip()
 {
     const Data::NodeId created = Data::NodeId::create();
@@ -911,6 +938,20 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
     QCOMPARE(Data::ControllerConnectionProfile(profile), profile);
     const Data::ControllerConnectionRequest request{scope, profile.id};
     QCOMPARE(Data::ControllerConnectionRequest(request), request);
+    Data::ControllerConnectionProfileConfiguration configuration{
+        profile.id,
+        profile.endpointSummary,
+        QStringLiteral("192.168.3.101:15200"),
+        true,
+    };
+    QCOMPARE(Data::ControllerConnectionProfileConfiguration(configuration), configuration);
+    QVERIFY(!provider.connectionProfileConfiguration(scope, profile.id));
+    const Utils::Result<> unsupportedEndpointEdit
+        = provider.setConnectionProfileEndpoint(scope, profile.id, QStringLiteral("192.0.2.1"));
+    QVERIFY(!unsupportedEndpointEdit);
+    QCOMPARE(
+        unsupportedEndpointEdit.error(),
+        Tr::tr("This controller provider does not support editing connection profiles."));
 
     TestControllerConnectionProvider alternateProvider(
         "EtherCAT.Connection.VendorIpc",

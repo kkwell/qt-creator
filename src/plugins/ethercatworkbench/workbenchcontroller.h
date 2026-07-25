@@ -70,6 +70,18 @@ struct ControllerConnectionSelection
         const ControllerConnectionSelection &, const ControllerConnectionSelection &) = default;
 };
 
+enum class ControllerQuickControlAction {
+    Run,
+    Debug,
+    Stop,
+};
+
+enum class ControllerOutputLevel {
+    Information,
+    Warning,
+    Error,
+};
+
 class WorkbenchController final : public QObject
 {
     Q_OBJECT
@@ -87,6 +99,11 @@ public:
     OptionalProviderPresentation diagnosticsProviderPresentation() const;
     DiagnosticsStatusPresentation diagnosticsStatusPresentation() const;
     QList<Core::ControllerConnectionProvider *> controllerConnectionProviders() const;
+    static std::optional<Data::ControllerConnectionScope> uniqueMasterControllerConnectionScope(
+        const Data::ProjectSnapshot &project);
+    std::optional<Data::ControllerConnectionScope> quickControllerControlScope() const;
+    QString quickControllerControlScopeUnavailableReason() const;
+    std::optional<Data::ControllerConnectionScope> activeControllerConnectionScope() const;
     std::optional<Data::ControllerConnectionScope> selectedControllerConnectionScope() const;
     ControllerConnectionSelection prepareControllerConnection(
         const Data::ControllerConnectionScope &scope);
@@ -96,6 +113,10 @@ public:
         const Data::ControllerConnectionScope &scope) const;
     QList<Data::ControllerConnectionProfile> controllerConnectionProfiles(
         const Data::ControllerConnectionScope &scope) const;
+    std::optional<Data::ControllerConnectionProfileConfiguration>
+    controllerConnectionProfileConfiguration(
+        const Data::ControllerConnectionScope &scope,
+        const Data::NodeId &profileId) const;
     Data::ControllerConnectionSnapshot controllerConnectionSnapshot(
         const Data::ControllerConnectionScope &scope) const;
     bool controllerConnectionProjectIsOpen(const Data::ControllerConnectionScope &scope) const;
@@ -103,13 +124,35 @@ public:
         const Data::ControllerConnectionScope &scope, Utils::Id providerId);
     Utils::Result<> selectControllerConnectionProfile(
         const Data::ControllerConnectionScope &scope, const Data::NodeId &profileId);
+    Utils::Result<> setControllerConnectionProfileEndpoint(
+        const Data::ControllerConnectionScope &scope,
+        const Data::NodeId &profileId,
+        const QString &endpoint);
     bool controllerConnectionSelectionLocked(const Data::ControllerConnectionScope &scope) const;
     bool canConnectSelectedController() const;
     bool canDisconnectSelectedController() const;
     bool canRefreshSelectedController() const;
+    bool canExecuteControllerControl(
+        const Data::ControllerConnectionScope &scope,
+        Data::ControllerControlCommand command) const;
+    bool canExecuteSelectedControllerControl(Data::ControllerControlCommand command) const;
+    std::optional<Data::ControllerControlCommand> quickControllerControlCommand(
+        const Data::ControllerConnectionScope &scope,
+        ControllerQuickControlAction action) const;
+    QString quickControllerControlUnavailableReason(
+        const Data::ControllerConnectionScope &scope,
+        ControllerQuickControlAction action) const;
     Utils::Result<> connectSelectedController();
     Utils::Result<> disconnectSelectedController();
     Utils::Result<> refreshSelectedController();
+    Utils::Result<> executeControllerControl(
+        const Data::ControllerConnectionScope &scope,
+        const Data::ControllerControlRequest &request);
+    Utils::Result<> executeSelectedControllerControl(
+        const Data::ControllerControlRequest &request);
+    void writeControllerOutput(
+        const QString &message,
+        ControllerOutputLevel level = ControllerOutputLevel::Information);
     bool scanAvailable() const;
     bool diagnosticsAvailable() const;
     bool canInsertDeviceOnSelectedMaster() const;
@@ -151,9 +194,59 @@ signals:
     void diagnosticsProviderChanged(bool availabilityChanged);
     void diagnosticsStatusChanged();
     void controllerConnectionChanged();
+    void controllerOutputRequested(
+        const QString &message,
+        EtherCAT::Workbench::Internal::ControllerOutputLevel level);
 
 private:
     friend class EtherCATWorkbenchTests;
+
+    // Product API state-changing commands can legitimately remain pending for 45 seconds,
+    // including the authoritative state refresh. Keep the whole project-close cleanup bounded
+    // while leaving enough time for the final release and disconnect.
+    static constexpr int controllerCleanupPollIntervalMs = 100;
+    static constexpr int controllerCleanupMaximumWaitMs = 60000;
+    static constexpr int controllerCleanupMaximumPolls
+        = controllerCleanupMaximumWaitMs / controllerCleanupPollIntervalMs;
+
+    struct ControllerAutoAcquireState
+    {
+        quint64 providerEpoch = 0;
+        Data::ControllerConnectionScope scope;
+        Data::NodeId profileId;
+        quint64 sessionGeneration = 0;
+        bool queued = false;
+        bool attempted = false;
+    };
+
+    enum class ControllerCleanupPhase {
+        Evaluate,
+        WaitingForPending,
+        WaitingForStableState,
+        WaitingForStop,
+        WaitingForConfiguration,
+        WaitingForRelease,
+        WaitingForDisconnect,
+        Failed,
+    };
+
+    struct ControllerCleanupState
+    {
+        quint64 providerEpoch = 0;
+        Data::ControllerConnectionScope scope;
+        Data::NodeId profileId;
+        quint64 sessionGeneration = 0;
+        quint64 sessionId = 0;
+        quint64 bootId = 0;
+        ControllerCleanupPhase phase = ControllerCleanupPhase::Evaluate;
+        int remainingPolls = 0;
+        int refreshCooldown = 0;
+        int disconnectAttempts = 0;
+        int generationChanges = 0;
+        bool disconnectAccepted = false;
+        bool scheduled = false;
+        QString failure;
+    };
 
     void refreshProjects();
     void refreshDevices();
@@ -163,16 +256,33 @@ private:
     void handleOptionalAvailabilityChanged();
     void handleProjectAboutToBeRemoved(const Data::NodeId &projectId);
     void handleControllerConnectionChanged();
-    void requestControllerDisconnect(
+    void scheduleControllerAutoAcquire();
+    void executeControllerAutoAcquire(
         Core::ControllerConnectionProvider *provider,
         const Data::ControllerConnectionScope &expectedScope,
-        quint64 expectedGeneration);
-    void requestControllerDisconnectAttempt(
-        Core::ControllerConnectionProvider *provider,
-        const Data::ControllerConnectionScope &expectedScope,
+        const Data::NodeId &expectedProfileId,
         quint64 expectedGeneration,
-        quint64 expectedProviderEpoch,
-        int retryStep);
+        quint64 expectedProviderEpoch);
+    void beginControllerCleanup(
+        Core::ControllerConnectionProvider *provider,
+        const Data::ControllerConnectionSnapshot &snapshot);
+    void scheduleControllerCleanup(Core::ControllerConnectionProvider *provider, int delayMs = 0);
+    void advanceControllerCleanup(
+        Core::ControllerConnectionProvider *provider,
+        const Data::ControllerConnectionScope &expectedScope,
+        const Data::NodeId &expectedProfileId,
+        quint64 expectedGeneration,
+        quint64 expectedProviderEpoch);
+    void finishControllerCleanup(Core::ControllerConnectionProvider *provider);
+    void failControllerCleanup(Core::ControllerConnectionProvider *provider, const QString &reason);
+    bool controllerCleanupBindingIsRetained(const Data::ControllerConnectionScope &scope) const;
+    bool controllerConnectionScopeIsValid(const Data::ControllerConnectionScope &scope) const;
+    QString controllerControlCommonUnavailableReason(
+        const Data::ControllerConnectionScope &scope,
+        Data::ControllerControlCommand command,
+        Data::ControllerConnectionSnapshot *snapshot) const;
+    QString controllerControlUnavailableReason(
+        const Data::ControllerConnectionScope &scope, Data::ControllerControlCommand command) const;
     ControllerConnectionSelection *mutableControllerConnectionSelection(
         const Data::ControllerConnectionScope &scope);
 
@@ -188,8 +298,14 @@ private:
     DiagnosticsStatusPresentation m_diagnosticsStatus;
     QList<ControllerConnectionSelection> m_controllerConnectionSelections;
     QHash<Core::ControllerConnectionProvider *, quint64> m_controllerConnectionProviderEpochs;
+    QHash<Core::ControllerConnectionProvider *, ControllerAutoAcquireState>
+        m_controllerAutoAcquireStates;
+    QHash<Core::ControllerConnectionProvider *, ControllerCleanupState> m_controllerCleanupStates;
+    QHash<Core::ControllerConnectionProvider *, QString> m_controllerOutputFingerprints;
     quint64 m_nextControllerConnectionProviderEpoch = 0;
     bool m_suppressControllerConnectionChanges = false;
 };
 
 } // namespace EtherCAT::Workbench::Internal
+
+Q_DECLARE_METATYPE(EtherCAT::Workbench::Internal::ControllerOutputLevel)

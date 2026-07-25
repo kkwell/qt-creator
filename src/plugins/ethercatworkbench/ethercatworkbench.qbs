@@ -7,9 +7,11 @@ QtcPlugin {
     Depends { name: "EtherCATData" }
     Depends { name: "Utils" }
     Depends { name: "Core" }
+    Depends { name: "Debugger" }
     Depends { name: "EtherCATCore" }
     Depends { name: "EtherCATDevices" }
     Depends { name: "EtherCATProject" }
+    Depends { name: "ProjectExplorer" }
 
     files: [
         "builtinpropertypages.cpp",

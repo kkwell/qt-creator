@@ -78,6 +78,11 @@ Utils::Result<> EtherCATProject::renameProject(const QString &name)
     return m_document->renameProject(name);
 }
 
+bool EtherCATProject::needsConfiguration() const
+{
+    return false;
+}
+
 void EtherCATProject::updateProjectTree()
 {
     const Data::ProjectSnapshot &project = snapshot();

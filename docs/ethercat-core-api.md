@@ -144,6 +144,15 @@ asynchronous transport operation later succeeded. Consumers observe
 the complete immutable values. A concrete provider must publish every signal
 on its GUI thread; background socket or codec work remains private.
 
+An adapter may additionally expose an editable presentation value through
+`connectionProfileConfiguration(scope, profileId)` and accept it through
+`setConnectionProfileEndpoint(scope, profileId, endpoint)`. The common value
+contains only the selected profile ID, an endpoint presentation string, a
+placeholder, and an editable flag. Its syntax and persistence remain
+provider-owned; the default implementation returns no configuration and
+rejects edits. Consumers must not infer TCP, host, port, route, credentials, or
+any other vendor-specific transport structure from this optional string.
+
 A `ControllerConnectionScope` contains stable Project and Master IDs. A
 provider-owned `ControllerConnectionProfile` adds a stable profile ID, display
 name, redacted endpoint summary, configured/supported/default flags, and an
@@ -245,20 +254,55 @@ values returned by that controller protocol when applicable. A local
 controller-returned evidence may use the `Controller` source; local parsing or
 connectivity failures must not be mislabeled as master defects.
 
-This Core revision authorizes no control lease, configuration mode, discovery,
-runtime state transition, package mutation, SDO/PDO write, or firmware change.
-The first concrete implementation is the independent, headless
+The original connection-only Core revision authorized no control lease,
+configuration mode, discovery, runtime state transition, package mutation,
+SDO/PDO write, or firmware change. The later typed extension adds only
+provider-neutral command support/dispatch, progress, and linear Actual Bus
+values. The default Provider rejects control; a vendor adapter opts into each
+command. Numeric Product API messages, fixed endpoints, channel layout, frame
+encoding, and status tables remain private to the independent, headless
 `EtherCATProductApi` plugin documented in `docs/ethercat-product-api.md` and
-`docs/ethercat-online-controller.md`. It consumes this generic contract while
-keeping its fixed endpoints, three-channel ECAP session, strict read-only
-outbound allow-list, and full-session resume policy private.
+`docs/ethercat-online-controller.md`.
+
+Workbench, not Core, performs one automatic Acquire attempt after an
+authoritative connected snapshot identifies the exact
+Provider/profile/scope/session generation. The controller remains the lease
+authority: one session owns control, other API sessions may continue read-only
+queries, and their writes are rejected with `LEASE_BUSY (-10)`. Core exposes
+the semantic ownership/error evidence but neither steals a lease nor retries a
+vendor command through an arbitrary-message path.
 
 The ProductApi adapter's current auxiliary-channel recovery closes Control,
 Push, and Bulk together and attempts a bounded resume of the complete session;
 that is an adapter decision, not a `ControllerConnectionProvider` requirement.
-Local codec and loopback validation remains Mock protocol evidence. Until an
-explicit Qt hardware run is authorized and recorded, neither this Core
-contract nor the concrete plugin claims a real Qt-to-controller connection.
+Local codec and loopback validation remains non-hardware protocol evidence.
+Dated Qt hardware observations are recorded separately in
+`docs/ethercat-online-controller.md`; they do not turn this generic Core
+contract into hardware evidence. The current English regression passed 19
+Core tests and 226 tests across Workbench, Project, Devices, Core, Scan,
+Diagnostics, and ProductApi, with one ProductApi hardware test skipped and no
+failures.
+The `WITH_TESTS=OFF` product build passed with exactly 17 plugin dylibs, and
+all EtherCAT Simplified Chinese contexts contain no unfinished or empty
+translations.
+
+The generic Start and explicit DC real-controller lifecycles each passed 3
+tests with 0 failures and completed safe cleanup in `SHUTDOWN`/EMPTY with no
+lease owner or fault.
+Those are adapter and Workbench observations, not Core hardware qualification.
+Windows `ISSUE-RT-009` separated a successful LRW cycle from the actual
+failure: `OP_REQUEST` for station `0x1002` returned WKC 0/1 on all four
+attempts. `cfg812` was not activated and no FreeRun lifecycle ran. The
+controller was safely rolled back to `B/12/813`, `OP_SAFE`, WKC 11/11, faults
+0, and lease 0. The Windows session continues with `ISSUE-API-016` and the
+smallest isolated fix.
+
+The earlier single-instance product observation showed Workbench, Simplified
+Chinese, hidden production Mock UI, and the compact tree. The current endpoint
+and unified-output revision is covered by 95 Workbench tests plus a three-pass
+ProjectExplorer passive-output lifecycle test. No controller connection or
+hardware command was executed in this round. None of these adapter/UI
+observations changes the generic Core qualification boundary.
 
 ## Scan provider contract
 

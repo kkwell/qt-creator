@@ -9,24 +9,27 @@
 #include <coreplugin/actionmanager/actionmanager.h>
 #include <coreplugin/actionmanager/command.h>
 
-#include <utils/infolabel.h>
 #include <utils/stylehelper.h>
+#include <utils/utilsicons.h>
 
 #include <QComboBox>
 #include <QFormLayout>
+#include <QGridLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLineEdit>
 #include <QLocale>
 #include <QScopedValueRollback>
 #include <QSignalBlocker>
-#include <QStringList>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QVariant>
 
 #include <algorithm>
+#include <utility>
 
 namespace EtherCAT::Workbench::Internal {
 
@@ -50,6 +53,42 @@ static QString connectionStateText(Data::ControllerConnectionState state)
         return Tr::tr("Failed");
     }
     return Tr::tr("Unknown");
+}
+
+static bool ownsControllerControlLease(const Data::ControllerConnectionSnapshot &snapshot)
+{
+    return snapshot.session && snapshot.session->ownsControlLease;
+}
+
+static bool controllerControlLeaseHeldByAnotherSession(
+    const Data::ControllerConnectionSnapshot &snapshot)
+{
+    return snapshot.session && !snapshot.session->ownsControlLease
+           && snapshot.session->controlLeaseOwnerSessionId != 0
+           && snapshot.session->controlLeaseOwnerSessionId != snapshot.session->sessionId;
+}
+
+static bool controllerControlLeaseOwnershipUnverified(
+    const Data::ControllerConnectionSnapshot &snapshot)
+{
+    return snapshot.session && !snapshot.session->ownsControlLease
+           && snapshot.session->controlLeaseOwnerSessionId != 0
+           && snapshot.session->controlLeaseOwnerSessionId == snapshot.session->sessionId;
+}
+
+static QString controllerAccessText(const Data::ControllerConnectionSnapshot &snapshot)
+{
+    if (snapshot.mock)
+        return Tr::tr("Mock");
+    if (snapshot.readOnly)
+        return Tr::tr("Read-only");
+    if (ownsControllerControlLease(snapshot))
+        return Tr::tr("Exclusive control");
+    if (controllerControlLeaseHeldByAnotherSession(snapshot))
+        return Tr::tr("Lease held by another session");
+    if (controllerControlLeaseOwnershipUnverified(snapshot))
+        return Tr::tr("Control lease ownership unverified");
+    return Tr::tr("Control available / lease not acquired");
 }
 
 static QString channelStateText(Data::ControllerChannelState state)
@@ -154,20 +193,10 @@ static QString firmwareStateText(Data::ControllerFirmwareState state)
     return Tr::tr("Unknown");
 }
 
-static QString retryDispositionText(Data::ControllerRetryDisposition disposition)
+static QString hexadecimalValue(quint32 value, int width)
 {
-    using Disposition = Data::ControllerRetryDisposition;
-    switch (disposition) {
-    case Disposition::Unknown:
-        return Tr::tr("No retry guidance");
-    case Disposition::Retryable:
-        return Tr::tr("Retry is allowed");
-    case Disposition::Reconnect:
-        return Tr::tr("Reconnect before retrying");
-    case Disposition::NotRetryable:
-        return Tr::tr("Do not retry automatically");
-    }
-    return Tr::tr("No retry guidance");
+    return QStringLiteral("0x")
+           + QStringLiteral("%1").arg(value, width, 16, QLatin1Char('0')).toUpper();
 }
 
 static void addSummaryRow(QTreeWidget *tree, const QString &name, const QString &value)
@@ -181,33 +210,27 @@ static void addSummaryRow(QTreeWidget *tree, const QString &name, const QString 
 CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *parent)
     : QWidget(parent)
     , m_controller(controller)
-    , m_banner(new Utils::InfoLabel(this))
-    , m_safety(new QLabel(this))
     , m_provider(new QComboBox(this))
     , m_profile(new QComboBox(this))
-    , m_endpoint(new QLabel(this))
+    , m_endpoint(new QLineEdit(this))
+    , m_saveEndpoint(new QToolButton(this))
     , m_connect(new QToolButton(this))
     , m_refresh(new QToolButton(this))
     , m_disconnect(new QToolButton(this))
+    , m_acquireControl(new QToolButton(this))
+    , m_enterConfiguration(new QToolButton(this))
+    , m_scanBus(new QToolButton(this))
+    , m_restorePackage(new QToolButton(this))
+    , m_releaseControl(new QToolButton(this))
     , m_summary(new QTreeWidget(this))
     , m_channels(new QTreeWidget(this))
-    , m_error(new QLabel(this))
+    , m_topologySummary(new QLabel(this))
+    , m_actualBus(new QTreeWidget(this))
 {
     setObjectName("EtherCATWorkbenchCommunicationPage");
     setAccessibleName(Tr::tr("Controller communication"));
     setAccessibleDescription(
-        Tr::tr("Configures a controller adapter and shows its current read-only connection."));
-
-    m_banner->setObjectName("EtherCATCommunicationBanner");
-    m_banner->setFilled(true);
-    m_safety->setObjectName("EtherCATCommunicationSafety");
-    m_safety->setWordWrap(true);
-    m_safety->setTextFormat(Qt::PlainText);
-    m_safety->setText(
-        Tr::tr(
-            "Connect and Refresh are read-only. They do not acquire control, scan the bus, "
-            "change controller state, or write configuration and outputs."));
-    m_safety->setAccessibleName(Tr::tr("Read-only safety boundary"));
+        Tr::tr("Configures a controller adapter and controls its connected EtherCAT Master."));
 
     auto providerLabel = new QLabel(Tr::tr("Controller adapter:"), this);
     providerLabel->setBuddy(m_provider);
@@ -219,8 +242,20 @@ CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *p
     m_profile->setObjectName("EtherCATCommunicationProfile");
     m_profile->setAccessibleName(Tr::tr("Connection profile"));
     m_endpoint->setObjectName("EtherCATCommunicationEndpoint");
-    m_endpoint->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    m_endpoint->setWordWrap(true);
+    m_endpoint->setAccessibleName(Tr::tr("Controller IP address"));
+    m_endpoint->setClearButtonEnabled(true);
+    m_saveEndpoint->setObjectName("EtherCATCommunicationSaveEndpoint");
+    m_saveEndpoint->setAccessibleName(Tr::tr("Save controller IP address"));
+    m_saveEndpoint->setToolTip(Tr::tr("Save the controller IP address or base endpoint."));
+    m_saveEndpoint->setIcon(Utils::Icons::SAVEFILE_TOOLBAR.icon());
+    m_saveEndpoint->setAutoRaise(true);
+
+    auto endpointWidget = new QWidget(this);
+    auto endpointLayout = new QHBoxLayout(endpointWidget);
+    endpointLayout->setContentsMargins(QMargins());
+    endpointLayout->setSpacing(Utils::StyleHelper::SpacingTokens::GapHS);
+    endpointLayout->addWidget(m_endpoint, 1);
+    endpointLayout->addWidget(m_saveEndpoint);
 
     auto form = new QFormLayout;
     form->setContentsMargins(QMargins());
@@ -228,7 +263,7 @@ CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *p
     form->setVerticalSpacing(Utils::StyleHelper::SpacingTokens::GapVS);
     form->addRow(providerLabel, m_provider);
     form->addRow(profileLabel, m_profile);
-    form->addRow(endpointLabel, m_endpoint);
+    form->addRow(endpointLabel, endpointWidget);
 
     const auto configureButton =
         [](QToolButton *button, const char *objectName, Utils::Id actionId) {
@@ -260,6 +295,70 @@ CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *p
     buttonLayout->addWidget(m_disconnect);
     buttonLayout->addStretch();
 
+    auto controlGroup = new QGroupBox(Tr::tr("Advanced controller control"), this);
+    controlGroup->setObjectName("EtherCATCommunicationControllerControl");
+    auto controlLayout = new QGridLayout(controlGroup);
+    controlLayout->setContentsMargins(
+        Utils::StyleHelper::SpacingTokens::PaddingHS,
+        Utils::StyleHelper::SpacingTokens::PaddingVS,
+        Utils::StyleHelper::SpacingTokens::PaddingHS,
+        Utils::StyleHelper::SpacingTokens::PaddingVS);
+    controlLayout->setHorizontalSpacing(Utils::StyleHelper::SpacingTokens::GapHS);
+    controlLayout->setVerticalSpacing(Utils::StyleHelper::SpacingTokens::GapVS);
+    const auto configureControlButton =
+        [this](QToolButton *button,
+               const char *objectName,
+               const QString &text,
+               const QString &toolTip,
+               Data::ControllerControlCommand command) {
+            button->setObjectName(objectName);
+            button->setText(text);
+            button->setAccessibleName(text);
+            button->setAccessibleDescription(toolTip);
+            button->setToolTip(toolTip);
+            button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+            button->setEnabled(false);
+            connect(button, &QToolButton::clicked, this, [this, command] {
+                executeControllerControl(command);
+            });
+        };
+    configureControlButton(
+        m_acquireControl,
+        "EtherCATCommunicationAcquireControl",
+        Tr::tr("Acquire"),
+        Tr::tr("Acquire the controller control lease for this EtherCAT Master."),
+        Data::ControllerControlCommand::AcquireControl);
+    configureControlButton(
+        m_enterConfiguration,
+        "EtherCATCommunicationEnterConfiguration",
+        Tr::tr("Configuration"),
+        Tr::tr("Stop active operation safely and enter controller configuration mode."),
+        Data::ControllerControlCommand::EnterConfigurationMode);
+    configureControlButton(
+        m_scanBus,
+        "EtherCATCommunicationScanBus",
+        Tr::tr("Scan Bus"),
+        Tr::tr("Scan the live EtherCAT bus. This does not modify the offline Project."),
+        Data::ControllerControlCommand::DiscoverTopology);
+    configureControlButton(
+        m_restorePackage,
+        "EtherCATCommunicationRestorePackage",
+        Tr::tr("Restore Package"),
+        Tr::tr("Restore the controller's exact persistent active package."),
+        Data::ControllerControlCommand::RestoreActivePackage);
+    configureControlButton(
+        m_releaseControl,
+        "EtherCATCommunicationReleaseControl",
+        Tr::tr("Release"),
+        Tr::tr("Release this session's controller control lease."),
+        Data::ControllerControlCommand::ReleaseControl);
+    controlLayout->addWidget(m_acquireControl, 0, 0);
+    controlLayout->addWidget(m_enterConfiguration, 0, 1);
+    controlLayout->addWidget(m_scanBus, 0, 2);
+    controlLayout->addWidget(m_restorePackage, 0, 3);
+    controlLayout->addWidget(m_releaseControl, 0, 4);
+    controlLayout->setColumnStretch(5, 1);
+
     m_summary->setObjectName("EtherCATCommunicationSummary");
     m_summary->setAccessibleName(Tr::tr("Controller connection summary"));
     m_summary->setColumnCount(2);
@@ -285,11 +384,38 @@ CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *p
     m_channels->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
     m_channels->header()->setStretchLastSection(true);
 
-    m_error->setObjectName("EtherCATCommunicationError");
-    m_error->setWordWrap(true);
-    m_error->setTextFormat(Qt::PlainText);
-    m_error->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    m_error->setAccessibleName(Tr::tr("Controller connection error"));
+    auto actualBusGroup = new QGroupBox(Tr::tr("Actual Bus"), this);
+    actualBusGroup->setObjectName("EtherCATCommunicationActualBusGroup");
+    auto actualBusLayout = new QVBoxLayout(actualBusGroup);
+    actualBusLayout->setContentsMargins(
+        Utils::StyleHelper::SpacingTokens::PaddingHS,
+        Utils::StyleHelper::SpacingTokens::PaddingVS,
+        Utils::StyleHelper::SpacingTokens::PaddingHS,
+        Utils::StyleHelper::SpacingTokens::PaddingVS);
+    actualBusLayout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVS);
+    m_topologySummary->setObjectName("EtherCATCommunicationActualBusSummary");
+    m_topologySummary->setTextFormat(Qt::PlainText);
+    m_topologySummary->setWordWrap(true);
+    m_actualBus->setObjectName("EtherCATCommunicationActualBus");
+    m_actualBus->setAccessibleName(Tr::tr("Actual EtherCAT bus topology"));
+    m_actualBus->setAccessibleDescription(
+        Tr::tr("Read-only results from the most recent live controller bus scan."));
+    m_actualBus->setColumnCount(7);
+    m_actualBus->setHeaderLabels(
+        {Tr::tr("Position"),
+         Tr::tr("Station"),
+         Tr::tr("AL"),
+         Tr::tr("Vendor"),
+         Tr::tr("Product"),
+         Tr::tr("Revision"),
+         Tr::tr("Serial")});
+    m_actualBus->setRootIsDecorated(false);
+    m_actualBus->setAlternatingRowColors(true);
+    m_actualBus->setUniformRowHeights(true);
+    m_actualBus->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    m_actualBus->header()->setStretchLastSection(true);
+    actualBusLayout->addWidget(m_topologySummary);
+    actualBusLayout->addWidget(m_actualBus);
 
     auto layout = new QVBoxLayout(this);
     layout->setContentsMargins(
@@ -298,16 +424,22 @@ CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *p
         Utils::StyleHelper::SpacingTokens::PaddingHM,
         Utils::StyleHelper::SpacingTokens::PaddingVM);
     layout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVM);
-    layout->addWidget(m_banner);
-    layout->addWidget(m_safety);
     layout->addLayout(form);
     layout->addLayout(buttonLayout);
+    layout->addWidget(controlGroup);
     layout->addWidget(m_summary, 1);
     layout->addWidget(m_channels, 1);
-    layout->addWidget(m_error);
+    layout->addWidget(actualBusGroup, 1);
 
     connect(m_provider, &QComboBox::currentIndexChanged, this, &CommunicationPage::selectProvider);
     connect(m_profile, &QComboBox::currentIndexChanged, this, &CommunicationPage::selectProfile);
+    connect(m_endpoint, &QLineEdit::textEdited, this, [this] {
+        m_endpointDirty = true;
+        m_saveEndpoint->setEnabled(
+            m_endpoint->isEnabled() && !m_endpoint->text().trimmed().isEmpty());
+    });
+    connect(m_endpoint, &QLineEdit::returnPressed, this, &CommunicationPage::saveEndpoint);
+    connect(m_saveEndpoint, &QToolButton::clicked, this, &CommunicationPage::saveEndpoint);
     if (m_controller) {
         connect(
             m_controller,
@@ -319,6 +451,8 @@ CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *p
 
 void CommunicationPage::setContext(const Core::PropertyPageContext &context)
 {
+    if (m_context.projectId != context.projectId || m_context.nodeId != context.nodeId)
+        m_endpointDirty = false;
     m_context = context;
     if (m_controller && context.nodeKind == Core::WorkbenchNodeKind::Master) {
         m_controller->prepareControllerConnection({context.projectId, context.nodeId});
@@ -340,16 +474,18 @@ void CommunicationPage::refresh()
     m_provider->clear();
     m_profile->clear();
     if (!validScope) {
-        m_banner->setType(Utils::InfoLabel::Warning);
-        m_banner->setText(Tr::tr("Select a valid EtherCAT Master."));
         m_provider->setEnabled(false);
         m_profile->setEnabled(false);
-        m_endpoint->setText(Tr::tr("Not available"));
+        m_endpointDirty = false;
+        m_endpoint->clear();
+        m_endpoint->setPlaceholderText(Tr::tr("Not available"));
+        m_endpoint->setEnabled(false);
+        m_saveEndpoint->setEnabled(false);
         m_summary->clear();
         m_channels->clear();
         m_channels->hide();
-        m_error->clear();
-        m_error->hide();
+        updateControllerControl({});
+        updateTopology(std::nullopt);
         return;
     }
 
@@ -424,6 +560,8 @@ void CommunicationPage::refresh()
     m_profile->setEnabled(!locked && provider && !profiles.isEmpty());
     updateSummary(snapshot, provider);
     updateChannels(snapshot);
+    updateControllerControl(snapshot);
+    updateTopology(snapshot.scope == scope ? snapshot.topology : std::nullopt);
 
     QString endpoint;
     const auto profile
@@ -434,131 +572,40 @@ void CommunicationPage::refresh()
         endpoint = profile->endpointSummary;
     if (endpoint.isEmpty())
         endpoint = snapshot.endpointSummary;
-    m_endpoint->setText(endpoint.isEmpty() ? Tr::tr("Not available") : endpoint);
-    m_endpoint->setToolTip(m_endpoint->text());
-
-    const QString state = connectionStateText(snapshot.state);
-    const bool activeSnapshot = snapshot.state != Data::ControllerConnectionState::Disconnected
-                                && snapshot.state != Data::ControllerConnectionState::Failed;
-    const bool disconnectableSnapshot = snapshot.state
-                                            != Data::ControllerConnectionState::Disconnected
-                                        && snapshot.state
-                                               != Data::ControllerConnectionState::Disconnecting;
-    const bool snapshotHasScope = !snapshot.scope.projectId.isNull()
-                                  || !snapshot.scope.masterId.isNull();
-    const bool foreignSnapshot = snapshotHasScope && snapshot.scope != scope;
-    const bool orphanedSnapshot = disconnectableSnapshot
-                                  && !m_controller->controllerConnectionProjectIsOpen(
-                                      snapshot.scope);
-    const auto showSnapshotEvidence = [this, &snapshot, &state] {
-        switch (snapshot.state) {
-        case Data::ControllerConnectionState::Connected:
-            m_banner->setType(Utils::InfoLabel::Ok);
-            break;
-        case Data::ControllerConnectionState::Degraded:
-            m_banner->setType(Utils::InfoLabel::Warning);
-            break;
-        default:
-            m_banner->setType(Utils::InfoLabel::Information);
-            break;
-        }
-        QString evidence = Tr::tr("No live controller evidence");
-        if (snapshot.state == Data::ControllerConnectionState::Connected
-            || snapshot.state == Data::ControllerConnectionState::Degraded) {
-            if (snapshot.mock) {
-                evidence = Tr::tr("Mock");
-            } else if (snapshot.readOnly) {
-                evidence = Tr::tr("Read-only real controller");
-            } else {
-                evidence = Tr::tr("Controlled real controller");
-                m_banner->setType(Utils::InfoLabel::Warning);
-            }
-        }
-        m_banner->setText(Tr::tr("%1 — %2").arg(state, evidence));
-    };
-    if (!selection.providerExplicitlySelected || !selection.providerId.isValid()) {
-        m_banner->setType(Utils::InfoLabel::Information);
-        m_banner->setText(Tr::tr("Select a controller adapter."));
-    } else if (!provider) {
-        m_banner->setType(Utils::InfoLabel::Warning);
-        m_banner->setText(Tr::tr("The selected controller adapter is no longer available."));
-    } else if (!provider->isAvailable()) {
-        m_banner->setType(Utils::InfoLabel::Warning);
-        m_banner->setText(Tr::tr("%1 — the controller adapter is unavailable.").arg(state));
-    } else if (foreignSnapshot && orphanedSnapshot) {
-        m_banner->setType(Utils::InfoLabel::Warning);
-        m_banner->setText(
-            Tr::tr(
-                "This adapter is still connected for a Project that is no longer open. Click "
-                "Disconnect to finish cleanup."));
-    } else if (foreignSnapshot && activeSnapshot) {
-        m_banner->setType(Utils::InfoLabel::Warning);
-        m_banner->setText(
-            Tr::tr(
-                "This adapter is connected for another EtherCAT Master. Select that Master to "
-                "refresh or disconnect it."));
-    } else if (activeSnapshot) {
-        showSnapshotEvidence();
-    } else if (foreignSnapshot) {
-        m_banner->setType(Utils::InfoLabel::Warning);
-        m_banner->setText(
-            Tr::tr("This adapter is showing a historical snapshot for another EtherCAT Master."));
-    } else if (snapshot.state == Data::ControllerConnectionState::Failed) {
-        m_banner->setType(Utils::InfoLabel::Error);
-        m_banner->setText(Tr::tr("%1 — the read-only connection failed.").arg(state));
-    } else if (!selection.profileExplicitlySelected || selection.profileId.isNull()) {
-        m_banner->setType(Utils::InfoLabel::Information);
-        m_banner->setText(Tr::tr("Select a connection profile."));
-    } else if (profile == profiles.cend() || !profile->configured || !profile->supported) {
-        m_banner->setType(Utils::InfoLabel::Warning);
-        const QString issue = profile != profiles.cend() ? profile->configurationIssue : QString();
-        m_banner->setText(
-            issue.isEmpty() ? Tr::tr("The selected connection profile is unavailable.") : issue);
-    } else {
-        showSnapshotEvidence();
+    const std::optional<Data::ControllerConnectionProfileConfiguration> configuration
+        = provider && !selection.profileId.isNull()
+              ? m_controller->controllerConnectionProfileConfiguration(
+                    scope, selection.profileId)
+              : std::nullopt;
+    if (!m_endpointDirty) {
+        m_endpoint->setText(configuration ? configuration->endpoint : endpoint);
     }
-
-    if (snapshot.lastError) {
-        QStringList errorLines;
-        if (!snapshot.lastError->summary.isEmpty())
-            errorLines.append(snapshot.lastError->summary);
-        if (!snapshot.lastError->detail.isEmpty())
-            errorLines.append(snapshot.lastError->detail);
-        QString code = snapshot.lastError->codeName;
-        if (snapshot.lastError->code)
-            code = code.isEmpty() ? QString::number(*snapshot.lastError->code)
-                                  : Tr::tr("%1 (%2)").arg(code).arg(*snapshot.lastError->code);
-        if (!code.isEmpty())
-            errorLines.append(Tr::tr("Code: %1").arg(code));
-        if (!snapshot.lastError->channelId.isEmpty()) {
-            errorLines.append(Tr::tr("Channel: %1").arg(snapshot.lastError->channelId));
-        }
-        QString retry = retryDispositionText(snapshot.lastError->retryDisposition);
-        if (snapshot.lastError->retryAfterMs) {
-            retry = Tr::tr("%1 after %2 ms").arg(retry).arg(*snapshot.lastError->retryAfterMs);
-        }
-        errorLines.append(Tr::tr("Recovery: %1").arg(retry));
-        const QString errorText = errorLines.join('\n');
-        m_error->setText(errorText);
-        m_error->setToolTip(errorText);
-        m_error->show();
-    } else {
-        m_error->clear();
-        m_error->hide();
-    }
+    m_endpoint->setPlaceholderText(
+        configuration && !configuration->placeholder.isEmpty()
+            ? configuration->placeholder
+            : Tr::tr("Not available"));
+    const bool endpointEditable = configuration && configuration->editable && !locked;
+    m_endpoint->setEnabled(endpointEditable);
+    m_saveEndpoint->setEnabled(
+        endpointEditable && m_endpointDirty && !m_endpoint->text().trimmed().isEmpty());
+    m_endpoint->setToolTip(
+        endpointEditable
+            ? Tr::tr("Enter an IPv4 address or IPv4:basePort. Push and Bulk use the next two ports.")
+            : m_endpoint->text());
 }
 
 void CommunicationPage::selectProvider(int index)
 {
     if (m_updating || !m_controller || index < 0)
         return;
+    m_endpointDirty = false;
     const Data::ControllerConnectionScope scope{m_context.projectId, m_context.nodeId};
     const Utils::Result<> result = m_controller->selectControllerConnectionProvider(
         scope, Utils::Id::fromSetting(m_provider->itemData(index)));
     if (!result) {
         refresh();
-        m_banner->setType(Utils::InfoLabel::Error);
-        m_banner->setText(result.error());
+        m_controller->writeControllerOutput(result.error(), ControllerOutputLevel::Error);
+        return;
     }
 }
 
@@ -566,14 +613,44 @@ void CommunicationPage::selectProfile(int index)
 {
     if (m_updating || !m_controller || index < 0)
         return;
+    m_endpointDirty = false;
     const Data::ControllerConnectionScope scope{m_context.projectId, m_context.nodeId};
     const Utils::Result<> result = m_controller->selectControllerConnectionProfile(
         scope, m_profile->itemData(index).value<Data::NodeId>());
     if (!result) {
         refresh();
-        m_banner->setType(Utils::InfoLabel::Error);
-        m_banner->setText(result.error());
+        m_controller->writeControllerOutput(result.error(), ControllerOutputLevel::Error);
+        return;
     }
+}
+
+void CommunicationPage::saveEndpoint()
+{
+    if (!m_controller || !m_endpointDirty)
+        return;
+
+    const Data::ControllerConnectionScope scope{m_context.projectId, m_context.nodeId};
+    const Data::NodeId profileId = m_profile->currentData().value<Data::NodeId>();
+    const QString endpoint = m_endpoint->text().trimmed();
+    const Utils::Result<> result
+        = m_controller->setControllerConnectionProfileEndpoint(scope, profileId, endpoint);
+    if (!result) {
+        m_controller->writeControllerOutput(
+            Tr::tr("Cannot save the controller endpoint: %1").arg(result.error()),
+            ControllerOutputLevel::Error);
+        return;
+    }
+
+    m_endpointDirty = false;
+    const std::optional<Data::ControllerConnectionProfileConfiguration> savedConfiguration
+        = m_controller->controllerConnectionProfileConfiguration(scope, profileId);
+    const QString savedEndpoint
+        = savedConfiguration ? savedConfiguration->endpoint.trimmed() : QString();
+    m_controller->writeControllerOutput(
+        savedEndpoint.isEmpty()
+            ? Tr::tr("Controller endpoint saved.")
+            : Tr::tr("Controller endpoint saved: %1").arg(savedEndpoint));
+    refresh();
 }
 
 void CommunicationPage::updateSummary(
@@ -602,9 +679,7 @@ void CommunicationPage::updateSummary(
     addSummaryRow(
         m_summary,
         Tr::tr("Access"),
-        hasConnectionEvidence
-            ? (snapshot.readOnly ? Tr::tr("Read-only") : Tr::tr("Controlled"))
-            : Tr::tr("Not available"));
+        hasConnectionEvidence ? controllerAccessText(snapshot) : Tr::tr("Not available"));
     addSummaryRow(
         m_summary,
         Tr::tr("Evidence"),
@@ -717,6 +792,81 @@ void CommunicationPage::updateChannels(const Data::ControllerConnectionSnapshot 
         m_channels->addTopLevelItem(item);
     }
     m_channels->setVisible(!snapshot.channels.isEmpty());
+}
+
+void CommunicationPage::updateControllerControl(
+    const Data::ControllerConnectionSnapshot &snapshot)
+{
+    const Data::ControllerConnectionScope contextScope{m_context.projectId, m_context.nodeId};
+    const bool matchingMasterContext = m_context.nodeKind == Core::WorkbenchNodeKind::Master
+                                       && !contextScope.projectId.isNull()
+                                       && !contextScope.masterId.isNull()
+                                       && snapshot.scope == contextScope;
+    const QList<std::pair<QToolButton *, Data::ControllerControlCommand>> buttons{
+        {m_acquireControl, Data::ControllerControlCommand::AcquireControl},
+        {m_enterConfiguration, Data::ControllerControlCommand::EnterConfigurationMode},
+        {m_scanBus, Data::ControllerControlCommand::DiscoverTopology},
+        {m_restorePackage, Data::ControllerControlCommand::RestoreActivePackage},
+        {m_releaseControl, Data::ControllerControlCommand::ReleaseControl},
+    };
+    for (const auto &[button, command] : buttons) {
+        button->setEnabled(matchingMasterContext && m_controller
+                           && m_controller->canExecuteControllerControl(contextScope, command));
+    }
+}
+
+void CommunicationPage::updateTopology(
+    const std::optional<Data::ControllerTopologySnapshot> &topology)
+{
+    m_actualBus->clear();
+    if (!topology) {
+        m_topologySummary->clear();
+        m_topologySummary->hide();
+        m_actualBus->hide();
+        return;
+    }
+
+    QString summary = Tr::tr("%1 responding device(s), %2 displayed")
+                          .arg(topology->respondingCount)
+                          .arg(topology->slaves.size());
+    if (topology->discoveredAt.isValid()) {
+        summary += Tr::tr(" — scanned %1").arg(dateTimeText(topology->discoveredAt));
+    }
+    if (topology->result)
+        summary += Tr::tr(" — result %1").arg(topology->result);
+    m_topologySummary->setText(summary);
+    m_topologySummary->setToolTip(summary);
+    m_topologySummary->show();
+    m_actualBus->show();
+
+    for (const Data::ControllerTopologySlave &slave : topology->slaves) {
+        auto item = new QTreeWidgetItem(
+            {QString::number(slave.position),
+             hexadecimalValue(slave.stationAddress, 4),
+             hexadecimalValue(slave.alState, 4),
+             hexadecimalValue(slave.vendorId, 8),
+             hexadecimalValue(slave.productCode, 8),
+             hexadecimalValue(slave.revision, 8),
+             hexadecimalValue(slave.serial, 8)});
+        for (int column = 0; column < item->columnCount(); ++column)
+            item->setToolTip(column, item->text(column));
+        m_actualBus->addTopLevelItem(item);
+    }
+}
+
+void CommunicationPage::executeControllerControl(Data::ControllerControlCommand command)
+{
+    if (!m_controller)
+        return;
+    const Data::ControllerConnectionScope contextScope{m_context.projectId, m_context.nodeId};
+    Data::ControllerControlRequest request;
+    request.command = command;
+    const Utils::Result<> result = m_controller->executeControllerControl(contextScope, request);
+    if (result)
+        return;
+    m_controller->writeControllerOutput(
+        Tr::tr("Cannot control the controller: %1").arg(result.error()),
+        ControllerOutputLevel::Error);
 }
 
 } // namespace EtherCAT::Workbench::Internal

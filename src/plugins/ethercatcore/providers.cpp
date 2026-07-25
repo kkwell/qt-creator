@@ -2,7 +2,21 @@
 
 #include "providers.h"
 
+#include "ethercatcoretr.h"
+
 namespace EtherCAT::Core {
+
+bool isMockUiEnabled()
+{
+    if (qEnvironmentVariableIsSet("QTC_ETHER_CAT_ENABLE_MOCK_UI")) {
+        return qEnvironmentVariable("QTC_ETHER_CAT_ENABLE_MOCK_UI") == "1";
+    }
+#ifdef WITH_TESTS
+    return true;
+#else
+    return false;
+#endif
+}
 
 Provider::Provider(ProviderKind kind, Utils::Id id, const QString &displayName, QObject *parent)
     : QObject(parent)
@@ -121,6 +135,33 @@ ControllerConnectionProvider::ControllerConnectionProvider(
     Utils::Id id, const QString &displayName, QObject *parent)
     : Provider(ProviderKind::ControllerConnection, id, displayName, parent)
 {}
+
+std::optional<Data::ControllerConnectionProfileConfiguration>
+ControllerConnectionProvider::connectionProfileConfiguration(
+    const Data::ControllerConnectionScope &, const Data::NodeId &) const
+{
+    return std::nullopt;
+}
+
+Utils::Result<> ControllerConnectionProvider::setConnectionProfileEndpoint(
+    const Data::ControllerConnectionScope &, const Data::NodeId &, const QString &)
+{
+    return Utils::ResultError(
+        Tr::tr("This controller provider does not support editing connection profiles."));
+}
+
+bool ControllerConnectionProvider::supportsControlCommand(
+    Data::ControllerControlCommand) const
+{
+    return false;
+}
+
+Utils::Result<> ControllerConnectionProvider::executeControlCommand(
+    const Data::ControllerControlRequest &)
+{
+    return Utils::ResultError(
+        Tr::tr("This controller provider does not support control commands."));
+}
 
 ScanProvider::ScanProvider(Utils::Id id, const QString &displayName, QObject *parent)
     : Provider(ProviderKind::Scan, id, displayName, parent)

@@ -17,7 +17,9 @@ inline constexpr qsizetype HeaderBytes = 64;
 inline constexpr quint32 Magic = 0x45434150;
 inline constexpr quint16 CurrentMajor = 1;
 inline constexpr quint16 MinimumMinor = 1;
-inline constexpr quint16 CurrentMinor = 9;
+inline constexpr quint16 FirmwareMinor = 9;
+inline constexpr quint16 ExplicitTimingModeMinor = 10;
+inline constexpr quint16 CurrentMinor = ExplicitTimingModeMinor;
 inline constexpr quint32 ControlMaximumPayloadBytes = 4096;
 inline constexpr quint32 PushMaximumPayloadBytes = 65536;
 inline constexpr quint32 BulkMaximumPayloadBytes = 65536;
@@ -32,7 +34,17 @@ enum class MessageType : quint16 {
     Hello = 0x0001,
     HelloAck = 0x0002,
     Error = 0x0003,
+    AcquireControl = 0x0100,
+    ReleaseControl = 0x0101,
+    Start = 0x0102,
+    Pause = 0x0103,
+    Resume = 0x0104,
+    ControlledStop = 0x0105,
     GetState = 0x0108,
+    Heartbeat = 0x0109,
+    EnterConfigurationMode = 0x010b,
+    StartFreeRun = 0x010c,
+    StartDc = 0x010d,
     CommandStatus = 0x0180,
     ControllerState = 0x0200,
     AlarmRaised = 0x0207,
@@ -44,8 +56,11 @@ enum class MessageType : quint16 {
     ResumeEventsResult = 0x0280,
     BulkStatus = 0x0380,
     GetCapability = 0x0400,
+    DiscoverTopology = 0x0401,
     GetPackageState = 0x0403,
+    RestoreActivePackage = 0x0407,
     Capability = 0x0480,
+    TopologyResult = 0x0481,
     PackageState = 0x0483,
     GetFirmwareState = 0x0504,
     FirmwareStatus = 0x0580,
@@ -234,8 +249,29 @@ struct PushHeartbeat
     quint64 bootId = 0;
 };
 
+struct TopologySlave
+{
+    quint16 position = 0;
+    quint16 stationAddress = 0;
+    quint16 alState = 0;
+    quint16 flags = 0;
+    quint32 vendorId = 0;
+    quint32 productCode = 0;
+    quint32 revision = 0;
+    quint32 serial = 0;
+};
+
+struct TopologyResult
+{
+    qint32 result = 0;
+    quint16 respondingCount = 0;
+    quint32 combinedAlState = 0;
+    QList<TopologySlave> slaves;
+};
+
 quint32 maximumPayloadBytes(Role role);
 bool isReadOnlyRequest(MessageType type);
+bool isSupportedRequest(MessageType type);
 quint32 crc32c(QByteArrayView bytes);
 
 QByteArray encodeFrame(const Frame &frame, Error *error = nullptr);
@@ -282,6 +318,8 @@ std::optional<Data::ControllerStateSummary> decodeControllerState(
 std::optional<Data::ControllerCapabilitySummary> decodeCapability(
     const Frame &frame, quint32 featureBits, Error *error = nullptr);
 std::optional<Data::ControllerPackageSummary> decodePackageState(
+    const Frame &frame, Error *error = nullptr);
+std::optional<TopologyResult> decodeTopologyResult(
     const Frame &frame, Error *error = nullptr);
 std::optional<Data::ControllerFirmwareSummary> decodeFirmwareState(
     const Frame &frame, Error *error = nullptr);

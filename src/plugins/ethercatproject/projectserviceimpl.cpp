@@ -8,6 +8,8 @@
 #include "ethercatprojecttr.h"
 
 #include <projectexplorer/projectmanager.h>
+#include <projectexplorer/task.h>
+#include <projectexplorer/taskhub.h>
 
 #include <utils/qtcassert.h>
 
@@ -48,6 +50,19 @@ Data::NodeId ProjectServiceImpl::activeProjectId() const
 {
     QTC_ASSERT(isGuiThread(), return {});
     return m_activeProjectId;
+}
+
+bool ProjectServiceImpl::managesProject(const QObject *project) const
+{
+    QTC_ASSERT(isGuiThread(), return false);
+    const auto *etherCATProject = qobject_cast<const EtherCATProject *>(project);
+    if (!etherCATProject)
+        return false;
+    for (const QPointer<EtherCATProject> &managedProject : m_projects) {
+        if (managedProject.data() == etherCATProject)
+            return true;
+    }
+    return false;
 }
 
 Utils::Result<> ProjectServiceImpl::activateProject(const Data::NodeId &projectId)
@@ -184,50 +199,43 @@ void ProjectServiceImpl::registerProject(ProjectExplorer::Project *project)
 {
     QTC_ASSERT(isGuiThread(), return);
     auto *etherCATProject = qobject_cast<EtherCATProject *>(project);
-    if (!etherCATProject || m_projects.contains(etherCATProject))
+    if (!etherCATProject || m_openProjects.contains(etherCATProject))
         return;
-    if (findProject(etherCATProject->snapshot().id)) {
-        etherCATProject->addTask(
-            ProjectExplorer::Project::createTask(
-                ProjectExplorer::Task::TaskType::Error,
-                Tr::tr("Another open EtherCAT project has the same project ID.")));
-        return;
-    }
-
-    m_projects.append(etherCATProject);
-    connect(
-        etherCATProject,
-        &EtherCATProject::snapshotChanged,
-        this,
-        [this, etherCATProject](const Data::ProjectSnapshot &snapshot) {
-            handleSnapshotChanged(etherCATProject, snapshot);
-        });
-    emit projectAdded(etherCATProject->snapshot());
+    m_openProjects.append(etherCATProject);
+    reevaluateProjectId(etherCATProject->snapshot().id);
 }
 
 void ProjectServiceImpl::unregisterProject(ProjectExplorer::Project *project)
 {
     QTC_ASSERT(isGuiThread(), return);
     auto *etherCATProject = qobject_cast<EtherCATProject *>(project);
-    if (!etherCATProject || !m_projects.contains(etherCATProject))
+    if (!etherCATProject || !m_openProjects.contains(etherCATProject))
         return;
 
     const Data::NodeId projectId = etherCATProject->snapshot().id;
-    emit projectAboutToBeRemoved(projectId);
-    if (m_activeProjectId == projectId) {
-        m_activeProjectId = {};
-        emit activeProjectChanged(projectId, {});
+    clearDuplicateProjectTask(etherCATProject);
+    m_openProjects.removeAll(etherCATProject);
+    if (m_projects.contains(etherCATProject)) {
+        emit projectAboutToBeRemoved(projectId);
+        if (m_activeProjectId == projectId) {
+            m_activeProjectId = {};
+            emit activeProjectChanged(projectId, {});
+        }
+        disconnect(etherCATProject, nullptr, this, nullptr);
+        m_projects.removeAll(etherCATProject);
     }
-    disconnect(etherCATProject, nullptr, this, nullptr);
-    m_projects.removeAll(etherCATProject);
+    reevaluateProjectId(projectId);
+    setStartupProject(ProjectExplorer::ProjectManager::startupProject());
 }
 
 void ProjectServiceImpl::setStartupProject(ProjectExplorer::Project *project)
 {
     QTC_ASSERT(isGuiThread(), return);
     const auto *etherCATProject = qobject_cast<EtherCATProject *>(project);
-    const Data::NodeId newProjectId = etherCATProject ? etherCATProject->snapshot().id
-                                                      : Data::NodeId{};
+    const Data::NodeId newProjectId
+        = etherCATProject && managesProject(etherCATProject)
+              ? etherCATProject->snapshot().id
+              : Data::NodeId{};
     if (newProjectId == m_activeProjectId)
         return;
     const Data::NodeId oldProjectId = m_activeProjectId;
@@ -238,10 +246,14 @@ void ProjectServiceImpl::setStartupProject(ProjectExplorer::Project *project)
 void ProjectServiceImpl::clear()
 {
     QTC_ASSERT(isGuiThread(), return);
+    for (ProjectExplorer::Task &task : m_duplicateProjectTasks)
+        ProjectExplorer::TaskHub::clearAndRemoveTask(task);
+    m_duplicateProjectTasks.clear();
     for (const QPointer<EtherCATProject> &project : std::as_const(m_projects)) {
         if (project)
             disconnect(project, nullptr, this, nullptr);
     }
+    m_openProjects.clear();
     m_projects.clear();
     if (!m_activeProjectId.isNull()) {
         const Data::NodeId oldProjectId = m_activeProjectId;
@@ -259,6 +271,69 @@ EtherCATProject *ProjectServiceImpl::findProject(const Data::NodeId &projectId) 
             return project;
     }
     return nullptr;
+}
+
+void ProjectServiceImpl::manageProject(EtherCATProject *project)
+{
+    QTC_ASSERT(project, return);
+    if (m_projects.contains(project))
+        return;
+    clearDuplicateProjectTask(project);
+    m_projects.append(project);
+    connect(
+        project,
+        &EtherCATProject::snapshotChanged,
+        this,
+        [this, project](const Data::ProjectSnapshot &snapshot) {
+            handleSnapshotChanged(project, snapshot);
+        });
+    emit projectAdded(project->snapshot());
+}
+
+void ProjectServiceImpl::reevaluateProjectId(const Data::NodeId &projectId)
+{
+    QList<EtherCATProject *> candidates;
+    for (const QPointer<EtherCATProject> &project : std::as_const(m_openProjects)) {
+        if (project && project->snapshot().id == projectId)
+            candidates.append(project);
+    }
+
+    if (EtherCATProject *owner = findProject(projectId)) {
+        for (EtherCATProject *candidate : std::as_const(candidates)) {
+            if (candidate != owner)
+                markDuplicateProject(candidate);
+        }
+        return;
+    }
+
+    if (candidates.size() == 1) {
+        manageProject(candidates.constFirst());
+        return;
+    }
+    for (EtherCATProject *candidate : std::as_const(candidates))
+        markDuplicateProject(candidate);
+}
+
+void ProjectServiceImpl::markDuplicateProject(EtherCATProject *project)
+{
+    QTC_ASSERT(project, return);
+    if (m_duplicateProjectTasks.contains(project))
+        return;
+    const ProjectExplorer::Task task(
+        ProjectExplorer::OtherTask(
+            ProjectExplorer::Task::TaskType::Error,
+            Tr::tr("Another open EtherCAT project has the same project ID.")));
+    m_duplicateProjectTasks.insert(project, task);
+    ProjectExplorer::TaskHub::addTask(task);
+}
+
+void ProjectServiceImpl::clearDuplicateProjectTask(EtherCATProject *project)
+{
+    auto task = m_duplicateProjectTasks.find(project);
+    if (task == m_duplicateProjectTasks.end())
+        return;
+    ProjectExplorer::TaskHub::clearAndRemoveTask(task.value());
+    m_duplicateProjectTasks.erase(task);
 }
 
 void ProjectServiceImpl::handleSnapshotChanged(

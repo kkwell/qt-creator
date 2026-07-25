@@ -95,9 +95,101 @@ enum class ControllerOperation {
     SubscribeEvents,
     Refresh,
     Disconnect,
+    AcquireControl,
+    ReleaseControl,
+    Heartbeat,
+    EnterConfigurationMode,
+    DiscoverTopology,
+    RestoreActivePackage,
+    Start,
+    StartFreeRun,
+    StartDistributedClocks,
+    Pause,
+    Resume,
+    ControlledStop,
+};
+
+enum class ControllerControlCommand {
+    None,
+    AcquireControl,
+    ReleaseControl,
+    EnterConfigurationMode,
+    DiscoverTopology,
+    RestoreActivePackage,
+    Start,
+    StartFreeRun,
+    StartDistributedClocks,
+    Pause,
+    Resume,
+    ControlledStop,
+};
+
+enum class ControllerControlState {
+    Idle,
+    Pending,
+    Succeeded,
+    Failed,
 };
 
 enum class ControllerRetryDisposition { Unknown, Retryable, Reconnect, NotRetryable };
+
+struct ETHERCATDATA_EXPORT ControllerControlRequest
+{
+    ControllerControlCommand command = ControllerControlCommand::None;
+    int leaseDurationMs = 30000;
+    quint16 firstStationAddress = 0x1001;
+    quint16 topologyCapacity = 64;
+
+    friend bool operator==(const ControllerControlRequest &,
+                           const ControllerControlRequest &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT ControllerControlProgress
+{
+    ControllerControlCommand command = ControllerControlCommand::None;
+    ControllerControlState state = ControllerControlState::Idle;
+    quint16 stage = 0;
+    bool final = false;
+    std::optional<qint32> status;
+    std::optional<qint32> operationResult;
+    QString detail;
+    QDateTime startedAt;
+    QDateTime completedAt;
+
+    friend bool operator==(const ControllerControlProgress &,
+                           const ControllerControlProgress &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT ControllerTopologySlave
+{
+    quint32 position = 0;
+    quint16 stationAddress = 0;
+    quint16 alState = 0;
+    quint32 flags = 0;
+    quint32 vendorId = 0;
+    quint32 productCode = 0;
+    quint32 revision = 0;
+    quint32 serial = 0;
+
+    friend bool operator==(const ControllerTopologySlave &,
+                           const ControllerTopologySlave &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT ControllerTopologySnapshot
+{
+    quint16 firstStationAddress = 0;
+    quint32 respondingCount = 0;
+    qint32 result = 0;
+    QList<ControllerTopologySlave> slaves;
+    QDateTime discoveredAt;
+
+    friend bool operator==(const ControllerTopologySnapshot &,
+                           const ControllerTopologySnapshot &)
+        = default;
+};
 
 struct ETHERCATDATA_EXPORT ControllerConnectionScope
 {
@@ -119,6 +211,19 @@ struct ETHERCATDATA_EXPORT ControllerConnectionProfile
     QString configurationIssue;
 
     friend bool operator==(const ControllerConnectionProfile &, const ControllerConnectionProfile &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT ControllerConnectionProfileConfiguration
+{
+    NodeId profileId;
+    QString endpoint;
+    QString placeholder;
+    bool editable = false;
+
+    friend bool operator==(
+        const ControllerConnectionProfileConfiguration &,
+        const ControllerConnectionProfileConfiguration &)
         = default;
 };
 
@@ -212,6 +317,7 @@ struct ETHERCATDATA_EXPORT ControllerCapabilitySummary
     bool processInputSample = false;
     bool structuredHandshakeError = false;
     bool firmwareUpdate = false;
+    bool explicitTimingModeStart = false;
     bool coe = false;
     bool distributedClocks = false;
     bool multiSlaveDistributedClocks = false;
@@ -300,6 +406,8 @@ struct ETHERCATDATA_EXPORT ControllerConnectionSnapshot
     std::optional<ControllerPackageSummary> package;
     std::optional<ControllerFirmwareSummary> firmware;
     std::optional<ControllerOperationError> lastError;
+    ControllerControlProgress controlProgress;
+    std::optional<ControllerTopologySnapshot> topology;
 
     friend bool operator==(const ControllerConnectionSnapshot &, const ControllerConnectionSnapshot &)
         = default;
@@ -316,9 +424,16 @@ Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPackageState)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerFirmwareState)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerErrorSource)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerOperation)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerControlCommand)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerControlState)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerRetryDisposition)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerControlRequest)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerControlProgress)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerTopologySlave)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerTopologySnapshot)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerConnectionScope)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerConnectionProfile)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerConnectionProfileConfiguration)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerConnectionRequest)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerProtocolVersion)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerChannelStatus)

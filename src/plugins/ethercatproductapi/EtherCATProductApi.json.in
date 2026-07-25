@@ -9,6 +9,6 @@
     "Copyright" : "(C) 2026 Embed Labs",
     "License" : [ "Commercial Usage" ],
     "Category" : "EtherCAT",
-    "Description" : "Embed Labs Product API v1.9 read-only controller adapter.",
+    "Description" : "Embed Labs Product API v1.10 controller adapter.",
     ${IDE_PLUGIN_DEPENDENCIES}
 }

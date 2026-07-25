@@ -2,6 +2,8 @@
 
 #include "productapicodec.h"
 
+#include "ethercatproductapitr.h"
+
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QtEndian>
@@ -25,6 +27,7 @@ constexpr quint32 TimeCorrelationFeature = 1U << 7;
 constexpr quint32 ProcessInputSampleFeature = 1U << 8;
 constexpr quint32 StructuredHelloErrorFeature = 1U << 9;
 constexpr quint32 FirmwareUpdateFeature = 1U << 10;
+constexpr quint32 ExplicitTimingModeStartFeature = 1U << 11;
 constexpr quint32 ControllerStatusKnownMask = 0x000001ff;
 constexpr quint64 ControllerFaultKnownMask = 0x000000000001ffff;
 constexpr quint32 ControllerAlKnownMask = 0x1f;
@@ -91,8 +94,18 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
         if (type == MessageType::Hello)
             return true;
         if (role == Role::Control) {
-            return type == MessageType::GetState || type == MessageType::GetCapability
-                   || type == MessageType::GetPackageState || type == MessageType::GetFirmwareState;
+            return type == MessageType::AcquireControl
+                   || type == MessageType::ReleaseControl || type == MessageType::Start
+                   || type == MessageType::StartFreeRun || type == MessageType::StartDc
+                   || type == MessageType::Pause || type == MessageType::Resume
+                   || type == MessageType::ControlledStop || type == MessageType::GetState
+                   || type == MessageType::Heartbeat
+                   || type == MessageType::EnterConfigurationMode
+                   || type == MessageType::GetCapability
+                   || type == MessageType::DiscoverTopology
+                   || type == MessageType::GetPackageState
+                   || type == MessageType::RestoreActivePackage
+                   || type == MessageType::GetFirmwareState;
         }
         if (role == Role::Push)
             return type == MessageType::ResumeEvents;
@@ -103,8 +116,8 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
         return true;
     if (role == Role::Control) {
         return type == MessageType::CommandStatus || type == MessageType::ControllerState
-               || type == MessageType::Capability || type == MessageType::PackageState
-               || type == MessageType::FirmwareState;
+               || type == MessageType::Capability || type == MessageType::TopologyResult
+               || type == MessageType::PackageState || type == MessageType::FirmwareState;
     }
     if (role == Role::Push) {
         return type == MessageType::CommandStatus || type == MessageType::ControllerState
@@ -134,6 +147,8 @@ quint32 requiredFeatureMask(quint16 minor)
         mask |= StructuredHelloErrorFeature;
     if (minor >= 9)
         mask |= FirmwareUpdateFeature;
+    if (minor >= ExplicitTimingModeMinor)
+        mask |= ExplicitTimingModeStartFeature;
     return mask;
 }
 
@@ -341,6 +356,7 @@ bool commandStatusAllowed(qint32 status)
     case -22:
     case -23:
     case -24:
+    case -35:
         return true;
     default:
         return false;
@@ -399,7 +415,7 @@ bool firmwareStatusAllowed(qint32 status)
 
 bool commandStatusOriginalAllowed(quint16 originalType)
 {
-    return (originalType >= 0x0100 && originalType <= 0x010b) || originalType == 0x0210
+    return (originalType >= 0x0100 && originalType <= 0x010d) || originalType == 0x0210
            || (originalType >= 0x0400 && originalType <= 0x040a);
 }
 
@@ -609,6 +625,19 @@ bool isReadOnlyRequest(MessageType type)
            || type == MessageType::ResumeEvents;
 }
 
+bool isSupportedRequest(MessageType type)
+{
+    return type == MessageType::Hello || isReadOnlyRequest(type)
+           || type == MessageType::AcquireControl || type == MessageType::ReleaseControl
+           || type == MessageType::Start || type == MessageType::StartFreeRun
+           || type == MessageType::StartDc || type == MessageType::Pause
+           || type == MessageType::Resume || type == MessageType::ControlledStop
+           || type == MessageType::Heartbeat
+           || type == MessageType::EnterConfigurationMode
+           || type == MessageType::DiscoverTopology
+           || type == MessageType::RestoreActivePackage;
+}
+
 quint32 crc32c(QByteArrayView bytes)
 {
     quint32 crc = 0xffffffffU;
@@ -675,17 +704,38 @@ QByteArray encodeRequest(
     Error *error)
 {
     clearError(error);
-    if (!isReadOnlyRequest(type) && type != MessageType::Hello) {
+    if (!isSupportedRequest(type)) {
         setError(
             error,
             ErrorCategory::UnsupportedMessage,
-            QStringLiteral("Only read-only requests are allowed."));
+            Tr::tr("The request message type is not supported."));
         return {};
     }
-    const qsizetype expectedBytes = type == MessageType::Hello          ? 24
-                                    : type == MessageType::ResumeEvents ? 4
-                                                                        : 0;
-    if (payload.size() != expectedBytes) {
+    bool payloadValid = false;
+    if (type == MessageType::Hello) {
+        payloadValid = payload.size() == 24;
+    } else if (type == MessageType::ResumeEvents) {
+        payloadValid = payload.size() == 4;
+    } else if (type == MessageType::AcquireControl) {
+        payloadValid = payload.isEmpty()
+                       || (payload.size() == 4
+                           && readBigEndian<quint32>(payload, 0) >= 1
+                           && readBigEndian<quint32>(payload, 0) <= MaximumLeaseDurationMs);
+    } else if (type == MessageType::DiscoverTopology) {
+        payloadValid = payload.size() == 8 && readBigEndian<quint16>(payload, 0)
+                       && readBigEndian<quint16>(payload, 2) >= 1
+                       && readBigEndian<quint16>(payload, 2) <= 64
+                       && readBigEndian<quint32>(payload, 4) == 0;
+    } else if (type == MessageType::RestoreActivePackage) {
+        const quint32 slot = payload.size() == 24 ? readBigEndian<quint32>(payload, 0) : 0;
+        payloadValid = payload.size() == 24 && (slot == quint32('A') || slot == quint32('B'))
+                       && readBigEndian<quint32>(payload, 4) == 0
+                       && readBigEndian<quint64>(payload, 8)
+                       && readBigEndian<quint64>(payload, 16);
+    } else {
+        payloadValid = payload.isEmpty();
+    }
+    if (!payloadValid) {
         setError(
             error,
             ErrorCategory::InvalidPayload,
@@ -714,11 +764,19 @@ QByteArray encodeRequest(
             QStringLiteral("Post-handshake identity must be nonzero."));
         return {};
     }
-    if (type == MessageType::GetFirmwareState && protocolMinor < CurrentMinor) {
+    if (type == MessageType::GetFirmwareState && protocolMinor < FirmwareMinor) {
         setError(
             error,
             ErrorCategory::IncompatibleVersion,
             QStringLiteral("Firmware state requires protocol v1.9."));
+        return {};
+    }
+    if ((type == MessageType::StartFreeRun || type == MessageType::StartDc)
+        && protocolMinor < ExplicitTimingModeMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            Tr::tr("Explicit timing-mode start requires protocol v1.10."));
         return {};
     }
 
@@ -935,6 +993,7 @@ std::optional<CommandStatus> decodeCommandStatus(const Frame &frame, Error *erro
     const qint32 status = readBigEndian<qint32>(payload, 4);
     const qint32 operationResult = readBigEndian<qint32>(payload, 8);
     const quint32 serviceState = readBigEndian<quint32>(payload, 12);
+    const quint64 detail = readBigEndian<quint64>(payload, 28);
     const quint32 finalValue = readBigEndian<quint32>(payload, 36);
     if (!validateStatusFlags(frame, status, error))
         return {};
@@ -960,6 +1019,23 @@ std::optional<CommandStatus> decodeCommandStatus(const Frame &frame, Error *erro
             QStringLiteral("CommandStatus fields violate the public protocol contract."));
         return {};
     }
+    if (status == -35) {
+        const quint32 requestedMode = quint32(detail >> 32);
+        const quint32 actualMode = quint32(detail);
+        const quint32 expectedRequestedMode
+            = originalType == quint16(MessageType::StartFreeRun)
+                  ? 1
+                  : originalType == quint16(MessageType::StartDc) ? 2 : 0;
+        if (frame.header.protocolMinor < ExplicitTimingModeMinor || stage != 2
+            || !expectedRequestedMode || requestedMode != expectedRequestedMode
+            || (actualMode != 1 && actualMode != 2) || actualMode == requestedMode) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                Tr::tr("TIMING_MODE_MISMATCH fields violate the v1.10 contract."));
+            return {};
+        }
+    }
 
     return CommandStatus{
         originalType,
@@ -969,7 +1045,7 @@ std::optional<CommandStatus> decodeCommandStatus(const Frame &frame, Error *erro
         serviceState,
         readBigEndian<quint32>(payload, 16),
         readBigEndian<quint64>(payload, 20),
-        readBigEndian<quint64>(payload, 28),
+        detail,
         bool(finalValue),
     };
 }
@@ -1052,11 +1128,13 @@ std::optional<BulkStatus> decodeBulkStatus(const Frame &frame, Error *error)
 std::optional<FirmwareStatus> decodeFirmwareStatus(const Frame &frame, Error *error)
 {
     clearError(error);
-    if (frame.header.protocolMajor != CurrentMajor || frame.header.protocolMinor != CurrentMinor) {
+    if (frame.header.protocolMajor != CurrentMajor
+        || frame.header.protocolMinor < FirmwareMinor
+        || frame.header.protocolMinor > CurrentMinor) {
         setError(
             error,
             ErrorCategory::IncompatibleVersion,
-            QStringLiteral("FirmwareStatus requires Product API v1.9."));
+            Tr::tr("FirmwareStatus requires Product API v1.9 or newer."));
         return {};
     }
     if (frame.header.messageType != MessageType::FirmwareStatus || frame.payload.size() != 96) {
@@ -1250,6 +1328,7 @@ std::optional<Data::ControllerCapabilitySummary> decodeCapability(
     result.processInputSample = featureBits & ProcessInputSampleFeature;
     result.structuredHandshakeError = featureBits & StructuredHelloErrorFeature;
     result.firmwareUpdate = featureBits & FirmwareUpdateFeature;
+    result.explicitTimingModeStart = featureBits & ExplicitTimingModeStartFeature;
     return result;
 }
 
@@ -1352,6 +1431,72 @@ std::optional<Data::ControllerPackageSummary> decodePackageState(const Frame &fr
     result.controllerRequestSequence = cpuSequence;
     result.controllerBootId = cpuBootId;
     return result;
+}
+
+std::optional<TopologyResult> decodeTopologyResult(const Frame &frame, Error *error)
+{
+    clearError(error);
+    if (frame.header.messageType != MessageType::TopologyResult || frame.payload.size() < 32) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            Tr::tr("Expected a complete TopologyResult."));
+        return {};
+    }
+    if (frame.header.flags != flagValue(Flag::Response) || !frame.header.requestId) {
+        setError(
+            error,
+            ErrorCategory::InvalidEnvelope,
+            Tr::tr("TopologyResult has an invalid response envelope."));
+        return {};
+    }
+
+    const QByteArrayView payload(frame.payload);
+    const quint16 originalType = readBigEndian<quint16>(payload, 0);
+    const quint16 recordBytes = readBigEndian<quint16>(payload, 2);
+    const qint32 result = readBigEndian<qint32>(payload, 4);
+    const quint16 count = readBigEndian<quint16>(payload, 8);
+    const quint16 responding = readBigEndian<quint16>(payload, 10);
+    const quint32 flags = readBigEndian<quint32>(payload, 16);
+    const quint32 combinedAlState = readBigEndian<quint32>(payload, 20);
+    const qsizetype expectedBytes = 32 + qsizetype(count) * 24;
+    if (originalType != quint16(MessageType::DiscoverTopology) || recordBytes != 24 || result
+        || count != responding || count > 64 || flags
+        || combinedAlState & ~ControllerAlKnownMask
+        || frame.payload.size() != expectedBytes) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            Tr::tr("TopologyResult fields violate the discovery contract."));
+        return {};
+    }
+
+    TopologyResult topology;
+    topology.result = result;
+    topology.respondingCount = responding;
+    topology.combinedAlState = combinedAlState;
+    topology.slaves.reserve(count);
+    for (quint16 index = 0; index < count; ++index) {
+        const qsizetype offset = 32 + qsizetype(index) * 24;
+        TopologySlave slave;
+        slave.position = readBigEndian<quint16>(payload, offset);
+        slave.stationAddress = readBigEndian<quint16>(payload, offset + 2);
+        slave.alState = readBigEndian<quint16>(payload, offset + 4);
+        slave.flags = readBigEndian<quint16>(payload, offset + 6);
+        slave.vendorId = readBigEndian<quint32>(payload, offset + 8);
+        slave.productCode = readBigEndian<quint32>(payload, offset + 12);
+        slave.revision = readBigEndian<quint32>(payload, offset + 16);
+        slave.serial = readBigEndian<quint32>(payload, offset + 20);
+        if (!slave.stationAddress) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                Tr::tr("TopologyResult contains an invalid station address."));
+            return {};
+        }
+        topology.slaves.append(slave);
+    }
+    return topology;
 }
 
 std::optional<Data::ControllerFirmwareSummary> decodeFirmwareState(const Frame &frame, Error *error)

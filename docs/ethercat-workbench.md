@@ -68,8 +68,10 @@ actions to the compact engineering strip.
 
 Workbench never names or includes Scan or Diagnostics implementation details.
 When either optional plugin is disabled, its actions are simply missing from
-the shared action container and no empty controls are fabricated. When both
-are available, their clearly named Mock commands appear automatically.
+the shared action container and no empty controls are fabricated. Mock Scan,
+Diagnostics, status, tree nodes, and property pages are hidden in a production
+build by default. They are available only in a `WITH_TESTS` build or when the
+process is started explicitly with `QTC_ETHER_CAT_ENABLE_MOCK_UI=1`.
 
 The strip uses the active Qt style's standard toolbar icon metric and compact
 icon-only buttons, with complete command names retained in tooltips. This
@@ -83,20 +85,16 @@ navigation controls.
 The Workbench registers one Qt Creator status-bar control in the standard
 `LastLeftAligned` area. It is visible only in EtherCAT Mode and merges the
 existing `StateService` entries with a value-only projection from the
-deterministically preferred public Diagnostics Provider and active immutable
-controller-connection Provider snapshots. The highest severity selects a
-Ready, Busy, Warning, or Fault icon and a short textual state; an active
-controller connection remains visible at equal severity. An empty service with
-no active Diagnostics or controller connection state displays `Offline`.
+deterministically preferred public Diagnostics Provider. The highest severity
+selects a Ready, Busy, Warning, or Fault icon and a short textual state. An
+empty service with no active Diagnostics state displays `Offline`.
 
 Local phase-1 Diagnostics snapshots remain explicitly labeled `MOCK`. While
 the preferred local Mock stream is running, the compact text distinguishes
 `MOCK Config / PREOP`, `MOCK FreeRun / SAFEOP`, and `MOCK Run / OP`. A future
 or test Provider that reports `mock=false` uses neutral `Diagnostics` wording
 and is identified as Provider-reported only; the Workbench does not infer a
-controller or physical-hardware connection from that value. Controller
-connection wording is likewise derived only from the connection Provider's
-snapshot and does not fabricate transport or hardware evidence.
+controller or physical-hardware connection from that value.
 
 The button tooltip and drop-down list retain every contributing summary and
 detail, so the compact visible state does not discard its source information.
@@ -104,6 +102,13 @@ The control uses Qt Creator icons, the active style's small-icon metric, and
 its current `sizeHint()` rather than hard-coded colors, fonts, or pixels. It
 therefore remains readable in the constrained status bar and at high DPI.
 Switching to another Mode hides the control without clearing shared state.
+
+Controller connection, lease, service, and command states deliberately do not
+contribute to this status-bar control. The native lower-left Run, Pause /
+Resume, and Controlled Stop actions change text, icon, enabled state, and
+tooltip from the selected controller snapshot. Detailed controller events and
+errors are written to the dedicated **EtherCAT Controller** tab in
+**Application Output**.
 
 ## Device tree
 
@@ -215,9 +220,10 @@ through the existing Message Manager path.
 
 This command is Qt Creator active-project selection only. It is not Beckhoff
 `Active PLC project`, `Activate Configuration`, Login, Download, boot-project,
-ADS, controller connection, Config/Run/OP, or any online transition. Replacing
-Qt Creator Run/Debug controls with future Mock or real controller-state controls
-requires a separate issue and a truthful state/transport contract.
+ADS, controller connection, Config/Run/OP, or any online transition. The later
+controller-control issue leaves this activation command unchanged and
+contextually routes Qt Creator's native Run/Debug controls only after a real
+controller snapshot and exclusive lease satisfy the documented gates.
 
 ## Navigation keyboard focus
 
@@ -1184,15 +1190,16 @@ The plugin owns no background thread, timer, future, file format, or persistent
 business state. Imported ESI data remains owned by `EtherCATDevices`; open
 project state remains owned by `EtherCATProject`.
 
-## Current limits
+## Historical phase-1 limits
 
-The Workbench itself deliberately provides no real bus scan, interface
-discovery, online controller state, controller connection, network protocol,
-configuration package, PLC language, or code generation. Scan and Diagnostics
-remain optional Mock Provider plugins. CoE Online is also a clearly labeled
-local interaction Mock; it does not perform SDO information or object access.
-The `Online` label is a presentation contract for a future non-Mock Provider,
-not evidence that this phase contains such a Provider or controller transport.
+At the phase-1 baseline, Workbench deliberately provided no real bus scan,
+interface discovery, online controller state, controller connection, network
+protocol, configuration package, PLC language, or code generation. The later
+Communication and controller-control sections supersede that baseline for
+connection, leased discovery, Actual Bus, and runtime control. Local Scan and
+Diagnostics remain optional Mock Provider plugins and are production-hidden
+unless explicitly enabled. CoE Online is also a clearly labeled local
+interaction Mock; it does not perform SDO information or object access.
 Inputs, Outputs, RxPDO, TxPDO, and their
 PDO/entry branches now render persisted, validated active process data. Actual
 modular ESI profile parsing and project-side module/channel values remain a
@@ -1510,18 +1517,21 @@ Mock name.
 The Workbench-private presentation now retains three states for each capability:
 
 - `Absent`: no Provider of that kind is registered; the tree says that no
-  Provider is registered and that V1 is local Mock only;
+  Provider is registered. Production guides the operator to the real scan or
+  reports no Diagnostics Provider; Mock-enabled builds additionally identify
+  the local-Mock boundary;
 - `Unavailable`: a Provider is registered but none is currently available;
 - `Available`: at least one registered Provider is available.
 
 For the latter two states, Workbench displays the deterministically selected
-Provider's public `displayName`. The production providers publish `Local Mock
-EtherCAT scanner` and `Local Mock EtherCAT diagnostics`, so the ready and
-unavailable states remain visibly Mock without teaching Workbench producer IDs
-or private implementation types. A whitespace-only public name is normalized
-to the same neutral `Unnamed Scan Provider` or `Unnamed Diagnostics Provider`
-fallback before any tree, Details, tooltip, search, or accessibility projection;
-Workbench does not invent a Mock identity when the Provider did not publish one.
+Provider's public `displayName`. When the Mock UI is explicitly enabled, the
+local providers publish `Local Mock EtherCAT scanner` and
+`Local Mock EtherCAT diagnostics`, so the ready and unavailable states remain
+visibly Mock without teaching Workbench producer IDs or private implementation
+types. A whitespace-only public name is normalized to the same neutral
+`Unnamed Scan Provider` or `Unnamed Diagnostics Provider` fallback before any
+tree, Details, tooltip, search, or accessibility projection; Workbench does
+not invent a Mock identity when the Provider did not publish one.
 If several typed Providers are available,
 Workbench selects the same producer for both the copied result/snapshot and the
 visible name: a Scan result wins over an active scan, failure, or idle state;
@@ -6794,6 +6804,12 @@ existing right-side Details host. It does not open a separate controller
 window, own a socket, decode a protocol frame, or branch on a controller
 manufacturer.
 
+This section records the historical read-only issue. Its test and hardware
+tables remain dated evidence for that issue only. The current UI/control
+contract is defined in **Current real-controller control workflow** below and
+supersedes the historical statements about lease acquisition and control
+placement.
+
 `ISSUE-CORE-CONTROLLER-CONNECTION-API-001` and the multi-vendor correction
 `ISSUE-CORE-CONTROLLER-PROVIDER-PROFILE-002` add no Workbench widget or
 command. Together they establish the public semantic boundary consumed by this
@@ -6806,8 +6822,8 @@ UI issue:
 - an immutable snapshot separates provider availability, connection state,
   arbitrary named channel/session health, heartbeat, read-only controller
   summaries, and structured errors;
-- Connect does not acquire control, scan a bus, change the controller state, or
-  mutate the offline project; and
+- the historical Connect request did not itself acquire control, scan a bus,
+  change the controller state, or mutate the offline project; and
 - Workbench will consume concrete vendor Providers through the object pool
   without owning sockets or protocol frames.
 
@@ -6892,7 +6908,8 @@ diagnostics, or embedded actual topology. Those require later typed Provider
 contracts and independently authorized issues; the existing Mock Scan and
 Diagnostics commands must not be rebound to real hardware by this page.
 
-Local qualification for this issue is complete:
+The following qualification is historical and was not rerun for the current
+control-surface revision:
 
 | Gate | Result |
 |---|---|
@@ -6923,3 +6940,187 @@ and compare actual devices before applying them to the project. It does not
 require copying the CODESYS window layout. Product API sources, endpoint
 details, safety gates, real read-only evidence, and controller/client issue
 handoff are in `docs/ethercat-online-controller.md`.
+
+## Current real-controller control workflow
+
+The preceding Communication-page issue and its qualification table are the
+historical read-only baseline. The current implementation keeps commissioning
+and information in the embedded right-side **Communication** page, while
+runtime control uses Qt Creator's native lower-left quick-control area. No
+separate controller window is added.
+
+The Communication page contains:
+
+- Provider/profile selection plus Connect, Refresh, and Disconnect;
+- Acquire, primarily as manual recovery for automatic acquisition;
+- Configuration;
+- Scan Bus;
+- Restore Package and Release;
+- command progress, authoritative controller/session/package information; and
+- the read-only Actual Bus result.
+
+It deliberately has no independent FreeRun, DC Run, Pause, Resume, or Stop
+button. Those operations are not commissioning-page choices.
+
+Connect establishes the three-channel session and publishes an authoritative
+snapshot using the transport's read-only request set. Once that snapshot has a
+valid selected scope, profile, session identity, and generation, Workbench
+queues one Acquire request for that exact generation. The visible Acquire
+button remains available when automatic acquisition could not run or must be
+retried manually. A changed Provider registration, scope, profile, or session
+generation invalidates the queued attempt.
+
+The control lease is exclusive. Only the session that owns it may issue
+Configuration, Scan, Restore, runtime, or Release writes. Other Product API
+sessions may stay connected and continue read-only queries and event
+observation, but their control writes are rejected by the controller with
+`LEASE_BUSY (-10)`. Workbench never steals or silently replaces another
+session's lease.
+
+After automatic or manual Acquire, the commissioning path is:
+
+`Connect -> Acquire -> Configuration -> Scan Bus -> Restore Package`
+
+Runtime control then uses the standard quick-control area:
+
+| Quick control | Authoritative state | Provider command |
+|---|---|---|
+| Run | `OP_SAFE` | `Start`; starts the already active package using the timing mode encoded by that package |
+| Run | `PAUSED` | `Resume` |
+| Debug | `RUNNING` | `Pause` |
+| Debug | `PAUSED` | `Resume` |
+| Controlled Stop | `RUNNING` or `PAUSED` | `ControlledStop` |
+
+Controlled Stop is added beside the native Run/Debug controls. It is an
+operational stop, not a safety-rated emergency stop. Disconnect is not a
+substitute: the Product API Provider rejects Disconnect from `RUNNING` or
+`PAUSED`. After Controlled Stop confirms `OP_SAFE`, the operator may enter
+Configuration again, Release, and Disconnect.
+
+All page and quick-control commands require the exact active Project/Master
+scope, an explicitly selected available Provider/profile, a real non-Mock and
+non-read-only Connected or Degraded snapshot, no Pending operation, and the
+command-specific state gate:
+
+| Operation | Snapshot gate |
+|---|---|
+| Acquire | Established session, no lease owned by this session, and no reported owner; normally attempted automatically |
+| Configuration | Lease owned; controller ready in `OP_SAFE`, `RUNNING`, `FAULT`, `PAUSED`, or `SHUTDOWN` |
+| Scan Bus | Lease owned, ready `SHUTDOWN`, package summary present, and controller package not Active |
+| Restore Package | Lease owned, controller ready, exact persistent slot/generation/configuration ID present, and state `SHUTDOWN` or `OP_SAFE` |
+| Start | Lease owned, ready `OP_SAFE`, active current-Boot package, OP bus, nonzero matching WKC, and no current or latched faults |
+| Pause | Lease owned, ready `RUNNING`, and active package |
+| Resume | Lease owned, ready `PAUSED`, active package, operational bus, matching WKC, and no faults |
+| Controlled Stop | Lease owned, ready `RUNNING` or `PAUSED`, and active package |
+| Release | Lease owned and controller ready in `SHUTDOWN` or `OP_SAFE` |
+
+### Actual Bus presentation
+
+Scan Bus invokes the selected controller Provider's stateful topology
+discovery. The page presents the most recent result in a separate read-only
+**Actual Bus** tree with scan position, station address, AL state, VendorId,
+ProductCode, RevisionNo, and SerialNo. A scan never inserts, removes, or
+rewrites offline Project slaves. The current Product API result has no
+physical port-to-port edges, so Workbench shows truthful linear scan order and
+does not fabricate a branch or star graph.
+
+The persistent package selector observed before Configuration is retained by
+the provider. Restore Package sends that exact slot, generation, and
+configuration ID, then the provider refreshes authoritative controller and
+package state. The quick Run control becomes available only after the restored
+package and real bus satisfy the common startup gate.
+
+### Package-determined FreeRun and DC semantics
+
+Product API v1.10 adds separate `StartFreeRun (0x010c)` and
+`StartDc (0x010d)` commands for protocol clients that explicitly need them.
+The adapter retains those typed capabilities, but Workbench exposes neither as
+an independent Communication-page or quick-control button. Its Run control
+uses `Start (0x0102)` so the already active package remains authoritative for
+FreeRun versus Distributed Clocks.
+
+The controller classifies actual mode from
+validated ECFG/DC content: zero configured DC slaves means FreeRun, while one
+or more valid DC slaves means Distributed Clocks. A legacy manifest may omit
+timing metadata and imply requested `auto`. The start command does not change
+the package's cycle source, SYNC configuration, or DC policy.
+
+The existing offline Distributed Clocks page edits Project/ESI configuration.
+This control extension does not serialize that Project into ECPKG, upload or
+activate it, or prove that the persistent controller package matches the
+offline Project. The controller summary can display DC lock and DC difference,
+but those fields do not identify the package mode.
+
+For an external client that uses an explicit timing-mode command, a mismatch
+returns terminal stage-2 `TIMING_MODE_MISMATCH (-35)` with
+`(requested_mode << 32) | actual_mode`. That protocol diagnostic is retained
+by the adapter, but it is not evidence of a Workbench FreeRun/DC selector.
+Workbench does not infer the actual mode from DC lock.
+
+Consequently, a FreeRun or DC demonstration requires the corresponding
+ECPKG, the generic Run action, and observed runtime evidence. Switching the
+package between modes still requires a deployment workflow outside this
+control extension.
+
+### Production Mock visibility
+
+Local Mock Scan and Diagnostics remain development/test providers. Their
+actions, tree nodes, property pages, and status contribution are hidden by
+default in production. They are registered only by a `WITH_TESTS` build or
+when the process starts with `QTC_ETHER_CAT_ENABLE_MOCK_UI=1`. This opt-in does
+not convert Mock data into controller or hardware evidence.
+
+### Controller endpoint and unified output
+
+The selected Product API profile exposes an inline base-endpoint editor on the
+embedded Communication page. It accepts an IPv4 address with an optional base
+port, defaults the Control port to `15200`, and derives Push and Bulk as the
+next two ports. Saving validates and persists the endpoint in user settings
+but never opens a socket. Editing is locked while a connection is active.
+
+The Communication page no longer displays a separate connection banner,
+safety paragraph, command-progress label, or error label. It retains only
+configuration controls and structured authoritative data such as the summary,
+channels, and Actual Bus. Connection transitions, session/lease changes,
+service state, command progress, scan results, and errors are deduplicated into
+one passive **EtherCAT Controller** tab in **Application Output**. Heartbeat
+timestamps and snapshot update times do not create output. The passive tab
+does not create a `RunControl`, change the active run count, or enable
+Run/Stop/Attach controls.
+
+When the selected Master is connected but has no currently valid Run/Resume
+command, the native lower-left Run action visibly changes to
+`Controller: <connection state>` with a matching link, progress, warning, or
+error icon. Once a runtime command becomes valid it returns to the standard
+Start/Resume presentation. Controller connection state is not projected into
+the global status bar.
+
+This revision changes no automatic behavior: saving an endpoint does not
+connect, opening the page does not connect, and only the existing explicit
+Connect action can begin the Product API session and subsequent exact-session
+automatic Acquire.
+
+### Current evidence boundary
+
+The current English regression passed 95 Workbench tests and 226 tests across
+Workbench, Project, Devices, Core, Scan, Diagnostics, and ProductApi, with one
+ProductApi hardware test skipped and no failures. The `WITH_TESTS=OFF` product
+build passed with exactly 17 plugin dylibs. A focused ProjectExplorer passive
+Application Output lifecycle passed 3 tests and covers channel reuse,
+close-and-recreate, RunControl isolation, and disabled Run/Stop/Attach controls.
+All EtherCAT Simplified Chinese contexts contain no unfinished or empty
+translations.
+
+The generic Start and explicit DC real-controller lifecycles each passed 3
+tests with 0 failures and completed safe cleanup in `SHUTDOWN`/EMPTY with no
+lease owner or fault. Windows `ISSUE-RT-009` separated a successful LRW cycle
+from the actual failure: `OP_REQUEST` for station `0x1002` returned WKC 0/1 on
+all four attempts. `cfg812` was not activated and no FreeRun lifecycle ran.
+The controller was safely rolled back to `B/12/813`, `OP_SAFE`, WKC 11/11,
+faults 0, and lease 0. The Windows session continues with `ISSUE-API-016` and
+the smallest isolated fix.
+
+The earlier single-instance product observation showed Workbench, Simplified
+Chinese, hidden production Mock UI, and the compact tree. This output-
+consolidation round used widget-level Communication-page tests and the passive
+Application Output lifecycle test; it did not connect to or control hardware.

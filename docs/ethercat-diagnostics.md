@@ -11,6 +11,12 @@ connect to a controller, parse a controller protocol, or claim a hardware
 measurement. Every user-visible page, action, status, event, and AL Status
 value identifies itself as Mock data.
 
+The local Mock UI is hidden by default in production. The Provider, actions,
+tree nodes, pages, and status contribution are registered only in a
+`WITH_TESTS` build or when the process is started explicitly with
+`QTC_ETHER_CAT_ENABLE_MOCK_UI=1`. This opt-in is for development and does not
+turn synthetic values into hardware evidence.
+
 ## Ownership and dependencies
 
 The plugin depends on public product contracts only:
@@ -145,3 +151,23 @@ smokes; and direct desktop inspection with a two-slave offline project.
 The complete `WITH_TESTS` default target remains blocked by the pre-existing
 EasyBoard include of unavailable `extensionmanager_test.h`. The qbs project is
 kept synchronized, but no qbs executable is installed on this host.
+
+The current English regression passed 7 Diagnostics tests and 226 tests across
+the seven EtherCAT suites, with one ProductApi hardware test skipped and no
+failures.
+The `WITH_TESTS=OFF` product build passed with exactly 17 plugin dylibs, and all
+EtherCAT Simplified Chinese contexts contain no unfinished or empty
+translations. The generic Start and explicit DC real-controller lifecycle
+results belong to ProductApi/Workbench and do not qualify this Mock-only
+Diagnostics Provider. Windows `ISSUE-RT-009` isolated the current `cfg812`
+failure after a successful LRW cycle: `OP_REQUEST` for station `0x1002`
+returned WKC 0/1 on all four attempts. `cfg812` was not activated, no FreeRun
+lifecycle ran, and the controller was safely rolled back to `B/12/813`,
+`OP_SAFE`, WKC 11/11, faults 0, and lease 0. The Windows session continues
+with `ISSUE-API-016` and the smallest isolated fix.
+
+The earlier single-instance product observation showed Workbench, Simplified
+Chinese, hidden production Mock UI, and the compact tree. The current
+endpoint/output round used widget-level Workbench and passive-output tests
+without connecting a controller. These observations do not qualify this
+Mock-only Diagnostics Provider.

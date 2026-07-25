@@ -34,6 +34,7 @@ constexpr quint32 FeatureTimeCorrelation = 1U << 7;
 constexpr quint32 FeatureProcessInputSample = 1U << 8;
 constexpr quint32 FeatureStructuredHelloError = 1U << 9;
 constexpr quint32 FeatureFirmwareUpdate = 1U << 10;
+constexpr quint32 FeatureExplicitTimingModeStart = 1U << 11;
 constexpr int SessionCapacityStatus = -26;
 constexpr int EventGapStatus = -25;
 constexpr int AlarmEventBytes = 64;
@@ -87,6 +88,8 @@ quint32 requiredFeatureMask(quint16 minor)
         mask |= FeatureStructuredHelloError;
     if (minor >= 9)
         mask |= FeatureFirmwareUpdate;
+    if (minor >= Protocol::ExplicitTimingModeMinor)
+        mask |= FeatureExplicitTimingModeStart;
     return mask;
 }
 
@@ -97,7 +100,7 @@ quint32 readU32(QByteArrayView bytes, qsizetype offset)
 
 QString statusName(qint32 status)
 {
-    static constexpr std::array<const char *, 35> names{
+    static constexpr std::array<const char *, 36> names{
         "OK",
         "BAD_MAGIC",
         "BAD_VERSION",
@@ -133,10 +136,20 @@ QString statusName(qint32 status)
         "FIRMWARE_UNSAFE_STATE",
         "FIRMWARE_STORAGE",
         "FIRMWARE_FIT_INVALID",
+        "TIMING_MODE_MISMATCH",
     };
-    if (status <= 0 && status >= -34)
+    if (status <= 0 && status >= -35)
         return QString::fromLatin1(names.at(size_t(-status)));
     return QStringLiteral("PRODUCT_API_STATUS_%1").arg(status);
+}
+
+QString timingModeName(quint32 mode)
+{
+    if (mode == 1)
+        return QStringLiteral("FreeRun");
+    if (mode == 2)
+        return QStringLiteral("DC");
+    return QString::number(mode);
 }
 
 Data::ControllerRetryDisposition retryDisposition(qint32 status)
@@ -146,6 +159,7 @@ Data::ControllerRetryDisposition retryDisposition(qint32 status)
     case -7:
     case -8:
     case -12:
+    case -16:
         return Data::ControllerRetryDisposition::Reconnect;
     case -10:
     case -13:
@@ -164,6 +178,107 @@ bool isReconnectStatus(qint32 status)
     return retryDisposition(status) == Data::ControllerRetryDisposition::Reconnect;
 }
 
+bool invalidatesControlLease(qint32 status)
+{
+    return status == -7 || status == -8 || status == -9 || status == -11;
+}
+
+Data::ControllerOperation operationForCommand(Data::ControllerControlCommand command)
+{
+    using Command = Data::ControllerControlCommand;
+    switch (command) {
+    case Command::AcquireControl:
+        return Data::ControllerOperation::AcquireControl;
+    case Command::ReleaseControl:
+        return Data::ControllerOperation::ReleaseControl;
+    case Command::EnterConfigurationMode:
+        return Data::ControllerOperation::EnterConfigurationMode;
+    case Command::DiscoverTopology:
+        return Data::ControllerOperation::DiscoverTopology;
+    case Command::RestoreActivePackage:
+        return Data::ControllerOperation::RestoreActivePackage;
+    case Command::Start:
+        return Data::ControllerOperation::Start;
+    case Command::StartFreeRun:
+        return Data::ControllerOperation::StartFreeRun;
+    case Command::StartDistributedClocks:
+        return Data::ControllerOperation::StartDistributedClocks;
+    case Command::Pause:
+        return Data::ControllerOperation::Pause;
+    case Command::Resume:
+        return Data::ControllerOperation::Resume;
+    case Command::ControlledStop:
+        return Data::ControllerOperation::ControlledStop;
+    case Command::None:
+        return Data::ControllerOperation::None;
+    }
+    return Data::ControllerOperation::None;
+}
+
+Protocol::MessageType messageTypeForCommand(Data::ControllerControlCommand command)
+{
+    using Command = Data::ControllerControlCommand;
+    switch (command) {
+    case Command::AcquireControl:
+        return Protocol::MessageType::AcquireControl;
+    case Command::ReleaseControl:
+        return Protocol::MessageType::ReleaseControl;
+    case Command::EnterConfigurationMode:
+        return Protocol::MessageType::EnterConfigurationMode;
+    case Command::DiscoverTopology:
+        return Protocol::MessageType::DiscoverTopology;
+    case Command::RestoreActivePackage:
+        return Protocol::MessageType::RestoreActivePackage;
+    case Command::Start:
+        return Protocol::MessageType::Start;
+    case Command::StartFreeRun:
+        return Protocol::MessageType::StartFreeRun;
+    case Command::StartDistributedClocks:
+        return Protocol::MessageType::StartDc;
+    case Command::Pause:
+        return Protocol::MessageType::Pause;
+    case Command::Resume:
+        return Protocol::MessageType::Resume;
+    case Command::ControlledStop:
+        return Protocol::MessageType::ControlledStop;
+    case Command::None:
+        return Protocol::MessageType::Error;
+    }
+    return Protocol::MessageType::Error;
+}
+
+QString commandDisplayName(Data::ControllerControlCommand command)
+{
+    using Command = Data::ControllerControlCommand;
+    switch (command) {
+    case Command::AcquireControl:
+        return Tr::tr("Acquire control");
+    case Command::ReleaseControl:
+        return Tr::tr("Release control");
+    case Command::EnterConfigurationMode:
+        return Tr::tr("Enter configuration mode");
+    case Command::DiscoverTopology:
+        return Tr::tr("Discover topology");
+    case Command::RestoreActivePackage:
+        return Tr::tr("Restore active package");
+    case Command::Start:
+        return Tr::tr("Start");
+    case Command::StartFreeRun:
+        return Tr::tr("Start free-run");
+    case Command::StartDistributedClocks:
+        return Tr::tr("Start distributed clocks");
+    case Command::Pause:
+        return Tr::tr("Pause");
+    case Command::Resume:
+        return Tr::tr("Resume");
+    case Command::ControlledStop:
+        return Tr::tr("Controlled stop");
+    case Command::None:
+        return Tr::tr("No operation");
+    }
+    return Tr::tr("Unknown operation");
+}
+
 } // namespace
 
 class ProductApiSessionPrivate
@@ -177,6 +292,10 @@ public:
         Firmware,
         ResumeEvents,
         ResumeReplay,
+        ControlCommand,
+        Topology,
+        RestorePackage,
+        Heartbeat,
     };
 
     struct PendingRequest
@@ -191,7 +310,20 @@ public:
         quint32 expectedAlarmSequence = 0;
         quint32 latestAlarmSequence = 0;
         quint32 remainingReplayEvents = 0;
+        Data::ControllerControlCommand controlCommand = Data::ControllerControlCommand::None;
+        quint16 nextExpectedStage = 0;
+        quint16 firstStationAddress = 0;
+        int responseTimeoutMs = 0;
+        bool terminalCommandStatus = false;
         QTimer *timer = nullptr;
+    };
+
+    struct PersistentPackageSelector
+    {
+        Data::ControllerSlot slot = Data::ControllerSlot::None;
+        quint64 generation = 0;
+        quint64 configurationId = 0;
+        quint64 bootId = 0;
     };
 
     struct Channel
@@ -224,7 +356,7 @@ public:
         channels[2].port = endpoints.bulkPort;
 
         snapshot.endpointSummary = endpoints.endpointSummary;
-        snapshot.readOnly = true;
+        snapshot.readOnly = false;
         snapshot.mock = false;
         initializeChannelSnapshots();
 
@@ -235,6 +367,12 @@ public:
             if (shuttingDown || userDisconnecting)
                 return;
             openChannel(channel(Protocol::Role::Control));
+        });
+
+        heartbeatTimer = new QTimer(q);
+        heartbeatTimer->setTimerType(Qt::PreciseTimer);
+        QObject::connect(heartbeatTimer, &QTimer::timeout, q, [this] {
+            sendHeartbeat();
         });
 
         nextRequestId = QRandomGenerator::system()->generate64()
@@ -249,6 +387,7 @@ public:
         clearPendingRequests();
         teardownChannels();
         reconnectTimer->stop();
+        heartbeatTimer->stop();
     }
 
     Channel &channel(Protocol::Role role)
@@ -306,6 +445,35 @@ public:
         emit q->snapshotChanged();
     }
 
+    void beginControlProgress(Data::ControllerControlCommand command)
+    {
+        snapshot.controlProgress = {};
+        snapshot.controlProgress.command = command;
+        snapshot.controlProgress.state = Data::ControllerControlState::Pending;
+        snapshot.controlProgress.startedAt = QDateTime::currentDateTimeUtc();
+        snapshot.lastError.reset();
+        publish();
+    }
+
+    void finishControlProgress(
+        Data::ControllerControlState state,
+        quint16 stage,
+        bool final,
+        std::optional<qint32> status,
+        std::optional<qint32> operationResult,
+        const QString &detail)
+    {
+        snapshot.controlProgress.state = state;
+        snapshot.controlProgress.stage = stage;
+        snapshot.controlProgress.final = final;
+        snapshot.controlProgress.status = status;
+        snapshot.controlProgress.operationResult = operationResult;
+        snapshot.controlProgress.detail = detail;
+        if (state != Data::ControllerControlState::Pending)
+            snapshot.controlProgress.completedAt = QDateTime::currentDateTimeUtc();
+        publish();
+    }
+
     quint64 allocateRequestId()
     {
         ++nextRequestId;
@@ -324,6 +492,9 @@ public:
 
     void clearLiveIdentity()
     {
+        heartbeatTimer->stop();
+        heartbeatRequestId = 0;
+        snapshot.readOnly = false;
         snapshot.session.reset();
         snapshot.lastHeartbeatAt = {};
         sessionId = 0;
@@ -340,6 +511,13 @@ public:
 
     void clearPendingRequests()
     {
+        if (snapshot.controlProgress.state == Data::ControllerControlState::Pending) {
+            snapshot.controlProgress.state = Data::ControllerControlState::Failed;
+            snapshot.controlProgress.final = false;
+            snapshot.controlProgress.detail = Tr::tr(
+                "The controller operation was interrupted before a final response.");
+            snapshot.controlProgress.completedAt = QDateTime::currentDateTimeUtc();
+        }
         for (const PendingRequest &request : std::as_const(pendingRequests)) {
             if (request.timer) {
                 request.timer->stop();
@@ -347,7 +525,28 @@ public:
             }
         }
         pendingRequests.clear();
+        heartbeatRequestId = 0;
+        disconnectReleaseRequestId = 0;
+        controlRefreshPending = false;
+        controlRefreshCompletesCommand = false;
+        disconnectAfterRelease = false;
+        stateBeforeDisconnectRelease.reset();
         refreshInProgress = false;
+        refreshRejected = false;
+    }
+
+    void rememberPersistentPackageSelector(const Data::ControllerPackageSummary &package)
+    {
+        if (package.activeSlot == Data::ControllerSlot::None || !package.activeGeneration
+            || !package.activeConfigurationId || !bootId) {
+            return;
+        }
+        persistentPackageSelector = {
+            package.activeSlot,
+            package.activeGeneration,
+            package.activeConfigurationId,
+            bootId,
+        };
     }
 
     void teardownChannel(Channel &value)
@@ -376,6 +575,59 @@ public:
         clearPendingRequests();
         for (Channel &value : channels)
             teardownChannel(value);
+    }
+
+    void finalizeDisconnect()
+    {
+        disconnectAfterRelease = false;
+        disconnectReleaseRequestId = 0;
+        stateBeforeDisconnectRelease.reset();
+        userDisconnecting = true;
+        reconnectTimer->stop();
+        snapshot.state = Data::ControllerConnectionState::Disconnecting;
+        publish();
+        advanceGeneration();
+        teardownChannels();
+        clearLiveIdentity();
+        clearAlarmCheckpoint();
+        clearResumeCandidate();
+        markChannelsDisconnected();
+        snapshot.state = Data::ControllerConnectionState::Disconnected;
+        publish();
+        userDisconnecting = false;
+    }
+
+    void sendBestEffortRelease()
+    {
+        if (!snapshot.session || !snapshot.session->ownsControlLease || !sessionId || !bootId)
+            return;
+        if (hasActiveControlOperation() || !snapshot.controllerState
+            || !snapshot.controllerState->ready
+            || (snapshot.controllerState->serviceState
+                    != Data::ControllerServiceState::Shutdown
+                && snapshot.controllerState->serviceState
+                       != Data::ControllerServiceState::OperationalSafe)) {
+            return;
+        }
+        Channel &control = channel(Protocol::Role::Control);
+        if (!control.handshaken || !control.socket)
+            return;
+        heartbeatTimer->stop();
+        Protocol::Error codecError;
+        const QByteArray wire = Protocol::encodeRequest(
+            Protocol::MessageType::ReleaseControl,
+            {},
+            sessionId,
+            allocateRequestId(),
+            ++control.sendSequence,
+            bootId,
+            negotiatedMinor,
+            &codecError);
+        if (wire.isEmpty())
+            return;
+        control.socket->write(wire);
+        control.socket->flush();
+        control.socket->waitForBytesWritten(100);
     }
 
     void armChannelTimer(Channel &value, int timeoutMs, const QString &summary)
@@ -475,16 +727,124 @@ public:
         Data::ControllerOperation operation,
         const QString &summary,
         const QString &detail = {},
-        std::optional<quint64> requestId = {})
+        std::optional<quint64> requestId = {},
+        bool requestMayHaveReachedController = true)
     {
+        if (disconnectAfterRelease) {
+            if (!requestMayHaveReachedController) {
+                setError(
+                    Data::ControllerErrorSource::Protocol,
+                    role,
+                    Data::ControllerOperation::ReleaseControl,
+                    summary,
+                    Tr::tr(
+                        "The Release control request was not queued; the controller still "
+                        "reports this session as the lease owner."),
+                    {},
+                    requestId,
+                    Data::ControllerRetryDisposition::Retryable);
+                disconnectAfterRelease = false;
+                disconnectReleaseRequestId = 0;
+                snapshot.state = stateBeforeDisconnectRelease.value_or(
+                    Data::ControllerConnectionState::Connected);
+                stateBeforeDisconnectRelease.reset();
+                startHeartbeat();
+                publish();
+                return;
+            }
+            if (requestId
+                && (!disconnectReleaseRequestId
+                    || *requestId != disconnectReleaseRequestId)) {
+                setError(
+                    Data::ControllerErrorSource::Protocol,
+                    role,
+                    operation,
+                    summary,
+                    detail,
+                    {},
+                    requestId,
+                    Data::ControllerRetryDisposition::NotRetryable);
+                removePending(*requestId);
+                publish();
+                return;
+            }
+            setError(
+                Data::ControllerErrorSource::Protocol,
+                role,
+                Data::ControllerOperation::ReleaseControl,
+                summary,
+                detail,
+                {},
+                requestId,
+                Data::ControllerRetryDisposition::NotRetryable);
+            finalizeDisconnect();
+            return;
+        }
         terminalFailure(
             Data::ControllerErrorSource::Protocol, role, operation, summary, detail, {}, requestId);
     }
 
-    void failNetwork(Protocol::Role role, Data::ControllerOperation operation, const QString &summary)
+    void failNetwork(
+        Protocol::Role role,
+        Data::ControllerOperation operation,
+        const QString &summary,
+        bool requestMayHaveReachedController = true,
+        std::optional<quint64> requestId = {})
     {
         if (shuttingDown || userDisconnecting)
             return;
+        if (disconnectAfterRelease) {
+            if (!requestMayHaveReachedController) {
+                setError(
+                    Data::ControllerErrorSource::Network,
+                    role,
+                    Data::ControllerOperation::ReleaseControl,
+                    summary,
+                    Tr::tr(
+                        "The Release control request was not queued; the controller still reports "
+                        "this session as the lease owner."),
+                    {},
+                    {},
+                    Data::ControllerRetryDisposition::Retryable);
+                disconnectAfterRelease = false;
+                disconnectReleaseRequestId = 0;
+                snapshot.state = stateBeforeDisconnectRelease.value_or(
+                    Data::ControllerConnectionState::Connected);
+                stateBeforeDisconnectRelease.reset();
+                startHeartbeat();
+                publish();
+                return;
+            }
+            if (requestId
+                && (!disconnectReleaseRequestId
+                    || *requestId != disconnectReleaseRequestId)) {
+                setError(
+                    Data::ControllerErrorSource::Network,
+                    role,
+                    operation,
+                    summary,
+                    {},
+                    {},
+                    requestId,
+                    Data::ControllerRetryDisposition::Retryable);
+                removePending(*requestId);
+                publish();
+                return;
+            }
+            setError(
+                Data::ControllerErrorSource::Network,
+                role,
+                Data::ControllerOperation::ReleaseControl,
+                summary,
+                Tr::tr(
+                    "The Release control result is unknown because the connection ended before "
+                    "confirmation."),
+                {},
+                {},
+                Data::ControllerRetryDisposition::Reconnect);
+            finalizeDisconnect();
+            return;
+        }
         setChannelState(role, Data::ControllerChannelState::Failed, summary);
         setError(
             Data::ControllerErrorSource::Network,
@@ -630,8 +990,23 @@ public:
     {
         if (!value.socket || wire.isEmpty())
             return false;
+#ifdef WITH_TESTS
+        if (failNextWriteForTests) {
+            failNextWriteForTests = false;
+            failNetwork(
+                role,
+                operation,
+                Tr::tr("The controller request could not be queued."),
+                false);
+            return false;
+        }
+#endif
         if (value.socket->write(wire) != wire.size()) {
-            failNetwork(role, operation, Tr::tr("The controller request could not be queued."));
+            failNetwork(
+                role,
+                operation,
+                Tr::tr("The controller request could not be queued."),
+                false);
             return false;
         }
         return true;
@@ -639,23 +1014,46 @@ public:
 
     void addPending(quint64 requestId, PendingRequest request, int timeoutMs)
     {
+        request.responseTimeoutMs = timeoutMs;
         request.timer = new QTimer(q);
         request.timer->setSingleShot(true);
         const quint64 expectedGeneration = request.generation;
         const quint64 expectedEpoch = request.channelEpoch;
         const Protocol::Role role = request.role;
         const Data::ControllerOperation operation = request.operation;
+        const PendingKind kind = request.kind;
         QObject::connect(
             request.timer,
             &QTimer::timeout,
             q,
-            [this, requestId, expectedGeneration, expectedEpoch, role, operation] {
+            [this, requestId, expectedGeneration, expectedEpoch, role, operation, kind] {
                 const auto found = pendingRequests.constFind(requestId);
                 if (found == pendingRequests.cend() || found->generation != expectedGeneration
                     || found->channelEpoch != expectedEpoch || generation != expectedGeneration) {
                     return;
                 }
-                failNetwork(role, operation, Tr::tr("The controller response timed out."));
+                if (kind == PendingKind::ControlCommand || kind == PendingKind::Topology
+                    || kind == PendingKind::RestorePackage) {
+                    finishControlProgress(
+                        Data::ControllerControlState::Failed,
+                        snapshot.controlProgress.stage,
+                        false,
+                        {},
+                        {},
+                        Tr::tr("The controller operation timed out; its final state is unknown."));
+                }
+                if (kind == PendingKind::Heartbeat) {
+                    heartbeatRequestId = 0;
+                    heartbeatTimer->stop();
+                    if (!disconnectAfterRelease && snapshot.session)
+                        snapshot.session->ownsControlLease = false;
+                }
+                failNetwork(
+                    role,
+                    operation,
+                    Tr::tr("The controller response timed out."),
+                    true,
+                    requestId);
             });
         pendingRequests.insert(requestId, request);
         request.timer->start(timeoutMs);
@@ -670,6 +1068,8 @@ public:
             found->timer->stop();
             found->timer->deleteLater();
         }
+        if (requestId == heartbeatRequestId)
+            heartbeatRequestId = 0;
         pendingRequests.erase(found);
     }
 
@@ -715,7 +1115,8 @@ public:
         Protocol::MessageType type,
         PendingKind kind,
         Data::ControllerOperation operation,
-        QByteArrayView payload = {})
+        QByteArrayView payload = {},
+        int responseTimeoutMs = 0)
     {
         Protocol::Error codecError;
         const quint64 requestId = allocateRequestId();
@@ -734,7 +1135,8 @@ public:
                 operation,
                 Tr::tr("The controller request could not be encoded."),
                 codecError.text,
-                requestId);
+                requestId,
+                false);
             return 0;
         }
 
@@ -745,12 +1147,81 @@ public:
         request.generation = generation;
         request.channelEpoch = value.epoch;
         request.requestType = type;
-        addPending(requestId, request, options.requestTimeoutMs);
+        addPending(
+            requestId,
+            request,
+            responseTimeoutMs > 0 ? responseTimeoutMs : options.requestTimeoutMs);
         if (!writeFrame(value, wire, value.role, operation)) {
             removePending(requestId);
             return 0;
         }
         return requestId;
+    }
+
+    quint64 sendControlRequest(
+        Data::ControllerControlCommand command,
+        PendingKind kind,
+        QByteArrayView payload,
+        quint16 firstExpectedStage,
+        bool terminalCommandStatus)
+    {
+        const int responseTimeoutMs
+            = command == Data::ControllerControlCommand::EnterConfigurationMode
+                      || command == Data::ControllerControlCommand::RestoreActivePackage
+                  ? std::max(options.requestTimeoutMs, 40000)
+                  : options.requestTimeoutMs;
+        Channel &control = channel(Protocol::Role::Control);
+        const quint64 requestId = sendRequest(
+            control,
+            messageTypeForCommand(command),
+            kind,
+            operationForCommand(command),
+            payload,
+            responseTimeoutMs);
+        auto found = pendingRequests.find(requestId);
+        if (found == pendingRequests.end())
+            return 0;
+        found->controlCommand = command;
+        found->nextExpectedStage = firstExpectedStage;
+        found->terminalCommandStatus = terminalCommandStatus;
+        if (disconnectAfterRelease
+            && command == Data::ControllerControlCommand::ReleaseControl) {
+            disconnectReleaseRequestId = requestId;
+        }
+        return requestId;
+    }
+
+    void startHeartbeat()
+    {
+        if (!snapshot.session || !snapshot.session->ownsControlLease)
+            return;
+        const int defaultDuration = snapshot.session->defaultControlLeaseDurationMs;
+        heartbeatTimer->setInterval(std::max(250, defaultDuration / 3));
+        heartbeatTimer->start();
+        sendHeartbeat();
+    }
+
+    void sendHeartbeat()
+    {
+        if (shuttingDown || userDisconnecting || disconnectAfterRelease || heartbeatRequestId
+            || snapshot.state == Data::ControllerConnectionState::Disconnected
+            || !snapshot.session || !snapshot.session->ownsControlLease) {
+            return;
+        }
+        Channel &control = channel(Protocol::Role::Control);
+        if (!control.handshaken)
+            return;
+        const quint64 requestId = sendRequest(
+            control,
+            Protocol::MessageType::Heartbeat,
+            PendingKind::Heartbeat,
+            Data::ControllerOperation::Heartbeat);
+        auto found = pendingRequests.find(requestId);
+        if (found == pendingRequests.end())
+            return;
+        found->nextExpectedStage = 4;
+        found->terminalCommandStatus = true;
+        heartbeatRequestId = requestId;
     }
 
     quint64 sendResumeEvents(Channel &value, quint32 afterSequence)
@@ -883,13 +1354,18 @@ public:
             session.bootId = ack->bootId;
             session.controlLeaseOwnerSessionId = ack->controlLeaseOwnerSessionId;
             session.defaultControlLeaseDurationMs = int(ack->defaultControlLeaseDurationMs);
-            session.ownsControlLease = false;
+            const bool resumedControlLease
+                = expectedResume != 0 && ack->controlLeaseOwnerSessionId == ack->sessionId;
+            session.ownsControlLease = resumedControlLease;
             snapshot.session = session;
+            snapshot.readOnly = false;
             snapshot.protocolVersion = {Protocol::CurrentMajor, negotiatedMinor};
-
-            clearResumeCandidate();
             value.handshaken = true;
             setChannelState(value.role, Data::ControllerChannelState::Connected);
+            if (session.ownsControlLease)
+                startHeartbeat();
+
+            clearResumeCandidate();
             openChannel(channel(Protocol::Role::Push));
             openChannel(channel(Protocol::Role::Bulk));
         } else {
@@ -933,27 +1409,252 @@ public:
         qint32 status,
         std::optional<qint32> operationResult,
         std::optional<quint64> sourceDetail,
-        const QString &detail = {})
+        const QString &detail = {},
+        quint16 stage = 0)
     {
+        QString rejectionDetail = detail;
+        if (status == -35 && sourceDetail) {
+            rejectionDetail = Tr::tr(
+                                  "Timing mode mismatch: requested %1, but the active package is %2.")
+                                  .arg(
+                                      timingModeName(quint32(*sourceDetail >> 32)),
+                                      timingModeName(quint32(*sourceDetail)));
+        } else if (status == -20) {
+            rejectionDetail = Tr::tr(
+                "The package capability descriptor does not match this controller. Rebuild the "
+                "package from the current Capability descriptor.");
+        }
+        const bool controlRequest = request.kind == PendingKind::ControlCommand
+                                    || request.kind == PendingKind::Topology
+                                    || request.kind == PendingKind::RestorePackage;
+        const bool heartbeat = request.kind == PendingKind::Heartbeat;
         setError(
             Data::ControllerErrorSource::Controller,
             request.role,
             request.operation,
-            Tr::tr("The controller rejected a read-only request."),
-            detail,
+            controlRequest || heartbeat
+                ? Tr::tr("The controller rejected the control request.")
+                : Tr::tr("The controller rejected a read-only request."),
+            rejectionDetail,
             status,
             requestId,
             retryDisposition(status));
         snapshot.lastError->operationResult = operationResult;
         snapshot.lastError->sourceDetail = sourceDetail;
+        if (invalidatesControlLease(status)) {
+            heartbeatTimer->stop();
+            if (snapshot.session) {
+                snapshot.session->controlLeaseOwnerSessionId = 0;
+                snapshot.session->ownsControlLease = false;
+            }
+        }
+        if (controlRequest) {
+            finishControlProgress(
+                Data::ControllerControlState::Failed,
+                stage ? stage : snapshot.controlProgress.stage,
+                true,
+                status,
+                operationResult,
+                rejectionDetail.isEmpty()
+                    ? Tr::tr("%1 was rejected by the controller.")
+                          .arg(commandDisplayName(request.controlCommand))
+                    : rejectionDetail);
+        } else if (!heartbeat && refreshInProgress) {
+            refreshRejected = true;
+            snapshot.controllerState.reset();
+            snapshot.package.reset();
+            switch (request.kind) {
+            case PendingKind::State:
+                stateReceived = true;
+                break;
+            case PendingKind::Capability:
+                capabilityReceived = true;
+                break;
+            case PendingKind::Package:
+                packageReceived = true;
+                break;
+            case PendingKind::Firmware:
+                firmwareReceived = true;
+                break;
+            case PendingKind::ResumeEvents:
+                subscriptionReceived = true;
+                break;
+            default:
+                break;
+            }
+        }
         removePending(requestId);
+        const bool releaseRequest
+            = request.controlCommand == Data::ControllerControlCommand::ReleaseControl;
+        if (disconnectAfterRelease && releaseRequest) {
+            if (invalidatesControlLease(status)) {
+                finalizeDisconnect();
+                return;
+            }
+            disconnectAfterRelease = false;
+            disconnectReleaseRequestId = 0;
+            snapshot.state = stateBeforeDisconnectRelease.value_or(
+                Data::ControllerConnectionState::Connected);
+            stateBeforeDisconnectRelease.reset();
+            startHeartbeat();
+            publish();
+            return;
+        }
+        if (disconnectAfterRelease) {
+            publish();
+            return;
+        }
         if (isReconnectStatus(status)) {
             scheduleReconnect();
-        } else {
+        } else if (controlRequest && sessionId) {
             snapshot.state = Data::ControllerConnectionState::Degraded;
-            refreshInProgress = false;
+            controlRefreshPending = true;
+            controlRefreshCompletesCommand = false;
+            snapshot.controlProgress.state = Data::ControllerControlState::Pending;
+            snapshot.controlProgress.final = false;
+            snapshot.controlProgress.detail = Tr::tr(
+                "The command was rejected; refreshing authoritative controller state.");
+            beginRefresh(true);
+        } else if (!controlRequest && !heartbeat) {
+            if (refreshInProgress)
+                finishRefreshIfReady();
+            else {
+                snapshot.controllerState.reset();
+                snapshot.package.reset();
+                snapshot.state = Data::ControllerConnectionState::Degraded;
+            }
+            publish();
+        } else {
             publish();
         }
+    }
+
+    void completeTerminalCommand(
+        const PendingRequest &request,
+        const Protocol::CommandStatus &status,
+        quint64 requestId)
+    {
+        const Data::ControllerControlCommand command = request.controlCommand;
+        if (command == Data::ControllerControlCommand::AcquireControl) {
+            if (snapshot.session) {
+                snapshot.session->controlLeaseOwnerSessionId = sessionId;
+                snapshot.session->ownsControlLease = true;
+            }
+            startHeartbeat();
+        } else if (command == Data::ControllerControlCommand::ReleaseControl) {
+            heartbeatTimer->stop();
+            if (snapshot.session) {
+                snapshot.session->controlLeaseOwnerSessionId = 0;
+                snapshot.session->ownsControlLease = false;
+            }
+        }
+        removePending(requestId);
+        if (command != Data::ControllerControlCommand::ReleaseControl) {
+            controlRefreshPending = true;
+            controlRefreshCompletesCommand = true;
+            finishControlProgress(
+                Data::ControllerControlState::Pending,
+                status.stage,
+                false,
+                status.status,
+                status.operationResult,
+                Tr::tr("%1 was accepted; confirming the resulting controller state.")
+                    .arg(commandDisplayName(command)));
+            beginRefresh();
+            return;
+        }
+        finishControlProgress(
+            Data::ControllerControlState::Succeeded,
+            status.stage,
+            true,
+            status.status,
+            status.operationResult,
+            Tr::tr("%1 completed successfully.").arg(commandDisplayName(command)));
+        if (command == Data::ControllerControlCommand::ReleaseControl && disconnectAfterRelease) {
+            finalizeDisconnect();
+            return;
+        }
+    }
+
+    bool handleStatefulCommandStatus(
+        const Protocol::Frame &frame,
+        const PendingRequest &request,
+        quint64 requestId,
+        QString *protocolDetail)
+    {
+        Protocol::Error decodeError;
+        const auto status = Protocol::decodeCommandStatus(frame, &decodeError);
+        if (!status) {
+            *protocolDetail = decodeError.text;
+            return false;
+        }
+        if (status->originalType != quint16(request.requestType)) {
+            *protocolDetail = Tr::tr(
+                "CommandStatus does not match the pending control request.");
+            return false;
+        }
+        if (status->status) {
+            if (status->stage != request.nextExpectedStage) {
+                *protocolDetail = Tr::tr(
+                    "Failed CommandStatus skipped an expected control stage.");
+                return false;
+            }
+            recordControllerRejection(
+                request,
+                requestId,
+                status->status,
+                status->operationResult,
+                status->detail,
+                {},
+                status->stage);
+            return true;
+        }
+        if (status->stage != request.nextExpectedStage) {
+            *protocolDetail = Tr::tr(
+                "CommandStatus stages are not contiguous for the control request.");
+            return false;
+        }
+        const bool expectedFinal = request.terminalCommandStatus && status->stage == 4;
+        if (status->final != expectedFinal) {
+            *protocolDetail = Tr::tr(
+                "CommandStatus final flag does not match the control request contract.");
+            return false;
+        }
+
+        auto found = pendingRequests.find(requestId);
+        if (found == pendingRequests.end())
+            return true;
+        if (found->timer)
+            found->timer->start(found->responseTimeoutMs);
+        if (found->nextExpectedStage <= 4)
+            ++found->nextExpectedStage;
+
+        if (request.kind == PendingKind::Heartbeat) {
+            if (!status->final) {
+                *protocolDetail = Tr::tr("Heartbeat did not complete at stage 4.");
+                return false;
+            }
+            snapshot.lastHeartbeatAt = QDateTime::currentDateTimeUtc();
+            removePending(requestId);
+            publish();
+            return true;
+        }
+
+        if (status->final) {
+            completeTerminalCommand(request, *status, requestId);
+            return true;
+        }
+
+        finishControlProgress(
+            Data::ControllerControlState::Pending,
+            status->stage,
+            false,
+            status->status,
+            status->operationResult,
+            Tr::tr("%1: stage %2 of 4.")
+                .arg(commandDisplayName(request.controlCommand))
+                .arg(status->stage));
+        return true;
     }
 
     bool handleControllerStatus(
@@ -1043,6 +1744,22 @@ public:
         }
         if (!validateEstablishedIdentity(frame, request, requestId))
             return;
+        const bool statefulRequest = request.kind == PendingKind::ControlCommand
+                                     || request.kind == PendingKind::Topology
+                                     || request.kind == PendingKind::RestorePackage
+                                     || request.kind == PendingKind::Heartbeat;
+        if (statefulRequest && frame.header.messageType == Protocol::MessageType::CommandStatus) {
+            QString protocolDetail;
+            if (!handleStatefulCommandStatus(frame, request, requestId, &protocolDetail)) {
+                failProtocol(
+                    request.role,
+                    request.operation,
+                    Tr::tr("The controller returned a malformed control status."),
+                    protocolDetail,
+                    requestId);
+            }
+            return;
+        }
         if (frame.header.messageType == Protocol::MessageType::CommandStatus
             || frame.header.messageType == Protocol::MessageType::BulkStatus
             || frame.header.messageType == Protocol::MessageType::FirmwareStatus) {
@@ -1097,6 +1814,7 @@ public:
             if (!package)
                 break;
             snapshot.package = *package;
+            rememberPersistentPackageSelector(*package);
             packageReceived = true;
             removePending(requestId);
             finishRefreshIfReady();
@@ -1118,6 +1836,95 @@ public:
         case PendingKind::ResumeReplay:
             handleReplayEvent(value, frame, requestId);
             return;
+        case PendingKind::Topology: {
+            if (request.nextExpectedStage != 5) {
+                failProtocol(
+                    value.role,
+                    request.operation,
+                    Tr::tr("The topology result arrived before all command stages completed."),
+                    {},
+                    requestId);
+                return;
+            }
+            const auto topology = Protocol::decodeTopologyResult(frame, &decodeError);
+            if (!topology)
+                break;
+            Data::ControllerTopologySnapshot result;
+            result.firstStationAddress = request.firstStationAddress;
+            result.respondingCount = topology->respondingCount;
+            result.result = topology->result;
+            result.discoveredAt = QDateTime::currentDateTimeUtc();
+            result.slaves.reserve(topology->slaves.size());
+            for (const Protocol::TopologySlave &slave : topology->slaves) {
+                result.slaves.append(
+                    {slave.position,
+                     slave.stationAddress,
+                     slave.alState,
+                     slave.flags,
+                     slave.vendorId,
+                     slave.productCode,
+                     slave.revision,
+                     slave.serial});
+            }
+            snapshot.topology = result;
+            removePending(requestId);
+            controlRefreshPending = true;
+            controlRefreshCompletesCommand = true;
+            finishControlProgress(
+                Data::ControllerControlState::Pending,
+                4,
+                false,
+                0,
+                0,
+                Tr::tr("Discovered %1 EtherCAT devices.").arg(result.respondingCount));
+            beginRefresh();
+            return;
+        }
+        case PendingKind::RestorePackage: {
+            if (request.nextExpectedStage != 5) {
+                failProtocol(
+                    value.role,
+                    request.operation,
+                    Tr::tr("The package result arrived before all command stages completed."),
+                    {},
+                    requestId);
+                return;
+            }
+            if (frame.payload.size() < 2
+                || qFromBigEndian<quint16>(
+                       reinterpret_cast<const uchar *>(frame.payload.constData()))
+                       != quint16(request.requestType)) {
+                failProtocol(
+                    value.role,
+                    request.operation,
+                    Tr::tr("The package restore result does not match the request."),
+                    {},
+                    requestId);
+                return;
+            }
+            const auto package = Protocol::decodePackageState(frame, &decodeError);
+            if (!package)
+                break;
+            snapshot.package = *package;
+            rememberPersistentPackageSelector(*package);
+            removePending(requestId);
+            controlRefreshPending = true;
+            controlRefreshCompletesCommand = true;
+            finishControlProgress(
+                Data::ControllerControlState::Pending,
+                4,
+                false,
+                0,
+                0,
+                Tr::tr(
+                    "The active controller package was restored; confirming the resulting "
+                    "controller state."));
+            beginRefresh();
+            return;
+        }
+        case PendingKind::ControlCommand:
+        case PendingKind::Heartbeat:
+            break;
         case PendingKind::Hello:
             return;
         }
@@ -1204,7 +2011,7 @@ public:
                                            ? nextAlarmSequence(found->requestedAfterSequence)
                                            : result->oldestSequence;
         if (found->timer)
-            found->timer->start(options.requestTimeoutMs);
+            found->timer->start(found->responseTimeoutMs);
     }
 
     static quint32 nextAlarmSequence(quint32 value)
@@ -1253,7 +2060,7 @@ public:
         if (found->remainingReplayEvents) {
             found->expectedAlarmSequence = nextAlarmSequence(sequence);
             if (found->timer)
-                found->timer->start(options.requestTimeoutMs);
+                found->timer->start(found->responseTimeoutMs);
             return;
         }
         if (sequence != found->latestAlarmSequence) {
@@ -1399,18 +2206,108 @@ public:
             Tr::tr("The controller returned an unknown push message."));
     }
 
-    void beginRefresh()
+    bool hasActiveControlOperation() const
+    {
+        return controlRefreshPending
+               || std::any_of(
+            pendingRequests.cbegin(), pendingRequests.cend(), [](const PendingRequest &request) {
+                return request.kind == PendingKind::ControlCommand
+                       || request.kind == PendingKind::Topology
+                       || request.kind == PendingKind::RestorePackage;
+            });
+    }
+
+    std::optional<QString> controlPostconditionError() const
+    {
+        using Command = Data::ControllerControlCommand;
+        using PackageState = Data::ControllerPackageState;
+        using ServiceState = Data::ControllerServiceState;
+
+        const Data::ControllerControlCommand command = snapshot.controlProgress.command;
+        const Data::ControllerStateSummary *state
+            = snapshot.controllerState ? &*snapshot.controllerState : nullptr;
+        const Data::ControllerPackageSummary *package = snapshot.package ? &*snapshot.package
+                                                                         : nullptr;
+        const bool ownsLease = snapshot.session && snapshot.session->ownsControlLease;
+        const bool stateReady = state && state->ready;
+        const bool packageActive = package && package->controllerState == PackageState::Active
+                                   && package->controllerBootId == bootId;
+        const bool operationalBus
+            = state && state->busOperational && (state->ethercatAlStateBits & 0x08)
+              && state->expectedWorkingCounter
+              && state->actualWorkingCounter == state->expectedWorkingCounter;
+        const bool noFaults = state && !state->currentFaults && !state->latchedFaults;
+
+        bool satisfied = false;
+        QString expected;
+        switch (command) {
+        case Command::AcquireControl:
+            satisfied = snapshot.session && snapshot.session->ownsControlLease;
+            expected = Tr::tr("the session to own the control lease");
+            break;
+        case Command::EnterConfigurationMode:
+            satisfied = ownsLease && stateReady && state->serviceState == ServiceState::Shutdown
+                        && package && package->controllerState != PackageState::Active;
+            expected = Tr::tr("SHUTDOWN with no active CPU1 package");
+            break;
+        case Command::DiscoverTopology:
+            satisfied = ownsLease && stateReady && state->serviceState == ServiceState::Shutdown
+                        && package && package->controllerState != PackageState::Active;
+            expected = Tr::tr("SHUTDOWN with no active CPU1 package");
+            break;
+        case Command::RestoreActivePackage:
+            satisfied = ownsLease && stateReady
+                        && state->serviceState == ServiceState::OperationalSafe && packageActive
+                        && operationalBus && noFaults;
+            expected = Tr::tr(
+                "OP_SAFE with an active package, OP bus, matching working counters, and no faults");
+            break;
+        case Command::Start:
+        case Command::StartFreeRun:
+        case Command::StartDistributedClocks:
+        case Command::Resume:
+            satisfied = ownsLease && stateReady && state->serviceState == ServiceState::Running
+                        && packageActive && operationalBus && noFaults;
+            expected = Tr::tr(
+                "RUNNING with an active package, OP bus, matching working counters, and no faults");
+            break;
+        case Command::Pause:
+            satisfied = ownsLease && stateReady && state->serviceState == ServiceState::Paused
+                        && packageActive && operationalBus;
+            expected = Tr::tr(
+                "PAUSED with an active package, OP bus, and matching working counters");
+            break;
+        case Command::ControlledStop:
+            satisfied = ownsLease && stateReady
+                        && state->serviceState == ServiceState::OperationalSafe && packageActive
+                        && operationalBus;
+            expected = Tr::tr(
+                "OP_SAFE with an active package, OP bus, and matching working counters");
+            break;
+        case Command::ReleaseControl:
+        case Command::None:
+            return {};
+        }
+        if (satisfied)
+            return {};
+        return Tr::tr("%1 was accepted, but the refreshed controller state did not reach %2.")
+            .arg(commandDisplayName(command), expected);
+    }
+
+    void beginRefresh(bool preserveError = false)
     {
         if (refreshInProgress || shuttingDown || !sessionId)
             return;
         refreshInProgress = true;
+        refreshRejected = false;
         stateReceived = false;
         capabilityReceived = false;
         packageReceived = false;
         firmwareReceived = negotiatedMinor < 9 || !(featureBits & FeatureFirmwareUpdate);
         subscriptionReceived = negotiatedMinor < 4 || !(featureBits & FeatureExactAlarmReplay);
         subscriptionDegraded = false;
-        snapshot.lastError.reset();
+        if (!preserveError)
+            snapshot.lastError.reset();
 
         Channel &control = channel(Protocol::Role::Control);
         Channel &bulk = channel(Protocol::Role::Bulk);
@@ -1457,10 +2354,84 @@ public:
         }
         refreshInProgress = false;
         reconnectAttempt = 0;
-        snapshot.state = subscriptionDegraded ? Data::ControllerConnectionState::Degraded
-                                              : Data::ControllerConnectionState::Connected;
+        snapshot.state = subscriptionDegraded || refreshRejected
+                             ? Data::ControllerConnectionState::Degraded
+                             : Data::ControllerConnectionState::Connected;
         if (!snapshot.connectedAt.isValid())
             snapshot.connectedAt = QDateTime::currentDateTimeUtc();
+        if (controlRefreshPending) {
+            const bool completesCommand = controlRefreshCompletesCommand;
+            controlRefreshPending = false;
+            controlRefreshCompletesCommand = false;
+            if (!completesCommand) {
+                const Data::ControllerControlCommand command = snapshot.controlProgress.command;
+                if (refreshRejected) {
+                    snapshot.controllerState.reset();
+                    snapshot.package.reset();
+                }
+                const QString refreshDetail
+                    = refreshRejected
+                          ? Tr::tr(
+                                "%1 was rejected; the authoritative controller state could not be "
+                                "refreshed.")
+                                .arg(commandDisplayName(command))
+                          : Tr::tr(
+                                "%1 was rejected; the authoritative controller state was "
+                                "refreshed.")
+                                .arg(commandDisplayName(command));
+                const QString rejectionDetail
+                    = snapshot.lastError ? snapshot.lastError->detail : QString();
+                finishControlProgress(
+                    Data::ControllerControlState::Failed,
+                    snapshot.controlProgress.stage,
+                    true,
+                    snapshot.controlProgress.status,
+                    snapshot.controlProgress.operationResult,
+                    rejectionDetail.isEmpty()
+                        ? refreshDetail
+                        : QStringLiteral("%1\n%2").arg(rejectionDetail, refreshDetail));
+                return;
+            }
+            if (refreshRejected) {
+                snapshot.controllerState.reset();
+                snapshot.package.reset();
+                finishControlProgress(
+                    Data::ControllerControlState::Failed,
+                    snapshot.controlProgress.stage,
+                    false,
+                    snapshot.controlProgress.status,
+                    snapshot.controlProgress.operationResult,
+                    Tr::tr(
+                        "The controller accepted the command, but its resulting state could not "
+                        "be confirmed."));
+                return;
+            }
+            const Data::ControllerControlCommand command = snapshot.controlProgress.command;
+            if (const std::optional<QString> postconditionError = controlPostconditionError()) {
+                snapshot.state = Data::ControllerConnectionState::Degraded;
+                finishControlProgress(
+                    Data::ControllerControlState::Failed,
+                    snapshot.controlProgress.stage,
+                    true,
+                    snapshot.controlProgress.status,
+                    snapshot.controlProgress.operationResult,
+                    *postconditionError);
+                return;
+            }
+            finishControlProgress(
+                Data::ControllerControlState::Succeeded,
+                snapshot.controlProgress.stage,
+                true,
+                snapshot.controlProgress.status,
+                snapshot.controlProgress.operationResult,
+                Tr::tr("%1 completed successfully and its resulting state was confirmed.")
+                    .arg(commandDisplayName(command)));
+            return;
+        }
+        if (refreshRejected) {
+            snapshot.controllerState.reset();
+            snapshot.package.reset();
+        }
         publish();
     }
 
@@ -1471,7 +2442,9 @@ public:
     std::array<Channel, 3> channels;
     QHash<quint64, PendingRequest> pendingRequests;
     QTimer *reconnectTimer = nullptr;
+    QTimer *heartbeatTimer = nullptr;
     Data::ControllerConnectionRequest currentRequest;
+    std::optional<PersistentPackageSelector> persistentPackageSelector;
     quint64 generation = 0;
     quint64 nextRequestId = 0;
     quint64 sessionId = 0;
@@ -1479,12 +2452,14 @@ public:
     quint64 resumeSessionId = 0;
     quint64 resumeBootId = 0;
     quint32 featureBits = 0;
+    quint64 heartbeatRequestId = 0;
     quint32 lastAlarmSequence = 0;
     quint16 negotiatedMinor = 0;
     int reconnectAttempt = 0;
     bool shuttingDown = false;
     bool userDisconnecting = false;
     bool refreshInProgress = false;
+    bool refreshRejected = false;
     bool stateReceived = false;
     bool capabilityReceived = false;
     bool packageReceived = false;
@@ -1492,6 +2467,14 @@ public:
     bool subscriptionReceived = false;
     bool subscriptionDegraded = false;
     bool alarmCheckpointEstablished = false;
+    bool disconnectAfterRelease = false;
+    quint64 disconnectReleaseRequestId = 0;
+    std::optional<Data::ControllerConnectionState> stateBeforeDisconnectRelease;
+    bool controlRefreshPending = false;
+    bool controlRefreshCompletesCommand = false;
+#ifdef WITH_TESTS
+    bool failNextWriteForTests = false;
+#endif
 };
 
 ProductApiSession::EndpointSet ProductApiSession::EndpointSet::productionDefaults()
@@ -1538,6 +2521,50 @@ Data::ControllerConnectionSnapshot ProductApiSession::snapshot() const
     return d->snapshot;
 }
 
+Utils::Result<> ProductApiSession::setEndpoints(const EndpointSet &endpoints)
+{
+    if (d->shuttingDown)
+        return Utils::ResultError(Tr::tr("The controller session is shutting down."));
+    if (!endpoints.isValid())
+        return Utils::ResultError(Tr::tr("The controller endpoint is not valid."));
+    if (d->snapshot.state != Data::ControllerConnectionState::Disconnected
+        && d->snapshot.state != Data::ControllerConnectionState::Failed) {
+        return Utils::ResultError(
+            Tr::tr("Disconnect the controller before changing its endpoint."));
+    }
+
+    d->userDisconnecting = true;
+    d->reconnectTimer->stop();
+    d->heartbeatTimer->stop();
+    d->advanceGeneration();
+    d->teardownChannels();
+    d->clearLiveIdentity();
+    d->clearAlarmCheckpoint();
+    d->clearResumeCandidate();
+    d->persistentPackageSelector.reset();
+    d->currentRequest = {};
+    d->reconnectAttempt = 0;
+    d->stateReceived = false;
+    d->capabilityReceived = false;
+    d->packageReceived = false;
+    d->firmwareReceived = false;
+    d->subscriptionReceived = false;
+    d->subscriptionDegraded = false;
+    d->endpoints = endpoints;
+    d->channels[0].port = endpoints.controlPort;
+    d->channels[1].port = endpoints.pushPort;
+    d->channels[2].port = endpoints.bulkPort;
+    d->snapshot = {};
+    d->snapshot.endpointSummary = endpoints.endpointSummary;
+    d->snapshot.sessionGeneration = d->generation;
+    d->snapshot.readOnly = false;
+    d->snapshot.mock = false;
+    d->initializeChannelSnapshots();
+    d->publish();
+    d->userDisconnecting = false;
+    return {};
+}
+
 Utils::Result<> ProductApiSession::connectToController(
     const Data::ControllerConnectionRequest &request)
 {
@@ -1561,6 +2588,7 @@ Utils::Result<> ProductApiSession::connectToController(
     d->clearLiveIdentity();
     d->clearAlarmCheckpoint();
     d->clearResumeCandidate();
+    d->persistentPackageSelector.reset();
     d->currentRequest = request;
     d->snapshot.scope = request.scope;
     d->snapshot.profileId = request.profileId;
@@ -1572,6 +2600,8 @@ Utils::Result<> ProductApiSession::connectToController(
     d->snapshot.capability.reset();
     d->snapshot.package.reset();
     d->snapshot.firmware.reset();
+    d->snapshot.controlProgress = {};
+    d->snapshot.topology.reset();
     d->reconnectAttempt = 0;
     d->markChannelsDisconnected();
     d->publish();
@@ -1585,20 +2615,51 @@ Utils::Result<> ProductApiSession::disconnectFromController()
         return {};
     if (d->snapshot.state == Data::ControllerConnectionState::Disconnected)
         return {};
-
-    d->userDisconnecting = true;
-    d->reconnectTimer->stop();
-    d->snapshot.state = Data::ControllerConnectionState::Disconnecting;
-    d->publish();
-    d->advanceGeneration();
-    d->teardownChannels();
-    d->clearLiveIdentity();
-    d->clearAlarmCheckpoint();
-    d->clearResumeCandidate();
-    d->markChannelsDisconnected();
-    d->snapshot.state = Data::ControllerConnectionState::Disconnected;
-    d->publish();
-    d->userDisconnecting = false;
+    if (d->hasActiveControlOperation())
+        return Utils::ResultError(Tr::tr("Wait for the active controller operation to finish."));
+    if (d->snapshot.session) {
+        const Data::ControllerSessionSummary &session = *d->snapshot.session;
+        if (session.controlLeaseOwnerSessionId
+            && session.controlLeaseOwnerSessionId == session.sessionId
+            && !session.ownsControlLease) {
+            return Utils::ResultError(
+                Tr::tr(
+                    "The controller control lease ownership is unverified for this session."));
+        }
+    }
+    if (d->snapshot.session && d->snapshot.session->ownsControlLease) {
+        if (!d->snapshot.controllerState || !d->snapshot.controllerState->ready
+            || (d->snapshot.controllerState->serviceState
+                    != Data::ControllerServiceState::Shutdown
+                && d->snapshot.controllerState->serviceState
+                       != Data::ControllerServiceState::OperationalSafe)) {
+            return Utils::ResultError(
+                Tr::tr(
+                    "Disconnect requires a ready controller in SHUTDOWN or OP_SAFE before "
+                    "releasing control."));
+        }
+        Data::ControllerControlRequest release;
+        release.command = Data::ControllerControlCommand::ReleaseControl;
+        d->disconnectAfterRelease = true;
+        d->disconnectReleaseRequestId = 0;
+        d->stateBeforeDisconnectRelease = d->snapshot.state;
+        d->heartbeatTimer->stop();
+        const Utils::Result<> result = executeControlCommand(release);
+        if (!result) {
+            if (d->snapshot.state != Data::ControllerConnectionState::Disconnected) {
+                d->disconnectAfterRelease = false;
+                d->disconnectReleaseRequestId = 0;
+                d->stateBeforeDisconnectRelease.reset();
+                if (d->snapshot.session && d->snapshot.session->ownsControlLease)
+                    d->startHeartbeat();
+            }
+            return result;
+        }
+        d->snapshot.state = Data::ControllerConnectionState::Disconnecting;
+        d->publish();
+        return {};
+    }
+    d->finalizeDisconnect();
     return {};
 }
 
@@ -1616,10 +2677,262 @@ Utils::Result<> ProductApiSession::refreshController()
     return {};
 }
 
+bool ProductApiSession::supportsControlCommand(Data::ControllerControlCommand command) const
+{
+    using Command = Data::ControllerControlCommand;
+    switch (command) {
+    case Command::AcquireControl:
+    case Command::ReleaseControl:
+    case Command::EnterConfigurationMode:
+    case Command::DiscoverTopology:
+    case Command::RestoreActivePackage:
+    case Command::Start:
+    case Command::Pause:
+    case Command::Resume:
+    case Command::ControlledStop:
+        return true;
+    case Command::StartFreeRun:
+    case Command::StartDistributedClocks:
+        return d->negotiatedMinor >= Protocol::ExplicitTimingModeMinor
+               && (d->featureBits & FeatureExplicitTimingModeStart);
+    case Command::None:
+        return false;
+    }
+    return false;
+}
+
+Utils::Result<> ProductApiSession::executeControlCommand(
+    const Data::ControllerControlRequest &request)
+{
+    using Command = Data::ControllerControlCommand;
+    using ServiceState = Data::ControllerServiceState;
+
+    if (!supportsControlCommand(request.command))
+        return Utils::ResultError(Tr::tr("The requested controller command is not supported."));
+    if (d->shuttingDown)
+        return Utils::ResultError(Tr::tr("The controller session is shutting down."));
+    if (d->snapshot.state != Data::ControllerConnectionState::Connected
+        && d->snapshot.state != Data::ControllerConnectionState::Degraded) {
+        return Utils::ResultError(Tr::tr("Connect to the controller before sending commands."));
+    }
+    if (!d->sessionId || !d->bootId || !d->snapshot.session)
+        return Utils::ResultError(Tr::tr("The controller session identity is not available."));
+    if (d->refreshInProgress)
+        return Utils::ResultError(Tr::tr("Wait for the controller refresh to finish."));
+    if (d->hasActiveControlOperation())
+        return Utils::ResultError(Tr::tr("Another controller operation is already active."));
+
+    const bool ownsLease = d->snapshot.session->ownsControlLease;
+    const auto state = d->snapshot.controllerState
+                           ? std::optional(d->snapshot.controllerState->serviceState)
+                           : std::optional<ServiceState>();
+    const auto stateIs = [&state](std::initializer_list<ServiceState> allowed) {
+        return state && std::find(allowed.begin(), allowed.end(), *state) != allowed.end();
+    };
+    const bool controllerPackageActive
+        = d->snapshot.package
+          && d->snapshot.package->controllerState == Data::ControllerPackageState::Active
+          && d->snapshot.package->controllerBootId == d->bootId;
+    const bool hasPersistentPackageSelector
+        = d->persistentPackageSelector
+          && d->persistentPackageSelector->bootId == d->bootId
+          && d->persistentPackageSelector->slot != Data::ControllerSlot::None
+          && d->persistentPackageSelector->generation
+          && d->persistentPackageSelector->configurationId;
+    if (request.command == Command::AcquireControl) {
+        if (ownsLease)
+            return Utils::ResultError(Tr::tr("This session already owns the control lease."));
+        if (d->snapshot.session->controlLeaseOwnerSessionId) {
+            return Utils::ResultError(
+                Tr::tr("The controller reports that the control lease is already owned."));
+        }
+        if (request.leaseDurationMs < 1 || request.leaseDurationMs > 30000) {
+            return Utils::ResultError(
+                Tr::tr("The control lease duration must be between 1 and 30000 ms."));
+        }
+    } else if (!ownsLease) {
+        return Utils::ResultError(Tr::tr("Acquire the control lease before this operation."));
+    }
+    if (request.command != Command::AcquireControl
+        && (!d->snapshot.controllerState || !d->snapshot.controllerState->ready)) {
+        return Utils::ResultError(
+            Tr::tr("The controller is not ready for the selected control operation."));
+    }
+
+    switch (request.command) {
+    case Command::EnterConfigurationMode:
+        if (!stateIs(
+                {ServiceState::OperationalSafe,
+                 ServiceState::Running,
+                 ServiceState::Fault,
+                 ServiceState::Paused,
+                 ServiceState::Shutdown})) {
+            return Utils::ResultError(
+                Tr::tr("Configuration mode is not allowed from the current controller state."));
+        }
+        break;
+    case Command::DiscoverTopology:
+        if (!stateIs({ServiceState::Shutdown})) {
+            return Utils::ResultError(
+                Tr::tr("Enter configuration mode before scanning the EtherCAT bus."));
+        }
+        if (!request.firstStationAddress || !request.topologyCapacity
+            || request.topologyCapacity > 64) {
+            return Utils::ResultError(Tr::tr("The topology scan range is invalid."));
+        }
+        if (!d->snapshot.package
+            || d->snapshot.package->controllerState == Data::ControllerPackageState::Active) {
+            return Utils::ResultError(
+                Tr::tr("The active controller package must be stopped before scanning the bus."));
+        }
+        break;
+    case Command::RestoreActivePackage:
+        if (!stateIs({ServiceState::OperationalSafe, ServiceState::Shutdown})) {
+            return Utils::ResultError(
+                Tr::tr("The active package cannot be restored from the current state."));
+        }
+        if (!hasPersistentPackageSelector) {
+            return Utils::ResultError(
+                Tr::tr("No exact persistent active-package selector is available."));
+        }
+        break;
+    case Command::Start:
+    case Command::StartFreeRun:
+    case Command::StartDistributedClocks:
+        if (!stateIs({ServiceState::OperationalSafe}) || !d->snapshot.controllerState
+            || !controllerPackageActive
+            || !d->snapshot.controllerState->busOperational
+            || !(d->snapshot.controllerState->ethercatAlStateBits & 0x08)
+            || !d->snapshot.controllerState->expectedWorkingCounter
+            || d->snapshot.controllerState->actualWorkingCounter
+                   != d->snapshot.controllerState->expectedWorkingCounter
+            || d->snapshot.controllerState->currentFaults
+            || d->snapshot.controllerState->latchedFaults) {
+            return Utils::ResultError(
+                Tr::tr(
+                    "Starting requires OP_SAFE, an active package, an operational bus with matching "
+                    "working counters, and no faults."));
+        }
+        break;
+    case Command::Pause:
+        if (!stateIs({ServiceState::Running}) || !controllerPackageActive) {
+            return Utils::ResultError(
+                Tr::tr("Pause requires a running controller with an active package."));
+        }
+        break;
+    case Command::Resume:
+        if (!stateIs({ServiceState::Paused}) || !controllerPackageActive
+            || !d->snapshot.controllerState
+            || !d->snapshot.controllerState->busOperational
+            || !(d->snapshot.controllerState->ethercatAlStateBits & 0x08)
+            || !d->snapshot.controllerState->expectedWorkingCounter
+            || d->snapshot.controllerState->actualWorkingCounter
+                   != d->snapshot.controllerState->expectedWorkingCounter
+            || d->snapshot.controllerState->currentFaults
+            || d->snapshot.controllerState->latchedFaults) {
+            return Utils::ResultError(
+                Tr::tr(
+                    "Resume requires PAUSED, an operational bus with matching working counters, "
+                    "and no faults."));
+        }
+        break;
+    case Command::ControlledStop:
+        if (!stateIs({ServiceState::Running, ServiceState::Paused})
+            || !controllerPackageActive) {
+            return Utils::ResultError(
+                Tr::tr(
+                    "Controlled stop requires a running or paused controller with an active "
+                    "package."));
+        }
+        break;
+    case Command::AcquireControl:
+    case Command::None:
+        break;
+    case Command::ReleaseControl:
+        if (!stateIs({ServiceState::Shutdown, ServiceState::OperationalSafe})) {
+            return Utils::ResultError(
+                Tr::tr("Release control requires a ready controller in SHUTDOWN or OP_SAFE."));
+        }
+        break;
+    }
+
+    QByteArray payload;
+    const auto appendU16 = [&payload](quint16 value) {
+        const qsizetype offset = payload.size();
+        payload.resize(offset + qsizetype(sizeof(value)));
+        qToBigEndian(value, reinterpret_cast<uchar *>(payload.data() + offset));
+    };
+    const auto appendU32 = [&payload](quint32 value) {
+        const qsizetype offset = payload.size();
+        payload.resize(offset + qsizetype(sizeof(value)));
+        qToBigEndian(value, reinterpret_cast<uchar *>(payload.data() + offset));
+    };
+    const auto appendU64 = [&payload](quint64 value) {
+        const qsizetype offset = payload.size();
+        payload.resize(offset + qsizetype(sizeof(value)));
+        qToBigEndian(value, reinterpret_cast<uchar *>(payload.data() + offset));
+    };
+    if (request.command == Command::AcquireControl) {
+        appendU32(quint32(request.leaseDurationMs));
+    } else if (request.command == Command::DiscoverTopology) {
+        appendU16(request.firstStationAddress);
+        appendU16(request.topologyCapacity);
+        appendU32(0);
+    } else if (request.command == Command::RestoreActivePackage) {
+        const ProductApiSessionPrivate::PersistentPackageSelector &selector
+            = *d->persistentPackageSelector;
+        appendU32(
+            selector.slot == Data::ControllerSlot::A ? quint32('A') : quint32('B'));
+        appendU32(0);
+        appendU64(selector.generation);
+        appendU64(selector.configurationId);
+    }
+
+    ProductApiSessionPrivate::PendingKind kind
+        = ProductApiSessionPrivate::PendingKind::ControlCommand;
+    bool terminalCommandStatus = true;
+    if (request.command == Command::DiscoverTopology) {
+        kind = ProductApiSessionPrivate::PendingKind::Topology;
+        terminalCommandStatus = false;
+        d->snapshot.topology.reset();
+    } else if (request.command == Command::RestoreActivePackage) {
+        kind = ProductApiSessionPrivate::PendingKind::RestorePackage;
+        terminalCommandStatus = false;
+    }
+    const quint16 firstExpectedStage
+        = request.command == Command::AcquireControl || request.command == Command::ReleaseControl
+              ? 4
+              : 1;
+    d->beginControlProgress(request.command);
+    const quint64 requestId = d->sendControlRequest(
+        request.command,
+        kind,
+        QByteArrayView(payload),
+        firstExpectedStage,
+        terminalCommandStatus);
+    if (!requestId) {
+        d->finishControlProgress(
+            Data::ControllerControlState::Failed,
+            0,
+            false,
+            {},
+            {},
+            Tr::tr("The controller command could not be sent."));
+        return Utils::ResultError(Tr::tr("The controller command could not be sent."));
+    }
+    if (kind == ProductApiSessionPrivate::PendingKind::Topology) {
+        auto found = d->pendingRequests.find(requestId);
+        if (found != d->pendingRequests.end())
+            found->firstStationAddress = request.firstStationAddress;
+    }
+    return {};
+}
+
 void ProductApiSession::shutdown()
 {
     if (d->shuttingDown)
         return;
+    d->sendBestEffortRelease();
     d->shuttingDown = true;
     d->userDisconnecting = true;
     d->reconnectTimer->stop();
@@ -1633,6 +2946,11 @@ void ProductApiSession::shutdown()
 }
 
 #ifdef WITH_TESTS
+ProductApiSession::EndpointSet ProductApiSession::endpointsForTests() const
+{
+    return d->endpoints;
+}
+
 bool ProductApiSession::isIdleForTests() const
 {
     return activeSocketCountForTests() == 0 && pendingRequestCountForTests() == 0
@@ -1649,6 +2967,11 @@ int ProductApiSession::activeSocketCountForTests() const
 int ProductApiSession::pendingRequestCountForTests() const
 {
     return d->pendingRequests.size();
+}
+
+void ProductApiSession::failNextWriteForTests()
+{
+    d->failNextWriteForTests = true;
 }
 #endif
 

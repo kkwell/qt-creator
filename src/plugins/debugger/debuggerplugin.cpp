@@ -910,6 +910,7 @@ DebuggerPluginPrivate::DebuggerPluginPrivate(const QStringList &arguments)
     const QKeySequence startShortcut(useMacShortcuts ? Tr::tr("Ctrl+Y") : Tr::tr("F5"));
 
     Command *cmd = ActionManager::registerAction(&m_visibleStartAction, "Debugger.Debug");
+    QAction *debugCommandAction = cmd->action();
 
     cmd->setDescription(Tr::tr("Start Debugging or Continue"));
     cmd->setAttribute(Command::CA_UpdateText);
@@ -928,9 +929,10 @@ DebuggerPluginPrivate::DebuggerPluginPrivate(const QStringList &arguments)
     m_visibleStartAction.setAction(&m_startAction);
 
     m_visibleStartAction.setObjectName("Debug"); // used for UI introduction
+    debugCommandAction->setObjectName("Debug"); // used for UI introduction
 
     if (!hideDebugMenu())
-        ModeManager::addAction(&m_visibleStartAction, /*priority*/ 90);
+        ModeManager::addAction(debugCommandAction, /*priority*/ 90);
 
     m_undisturbableAction.setIcon(interruptIcon(false));
     m_undisturbableAction.setEnabled(false);

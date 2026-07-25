@@ -3,6 +3,11 @@
 
 #include "projectwindow.h"
 
+#ifdef WITH_TESTS
+#include "appoutputpane.h"
+#include "runcontrol.h"
+#endif
+
 #include "buildinfo.h"
 #include "buildmanager.h"
 #include "buildsettingspropertiespage.h"
@@ -70,6 +75,13 @@
 #include <QStyledItemDelegate>
 #include <QToolButton>
 #include <QVBoxLayout>
+
+#ifdef WITH_TESTS
+#include <QPointer>
+#include <QScopeGuard>
+#include <QTemporaryDir>
+#include <QTest>
+#endif
 
 using namespace Core;
 using namespace Utils;
@@ -848,8 +860,9 @@ public:
     Qt::ItemFlags flags(int column) const final
     {
         Q_UNUSED(column)
-        return m_kitErrorsForProject ? Qt::ItemFlags({})
-                                     : Qt::ItemFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+        return !m_project->supportsBuilding() || m_kitErrorsForProject
+                   ? Qt::ItemFlags({})
+                   : Qt::ItemFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
     }
 
     QVariant data(int column, int role) const final
@@ -867,7 +880,7 @@ public:
                 break;
             if (m_kitErrorsForProject)
                 return kitIconWithOverlay(*k, IconOverlay::Error);
-            if (!isEnabled())
+            if (!isEnabled() && m_project->supportsBuilding())
                 return kitIconWithOverlay(*k, IconOverlay::Add);
             if (m_kitWarningForProject)
                 return kitIconWithOverlay(*k, IconOverlay::Warning);
@@ -895,6 +908,10 @@ public:
             if (!k)
                 break;
             const QString extraText = [this] {
+                if (!m_project->supportsBuilding()) {
+                    return QString(
+                        "<h3>" + Tr::tr("This project does not support build kits") + "</h3>");
+                }
                 if (m_kitErrorsForProject)
                     return QString("<h3>" + Tr::tr("Kit is unsuited for project") + "</h3>");
                 if (isEnabled())
@@ -907,7 +924,7 @@ public:
 
         case CanEnableRole: {
             const Kit *k = KitManager::kit(m_kitId);
-            return k && !m_kitErrorsForProject && !isEnabled();
+            return m_project->supportsBuilding() && k && !m_kitErrorsForProject && !isEnabled();
         }
 
         default:
@@ -954,6 +971,8 @@ public:
 
     void itemActivatedDirectly() final
     {
+        if (!m_project->supportsBuilding())
+            return;
         if (!isEnabled()) {
             m_project->addTargetForKit(KitManager::kit(m_kitId));
         } else {
@@ -965,12 +984,16 @@ public:
 
     void itemActivatedFromAbove() final
     {
+        if (!m_project->supportsBuilding())
+            return;
         // Usually programmatic activation, e.g. after opening the Project mode.
         m_project->setActiveTarget(target(), SetActive::Cascade);
     }
 
     void addToContextMenu(QMenu *menu, bool isSelectable) const
     {
+        if (!m_project->supportsBuilding())
+            return;
         Kit *kit = KitManager::kit(m_kitId);
         QTC_ASSERT(kit, return);
         const QString projectName = m_project->displayName();
@@ -986,7 +1009,7 @@ public:
         enableForAllAction->setEnabled(isSelectable);
         QObject::connect(enableForAllAction, &QAction::triggered, [kit] {
             for (Project * const p : ProjectManager::projects()) {
-                if (!p->target(kit))
+                if (p->supportsBuilding() && !p->target(kit))
                     p->addTargetForKit(kit);
             }
         });
@@ -1149,6 +1172,8 @@ ProjectItemBase *TargetGroupItem::activeItem()
 
 ProjectPanels TargetGroupItem::panelWidgets() const
 {
+    if (!m_project->supportsBuilding())
+        return {};
     if (!m_targetSetupPanel)
         m_targetSetupPanel = new ProjectPanel(new TargetSetupPageWrapper(m_project));
 
@@ -1913,6 +1938,196 @@ void ProjectWindow::loadPersistentSettings()
     settings->endGroup();
     d->m_toggleRightSidebarAction.setChecked(d->m_outputDock->isVisible());
 }
+
+#ifdef WITH_TESTS
+
+class ProjectWindowTestProject final : public Project
+{
+public:
+    ProjectWindowTestProject(
+        const FilePath &filePath, const QString &displayName, bool supportsBuilding)
+        : Project("application/x-project-window-test", filePath)
+    {
+        setType("ProjectExplorer.ProjectWindow.Test");
+        setDisplayName(displayName);
+        setSupportsBuilding(supportsBuilding);
+    }
+
+    bool needsConfiguration() const final { return false; }
+};
+
+class ProjectWindowTest final : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void testPassiveApplicationOutputLifecycle()
+    {
+        AppOutputPane &pane = appOutputPane();
+        if (!pane.allRunControls().isEmpty())
+            QSKIP("The test requires no active application output run controls.");
+
+        pane.closeTabsWithoutPrompt();
+        const QScopeGuard closeTabs([&pane] { pane.closeTabsWithoutPrompt(); });
+        Core::IOutputPane &outputPane = pane;
+        const QList<RunControl *> initialRunControls = pane.allRunControls();
+        const Id channelId("ProjectExplorer.Test.PassiveApplicationOutput");
+
+        pane.postApplicationOutput(
+            channelId, "Passive Test", "first passive message\n", NormalMessageFormat);
+        const QList<Core::OutputWindow *> firstWindows = outputPane.outputWindows();
+        QCOMPARE(firstWindows.size(), 1);
+        QPointer<Core::OutputWindow> firstWindow = firstWindows.constFirst();
+        QVERIFY(firstWindow);
+        QVERIFY(pane.allRunControls() == initialRunControls);
+
+        pane.postApplicationOutput(
+            channelId, "Ignored Replacement Name", "second passive message\n", NormalMessageFormat);
+        const QList<Core::OutputWindow *> reusedWindows = outputPane.outputWindows();
+        QCOMPARE(reusedWindows.size(), 1);
+        QCOMPARE(reusedWindows.constFirst(), firstWindow.data());
+        QVERIFY(pane.allRunControls() == initialRunControls);
+        firstWindow->flush();
+        QVERIFY(firstWindow->toPlainText().contains("first passive message"));
+        QVERIFY(firstWindow->toPlainText().contains("second passive message"));
+
+        outputPane.ensureWindowVisible(firstWindow);
+        const QList<QWidget *> passiveToolBarWidgets = outputPane.toolBarWidgets();
+        QVERIFY(passiveToolBarWidgets.size() >= 3);
+        for (int index = 0; index < 3; ++index) {
+            auto *button = qobject_cast<QToolButton *>(passiveToolBarWidgets.at(index));
+            QVERIFY(button);
+            QVERIFY(!button->isEnabled());
+        }
+
+        pane.closeTabsWithoutPrompt();
+        QVERIFY(firstWindow.isNull());
+        QVERIFY(outputPane.outputWindows().isEmpty());
+        QVERIFY(pane.allRunControls() == initialRunControls);
+
+        pane.postApplicationOutput(
+            channelId, "Passive Test", "rebuilt passive message\n", NormalMessageFormat);
+        const QList<Core::OutputWindow *> rebuiltWindows = outputPane.outputWindows();
+        QCOMPARE(rebuiltWindows.size(), 1);
+        QPointer<Core::OutputWindow> rebuiltWindow = rebuiltWindows.constFirst();
+        QVERIFY(rebuiltWindow);
+        QVERIFY(pane.allRunControls() == initialRunControls);
+
+        auto *firstRunControl = new RunControl(Constants::NORMAL_RUN_MODE);
+        firstRunControl->setDisplayName("First Normal Run");
+        QPointer<RunControl> replacedRunControl = firstRunControl;
+        pane.prepareRunControlStart(firstRunControl);
+        QCOMPARE(outputPane.outputWindows().size(), 2);
+        QVERIFY(outputPane.outputWindows().contains(rebuiltWindow));
+        QCOMPARE(pane.allRunControls().size(), 1);
+        QCOMPARE(pane.allRunControls().constFirst(), firstRunControl);
+
+        auto *replacementRunControl = new RunControl(Constants::NORMAL_RUN_MODE);
+        replacementRunControl->setDisplayName("Replacement Normal Run");
+        pane.prepareRunControlStart(replacementRunControl);
+        QVERIFY(replacedRunControl.isNull());
+        QCOMPARE(outputPane.outputWindows().size(), 2);
+        QVERIFY(outputPane.outputWindows().contains(rebuiltWindow));
+        QCOMPARE(pane.allRunControls().size(), 1);
+        QCOMPARE(pane.allRunControls().constFirst(), replacementRunControl);
+
+        outputPane.ensureWindowVisible(rebuiltWindow);
+        const QList<QWidget *> rebuiltPassiveToolBarWidgets = outputPane.toolBarWidgets();
+        QVERIFY(rebuiltPassiveToolBarWidgets.size() >= 3);
+        for (int index = 0; index < 3; ++index) {
+            auto *button = qobject_cast<QToolButton *>(rebuiltPassiveToolBarWidgets.at(index));
+            QVERIFY(button);
+            QVERIFY(!button->isEnabled());
+        }
+    }
+
+    void testTargetlessProjectCannotEnableKits()
+    {
+        if (!ProjectManager::projects().isEmpty())
+            QSKIP("The test requires an empty project session.");
+        const QList<Kit *> kits = KitManager::kits();
+        if (kits.isEmpty())
+            QSKIP("The test requires at least one kit.");
+        Kit * const kit = kits.constFirst();
+
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        auto targetlessProject = std::make_unique<ProjectWindowTestProject>(
+            FilePath::fromString(directory.filePath("targetless-one.project")),
+            "Targetless One",
+            false);
+        auto secondTargetlessProject = std::make_unique<ProjectWindowTestProject>(
+            FilePath::fromString(directory.filePath("targetless-two.project")),
+            "Targetless Two",
+            false);
+        ProjectWindowTestProject buildableProject(
+            FilePath::fromString(directory.filePath("buildable.project")), "Buildable", true);
+
+        ProjectManager::addProject(targetlessProject.release());
+        ProjectManager::addProject(secondTargetlessProject.release());
+        const QScopeGuard removeProjects([] {
+            ProjectManager::removeProjects(ProjectManager::projects());
+        });
+
+        Project * const firstTargetless = ProjectManager::projects().at(0);
+        Project * const secondTargetless = ProjectManager::projects().at(1);
+        TargetItem targetlessItem(firstTargetless, kit->id(), {});
+        TargetItem buildableItem(&buildableProject, kit->id(), {});
+
+        QCOMPARE(targetlessItem.flags(0), Qt::NoItemFlags);
+        QVERIFY(!targetlessItem.data(0, TargetItem::CanEnableRole).toBool());
+        const QString targetlessToolTip
+            = targetlessItem.data(0, Qt::ToolTipRole).toString();
+        QVERIFY(targetlessToolTip.contains(
+            Tr::tr("This project does not support build kits")));
+        QVERIFY(!targetlessToolTip.contains(
+            Tr::tr("Click to enable target, click again to make active")));
+
+        targetlessItem.itemActivatedDirectly();
+        targetlessItem.itemActivatedFromAbove();
+        QVERIFY(firstTargetless->targets().isEmpty());
+
+        QMenu targetlessMenu;
+        targetlessItem.addToMenu(&targetlessMenu);
+        QVERIFY(targetlessMenu.actions().isEmpty());
+
+        TargetGroupItem targetlessGroup(firstTargetless);
+        QVERIFY(targetlessGroup.panelWidgets().isEmpty());
+
+        QVERIFY(buildableItem.flags(0) & Qt::ItemIsSelectable);
+        QVERIFY(buildableItem.flags(0) & Qt::ItemIsEnabled);
+        QVERIFY(buildableItem.data(0, TargetItem::CanEnableRole).toBool());
+
+        QMenu buildableMenu;
+        buildableItem.addToMenu(&buildableMenu);
+        QAction *enableForProject = nullptr;
+        QAction *enableForAll = nullptr;
+        for (QAction *action : buildableMenu.actions()) {
+            if (action->text()
+                == Tr::tr("Enable Kit for Project \"%1\"").arg(buildableProject.displayName())) {
+                enableForProject = action;
+            } else if (action->text() == Tr::tr("Enable Kit for All Projects")) {
+                enableForAll = action;
+            }
+        }
+        QVERIFY(enableForProject);
+        QVERIFY(enableForProject->isEnabled());
+        QVERIFY(enableForAll);
+        QVERIFY(enableForAll->isEnabled());
+
+        enableForAll->trigger();
+        QVERIFY(firstTargetless->targets().isEmpty());
+        QVERIFY(secondTargetless->targets().isEmpty());
+        QVERIFY(buildableProject.targets().isEmpty());
+    }
+};
+
+QObject *createProjectWindowTest()
+{
+    return new ProjectWindowTest;
+}
+
+#endif
 
 } // namespace ProjectExplorer::Internal
 

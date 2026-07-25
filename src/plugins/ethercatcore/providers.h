@@ -54,6 +54,8 @@ enum class WorkbenchNodeKind {
     Channel = 17,
 };
 
+ETHERCATCORE_EXPORT bool isMockUiEnabled();
+
 struct ETHERCATCORE_EXPORT PropertyPageContext
 {
     Data::NodeId projectId;
@@ -111,6 +113,7 @@ public:
     virtual QList<Data::ProjectSnapshot> projects() const = 0;
     virtual std::optional<Data::ProjectSnapshot> project(const Data::NodeId &projectId) const = 0;
     virtual Data::NodeId activeProjectId() const = 0;
+    virtual bool managesProject(const QObject *project) const = 0;
 
     virtual Utils::Result<> activateProject(const Data::NodeId &projectId) = 0;
     virtual Utils::Result<> renameProject(const Data::NodeId &projectId, const QString &name) = 0;
@@ -221,12 +224,25 @@ public:
 
     virtual QList<Data::ControllerConnectionProfile> connectionProfiles(
         const Data::ControllerConnectionScope &scope) const = 0;
+    virtual std::optional<Data::ControllerConnectionProfileConfiguration>
+    connectionProfileConfiguration(
+        const Data::ControllerConnectionScope &scope,
+        const Data::NodeId &profileId) const;
+    virtual Utils::Result<> setConnectionProfileEndpoint(
+        const Data::ControllerConnectionScope &scope,
+        const Data::NodeId &profileId,
+        const QString &endpoint);
     virtual Data::ControllerConnectionSnapshot connectionSnapshot() const = 0;
 
     virtual Utils::Result<> connectToController(
         const Data::ControllerConnectionRequest &request) = 0;
     virtual Utils::Result<> disconnectFromController() = 0;
     virtual Utils::Result<> refreshController() = 0;
+
+    virtual bool supportsControlCommand(
+        Data::ControllerControlCommand command) const;
+    virtual Utils::Result<> executeControlCommand(
+        const Data::ControllerControlRequest &request);
 
 signals:
     void connectionProfilesChanged();

@@ -43,7 +43,6 @@ add_subdirectory(languageclient)
 add_subdirectory(acpclient)
 
 # Level 4: (only depends on Level 3 and below)
-add_subdirectory(ethercatworkbench)
 add_subdirectory(classview)
 add_subdirectory(dotnet)
 add_subdirectory(glsleditor)
@@ -54,8 +53,6 @@ add_subdirectory(todo)
 add_subdirectory(vcsbase)
 
 # Level 5:
-add_subdirectory(ethercatscan)
-add_subdirectory(ethercatdiagnostics)
 add_subdirectory(autotoolsprojectmanager)
 add_subdirectory(bazaar)
 add_subdirectory(beautifier)
@@ -93,6 +90,7 @@ add_subdirectory(clangformat)
 add_subdirectory(cmakeprojectmanager)
 
 # Level 7:
+add_subdirectory(ethercatworkbench)
 add_subdirectory(android)
 add_subdirectory(autotest)
 add_subdirectory(axivion)
@@ -112,6 +110,8 @@ add_subdirectory(squish)
 add_subdirectory(appstatisticsmonitor)
 
 # Level 8:
+add_subdirectory(ethercatscan)
+add_subdirectory(ethercatdiagnostics)
 add_subdirectory(qmlpreview)
 add_subdirectory(zenmode)
 

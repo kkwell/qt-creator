@@ -1,6 +1,6 @@
 add_qtc_plugin(EtherCATWorkbench
   DEPENDS EtherCATData Qt::Widgets Utils
-  PLUGIN_DEPENDS Core EtherCATCore EtherCATDevices EtherCATProject
+  PLUGIN_DEPENDS Core Debugger EtherCATCore EtherCATDevices EtherCATProject ProjectExplorer
   SOURCES
     builtinpropertypages.cpp
     builtinpropertypages.h

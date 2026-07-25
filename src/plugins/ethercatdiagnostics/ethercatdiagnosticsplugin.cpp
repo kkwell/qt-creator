@@ -43,17 +43,19 @@ EtherCATDiagnosticsPlugin::~EtherCATDiagnosticsPlugin()
 
 void EtherCATDiagnosticsPlugin::initialize()
 {
-    m_diagnosticsProvider = std::make_unique<MockDiagnosticsProvider>();
-    ExtensionSystem::PluginManager::addObject(m_diagnosticsProvider.get());
-    m_diagnosticsProviderRegistered = true;
+    if (Core::isMockUiEnabled()) {
+        m_diagnosticsProvider = std::make_unique<MockDiagnosticsProvider>();
+        ExtensionSystem::PluginManager::addObject(m_diagnosticsProvider.get());
+        m_diagnosticsProviderRegistered = true;
 
-    m_workflow = std::make_unique<DiagnosticsWorkflow>(m_diagnosticsProvider.get());
-    m_workflow->setupActions();
+        m_workflow = std::make_unique<DiagnosticsWorkflow>(m_diagnosticsProvider.get());
+        m_workflow->setupActions();
 
-    m_pageProvider = std::make_unique<DiagnosticsPropertyPageProvider>(
-        m_diagnosticsProvider.get(), m_workflow.get());
-    ExtensionSystem::PluginManager::addObject(m_pageProvider.get());
-    m_pageProviderRegistered = true;
+        m_pageProvider = std::make_unique<DiagnosticsPropertyPageProvider>(
+            m_diagnosticsProvider.get(), m_workflow.get());
+        ExtensionSystem::PluginManager::addObject(m_pageProvider.get());
+        m_pageProviderRegistered = true;
+    }
 
 #ifdef WITH_TESTS
     addTest<EtherCATDiagnosticsTests>();

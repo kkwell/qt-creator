@@ -100,6 +100,11 @@ static QString optionalProviderStatus(
     const OptionalProviderPresentation &provider, Core::ProviderKind kind)
 {
     if (provider.state == OptionalProviderState::Absent) {
+        if (!Core::isMockUiEnabled()) {
+            return kind == Core::ProviderKind::Scan
+                       ? Tr::tr("Connect to the controller and scan the EtherCAT bus")
+                       : Tr::tr("No Diagnostics Provider registered");
+        }
         return kind == Core::ProviderKind::Scan
                    ? Tr::tr("No Scan Provider registered | Local Mock only")
                    : Tr::tr("No Diagnostics Provider registered | Local Mock only");
@@ -110,12 +115,23 @@ static QString optionalProviderStatus(
                : Tr::tr("%1 unavailable").arg(displayName);
 }
 
-static QString optionalProviderCompactStatus(const OptionalProviderPresentation &provider)
+static QString optionalProviderCompactStatus(
+    const OptionalProviderPresentation &provider, Core::ProviderKind kind)
 {
-    if (provider.state == OptionalProviderState::Absent)
+    if (provider.state == OptionalProviderState::Absent) {
+        if (!Core::isMockUiEnabled()) {
+            return kind == Core::ProviderKind::Scan ? Tr::tr("Scan controller bus")
+                                                    : Tr::tr("No provider");
+        }
         return Tr::tr("No provider · Mock only");
+    }
     return provider.state == OptionalProviderState::Available ? Tr::tr("Available")
                                                               : Tr::tr("Unavailable");
+}
+
+static bool shouldShowDiagnosticsNode(const OptionalProviderPresentation &provider)
+{
+    return Core::isMockUiEnabled() || provider.state != OptionalProviderState::Absent;
 }
 
 static std::unique_ptr<WorkbenchTreeModel::Node> makeNode(
@@ -1061,6 +1077,9 @@ void WorkbenchTreeModel::setProviderPresentations(
 {
     const bool optionalProvidersChanged = m_scanProvider != scanProvider
                                           || m_diagnosticsProvider != diagnosticsProvider;
+    const bool diagnosticsNodeVisibilityChanged
+        = shouldShowDiagnosticsNode(m_diagnosticsProvider)
+          != shouldShowDiagnosticsNode(diagnosticsProvider);
     if (!optionalProvidersChanged && m_scanResult == scanResult
         && m_diagnosticsState == diagnosticsState
         && m_diagnosticsRequest == diagnosticsRequest
@@ -1074,6 +1093,10 @@ void WorkbenchTreeModel::setProviderPresentations(
     m_diagnosticsState = diagnosticsState;
     m_diagnosticsRequest = diagnosticsRequest;
     m_diagnosticsSnapshot = diagnosticsSnapshot;
+    if (diagnosticsNodeVisibilityChanged) {
+        rebuild();
+        return;
+    }
     if (optionalProvidersChanged)
         updateOptionalProviderStatus();
     updateProviderPresentation();
@@ -1303,11 +1326,13 @@ void WorkbenchTreeModel::updateOptionalProviderStatus()
             }
             child->baseStatus = status;
             if (child->kind == Core::WorkbenchNodeKind::Diagnostics) {
-                child->baseCompactStatus = optionalProviderCompactStatus(m_diagnosticsProvider);
+                child->baseCompactStatus = optionalProviderCompactStatus(
+                    m_diagnosticsProvider, Core::ProviderKind::Diagnostics);
             } else if (
                 child->kind == Core::WorkbenchNodeKind::Placeholder && child->parent
                 && child->parent->kind == Core::WorkbenchNodeKind::Master) {
-                child->baseCompactStatus = optionalProviderCompactStatus(m_scanProvider);
+                child->baseCompactStatus = optionalProviderCompactStatus(
+                    m_scanProvider, Core::ProviderKind::Scan);
             }
             self(self, child.get());
         }
@@ -1790,15 +1815,18 @@ void WorkbenchTreeModel::rebuild()
                         nodePointer->status = nodePointer->baseStatus;
                         nodePointer->compactStatus = nodePointer->baseCompactStatus;
                     }
-                    nodePointer->children.push_back(makeNode(
-                        nodePointer,
-                        derivedNodeId(snapshot->id.toString() + ":diagnostics"),
-                        project.id,
-                        Core::WorkbenchNodeKind::Diagnostics,
-                        Tr::tr("Diagnostics"),
-                        optionalProviderStatus(
-                            m_diagnosticsProvider, Core::ProviderKind::Diagnostics),
-                        optionalProviderCompactStatus(m_diagnosticsProvider)));
+                    if (shouldShowDiagnosticsNode(m_diagnosticsProvider)) {
+                        nodePointer->children.push_back(makeNode(
+                            nodePointer,
+                            derivedNodeId(snapshot->id.toString() + ":diagnostics"),
+                            project.id,
+                            Core::WorkbenchNodeKind::Diagnostics,
+                            Tr::tr("Diagnostics"),
+                            optionalProviderStatus(
+                                m_diagnosticsProvider, Core::ProviderKind::Diagnostics),
+                            optionalProviderCompactStatus(
+                                m_diagnosticsProvider, Core::ProviderKind::Diagnostics)));
+                    }
                     if (slaveCount == 0) {
                         nodePointer->children.push_back(makeNode(
                             nodePointer,
@@ -1808,7 +1836,8 @@ void WorkbenchTreeModel::rebuild()
                             Tr::tr("No configured slaves"),
                             optionalProviderStatus(
                                 m_scanProvider, Core::ProviderKind::Scan),
-                            optionalProviderCompactStatus(m_scanProvider)));
+                            optionalProviderCompactStatus(
+                                m_scanProvider, Core::ProviderKind::Scan)));
                     }
                 }
             }

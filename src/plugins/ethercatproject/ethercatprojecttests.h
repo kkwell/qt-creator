@@ -12,6 +12,7 @@ class EtherCATProjectTests final : public QObject
 
 private slots:
     void testMetadataAndService();
+    void testProjectNeedsNoTargetConfiguration();
     void testFormatRoundTripAndCorruption();
     void testDocumentUndoRedoAndAtomicFailure();
     void testStructuralNodeRenameAndPersistence();
@@ -21,6 +22,8 @@ private slots:
     void testOfflineConfigurationCorruption();
     void testMigrationCreatesRecoveryBackup();
     void testProjectExplorerMultiProjectLifecycle();
+    void testDuplicateProjectIdCannotOwnStartupContext();
+    void testDuplicateProjectIdOwnerRecovery();
 };
 
 } // namespace EtherCAT::Project::Internal

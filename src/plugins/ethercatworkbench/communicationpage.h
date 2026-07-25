@@ -7,16 +7,15 @@
 #include <QPointer>
 #include <QWidget>
 
+#include <optional>
+
 QT_BEGIN_NAMESPACE
 class QComboBox;
 class QLabel;
+class QLineEdit;
 class QToolButton;
 class QTreeWidget;
 QT_END_NAMESPACE
-
-namespace Utils {
-class InfoLabel;
-}
 
 namespace EtherCAT::Workbench::Internal {
 
@@ -35,25 +34,35 @@ private:
     void refresh();
     void selectProvider(int index);
     void selectProfile(int index);
+    void saveEndpoint();
     void updateSummary(
         const Data::ControllerConnectionSnapshot &snapshot,
         Core::ControllerConnectionProvider *provider);
     void updateChannels(const Data::ControllerConnectionSnapshot &snapshot);
+    void updateControllerControl(const Data::ControllerConnectionSnapshot &snapshot);
+    void updateTopology(const std::optional<Data::ControllerTopologySnapshot> &topology);
+    void executeControllerControl(Data::ControllerControlCommand command);
 
     QPointer<WorkbenchController> m_controller;
     Core::PropertyPageContext m_context;
-    Utils::InfoLabel *m_banner = nullptr;
-    QLabel *m_safety = nullptr;
     QComboBox *m_provider = nullptr;
     QComboBox *m_profile = nullptr;
-    QLabel *m_endpoint = nullptr;
+    QLineEdit *m_endpoint = nullptr;
+    QToolButton *m_saveEndpoint = nullptr;
     QToolButton *m_connect = nullptr;
     QToolButton *m_refresh = nullptr;
     QToolButton *m_disconnect = nullptr;
+    QToolButton *m_acquireControl = nullptr;
+    QToolButton *m_enterConfiguration = nullptr;
+    QToolButton *m_scanBus = nullptr;
+    QToolButton *m_restorePackage = nullptr;
+    QToolButton *m_releaseControl = nullptr;
     QTreeWidget *m_summary = nullptr;
     QTreeWidget *m_channels = nullptr;
-    QLabel *m_error = nullptr;
+    QLabel *m_topologySummary = nullptr;
+    QTreeWidget *m_actualBus = nullptr;
     bool m_updating = false;
+    bool m_endpointDirty = false;
 };
 
 } // namespace EtherCAT::Workbench::Internal

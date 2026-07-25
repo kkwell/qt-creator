@@ -38,4 +38,8 @@ private:
     const std::unique_ptr<ProjectWindowPrivate> d;
 };
 
+#ifdef WITH_TESTS
+QObject *createProjectWindowTest();
+#endif
+
 } // namespace ProjectExplorer::Internal

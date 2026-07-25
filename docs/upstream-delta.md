@@ -2068,13 +2068,17 @@ returned status 15, with no matching residual process or new Embed Labs
 DiagnosticReport. Evidence is under
 `/private/tmp/embed-labs-i18n-compact/controller-profile-v2`.
 
-## Headless Product API adapter delta
+## Historical read-only Product API adapter delta
 
 `ISSUE-ONLINE-PRODUCTAPI-READONLY-ADAPTER-001` adds the product-owned
 `EtherCATProductApi` plugin as the first concrete implementation of the
 generic `ControllerConnectionProvider` contract. The plugin depends on
 EtherCATData, EtherCATCore, Utils, and Qt Network; its CMake and qbs
 descriptions list the same target, sources, and dependencies.
+
+This section records that issue's original read-only scope and dated
+qualification. The typed controller-control lifecycle delta below supersedes
+its control exclusions.
 
 The adapter owns only the Embed Labs Product API v1.9 protocol. ECAP framing,
 CRC32C, numeric message and status values, Control/Push/Bulk sockets, endpoint
@@ -2116,3 +2120,84 @@ matching process or new Embed Labs DiagnosticReport after intentional
 termination. These results do not establish that the Qt adapter connected to
 the real controller; that hardware qualification remains a later,
 explicitly authorized issue.
+
+## Typed controller-control lifecycle delta
+
+The current local extension widens only product-owned EtherCAT semantic and
+adapter surfaces. `EtherCATData` adds typed control request/progress and
+linear topology values. `EtherCATCore::ControllerConnectionProvider` adds an
+opt-in command-support query and typed execution entry point whose default
+rejects control. No Product API numeric message, ECAP frame, socket, endpoint,
+or vendor enum enters the shared API.
+
+`EtherCATProductApi` privately adds Acquire/Release/lease Heartbeat,
+Configuration, DiscoverTopology, exact active-package restore, Product API
+v1.10 `StartFreeRun (0x010c)` and `StartDc (0x010d)`,
+Pause/Resume/ControlledStop, ordered response-stage validation,
+command-postcondition refresh, and safe disconnect handling. Legacy
+`Start (0x0102)` remains the automatic-mode request on v1.10 and older
+runtimes. Workbench uses it through Qt Creator's native lower-left Run
+control. The Communication page embeds connection, automatic/manual Acquire,
+Configuration, Scan, Restore/Release, progress, read-only Actual Bus, and
+authoritative information. It has no independent FreeRun, DC Run, Pause,
+Resume, or Stop buttons. Debug maps Running to Pause and Paused to Resume; Run
+maps OP_SAFE to Start and Paused to Resume; Controlled Stop is added beside
+those native controls. This delta does not add a standalone window, change the
+Project format, or mutate offline topology after a scan.
+
+After the authoritative connected snapshot identifies the exact
+Provider/profile/scope/session generation, Workbench queues one Acquire
+attempt. The page's Acquire action remains a manual recovery route. The
+controller lease is exclusive: other API sessions retain read-only access, but
+their writes are rejected with `LEASE_BUSY (-10)` while another session owns
+control.
+
+Product API v1.10 requires explicit timing-mode start feature bit 11, making
+the complete required feature mask `0xfff`. The historical 2026-07-24 record
+observed `0xfff` on the RAM-deployed controller and `0x7ff` after a reboot into
+persistent release24/v1.9.
+Generic Workbench Run retains the common `OP_SAFE`, current-Boot
+active-package, OP bus, nonzero matching WKC, and zero-fault gate. The
+controller classifies the active package's actual mode from validated ECFG/DC
+content: zero configured DC slaves means FreeRun and one or more valid DC
+slaves means DC. Run never rewrites the package. Explicit StartFreeRun/StartDc
+remain private adapter capabilities for external clients, not Workbench mode
+buttons. DC lock is runtime observation and is not used to infer package mode.
+
+A mismatch is terminal stage-2 `TIMING_MODE_MISMATCH (-35)`. Its detail is
+`(requested_mode << 32) | actual_mode`, with the requested mode in the high
+32 bits and the active-package actual mode in the low 32 bits. The client
+preserves that controller detail. ECPKG construction, upload, activation,
+ECFG/DC editing, and offline-to-actual Apply remain outside this delta.
+
+Local Mock Scan/Diagnostics UI is hidden by default in production. It is
+registered only in a `WITH_TESTS` build or when
+`QTC_ETHER_CAT_ENABLE_MOCK_UI=1` is set for that process.
+
+The current English regression passed Workbench 95, Project 15, Devices 8,
+Core 19, Scan 11, Diagnostics 7, and ProductApi 71: 226 passed, 0 failed, and
+1 ProductApi hardware test skipped. The `WITH_TESTS=OFF` product build passed
+with exactly 17 plugin dylibs, and all EtherCAT Simplified Chinese contexts
+contain no unfinished or empty translations.
+
+The generic Start and explicit DC real-controller lifecycles each passed 3
+tests with 0 failures and completed safe cleanup in `SHUTDOWN`/EMPTY with no
+lease owner or fault. Windows `ISSUE-RT-009` separated a successful LRW cycle
+from the actual failure: `OP_REQUEST` for station `0x1002` returned WKC 0/1 on
+all four attempts. `cfg812` was not activated and no FreeRun lifecycle ran.
+The controller was safely rolled back to `B/12/813`, `OP_SAFE`, WKC 11/11,
+faults 0, and lease 0. The Windows session continues with `ISSUE-API-016` and
+the smallest isolated fix.
+
+The earlier single-instance product observation showed Workbench, Simplified
+Chinese, hidden production Mock UI, and the compact tree. The current endpoint
+and unified-output revision is covered by 95 Workbench tests and a three-pass
+ProjectExplorer passive-output lifecycle test. No controller connection or
+hardware command was executed in this round.
+
+Historical 2026-07-24 evidence records a headless production-Provider run
+against the RAM-deployed v1.10 controller that reached AcquireControl,
+Configuration, and a three-slave DiscoverTopology, then safely released and
+disconnected. Exact restore of `A/11/810` returned typed
+`CAPABILITY_MISMATCH (-20)`, so that run did not qualify Start, Pause/Resume,
+ControlledStop, or cyclic FreeRun/DC behavior.

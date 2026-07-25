@@ -4,6 +4,9 @@
 
 #include <ethercatcore/providers.h>
 
+#include <projectexplorer/task.h>
+
+#include <QHash>
 #include <QList>
 #include <QPointer>
 
@@ -25,6 +28,7 @@ public:
     QList<Data::ProjectSnapshot> projects() const final;
     std::optional<Data::ProjectSnapshot> project(const Data::NodeId &projectId) const final;
     Data::NodeId activeProjectId() const final;
+    bool managesProject(const QObject *project) const final;
 
     Utils::Result<> activateProject(const Data::NodeId &projectId) final;
     Utils::Result<> renameProject(const Data::NodeId &projectId, const QString &name) final;
@@ -61,10 +65,16 @@ public:
 
 private:
     EtherCATProject *findProject(const Data::NodeId &projectId) const;
+    void manageProject(EtherCATProject *project);
+    void reevaluateProjectId(const Data::NodeId &projectId);
+    void markDuplicateProject(EtherCATProject *project);
+    void clearDuplicateProjectTask(EtherCATProject *project);
     void handleSnapshotChanged(EtherCATProject *project, const Data::ProjectSnapshot &snapshot);
     bool isGuiThread() const;
 
+    QList<QPointer<EtherCATProject>> m_openProjects;
     QList<QPointer<EtherCATProject>> m_projects;
+    QHash<EtherCATProject *, ProjectExplorer::Task> m_duplicateProjectTasks;
     Data::NodeId m_activeProjectId;
 };
 

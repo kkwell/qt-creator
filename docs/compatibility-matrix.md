@@ -43,10 +43,10 @@ local decisions and easier maintenance.
 | EtherCATCore | EtherCAT services and extension points | Stage 1 verified |
 | EtherCATProject | Offline project lifecycle and persistence | Stage 2 verified |
 | EtherCATDevices | Offline ESI repository and immutable device data | Stage 3 verified |
-| EtherCATWorkbench | EtherCAT mode, device tree, selection, master-side ESI insertion, supported-device drag-and-drop, offline property pages, and the current provider-neutral Communication-page issue | Stage 4 offline scope plus Communication local and read-only hardware flow verified; the status-bar client correction passed automated regression and a second real-controller UI revalidation |
+| EtherCATWorkbench | EtherCAT mode, device tree, selection, master-side ESI insertion, supported-device drag-and-drop, offline property pages, embedded commissioning, and native quick controller controls | Current English Workbench suite passed 95 tests with no failures; controller prompts use one passive Application Output channel, the status bar excludes controller connection state, and the lower-left controls retain the compact actionable projection |
 | EtherCATScan | Local Mock scan, topology comparison, and checked acceptance | Stage 5 verified |
 | EtherCATDiagnostics | Local Mock state, WKC, DC, alarm, and performance views | Stage 6 verified |
-| EtherCATProductApi | Headless Embed Labs Product API v1.9 adapter | Locally qualified and exercised through the 2026-07-24 real-controller read-only UI flow |
+| EtherCATProductApi | Headless Embed Labs Product API v1.10 client with bounded v1.9 compatibility | Current English ProductApi suite passed 71 tests with no failures and 1 hardware skip; endpoint parsing/configuration is included, generic Start and explicit DC hardware lifecycles each passed 3 tests with no failures, and no FreeRun lifecycle ran |
 
 ### Phase-1 EtherCAT profile
 
@@ -89,17 +89,27 @@ behavior. Its ordered gates are:
 7. truthful embedded topology; and
 8. real diagnostics.
 
-The first three gates are complete. Gate 4 is implemented and its focused
-normal- and 2x-scale tests, complete Workbench suite, isolated seven-suite
-regression, product build, plugin lifecycle, translation gates, and real Qt
-Connect/Refresh/Disconnect hardware flow passed. The synchronized product
-profile includes the headless `EtherCATProductApi`. Its codec and local
-loopback checks remain Mock protocol evidence, while the 2026-07-24 UI flow is
-separate real-controller evidence. The status-bar presentation defect observed
-during that acceptance is fixed in the client and covered by automated
-regression. A second real-controller UI pass then verified Handshaking,
-Connected/real-controller read-only evidence, and Disconnect-to-Offline in the
-status bar against the same controller.
+The historical Gate 4 record includes focused normal- and 2x-scale tests,
+complete Workbench and isolated seven-suite runs, product/plugin/translation
+gates, and the dated real Qt Connect/Refresh/Disconnect flow. The synchronized
+product profile includes the headless `EtherCATProductApi`. Its codec and local
+loopback checks remain non-hardware protocol evidence, while the 2026-07-24 UI
+flow is separate real-controller evidence. The dated record also includes the
+status-bar correction and a second Handshaking, Connected, and
+Disconnect-to-Offline hardware UI pass. Those dated UI gates remain historical.
+The earlier single-instance, full-path product observation showed Workbench,
+Simplified Chinese, hidden production Mock UI, and the compact tree. The
+current endpoint and unified-output revision is covered by widget-level
+Workbench tests and a three-pass ProjectExplorer passive-output lifecycle test.
+No controller connection or hardware command was executed in this round.
+
+The later local control extension implements leased discovery and the Product
+API v1.10 explicit timing-mode start contract. The 2026-07-24 record observed
+v1.10 with feature bits `0xfff` and reached AcquireControl, Configuration,
+three-slave DiscoverTopology, ReleaseControl, and safe cleanup. Exact restore
+of `A/11/810` returned `CAPABILITY_MISMATCH (-20)`, so that run did not qualify
+runtime transitions. The same record observed a reboot return to persistent
+release24/v1.9.
 
 ### Hidden or excluded plugins
 
@@ -142,13 +152,13 @@ function is outside the product target and records migration or recovery.
 | Scan UI and topology comparison | Stage 5 verified with Mock provider only |
 | WKC/DC/link diagnostics | Stage 6 verified with Mock provider only |
 | Optional Scan/Diagnostics Provider state | Verified for absent, registered/unavailable, and available states with public `Local Mock` producer names and no installation inference |
-| Product API v1.9 | Headless Qt transport and semantic connection Provider present; local codec/loopback validation plus the 2026-07-24 real-controller read-only UI flow verified |
+| Product API v1 | v1.10 explicit timing-mode client contract is locally qualified with bounded v1.9 compatibility; RAM-only v1.10 hardware is qualified through Scan, with Restore and runtime transitions pending |
 | Controller connection Core contract | Verified multi-provider/profile semantic prerequisite with arbitrary named channels; no Qt network or hardware claim |
-| Provider-neutral Communication page | Locally and on real hardware qualified embedded Master Details page with explicit Provider/Profile and read-only Connect/Refresh/Disconnect; status-bar correction passed automated regression and a second real-controller UI revalidation |
-| Real EtherCAT scan | Planned after read-only Qt connection and separate typed control/discovery APIs; not implemented or Qt-validated |
+| Provider-neutral Communication page | Embedded Master Details page for connection, automatic/manual Acquire, Configuration, Scan, Restore/Release, Actual Bus, and information; runtime uses the lower-left native quick controls; earlier read-only qualification remains historical |
+| Real EtherCAT scan | Typed leased discovery is verified against three real slaves and remains separate from the offline Project; Project Apply remains pending |
 | Real controller diagnostics | Existing Mock contract reusable; ProductApi Push/Bulk source pending |
 | Physical topology graph | Linear scan order only with current API; branch/star graph blocked by missing port-neighbor edge ABI |
-| ECPKG/ECFG/ETIR | Explicitly out of scope |
+| ECPKG/ECFG/ETIR | Construction, transfer, activation, and editing remain out of scope; v1.10 classifies the active package mode from validated ECFG/DC content |
 | ST/LD/FBD | Explicitly out of scope |
 
 ## EtherCATCore stage-1 qualification
@@ -3456,12 +3466,14 @@ client/master issue handoff are documented in
 Evidence is under
 `/private/tmp/embed-labs-i18n-compact/controller-profile-v2`.
 
-## Headless Embed Labs ProductApi adapter boundary
+## Historical headless Embed Labs ProductApi adapter boundary
 
 `ISSUE-ONLINE-PRODUCTAPI-READONLY-ADAPTER-001` supplies the first concrete
 connection Provider without changing the generic multi-vendor contract.
+This table records the original read-only issue and its dated evidence; the
+current lifecycle contract below supersedes its control exclusions.
 
-| Compatibility boundary | Current adapter status |
+| Compatibility boundary | Historical issue status |
 |---|---|
 | Plugin ownership | Product API v1.9 framing, endpoints, Control/Push/Bulk sockets, status mapping, and resume policy remain private to `EtherCATProductApi` |
 | Multi-vendor extension | Another manufacturer or incompatible protocol adds an independent plugin and Provider ID; Core and Workbench gain no vendor switch or fixed-channel assumption |
@@ -3498,10 +3510,13 @@ enabled/disabled samples, mapping checks, exit status, crash-report diff, and
 residual-process audit are under
 `/private/tmp/embed-labs-productapi-api014-lifecycle.m87DYb`.
 
-## Workbench controller Communication page boundary
+## Historical Workbench controller Communication page boundary
 
 `ISSUE-WORKBENCH-CONTROLLER-COMMUNICATION-001` consumes the qualified
 connection API and headless adapter without widening either contract.
+The table below is the dated read-only issue record. It is retained as
+historical evidence and was not rerun for the current automatic-Acquire and
+quick-control contract.
 
 | Compatibility boundary | Current issue scope |
 |---|---|
@@ -3536,3 +3551,40 @@ connection API and headless adapter without widening either contract.
 | Safety boundary | No Scan, configuration write, state transition, FreeRun, DC mode, Run, or Stop was invoked |
 | Status-bar correction | The client now projects Provider connection state into the unified status control; automated regression covers Connected, Degraded, and Disconnect-to-Offline presentation |
 | Secondary hardware UI revalidation | Passed on 2026-07-24; the status bar showed Handshaking, then `Embed Labs Product API — Connected` with real-controller read-only evidence, and returned to Disconnected after explicit Disconnect |
+
+## Current Product API and Workbench lifecycle contract
+
+This section supersedes the read-only adapter/Communication exclusions above
+for the current local control extension. It does not change or requalify the
+historical results of those earlier issues.
+
+| Compatibility boundary | Current local status |
+|---|---|
+| Provider neutrality | `ControllerConnectionProvider` exposes typed command support and execution; the default implementation rejects control, so another vendor opts in per command |
+| Semantic snapshot | Control request/progress and linear actual-topology values contain no Product API frame, numeric message type, socket, host, or port |
+| Protocol negotiation | Current local client contract is Product API v1.10; explicit timing-mode start requires feature bit 11 and the complete `0xfff` feature mask. Negotiated v1.9/`0x7ff` remains bounded compatibility |
+| Product API requests | The private adapter adds Acquire, Release, lease Heartbeat, Configuration, DiscoverTopology, RestoreActivePackage, Start, Pause, Resume, ControlledStop, and v1.10 StartFreeRun/StartDc protocol capabilities. Workbench uses generic Start and does not expose explicit timing-mode buttons |
+| Communication page | Provider/profile, Connect/Refresh/Disconnect, automatic/manual Acquire, Configuration, Scan Bus, Restore Package, Release, progress, Actual Bus, and authoritative information; no FreeRun, DC Run, Pause, Resume, or Stop buttons |
+| Automatic Acquire | After the authoritative connected snapshot identifies the exact Provider/profile/scope/session generation, Workbench queues one Acquire attempt; the page button is manual recovery |
+| Lease arbitration | Exactly one session owns control. Other API sessions retain read-only access, while their writes are rejected with `LEASE_BUSY (-10)` |
+| Native quick controls | Run maps `OP_SAFE` to Start and `PAUSED` to Resume; Debug maps `RUNNING` to Pause and `PAUSED` to Resume; Controlled Stop is beside them and applies in `RUNNING` or `PAUSED` |
+| Full workflow | Connect, automatic/manual Acquire, Configuration, Scan, Restore, native Run, optional Debug Pause/Resume, Controlled Stop, Configuration, Release, Disconnect |
+| Discovery safety | Requires owned lease, ready `SHUTDOWN`, package summary present, and package not Active; Actual Bus remains separate from the offline Project |
+| Startup safety | Generic Run requires ready `OP_SAFE`, current-Boot active package, operational OP bus, nonzero matching WKC, and zero current/latched faults |
+| Recovery | Controlled Stop confirms `OP_SAFE`; the second Configuration confirms `SHUTDOWN` and inactive package before Release |
+| Disconnect | Running/Paused Disconnect is rejected; a non-running owned lease is released before channel teardown |
+| FreeRun/DC | Workbench Start runs the active package, whose validated ECFG/DC content determines FreeRun or DC. Explicit StartFreeRun/StartDc remain adapter protocol capabilities, not UI buttons; DC lock remains observation |
+| Mode mismatch | An external explicit-mode request may receive terminal stage-2 `TIMING_MODE_MISMATCH (-35)` with `(requested_mode << 32) \| actual_mode`; this is not a Workbench timing-mode selection |
+| Package boundary | Exact persistent package restore is supported; ECPKG build/upload/stage/accept/activate, ECFG/DC editing, and offline-to-actual Apply remain absent |
+| Topology boundary | Position and device identity support truthful linear display; physical port-to-port edges remain unavailable |
+| Mock visibility | Production hides local Mock Scan/Diagnostics UI by default; it is available only with `WITH_TESTS` or `QTC_ETHER_CAT_ENABLE_MOCK_UI=1` |
+| Current English regression | Workbench 95, Project 15, Devices 8, Core 19, Scan 11, Diagnostics 7, and ProductApi 71; 226 passed, 0 failed, and 1 ProductApi hardware test skipped |
+| Current product build | The `WITH_TESTS=OFF` product build passed and contains exactly 17 plugin dylibs |
+| Current Simplified Chinese | All EtherCAT translation contexts contain 0 unfinished and 0 empty translations |
+| Current hardware evidence | The generic Start lifecycle and explicit DC lifecycle each passed 3 tests with 0 failures and completed safe cleanup in `SHUTDOWN`/EMPTY with no lease owner or fault |
+| Current FreeRun boundary | Windows `ISSUE-RT-009` separated a successful LRW cycle from the actual failure: `OP_REQUEST` for station `0x1002` returned WKC 0/1 on all four attempts. `cfg812` was not activated and no FreeRun lifecycle ran. Windows continues with `ISSUE-API-016` and the smallest isolated fix |
+| Current controller safety | The failed attempt was safely rolled back to `B/12/813`, `OP_SAFE`, WKC 11/11, faults 0, and lease 0 |
+| Current UI verification | The earlier single-instance product observation showed Workbench, Simplified Chinese, hidden production Mock UI, and the compact tree. The current endpoint/output round passed 95 widget-level Workbench tests plus a 3-pass passive Application Output lifecycle without connecting hardware |
+| Historical hardware evidence | On 2026-07-24 RAM-only v1.10 passed Connect, Acquire, Configuration, three-slave Scan, Release, and safe cleanup; Restore returned typed `CAPABILITY_MISMATCH (-20)` |
+| Historical runtime observation | The 2026-07-24 RAM service negotiated v1.10/`0xfff`; the recorded reboot behavior returned to persistent release24/v1.9 |
+| Publication | Current work remains local on `embed-labs`; no remote publication is authorized |

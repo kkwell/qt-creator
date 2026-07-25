@@ -48452,6 +48452,14 @@ What do you want to do?</source>
         <source>General</source>
         <translation>常规</translation>
     </message>
+    <message>
+        <source>This controller provider does not support control commands.</source>
+        <translation>此控制器提供程序不支持控制命令。</translation>
+    </message>
+    <message>
+        <source>This controller provider does not support editing connection profiles.</source>
+        <translation>此控制器提供程序不支持编辑连接配置。</translation>
+    </message>
 </context>
 <context>
     <name>QtC::EtherCATDevices</name>
@@ -52606,12 +52614,52 @@ Object Id: %1</source>
         <translation>离线</translation>
     </message>
     <message>
+        <source>No controller control operation</source>
+        <translation type="vanished">无控制器控制操作</translation>
+    </message>
+    <message>
+        <source>The controller reports that the control lease is already owned.</source>
+        <translation type="vanished">控制器报告控制租约已被占用。</translation>
+    </message>
+    <message>
+        <source>No local Mock scan or diagnostics workflow is active.</source>
+        <translation>当前没有正在运行的本地 Mock 扫描或诊断工作流。</translation>
+    </message>
+    <message>
+        <source>No diagnostics workflow is active.</source>
+        <translation>当前没有正在运行的诊断工作流。</translation>
+    </message>
+    <message>
+        <source>in progress</source>
+        <translation>进行中</translation>
+    </message>
+    <message>
+        <source>succeeded</source>
+        <translation>已成功</translation>
+    </message>
+    <message>
+        <source>failed</source>
+        <translation>失败</translation>
+    </message>
+    <message>
+        <source>No controller is connected.</source>
+        <translation type="vanished">未连接控制器。</translation>
+    </message>
+    <message>
         <source>Unnamed Scan Provider</source>
         <translation>未命名的扫描提供程序</translation>
     </message>
     <message>
         <source>Unnamed Diagnostics Provider</source>
         <translation>未命名的诊断提供程序</translation>
+    </message>
+    <message>
+        <source>Connect to the controller and scan the EtherCAT bus</source>
+        <translation>连接控制器并扫描 EtherCAT 总线</translation>
+    </message>
+    <message>
+        <source>No Diagnostics Provider registered</source>
+        <translation>未注册诊断提供程序</translation>
     </message>
     <message>
         <source>No Scan Provider registered | Local Mock only</source>
@@ -52628,6 +52676,14 @@ Object Id: %1</source>
     <message>
         <source>%1 unavailable</source>
         <translation>%1 不可用</translation>
+    </message>
+    <message>
+        <source>Scan controller bus</source>
+        <translation>扫描控制器总线</translation>
+    </message>
+    <message>
+        <source>No provider</source>
+        <translation>无提供程序</translation>
     </message>
     <message>
         <source>No provider · Mock only</source>
@@ -53088,8 +53144,232 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>%1（%2）</translation>
     </message>
     <message>
+        <source>The controller session has not been established.</source>
+        <translation>尚未建立控制器会话。</translation>
+    </message>
+    <message>
+        <source>Acquire the controller control lease first.</source>
+        <translation>请先获取控制器控制租约。</translation>
+    </message>
+    <message>
+        <source>The controller state is unavailable.</source>
+        <translation>控制器状态不可用。</translation>
+    </message>
+    <message>
+        <source>The controller is not ready for control commands.</source>
+        <translation>控制器尚未就绪，无法执行控制命令。</translation>
+    </message>
+    <message>
+        <source>The active controller package is not ready for this session.</source>
+        <translation>活动控制器软件包尚未为当前会话就绪。</translation>
+    </message>
+    <message>
+        <source>No controller control operation is selected.</source>
+        <translation>未选择控制器控制操作。</translation>
+    </message>
+    <message>
+        <source>This session already owns the controller control lease.</source>
+        <translation>当前会话已持有控制器控制租约。</translation>
+    </message>
+    <message>
+        <source>The controller control lease is owned by another session.</source>
+        <translation>控制器控制租约已由另一会话持有。</translation>
+    </message>
+    <message>
+        <source>The controller control lease ownership is unverified for this session.</source>
+        <translation>当前会话的控制器控制租约归属尚未验证。</translation>
+    </message>
+    <message>
+        <source>Stop the controller in OP_SAFE or Shutdown before releasing control.</source>
+        <translation>释放控制权前，请先将控制器停止到 OP_SAFE 或 Shutdown 状态。</translation>
+    </message>
+    <message>
+        <source>The controller service state does not allow configuration mode.</source>
+        <translation>当前控制器服务状态不允许进入配置模式。</translation>
+    </message>
+    <message>
+        <source>The controller package state is unavailable.</source>
+        <translation>控制器软件包状态不可用。</translation>
+    </message>
+    <message>
+        <source>Deactivate the controller package before scanning the bus.</source>
+        <translation>扫描总线前，请先停用控制器软件包。</translation>
+    </message>
+    <message>
+        <source>The controller must be in Shutdown before scanning the bus.</source>
+        <translation>扫描总线前，控制器必须处于 Shutdown 状态。</translation>
+    </message>
+    <message>
+        <source>No restorable active controller package is available.</source>
+        <translation>没有可恢复的活动控制器软件包。</translation>
+    </message>
+    <message>
+        <source>Restore is available only in OP_SAFE or Shutdown.</source>
+        <translation>仅当控制器处于 OP_SAFE 或 Shutdown 状态时才可恢复。</translation>
+    </message>
+    <message>
+        <source>The controller must be in OP_SAFE before starting.</source>
+        <translation>启动前，控制器必须处于 OP_SAFE 状态。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT bus has not reached Operational state.</source>
+        <translation>EtherCAT 总线尚未达到 Operational（OP）状态。</translation>
+    </message>
+    <message>
+        <source>The expected EtherCAT working counter is unavailable.</source>
+        <translation>预期的 EtherCAT 工作计数器不可用。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT working counter does not match its expected value.</source>
+        <translation>EtherCAT 工作计数器与预期值不匹配。</translation>
+    </message>
+    <message>
+        <source>Clear current and latched controller faults before starting.</source>
+        <translation>启动前，请清除控制器的当前故障和锁存故障。</translation>
+    </message>
+    <message>
+        <source>Pause is available only while the controller is Running.</source>
+        <translation>仅当控制器处于 Running 状态时才可暂停。</translation>
+    </message>
+    <message>
+        <source>Resume is available only while the controller is Paused.</source>
+        <translation>仅当控制器处于 Paused 状态时才可恢复运行。</translation>
+    </message>
+    <message>
+        <source>Clear current and latched controller faults before resuming.</source>
+        <translation>恢复运行前，请清除控制器的当前故障和锁存故障。</translation>
+    </message>
+    <message>
+        <source>Controlled Stop is available only while Running or Paused.</source>
+        <translation>仅当控制器处于 Running 或 Paused 状态时才可受控停止。</translation>
+    </message>
+    <message>
+        <source>The controller service state does not allow this operation.</source>
+        <translation>当前控制器服务状态不允许执行此操作。</translation>
+    </message>
+    <message>
+        <source>idle</source>
+        <translation>空闲</translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <translation>未知</translation>
+    </message>
+    <message>
+        <source>Controller</source>
+        <translation>控制器</translation>
+    </message>
+    <message>
+        <source>Endpoint %1</source>
+        <translation>端点 %1</translation>
+    </message>
+    <message>
+        <source>Exclusive control acquired</source>
+        <translation>已取得独占控制权</translation>
+    </message>
+    <message>
+        <source>Control lease owner %1</source>
+        <translation>控制租约所有者 %1</translation>
+    </message>
+    <message>
+        <source>Control lease not acquired</source>
+        <translation>未取得控制租约</translation>
+    </message>
+    <message>
+        <source>Service %1</source>
+        <translation>服务 %1</translation>
+    </message>
+    <message>
+        <source>WKC %1/%2</source>
+        <translation>WKC %1/%2</translation>
+    </message>
+    <message>
+        <source> (%1)</source>
+        <translation>（%1）</translation>
+    </message>
+    <message>
+        <source>Bus scan %1 responding, %2 listed</source>
+        <translation>总线扫描：%1 个设备响应，列出 %2 个</translation>
+    </message>
+    <message>
+        <source>Error: %1</source>
+        <translation>错误：%1</translation>
+    </message>
+    <message>
         <source>Cannot drop the ESI device: %1</source>
         <translation>无法拖放 ESI 设备：%1</translation>
+    </message>
+    <message>
+        <source>Automatic controller cleanup stopped safely because the controller adapter was removed. The connection was not reported as disconnected.</source>
+        <translation>自动控制器清理已安全停止，因为控制器适配器已被移除。未将该连接报告为已断开。</translation>
+    </message>
+    <message>
+        <source>Select a valid EtherCAT Master before editing its endpoint.</source>
+        <translation>请先选择有效的 EtherCAT 主站，再编辑其端点。</translation>
+    </message>
+    <message>
+        <source>Disconnect the current controller session before changing its endpoint.</source>
+        <translation>请先断开当前控制器会话，再更改其端点。</translation>
+    </message>
+    <message>
+        <source>Select the connection profile before changing its endpoint.</source>
+        <translation>请先选择连接配置，再更改其端点。</translation>
+    </message>
+    <message>
+        <source>The requested EtherCAT Master is not available in an open project.</source>
+        <translation>请求的 EtherCAT 主站不在任何已打开的项目中。</translation>
+    </message>
+    <message>
+        <source>Select a controller adapter for the active EtherCAT Master.</source>
+        <translation>请为活动 EtherCAT 主站选择控制器适配器。</translation>
+    </message>
+    <message>
+        <source>The selected controller adapter is not available.</source>
+        <translation>所选控制器适配器不可用。</translation>
+    </message>
+    <message>
+        <source>Select a controller connection profile for the active EtherCAT Master.</source>
+        <translation>请为活动 EtherCAT 主站选择控制器连接配置。</translation>
+    </message>
+    <message>
+        <source>The connected controller does not support this control operation.</source>
+        <translation>已连接的控制器不支持此控制操作。</translation>
+    </message>
+    <message>
+        <source>Connect the controller before using controller run controls.</source>
+        <translation>使用控制器运行控件前，请先连接控制器。</translation>
+    </message>
+    <message>
+        <source>The connected controller session belongs to a different EtherCAT Master.</source>
+        <translation>已连接的控制器会话属于另一 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>The connected controller session uses a different connection profile.</source>
+        <translation>已连接的控制器会话使用了另一连接配置。</translation>
+    </message>
+    <message>
+        <source>Controller run controls are unavailable for a Mock connection.</source>
+        <translation>Mock 连接不能使用控制器运行控件。</translation>
+    </message>
+    <message>
+        <source>The controller connection is read-only.</source>
+        <translation>控制器连接为只读。</translation>
+    </message>
+    <message>
+        <source>Wait for the current controller control operation to finish.</source>
+        <translation>请等待当前控制器控制操作完成。</translation>
+    </message>
+    <message>
+        <source>Run is available only while the controller is in OP_SAFE or Paused.</source>
+        <translation>仅当控制器处于 OP_SAFE 或 Paused 状态时才可运行。</translation>
+    </message>
+    <message>
+        <source>Pause or Resume is available only while the controller is Running or Paused.</source>
+        <translation>仅当控制器处于 Running 或 Paused 状态时才可暂停或恢复运行。</translation>
+    </message>
+    <message>
+        <source>Controlled Stop is available only while the controller is Running or Paused.</source>
+        <translation>仅当控制器处于 Running 或 Paused 状态时才可受控停止。</translation>
     </message>
     <message>
         <source>The offline topology services are unavailable.</source>
@@ -53168,6 +53448,86 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>此离线从站不属于相应的 EtherCAT 主站。</translation>
     </message>
     <message>
+        <source>Cannot automatically acquire controller control: %1</source>
+        <translation>无法自动取得控制器控制权：%1</translation>
+    </message>
+    <message>
+        <source>The controller adapter instance changed during cleanup.</source>
+        <translation>清理期间控制器适配器实例发生变化。</translation>
+    </message>
+    <message>
+        <source>The controller connection scope or profile changed during cleanup.</source>
+        <translation>清理期间控制器连接范围或连接配置发生变化。</translation>
+    </message>
+    <message>
+        <source>The controller session changed repeatedly during cleanup.</source>
+        <translation>清理期间控制器会话反复变化。</translation>
+    </message>
+    <message>
+        <source>The controller session identity changed without a new generation.</source>
+        <translation>控制器会话标识在未产生新代次的情况下发生变化。</translation>
+    </message>
+    <message>
+        <source>Timed out while waiting for safe controller cleanup.</source>
+        <translation>等待控制器安全清理超时。</translation>
+    </message>
+    <message>
+        <source> Last error: %1</source>
+        <translation> 最后一个错误：%1</translation>
+    </message>
+    <message>
+        <source>The controller adapter does not support the required cleanup command.</source>
+        <translation>控制器适配器不支持清理所需的命令。</translation>
+    </message>
+    <message>
+        <source>The controller adapter repeatedly rejected disconnect.</source>
+        <translation>控制器适配器反复拒绝断开连接。</translation>
+    </message>
+    <message>
+        <source>The controller adapter became unavailable during cleanup.</source>
+        <translation>清理期间控制器适配器变为不可用。</translation>
+    </message>
+    <message>
+        <source>Controlled Stop failed during project cleanup.</source>
+        <translation>项目清理期间受控停止失败。</translation>
+    </message>
+    <message>
+        <source>Configuration mode failed during project cleanup.</source>
+        <translation>项目清理期间进入配置模式失败。</translation>
+    </message>
+    <message>
+        <source>Release control failed during project cleanup.</source>
+        <translation>项目清理期间释放控制权失败。</translation>
+    </message>
+    <message>
+        <source>The controller connection failed before safe cleanup was confirmed.</source>
+        <translation>在确认安全清理之前，控制器连接已失败。</translation>
+    </message>
+    <message>
+        <source>The controller connection entered an unknown cleanup state.</source>
+        <translation>控制器连接进入未知的清理状态。</translation>
+    </message>
+    <message>
+        <source>The controller session identity is unavailable.</source>
+        <translation>控制器会话标识不可用。</translation>
+    </message>
+    <message>
+        <source>The controller session identity is incomplete.</source>
+        <translation>控制器会话标识不完整。</translation>
+    </message>
+    <message>
+        <source>The controller lease ownership snapshot is inconsistent.</source>
+        <translation>控制器控制租约所有权快照不一致。</translation>
+    </message>
+    <message>
+        <source>The controller state is not ready for safe cleanup.</source>
+        <translation>控制器状态尚未准备好进行安全清理。</translation>
+    </message>
+    <message>
+        <source>Automatic controller cleanup stopped safely: %1 The connection remains unchanged and was not reported as disconnected.</source>
+        <translation>自动控制器清理已安全停止：%1 连接保持不变，未将其报告为已断开。</translation>
+    </message>
+    <message>
         <source>MOCK Ready</source>
         <translation>MOCK 就绪</translation>
     </message>
@@ -53232,12 +53592,20 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>%1 — %2</translation>
     </message>
     <message>
+        <source>Local Mock diagnostics only.</source>
+        <translation>仅为本地 Mock 诊断。</translation>
+    </message>
+    <message>
+        <source>Provider-reported diagnostics only.</source>
+        <translation>仅为提供程序报告的诊断。</translation>
+    </message>
+    <message>
         <source>Local Mock diagnostics only. No controller or physical hardware is connected.</source>
-        <translation>仅限本地 Mock 诊断。未连接控制器或物理硬件。</translation>
+        <translation type="vanished">仅限本地 Mock 诊断。未连接控制器或物理硬件。</translation>
     </message>
     <message>
         <source>Provider-reported diagnostics only. The Workbench does not infer a controller or physical-hardware connection.</source>
-        <translation>仅显示提供程序报告的诊断。Workbench 不会推断控制器或物理硬件连接。</translation>
+        <translation type="vanished">仅显示提供程序报告的诊断。Workbench 不会推断控制器或物理硬件连接。</translation>
     </message>
     <message>
         <source>Project: %1</source>
@@ -53253,7 +53621,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>No local Mock scan or diagnostics workflow is active. No controller is connected.</source>
-        <translation>没有活动的本地 Mock 扫描或诊断工作流。未连接控制器。</translation>
+        <translation type="vanished">没有活动的本地 Mock 扫描或诊断工作流。未连接控制器。</translation>
     </message>
     <message>
         <source>Diagnostics %1</source>
@@ -53261,19 +53629,139 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Controller %1</source>
-        <translation>控制器%1</translation>
+        <translation type="vanished">控制器%1</translation>
     </message>
     <message>
         <source>Mock controller connection</source>
-        <translation>Mock 控制器连接</translation>
+        <translation type="vanished">Mock 控制器连接</translation>
     </message>
     <message>
         <source>Endpoint: %1</source>
-        <translation>端点：%1</translation>
+        <translation type="vanished">端点：%1</translation>
     </message>
     <message>
         <source>EtherCAT</source>
         <translation>EtherCAT</translation>
+    </message>
+    <message>
+        <source>Run Controller</source>
+        <translation>运行控制器</translation>
+    </message>
+    <message>
+        <source>Pause / Resume Controller</source>
+        <translation>暂停/恢复控制器</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project service is unavailable.</source>
+        <translation>EtherCAT 项目服务不可用。</translation>
+    </message>
+    <message>
+        <source>An open EtherCAT project is not the registered owner of its project ID. Close the conflicting duplicate project or assign it a unique project ID.</source>
+        <translation>某个已打开的 EtherCAT 项目不是其项目 ID 的已注册所有者。请关闭冲突的重复项目，或为其分配唯一的项目 ID。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT project is no longer available.</source>
+        <translation>所选 EtherCAT 项目已不可用。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT project is invalid. Fix its reported errors before controlling the controller.</source>
+        <translation>所选 EtherCAT 项目无效。请先修复已报告的错误，再控制该控制器。</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT project must contain exactly one valid Master.</source>
+        <translation>所选 EtherCAT 项目必须且只能包含一个有效主站。</translation>
+    </message>
+    <message>
+        <source>Open a valid EtherCAT project before controlling the controller.</source>
+        <translation>请先打开一个有效的 EtherCAT 项目，再控制该控制器。</translation>
+    </message>
+    <message>
+        <source>Select a node in the EtherCAT project whose controller you want to control.</source>
+        <translation>请在要控制其控制器的 EtherCAT 项目中选择一个节点。</translation>
+    </message>
+    <message>
+        <source>The open EtherCAT project is invalid. Fix its reported errors before controlling the controller.</source>
+        <translation>已打开的 EtherCAT 项目无效。请先修复已报告的错误，再控制该控制器。</translation>
+    </message>
+    <message>
+        <source>The open EtherCAT project must contain exactly one valid Master.</source>
+        <translation>已打开的 EtherCAT 项目必须且只能包含一个有效主站。</translation>
+    </message>
+    <message>
+        <source>The controller run control service is unavailable.</source>
+        <translation>控制器运行控制服务不可用。</translation>
+    </message>
+    <message>
+        <source>Start Controller</source>
+        <translation>启动控制器</translation>
+    </message>
+    <message>
+        <source>Start the active controller package using its configured FreeRun or Distributed Clocks timing mode.</source>
+        <translation>使用活动控制器软件包配置的 FreeRun 或分布式时钟时序模式启动。</translation>
+    </message>
+    <message>
+        <source>Resume Controller</source>
+        <translation>恢复控制器运行</translation>
+    </message>
+    <message>
+        <source>Resume the paused controller application.</source>
+        <translation>恢复已暂停的控制器应用。</translation>
+    </message>
+    <message>
+        <source>Pause Controller</source>
+        <translation>暂停控制器</translation>
+    </message>
+    <message>
+        <source>Pause the running controller application.</source>
+        <translation>暂停正在运行的控制器应用。</translation>
+    </message>
+    <message>
+        <source>Request a controlled stop of the running or paused controller application. This is not an emergency stop.</source>
+        <translation>请求对正在运行或已暂停的控制器应用执行受控停止。此操作不是紧急停止。</translation>
+    </message>
+    <message>
+        <source>Open the EtherCAT Workbench to use controller run controls.</source>
+        <translation>请打开 EtherCAT Workbench 以使用控制器运行控件。</translation>
+    </message>
+    <message>
+        <source>%1 is unavailable: %2</source>
+        <translation>%1 不可用：%2</translation>
+    </message>
+    <message>
+        <source>the active EtherCAT project is invalid. Fix its reported errors before controlling the controller.</source>
+        <translation type="vanished">当前 EtherCAT 项目无效。请先修复已报告的错误，再控制该控制器。</translation>
+    </message>
+    <message>
+        <source>the active EtherCAT project must contain exactly one valid Master.</source>
+        <translation type="vanished">当前 EtherCAT 项目必须且只能包含一个有效主站。</translation>
+    </message>
+    <message>
+        <source>Cannot control the controller: %1</source>
+        <translation>无法控制控制器：%1</translation>
+    </message>
+    <message>
+        <source>Connection: %1</source>
+        <translation>连接：%1</translation>
+    </message>
+    <message>
+        <source>Service: %1</source>
+        <translation>服务：%1</translation>
+    </message>
+    <message>
+        <source>Control: exclusive</source>
+        <translation>控制：独占</translation>
+    </message>
+    <message>
+        <source>Control: owned by another session</source>
+        <translation>控制：由其他会话持有</translation>
+    </message>
+    <message>
+        <source>Control: not acquired</source>
+        <translation>控制：未取得</translation>
+    </message>
+    <message>
+        <source>EtherCAT Controller</source>
+        <translation>EtherCAT 控制器</translation>
     </message>
     <message>
         <source>Open Workbench</source>
@@ -53282,6 +53770,18 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     <message>
         <source>Refresh</source>
         <translation>刷新</translation>
+    </message>
+    <message>
+        <source>Connect Controller</source>
+        <translation>连接控制器</translation>
+    </message>
+    <message>
+        <source>Establish the Control, Push, and Bulk channels, read the authoritative controller snapshot, then automatically request the exclusive control lease. Connecting does not scan the bus, change controller state, or write configuration.</source>
+        <translation>建立 Control、Push 和 Bulk 通道，读取权威控制器快照，然后自动请求独占控制租约。连接操作不会扫描总线、切换控制器状态或写入配置。</translation>
+    </message>
+    <message>
+        <source>Close the controller connection for the selected EtherCAT Master.</source>
+        <translation>关闭所选 EtherCAT 主站的控制器连接。</translation>
     </message>
     <message>
         <source>Expand Device Tree</source>
@@ -53509,7 +54009,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>%1 after %2 ms</source>
-        <translation>%1，%2 毫秒后</translation>
+        <translation type="vanished">%1，%2 毫秒后</translation>
     </message>
     <message>
         <source>%1 ms</source>
@@ -53521,11 +54021,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>%1 — the controller adapter is unavailable.</source>
-        <translation>%1 — 控制器适配器不可用。</translation>
-    </message>
-    <message>
-        <source>%1 — the read-only connection failed.</source>
-        <translation>%1 — 只读连接失败。</translation>
+        <translation type="vanished">%1 — 控制器适配器不可用。</translation>
     </message>
     <message>
         <source>%1 — unavailable</source>
@@ -53568,32 +54064,20 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>无法断开控制器：%1</translation>
     </message>
     <message>
-        <source>Automatic disconnect cleanup stopped after repeated failures: %1. Select any EtherCAT Master, choose this controller adapter, and click Disconnect.</source>
-        <translation>自动断开清理在多次失败后已停止：%1。请选择任意 EtherCAT 主站，再选择此控制器适配器并点击“断开”。</translation>
-    </message>
-    <message>
         <source>Cannot refresh the controller snapshot: %1</source>
         <translation>无法刷新控制器快照：%1</translation>
     </message>
     <message>
         <source>Channel: %1</source>
-        <translation>通道：%1</translation>
+        <translation type="vanished">通道：%1</translation>
     </message>
     <message>
         <source>Channel</source>
         <translation>通道</translation>
     </message>
     <message>
-        <source>Close the read-only controller connection for the selected EtherCAT Master.</source>
-        <translation>关闭所选 EtherCAT 主站的只读控制器连接。</translation>
-    </message>
-    <message>
         <source>Code: %1</source>
-        <translation>代码：%1</translation>
-    </message>
-    <message>
-        <source>Configures a controller adapter and shows its current read-only connection.</source>
-        <translation>配置控制器适配器并显示其当前只读连接。</translation>
+        <translation type="vanished">代码：%1</translation>
     </message>
     <message>
         <source>Configuring</source>
@@ -53602,18 +54086,6 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     <message>
         <source>Confirmed</source>
         <translation>已确认</translation>
-    </message>
-    <message>
-        <source>Connect Controller (Read-only)</source>
-        <translation>连接控制器（只读）</translation>
-    </message>
-    <message>
-        <source>Connect and Refresh are read-only. They do not acquire control, scan the bus, change controller state, or write configuration and outputs.</source>
-        <translation>连接和刷新均为只读操作。它们不会获取控制权、扫描总线、更改控制器状态，也不会写入配置和输出。</translation>
-    </message>
-    <message>
-        <source>Connect the selected controller profile and query its read-only state. This does not acquire control, scan the bus, change controller state, or write configuration.</source>
-        <translation>连接所选控制器配置并查询其只读状态。此操作不会获取控制权、扫描总线、更改控制器状态或写入配置。</translation>
     </message>
     <message>
         <source>Connected at</source>
@@ -53632,12 +54104,36 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>连接配置</translation>
     </message>
     <message>
-        <source>Control lease owner</source>
-        <translation>控制租约所有者</translation>
+        <source>Controller IP address</source>
+        <translation>控制器 IP 地址</translation>
     </message>
     <message>
-        <source>Controlled</source>
-        <translation>受控</translation>
+        <source>Save controller IP address</source>
+        <translation>保存控制器 IP 地址</translation>
+    </message>
+    <message>
+        <source>Save the controller IP address or base endpoint.</source>
+        <translation>保存控制器 IP 地址或基础端点。</translation>
+    </message>
+    <message>
+        <source>Enter an IPv4 address or IPv4:basePort. Push and Bulk use the next two ports.</source>
+        <translation>输入 IPv4 地址或 IPv4:基础端口。Push 和 Bulk 使用后续两个端口。</translation>
+    </message>
+    <message>
+        <source>Cannot save the controller endpoint: %1</source>
+        <translation>无法保存控制器端点：%1</translation>
+    </message>
+    <message>
+        <source>Controller endpoint saved.</source>
+        <translation>已保存控制器端点。</translation>
+    </message>
+    <message>
+        <source>Controller endpoint saved: %1</source>
+        <translation>已保存控制器端点：%1</translation>
+    </message>
+    <message>
+        <source>Control lease owner</source>
+        <translation>控制租约所有者</translation>
     </message>
     <message>
         <source>Controller adapter:</source>
@@ -53657,7 +54153,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Controller connection error</source>
-        <translation>控制器连接错误</translation>
+        <translation type="vanished">控制器连接错误</translation>
     </message>
     <message>
         <source>Controller connection summary</source>
@@ -53709,7 +54205,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Do not retry automatically</source>
-        <translation>不要自动重试</translation>
+        <translation type="vanished">不要自动重试</translation>
     </message>
     <message>
         <source>Endpoint:</source>
@@ -53765,7 +54261,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>No retry guidance</source>
-        <translation>无重试建议</translation>
+        <translation type="vanished">无重试建议</translation>
     </message>
     <message>
         <source>Not negotiated</source>
@@ -53789,11 +54285,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Read-only real controller</source>
-        <translation>真实控制器（只读）</translation>
-    </message>
-    <message>
-        <source>Read-only safety boundary</source>
-        <translation>只读安全边界</translation>
+        <translation type="vanished">真实控制器（只读）</translation>
     </message>
     <message>
         <source>Read-only</source>
@@ -53813,7 +54305,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Reconnect before retrying</source>
-        <translation>重连后再重试</translation>
+        <translation type="vanished">重连后再重试</translation>
     </message>
     <message>
         <source>Recovering</source>
@@ -53821,7 +54313,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Recovery: %1</source>
-        <translation>恢复建议：%1</translation>
+        <translation type="vanished">恢复建议：%1</translation>
     </message>
     <message>
         <source>Refresh Controller Snapshot</source>
@@ -53837,7 +54329,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Retry is allowed</source>
-        <translation>可以重试</translation>
+        <translation type="vanished">可以重试</translation>
     </message>
     <message>
         <source>Rolled back</source>
@@ -53857,7 +54349,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Select a connection profile.</source>
-        <translation>请选择连接配置。</translation>
+        <translation type="vanished">请选择连接配置。</translation>
     </message>
     <message>
         <source>Select a controller adapter before selecting a profile.</source>
@@ -53869,7 +54361,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Select a controller adapter.</source>
-        <translation>请选择控制器适配器。</translation>
+        <translation type="vanished">请选择控制器适配器。</translation>
     </message>
     <message>
         <source>Select a valid EtherCAT Master before connecting.</source>
@@ -53877,7 +54369,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>Select a valid EtherCAT Master.</source>
-        <translation>请选择有效的 EtherCAT 主站。</translation>
+        <translation type="vanished">请选择有效的 EtherCAT 主站。</translation>
     </message>
     <message>
         <source>Select the connected EtherCAT Master first.</source>
@@ -53941,7 +54433,7 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>The selected controller adapter is no longer available.</source>
-        <translation>所选控制器适配器已不可用。</translation>
+        <translation type="vanished">所选控制器适配器已不可用。</translation>
     </message>
     <message>
         <source>The selected controller adapter is unavailable.</source>
@@ -53953,11 +54445,11 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     </message>
     <message>
         <source>This adapter is connected for another EtherCAT Master. Select that Master to refresh or disconnect it.</source>
-        <translation>此适配器已连接到另一个 EtherCAT 主站。请选择该主站进行刷新或断开。</translation>
+        <translation type="vanished">此适配器已连接到另一个 EtherCAT 主站。请选择该主站进行刷新或断开。</translation>
     </message>
     <message>
         <source>This adapter is still connected for a Project that is no longer open. Click Disconnect to finish cleanup.</source>
-        <translation>此适配器仍连接到已关闭的项目。请点击“断开”完成清理。</translation>
+        <translation type="vanished">此适配器仍连接到已关闭的项目。请点击“断开”完成清理。</translation>
     </message>
     <message>
         <source>Trial boot</source>
@@ -54000,12 +54492,40 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>已连接</translation>
     </message>
     <message>
+        <source>Exclusive control</source>
+        <translation>独占控制</translation>
+    </message>
+    <message>
+        <source>Lease held by another session</source>
+        <translation>控制租约由另一会话持有</translation>
+    </message>
+    <message>
+        <source>Control lease ownership unverified</source>
+        <translation>控制租约归属尚未验证</translation>
+    </message>
+    <message>
+        <source>Control available / lease not acquired</source>
+        <translation>控制权可用 / 尚未获取租约</translation>
+    </message>
+    <message>
+        <source>Exclusive control of real controller</source>
+        <translation type="vanished">已独占控制真实控制器</translation>
+    </message>
+    <message>
         <source>Idle</source>
         <translation>空闲</translation>
     </message>
     <message>
         <source>Installing</source>
         <translation>正在安装</translation>
+    </message>
+    <message>
+        <source>Connect establishes all controller channels, reads the authoritative snapshot, and then automatically requests exclusive control. It does not scan the bus, change controller state, or write configuration. Use the Workbench Run, Pause / Resume, and Controlled Stop buttons in the lower-left control area for daily operation.</source>
+        <translation type="vanished">连接操作会建立所有控制器通道，读取权威快照，然后自动请求独占控制。它不会扫描总线、切换控制器状态或写入配置。日常运行请使用 Workbench 左下角控制区的“运行”“暂停/恢复”和“受控停止”按钮。</translation>
+    </message>
+    <message>
+        <source>Advanced controller control</source>
+        <translation>高级控制器控制</translation>
     </message>
     <message>
         <source>State</source>
@@ -54028,23 +54548,207 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>通信</translation>
     </message>
     <message>
-        <source>Controlled real controller</source>
-        <translation>真实控制器（受控）</translation>
+        <source>This adapter is showing a historical snapshot for another EtherCAT Master.</source>
+        <translation type="vanished">此适配器正在显示另一个 EtherCAT 主站的历史快照。</translation>
     </message>
     <message>
-        <source>This adapter is showing a historical snapshot for another EtherCAT Master.</source>
-        <translation>此适配器正在显示另一个 EtherCAT 主站的历史快照。</translation>
+        <source>Select a controller control operation.</source>
+        <translation>请选择控制器控制操作。</translation>
+    </message>
+    <message>
+        <source>Controller control</source>
+        <translation>控制器控制</translation>
+    </message>
+    <message>
+        <source>Acquire control</source>
+        <translation>获取控制权</translation>
+    </message>
+    <message>
+        <source>Release control</source>
+        <translation>释放控制权</translation>
+    </message>
+    <message>
+        <source>Enter configuration</source>
+        <translation>进入配置模式</translation>
+    </message>
+    <message>
+        <source>Scan bus</source>
+        <translation>扫描总线</translation>
+    </message>
+    <message>
+        <source>Restore package</source>
+        <translation>恢复软件包</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>启动</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>暂停</translation>
+    </message>
+    <message>
+        <source>Resume</source>
+        <translation>恢复运行</translation>
+    </message>
+    <message>
+        <source>Controlled stop</source>
+        <translation>受控停止</translation>
+    </message>
+    <message>
+        <source>Configures a controller adapter and controls its connected EtherCAT Master.</source>
+        <translation>配置控制器适配器，并控制其连接的 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>Controller control safety boundary</source>
+        <translation type="vanished">控制器控制安全边界</translation>
+    </message>
+    <message>
+        <source>Acquire</source>
+        <translation>获取控制权</translation>
+    </message>
+    <message>
+        <source>Acquire the controller control lease for this EtherCAT Master.</source>
+        <translation>获取此 EtherCAT 主站对应控制器的控制租约。</translation>
+    </message>
+    <message>
+        <source>Configuration</source>
+        <translation>配置模式</translation>
+    </message>
+    <message>
+        <source>Stop active operation safely and enter controller configuration mode.</source>
+        <translation>以受控方式停止当前操作并进入控制器配置模式。</translation>
+    </message>
+    <message>
+        <source>Scan Bus</source>
+        <translation>扫描总线</translation>
+    </message>
+    <message>
+        <source>Scan the live EtherCAT bus. This does not modify the offline Project.</source>
+        <translation>扫描实际 EtherCAT 总线。此操作不会修改离线项目。</translation>
+    </message>
+    <message>
+        <source>Restore Package</source>
+        <translation>恢复软件包</translation>
+    </message>
+    <message>
+        <source>Restore the controller&apos;s exact persistent active package.</source>
+        <translation>恢复控制器精确的持久化活动软件包。</translation>
+    </message>
+    <message>
+        <source>Controlled Stop</source>
+        <translation>受控停止</translation>
+    </message>
+    <message>
+        <source>Release</source>
+        <translation>释放</translation>
+    </message>
+    <message>
+        <source>Release this session&apos;s controller control lease.</source>
+        <translation>释放当前会话的控制器控制租约。</translation>
+    </message>
+    <message>
+        <source>Controller control progress</source>
+        <translation type="vanished">控制器控制进度</translation>
+    </message>
+    <message>
+        <source>Actual Bus</source>
+        <translation>实际总线</translation>
+    </message>
+    <message>
+        <source>Actual EtherCAT bus topology</source>
+        <translation>实际 EtherCAT 总线拓扑</translation>
+    </message>
+    <message>
+        <source>Read-only results from the most recent live controller bus scan.</source>
+        <translation>最近一次实时控制器总线扫描的只读结果。</translation>
+    </message>
+    <message>
+        <source>Station</source>
+        <translation>站地址</translation>
+    </message>
+    <message>
+        <source>AL</source>
+        <translation>AL</translation>
+    </message>
+    <message>
+        <source>Serial</source>
+        <translation>序列号</translation>
+    </message>
+    <message>
+        <source>%1 — the controller connection failed.</source>
+        <translation type="vanished">%1 — 控制器连接失败。</translation>
+    </message>
+    <message>
+        <source>No controller control operation has run.</source>
+        <translation type="vanished">尚未执行控制器控制操作。</translation>
+    </message>
+    <message>
+        <source>%1 is in progress.</source>
+        <translation type="vanished">“%1”正在进行。</translation>
+    </message>
+    <message>
+        <source>%1 succeeded.</source>
+        <translation type="vanished">“%1”已成功。</translation>
+    </message>
+    <message>
+        <source>%1 failed.</source>
+        <translation type="vanished">“%1”失败。</translation>
+    </message>
+    <message>
+        <source>Stage: %1</source>
+        <translation type="vanished">阶段：%1</translation>
+    </message>
+    <message>
+        <source>Operation result: %1</source>
+        <translation type="vanished">操作结果：%1</translation>
+    </message>
+    <message>
+        <source>No live bus topology has been scanned.</source>
+        <translation type="vanished">尚未扫描实际总线拓扑。</translation>
+    </message>
+    <message>
+        <source>%1 responding device(s), %2 displayed</source>
+        <translation>%1 个响应设备，显示 %2 个</translation>
+    </message>
+    <message>
+        <source> — scanned %1</source>
+        <translation> — 扫描时间 %1</translation>
+    </message>
+    <message>
+        <source> — result %1</source>
+        <translation> — 结果 %1</translation>
+    </message>
+    <message>
+        <source>Start free-run</source>
+        <translation>启动自由运行</translation>
+    </message>
+    <message>
+        <source>Start distributed clocks</source>
+        <translation>启动分布式时钟运行</translation>
     </message>
 </context>
 <context>
     <name>QtC::EtherCATProductApi</name>
     <message>
-        <source>Embed Labs Product API</source>
-        <translation>Embed Labs 产品 API</translation>
+        <source>Enter a controller IP address.</source>
+        <translation>请输入控制器 IP 地址。</translation>
     </message>
     <message>
-        <source>Embed Labs Product API v1.9</source>
-        <translation>Embed Labs 产品 API v1.9</translation>
+        <source>Use an IPv4 address with an optional base port.</source>
+        <translation>请使用 IPv4 地址，可选择附加基础端口。</translation>
+    </message>
+    <message>
+        <source>Enter a valid IPv4 controller address.</source>
+        <translation>请输入有效的控制器 IPv4 地址。</translation>
+    </message>
+    <message>
+        <source>The base port must be between 1 and 65533.</source>
+        <translation>基础端口必须介于 1 到 65533 之间。</translation>
+    </message>
+    <message>
+        <source>Embed Labs Product API</source>
+        <translation>Embed Labs 产品 API</translation>
     </message>
     <message>
         <source>The controller endpoint is not configured.</source>
@@ -54053,6 +54757,10 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     <message>
         <source>The controller connection profile is unavailable.</source>
         <translation>控制器连接配置不可用。</translation>
+    </message>
+    <message>
+        <source>Select an EtherCAT project and master first.</source>
+        <translation>请先选择 EtherCAT 项目和主站。</translation>
     </message>
     <message>
         <source>The Embed Labs controller provider is unavailable.</source>
@@ -54151,6 +54859,26 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>控制器拒绝了只读请求。</translation>
     </message>
     <message>
+        <source>CommandStatus does not match the pending control request.</source>
+        <translation>CommandStatus 与当前待处理的控制请求不匹配。</translation>
+    </message>
+    <message>
+        <source>Failed CommandStatus skipped an expected control stage.</source>
+        <translation>失败的 CommandStatus 跳过了预期的控制阶段。</translation>
+    </message>
+    <message>
+        <source>CommandStatus stages are not contiguous for the control request.</source>
+        <translation>CommandStatus 的控制请求阶段不连续。</translation>
+    </message>
+    <message>
+        <source>CommandStatus final flag does not match the control request contract.</source>
+        <translation>CommandStatus 的 final 标志与控制请求约定不匹配。</translation>
+    </message>
+    <message>
+        <source>Heartbeat did not complete at stage 4.</source>
+        <translation>心跳未在第 4 阶段完成。</translation>
+    </message>
+    <message>
         <source>The controller returned an unknown RequestId.</source>
         <translation>控制器返回了未知的 RequestId。</translation>
     </message>
@@ -54231,6 +54959,14 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>控制器会话正在关闭。</translation>
     </message>
     <message>
+        <source>The controller endpoint is not valid.</source>
+        <translation>控制器端点无效。</translation>
+    </message>
+    <message>
+        <source>Disconnect the controller before changing its endpoint.</source>
+        <translation>请先断开控制器连接，再更改其端点。</translation>
+    </message>
+    <message>
         <source>The controller connection request is incomplete.</source>
         <translation>控制器连接请求不完整。</translation>
     </message>
@@ -54245,6 +54981,310 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     <message>
         <source>A controller refresh is already active.</source>
         <translation>已有控制器刷新操作正在进行。</translation>
+    </message>
+    <message>
+        <source>Acquire control</source>
+        <translation>获取控制权</translation>
+    </message>
+    <message>
+        <source>Release control</source>
+        <translation>释放控制权</translation>
+    </message>
+    <message>
+        <source>The controller reports that the control lease is already owned.</source>
+        <translation>控制器报告控制租约已被占用。</translation>
+    </message>
+    <message>
+        <source>Enter configuration mode</source>
+        <translation>进入配置模式</translation>
+    </message>
+    <message>
+        <source>Discover topology</source>
+        <translation>扫描拓扑</translation>
+    </message>
+    <message>
+        <source>Restore active package</source>
+        <translation>恢复活动软件包</translation>
+    </message>
+    <message>
+        <source>Start</source>
+        <translation>启动</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>暂停</translation>
+    </message>
+    <message>
+        <source>Resume</source>
+        <translation>恢复运行</translation>
+    </message>
+    <message>
+        <source>Controlled stop</source>
+        <translation>受控停止</translation>
+    </message>
+    <message>
+        <source>No operation</source>
+        <translation>无操作</translation>
+    </message>
+    <message>
+        <source>Unknown operation</source>
+        <translation>未知操作</translation>
+    </message>
+    <message>
+        <source>The controller operation was interrupted before a final response.</source>
+        <translation>控制器操作在收到最终响应前被中断。</translation>
+    </message>
+    <message>
+        <source>The controller operation timed out; its final state is unknown.</source>
+        <translation>控制器操作超时；其最终状态未知。</translation>
+    </message>
+    <message>
+        <source>The controller rejected the control request.</source>
+        <translation>控制器拒绝了控制请求。</translation>
+    </message>
+    <message>
+        <source>%1 was rejected by the controller.</source>
+        <translation>控制器拒绝了“%1”。</translation>
+    </message>
+    <message>
+        <source>The command was rejected; refreshing authoritative controller state.</source>
+        <translation>命令被拒绝；正在刷新控制器权威状态。</translation>
+    </message>
+    <message>
+        <source>%1 was accepted; confirming the resulting controller state.</source>
+        <translation>已接受“%1”；正在确认控制器执行后的状态。</translation>
+    </message>
+    <message>
+        <source>%1 completed successfully.</source>
+        <translation>“%1”已成功完成。</translation>
+    </message>
+    <message>
+        <source>%1: stage %2 of 4.</source>
+        <translation>%1：第 %2/4 阶段。</translation>
+    </message>
+    <message>
+        <source>The controller returned a malformed control status.</source>
+        <translation>控制器返回了格式错误的控制状态。</translation>
+    </message>
+    <message>
+        <source>The topology result arrived before all command stages completed.</source>
+        <translation>尚未完成全部命令阶段就收到了拓扑结果。</translation>
+    </message>
+    <message>
+        <source>Discovered %1 EtherCAT devices.</source>
+        <translation>已发现 %1 个 EtherCAT 设备。</translation>
+    </message>
+    <message>
+        <source>The package result arrived before all command stages completed.</source>
+        <translation>尚未完成全部命令阶段就收到了软件包结果。</translation>
+    </message>
+    <message>
+        <source>The package restore result does not match the request.</source>
+        <translation>软件包恢复结果与请求不匹配。</translation>
+    </message>
+    <message>
+        <source>The active controller package was restored; confirming the resulting controller state.</source>
+        <translation>已恢复控制器活动软件包；正在确认执行后的控制器状态。</translation>
+    </message>
+    <message>
+        <source>the session to own the control lease</source>
+        <translation>当前会话持有控制租约</translation>
+    </message>
+    <message>
+        <source>SHUTDOWN with no active CPU1 package</source>
+        <translation>处于 SHUTDOWN，且没有活动的 CPU1 软件包</translation>
+    </message>
+    <message>
+        <source>OP_SAFE with an active package, OP bus, matching working counters, and no faults</source>
+        <translation>处于 OP_SAFE，活动软件包已加载、总线处于 OP、工作计数器匹配且无故障</translation>
+    </message>
+    <message>
+        <source>RUNNING with an active package, OP bus, matching working counters, and no faults</source>
+        <translation>处于 RUNNING，活动软件包已加载、总线处于 OP、工作计数器匹配且无故障</translation>
+    </message>
+    <message>
+        <source>PAUSED with an active package, OP bus, and matching working counters</source>
+        <translation>处于 PAUSED，活动软件包已加载、总线处于 OP 且工作计数器匹配</translation>
+    </message>
+    <message>
+        <source>OP_SAFE with an active package, OP bus, and matching working counters</source>
+        <translation>处于 OP_SAFE，活动软件包已加载、总线处于 OP 且工作计数器匹配</translation>
+    </message>
+    <message>
+        <source>%1 was accepted, but the refreshed controller state did not reach %2.</source>
+        <translation>已接受“%1”，但刷新后的控制器状态未达到“%2”。</translation>
+    </message>
+    <message>
+        <source>The controller accepted the command, but its resulting state could not be confirmed.</source>
+        <translation>控制器已接受命令，但无法确认其执行后的状态。</translation>
+    </message>
+    <message>
+        <source>%1 was rejected; the authoritative controller state was refreshed.</source>
+        <translation>“%1”被拒绝；已刷新控制器权威状态。</translation>
+    </message>
+    <message>
+        <source>%1 completed successfully and its resulting state was confirmed.</source>
+        <translation>“%1”已成功完成，并已确认其执行后的状态。</translation>
+    </message>
+    <message>
+        <source>Wait for the active controller operation to finish.</source>
+        <translation>请等待当前控制器操作完成。</translation>
+    </message>
+    <message>
+        <source>The requested controller command is not supported.</source>
+        <translation>不支持请求的控制器命令。</translation>
+    </message>
+    <message>
+        <source>Connect to the controller before sending commands.</source>
+        <translation>发送命令前请先连接控制器。</translation>
+    </message>
+    <message>
+        <source>The controller session identity is not available.</source>
+        <translation>控制器会话标识不可用。</translation>
+    </message>
+    <message>
+        <source>Wait for the controller refresh to finish.</source>
+        <translation>请等待控制器刷新完成。</translation>
+    </message>
+    <message>
+        <source>Another controller operation is already active.</source>
+        <translation>另一个控制器操作正在进行。</translation>
+    </message>
+    <message>
+        <source>This session already owns the control lease.</source>
+        <translation>当前会话已持有控制租约。</translation>
+    </message>
+    <message>
+        <source>The control lease duration must be between 1 and 30000 ms.</source>
+        <translation>控制租约时长必须在 1 到 30000 毫秒之间。</translation>
+    </message>
+    <message>
+        <source>Acquire the control lease before this operation.</source>
+        <translation>执行此操作前请先获取控制租约。</translation>
+    </message>
+    <message>
+        <source>The controller is not ready for the selected control operation.</source>
+        <translation>控制器尚未准备好执行所选控制操作。</translation>
+    </message>
+    <message>
+        <source>Configuration mode is not allowed from the current controller state.</source>
+        <translation>当前控制器状态不允许进入配置模式。</translation>
+    </message>
+    <message>
+        <source>Enter configuration mode before scanning the EtherCAT bus.</source>
+        <translation>扫描 EtherCAT 总线前请先进入配置模式。</translation>
+    </message>
+    <message>
+        <source>The topology scan range is invalid.</source>
+        <translation>拓扑扫描范围无效。</translation>
+    </message>
+    <message>
+        <source>The active controller package must be stopped before scanning the bus.</source>
+        <translation>扫描总线前必须停止控制器的活动软件包。</translation>
+    </message>
+    <message>
+        <source>The active package cannot be restored from the current state.</source>
+        <translation>当前状态下无法恢复活动软件包。</translation>
+    </message>
+    <message>
+        <source>No exact persistent active-package selector is available.</source>
+        <translation>没有可用的精确持久化活动软件包选择器。</translation>
+    </message>
+    <message>
+        <source>Pause requires a running controller with an active package.</source>
+        <translation>暂停要求控制器处于 RUNNING，且活动软件包已加载。</translation>
+    </message>
+    <message>
+        <source>Resume requires PAUSED, an operational bus with matching working counters, and no faults.</source>
+        <translation>恢复运行要求控制器处于 PAUSED，总线处于 OP 且工作计数器匹配，并且无故障。</translation>
+    </message>
+    <message>
+        <source>Controlled stop requires a running or paused controller with an active package.</source>
+        <translation>受控停止要求控制器处于 RUNNING 或 PAUSED，且活动软件包已加载。</translation>
+    </message>
+    <message>
+        <source>The controller command could not be sent.</source>
+        <translation>无法发送控制器命令。</translation>
+    </message>
+    <message>
+        <source>Embed Labs Product API v1.10</source>
+        <translation>Embed Labs 产品 API v1.10</translation>
+    </message>
+    <message>
+        <source>Start free-run</source>
+        <translation>启动自由运行</translation>
+    </message>
+    <message>
+        <source>Start distributed clocks</source>
+        <translation>启动分布式时钟运行</translation>
+    </message>
+    <message>
+        <source>Starting requires OP_SAFE, an active package, an operational bus with matching working counters, and no faults.</source>
+        <translation>启动要求控制器处于 OP_SAFE，活动软件包已加载，总线处于 OP 且工作计数器匹配，并且无故障。</translation>
+    </message>
+    <message>
+        <source>Disconnect requires a ready controller in SHUTDOWN or OP_SAFE before releasing control.</source>
+        <translation>断开连接并释放控制权前，控制器必须已就绪且处于 SHUTDOWN 或 OP_SAFE。</translation>
+    </message>
+    <message>
+        <source>The controller control lease ownership is unverified for this session.</source>
+        <translation>当前会话的控制器控制租约归属尚未验证。</translation>
+    </message>
+    <message>
+        <source>The Release control request was not queued; the controller still reports this session as the lease owner.</source>
+        <translation>释放控制权请求未进入发送队列；控制器仍报告当前会话为租约持有者。</translation>
+    </message>
+    <message>
+        <source>The Release control result is unknown because the connection ended before confirmation.</source>
+        <translation>连接在确认前已结束，因此释放控制权的结果未知。</translation>
+    </message>
+    <message>
+        <source>Release control requires a ready controller in SHUTDOWN or OP_SAFE.</source>
+        <translation>释放控制权要求控制器已就绪且处于 SHUTDOWN 或 OP_SAFE。</translation>
+    </message>
+    <message>
+        <source>%1 was rejected; the authoritative controller state could not be refreshed.</source>
+        <translation>“%1”被拒绝；无法刷新控制器权威状态。</translation>
+    </message>
+    <message>
+        <source>Timing mode mismatch: requested %1, but the active package is %2.</source>
+        <translation>时序模式不匹配：请求为 %1，但活动软件包为 %2。</translation>
+    </message>
+    <message>
+        <source>The package capability descriptor does not match this controller. Rebuild the package from the current Capability descriptor.</source>
+        <translation>软件包能力描述符与此控制器不匹配。请使用控制器当前的能力描述符重新构建软件包。</translation>
+    </message>
+    <message>
+        <source>The request message type is not supported.</source>
+        <translation>不支持该请求消息类型。</translation>
+    </message>
+    <message>
+        <source>Explicit timing-mode start requires protocol v1.10.</source>
+        <translation>显式定时模式启动需要 Product API v1.10。</translation>
+    </message>
+    <message>
+        <source>TIMING_MODE_MISMATCH fields violate the v1.10 contract.</source>
+        <translation>TIMING_MODE_MISMATCH 字段不符合 v1.10 协议约定。</translation>
+    </message>
+    <message>
+        <source>FirmwareStatus requires Product API v1.9 or newer.</source>
+        <translation>FirmwareStatus 需要 Product API v1.9 或更高版本。</translation>
+    </message>
+    <message>
+        <source>Expected a complete TopologyResult.</source>
+        <translation>需要完整的 TopologyResult。</translation>
+    </message>
+    <message>
+        <source>TopologyResult has an invalid response envelope.</source>
+        <translation>TopologyResult 的响应封装无效。</translation>
+    </message>
+    <message>
+        <source>TopologyResult fields violate the discovery contract.</source>
+        <translation>TopologyResult 字段不符合总线发现协议约定。</translation>
+    </message>
+    <message>
+        <source>TopologyResult contains an invalid station address.</source>
+        <translation>TopologyResult 包含无效的站地址。</translation>
     </message>
 </context>
 </TS>

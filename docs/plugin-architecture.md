@@ -27,10 +27,10 @@ documentation, review, and local-commit gates.
 | 1 | `EtherCATCorePlugin` | Complete | IDs, public services, selection, extension points, settings |
 | 2 | `EtherCATProjectPlugin` | Configuration persistence and structural-name API complete | Version-2 project lifecycle, migration, validation, and Undo/Redo |
 | 3 | `EtherCATDevicesPlugin` | Complete | ESI repository and offline device/PDO/DC models |
-| 4 | `EtherCATWorkbenchPlugin` | In progress | Project, Target, Master, configured-slave, ESI Repository, individual ESI catalogue-device General, master-side ESI insertion, supported-device drag-and-drop, and explicit active-project selection workflows, master/slave EtherCAT views, Alias editing, editable pages, manual offline topology, process-data tree, command/status surfaces, public Scan/Diagnostics state overlays, and the locally plus real-hardware qualified read-only Communication page; its status-bar correction passed automated regression and second hardware UI revalidation, while later stateful online work remains open |
+| 4 | `EtherCATWorkbenchPlugin` | In progress | Offline engineering plus embedded controller commissioning, automatic/manual Acquire, read-only Actual Bus, and native lower-left Run/Debug/Controlled Stop routing; dated read-only and scan hardware evidence is retained separately |
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
-| 7 | `EtherCATProductApiPlugin` | Complete; locally and read-only hardware qualified | First vendor adapter: Embed Labs Product API transport, three-channel lifecycle, and read-only controller Provider |
+| 7 | `EtherCATProductApiPlugin` | In progress | First vendor adapter: Product API transport, three-channel lifecycle, exclusive lease, typed commissioning/runtime commands, and bounded v1.9 compatibility |
 
 `EtherCATData` is an infrastructure library, not a feature container. Its
 offline configuration contract is persisted by EtherCATProject format version
@@ -159,8 +159,8 @@ The implemented adapter boundary, strict outbound allow-list, semantic mapping,
 generation cleanup, and remaining protocol gaps are recorded in
 `docs/ethercat-product-api.md`.
 
-The current Workbench Communication issue consumes the public Provider through
-the existing Details extension surface. It does not host
+The Workbench Communication surface consumes the public Provider through the
+existing Details extension surface. It does not host
 ProductApi-internal widgets and does not retain sockets, codec objects,
 threads, internal ProductApi objects, or network callbacks. Scan and
 Diagnostics remain independent Provider contracts, so connection success does
@@ -170,16 +170,17 @@ Local codec and loopback validation is Mock protocol evidence only. The
 Windows Python reference-client audit and the Mac's three-port TCP reachability
 check also do not by themselves qualify the Qt adapter. The independent
 2026-07-24 Workbench UI acceptance verified real Qt
-Connect/Refresh/Disconnect and clean three-channel teardown. The status-bar
-presentation defect observed during that flow is fixed in the client and
-covered by automated regression. A second real-controller UI revalidation
-passed with Handshaking, Connected/real-controller read-only, and
-Disconnect-to-Offline status-bar presentation.
+Connect/Refresh/Disconnect and clean three-channel teardown. That historical
+acceptance used a status-bar connection projection. The current client removes
+controller state from the global status control: Diagnostics and StateService
+remain there, the native lower-left controls show actionable controller state,
+and detailed connection/lease/control events go to a passive Application
+Output channel.
 
 The full source, safety, endpoint, CODESYS workflow, and controller/client issue
 handoff is recorded in `docs/ethercat-online-controller.md`.
 
-## Workbench controller Communication boundary
+## Historical Workbench controller Communication boundary
 
 `ISSUE-WORKBENCH-CONTROLLER-COMMUNICATION-001` adds a provider-neutral
 Communication page to the existing right-side Details host for an EtherCAT
@@ -188,6 +189,10 @@ retains only stable `{providerId, profileId}` selection for the Master in the
 Workbench session, and displays only copied immutable connection snapshots.
 It has no dependency on the ProductApi plugin and no vendor-ID or channel-role
 branch.
+
+This section records the original read-only issue. Its exclusions and
+qualification remain historical; the current commissioning and quick-control
+contract below supersedes them.
 
 The page and compact controller strip share ActionManager commands for
 Connect, Refresh, and Disconnect. Connect is enabled only for a valid selected
@@ -225,8 +230,8 @@ SDO/PDO, package, firmware, or diagnostics operation. The existing Scan and
 Diagnostics providers remain Mock-only, and their actions are not routed
 through `ControllerConnectionProvider`.
 
-Local qualification passed 6/6 focused events at normal scale, 6/6 at 2x,
-89/89 complete Workbench events, and 92/92 events across the other six
+Historical local qualification passed 6/6 focused events at normal scale, 6/6
+at 2x, 89/89 complete Workbench events, and 92/92 events across the other six
 isolated Core, Project, Devices, Scan, Diagnostics, and ProductApi suites. The
 seven-suite total is 181/181. The Qt 6.11.0 `WITH_TESTS=OFF` product build,
 enabled/explicitly-disabled Workbench lifecycle checks,
@@ -252,6 +257,63 @@ regression covers Connected, Degraded, and Disconnect-to-Offline presentation.
 A second real-controller UI revalidation passed on 2026-07-24 and confirmed
 Handshaking, Connected/real-controller read-only, and Disconnect-to-Offline
 presentation.
+
+## Current commissioning and native quick-control boundary
+
+The current Communication page remains provider-neutral and embedded in the
+Master Details host. It contains Provider/profile selection,
+Connect/Refresh/Disconnect, automatic/manual Acquire, Configuration, Scan Bus,
+Restore Package, Release, command progress, authoritative information, and the
+read-only Actual Bus result. It has no independent FreeRun, DC Run, Pause,
+Resume, or Stop buttons.
+
+Connect publishes an authoritative read-only snapshot first. Workbench then
+queues one Acquire request for the exact selected
+`{provider, profile, Project, Master, sessionGeneration}` identity. The
+Communication-page Acquire action is retained for necessary manual recovery.
+Only one session may own the controller's control lease. Other API sessions
+remain connected and may continue read-only requests, but control writes are
+rejected with `LEASE_BUSY (-10)`.
+
+Runtime control uses Qt Creator's native lower-left area:
+
+| Native control | Controller state | Typed command |
+|---|---|---|
+| Run | `OP_SAFE` | Start the active package; its ECFG/DC content determines FreeRun or DC |
+| Run | `PAUSED` | Resume |
+| Debug | `RUNNING` | Pause |
+| Debug | `PAUSED` | Resume |
+| Controlled Stop | `RUNNING` or `PAUSED` | ControlledStop |
+
+Controlled Stop is an operational stop, not an emergency stop. All commands
+remain gated by exact scope, real non-Mock/non-read-only snapshot, exclusive
+lease, controller readiness, active-package identity, bus/WKC/fault state, and
+absence of another Pending operation.
+
+Local Mock Scan/Diagnostics providers and their actions, tree nodes, pages, and
+status contribution are hidden in production by default. They are registered
+only with `WITH_TESTS` or `QTC_ETHER_CAT_ENABLE_MOCK_UI=1`.
+
+The current English regression passed Workbench 95, Project 15, Devices 8,
+Core 19, Scan 11, Diagnostics 7, and ProductApi 71: 226 passed, 0 failed, and
+1 ProductApi hardware test skipped. The `WITH_TESTS=OFF` product build passed
+with exactly 17 plugin dylibs, and all EtherCAT Simplified Chinese contexts
+contain no unfinished or empty translations.
+
+The generic Start and explicit DC real-controller lifecycles each passed 3
+tests with 0 failures and completed safe cleanup in `SHUTDOWN`/EMPTY with no
+lease owner or fault. Windows `ISSUE-RT-009` separated a successful LRW cycle
+from the actual failure: `OP_REQUEST` for station `0x1002` returned WKC 0/1 on
+all four attempts. `cfg812` was not activated and no FreeRun lifecycle ran.
+The controller was safely rolled back to `B/12/813`, `OP_SAFE`, WKC 11/11,
+faults 0, and lease 0. The Windows session continues with `ISSUE-API-016` and
+the smallest isolated fix.
+
+The earlier single-instance product observation showed Workbench, Simplified
+Chinese, hidden production Mock UI, and the compact tree. The current endpoint
+and unified-output revision is covered by 95 Workbench tests and a three-pass
+ProjectExplorer passive-output lifecycle test. No controller connection or
+hardware command was executed in this round.
 
 ## Cross-plugin data rules
 
@@ -374,12 +436,13 @@ command strip. It reuses the same actions and discovers optional
 Scan/Diagnostics commands without reverse dependencies or private UI access.
 EtherCATCore now provides the shared `StateService`; the Workbench renders its
 highest-severity Scan/Diagnostics contribution and a value-only semantic
-projection from the preferred Diagnostics Provider together with active
-immutable controller-connection Provider snapshots through one mode-scoped Qt
+projection from the preferred Diagnostics Provider through one mode-scoped Qt
 Creator status-bar control, while producer plugins retain ownership of their
-state. It uses standard icons, preserves explicit `MOCK` labeling for local
-snapshots, and derives controller connection wording only from Provider
-evidence. The same
+state. It uses standard icons and preserves explicit `MOCK` labeling for local
+snapshots. Controller snapshots instead drive the native lower-left
+Run/Pause/Stop actions and a passive ProjectExplorer Application Output
+channel; they never alter the global status control or create a `RunControl`.
+The same
 Workbench controller now copies public immutable Scan and Diagnostics
 snapshots into a presentation-only tree overlay. It exposes topology
 differences, live Mock

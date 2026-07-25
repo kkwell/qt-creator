@@ -7,6 +7,7 @@
 #include <coreplugin/dialogs/ioptionspage.h>
 #include <coreplugin/ioutputpane.h>
 
+#include <utils/id.h>
 #include <utils/outputformat.h>
 #include <utils/theme/theme.h>
 
@@ -80,6 +81,11 @@ public:
 
     void prepareRunControlStart(RunControl *runControl);
     void showOutputPaneForRunControl(RunControl *runControl);
+    void postApplicationOutput(Utils::Id channelId,
+                               const QString &displayName,
+                               const QString &message,
+                               Utils::OutputFormat format);
+    void showApplicationOutput(Utils::Id channelId);
 
     void closeTabsWithoutPrompt();
 
@@ -95,7 +101,9 @@ private:
     void setBehaviorOnOutput(RunControl *rc, AppOutputPaneMode mode);
     void projectRemoved();
 
-    void createNewOutputWindow(RunControl *rc);
+    void createNewOutputWindow(RunControl *rc,
+                               Utils::Id passiveChannelId = {},
+                               const QString &displayName = {});
     void appendMessage(ProjectExplorer::RunControl *rc, const QString &out,
                        Utils::OutputFormat format);
     void reRunRunControl();
@@ -118,16 +126,20 @@ private:
     class RunControlTab {
     public:
         explicit RunControlTab(RunControl *runControl = nullptr,
-                               Core::OutputWindow *window = nullptr);
+                               Core::OutputWindow *window = nullptr,
+                               Utils::Id passiveChannelId = {});
         QPointer<RunControl> runControl;
         QPointer<Core::OutputWindow> window;
+        Utils::Id passiveChannelId;
         AppOutputPaneMode behaviorOnOutput = AppOutputPaneMode::FlashOnOutput;
     };
 
+    void appendMessage(RunControlTab *tab, const QString &out, Utils::OutputFormat format);
     void closeTab(int index, CloseTabMode cm = CloseTabWithPrompt);
     bool optionallyPromptToStop(RunControl *runControl);
 
     RunControlTab *tabFor(const RunControl *rc);
+    RunControlTab *tabFor(Utils::Id passiveChannelId);
     RunControlTab *tabFor(const QWidget *outputWindow);
     const RunControlTab *tabFor(const QWidget *outputWindow) const;
     RunControlTab *currentTab();

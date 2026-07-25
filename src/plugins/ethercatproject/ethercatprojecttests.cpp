@@ -6,6 +6,7 @@
 #include "ethercatprojectconstants.h"
 #include "ethercatprojectdocument.h"
 #include "ethercatprojectformat.h"
+#include "ethercatprojecttr.h"
 #include "projectserviceimpl.h"
 
 #include <coreplugin/documentmanager.h>
@@ -18,6 +19,7 @@
 
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectmanager.h>
+#include <projectexplorer/taskhub.h>
 
 #include <utils/filepath.h>
 
@@ -201,6 +203,20 @@ void EtherCATProjectTests::testMetadataAndService()
     QVERIFY(wizard != factories.cend());
     QCOMPARE((*wizard)->kind(), ::Core::IWizardFactory::ProjectWizard);
     QCOMPARE((*wizard)->supportedProjectTypes(), QSet<Utils::Id>({Constants::PROJECT_ID}));
+}
+
+void EtherCATProjectTests::testProjectNeedsNoTargetConfiguration()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath projectFile = temporaryFilePath(directory, "targetless.ecatproject");
+    writeProject(projectFile, createProjectSnapshot("Targetless", "Test"));
+
+    EtherCATProject project(projectFile);
+    QVERIFY(project.snapshot().valid);
+    QVERIFY(!project.needsConfiguration());
+    QVERIFY(project.targets().isEmpty());
+    QVERIFY(!project.activeTarget());
 }
 
 void EtherCATProjectTests::testFormatRoundTripAndCorruption()
@@ -712,7 +728,7 @@ void EtherCATProjectTests::testProjectExplorerMultiProjectLifecycle()
     QVERIFY_RESULT(service->undoProject(secondProject->snapshot().id));
     QCOMPARE(
         nodeName(*service->project(secondProject->snapshot().id), secondMaster),
-        QString("EtherCAT Master"));
+        Tr::tr("EtherCAT Master"));
 
     QVERIFY_RESULT(service->replaceOfflineSlaves(
         secondProject->snapshot().id, secondMaster, offlineSlaves(secondMaster)));
@@ -752,6 +768,134 @@ void EtherCATProjectTests::testProjectExplorerMultiProjectLifecycle()
     const Utils::Result<LoadedProject> closedProject = parseProject(*closedContents, "Fallback");
     QVERIFY_RESULT(closedProject);
     QCOMPARE(closedProject->snapshot.name, QString("First Closed"));
+}
+
+void EtherCATProjectTests::testDuplicateProjectIdCannotOwnStartupContext()
+{
+    auto *service = ExtensionSystem::PluginManager::getObject<ProjectServiceImpl>();
+    QVERIFY(service);
+    QVERIFY(service->projects().isEmpty());
+    QVERIFY(service->activeProjectId().isNull());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath firstFile = temporaryFilePath(directory, "first.ecatproject");
+    const Utils::FilePath duplicateFile = temporaryFilePath(directory, "duplicate.ecatproject");
+
+    const Data::ProjectSnapshot firstSnapshot = createProjectSnapshot("First", "Test");
+    Data::ProjectSnapshot duplicateSnapshot = firstSnapshot;
+    duplicateSnapshot.name = "Duplicate";
+    writeProject(firstFile, firstSnapshot);
+    writeProject(duplicateFile, duplicateSnapshot);
+
+    const ProjectExplorer::OpenProjectResult firstResult
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(firstFile, false);
+    QVERIFY2(firstResult, qPrintable(firstResult.errorMessage()));
+    auto *firstProject = qobject_cast<EtherCATProject *>(firstResult.project());
+    QVERIFY(firstProject);
+
+    const ProjectExplorer::OpenProjectResult duplicateResult
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(duplicateFile, false);
+    QVERIFY2(duplicateResult, qPrintable(duplicateResult.errorMessage()));
+    auto *duplicateProject = qobject_cast<EtherCATProject *>(duplicateResult.project());
+    QVERIFY(duplicateProject);
+
+    QCOMPARE(service->projects().size(), 1);
+    QCOMPARE(service->projects().constFirst().id, firstSnapshot.id);
+    QVERIFY(service->managesProject(firstProject));
+    QVERIFY(!service->managesProject(duplicateProject));
+
+    ProjectExplorer::ProjectManager::setStartupProject(duplicateProject);
+    QVERIFY(service->activeProjectId().isNull());
+
+    ProjectExplorer::ProjectManager::setStartupProject(firstProject);
+    QCOMPARE(service->activeProjectId(), firstSnapshot.id);
+
+    ProjectExplorer::ProjectManager::removeProject(duplicateProject);
+    QCOMPARE(service->projects().size(), 1);
+    QCOMPARE(service->activeProjectId(), firstSnapshot.id);
+
+    ProjectExplorer::ProjectManager::removeProject(firstProject);
+    QVERIFY(service->projects().isEmpty());
+    QVERIFY(service->activeProjectId().isNull());
+}
+
+void EtherCATProjectTests::testDuplicateProjectIdOwnerRecovery()
+{
+    auto *service = ExtensionSystem::PluginManager::getObject<ProjectServiceImpl>();
+    QVERIFY(service);
+    QVERIFY(service->projects().isEmpty());
+    QVERIFY(service->activeProjectId().isNull());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath ownerFile = temporaryFilePath(directory, "owner.ecatproject");
+    const Utils::FilePath duplicateFile = temporaryFilePath(directory, "recoverable.ecatproject");
+
+    const Data::ProjectSnapshot ownerSnapshot = createProjectSnapshot("Owner", "Test");
+    Data::ProjectSnapshot duplicateSnapshot = ownerSnapshot;
+    duplicateSnapshot.name = "Recoverable";
+    writeProject(ownerFile, ownerSnapshot);
+    writeProject(duplicateFile, duplicateSnapshot);
+
+    QSignalSpy taskAddedSpy(
+        &ProjectExplorer::taskHub(), &ProjectExplorer::TaskHub::taskAdded);
+    QSignalSpy taskRemovedSpy(
+        &ProjectExplorer::taskHub(), &ProjectExplorer::TaskHub::taskRemoved);
+
+    const ProjectExplorer::OpenProjectResult ownerResult
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(ownerFile, false);
+    QVERIFY2(ownerResult, qPrintable(ownerResult.errorMessage()));
+    QPointer<EtherCATProject> ownerProject
+        = qobject_cast<EtherCATProject *>(ownerResult.project());
+    QVERIFY(ownerProject);
+
+    const ProjectExplorer::OpenProjectResult duplicateResult
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(duplicateFile, false);
+    QVERIFY2(duplicateResult, qPrintable(duplicateResult.errorMessage()));
+    QPointer<EtherCATProject> duplicateProject
+        = qobject_cast<EtherCATProject *>(duplicateResult.project());
+    QVERIFY(duplicateProject);
+
+    const QScopeGuard cleanup([&] {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        if (duplicateProject
+            && ProjectExplorer::ProjectManager::hasProject(duplicateProject.data())) {
+            ProjectExplorer::ProjectManager::removeProject(duplicateProject.data());
+        }
+        if (ownerProject && ProjectExplorer::ProjectManager::hasProject(ownerProject.data()))
+            ProjectExplorer::ProjectManager::removeProject(ownerProject.data());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    QTRY_COMPARE(taskAddedSpy.count(), 1);
+    const ProjectExplorer::Task conflictTask
+        = qvariant_cast<ProjectExplorer::Task>(taskAddedSpy.constFirst().constFirst());
+    QCOMPARE(
+        conflictTask.description(),
+        Tr::tr("Another open EtherCAT project has the same project ID."));
+    QVERIFY(service->managesProject(ownerProject));
+    QVERIFY(!service->managesProject(duplicateProject));
+
+    ProjectExplorer::ProjectManager::setStartupProject(duplicateProject);
+    QVERIFY(service->activeProjectId().isNull());
+
+    ProjectExplorer::ProjectManager::removeProject(ownerProject);
+    QTRY_VERIFY(ownerProject.isNull());
+    QTRY_VERIFY(service->managesProject(duplicateProject));
+    QCOMPARE(service->projects().size(), 1);
+    QCOMPARE(service->projects().constFirst().id, ownerSnapshot.id);
+    QTRY_COMPARE(service->activeProjectId(), ownerSnapshot.id);
+    QTRY_COMPARE(taskRemovedSpy.count(), 1);
+    QCOMPARE(
+        qvariant_cast<ProjectExplorer::Task>(taskRemovedSpy.constFirst().constFirst()),
+        conflictTask);
+
+    ProjectExplorer::ProjectManager::removeProject(duplicateProject);
+    QTRY_VERIFY(duplicateProject.isNull());
+    QVERIFY(service->projects().isEmpty());
+    QVERIFY(service->activeProjectId().isNull());
 }
 
 } // namespace EtherCAT::Project::Internal

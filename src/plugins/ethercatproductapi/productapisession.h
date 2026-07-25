@@ -54,16 +54,21 @@ public:
     ~ProductApiSession() override;
 
     Data::ControllerConnectionSnapshot snapshot() const;
+    Utils::Result<> setEndpoints(const EndpointSet &endpoints);
 
     Utils::Result<> connectToController(const Data::ControllerConnectionRequest &request);
     Utils::Result<> disconnectFromController();
     Utils::Result<> refreshController();
+    bool supportsControlCommand(Data::ControllerControlCommand command) const;
+    Utils::Result<> executeControlCommand(const Data::ControllerControlRequest &request);
     void shutdown();
 
 #ifdef WITH_TESTS
+    EndpointSet endpointsForTests() const;
     bool isIdleForTests() const;
     int activeSocketCountForTests() const;
     int pendingRequestCountForTests() const;
+    void failNextWriteForTests();
 #endif
 
 signals:

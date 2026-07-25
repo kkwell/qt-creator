@@ -8,5 +8,7 @@ inline constexpr char CONTROLLER_PROVIDER_ID[] =
     "EtherCAT.Connection.EmbedLabs.ProductApiV1";
 inline constexpr char DEFAULT_PROFILE_ID[] =
     "45c72dbc-31cf-52d5-92a1-8cd013503ed2";
+inline constexpr char BASE_ENDPOINT_SETTINGS_KEY[] =
+    "EtherCAT/ProductApiV1/BaseEndpoint";
 
 } // namespace EtherCAT::ProductApi::Constants
