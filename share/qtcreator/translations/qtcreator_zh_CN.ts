@@ -54727,6 +54727,234 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <source>Start distributed clocks</source>
         <translation>启动分布式时钟运行</translation>
     </message>
+    <message numerus="yes">
+        <source> Last scan: %n responding device(s).</source>
+        <translation>
+            <numerusform> 最近一次扫描：%n 个设备响应。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>%1. Current value: %2. Source: %3.</source>
+        <translation>%1。当前值：%2。来源：%3。</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n online</source>
+        <translation>
+            <numerusform>%n 个在线</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n online device(s)</source>
+        <translation>
+            <numerusform>%n 个在线设备</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n responding</source>
+        <translation>
+            <numerusform>%n 个响应</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n responding device(s)</source>
+        <translation>
+            <numerusform>%n 个响应设备</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>A controller startup step failed.</source>
+        <translation>控制器启动步骤失败。</translation>
+    </message>
+    <message>
+        <source>A different controller operation replaced automatic startup.</source>
+        <translation>其他控制器操作中断了自动启动流程。</translation>
+    </message>
+    <message>
+        <source>AL %1</source>
+        <translation>AL %1</translation>
+    </message>
+    <message>
+        <source>Actual bus</source>
+        <translation>实际总线</translation>
+    </message>
+    <message numerus="yes">
+        <source>Actual bus scan: %n responding device(s).</source>
+        <translation>
+            <numerusform>实际总线扫描：%n 个设备响应。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Automatic controller startup is in progress.</source>
+        <translation>控制器正在自动启动。</translation>
+    </message>
+    <message>
+        <source>Automatic controller startup stopped because the controller adapter was removed.</source>
+        <translation>控制器适配器已移除，自动启动已停止。</translation>
+    </message>
+    <message>
+        <source>Automatic controller startup was canceled because its project closed.</source>
+        <translation>所属项目已关闭，控制器自动启动已取消。</translation>
+    </message>
+    <message>
+        <source>Bus device %1</source>
+        <translation>总线设备 %1</translation>
+    </message>
+    <message>
+        <source>Connected controller Product API endpoint.</source>
+        <translation>已连接控制器的 Product API 端点。</translation>
+    </message>
+    <message>
+        <source>Controller cycle counter: %1</source>
+        <translation>控制器周期计数：%1</translation>
+    </message>
+    <message>
+        <source>Controller endpoint: %1</source>
+        <translation>控制器端点：%1</translation>
+    </message>
+    <message>
+        <source>Controller session</source>
+        <translation>控制器会话</translation>
+    </message>
+    <message>
+        <source>Controller startup completed.</source>
+        <translation>控制器启动完成。</translation>
+    </message>
+    <message>
+        <source>Controller startup completed: Running, WKC %1/%2, cycle %3.</source>
+        <translation>控制器启动完成：正在运行，WKC %1/%2，周期计数 %3。</translation>
+    </message>
+    <message>
+        <source>Controller startup failed: %1</source>
+        <translation>控制器启动失败：%1</translation>
+    </message>
+    <message>
+        <source>Controller state push</source>
+        <translation>控制器状态推送</translation>
+    </message>
+    <message>
+        <source>Cycle counter</source>
+        <translation>周期计数</translation>
+    </message>
+    <message>
+        <source>Distributed Clocks</source>
+        <translation>分布式时钟</translation>
+    </message>
+    <message>
+        <source>Distributed Clocks locked; difference %1 ns.</source>
+        <translation>分布式时钟已锁定；偏差 %1 ns。</translation>
+    </message>
+    <message>
+        <source>Distributed Clocks not locked; difference %1 ns.</source>
+        <translation>分布式时钟未锁定；偏差 %1 ns。</translation>
+    </message>
+    <message>
+        <source>Enter configuration, scan the EtherCAT bus, restore the active package, then start it using its configured FreeRun or Distributed Clocks mode.</source>
+        <translation>进入配置模式、扫描 EtherCAT 总线、恢复活动软件包，然后按其配置的 FreeRun 或分布式时钟模式启动。</translation>
+    </message>
+    <message>
+        <source>EtherCAT AL state</source>
+        <translation>EtherCAT AL 状态</translation>
+    </message>
+    <message>
+        <source>Exclusive controller control was lost during automatic startup.</source>
+        <translation>自动启动期间丢失了控制器独占控制权。</translation>
+    </message>
+    <message>
+        <source>Live EtherCAT cyclic telemetry</source>
+        <translation>实时 EtherCAT 周期遥测</translation>
+    </message>
+    <message>
+        <source>Live aggregate cyclic telemetry from controller protocol v1.10. The protocol does not expose individual cyclic frame descriptors.</source>
+        <translation>来自控制器 v1.10 协议的实时周期汇总遥测。当前协议不提供单帧周期描述。</translation>
+    </message>
+    <message>
+        <source>Live cyclic transfer is running. Cycle counter %1, WKC %2/%3. Protocol v1.10 provides aggregate cyclic evidence but not individual frame descriptors.</source>
+        <translation>实时周期传输正在运行。周期计数 %1，WKC %2/%3。v1.10 协议提供周期汇总证据，但不提供单帧描述。</translation>
+    </message>
+    <message>
+        <source>Live metric</source>
+        <translation>实时指标</translation>
+    </message>
+    <message>
+        <source>Live cyclic telemetry is unavailable while the controller is %1.</source>
+        <translation>控制器处于 %1 状态时无法提供实时周期遥测。</translation>
+    </message>
+    <message>
+        <source>Locked — difference %1 ns</source>
+        <translation>已锁定 — 偏差 %1 ns</translation>
+    </message>
+    <message>
+        <source>Not locked — difference %1 ns</source>
+        <translation>未锁定 — 偏差 %1 ns</translation>
+    </message>
+    <message>
+        <source>Online %1 | WKC %2/%3</source>
+        <translation>在线 %1 | WKC %2/%3</translation>
+    </message>
+    <message>
+        <source>Online EtherCAT master — %1, AL %2, WKC %3/%4.</source>
+        <translation>在线 EtherCAT 主站 — %1，AL %2，WKC %3/%4。</translation>
+    </message>
+    <message>
+        <source>Online | %1 / AL %2 | WKC %3/%4</source>
+        <translation>在线 | %1 / AL %2 | WKC %3/%4</translation>
+    </message>
+    <message>
+        <source>Online | AL %1</source>
+        <translation>在线 | AL %1</translation>
+    </message>
+    <message>
+        <source>Run is available while the controller is in Shutdown, OP_SAFE, or Paused.</source>
+        <translation>控制器处于关停、OP_SAFE 或已暂停状态时可以运行。</translation>
+    </message>
+    <message>
+        <source>Starting Controller...</source>
+        <translation>正在启动控制器...</translation>
+    </message>
+    <message>
+        <source>Starting controller: enter configuration, scan the bus, restore the active package, then start runtime.</source>
+        <translation>正在启动控制器：进入配置模式、扫描总线、恢复活动软件包，然后启动运行时。</translation>
+    </message>
+    <message>
+        <source>Station %1; vendor %2; product %3; revision %4; serial %5.</source>
+        <translation>站地址 %1；厂商 %2；产品 %3；版本 %4；序列号 %5。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT bus is operational while the runtime is %1. Cycle counter %2, WKC %3/%4.</source>
+        <translation>EtherCAT 总线处于运行状态，当前运行时状态为 %1。周期计数 %2，WKC %3/%4。</translation>
+    </message>
+    <message>
+        <source>The controller adapter instance changed during startup.</source>
+        <translation>启动期间控制器适配器实例发生变化。</translation>
+    </message>
+    <message>
+        <source>The controller adapter instance is unavailable.</source>
+        <translation>控制器适配器实例不可用。</translation>
+    </message>
+    <message>
+        <source>The controller disconnected during automatic startup.</source>
+        <translation>自动启动期间控制器连接已断开。</translation>
+    </message>
+    <message>
+        <source>The controller does not support the complete automatic startup sequence.</source>
+        <translation>控制器不支持完整的自动启动流程。</translation>
+    </message>
+    <message>
+        <source>The controller is connected; waiting for its authoritative runtime state.</source>
+        <translation>控制器已连接；正在等待权威运行状态。</translation>
+    </message>
+    <message>
+        <source>The controller is online in %1; cyclic process-data transfer is not active.</source>
+        <translation>控制器在线，当前状态为 %1；周期过程数据传输尚未运行。</translation>
+    </message>
+    <message>
+        <source>The controller session changed during automatic startup.</source>
+        <translation>自动启动期间控制器会话发生变化。</translation>
+    </message>
+    <message>
+        <source>Timed out while waiting for automatic controller startup.</source>
+        <translation>等待控制器自动启动超时。</translation>
+    </message>
 </context>
 <context>
     <name>QtC::EtherCATProductApi</name>

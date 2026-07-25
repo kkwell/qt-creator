@@ -31,6 +31,9 @@ public:
 
 private:
     void reset(const QString &summary, const QStringList &headers, bool preserveAlias = false);
+    void updateMasterPresentation();
+    void addControllerTelemetryRow(
+        const QString &metric, const QString &value, const QString &source);
     void addSyncManagerRow(const QStringList &values);
     void addSyncManagers(const Data::DeviceDescription &device);
     void commitAlias();

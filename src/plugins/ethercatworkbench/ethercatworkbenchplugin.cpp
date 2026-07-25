@@ -171,15 +171,14 @@ void EtherCATWorkbenchPlugin::initialize()
         &WorkbenchController::controllerOutputRequested,
         this,
         [](const QString &message, ControllerOutputLevel level) {
+            const Utils::Id channelId(Constants::CONTROLLER_OUTPUT_CHANNEL_ID);
             const Utils::OutputFormat format
                 = level == ControllerOutputLevel::Error
                       ? Utils::ErrorMessageFormat
                       : Utils::NormalMessageFormat;
             ProjectExplorer::ProjectExplorerPlugin::postApplicationOutput(
-                Utils::Id(Constants::CONTROLLER_OUTPUT_CHANNEL_ID),
-                Tr::tr("EtherCAT Controller"),
-                message + QLatin1Char('\n'),
-                format);
+                channelId, Tr::tr("EtherCAT Controller"), message + QLatin1Char('\n'), format);
+            ProjectExplorer::ProjectExplorerPlugin::showApplicationOutput(channelId);
         });
     m_builtinPages = std::make_unique<BuiltinPropertyPageProvider>(m_controller.get());
     ExtensionSystem::PluginManager::addObject(m_builtinPages.get());
@@ -373,10 +372,20 @@ void EtherCATWorkbenchPlugin::updateQuickControllerActions()
 
             QString text;
             QString availableDescription;
+            const bool startupInProgress = scope && m_controller
+                                           && m_controller->controllerStartupInProgress(*scope);
             switch (quickAction) {
             case ControllerQuickControlAction::Run:
                 action->setIcon(ProjectExplorer::Icons::RUN.icon());
-                if (command == Data::ControllerControlCommand::Start) {
+                if (startupInProgress) {
+                    action->setIcon(Utils::Icons::RELOAD.icon());
+                    text = Tr::tr("Starting Controller...");
+                } else if (command == Data::ControllerControlCommand::EnterConfigurationMode) {
+                    text = Tr::tr("Run Controller");
+                    availableDescription = Tr::tr(
+                        "Enter configuration, scan the EtherCAT bus, restore the active package, "
+                        "then start it using its configured FreeRun or Distributed Clocks mode.");
+                } else if (command == Data::ControllerControlCommand::Start) {
                     text = Tr::tr("Start Controller");
                     availableDescription = Tr::tr(
                         "Start the active controller package using its configured FreeRun or "
@@ -385,10 +394,8 @@ void EtherCATWorkbenchPlugin::updateQuickControllerActions()
                     text = Tr::tr("Resume Controller");
                     availableDescription = Tr::tr("Resume the paused controller application.");
                 } else if (
-                    controllerSnapshot
-                    && controllerSnapshot->scope == *scope
-                    && controllerSnapshot->state
-                           != Data::ControllerConnectionState::Disconnected) {
+                    controllerSnapshot && controllerSnapshot->scope == *scope
+                    && controllerSnapshot->state != Data::ControllerConnectionState::Disconnected) {
                     using State = Data::ControllerConnectionState;
                     switch (controllerSnapshot->state) {
                     case State::Connected:
@@ -477,22 +484,7 @@ void EtherCATWorkbenchPlugin::triggerQuickControllerAction(ControllerQuickContro
         return;
     }
 
-    const std::optional<Data::ControllerControlCommand> command
-        = m_controller->quickControllerControlCommand(*scope, action);
-    const QString unavailableReason
-        = m_controller->quickControllerControlUnavailableReason(*scope, action);
-    if (!command || !unavailableReason.isEmpty()
-        || !m_controller->canExecuteControllerControl(*scope, *command)) {
-        m_controller->writeControllerOutput(
-            Tr::tr("Cannot control the controller: %1").arg(unavailableReason),
-            ControllerOutputLevel::Error);
-        updateQuickControllerActions();
-        return;
-    }
-
-    Data::ControllerControlRequest request;
-    request.command = *command;
-    if (const Utils::Result<> result = m_controller->executeControllerControl(*scope, request);
+    if (const Utils::Result<> result = m_controller->executeQuickControllerControl(*scope, action);
         !result) {
         m_controller->writeControllerOutput(
             Tr::tr("Cannot control the controller: %1").arg(result.error()),

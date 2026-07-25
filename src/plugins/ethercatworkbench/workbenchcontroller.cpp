@@ -780,6 +780,13 @@ WorkbenchController::WorkbenchController(QObject *parent)
                             ControllerOutputLevel::Error);
                         m_controllerCleanupStates.erase(cleanup);
                     }
+                    if (m_controllerStartupStates.remove(connectionProvider)) {
+                        writeControllerOutput(
+                            Tr::tr(
+                                "Automatic controller startup stopped because the controller "
+                                "adapter was removed."),
+                            ControllerOutputLevel::Error);
+                    }
                     m_controllerConnectionProviderEpochs.remove(connectionProvider);
                     m_controllerAutoAcquireStates.remove(connectionProvider);
                     m_controllerOutputFingerprints.remove(connectionProvider);
@@ -1002,7 +1009,60 @@ bool WorkbenchController::controllerConnectionScopeIsValid(
 ControllerConnectionSelection WorkbenchController::prepareControllerConnection(
     const Data::ControllerConnectionScope &scope)
 {
-    return controllerConnectionSelection(scope);
+    ControllerConnectionSelection selection = controllerConnectionSelection(scope);
+    if (m_shuttingDown || !controllerConnectionScopeIsValid(scope)
+        || controllerConnectionSelectionLocked(scope)
+        || (selection.providerExplicitlySelected && selection.profileExplicitlySelected)) {
+        return selection;
+    }
+
+    const std::optional<ControllerConnectionSelection> automatic
+        = automaticControllerConnectionSelection(scope, controllerConnectionProviders());
+    if (!automatic)
+        return selection;
+
+    ControllerConnectionSelection *stored = mutableControllerConnectionSelection(scope);
+    if (!stored) {
+        ControllerConnectionSelection unselected;
+        unselected.scope = scope;
+        m_controllerConnectionSelections.append(unselected);
+        stored = &m_controllerConnectionSelections.last();
+    }
+    if (*stored == *automatic)
+        return *stored;
+    *stored = *automatic;
+    emit controllerConnectionChanged();
+    return *stored;
+}
+
+std::optional<ControllerConnectionSelection>
+WorkbenchController::automaticControllerConnectionSelection(
+    const Data::ControllerConnectionScope &scope,
+    const QList<Core::ControllerConnectionProvider *> &candidates)
+{
+    QList<Core::ControllerConnectionProvider *> providers;
+    for (Core::ControllerConnectionProvider *provider : candidates) {
+        if (provider && provider->isAvailable())
+            providers.append(provider);
+    }
+    if (providers.size() != 1)
+        return std::nullopt;
+
+    Core::ControllerConnectionProvider *provider = providers.constFirst();
+    QList<Data::ControllerConnectionProfile> profiles;
+    for (const Data::ControllerConnectionProfile &profile : provider->connectionProfiles(scope)) {
+        if (connectionProfileUsable(profile))
+            profiles.append(profile);
+    }
+    if (profiles.size() != 1)
+        return std::nullopt;
+    return ControllerConnectionSelection{
+        scope,
+        provider->id(),
+        profiles.constFirst().id,
+        true,
+        true,
+    };
 }
 
 ControllerConnectionSelection WorkbenchController::controllerConnectionSelection(
@@ -1214,6 +1274,8 @@ bool WorkbenchController::canDisconnectSelectedController() const
     Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
     if (!provider)
         return false;
+    if (m_controllerStartupStates.contains(provider))
+        return false;
     const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
     const bool releaseRequired = snapshot.session && snapshot.session->ownsControlLease;
     return (snapshot.scope == *scope || !controllerConnectionProjectIsOpen(snapshot.scope))
@@ -1259,6 +1321,8 @@ QString WorkbenchController::controllerControlCommonUnavailableReason(
         return Tr::tr("The selected controller adapter is unavailable.");
     if (!provider->isAvailable())
         return Tr::tr("The selected controller adapter is not available.");
+    if (m_controllerStartupStates.contains(provider))
+        return Tr::tr("Automatic controller startup is in progress.");
     if (!selection.profileExplicitlySelected || selection.profileId.isNull())
         return Tr::tr("Select a controller connection profile for the active EtherCAT Master.");
     if (command != Data::ControllerControlCommand::None
@@ -1327,6 +1391,8 @@ std::optional<Data::ControllerControlCommand> WorkbenchController::quickControll
     const ServiceState serviceState = snapshot.controllerState->serviceState;
     switch (action) {
     case ControllerQuickControlAction::Run:
+        if (serviceState == ServiceState::Shutdown)
+            return Command::EnterConfigurationMode;
         if (serviceState == ServiceState::OperationalSafe)
             return Command::Start;
         if (serviceState == ServiceState::Paused)
@@ -1349,6 +1415,10 @@ std::optional<Data::ControllerControlCommand> WorkbenchController::quickControll
 QString WorkbenchController::quickControllerControlUnavailableReason(
     const Data::ControllerConnectionScope &scope, ControllerQuickControlAction action) const
 {
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (provider && m_controllerStartupStates.contains(provider))
+        return Tr::tr("Automatic controller startup is in progress.");
+
     Data::ControllerConnectionSnapshot snapshot;
     if (const QString reason = controllerControlCommonUnavailableReason(
             scope, Data::ControllerControlCommand::None, &snapshot);
@@ -1358,6 +1428,8 @@ QString WorkbenchController::quickControllerControlUnavailableReason(
 
     const std::optional<Data::ControllerControlCommand> command
         = quickControllerControlCommand(scope, action);
+    if (command == Data::ControllerControlCommand::EnterConfigurationMode)
+        return controllerStartupUnavailableReason(provider, snapshot);
     if (command)
         return controllerControlUnavailableReason(scope, *command);
     if (!snapshot.controllerState)
@@ -1365,13 +1437,47 @@ QString WorkbenchController::quickControllerControlUnavailableReason(
 
     switch (action) {
     case ControllerQuickControlAction::Run:
-        return Tr::tr("Run is available only while the controller is in OP_SAFE or Paused.");
+        return Tr::tr("Run is available while the controller is in Shutdown, OP_SAFE, or Paused.");
     case ControllerQuickControlAction::Debug:
         return Tr::tr("Pause or Resume is available only while the controller is Running or Paused.");
     case ControllerQuickControlAction::Stop:
         return Tr::tr("Controlled Stop is available only while the controller is Running or Paused.");
     }
     return Tr::tr("The controller service state does not allow this operation.");
+}
+
+bool WorkbenchController::controllerStartupInProgress(
+    const Data::ControllerConnectionScope &scope) const
+{
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider)
+        return false;
+    const auto state = m_controllerStartupStates.constFind(provider);
+    return state != m_controllerStartupStates.cend() && state->scope == scope;
+}
+
+Utils::Result<> WorkbenchController::executeQuickControllerControl(
+    const Data::ControllerConnectionScope &scope, ControllerQuickControlAction action)
+{
+    const QString unavailableReason = quickControllerControlUnavailableReason(scope, action);
+    if (!unavailableReason.isEmpty())
+        return Utils::ResultError(unavailableReason);
+
+    const std::optional<Data::ControllerControlCommand> command
+        = quickControllerControlCommand(scope, action);
+    if (!command)
+        return Utils::ResultError(
+            Tr::tr("The controller service state does not allow this operation."));
+
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider)
+        return Utils::ResultError(Tr::tr("The selected controller adapter is unavailable."));
+    if (*command == Data::ControllerControlCommand::EnterConfigurationMode)
+        return beginControllerStartup(provider, provider->connectionSnapshot());
+
+    Data::ControllerControlRequest request;
+    request.command = *command;
+    return executeControllerControl(scope, request);
 }
 
 Utils::Result<> WorkbenchController::connectSelectedController()
@@ -1794,6 +1900,7 @@ void WorkbenchController::refresh()
         return;
     refreshProjects();
     refreshDevices();
+    refreshControllerConnectionPresentation();
 }
 
 void WorkbenchController::shutdown()
@@ -1805,6 +1912,7 @@ void WorkbenchController::shutdown()
         disconnect(connection);
     m_connections.clear();
     m_controllerAutoAcquireStates.clear();
+    m_controllerStartupStates.clear();
     m_controllerCleanupStates.clear();
     m_treeModel.setDeviceDropHandler({});
     m_treeModel.clear();
@@ -1918,6 +2026,7 @@ void WorkbenchController::watchControllerConnectionProvider(Core::Provider *prov
     m_controllerConnectionProviderEpochs
         .insert(connectionProvider, m_nextControllerConnectionProviderEpoch);
     m_controllerAutoAcquireStates.remove(connectionProvider);
+    m_controllerStartupStates.remove(connectionProvider);
     m_controllerCleanupStates.remove(connectionProvider);
     for (const QMetaObject::Connection &connection :
          {connect(
@@ -2023,6 +2132,16 @@ void WorkbenchController::handleOptionalAvailabilityChanged()
     refreshOptionalProviders();
 }
 
+void WorkbenchController::refreshControllerConnectionPresentation()
+{
+    QList<Data::ControllerConnectionSnapshot> snapshots;
+    for (Core::ControllerConnectionProvider *provider : controllerConnectionProviders()) {
+        if (provider && m_controllerConnectionProviderEpochs.contains(provider))
+            snapshots.append(provider->connectionSnapshot());
+    }
+    m_treeModel.setControllerConnections(snapshots);
+}
+
 void WorkbenchController::handleProjectAboutToBeRemoved(const Data::NodeId &projectId)
 {
     if (m_shuttingDown || projectId.isNull())
@@ -2037,6 +2156,11 @@ void WorkbenchController::handleProjectAboutToBeRemoved(const Data::NodeId &proj
             continue;
         }
         changed = true;
+        if (m_controllerStartupStates.remove(provider)) {
+            writeControllerOutput(
+                Tr::tr("Automatic controller startup was canceled because its project closed."),
+                ControllerOutputLevel::Warning);
+        }
         beginControllerCleanup(provider, snapshot);
     }
     changed = m_controllerConnectionSelections.removeIf(
@@ -2058,9 +2182,14 @@ void WorkbenchController::handleControllerConnectionChanged()
         = m_controllerCleanupStates.keys();
     for (Core::ControllerConnectionProvider *provider : cleanupProviders)
         scheduleControllerCleanup(provider);
+    const QList<Core::ControllerConnectionProvider *> startupProviders
+        = m_controllerStartupStates.keys();
+    for (Core::ControllerConnectionProvider *provider : startupProviders)
+        scheduleControllerStartup(provider);
     if (m_suppressControllerConnectionChanges)
         return;
 
+    refreshControllerConnectionPresentation();
     for (Core::ControllerConnectionProvider *provider : controllerConnectionProviders()) {
         if (!provider)
             continue;
@@ -2201,11 +2330,326 @@ void WorkbenchController::executeControllerAutoAcquire(
     }
 }
 
+QString WorkbenchController::controllerStartupUnavailableReason(
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionSnapshot &snapshot) const
+{
+    if (!provider)
+        return Tr::tr("The selected controller adapter is unavailable.");
+    if (m_controllerStartupStates.contains(provider))
+        return Tr::tr("Automatic controller startup is in progress.");
+
+    using Command = Data::ControllerControlCommand;
+    for (const Command command :
+         {Command::EnterConfigurationMode,
+          Command::DiscoverTopology,
+          Command::RestoreActivePackage,
+          Command::Start}) {
+        if (!provider->supportsControlCommand(command)) {
+            return Tr::tr(
+                "The controller does not support the complete automatic startup sequence.");
+        }
+    }
+
+    if (const QString reason
+        = controllerControlStateUnavailableReason(snapshot, Command::EnterConfigurationMode);
+        !reason.isEmpty()) {
+        return reason;
+    }
+    if (!snapshot.package || snapshot.package->activeSlot == Data::ControllerSlot::None
+        || !snapshot.package->activeGeneration || !snapshot.package->activeConfigurationId) {
+        return Tr::tr("No restorable active controller package is available.");
+    }
+    return {};
+}
+
+Utils::Result<> WorkbenchController::beginControllerStartup(
+    Core::ControllerConnectionProvider *provider, const Data::ControllerConnectionSnapshot &snapshot)
+{
+    const QString unavailableReason = controllerStartupUnavailableReason(provider, snapshot);
+    if (!unavailableReason.isEmpty())
+        return Utils::ResultError(unavailableReason);
+    QTC_ASSERT(
+        provider,
+        return Utils::ResultError(Tr::tr("The selected controller adapter is unavailable.")));
+    if (!snapshot.session || !snapshot.session->sessionId || !snapshot.session->bootId
+        || !snapshot.sessionGeneration) {
+        return Utils::ResultError(Tr::tr("The controller session identity is incomplete."));
+    }
+    const quint64 providerEpoch = m_controllerConnectionProviderEpochs.value(provider);
+    if (!providerEpoch)
+        return Utils::ResultError(Tr::tr("The controller adapter instance is unavailable."));
+
+    ControllerStartupState state;
+    state.providerEpoch = providerEpoch;
+    state.scope = snapshot.scope;
+    state.profileId = snapshot.profileId;
+    state.sessionGeneration = snapshot.sessionGeneration;
+    state.sessionId = snapshot.session->sessionId;
+    state.bootId = snapshot.session->bootId;
+    state.phase = ControllerStartupPhase::WaitingForConfiguration;
+    state.remainingPolls = controllerStartupMaximumPhasePolls;
+    m_controllerStartupStates.insert(provider, state);
+
+    writeControllerOutput(
+        Tr::tr(
+            "Starting controller: enter configuration, scan the bus, restore the active package, "
+            "then start runtime."));
+
+    Data::ControllerControlRequest request;
+    request.command = Data::ControllerControlCommand::EnterConfigurationMode;
+    const Utils::Result<> result = provider->executeControlCommand(request);
+    if (!result) {
+        m_controllerStartupStates.remove(provider);
+        return result;
+    }
+    scheduleControllerStartup(provider, controllerStartupPollIntervalMs);
+    emit controllerConnectionChanged();
+    return {};
+}
+
+void WorkbenchController::scheduleControllerStartup(
+    Core::ControllerConnectionProvider *provider, int delayMs)
+{
+    if (m_shuttingDown || !provider)
+        return;
+    auto state = m_controllerStartupStates.find(provider);
+    if (state == m_controllerStartupStates.end() || state->scheduled)
+        return;
+
+    state->scheduled = true;
+    const QPointer<Core::ControllerConnectionProvider> guardedProvider(provider);
+    const Data::ControllerConnectionScope expectedScope = state->scope;
+    const Data::NodeId expectedProfileId = state->profileId;
+    const quint64 expectedGeneration = state->sessionGeneration;
+    const quint64 expectedProviderEpoch = state->providerEpoch;
+    QTimer::singleShot(
+        qMax(0, delayMs),
+        this,
+        [this,
+         guardedProvider,
+         expectedScope,
+         expectedProfileId,
+         expectedGeneration,
+         expectedProviderEpoch] {
+            advanceControllerStartup(
+                guardedProvider,
+                expectedScope,
+                expectedProfileId,
+                expectedGeneration,
+                expectedProviderEpoch);
+        });
+}
+
+void WorkbenchController::advanceControllerStartup(
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionScope &expectedScope,
+    const Data::NodeId &expectedProfileId,
+    quint64 expectedGeneration,
+    quint64 expectedProviderEpoch)
+{
+    if (m_shuttingDown || !provider)
+        return;
+    auto state = m_controllerStartupStates.find(provider);
+    if (state == m_controllerStartupStates.end() || state->scope != expectedScope
+        || state->profileId != expectedProfileId || state->sessionGeneration != expectedGeneration
+        || state->providerEpoch != expectedProviderEpoch) {
+        return;
+    }
+    state->scheduled = false;
+
+    if (m_controllerConnectionProviderEpochs.value(provider) != expectedProviderEpoch) {
+        failControllerStartup(
+            provider, Tr::tr("The controller adapter instance changed during startup."));
+        return;
+    }
+
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (!controllerConnectionScopeIsValid(expectedScope) || snapshot.scope != expectedScope
+        || snapshot.profileId != expectedProfileId
+        || snapshot.sessionGeneration != expectedGeneration || !snapshot.session
+        || snapshot.session->sessionId != state->sessionId
+        || snapshot.session->bootId != state->bootId) {
+        failControllerStartup(
+            provider, Tr::tr("The controller session changed during automatic startup."));
+        return;
+    }
+    if (snapshot.state != Data::ControllerConnectionState::Connected
+        && snapshot.state != Data::ControllerConnectionState::Degraded) {
+        failControllerStartup(
+            provider, Tr::tr("The controller disconnected during automatic startup."));
+        return;
+    }
+    if (snapshot.mock || snapshot.readOnly || !snapshot.session->ownsControlLease
+        || snapshot.session->controlLeaseOwnerSessionId != snapshot.session->sessionId) {
+        failControllerStartup(
+            provider, Tr::tr("Exclusive controller control was lost during automatic startup."));
+        return;
+    }
+    if (state->remainingPolls <= 0) {
+        failControllerStartup(
+            provider, Tr::tr("Timed out while waiting for automatic controller startup."));
+        return;
+    }
+    --state->remainingPolls;
+
+    using Command = Data::ControllerControlCommand;
+    const Command expectedCommand = [phase = state->phase] {
+        switch (phase) {
+        case ControllerStartupPhase::WaitingForConfiguration:
+            return Command::EnterConfigurationMode;
+        case ControllerStartupPhase::WaitingForTopology:
+            return Command::DiscoverTopology;
+        case ControllerStartupPhase::WaitingForRestore:
+            return Command::RestoreActivePackage;
+        case ControllerStartupPhase::WaitingForRunning:
+            return Command::Start;
+        }
+        return Command::None;
+    }();
+    const Data::ControllerControlProgress &progress = snapshot.controlProgress;
+    if (progress.state == Data::ControllerControlState::Pending) {
+        if (progress.command != expectedCommand) {
+            failControllerStartup(
+                provider, Tr::tr("A different controller operation replaced automatic startup."));
+            return;
+        }
+        scheduleControllerStartup(provider, controllerStartupPollIntervalMs);
+        return;
+    }
+    if (progress.command == expectedCommand
+        && progress.state == Data::ControllerControlState::Failed) {
+        failControllerStartup(
+            provider,
+            progress.detail.isEmpty() ? Tr::tr("A controller startup step failed.")
+                                      : progress.detail);
+        return;
+    }
+
+    const bool expectedCommandSucceeded = progress.command == expectedCommand
+                                          && progress.state
+                                                 == Data::ControllerControlState::Succeeded;
+    const auto waitForSnapshot = [this, provider, &state] {
+        if (state->refreshCooldown <= 0) {
+            state->refreshCooldown = 5;
+            provider->refreshController();
+        } else {
+            --state->refreshCooldown;
+        }
+        scheduleControllerStartup(provider, controllerStartupPollIntervalMs);
+    };
+    const auto dispatch = [this,
+                           provider,
+                           &state,
+                           &snapshot](Command command, ControllerStartupPhase nextPhase) {
+        if (!provider->supportsControlCommand(command)) {
+            failControllerStartup(
+                provider,
+                Tr::tr("The controller does not support the complete automatic startup sequence."));
+            return;
+        }
+        if (const QString reason = controllerControlStateUnavailableReason(snapshot, command);
+            !reason.isEmpty()) {
+            failControllerStartup(provider, reason);
+            return;
+        }
+        state->phase = nextPhase;
+        state->remainingPolls = controllerStartupMaximumPhasePolls;
+        state->refreshCooldown = 0;
+        Data::ControllerControlRequest request;
+        request.command = command;
+        const Utils::Result<> result = provider->executeControlCommand(request);
+        if (!result) {
+            failControllerStartup(provider, result.error());
+            return;
+        }
+        scheduleControllerStartup(provider, controllerStartupPollIntervalMs);
+    };
+
+    if (!expectedCommandSucceeded) {
+        waitForSnapshot();
+        return;
+    }
+
+    const std::optional<Data::ControllerStateSummary> &controllerState = snapshot.controllerState;
+    switch (state->phase) {
+    case ControllerStartupPhase::WaitingForConfiguration:
+        if (!controllerState || !controllerState->ready
+            || controllerState->serviceState != Data::ControllerServiceState::Shutdown
+            || !snapshot.package
+            || snapshot.package->controllerState == Data::ControllerPackageState::Active) {
+            waitForSnapshot();
+            return;
+        }
+        dispatch(Command::DiscoverTopology, ControllerStartupPhase::WaitingForTopology);
+        return;
+    case ControllerStartupPhase::WaitingForTopology:
+        if (!snapshot.topology || snapshot.topology->result
+            || !snapshot.topology->respondingCount
+            || snapshot.topology->respondingCount != quint32(snapshot.topology->slaves.size())) {
+            waitForSnapshot();
+            return;
+        }
+        dispatch(Command::RestoreActivePackage, ControllerStartupPhase::WaitingForRestore);
+        return;
+    case ControllerStartupPhase::WaitingForRestore:
+        if (!controllerState
+            || controllerState->serviceState != Data::ControllerServiceState::OperationalSafe
+            || !controllerPackageIsActive(snapshot)) {
+            waitForSnapshot();
+            return;
+        }
+        dispatch(Command::Start, ControllerStartupPhase::WaitingForRunning);
+        return;
+    case ControllerStartupPhase::WaitingForRunning:
+        if (!controllerState || !controllerState->ready
+            || controllerState->serviceState != Data::ControllerServiceState::Running
+            || !controllerState->applicationActive || !controllerState->busOperational
+            || !(controllerState->ethercatAlStateBits & 0x08) || !controllerState->cycleCount
+            || !controllerState->expectedWorkingCounter
+            || controllerState->actualWorkingCounter != controllerState->expectedWorkingCounter
+            || controllerState->currentFaults || controllerState->latchedFaults) {
+            waitForSnapshot();
+            return;
+        }
+        finishControllerStartup(provider);
+        return;
+    }
+}
+
+void WorkbenchController::finishControllerStartup(Core::ControllerConnectionProvider *provider)
+{
+    if (!provider || !m_controllerStartupStates.remove(provider))
+        return;
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (snapshot.controllerState) {
+        writeControllerOutput(
+            Tr::tr("Controller startup completed: Running, WKC %1/%2, cycle %3.")
+                .arg(snapshot.controllerState->actualWorkingCounter)
+                .arg(snapshot.controllerState->expectedWorkingCounter)
+                .arg(snapshot.controllerState->cycleCount));
+    } else {
+        writeControllerOutput(Tr::tr("Controller startup completed."));
+    }
+    emit controllerConnectionChanged();
+}
+
+void WorkbenchController::failControllerStartup(
+    Core::ControllerConnectionProvider *provider, const QString &reason)
+{
+    if (!provider || !m_controllerStartupStates.remove(provider))
+        return;
+    writeControllerOutput(
+        Tr::tr("Controller startup failed: %1").arg(reason), ControllerOutputLevel::Error);
+    emit controllerConnectionChanged();
+}
+
 void WorkbenchController::beginControllerCleanup(
     Core::ControllerConnectionProvider *provider, const Data::ControllerConnectionSnapshot &snapshot)
 {
     if (m_shuttingDown || !provider)
         return;
+    m_controllerStartupStates.remove(provider);
     const quint64 providerEpoch = m_controllerConnectionProviderEpochs.value(provider);
     if (!providerEpoch)
         return;

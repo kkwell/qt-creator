@@ -307,6 +307,118 @@ static QString hexValue(quint64 value, int width)
     return QString("0x%1").arg(value, width, 16, QLatin1Char('0'));
 }
 
+static QString controllerConnectionStateName(Data::ControllerConnectionState state)
+{
+    using State = Data::ControllerConnectionState;
+    switch (state) {
+    case State::Disconnected:
+        return Tr::tr("Disconnected");
+    case State::Connecting:
+        return Tr::tr("Connecting");
+    case State::Handshaking:
+        return Tr::tr("Handshaking");
+    case State::Connected:
+        return Tr::tr("Connected");
+    case State::Degraded:
+        return Tr::tr("Degraded");
+    case State::Disconnecting:
+        return Tr::tr("Disconnecting");
+    case State::Failed:
+        return Tr::tr("Failed");
+    }
+    return Tr::tr("Unknown");
+}
+
+static QString controllerServiceStateName(Data::ControllerServiceState state)
+{
+    using State = Data::ControllerServiceState;
+    switch (state) {
+    case State::Unknown:
+        return Tr::tr("Unknown");
+    case State::Boot:
+        return Tr::tr("Boot");
+    case State::Configuring:
+        return Tr::tr("Configuring");
+    case State::SafeOperational:
+        return Tr::tr("Safe operational");
+    case State::OperationalSafe:
+        return Tr::tr("Operational safe");
+    case State::Running:
+        return Tr::tr("Running");
+    case State::Stopping:
+        return Tr::tr("Stopping");
+    case State::Fault:
+        return Tr::tr("Fault");
+    case State::Recovering:
+        return Tr::tr("Recovering");
+    case State::Shutdown:
+        return Tr::tr("Shutdown");
+    case State::Paused:
+        return Tr::tr("Paused");
+    }
+    return Tr::tr("Unknown");
+}
+
+static QString controllerAlStateName(quint32 alState)
+{
+    if (alState & 0x08)
+        return Tr::tr("OP");
+    if (alState & 0x04)
+        return Tr::tr("SAFEOP");
+    if (alState & 0x02)
+        return Tr::tr("PREOP");
+    if (alState & 0x01)
+        return Tr::tr("INIT");
+    return hexValue(alState, 4);
+}
+
+static Data::NodeId actualBusGroupId(const Data::NodeId &masterId)
+{
+    return derivedNodeId(masterId.toString() + ":actual-bus");
+}
+
+static Data::NodeId actualBusSlaveId(
+    const Data::NodeId &masterId, const Data::ControllerTopologySlave &slave)
+{
+    return derivedNodeId(QStringLiteral("%1:actual-bus:%2:%3")
+                             .arg(masterId.toString())
+                             .arg(slave.position)
+                             .arg(slave.stationAddress));
+}
+
+static QString controllerTopologyFingerprint(
+    const QList<Data::ControllerConnectionSnapshot> &connections)
+{
+    QStringList scopes;
+    for (const Data::ControllerConnectionSnapshot &connection : connections) {
+        if ((connection.state != Data::ControllerConnectionState::Connected
+             && connection.state != Data::ControllerConnectionState::Degraded)
+            || !connection.topology) {
+            continue;
+        }
+        QStringList fields{
+            connection.scope.projectId.toString(),
+            connection.scope.masterId.toString(),
+            QString::number(connection.topology->respondingCount),
+            QString::number(connection.topology->result),
+        };
+        for (const Data::ControllerTopologySlave &slave : connection.topology->slaves) {
+            fields.append(QStringLiteral("%1:%2:%3:%4:%5:%6:%7:%8")
+                              .arg(slave.position)
+                              .arg(slave.stationAddress)
+                              .arg(slave.alState)
+                              .arg(slave.flags)
+                              .arg(slave.vendorId)
+                              .arg(slave.productCode)
+                              .arg(slave.revision)
+                              .arg(slave.serial));
+        }
+        scopes.append(fields.join(QLatin1Char('|')));
+    }
+    scopes.sort();
+    return scopes.join(QLatin1Char('\n'));
+}
+
 static QString dataTypeName(Data::EtherCATDataType type)
 {
     switch (type) {
@@ -1102,12 +1214,31 @@ void WorkbenchTreeModel::setProviderPresentations(
     updateProviderPresentation();
 }
 
+void WorkbenchTreeModel::setControllerConnections(
+    const QList<Data::ControllerConnectionSnapshot> &controllerConnections)
+{
+    if (m_controllerConnections == controllerConnections)
+        return;
+
+    const QString topologyFingerprint = controllerTopologyFingerprint(controllerConnections);
+    const bool topologyChanged = m_controllerTopologyFingerprint != topologyFingerprint;
+    m_controllerConnections = controllerConnections;
+    m_controllerTopologyFingerprint = topologyFingerprint;
+    if (topologyChanged) {
+        rebuild();
+        return;
+    }
+    updateProviderPresentation();
+}
+
 void WorkbenchTreeModel::clear()
 {
     m_projects.clear();
     m_devices.clear();
     m_activeProjectId = {};
     m_dropTargetMasterId = {};
+    m_controllerConnections.clear();
+    m_controllerTopologyFingerprint.clear();
     rebuild();
 }
 
@@ -1385,6 +1516,126 @@ void WorkbenchTreeModel::updateProviderPresentation()
     for (const Data::ProjectSnapshot &project : std::as_const(m_projects)) {
         if (!project.valid)
             applyInvalidProjectPresentation(findNode(project.id), project);
+    }
+
+    for (const Data::ControllerConnectionSnapshot &connection :
+         std::as_const(m_controllerConnections)) {
+        if (connection.state == Data::ControllerConnectionState::Disconnected
+            || connection.scope.projectId.isNull() || connection.scope.masterId.isNull()) {
+            continue;
+        }
+        Node *master = findNode(connection.scope.masterId);
+        if (!master || master->kind != Core::WorkbenchNodeKind::Master
+            || master->projectId != connection.scope.projectId) {
+            continue;
+        }
+
+        QString status
+            = Tr::tr("Controller %1").arg(controllerConnectionStateName(connection.state));
+        QString compactStatus = controllerConnectionStateName(connection.state);
+        const bool controllerStateIsLive = connection.state
+                                               == Data::ControllerConnectionState::Connected
+                                           || connection.state
+                                                  == Data::ControllerConnectionState::Degraded;
+        if (controllerStateIsLive && connection.controllerState) {
+            const Data::ControllerStateSummary &state = *connection.controllerState;
+            status = Tr::tr("Online | %1 / AL %2 | WKC %3/%4")
+                         .arg(
+                             controllerServiceStateName(state.serviceState),
+                             controllerAlStateName(state.ethercatAlStateBits))
+                         .arg(state.actualWorkingCounter)
+                         .arg(state.expectedWorkingCounter);
+            compactStatus = Tr::tr("Online %1 | WKC %2/%3")
+                                .arg(controllerServiceStateName(state.serviceState))
+                                .arg(state.actualWorkingCounter)
+                                .arg(state.expectedWorkingCounter);
+            appendPresentationDetail(
+                master, Tr::tr("Controller cycle counter: %1").arg(state.cycleCount));
+            appendPresentationDetail(
+                master,
+                state.distributedClocksLocked
+                    ? Tr::tr("Distributed Clocks locked; difference %1 ns.")
+                          .arg(state.distributedClockDifferenceNs)
+                    : Tr::tr("Distributed Clocks not locked; difference %1 ns.")
+                          .arg(state.distributedClockDifferenceNs));
+        }
+        appendPresentationStatus(master, status, compactStatus);
+        if (!connection.endpointSummary.isEmpty()) {
+            appendPresentationDetail(
+                master, Tr::tr("Controller endpoint: %1").arg(connection.endpointSummary));
+        }
+        if (connection.topology) {
+            appendPresentationDetail(
+                master,
+                Tr::tr(
+                    "Actual bus scan: %n responding device(s).",
+                    nullptr,
+                    int(connection.topology->respondingCount)));
+        }
+
+        StateMarker marker = StateMarker::Information;
+        if (connection.state == Data::ControllerConnectionState::Failed)
+            marker = StateMarker::Error;
+        else if (connection.state == Data::ControllerConnectionState::Degraded)
+            marker = StateMarker::Warning;
+        else if (
+            connection.state == Data::ControllerConnectionState::Connected
+            && connection.controllerState && connection.controllerState->ready
+            && !connection.controllerState->currentFaults
+            && !connection.controllerState->latchedFaults) {
+            marker = StateMarker::Healthy;
+        }
+        if (connection.controllerState
+            && (connection.controllerState->serviceState == Data::ControllerServiceState::Fault
+                || connection.controllerState->currentFaults
+                || connection.controllerState->latchedFaults)) {
+            marker = StateMarker::Error;
+        }
+        raiseMarker(master, marker);
+        master->issue = marker == StateMarker::Error;
+
+        for (Node *ancestor = master->parent; ancestor && ancestor != m_root.get();
+             ancestor = ancestor->parent) {
+            appendPresentationStatus(
+                ancestor,
+                Tr::tr("Controller %1").arg(controllerConnectionStateName(connection.state)),
+                controllerConnectionStateName(connection.state));
+            raiseMarker(ancestor, marker);
+            ancestor->issue = ancestor->issue || marker == StateMarker::Error;
+        }
+
+        if (!connection.topology)
+            continue;
+        Node *actualBus = findNode(actualBusGroupId(connection.scope.masterId));
+        if (actualBus) {
+            appendPresentationStatus(
+                actualBus,
+                Tr::tr("%n online device(s)", nullptr, int(connection.topology->respondingCount)),
+                Tr::tr("%n online", nullptr, int(connection.topology->respondingCount)));
+            raiseMarker(
+                actualBus, connection.topology->result ? StateMarker::Error : StateMarker::Healthy);
+            actualBus->issue = connection.topology->result != 0;
+        }
+        for (const Data::ControllerTopologySlave &slave : connection.topology->slaves) {
+            Node *actualSlave = findNode(actualBusSlaveId(connection.scope.masterId, slave));
+            if (!actualSlave)
+                continue;
+            appendPresentationStatus(
+                actualSlave,
+                Tr::tr("Online | AL %1").arg(controllerAlStateName(slave.alState)),
+                Tr::tr("AL %1").arg(controllerAlStateName(slave.alState)));
+            appendPresentationDetail(
+                actualSlave,
+                Tr::tr("Station %1; vendor %2; product %3; revision %4; serial %5.")
+                    .arg(hexValue(slave.stationAddress, 4))
+                    .arg(hexValue(slave.vendorId, 8))
+                    .arg(hexValue(slave.productCode, 8))
+                    .arg(hexValue(slave.revision, 8))
+                    .arg(hexValue(slave.serial, 8)));
+            raiseMarker(
+                actualSlave,
+                (slave.alState & 0x08) ? StateMarker::Healthy : StateMarker::Information);
+        }
     }
 
     if (m_diagnosticsSnapshot) {
@@ -1826,6 +2077,42 @@ void WorkbenchTreeModel::rebuild()
                                 m_diagnosticsProvider, Core::ProviderKind::Diagnostics),
                             optionalProviderCompactStatus(
                                 m_diagnosticsProvider, Core::ProviderKind::Diagnostics)));
+                    }
+                    const auto controllerConnection = std::find_if(
+                        m_controllerConnections.cbegin(),
+                        m_controllerConnections.cend(),
+                        [nodePointer,
+                         &project](const Data::ControllerConnectionSnapshot &connection) {
+                            return connection.scope.projectId == project.id
+                                   && connection.scope.masterId == nodePointer->id
+                                   && (connection.state == Data::ControllerConnectionState::Connected
+                                       || connection.state
+                                              == Data::ControllerConnectionState::Degraded)
+                                   && connection.topology.has_value();
+                        });
+                    if (controllerConnection != m_controllerConnections.cend()) {
+                        const Data::ControllerTopologySnapshot &topology
+                            = *controllerConnection->topology;
+                        auto actualBus = makeNode(
+                            nodePointer,
+                            actualBusGroupId(nodePointer->id),
+                            project.id,
+                            Core::WorkbenchNodeKind::Modules,
+                            Tr::tr("Actual bus"),
+                            Tr::tr("%n responding device(s)", nullptr, int(topology.respondingCount)),
+                            Tr::tr("%n responding", nullptr, int(topology.respondingCount)));
+                        Node *actualBusPointer = actualBus.get();
+                        for (const Data::ControllerTopologySlave &slave : topology.slaves) {
+                            actualBusPointer->children.push_back(makeNode(
+                                actualBusPointer,
+                                actualBusSlaveId(nodePointer->id, slave),
+                                project.id,
+                                Core::WorkbenchNodeKind::Module,
+                                Tr::tr("Bus device %1").arg(slave.position),
+                                Tr::tr("Online | AL %1").arg(controllerAlStateName(slave.alState)),
+                                Tr::tr("AL %1").arg(controllerAlStateName(slave.alState))));
+                        }
+                        nodePointer->children.push_back(std::move(actualBus));
                     }
                     if (slaveCount == 0) {
                         nodePointer->children.push_back(makeNode(

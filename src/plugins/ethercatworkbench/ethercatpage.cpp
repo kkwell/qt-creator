@@ -57,6 +57,71 @@ static QString syncManagerDirection(Data::SyncManagerDirection direction)
     return Tr::tr("Unknown");
 }
 
+static QString controllerConnectionStateName(Data::ControllerConnectionState state)
+{
+    using State = Data::ControllerConnectionState;
+    switch (state) {
+    case State::Disconnected:
+        return Tr::tr("Disconnected");
+    case State::Connecting:
+        return Tr::tr("Connecting");
+    case State::Handshaking:
+        return Tr::tr("Handshaking");
+    case State::Connected:
+        return Tr::tr("Connected");
+    case State::Degraded:
+        return Tr::tr("Degraded");
+    case State::Disconnecting:
+        return Tr::tr("Disconnecting");
+    case State::Failed:
+        return Tr::tr("Failed");
+    }
+    return Tr::tr("Unknown");
+}
+
+static QString controllerServiceStateName(Data::ControllerServiceState state)
+{
+    using State = Data::ControllerServiceState;
+    switch (state) {
+    case State::Unknown:
+        return Tr::tr("Unknown");
+    case State::Boot:
+        return Tr::tr("Boot");
+    case State::Configuring:
+        return Tr::tr("Configuring");
+    case State::SafeOperational:
+        return Tr::tr("Safe operational");
+    case State::OperationalSafe:
+        return Tr::tr("Operational safe");
+    case State::Running:
+        return Tr::tr("Running");
+    case State::Stopping:
+        return Tr::tr("Stopping");
+    case State::Fault:
+        return Tr::tr("Fault");
+    case State::Recovering:
+        return Tr::tr("Recovering");
+    case State::Shutdown:
+        return Tr::tr("Shutdown");
+    case State::Paused:
+        return Tr::tr("Paused");
+    }
+    return Tr::tr("Unknown");
+}
+
+static QString controllerAlStateName(quint32 alState)
+{
+    if (alState & 0x08)
+        return Tr::tr("OP");
+    if (alState & 0x04)
+        return Tr::tr("SAFEOP");
+    if (alState & 0x02)
+        return Tr::tr("PREOP");
+    if (alState & 0x01)
+        return Tr::tr("INIT");
+    return hexValue(alState, 4);
+}
+
 class AliasSpinBox final : public QSpinBox
 {
 public:
@@ -232,6 +297,13 @@ EtherCATPage::EtherCATPage(WorkbenchController *controller, QWidget *parent)
 
     connect(m_alias, &QSpinBox::editingFinished, this, &EtherCATPage::commitAlias);
     connect(m_masterTopology, &QPushButton::clicked, this, &EtherCATPage::showMasterTopology);
+    if (m_controller) {
+        connect(
+            m_controller,
+            &WorkbenchController::controllerConnectionChanged,
+            this,
+            &EtherCATPage::updateMasterPresentation);
+    }
     reset({}, {});
 }
 
@@ -275,18 +347,6 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
            Tr::tr("Control"),
            Tr::tr("Enabled")};
 
-    const QStringList cyclicFrameHeaders
-        = {Tr::tr("Frame"),
-           Tr::tr("Cmd"),
-           Tr::tr("Addr"),
-           Tr::tr("Len"),
-           Tr::tr("WC"),
-           Tr::tr("Sync Unit"),
-           Tr::tr("Cycle (ms)"),
-           Tr::tr("Utilization (%)"),
-           Tr::tr("Size / Duration (µs)"),
-           Tr::tr("Map Id")};
-
     const auto setTreePresentation = [this](const QString &name, const QString &description) {
         m_tree->setAccessibleName(name);
         m_tree->setAccessibleDescription(description);
@@ -294,26 +354,7 @@ void EtherCATPage::setContext(const Core::PropertyPageContext &context)
     };
 
     if (context.nodeKind == Core::WorkbenchNodeKind::Master && m_controller) {
-        const QList<Data::OfflineSlaveConfiguration> slaves
-            = m_controller->treeModel()->offlineSlavesForMaster(context.nodeId);
-        reset(
-            slaves.isEmpty() ? Tr::tr("No slaves are configured on this offline master.")
-                             : Tr::tr(
-                                   "Offline EtherCAT master with %n configured slave(s).",
-                                   nullptr,
-                                   slaves.size()),
-            cyclicFrameHeaders);
-        m_masterNetId->setText(Tr::tr("Not assigned (offline)"));
-        m_masterForm->show();
-        m_masterTopology->setEnabled(true);
-        m_masterFrameState->setText(
-            Tr::tr("Cyclic transfer frames are not generated: the offline phase-1 project has no "
-                   "runtime task, frame scheduler, or Sync Unit model."));
-        m_masterFrameState->show();
-        setTreePresentation(
-            Tr::tr("EtherCAT cyclic transfer frames"),
-            Tr::tr("The TwinCAT-style frame columns are shown, but no runtime frame rows are "
-                   "generated in the offline phase."));
+        updateMasterPresentation();
     } else if (context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave && slave) {
         reset(
             device ? Tr::tr(
@@ -439,6 +480,168 @@ void EtherCATPage::reset(
     m_tree->setColumnCount(qMax(1, headers.size()));
     m_tree->setHeaderLabels(headers);
     m_tree->setVisible(!headers.isEmpty());
+}
+
+void EtherCATPage::updateMasterPresentation()
+{
+    if (!m_controller || m_context.nodeKind != Core::WorkbenchNodeKind::Master)
+        return;
+
+    const QStringList offlineHeaders
+        = {Tr::tr("Frame"),
+           Tr::tr("Cmd"),
+           Tr::tr("Addr"),
+           Tr::tr("Len"),
+           Tr::tr("WC"),
+           Tr::tr("Sync Unit"),
+           Tr::tr("Cycle (ms)"),
+           Tr::tr("Utilization (%)"),
+           Tr::tr("Size / Duration (µs)"),
+           Tr::tr("Map Id")};
+    const Data::ControllerConnectionScope scope{m_context.projectId, m_context.nodeId};
+    const Data::ControllerConnectionSnapshot snapshot = m_controller->controllerConnectionSnapshot(
+        scope);
+    const bool controllerSessionVisible = snapshot.scope == scope
+                                          && snapshot.state
+                                                 != Data::ControllerConnectionState::Disconnected;
+    const bool controllerStateIsLive = snapshot.state == Data::ControllerConnectionState::Connected
+                                       || snapshot.state
+                                              == Data::ControllerConnectionState::Degraded;
+    if (!controllerSessionVisible) {
+        const QList<Data::OfflineSlaveConfiguration> slaves
+            = m_controller->treeModel()->offlineSlavesForMaster(m_context.nodeId);
+        reset(
+            slaves.isEmpty() ? Tr::tr("No slaves are configured on this offline master.")
+                             : Tr::tr(
+                                   "Offline EtherCAT master with %n configured slave(s).",
+                                   nullptr,
+                                   slaves.size()),
+            offlineHeaders);
+        m_masterNetId->setText(Tr::tr("Not assigned (offline)"));
+        m_masterNetId->setAccessibleDescription(
+            Tr::tr("An ADS NetId is not assigned to the offline phase-1 master."));
+        m_masterNetId->setToolTip(m_masterNetId->accessibleDescription());
+        m_masterForm->show();
+        m_masterTopology->setEnabled(true);
+        m_masterFrameState->setText(
+            Tr::tr(
+                "Cyclic transfer frames are not generated: the offline phase-1 project has no "
+                "runtime task, frame scheduler, or Sync Unit model."));
+        m_masterFrameState->show();
+        m_tree->setAccessibleName(Tr::tr("EtherCAT cyclic transfer frames"));
+        m_tree->setAccessibleDescription(
+            Tr::tr(
+                "The TwinCAT-style frame columns are shown, but no runtime frame rows are "
+                "generated in the offline phase."));
+        m_tree->setToolTip(m_tree->accessibleDescription());
+        return;
+    }
+
+    QString summary = Tr::tr("Controller %1").arg(controllerConnectionStateName(snapshot.state));
+    if (controllerStateIsLive && snapshot.controllerState) {
+        const Data::ControllerStateSummary &state = *snapshot.controllerState;
+        summary = Tr::tr("Online EtherCAT master — %1, AL %2, WKC %3/%4.")
+                      .arg(
+                          controllerServiceStateName(state.serviceState),
+                          controllerAlStateName(state.ethercatAlStateBits))
+                      .arg(state.actualWorkingCounter)
+                      .arg(state.expectedWorkingCounter);
+    }
+    if (snapshot.topology) {
+        summary += Tr::tr(
+            " Last scan: %n responding device(s).",
+            nullptr,
+            int(snapshot.topology->respondingCount));
+    }
+    reset(summary, {Tr::tr("Live metric"), Tr::tr("Value"), Tr::tr("Source")});
+    m_masterNetId->setText(
+        snapshot.endpointSummary.isEmpty() ? Tr::tr("Not available") : snapshot.endpointSummary);
+    m_masterNetId->setAccessibleDescription(Tr::tr("Connected controller Product API endpoint."));
+    m_masterNetId->setToolTip(m_masterNetId->accessibleDescription());
+    m_masterForm->show();
+    m_masterTopology->setEnabled(true);
+    m_masterFrameState->show();
+    m_tree->setAccessibleName(Tr::tr("Live EtherCAT cyclic telemetry"));
+    const QString telemetryDescription = Tr::tr(
+        "Live aggregate cyclic telemetry from controller protocol v1.10. The protocol does not "
+        "expose individual cyclic frame descriptors.");
+    m_tree->setAccessibleDescription(telemetryDescription);
+    m_tree->setToolTip(telemetryDescription);
+
+    if (!controllerStateIsLive || !snapshot.controllerState) {
+        m_masterFrameState->setText(
+            controllerStateIsLive
+                ? Tr::tr("The controller is connected; waiting for its authoritative runtime state.")
+                : Tr::tr("Live cyclic telemetry is unavailable while the controller is %1.")
+                      .arg(controllerConnectionStateName(snapshot.state)));
+        addControllerTelemetryRow(
+            Tr::tr("Connection"),
+            controllerConnectionStateName(snapshot.state),
+            Tr::tr("Controller session"));
+        return;
+    }
+
+    const Data::ControllerStateSummary &state = *snapshot.controllerState;
+    if (state.serviceState == Data::ControllerServiceState::Running) {
+        m_masterFrameState->setText(
+            Tr::tr(
+                "Live cyclic transfer is running. Cycle counter %1, WKC %2/%3. Protocol v1.10 "
+                "provides aggregate cyclic evidence but not individual frame descriptors.")
+                .arg(state.cycleCount)
+                .arg(state.actualWorkingCounter)
+                .arg(state.expectedWorkingCounter));
+    } else if (state.busOperational && state.expectedWorkingCounter) {
+        m_masterFrameState->setText(
+            Tr::tr(
+                "The EtherCAT bus is operational while the runtime is %1. Cycle counter %2, "
+                "WKC %3/%4.")
+                .arg(controllerServiceStateName(state.serviceState))
+                .arg(state.cycleCount)
+                .arg(state.actualWorkingCounter)
+                .arg(state.expectedWorkingCounter));
+    } else {
+        m_masterFrameState->setText(
+            Tr::tr("The controller is online in %1; cyclic process-data transfer is not active.")
+                .arg(controllerServiceStateName(state.serviceState)));
+    }
+
+    addControllerTelemetryRow(
+        Tr::tr("Cycle counter"), QString::number(state.cycleCount), Tr::tr("Controller state push"));
+    addControllerTelemetryRow(
+        Tr::tr("Working counter"),
+        Tr::tr("%1 / %2").arg(state.actualWorkingCounter).arg(state.expectedWorkingCounter),
+        Tr::tr("Controller state push"));
+    addControllerTelemetryRow(
+        Tr::tr("EtherCAT AL state"),
+        Tr::tr("%1 (%2)").arg(
+            controllerAlStateName(state.ethercatAlStateBits),
+            hexValue(state.ethercatAlStateBits, 4)),
+        Tr::tr("Controller state push"));
+    addControllerTelemetryRow(
+        Tr::tr("Bus operational"),
+        state.busOperational ? Tr::tr("Yes") : Tr::tr("No"),
+        Tr::tr("Controller state push"));
+    addControllerTelemetryRow(
+        Tr::tr("Distributed Clocks"),
+        state.distributedClocksLocked
+            ? Tr::tr("Locked — difference %1 ns").arg(state.distributedClockDifferenceNs)
+            : Tr::tr("Not locked — difference %1 ns").arg(state.distributedClockDifferenceNs),
+        Tr::tr("Controller state push"));
+}
+
+void EtherCATPage::addControllerTelemetryRow(
+    const QString &metric, const QString &value, const QString &source)
+{
+    auto item = new QTreeWidgetItem({metric, value, source});
+    for (int column = 0; column < item->columnCount(); ++column) {
+        const QString displayed = item->text(column);
+        const QString description
+            = Tr::tr("%1. Current value: %2. Source: %3.").arg(metric, value, source);
+        item->setData(column, Qt::AccessibleTextRole, displayed);
+        item->setData(column, Qt::AccessibleDescriptionRole, description);
+        item->setData(column, Qt::ToolTipRole, description);
+    }
+    m_tree->addTopLevelItem(item);
 }
 
 void EtherCATPage::addSyncManagerRow(const QStringList &values)

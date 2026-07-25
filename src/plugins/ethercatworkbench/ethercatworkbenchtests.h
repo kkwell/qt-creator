@@ -95,6 +95,7 @@ private slots:
     void testControllerCommunicationSelectionAndScope();
     void testControllerCommunicationPagePresentation();
     void testControllerCommunicationControlWorkflow();
+    void testControllerQuickStartupAndLivePresentation();
     void testControllerCommunicationAutoAcquire();
     void testControllerCommunicationAutoAcquireAcrossProjects();
     void testControllerProjectRemovalSafetyCleanup();

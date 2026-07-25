@@ -87,6 +87,8 @@ public:
         Data::DiagnosticsStreamState diagnosticsState,
         const Data::DiagnosticsRequest &diagnosticsRequest,
         const std::optional<Data::DiagnosticsSnapshot> &diagnosticsSnapshot);
+    void setControllerConnections(
+        const QList<Data::ControllerConnectionSnapshot> &controllerConnections);
     void clear();
 
     QModelIndex indexForNodeId(const Data::NodeId &nodeId, int column = 0) const;
@@ -127,6 +129,8 @@ private:
     Data::DiagnosticsStreamState m_diagnosticsState = Data::DiagnosticsStreamState::Stopped;
     Data::DiagnosticsRequest m_diagnosticsRequest;
     std::optional<Data::DiagnosticsSnapshot> m_diagnosticsSnapshot;
+    QList<Data::ControllerConnectionSnapshot> m_controllerConnections;
+    QString m_controllerTopologyFingerprint;
 };
 
 } // namespace EtherCAT::Workbench::Internal

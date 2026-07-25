@@ -142,6 +142,9 @@ public:
     QString quickControllerControlUnavailableReason(
         const Data::ControllerConnectionScope &scope,
         ControllerQuickControlAction action) const;
+    bool controllerStartupInProgress(const Data::ControllerConnectionScope &scope) const;
+    Utils::Result<> executeQuickControllerControl(
+        const Data::ControllerConnectionScope &scope, ControllerQuickControlAction action);
     Utils::Result<> connectSelectedController();
     Utils::Result<> disconnectSelectedController();
     Utils::Result<> refreshSelectedController();
@@ -208,6 +211,10 @@ private:
     static constexpr int controllerCleanupMaximumWaitMs = 60000;
     static constexpr int controllerCleanupMaximumPolls
         = controllerCleanupMaximumWaitMs / controllerCleanupPollIntervalMs;
+    static constexpr int controllerStartupPollIntervalMs = 100;
+    static constexpr int controllerStartupMaximumPhaseWaitMs = 60000;
+    static constexpr int controllerStartupMaximumPhasePolls = controllerStartupMaximumPhaseWaitMs
+                                                              / controllerStartupPollIntervalMs;
 
     struct ControllerAutoAcquireState
     {
@@ -217,6 +224,27 @@ private:
         quint64 sessionGeneration = 0;
         bool queued = false;
         bool attempted = false;
+    };
+
+    enum class ControllerStartupPhase {
+        WaitingForConfiguration,
+        WaitingForTopology,
+        WaitingForRestore,
+        WaitingForRunning,
+    };
+
+    struct ControllerStartupState
+    {
+        quint64 providerEpoch = 0;
+        Data::ControllerConnectionScope scope;
+        Data::NodeId profileId;
+        quint64 sessionGeneration = 0;
+        quint64 sessionId = 0;
+        quint64 bootId = 0;
+        ControllerStartupPhase phase = ControllerStartupPhase::WaitingForConfiguration;
+        int remainingPolls = 0;
+        int refreshCooldown = 0;
+        bool scheduled = false;
     };
 
     enum class ControllerCleanupPhase {
@@ -256,6 +284,7 @@ private:
     void handleOptionalAvailabilityChanged();
     void handleProjectAboutToBeRemoved(const Data::NodeId &projectId);
     void handleControllerConnectionChanged();
+    void refreshControllerConnectionPresentation();
     void scheduleControllerAutoAcquire();
     void executeControllerAutoAcquire(
         Core::ControllerConnectionProvider *provider,
@@ -263,6 +292,21 @@ private:
         const Data::NodeId &expectedProfileId,
         quint64 expectedGeneration,
         quint64 expectedProviderEpoch);
+    QString controllerStartupUnavailableReason(
+        Core::ControllerConnectionProvider *provider,
+        const Data::ControllerConnectionSnapshot &snapshot) const;
+    Utils::Result<> beginControllerStartup(
+        Core::ControllerConnectionProvider *provider,
+        const Data::ControllerConnectionSnapshot &snapshot);
+    void scheduleControllerStartup(Core::ControllerConnectionProvider *provider, int delayMs = 0);
+    void advanceControllerStartup(
+        Core::ControllerConnectionProvider *provider,
+        const Data::ControllerConnectionScope &expectedScope,
+        const Data::NodeId &expectedProfileId,
+        quint64 expectedGeneration,
+        quint64 expectedProviderEpoch);
+    void finishControllerStartup(Core::ControllerConnectionProvider *provider);
+    void failControllerStartup(Core::ControllerConnectionProvider *provider, const QString &reason);
     void beginControllerCleanup(
         Core::ControllerConnectionProvider *provider,
         const Data::ControllerConnectionSnapshot &snapshot);
@@ -276,6 +320,9 @@ private:
     void finishControllerCleanup(Core::ControllerConnectionProvider *provider);
     void failControllerCleanup(Core::ControllerConnectionProvider *provider, const QString &reason);
     bool controllerCleanupBindingIsRetained(const Data::ControllerConnectionScope &scope) const;
+    static std::optional<ControllerConnectionSelection> automaticControllerConnectionSelection(
+        const Data::ControllerConnectionScope &scope,
+        const QList<Core::ControllerConnectionProvider *> &providers);
     bool controllerConnectionScopeIsValid(const Data::ControllerConnectionScope &scope) const;
     QString controllerControlCommonUnavailableReason(
         const Data::ControllerConnectionScope &scope,
@@ -300,6 +347,7 @@ private:
     QHash<Core::ControllerConnectionProvider *, quint64> m_controllerConnectionProviderEpochs;
     QHash<Core::ControllerConnectionProvider *, ControllerAutoAcquireState>
         m_controllerAutoAcquireStates;
+    QHash<Core::ControllerConnectionProvider *, ControllerStartupState> m_controllerStartupStates;
     QHash<Core::ControllerConnectionProvider *, ControllerCleanupState> m_controllerCleanupStates;
     QHash<Core::ControllerConnectionProvider *, QString> m_controllerOutputFingerprints;
     quint64 m_nextControllerConnectionProviderEpoch = 0;
