@@ -48435,6 +48435,205 @@ What do you want to do?</source>
     </message>
 </context>
 <context>
+    <name>QtC::EtherCATAutomationGateway</name>
+    <message>
+        <source>Automation Gateway</source>
+        <translation>自动化网关</translation>
+    </message>
+    <message>
+        <source>EtherCAT Controller</source>
+        <translation>EtherCAT 控制器</translation>
+    </message>
+    <message>
+        <source>EtherCAT Automation Gateway settings</source>
+        <translation>EtherCAT 自动化网关设置</translation>
+    </message>
+    <message>
+        <source>Enable loopback automation service</source>
+        <translation>启用本机回环自动化服务</translation>
+    </message>
+    <message>
+        <source>Enable EtherCAT Automation Gateway</source>
+        <translation>启用 EtherCAT 自动化网关</translation>
+    </message>
+    <message>
+        <source>Gateway loopback address</source>
+        <translation>网关回环地址</translation>
+    </message>
+    <message>
+        <source>MCP loopback port</source>
+        <translation>MCP 回环端口</translation>
+    </message>
+    <message>
+        <source>REST loopback port</source>
+        <translation>REST 回环端口</translation>
+    </message>
+    <message>
+        <source>Gateway runtime state</source>
+        <translation>网关运行状态</translation>
+    </message>
+    <message>
+        <source>Actual MCP endpoint</source>
+        <translation>实际 MCP 端点</translation>
+    </message>
+    <message>
+        <source>Actual REST endpoint</source>
+        <translation>实际 REST 端点</translation>
+    </message>
+    <message>
+        <source>Gateway error information</source>
+        <translation>网关错误信息</translation>
+    </message>
+    <message>
+        <source>Gateway safety boundary</source>
+        <translation>网关安全边界</translation>
+    </message>
+    <message>
+        <source>Automatic (0)</source>
+        <translation>自动分配 (0)</translation>
+    </message>
+    <message>
+        <source>Safety boundary: this service is loopback-only, Mock-only, and read-only. It cannot connect, acquire a lease, scan, configure, deploy, or command motion.</source>
+        <translation>安全边界：此服务仅限本机回环、仅限 Mock 且只读。它不能连接控制器、取得租约、扫描、配置、部署或执行运动命令。</translation>
+    </message>
+    <message>
+        <source>Loopback address:</source>
+        <translation>回环地址：</translation>
+    </message>
+    <message>
+        <source>MCP port:</source>
+        <translation>MCP 端口：</translation>
+    </message>
+    <message>
+        <source>REST port:</source>
+        <translation>REST 端口：</translation>
+    </message>
+    <message>
+        <source>Runtime state:</source>
+        <translation>运行状态：</translation>
+    </message>
+    <message>
+        <source>MCP endpoint:</source>
+        <translation>MCP 端点：</translation>
+    </message>
+    <message>
+        <source>REST endpoint:</source>
+        <translation>REST 端点：</translation>
+    </message>
+    <message>
+        <source>Last error:</source>
+        <translation>最近错误：</translation>
+    </message>
+    <message>
+        <source>Unavailable</source>
+        <translation>不可用</translation>
+    </message>
+    <message>
+        <source>Stopped</source>
+        <translation>已停止</translation>
+    </message>
+    <message>
+        <source>Starting</source>
+        <translation>正在启动</translation>
+    </message>
+    <message>
+        <source>Running</source>
+        <translation>正在运行</translation>
+    </message>
+    <message>
+        <source>Stopping</source>
+        <translation>正在停止</translation>
+    </message>
+    <message>
+        <source>Failed</source>
+        <translation>失败</translation>
+    </message>
+    <message>
+        <source>Not listening</source>
+        <translation>未监听</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <translation>无</translation>
+    </message>
+    <message>
+        <source>The MCP port must be between 0 and 65535.</source>
+        <translation>MCP 端口必须介于 0 到 65535 之间。</translation>
+    </message>
+    <message>
+        <source>The REST port must be between 0 and 65535.</source>
+        <translation>REST 端口必须介于 0 到 65535 之间。</translation>
+    </message>
+    <message>
+        <source>MCP and REST ports must differ when both are non-zero.</source>
+        <translation>当 MCP 和 REST 端口均非零时，两者必须不同。</translation>
+    </message>
+    <message>
+        <source>IDE settings are unavailable.</source>
+        <translation>IDE 设置不可用。</translation>
+    </message>
+    <message>
+        <source>The stored Gateway port settings are invalid.</source>
+        <translation>已保存的网关端口设置无效。</translation>
+    </message>
+    <message>
+        <source>The Gateway settings could not be saved.</source>
+        <translation>无法保存网关设置。</translation>
+    </message>
+    <message>
+        <source>Safe settings could not be persisted: %1</source>
+        <translation>无法持久化安全设置：%1</translation>
+    </message>
+    <message>
+        <source>The IDE AutomationService is unavailable.</source>
+        <translation>IDE AutomationService 不可用。</translation>
+    </message>
+    <message>
+        <source>Stopped; both loopback listeners were released.</source>
+        <translation>已停止；两个回环监听器均已释放。</translation>
+    </message>
+    <message>
+        <source>Disable the running Gateway before changing its ports.</source>
+        <translation>更改端口前请先禁用正在运行的网关。</translation>
+    </message>
+    <message>
+        <source>Could not start the loopback listeners: %1</source>
+        <translation>无法启动回环监听器：%1</translation>
+    </message>
+    <message>
+        <source>The listeners were stopped because settings could not be saved: %1</source>
+        <translation>因无法保存设置，监听器已停止：%1</translation>
+    </message>
+    <message>
+        <source>Listening on MCP %1 and REST %2 (Mock-only, read-only).</source>
+        <translation>正在监听 MCP %1 和 REST %2（仅限 Mock、只读）。</translation>
+    </message>
+    <message>
+        <source>Safe disabled state could not be persisted: %1</source>
+        <translation>无法持久化安全禁用状态：%1</translation>
+    </message>
+    <message>
+        <source>MCP</source>
+        <translation>MCP</translation>
+    </message>
+    <message>
+        <source>REST</source>
+        <translation>REST</translation>
+    </message>
+    <message>
+        <source>loopback</source>
+        <translation>回环</translation>
+    </message>
+    <message>
+        <source>Mock-only</source>
+        <translation>仅限 Mock</translation>
+    </message>
+    <message>
+        <source>read-only</source>
+        <translation>只读</translation>
+    </message>
+</context>
+<context>
     <name>QtC::EtherCATCore</name>
     <message>
         <source>EtherCAT</source>

@@ -1,26 +1,42 @@
 // Copyright (C) 2026 Kvell
 
 #include "ethercatautomationgatewayconstants.h"
-#include "gatewayserver.h"
+#include "ethercatautomationgatewaytr.h"
+#include "gatewayruntime.h"
+#include "gatewaysettingspage.h"
 #ifdef WITH_TESTS
 #include "ethercatautomationgatewaytests.h"
 #endif
 
+#include <coreplugin/dialogs/ioptionspage.h>
 #include <coreplugin/icore.h>
-#include <coreplugin/messagemanager.h>
 
 #include <ethercatcore/automationservice.h>
 
 #include <extensionsystem/iplugin.h>
 #include <extensionsystem/pluginmanager.h>
 
-#include <utils/qtcsettings.h>
+#include <projectexplorer/projectexplorer.h>
 
-#include <QHostAddress>
+#include <utils/id.h>
+#include <utils/outputformat.h>
 
 #include <memory>
 
 namespace EtherCAT::AutomationGateway::Internal {
+
+static void writeGatewayEvent(const GatewayRuntimeEvent &event)
+{
+    const Utils::Id channelId(Constants::CONTROLLER_OUTPUT_CHANNEL_ID);
+    const Utils::OutputFormat format = event.kind == GatewayRuntimeEventKind::Failed
+                                           ? Utils::ErrorMessageFormat
+                                           : Utils::NormalMessageFormat;
+    const QString message = QString("[AI Gateway] %1\n").arg(event.message);
+    ProjectExplorer::ProjectExplorerPlugin::postApplicationOutput(
+        channelId, Tr::tr("EtherCAT Controller"), message, format);
+    if (event.kind == GatewayRuntimeEventKind::Failed)
+        ProjectExplorer::ProjectExplorerPlugin::showApplicationOutput(channelId);
+}
 
 class EtherCATAutomationGatewayPlugin final : public ExtensionSystem::IPlugin
 {
@@ -32,32 +48,15 @@ public:
     {
         Core::AutomationService *automation
             = ExtensionSystem::PluginManager::getObject<Core::AutomationService>();
-        if (!automation) {
-            ::Core::MessageManager::writeDisrupting(
-                "EtherCAT Automation Gateway has no IDE AutomationService.");
-            return;
-        }
-
-        m_server = std::make_unique<GatewayServer>(automation, true);
-        Utils::QtcSettings *settings = ::Core::ICore::settings();
-        settings->beginGroup(Constants::SETTINGS_GROUP);
-        const bool enabled = settings->value(Constants::SETTINGS_ENABLED, false).toBool();
-        const quint16 mcpPort
-            = settings->value(Constants::SETTINGS_MCP_PORT, Constants::DEFAULT_MCP_PORT)
-                  .value<quint16>();
-        const quint16 restPort
-            = settings->value(Constants::SETTINGS_REST_PORT, Constants::DEFAULT_REST_PORT)
-                  .value<quint16>();
-        settings->endGroup();
-
-        if (enabled) {
-            const Utils::Result<> started
-                = m_server->start(QHostAddress::LocalHost, mcpPort, restPort);
-            if (!started) {
-                ::Core::MessageManager::writeDisrupting(
-                    QString("EtherCAT Automation Gateway did not start: %1").arg(started.error()));
-            }
-        }
+        m_runtime = std::make_unique<GatewayRuntimeController>(
+            automation, ::Core::ICore::settings(), true);
+        connect(
+            m_runtime.get(),
+            &GatewayRuntimeController::eventOccurred,
+            this,
+            &writeGatewayEvent);
+        m_settingsPage = createGatewaySettingsPage(m_runtime.get());
+        m_runtime->startFromStoredConfiguration();
 
 #ifdef WITH_TESTS
         addTest<EtherCATAutomationGatewayTests>();
@@ -66,12 +65,16 @@ public:
 
     ShutdownFlag aboutToShutdown() final
     {
-        m_server.reset();
+        m_settingsPage.reset();
+        if (m_runtime)
+            m_runtime->shutdown();
+        m_runtime.reset();
         return SynchronousShutdown;
     }
 
 private:
-    std::unique_ptr<GatewayServer> m_server;
+    std::unique_ptr<GatewayRuntimeController> m_runtime;
+    std::unique_ptr<::Core::IOptionsPage> m_settingsPage;
 };
 
 } // namespace EtherCAT::AutomationGateway::Internal

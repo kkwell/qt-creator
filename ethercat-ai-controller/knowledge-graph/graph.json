@@ -1,10 +1,10 @@
 {
   "graphVersion": 1,
-  "updatedAt": "2026-07-25T12:00:00Z",
+  "updatedAt": "2026-07-25T16:00:00Z",
   "baseline": {
     "repository": "qt-creator",
     "branch": "embed-labs",
-    "commit": "857320a7e2018974fb702b32d92361fcd4dee635",
+    "commit": "94453831bef3f97ca264832277ea725ed17785a2",
     "remoteImported": false,
     "hardwareContacted": false
   },
@@ -159,6 +159,50 @@
       "failed": 0,
       "environment": "macOS-arm64-offscreen-loopback",
       "hardwareVerified": false
+    },
+    {
+      "id": "evidence.ide-gateway-002.qt",
+      "type": "test-evidence",
+      "status": "passed",
+      "suite": "EtherCATAutomationGateway",
+      "passed": 15,
+      "failed": 0,
+      "environment": "macOS-arm64-offscreen-loopback",
+      "hardwareVerified": false
+    },
+    {
+      "id": "ISSUE-IDE-AUTOMATION-GATEWAY-002",
+      "type": "issue",
+      "status": "implemented-offline",
+      "title": "Expose transactional IDE Gateway settings and process acceptance",
+      "commitRef": "SELF",
+      "scopeRoot": "src/plugins/ethercatautomationgateway",
+      "realHardwareAllowed": false,
+      "acceptanceOwnerThread": "019f690f-8a0a-7002-a272-38f7b13e853e"
+    },
+    {
+      "id": "gateway.ide.listener-runtime",
+      "type": "capability",
+      "status": "implemented-offline",
+      "pluginEnabledByDefault": true,
+      "listenerDefaultEnabled": false,
+      "loopbackOnly": true,
+      "mockOnly": true,
+      "readOnly": true,
+      "secondEthercatStateMachine": false,
+      "hardwareContacted": false
+    },
+    {
+      "id": "evidence.ide-gateway.process-probe",
+      "type": "test-evidence",
+      "status": "passed",
+      "transport": [
+        "mcp-streamable-http",
+        "rest"
+      ],
+      "clientOnly": true,
+      "providerControlCalls": 0,
+      "hardwareVerified": false
     }
   ],
   "edges": [
@@ -256,6 +300,36 @@
       "from": "ISSUE-IDE-AUTOMATION-GATEWAY-001",
       "relation": "qualified-by",
       "to": "evidence.ide-gateway.qt"
+    },
+    {
+      "from": "ISSUE-IDE-AUTOMATION-GATEWAY-001",
+      "relation": "advanced-by",
+      "to": "ISSUE-IDE-AUTOMATION-GATEWAY-002"
+    },
+    {
+      "from": "ISSUE-IDE-AUTOMATION-GATEWAY-002",
+      "relation": "implements",
+      "to": "gateway.ide.listener-runtime"
+    },
+    {
+      "from": "gateway.ide.listener-runtime",
+      "relation": "serves",
+      "to": "protocol.controller-tools.v1"
+    },
+    {
+      "from": "gateway.ide.listener-runtime",
+      "relation": "reads",
+      "to": "service.ide-automation-snapshot"
+    },
+    {
+      "from": "ISSUE-IDE-AUTOMATION-GATEWAY-002",
+      "relation": "qualified-by",
+      "to": "evidence.ide-gateway-002.qt"
+    },
+    {
+      "from": "ISSUE-IDE-AUTOMATION-GATEWAY-002",
+      "relation": "qualified-by",
+      "to": "evidence.ide-gateway.process-probe"
     }
   ],
   "nextIssue": null

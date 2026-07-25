@@ -2,9 +2,12 @@
 
 ## Issue and evidence boundary
 
-`ISSUE-IDE-AUTOMATION-GATEWAY-001` adds the first automation boundary inside
-the Embed Labs IDE. Its implementation baseline is
-`857320a7e2018974fb702b32d92361fcd4dee635`.
+`ISSUE-IDE-AUTOMATION-GATEWAY-001` added the first automation boundary inside
+the Embed Labs IDE. `ISSUE-IDE-AUTOMATION-GATEWAY-002` makes that plugin
+discoverable in the product, adds an explicit runtime listener transaction and
+settings page, and adds a real loopback process-level client probe. The Phase-2
+implementation baseline is
+`94453831bef3f97ca264832277ea725ed17785a2`.
 
 This issue is offline and Mock-only. It does not connect a controller, acquire
 a lease, scan a bus, apply configuration, deploy a package, start a task, or
@@ -50,11 +53,43 @@ The contract versions are:
 - REST description: OpenAPI `3.1.1`
 - artifact envelope: `controller.embed-labs.dev/v1`
 
-The plugin manifest and its listeners are disabled by default. When explicitly
-enabled, the service binds only IPv4 loopback. MCP and REST use separate
-loopback ports so the dedicated ordinary `Mcp::Server` cannot inherit the
-IDE-wide auto-registering tool set. Both transports call one Dispatcher and
-one bounded OperationId journal.
+The plugin is enabled by default so a clean product profile discovers its
+settings page without a plugin-manager enable/restart cycle. Its listeners are
+still disabled by default. Loading the plugin therefore opens no network port.
+When the user explicitly enables the service, it binds only IPv4 loopback. MCP
+and REST use separate loopback ports so the dedicated ordinary `Mcp::Server`
+cannot inherit the IDE-wide auto-registering tool set. Both transports call one
+Dispatcher and one bounded OperationId journal.
+
+## Product settings and listener transaction
+
+`Preferences > EtherCAT > Automation Gateway` exposes:
+
+- one explicit enable checkbox;
+- fixed, read-only `127.0.0.1`;
+- MCP and REST port settings, where `0` requests an automatically allocated
+  port and equal non-zero ports are rejected;
+- runtime state and the actual MCP/REST endpoints;
+- the last start error; and
+- a permanent Mock-only/read-only warning.
+
+Applying the page starts or stops the listeners immediately. No IDE restart is
+required. Enabling is committed to IDE settings only after the MCP listener,
+REST listener, and optional IDE MCP registry publication all succeed. Failure
+closes both sockets and persists the safe disabled state. Disabling the service,
+unloading the plugin, or closing the IDE releases both ports. A successful
+explicit enable remains an opt-in preference for the next IDE start.
+
+`GatewayRuntimeController` owns only the `GatewayServer`, accepted listener
+configuration, lifecycle state, and last error. It has no Provider pointer and
+does not copy a project, controller connection, lease, topology, scan, ESI, or
+diagnostics value. The listener lifecycle is not a second EtherCAT state
+machine.
+
+Start, stop, and failure events are written with the `[AI Gateway]` prefix to
+the existing `EtherCAT Controller` Application Output channel. A failure may
+reveal that existing output pane, but no modal dialog, new window, or status-bar
+controller is created.
 
 The MCP catalog is closed to these nine tools:
 
@@ -118,6 +153,24 @@ The plugin QtTest suite covers:
 - listener stop/reuse and atomic rollback after partial bind failure;
 - structural artifact validation; and
 - CMake/qbs source and dependency synchronization.
+
+Phase 2 additionally covers:
+
+- plugin discovery with default-off listeners;
+- stable settings object names and accessible names;
+- port `0`, equal-port rejection, immediate Apply, safe persistence, restart,
+  shutdown release, and atomic rollback after either bind fails;
+- English source strings and Simplified Chinese settings translations; and
+- a standard-library Python client process that performs MCP initialize,
+  `tools/list`, all controller read views and REST equivalents against a real
+  loopback `GatewayServer`, including cross-transport OperationId replay,
+  audit identity, conflict handling, and all seven read-only mutation denials.
+
+The Python program is a client/probe only. It contains no listener, server,
+sidecar, Provider, or Mock state. In the QtTest it reads a test-only
+`AutomationService` substitute. Final product acceptance must point the same
+probe at the single IDE process after existing Workbench Scan and Diagnostics
+Mock workflows have created the IDE-owned values.
 
 These are offline/Mock results only. The source task owns final product
 startup, the unique live controller binding, real controller tests, and

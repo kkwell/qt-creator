@@ -4,13 +4,21 @@
 
 #include "automationdispatcher.h"
 #include "ethercatautomationgatewayconstants.h"
+#include "gatewayruntime.h"
 #include "gatewayserver.h"
+#include "gatewaysettingspage.h"
+
+#include <coreplugin/dialogs/ioptionspage.h>
 
 #include <ethercatcore/automationservice.h>
+#include <ethercatcore/ethercatcoreconstants.h>
 #include <ethercatcore/providers.h>
 
 #include <extensionsystem/pluginmanager.h>
 
+#include <utils/qtcsettings.h>
+
+#include <QCheckBox>
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
@@ -19,11 +27,19 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
+#include <QLineEdit>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QScopeGuard>
+#include <QSettings>
+#include <QSpinBox>
+#include <QStandardPaths>
 #include <QTcpServer>
+#include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
 #include <QUrlQuery>
@@ -389,6 +405,8 @@ static QJsonObject jsonObject(const HttpResult &result)
     return document.isObject() ? document.object() : QJsonObject{};
 }
 
+static quint16 unusedPort();
+
 void EtherCATAutomationGatewayTests::testDefaultOffAndClosedToolCatalog()
 {
     FakeAutomationService service;
@@ -410,6 +428,276 @@ void EtherCATAutomationGatewayTests::testDefaultOffAndClosedToolCatalog()
     };
     for (const QString &tool : forbidden)
         QVERIFY(!server.registeredToolNames().contains(tool));
+}
+
+static QVariant gatewaySetting(Utils::QtcSettings &settings, const Utils::Key &key)
+{
+    settings.beginGroup(Constants::SETTINGS_GROUP);
+    const QVariant result = settings.value(key);
+    settings.endGroup();
+    return result;
+}
+
+void EtherCATAutomationGatewayTests::testPluginDiscoveryAndSettingsPageContract()
+{
+    const QDir sourceDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath());
+    QFile manifest(sourceDir.filePath("EtherCATAutomationGateway.json.in"));
+    QVERIFY(manifest.open(QIODevice::ReadOnly));
+    const QByteArray manifestText = manifest.readAll();
+    QVERIFY(!manifestText.contains("DisabledByDefault"));
+    QVERIFY(manifestText.contains("\"SoftLoadable\" : true"));
+
+    ::Core::IOptionsPage *registeredPage = nullptr;
+    for (::Core::IOptionsPage *page : ::Core::IOptionsPage::allOptionsPages()) {
+        if (page->id() == Utils::Id(Constants::SETTINGS_PAGE_ID)) {
+            registeredPage = page;
+            break;
+        }
+    }
+    QVERIFY(registeredPage);
+    QCOMPARE(
+        registeredPage->category(),
+        Utils::Id(EtherCAT::Core::Constants::SETTINGS_CATEGORY));
+
+    QTemporaryDir settingsDirectory;
+    QVERIFY(settingsDirectory.isValid());
+    Utils::QtcSettings settings(
+        settingsDirectory.filePath("gateway.ini"), QSettings::IniFormat);
+    FakeAutomationService service;
+    service.current = {mockContext()};
+    GatewayRuntimeController runtime(&service, &settings, false);
+    const Utils::Result<> defaultStarted = runtime.startFromStoredConfiguration();
+    QVERIFY_RESULT(defaultStarted);
+    QCOMPARE(runtime.snapshot().state, GatewayRuntimeState::Stopped);
+    QVERIFY(runtime.snapshot().mcpEndpoint.isEmpty());
+    QVERIFY(runtime.snapshot().restEndpoint.isEmpty());
+    QVERIFY(!gatewaySetting(settings, Constants::SETTINGS_ENABLED).toBool());
+
+    std::unique_ptr<::Core::IOptionsPage> page = createGatewaySettingsPage(&runtime);
+    QCOMPARE(page->id(), Utils::Id(Constants::SETTINGS_PAGE_ID));
+    QCOMPARE(page->category(), Utils::Id(EtherCAT::Core::Constants::SETTINGS_CATEGORY));
+    std::unique_ptr<::Core::IOptionsPageWidget> widget(page->createWidget());
+    QVERIFY(widget);
+    QCOMPARE(widget->objectName(), Constants::SETTINGS_PAGE_OBJECT_NAME);
+    QVERIFY(!widget->accessibleName().isEmpty());
+
+    auto enabled
+        = widget->findChild<QCheckBox *>(Constants::SETTINGS_ENABLED_OBJECT_NAME);
+    auto address = widget->findChild<QLineEdit *>(Constants::SETTINGS_ADDRESS_OBJECT_NAME);
+    auto mcpPort = widget->findChild<QSpinBox *>(Constants::SETTINGS_MCP_PORT_OBJECT_NAME);
+    auto restPort = widget->findChild<QSpinBox *>(Constants::SETTINGS_REST_PORT_OBJECT_NAME);
+    auto state = widget->findChild<QLineEdit *>(Constants::SETTINGS_STATE_OBJECT_NAME);
+    auto mcpEndpoint
+        = widget->findChild<QLineEdit *>(Constants::SETTINGS_MCP_ENDPOINT_OBJECT_NAME);
+    auto restEndpoint
+        = widget->findChild<QLineEdit *>(Constants::SETTINGS_REST_ENDPOINT_OBJECT_NAME);
+    auto error = widget->findChild<QLabel *>(Constants::SETTINGS_ERROR_OBJECT_NAME);
+    auto safety = widget->findChild<QLabel *>(Constants::SETTINGS_SAFETY_OBJECT_NAME);
+    const QList<QWidget *> keyWidgets{
+        enabled,
+        address,
+        mcpPort,
+        restPort,
+        state,
+        mcpEndpoint,
+        restEndpoint,
+        error,
+        safety,
+    };
+    for (QWidget *keyWidget : keyWidgets) {
+        QVERIFY(keyWidget);
+        QVERIFY2(!keyWidget->accessibleName().isEmpty(), qPrintable(keyWidget->objectName()));
+    }
+    QVERIFY(address->isReadOnly());
+    QCOMPARE(address->text(), QString::fromLatin1(Constants::LOOPBACK_ADDRESS));
+    QVERIFY(state->isReadOnly());
+    QVERIFY(mcpEndpoint->isReadOnly());
+    QVERIFY(restEndpoint->isReadOnly());
+    QVERIFY(safety->text().contains("Mock-only"));
+    QVERIFY(safety->text().contains("read-only"));
+    QCOMPARE(mcpPort->minimum(), 0);
+    QCOMPARE(mcpPort->maximum(), 65535);
+    QCOMPARE(restPort->minimum(), 0);
+    QCOMPARE(restPort->maximum(), 65535);
+
+    mcpPort->setValue(0);
+    restPort->setValue(0);
+    enabled->setChecked(true);
+    widget->apply();
+    QCOMPARE(runtime.snapshot().state, GatewayRuntimeState::Running);
+    QVERIFY(!runtime.snapshot().mcpEndpoint.isEmpty());
+    QVERIFY(!runtime.snapshot().restEndpoint.isEmpty());
+    QVERIFY(!mcpPort->isEnabled());
+    QVERIFY(!restPort->isEnabled());
+    QVERIFY(mcpEndpoint->text().contains("127.0.0.1"));
+    QVERIFY(restEndpoint->text().contains("127.0.0.1"));
+    QVERIFY(gatewaySetting(settings, Constants::SETTINGS_ENABLED).toBool());
+    QCOMPARE(gatewaySetting(settings, Constants::SETTINGS_MCP_PORT).toInt(), 0);
+    QCOMPARE(gatewaySetting(settings, Constants::SETTINGS_REST_PORT).toInt(), 0);
+
+    const quint16 actualMcpPort = runtime.snapshot().mcpEndpoint.port();
+    const quint16 actualRestPort = runtime.snapshot().restEndpoint.port();
+    QVERIFY(actualMcpPort != 0);
+    QVERIFY(actualRestPort != 0);
+    enabled->setChecked(false);
+    widget->apply();
+    QCOMPARE(runtime.snapshot().state, GatewayRuntimeState::Stopped);
+    QVERIFY(!gatewaySetting(settings, Constants::SETTINGS_ENABLED).toBool());
+    QVERIFY(mcpPort->isEnabled());
+    QVERIFY(restPort->isEnabled());
+    QTcpServer mcpReuse;
+    QTcpServer restReuse;
+    QVERIFY(mcpReuse.listen(QHostAddress::LocalHost, actualMcpPort));
+    QVERIFY(restReuse.listen(QHostAddress::LocalHost, actualRestPort));
+}
+
+void EtherCATAutomationGatewayTests::testRuntimeValidationRollbackAndRestart()
+{
+    QTemporaryDir settingsDirectory;
+    QVERIFY(settingsDirectory.isValid());
+    Utils::QtcSettings settings(
+        settingsDirectory.filePath("gateway.ini"), QSettings::IniFormat);
+    FakeAutomationService service;
+    service.current = {mockContext()};
+
+    {
+        GatewayRuntimeController runtime(&service, &settings, false);
+        const Utils::Result<> defaultStarted = runtime.startFromStoredConfiguration();
+        QVERIFY_RESULT(defaultStarted);
+        QVERIFY(!runtime.applyConfiguration({true, 65536, 0}));
+        QCOMPARE(runtime.snapshot().state, GatewayRuntimeState::Failed);
+        QVERIFY(!gatewaySetting(settings, Constants::SETTINGS_ENABLED).toBool());
+        QVERIFY(!runtime.applyConfiguration({true, 12000, 12000}));
+        QVERIFY(!gatewaySetting(settings, Constants::SETTINGS_ENABLED).toBool());
+    }
+
+    const quint16 candidateMcpPort = unusedPort();
+    QVERIFY(candidateMcpPort != 0);
+    QTcpServer blockedRest;
+    QVERIFY(blockedRest.listen(QHostAddress::LocalHost, 0));
+    {
+        GatewayRuntimeController runtime(&service, &settings, false);
+        const Utils::Result<> failed = runtime.applyConfiguration(
+            {true, candidateMcpPort, blockedRest.serverPort()});
+        QVERIFY(!failed);
+        QCOMPARE(runtime.snapshot().state, GatewayRuntimeState::Failed);
+        QVERIFY(runtime.snapshot().mcpEndpoint.isEmpty());
+        QVERIFY(runtime.snapshot().restEndpoint.isEmpty());
+        QVERIFY(!gatewaySetting(settings, Constants::SETTINGS_ENABLED).toBool());
+    }
+    QTcpServer rolledBackMcp;
+    QVERIFY(rolledBackMcp.listen(QHostAddress::LocalHost, candidateMcpPort));
+    rolledBackMcp.close();
+    blockedRest.close();
+
+    QTcpServer blockedMcp;
+    QVERIFY(blockedMcp.listen(QHostAddress::LocalHost, 0));
+    const quint16 candidateRestPort = unusedPort();
+    QVERIFY(candidateRestPort != 0);
+    {
+        GatewayRuntimeController runtime(&service, &settings, false);
+        const Utils::Result<> failed = runtime.applyConfiguration(
+            {true, blockedMcp.serverPort(), candidateRestPort});
+        QVERIFY(!failed);
+        QCOMPARE(runtime.snapshot().state, GatewayRuntimeState::Failed);
+        QVERIFY(!gatewaySetting(settings, Constants::SETTINGS_ENABLED).toBool());
+    }
+    QTcpServer untouchedRest;
+    QVERIFY(untouchedRest.listen(QHostAddress::LocalHost, candidateRestPort));
+    untouchedRest.close();
+    blockedMcp.close();
+
+    const QString blockedSettingsParent
+        = settingsDirectory.filePath("settings-parent-is-a-file");
+    QFile blockedSettingsFile(blockedSettingsParent);
+    QVERIFY(blockedSettingsFile.open(QIODevice::WriteOnly));
+    blockedSettingsFile.close();
+    Utils::QtcSettings unwritableSettings(
+        blockedSettingsParent + "/gateway.ini", QSettings::IniFormat);
+    QTcpServer persistenceMcpProbe;
+    QTcpServer persistenceRestProbe;
+    QVERIFY(persistenceMcpProbe.listen(QHostAddress::LocalHost, 0));
+    QVERIFY(persistenceRestProbe.listen(QHostAddress::LocalHost, 0));
+    const quint16 persistenceMcpPort = persistenceMcpProbe.serverPort();
+    const quint16 persistenceRestPort = persistenceRestProbe.serverPort();
+    persistenceMcpProbe.close();
+    persistenceRestProbe.close();
+    QVERIFY(persistenceMcpPort != 0);
+    QVERIFY(persistenceRestPort != 0);
+    QVERIFY(persistenceMcpPort != persistenceRestPort);
+    {
+        GatewayRuntimeController runtime(&service, &unwritableSettings, false);
+        const Utils::Result<> failed
+            = runtime.applyConfiguration({true, persistenceMcpPort, persistenceRestPort});
+        QVERIFY(!failed);
+        QCOMPARE(runtime.snapshot().state, GatewayRuntimeState::Failed);
+        QVERIFY(runtime.snapshot().mcpEndpoint.isEmpty());
+        QVERIFY(runtime.snapshot().restEndpoint.isEmpty());
+        QVERIFY(!gatewaySetting(unwritableSettings, Constants::SETTINGS_ENABLED).toBool());
+    }
+    QTcpServer persistenceMcpReuse;
+    QTcpServer persistenceRestReuse;
+    QVERIFY(persistenceMcpReuse.listen(QHostAddress::LocalHost, persistenceMcpPort));
+    QVERIFY(persistenceRestReuse.listen(QHostAddress::LocalHost, persistenceRestPort));
+
+    settings.beginGroup(Constants::SETTINGS_GROUP);
+    settings.setValue(Constants::SETTINGS_ENABLED, true);
+    settings.setValue(Constants::SETTINGS_MCP_PORT, 0);
+    settings.setValue(Constants::SETTINGS_REST_PORT, 0);
+    settings.endGroup();
+    settings.sync();
+    QVERIFY(gatewaySetting(settings, Constants::SETTINGS_ENABLED).toBool());
+    QCOMPARE(gatewaySetting(settings, Constants::SETTINGS_MCP_PORT).toInt(), 0);
+    QCOMPARE(gatewaySetting(settings, Constants::SETTINGS_REST_PORT).toInt(), 0);
+    QCOMPARE(settings.group(), QString());
+    settings.beginGroup(Constants::SETTINGS_GROUP);
+    QVERIFY(settings.value(Constants::SETTINGS_ENABLED, false).toBool());
+    settings.endGroup();
+
+    quint16 actualMcpPort = 0;
+    quint16 actualRestPort = 0;
+    {
+        GatewayRuntimeController restored(&service, &settings, false);
+        const Utils::Result<> restoredStarted = restored.startFromStoredConfiguration();
+        QVERIFY_RESULT(restoredStarted);
+        QCOMPARE(restored.snapshot().state, GatewayRuntimeState::Running);
+        actualMcpPort = restored.snapshot().mcpEndpoint.port();
+        actualRestPort = restored.snapshot().restEndpoint.port();
+        QVERIFY(actualMcpPort != 0);
+        QVERIFY(actualRestPort != 0);
+        const Utils::Result<> repeatedStart = restored.startFromStoredConfiguration();
+        QVERIFY_RESULT(repeatedStart);
+        QCOMPARE(restored.snapshot().state, GatewayRuntimeState::Running);
+        QCOMPARE(restored.snapshot().mcpEndpoint.port(), actualMcpPort);
+        QCOMPARE(restored.snapshot().restEndpoint.port(), actualRestPort);
+        restored.shutdown();
+        QCOMPARE(restored.snapshot().state, GatewayRuntimeState::Stopped);
+        QVERIFY(gatewaySetting(settings, Constants::SETTINGS_ENABLED).toBool());
+    }
+    QTcpServer releasedMcp;
+    QTcpServer releasedRest;
+    QVERIFY(releasedMcp.listen(QHostAddress::LocalHost, actualMcpPort));
+    QVERIFY(releasedRest.listen(QHostAddress::LocalHost, actualRestPort));
+}
+
+void EtherCATAutomationGatewayTests::testUnavailableRuntimeStaysDisabled()
+{
+    QTemporaryDir settingsDirectory;
+    QVERIFY(settingsDirectory.isValid());
+    Utils::QtcSettings settings(
+        settingsDirectory.filePath("gateway.ini"), QSettings::IniFormat);
+    settings.beginGroup(Constants::SETTINGS_GROUP);
+    settings.setValue(Constants::SETTINGS_ENABLED, true);
+    settings.setValue(Constants::SETTINGS_MCP_PORT, 0);
+    settings.setValue(Constants::SETTINGS_REST_PORT, 0);
+    settings.endGroup();
+
+    GatewayRuntimeController runtime(nullptr, &settings, false);
+    QVERIFY(!runtime.startFromStoredConfiguration());
+    QCOMPARE(runtime.snapshot().state, GatewayRuntimeState::Unavailable);
+    QVERIFY(runtime.snapshot().mcpEndpoint.isEmpty());
+    QVERIFY(runtime.snapshot().restEndpoint.isEmpty());
+    QVERIFY(!gatewaySetting(settings, Constants::SETTINGS_ENABLED).toBool());
 }
 
 void EtherCATAutomationGatewayTests::testWorkbenchPublishesSingleAutomationService()
@@ -606,7 +894,8 @@ void EtherCATAutomationGatewayTests::testListenerLifecycleAndAtomicRollback()
     FakeAutomationService service;
     service.current = {mockContext()};
     GatewayServer server(&service);
-    QVERIFY_RESULT(server.start(QHostAddress::LocalHost, 0, 0));
+    const Utils::Result<> started = server.start(QHostAddress::LocalHost, 0, 0);
+    QVERIFY_RESULT(started);
     QVERIFY(server.isRunning());
     const quint16 mcpPort = server.mcpPort();
     const quint16 restPort = server.restPort();
@@ -642,7 +931,8 @@ void EtherCATAutomationGatewayTests::testMcpRestIntegrationAndOriginBoundary()
     service.current = {mockContext()};
     FakeProviderCounters provider;
     GatewayServer server(&service);
-    QVERIFY_RESULT(server.start(QHostAddress::LocalHost, 0, 0));
+    const Utils::Result<> started = server.start(QHostAddress::LocalHost, 0, 0);
+    QVERIFY_RESULT(started);
     const QUrl mcpUrl(QString("http://127.0.0.1:%1/").arg(server.mcpPort()));
     const QString restBase = QString("http://127.0.0.1:%1").arg(server.restPort());
 
@@ -806,6 +1096,85 @@ void EtherCATAutomationGatewayTests::testMcpRestIntegrationAndOriginBoundary()
     QVERIFY(restReuse.listen(QHostAddress::LocalHost, stoppedRestPort));
 }
 
+void EtherCATAutomationGatewayTests::testExternalProcessProbe()
+{
+    FakeAutomationService service;
+    service.current = {mockContext()};
+    FakeProviderCounters provider;
+    CountingConnectionProvider connectionProvider(&provider);
+    CountingScanProvider scanProvider(&provider);
+    ExtensionSystem::PluginManager::addObject(&connectionProvider);
+    ExtensionSystem::PluginManager::addObject(&scanProvider);
+    const QScopeGuard removeProviders([&] {
+        ExtensionSystem::PluginManager::removeObject(&scanProvider);
+        ExtensionSystem::PluginManager::removeObject(&connectionProvider);
+    });
+
+    GatewayServer server(&service);
+    const Utils::Result<> started = server.start(QHostAddress::LocalHost, 0, 0);
+    QVERIFY_RESULT(started);
+
+    const QString python = QStandardPaths::findExecutable("python3");
+    QVERIFY2(!python.isEmpty(), "python3 is required for the client-only process probe");
+    const QDir sourceDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath());
+    const QString probePath = sourceDir.filePath("tests/controller_tools_v1_probe.py");
+    QVERIFY(QFileInfo::exists(probePath));
+
+    QProcess probe;
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert("QT_QPA_PLATFORM", "offscreen");
+    environment.insert("CRASH_REPORTER_DISABLE", "1");
+    probe.setProcessEnvironment(environment);
+    probe.setProgram(python);
+    probe.setArguments({
+        probePath,
+        "--mcp-url",
+        server.mcpEndpoint().toString(),
+        "--rest-url",
+        server.restEndpoint().toString(),
+    });
+
+    QEventLoop loop;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    timeout.start(30000);
+    connect(
+        &probe,
+        qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
+        &loop,
+        &QEventLoop::quit);
+    connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+    probe.start();
+    QVERIFY(probe.waitForStarted());
+    loop.exec();
+    if (probe.state() != QProcess::NotRunning) {
+        probe.kill();
+        probe.waitForFinished();
+        QFAIL("controller-tools-v1 process probe timed out");
+    }
+
+    const QByteArray standardOutput = probe.readAllStandardOutput().trimmed();
+    const QByteArray standardError = probe.readAllStandardError().trimmed();
+    QVERIFY2(
+        probe.exitStatus() == QProcess::NormalExit,
+        standardError.isEmpty() ? standardOutput.constData() : standardError.constData());
+    QVERIFY2(
+        probe.exitCode() == 0,
+        standardError.isEmpty() ? standardOutput.constData() : standardError.constData());
+    const QJsonDocument report = QJsonDocument::fromJson(standardOutput);
+    QVERIFY2(report.isObject(), standardOutput.constData());
+    QVERIFY(report.object().value("ok").toBool());
+    QCOMPARE(report.object().value("toolCount").toInt(), 9);
+    QCOMPARE(report.object().value("mutationsRejected").toInt(), 7);
+    QCOMPARE(report.object().value("topologySource").toString(),
+             "ide-workbench-scan-snapshot");
+    QVERIFY(report.object().value("diagnosticsAvailable").toBool());
+    QCOMPARE(provider.connect, 0);
+    QCOMPARE(provider.control, 0);
+    QCOMPARE(provider.scan, 0);
+    QCOMPARE(provider.write, 0);
+}
+
 void EtherCATAutomationGatewayTests::testArtifactValidationAndBuildSystemSync()
 {
     FakeAutomationService service;
@@ -843,22 +1212,31 @@ void EtherCATAutomationGatewayTests::testArtifactValidationAndBuildSystemSync()
     QFile cmake(sourceDir.filePath("CMakeLists.txt"));
     QFile qbs(sourceDir.filePath("ethercatautomationgateway.qbs"));
     QFile resources(sourceDir.filePath("controller-tools-v1-contracts.qrc"));
+    QFile pluginSource(sourceDir.filePath("ethercatautomationgatewayplugin.cpp"));
     QVERIFY(cmake.open(QIODevice::ReadOnly));
     QVERIFY(qbs.open(QIODevice::ReadOnly));
     QVERIFY(resources.open(QIODevice::ReadOnly));
+    QVERIFY(pluginSource.open(QIODevice::ReadOnly));
     const QByteArray cmakeText = cmake.readAll();
     const QByteArray qbsText = qbs.readAll();
     const QByteArray resourceText = resources.readAll();
+    const QByteArray pluginText = pluginSource.readAll();
     const QStringList synchronizedFiles{
         "automationdispatcher.cpp",
         "automationdispatcher.h",
         "controller-tools-v1-contracts.qrc",
         "ethercatautomationgatewayconstants.h",
         "ethercatautomationgatewayplugin.cpp",
+        "ethercatautomationgatewaytr.h",
         "ethercatautomationgatewaytests.cpp",
         "ethercatautomationgatewaytests.h",
+        "gatewayruntime.cpp",
+        "gatewayruntime.h",
         "gatewayserver.cpp",
         "gatewayserver.h",
+        "gatewaysettingspage.cpp",
+        "gatewaysettingspage.h",
+        "tests/controller_tools_v1_probe.py",
     };
     for (const QString &file : synchronizedFiles) {
         QVERIFY2(cmakeText.contains(file.toUtf8()), qPrintable(file));
@@ -871,10 +1249,12 @@ void EtherCATAutomationGatewayTests::testArtifactValidationAndBuildSystemSync()
         {"Qt::Core", "\"core\""},
         {"Qt::HttpServer", "\"httpserver\""},
         {"Qt::Network", "\"network\""},
+        {"Qt::Widgets", "\"widgets\""},
         {"Utils", "Utils"},
         {"Core", "\"Core\""},
         {"EtherCATCore", "EtherCATCore"},
         {"EtherCATWorkbench", "EtherCATWorkbench"},
+        {"ProjectExplorer", "ProjectExplorer"},
     };
     for (const auto &[cmakeDependency, qbsDependency] : synchronizedDependencies) {
         QVERIFY2(cmakeText.contains(cmakeDependency), cmakeDependency.constData());
@@ -882,6 +1262,21 @@ void EtherCATAutomationGatewayTests::testArtifactValidationAndBuildSystemSync()
     }
     QVERIFY(resourceText.contains("controller-tools-v1.mcp-tools.json"));
     QVERIFY(resourceText.contains("controller-tools-v1.openapi.json"));
+    QVERIFY(pluginText.contains("CONTROLLER_OUTPUT_CHANNEL_ID"));
+    QVERIFY(pluginText.contains("[AI Gateway]"));
+    QVERIFY(pluginText.contains("postApplicationOutput"));
+    QVERIFY(!pluginText.contains("MessageManager"));
+    QVERIFY(!pluginText.contains("QMessageBox"));
+
+    const QDir repositoryRoot(sourceDir.filePath("../../.."));
+    QFile translation(
+        repositoryRoot.filePath("share/qtcreator/translations/qtcreator_zh_CN.ts"));
+    QVERIFY(translation.open(QIODevice::ReadOnly));
+    const QByteArray translationText = translation.readAll();
+    QVERIFY(translationText.contains("<name>QtC::EtherCATAutomationGateway</name>"));
+    QVERIFY(translationText.contains("<source>Automation Gateway</source>"));
+    QVERIFY(translationText.contains("<translation>自动化网关</translation>"));
+    QVERIFY(translationText.contains("仅限 Mock"));
 }
 
 } // namespace EtherCAT::AutomationGateway::Internal

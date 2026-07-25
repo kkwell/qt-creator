@@ -31,7 +31,7 @@ documentation, review, and local-commit gates.
 | 5 | `EtherCATScanPlugin` | Complete | Mock scan state machine, snapshots, and configuration diff |
 | 6 | `EtherCATDiagnosticsPlugin` | Complete | Mock WKC/DC/link/event diagnostics and trends |
 | 7 | `EtherCATProductApiPlugin` | In progress | First vendor adapter: Product API transport, three-channel lifecycle, exclusive lease, typed commissioning/runtime commands, and bounded v1.9 compatibility |
-| 8 | `EtherCATAutomationGatewayPlugin` | Offline/Mock-only | Dedicated closed MCP and REST facade over fresh Workbench semantic values; default off and loopback-only |
+| 8 | `EtherCATAutomationGatewayPlugin` | Product-discoverable, listeners off | Dedicated closed MCP and REST facade over fresh Workbench semantic values; explicit loopback-only Mock/read-only runtime |
 
 `EtherCATData` is an infrastructure library, not a feature container. Its
 offline configuration contract is persisted by EtherCATProject format version
@@ -69,6 +69,18 @@ ECAP framing and `Qt Network`. A later vendor uses a separate plugin and
 Provider rather than adding vendor branches to ProductApi, Core, or Workbench.
 An adapter may later implement public connection, Scan, and Diagnostics
 Providers, but it cannot include Workbench private headers.
+
+The Automation Gateway plugin loads with the product so its EtherCAT settings
+page is discoverable, but this does not open a network listener. Its explicit
+settings transaction owns the only MCP/REST listener lifecycle and persists
+the enabled preference only after both ports bind. The runtime controller owns
+no EtherCAT Provider or state snapshot. It calls the single Workbench
+`AutomationService` through `GatewayServer`; both HTTP transports continue to
+share one Dispatcher, OperationId journal, error model, and audit record.
+
+Gateway lifecycle messages reuse the `EtherCAT.Controller.Output` Application
+Output channel under the `[AI Gateway]` prefix. The plugin adds no output pane,
+window, modal prompt, or status-bar controller.
 
 ## Qt Creator integration rules
 

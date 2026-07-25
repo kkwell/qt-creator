@@ -12,6 +12,9 @@ class EtherCATAutomationGatewayTests final : public QObject
 
 private slots:
     void testDefaultOffAndClosedToolCatalog();
+    void testPluginDiscoveryAndSettingsPageContract();
+    void testRuntimeValidationRollbackAndRestart();
+    void testUnavailableRuntimeStaysDisabled();
     void testWorkbenchPublishesSingleAutomationService();
     void testSharedSnapshotUpdatesWithoutGatewayCache();
     void testOperationJournalAcrossTransports();
@@ -19,6 +22,7 @@ private slots:
     void testVendorDetailsAreNotProjected();
     void testListenerLifecycleAndAtomicRollback();
     void testMcpRestIntegrationAndOriginBoundary();
+    void testExternalProcessProbe();
     void testArtifactValidationAndBuildSystemSync();
 };
 

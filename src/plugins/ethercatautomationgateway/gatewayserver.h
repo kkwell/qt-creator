@@ -11,6 +11,7 @@
 #include <QHostAddress>
 #include <QHttpServer>
 #include <QPointer>
+#include <QUrl>
 
 QT_BEGIN_NAMESPACE
 class QHttpServerRequest;
@@ -32,6 +33,8 @@ public:
     bool isRunning() const;
     quint16 mcpPort() const;
     quint16 restPort() const;
+    QUrl mcpEndpoint() const;
+    QUrl restEndpoint() const;
     QStringList registeredToolNames() const;
 
 private:

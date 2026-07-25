@@ -388,20 +388,35 @@ Utils::Result<> GatewayServer::start(const QHostAddress &address, quint16 mcpPor
         return Utils::ResultError("EtherCAT Automation Gateway is already running");
     if (!address.isLoopback())
         return Utils::ResultError("EtherCAT Automation Gateway only binds to loopback");
+    if (mcpPort != 0 && mcpPort == restPort)
+        return Utils::ResultError("MCP and REST ports must differ when both are non-zero");
     if (!m_contractError.isEmpty())
         return Utils::ResultError(m_contractError);
 
     auto mcpTcp = new QTcpServer;
-    if (!mcpTcp->listen(address, mcpPort) || !m_mcpServer.bind(mcpTcp)) {
+    if (!mcpTcp->listen(address, mcpPort)) {
+        const QString error = mcpTcp->errorString();
         delete mcpTcp;
-        return Utils::ResultError("Cannot bind the MCP loopback listener");
+        return Utils::ResultError(
+            QString("Cannot bind the MCP loopback listener: %1").arg(error));
+    }
+    if (!m_mcpServer.bind(mcpTcp)) {
+        delete mcpTcp;
+        return Utils::ResultError("Cannot register the MCP loopback listener");
     }
 
     auto restTcp = new QTcpServer;
-    if (!restTcp->listen(address, restPort) || !m_restServer.bind(restTcp)) {
+    if (!restTcp->listen(address, restPort)) {
+        const QString error = restTcp->errorString();
         delete restTcp;
         stop();
-        return Utils::ResultError("Cannot bind the REST loopback listener");
+        return Utils::ResultError(
+            QString("Cannot bind the REST loopback listener: %1").arg(error));
+    }
+    if (!m_restServer.bind(restTcp)) {
+        delete restTcp;
+        stop();
+        return Utils::ResultError("Cannot register the REST loopback listener");
     }
     m_restTcpServer = restTcp;
 
@@ -457,6 +472,18 @@ quint16 GatewayServer::mcpPort() const
 quint16 GatewayServer::restPort() const
 {
     return m_restTcpServer ? m_restTcpServer->serverPort() : 0;
+}
+
+QUrl GatewayServer::mcpEndpoint() const
+{
+    return mcpPort() == 0 ? QUrl{}
+                          : QUrl(QString("http://127.0.0.1:%1/").arg(mcpPort()));
+}
+
+QUrl GatewayServer::restEndpoint() const
+{
+    return restPort() == 0 ? QUrl{}
+                            : QUrl(QString("http://127.0.0.1:%1").arg(restPort()));
 }
 
 QStringList GatewayServer::registeredToolNames() const
