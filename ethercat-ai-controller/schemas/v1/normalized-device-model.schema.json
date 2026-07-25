@@ -1,0 +1,864 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.embed-labs.dev/controller-tools/v1/normalized-device-model.schema.json",
+  "title": "NormalizedDeviceModel v1",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "properties": {
+    "apiVersion": {
+      "$ref": "common.schema.json#/$defs/ApiVersion"
+    },
+    "kind": {
+      "type": "string",
+      "const": "NormalizedDeviceModel"
+    },
+    "metadata": {
+      "$ref": "common.schema.json#/$defs/ArtifactMetadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/DeviceSpec"
+    }
+  },
+  "$defs": {
+    "PdoEntry": {
+      "type": "object",
+      "required": [
+        "index",
+        "subIndex",
+        "name",
+        "bitLength",
+        "dataType",
+        "mapping",
+        "semantic"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "subIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "bitLength": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "dataType": {
+          "$ref": "common.schema.json#/$defs/DataType"
+        },
+        "mapping": {
+          "type": "string",
+          "enum": [
+            "fixed",
+            "configurable",
+            "unsupported"
+          ]
+        },
+        "semantic": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "scale": {
+          "type": "number"
+        },
+        "offset": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Pdo": {
+      "type": "object",
+      "required": [
+        "index",
+        "name",
+        "syncManager",
+        "fixed",
+        "mandatory",
+        "entries"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "syncManager": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "fixed": {
+          "type": "boolean"
+        },
+        "mandatory": {
+          "type": "boolean"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PdoEntry"
+          },
+          "minItems": 1,
+          "maxItems": 1024
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProcessVariable": {
+      "type": "object",
+      "required": [
+        "id",
+        "direction",
+        "byteOffset",
+        "bitOffset",
+        "bitLength",
+        "dataType",
+        "object"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "input",
+            "output"
+          ]
+        },
+        "byteOffset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bitOffset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7
+        },
+        "bitLength": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "dataType": {
+          "$ref": "common.schema.json#/$defs/DataType"
+        },
+        "object": {
+          "$ref": "common.schema.json#/$defs/ObjectAddress"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DiagnosticRule": {
+      "type": "object",
+      "required": [
+        "code",
+        "source",
+        "severity",
+        "recovery"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "al-status",
+            "emergency",
+            "sdo-abort",
+            "cia402-statusword",
+            "vendor"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "information",
+            "warning",
+            "error",
+            "fatal"
+          ]
+        },
+        "recovery": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "additionalProperties": false
+    },
+    "DeviceSpec": {
+      "type": "object",
+      "required": [
+        "identity",
+        "esiSource",
+        "mailbox",
+        "syncManagers",
+        "fmmus",
+        "rxPdos",
+        "txPdos",
+        "objectDictionary",
+        "distributedClocks",
+        "cycle",
+        "watchdog",
+        "startupSdos",
+        "cia402",
+        "processImage",
+        "safeOutputs",
+        "privateInitialization",
+        "diagnostics"
+      ],
+      "properties": {
+        "identity": {
+          "$ref": "common.schema.json#/$defs/Identity"
+        },
+        "esiSource": {
+          "type": "object",
+          "required": [
+            "uri",
+            "sha256",
+            "importedAt",
+            "complete"
+          ],
+          "properties": {
+            "uri": {
+              "type": "string",
+              "format": "uri"
+            },
+            "sha256": {
+              "$ref": "common.schema.json#/$defs/Sha256"
+            },
+            "importedAt": {
+              "$ref": "common.schema.json#/$defs/Timestamp"
+            },
+            "complete": {
+              "type": "boolean"
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "maxItems": 128
+            }
+          },
+          "additionalProperties": false
+        },
+        "mailbox": {
+          "type": "object",
+          "required": [
+            "supported",
+            "protocols",
+            "receiveOffset",
+            "receiveSize",
+            "sendOffset",
+            "sendSize"
+          ],
+          "properties": {
+            "supported": {
+              "type": "boolean"
+            },
+            "protocols": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "CoE",
+                  "FoE",
+                  "EoE",
+                  "SoE",
+                  "VoE"
+                ]
+              },
+              "uniqueItems": true
+            },
+            "receiveOffset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "receiveSize": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "sendOffset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "sendSize": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          "additionalProperties": false
+        },
+        "syncManagers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "index",
+              "direction",
+              "startAddress",
+              "sizeBytes",
+              "controlByte",
+              "enabled"
+            ],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 15
+              },
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "master-to-slave",
+                  "slave-to-master",
+                  "mailbox-out",
+                  "mailbox-in"
+                ]
+              },
+              "startAddress": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "sizeBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "controlByte": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "maxItems": 16
+        },
+        "fmmus": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "index",
+              "usage",
+              "required"
+            ],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 15
+              },
+              "usage": {
+                "type": "string",
+                "enum": [
+                  "outputs",
+                  "inputs",
+                  "mailbox-status",
+                  "unknown"
+                ]
+              },
+              "required": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "maxItems": 16
+        },
+        "rxPdos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Pdo"
+          },
+          "maxItems": 1024
+        },
+        "txPdos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Pdo"
+          },
+          "maxItems": 1024
+        },
+        "objectDictionary": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "index",
+              "subIndex",
+              "name",
+              "dataType",
+              "access",
+              "pdoMappable",
+              "semantic"
+            ],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "subIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "dataType": {
+                "$ref": "common.schema.json#/$defs/DataType"
+              },
+              "access": {
+                "type": "string",
+                "enum": [
+                  "ro",
+                  "wo",
+                  "rw",
+                  "const"
+                ]
+              },
+              "pdoMappable": {
+                "type": "boolean"
+              },
+              "semantic": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "unit": {
+                "type": "string",
+                "maxLength": 64
+              }
+            },
+            "additionalProperties": false
+          },
+          "maxItems": 65536
+        },
+        "distributedClocks": {
+          "type": "object",
+          "required": [
+            "supported",
+            "referenceClockCapable",
+            "sync0",
+            "sync1",
+            "modes"
+          ],
+          "properties": {
+            "supported": {
+              "type": "boolean"
+            },
+            "referenceClockCapable": {
+              "type": "boolean"
+            },
+            "sync0": {
+              "$ref": "#/$defs/SyncLimit"
+            },
+            "sync1": {
+              "$ref": "#/$defs/SyncLimit"
+            },
+            "modes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "assignActivate"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "assignActivate": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65535
+                  }
+                },
+                "additionalProperties": false
+              },
+              "maxItems": 64
+            }
+          },
+          "additionalProperties": false
+        },
+        "cycle": {
+          "type": "object",
+          "required": [
+            "minimumUs",
+            "maximumUs",
+            "supportedUs"
+          ],
+          "properties": {
+            "minimumUs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maximumUs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "supportedUs": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "watchdog": {
+          "type": "object",
+          "required": [
+            "supported",
+            "minimumMs",
+            "maximumMs",
+            "defaultMs",
+            "safeState"
+          ],
+          "properties": {
+            "supported": {
+              "type": "boolean"
+            },
+            "minimumMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maximumMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "defaultMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "safeState": {
+              "type": "string",
+              "enum": [
+                "device-default",
+                "zero-outputs",
+                "quick-stop",
+                "vendor-defined",
+                "unknown"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "startupSdos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "order",
+              "transition",
+              "index",
+              "subIndex",
+              "valueHex",
+              "timeoutMs",
+              "source"
+            ],
+            "properties": {
+              "order": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "transition": {
+                "type": "string",
+                "enum": [
+                  "IP",
+                  "PS",
+                  "SO",
+                  "OP"
+                ]
+              },
+              "index": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "subIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "valueHex": {
+                "$ref": "common.schema.json#/$defs/HexBytes"
+              },
+              "timeoutMs": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60000
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "esi",
+                  "standard",
+                  "verified-adapter"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "maxItems": 4096
+        },
+        "cia402": {
+          "type": "object",
+          "required": [
+            "supported",
+            "axes",
+            "modes",
+            "requiredObjects"
+          ],
+          "properties": {
+            "supported": {
+              "type": "boolean"
+            },
+            "axes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 256
+            },
+            "modes": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "profile-position",
+                  "velocity",
+                  "profile-velocity",
+                  "homing",
+                  "cyclic-synchronous-position",
+                  "cyclic-synchronous-velocity",
+                  "cyclic-synchronous-torque"
+                ]
+              },
+              "uniqueItems": true
+            },
+            "requiredObjects": {
+              "type": "array",
+              "items": {
+                "$ref": "common.schema.json#/$defs/ObjectAddress"
+              },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "processImage": {
+          "type": "object",
+          "required": [
+            "inputBytes",
+            "outputBytes",
+            "variables"
+          ],
+          "properties": {
+            "inputBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "outputBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "variables": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ProcessVariable"
+              },
+              "maxItems": 65536
+            }
+          },
+          "additionalProperties": false
+        },
+        "safeOutputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "variable",
+              "value",
+              "reason"
+            ],
+            "properties": {
+              "variable": {
+                "$ref": "common.schema.json#/$defs/Id"
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              }
+            },
+            "additionalProperties": false
+          },
+          "maxItems": 4096
+        },
+        "privateInitialization": {
+          "type": "object",
+          "required": [
+            "status",
+            "steps",
+            "missingInformation"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "not-required",
+                "documented",
+                "missing-information"
+              ]
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "description",
+                  "source"
+                ],
+                "properties": {
+                  "id": {
+                    "$ref": "common.schema.json#/$defs/Id"
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "verified-adapter",
+                      "vendor-document"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "maxItems": 1024
+            },
+            "missingInformation": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "maxItems": 128
+            }
+          },
+          "additionalProperties": false
+        },
+        "diagnostics": {
+          "type": "object",
+          "required": [
+            "rules",
+            "unknownCodePolicy"
+          ],
+          "properties": {
+            "rules": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/DiagnosticRule"
+              },
+              "maxItems": 4096
+            },
+            "unknownCodePolicy": {
+              "type": "string",
+              "const": "report-raw-and-stop-if-severe"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "SyncLimit": {
+      "type": "object",
+      "required": [
+        "supported",
+        "minimumCycleNs",
+        "maximumCycleNs",
+        "minimumShiftNs",
+        "maximumShiftNs"
+      ],
+      "properties": {
+        "supported": {
+          "type": "boolean"
+        },
+        "minimumCycleNs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maximumCycleNs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minimumShiftNs": {
+          "type": "integer"
+        },
+        "maximumShiftNs": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,177 @@
+{
+  "apiVersion": "controller.embed-labs.dev/v1",
+  "kind": "ControlIntent",
+  "metadata": {
+    "id": "mock.intent.safe-servo-stop",
+    "version": "1.0.0",
+    "createdAt": "2026-07-25T00:00:00Z",
+    "description": "Mock-only bounded digital output and servo stop intent"
+  },
+  "spec": {
+    "naturalLanguage": "将数字量输出第1路置位；伺服轴以2000计数/秒低速正转，并在数字量输入第1路触发时受控停止并复位输出。",
+    "naturalLanguageSha256": "0998757cdb71e0bd9eb8f9835510673a9316575e5309dcf2d44899d8d7078fa2",
+    "requestedCycleUs": 1000,
+    "executionMode": "offline-validation",
+    "bindings": [
+      {
+        "resourceId": "dio-output-1",
+        "position": 0,
+        "identity": {
+          "vendorId": 286331153,
+          "productCode": 4097,
+          "revision": 1,
+          "serial": 1001
+        },
+        "variable": "digital-output-1",
+        "access": "write"
+      },
+      {
+        "resourceId": "dio-input-1",
+        "position": 0,
+        "identity": {
+          "vendorId": 286331153,
+          "productCode": 4097,
+          "revision": 1,
+          "serial": 1001
+        },
+        "variable": "digital-input-1",
+        "access": "read"
+      },
+      {
+        "resourceId": "axis-1",
+        "position": 2,
+        "identity": {
+          "vendorId": 286331153,
+          "productCode": 8193,
+          "revision": 1,
+          "serial": 1003
+        },
+        "variable": "cia402-controlword",
+        "access": "write"
+      }
+    ],
+    "safety": {
+      "clientDisconnectAction": "controlled-stop",
+      "motionEnvelopes": [
+        {
+          "axisId": "axis-1",
+          "minimumPosition": -100000,
+          "maximumPosition": 100000,
+          "maximumVelocity": 5000,
+          "maximumAcceleration": 10000,
+          "maximumDeceleration": 10000,
+          "maximumDurationMs": 30000
+        }
+      ],
+      "safeOutputs": [
+        {
+          "resourceId": "dio-output-1",
+          "variable": "digital-output-1",
+          "value": false
+        }
+      ]
+    },
+    "program": {
+      "language": "ecl-v1",
+      "entryNodeId": "enable-axis",
+      "nodes": [
+        {
+          "nodeId": "enable-axis",
+          "op": "AxisPower",
+          "resources": [
+            "axis-1"
+          ],
+          "timeoutMs": 3000,
+          "parameters": {
+            "enable": true
+          },
+          "next": [
+            "set-output"
+          ]
+        },
+        {
+          "nodeId": "set-output",
+          "op": "SetDigitalOutput",
+          "resources": [
+            "dio-output-1"
+          ],
+          "timeoutMs": 100,
+          "parameters": {
+            "channel": 1,
+            "value": true
+          },
+          "next": [
+            "move-positive"
+          ]
+        },
+        {
+          "nodeId": "move-positive",
+          "op": "MoveVelocity",
+          "resources": [
+            "axis-1"
+          ],
+          "timeoutMs": 30000,
+          "parameters": {
+            "velocity": 2000,
+            "acceleration": 5000,
+            "deceleration": 5000
+          },
+          "next": [
+            "wait-input"
+          ]
+        },
+        {
+          "nodeId": "wait-input",
+          "op": "WaitInput",
+          "resources": [
+            "dio-input-1"
+          ],
+          "timeoutMs": 10000,
+          "parameters": {
+            "condition": {
+              "resourceId": "dio-input-1",
+              "variable": "digital-input-1",
+              "operator": "eq",
+              "value": true
+            }
+          },
+          "next": [
+            "controlled-stop"
+          ]
+        },
+        {
+          "nodeId": "controlled-stop",
+          "op": "ControlledStop",
+          "resources": [
+            "axis-1"
+          ],
+          "timeoutMs": 3000,
+          "parameters": {
+            "deceleration": 5000
+          },
+          "next": [
+            "reset-output"
+          ]
+        },
+        {
+          "nodeId": "reset-output",
+          "op": "SetDigitalOutput",
+          "resources": [
+            "dio-output-1"
+          ],
+          "timeoutMs": 100,
+          "parameters": {
+            "channel": 1,
+            "value": false
+          },
+          "next": []
+        }
+      ]
+    },
+    "approval": {
+      "policyId": "mock.policy.offline-only",
+      "policyVersion": "1.0.0",
+      "decision": "requires-approval"
+    }
+  }
+}

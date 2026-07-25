@@ -1,0 +1,625 @@
+{
+  "apiVersion": "controller-tools/v1",
+  "mcpProtocolVersion": "2025-11-25",
+  "tools": [
+    {
+      "name": "controller.list",
+      "title": "List configured controllers",
+      "description": "Return immutable configured mock-controller identities. This does not perform network discovery.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audit": {
+            "type": "object"
+          },
+          "error": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "controller.get-capabilities",
+      "title": "Get controller capabilities",
+      "description": "Return the declared controller and gateway capabilities without acquiring a lease.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "controllerId"
+        ],
+        "properties": {
+          "controllerId": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audit": {
+            "type": "object"
+          },
+          "error": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "controller.get-state",
+      "title": "Get controller state",
+      "description": "Return the immutable mock runtime-state snapshot and safe-state indicators.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "controllerId"
+        ],
+        "properties": {
+          "controllerId": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audit": {
+            "type": "object"
+          },
+          "error": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "controller.get-topology",
+      "title": "Get controller topology",
+      "description": "Return the static mock topology. This tool never scans an EtherCAT bus.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "controllerId"
+        ],
+        "properties": {
+          "controllerId": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audit": {
+            "type": "object"
+          },
+          "error": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "controller.get-device",
+      "title": "Get normalized device",
+      "description": "Return one exact normalized mock device and its topology identity by position.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "controllerId",
+          "position"
+        ],
+        "properties": {
+          "controllerId": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128
+          },
+          "position": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audit": {
+            "type": "object"
+          },
+          "error": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "controller.get-diagnostics",
+      "title": "Get controller diagnostics",
+      "description": "Return static mock diagnostics and their evidence boundary.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "controllerId"
+        ],
+        "properties": {
+          "controllerId": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audit": {
+            "type": "object"
+          },
+          "error": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "adapter.list",
+      "title": "List device adapters",
+      "description": "Return versioned mock adapter manifests and validation state.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audit": {
+            "type": "object"
+          },
+          "error": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "artifact.validate",
+      "title": "Validate controller artifact",
+      "description": "Perform pure schema and semantic validation of one candidate artifact; never stores or deploys it.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "artifact"
+        ],
+        "properties": {
+          "artifact": {
+            "type": "object"
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audit": {
+            "type": "object"
+          },
+          "error": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "gateway.get-protocol",
+      "title": "Get gateway protocol",
+      "description": "Return negotiated versions, safety boundary, and unsupported operations.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audit": {
+            "type": "object"
+          },
+          "error": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    }
+  ]
+}

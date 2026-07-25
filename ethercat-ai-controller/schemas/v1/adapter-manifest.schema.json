@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.embed-labs.dev/controller-tools/v1/adapter-manifest.schema.json",
+  "title": "AdapterManifest v1",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "properties": {
+    "apiVersion": {
+      "$ref": "common.schema.json#/$defs/ApiVersion"
+    },
+    "kind": {
+      "type": "string",
+      "const": "AdapterManifest"
+    },
+    "metadata": {
+      "$ref": "common.schema.json#/$defs/ArtifactMetadata"
+    },
+    "spec": {
+      "type": "object",
+      "required": [
+        "validationState",
+        "origin",
+        "matchPriority",
+        "identityScope",
+        "esiSha256",
+        "deviceModel",
+        "capabilities",
+        "privateInitializationStatus",
+        "evidence",
+        "signature",
+        "realHardwareAllowed"
+      ],
+      "properties": {
+        "validationState": {
+          "type": "string",
+          "enum": [
+            "candidate",
+            "mock-only",
+            "verified",
+            "revoked"
+          ]
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "standard-protocol",
+            "exact-esi",
+            "vendor",
+            "ai-candidate"
+          ]
+        },
+        "matchPriority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "identityScope": {
+          "type": "object",
+          "required": [
+            "vendorId",
+            "productCode",
+            "minimumRevision",
+            "maximumRevision"
+          ],
+          "properties": {
+            "vendorId": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            },
+            "productCode": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            },
+            "minimumRevision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "maximumRevision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "serialAllowlist": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4294967295
+              },
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "esiSha256": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Sha256"
+          },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "deviceModel": {
+          "type": "object",
+          "required": [
+            "id",
+            "version",
+            "sha256"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "version": {
+              "$ref": "common.schema.json#/$defs/SemVer"
+            },
+            "sha256": {
+              "$ref": "common.schema.json#/$defs/Sha256"
+            }
+          },
+          "additionalProperties": false
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "digital-input",
+              "digital-output",
+              "analog-input",
+              "analog-output",
+              "coe",
+              "distributed-clocks",
+              "cia402",
+              "diagnostics"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "privateInitializationStatus": {
+          "type": "string",
+          "enum": [
+            "not-required",
+            "documented",
+            "missing-information"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Evidence"
+          },
+          "maxItems": 256
+        },
+        "signature": {
+          "oneOf": [
+            {
+              "$ref": "common.schema.json#/$defs/Signature"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "realHardwareAllowed": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

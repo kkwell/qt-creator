@@ -1,0 +1,199 @@
+{
+  "graphVersion": 1,
+  "updatedAt": "2026-07-25T00:00:00Z",
+  "baseline": {
+    "repository": "qt-creator",
+    "branch": "embed-labs",
+    "commit": "e9f64673da80545b6927f28fc9ba26a18caa88da",
+    "remoteImported": false,
+    "hardwareContacted": false
+  },
+  "nodes": [
+    {
+      "id": "ISSUE-AI-CONTROLLER-001",
+      "type": "issue",
+      "status": "qualified",
+      "title": "Define and implement the mock-only controller-tools-v1 boundary",
+      "commitRef": "SELF",
+      "scopeRoot": "ethercat-ai-controller",
+      "realHardwareAllowed": false
+    },
+    {
+      "id": "format.control-intent.v1",
+      "type": "data-format",
+      "version": "controller.embed-labs.dev/v1",
+      "path": "schemas/v1/control-intent.schema.json"
+    },
+    {
+      "id": "format.normalized-device-model.v1",
+      "type": "data-format",
+      "version": "controller.embed-labs.dev/v1",
+      "path": "schemas/v1/normalized-device-model.schema.json"
+    },
+    {
+      "id": "format.adapter-manifest.v1",
+      "type": "data-format",
+      "version": "controller.embed-labs.dev/v1",
+      "path": "schemas/v1/adapter-manifest.schema.json"
+    },
+    {
+      "id": "format.controller-project.v1",
+      "type": "data-format",
+      "version": "controller.embed-labs.dev/v1",
+      "path": "schemas/v1/controller-project.schema.json"
+    },
+    {
+      "id": "protocol.controller-tools.v1",
+      "type": "protocol",
+      "mcpVersion": "2025-11-25",
+      "openApiVersion": "3.1.1",
+      "jsonSchemaDialect": "2020-12",
+      "readOnly": true,
+      "toolCount": 9
+    },
+    {
+      "id": "gateway.mock.readonly",
+      "type": "capability",
+      "status": "implemented",
+      "hardwareContacted": false
+    },
+    {
+      "id": "mock.device.digital-io",
+      "type": "mock-device",
+      "modelId": "mock.digital-io.8x8",
+      "realHardwareAllowed": false
+    },
+    {
+      "id": "mock.device.analog-io",
+      "type": "mock-device",
+      "modelId": "mock.analog-io.4x4",
+      "realHardwareAllowed": false
+    },
+    {
+      "id": "mock.device.cia402-servo",
+      "type": "mock-device",
+      "modelId": "mock.cia402-servo.axis1",
+      "realHardwareAllowed": false
+    },
+    {
+      "id": "evidence.failure-first",
+      "type": "test-evidence",
+      "status": "passed",
+      "command": "python3 -m unittest discover -s tests -v",
+      "testCount": 42,
+      "requiredRejections": [
+        "CT001_UNKNOWN_DEVICE",
+        "CT002_ESI_CONFLICT",
+        "CT003_PDO_CAPACITY_EXCEEDED",
+        "CT004_CYCLE_INFEASIBLE",
+        "CT005_DANGEROUS_MOTION"
+      ],
+      "environment": "macOS-arm64-offline-loopback",
+      "wslVerified": false,
+      "hardwareVerified": false
+    },
+    {
+      "id": "gap.etir-compiler",
+      "type": "gap",
+      "status": "unimplemented"
+    },
+    {
+      "id": "gap.ecpkg-lifecycle",
+      "type": "gap",
+      "status": "unimplemented"
+    },
+    {
+      "id": "gap.production-auth-audit",
+      "type": "gap",
+      "status": "unimplemented"
+    },
+    {
+      "id": "ISSUE-AI-CONTROLLER-002",
+      "type": "issue",
+      "status": "unresolved",
+      "title": "Bridge authenticated read-only Product API snapshots into the Gateway",
+      "constraints": [
+        "loopback-controller-simulation-first",
+        "no-scan",
+        "no-lease",
+        "no-configuration",
+        "no-deployment",
+        "no-start",
+        "no-motion"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "ISSUE-AI-CONTROLLER-001",
+      "relation": "defines",
+      "to": "format.control-intent.v1"
+    },
+    {
+      "from": "ISSUE-AI-CONTROLLER-001",
+      "relation": "defines",
+      "to": "format.normalized-device-model.v1"
+    },
+    {
+      "from": "ISSUE-AI-CONTROLLER-001",
+      "relation": "defines",
+      "to": "format.adapter-manifest.v1"
+    },
+    {
+      "from": "ISSUE-AI-CONTROLLER-001",
+      "relation": "defines",
+      "to": "format.controller-project.v1"
+    },
+    {
+      "from": "ISSUE-AI-CONTROLLER-001",
+      "relation": "implements",
+      "to": "protocol.controller-tools.v1"
+    },
+    {
+      "from": "protocol.controller-tools.v1",
+      "relation": "served-by",
+      "to": "gateway.mock.readonly"
+    },
+    {
+      "from": "gateway.mock.readonly",
+      "relation": "reads",
+      "to": "mock.device.digital-io"
+    },
+    {
+      "from": "gateway.mock.readonly",
+      "relation": "reads",
+      "to": "mock.device.analog-io"
+    },
+    {
+      "from": "gateway.mock.readonly",
+      "relation": "reads",
+      "to": "mock.device.cia402-servo"
+    },
+    {
+      "from": "ISSUE-AI-CONTROLLER-001",
+      "relation": "qualified-by",
+      "to": "evidence.failure-first"
+    },
+    {
+      "from": "format.controller-project.v1",
+      "relation": "references-future",
+      "to": "gap.etir-compiler"
+    },
+    {
+      "from": "format.controller-project.v1",
+      "relation": "references-future",
+      "to": "gap.ecpkg-lifecycle"
+    },
+    {
+      "from": "protocol.controller-tools.v1",
+      "relation": "blocked-for-production-by",
+      "to": "gap.production-auth-audit"
+    },
+    {
+      "from": "ISSUE-AI-CONTROLLER-001",
+      "relation": "next",
+      "to": "ISSUE-AI-CONTROLLER-002"
+    }
+  ],
+  "nextIssue": "ISSUE-AI-CONTROLLER-002"
+}

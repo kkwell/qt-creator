@@ -1,0 +1,176 @@
+{
+  "apiVersion": "controller.embed-labs.dev/v1",
+  "kind": "ControllerProject",
+  "metadata": {
+    "id": "mock.project.three-device-line",
+    "version": "1.0.0",
+    "createdAt": "2026-07-25T00:00:00Z",
+    "description": "Offline-only project for the three mock EtherCAT devices"
+  },
+  "spec": {
+    "controller": {
+      "controllerId": "mock.controller.zynq-001",
+      "bootId": "mock-boot-20260725-001",
+      "capabilitySha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "topology": {
+      "source": "mock",
+      "topologySha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "slaves": [
+        {
+          "position": 0,
+          "stationAddress": 4097,
+          "identity": {
+            "vendorId": 286331153,
+            "productCode": 4097,
+            "revision": 1,
+            "serial": 1001
+          },
+          "esiSha256": "2f9adb1d95f34114fdf6018e849984e62f9846e491d5f5ffed85d8d6928ba940",
+          "deviceModelId": "mock.digital-io.8x8",
+          "adapter": {
+            "adapterId": "mock.adapter.digital-io.8x8",
+            "version": "1.0.0",
+            "manifestSha256": "db2fba00f3d3d89d12144bb0a8b0995235dd692416b3da0883b9f90a71fa0fbd"
+          }
+        },
+        {
+          "position": 1,
+          "stationAddress": 4098,
+          "identity": {
+            "vendorId": 286331153,
+            "productCode": 4098,
+            "revision": 1,
+            "serial": 1002
+          },
+          "esiSha256": "7c0ba0e8736dafbaf1b9ab00bac2920b3b5a4e1c660b62e81a4cec9a836ff106",
+          "deviceModelId": "mock.analog-io.4x4",
+          "adapter": {
+            "adapterId": "mock.adapter.analog-io.4x4",
+            "version": "1.0.0",
+            "manifestSha256": "51a341249d2eaa51100777f63f4a26642f95098eb5e1e434afbf2b2858ef1ec1"
+          }
+        },
+        {
+          "position": 2,
+          "stationAddress": 4099,
+          "identity": {
+            "vendorId": 286331153,
+            "productCode": 8193,
+            "revision": 1,
+            "serial": 1003
+          },
+          "esiSha256": "4bf158b257ce44b357b792cc9b5c3a001405e65d936110473ee9cfe3f433d936",
+          "deviceModelId": "mock.cia402-servo.axis1",
+          "adapter": {
+            "adapterId": "mock.adapter.cia402-servo.axis1",
+            "version": "1.0.0",
+            "manifestSha256": "f4d35d1f9fb262dd89a02d012ffcfb5af891586891f14f101e1e40c024ac374e"
+          }
+        }
+      ]
+    },
+    "timing": {
+      "mode": "distributed-clocks",
+      "cycleUs": 1000,
+      "frameCount": 1,
+      "wireTimeNs": 25000,
+      "masterWcetNs": 30000,
+      "taskWcetNs": 20000,
+      "safetyMarginNs": 100000,
+      "expectedWorkingCounter": 6
+    },
+    "processImage": {
+      "inputBytes": 20,
+      "outputBytes": 20,
+      "variables": [
+        {
+          "id": "dio-output-1",
+          "slavePosition": 0,
+          "deviceVariable": "digital-output-1",
+          "direction": "output",
+          "byteOffset": 0,
+          "bitOffset": 0,
+          "bitLength": 1
+        },
+        {
+          "id": "dio-input-1",
+          "slavePosition": 0,
+          "deviceVariable": "digital-input-1",
+          "direction": "input",
+          "byteOffset": 0,
+          "bitOffset": 0,
+          "bitLength": 1
+        },
+        {
+          "id": "analog-output-1",
+          "slavePosition": 1,
+          "deviceVariable": "analog-output-1",
+          "direction": "output",
+          "byteOffset": 1,
+          "bitOffset": 0,
+          "bitLength": 16
+        },
+        {
+          "id": "analog-input-1",
+          "slavePosition": 1,
+          "deviceVariable": "analog-input-1",
+          "direction": "input",
+          "byteOffset": 1,
+          "bitOffset": 0,
+          "bitLength": 16
+        },
+        {
+          "id": "axis-target-velocity",
+          "slavePosition": 2,
+          "deviceVariable": "cia402-target-velocity",
+          "direction": "output",
+          "byteOffset": 16,
+          "bitOffset": 0,
+          "bitLength": 32
+        },
+        {
+          "id": "axis-actual-velocity",
+          "slavePosition": 2,
+          "deviceVariable": "cia402-actual-velocity",
+          "direction": "input",
+          "byteOffset": 16,
+          "bitOffset": 0,
+          "bitLength": 32
+        }
+      ]
+    },
+    "startupSdos": [
+      {
+        "slavePosition": 2,
+        "order": 0,
+        "transition": "PS",
+        "index": 24672,
+        "subIndex": 0,
+        "valueHex": "08",
+        "timeoutMs": 1000,
+        "adapterId": "mock.adapter.cia402-servo.axis1"
+      }
+    ],
+    "task": {
+      "controlIntentId": "mock.intent.safe-servo-stop",
+      "controlIntentVersion": "1.0.0",
+      "language": "ecl-v1",
+      "buildState": "not-built",
+      "etirSha256": null,
+      "ecpkgSha256": null
+    },
+    "safety": {
+      "unknownDeviceAction": "reject-output",
+      "validationRequired": true,
+      "safeOutputPolicyId": "mock.policy.safe-output",
+      "motionPolicyId": "mock.policy.motion-envelope"
+    },
+    "deployment": {
+      "mode": "offline-only",
+      "slot": "none",
+      "approvalDecision": "not-evaluated",
+      "signature": null
+    }
+  }
+}

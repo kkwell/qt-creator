@@ -1,0 +1,317 @@
+{
+  "apiVersion": "controller.embed-labs.dev/v1",
+  "kind": "NormalizedDeviceModel",
+  "metadata": {
+    "id": "mock.analog-io.4x4",
+    "version": "1.0.0",
+    "createdAt": "2026-07-25T00:00:00Z",
+    "description": "Mock four-channel signed 16-bit analog output and input terminal"
+  },
+  "spec": {
+    "identity": {
+      "vendorId": 286331153,
+      "productCode": 4098,
+      "revision": 1
+    },
+    "esiSource": {
+      "uri": "mock://esi/mock-analog-io.xml",
+      "sha256": "7c0ba0e8736dafbaf1b9ab00bac2920b3b5a4e1c660b62e81a4cec9a836ff106",
+      "importedAt": "2026-07-25T00:00:00Z",
+      "complete": true,
+      "warnings": []
+    },
+    "mailbox": {
+      "supported": true,
+      "protocols": [
+        "CoE"
+      ],
+      "receiveOffset": 4096,
+      "receiveSize": 128,
+      "sendOffset": 4224,
+      "sendSize": 128
+    },
+    "syncManagers": [
+      {
+        "index": 0,
+        "direction": "mailbox-out",
+        "startAddress": 4096,
+        "sizeBytes": 128,
+        "controlByte": 38,
+        "enabled": true
+      },
+      {
+        "index": 1,
+        "direction": "mailbox-in",
+        "startAddress": 4224,
+        "sizeBytes": 128,
+        "controlByte": 34,
+        "enabled": true
+      },
+      {
+        "index": 2,
+        "direction": "master-to-slave",
+        "startAddress": 4352,
+        "sizeBytes": 8,
+        "controlByte": 36,
+        "enabled": true
+      },
+      {
+        "index": 3,
+        "direction": "slave-to-master",
+        "startAddress": 4608,
+        "sizeBytes": 8,
+        "controlByte": 32,
+        "enabled": true
+      }
+    ],
+    "fmmus": [
+      {
+        "index": 0,
+        "usage": "outputs",
+        "required": true
+      },
+      {
+        "index": 1,
+        "usage": "inputs",
+        "required": true
+      }
+    ],
+    "rxPdos": [
+      {
+        "index": 5632,
+        "name": "Analog outputs",
+        "syncManager": 2,
+        "fixed": true,
+        "mandatory": true,
+        "entries": [
+          {
+            "index": 28672,
+            "subIndex": 1,
+            "name": "Analog output 1",
+            "bitLength": 16,
+            "dataType": "integer16",
+            "mapping": "fixed",
+            "semantic": "analog-output-1",
+            "unit": "permille",
+            "scale": 0.030518509475997192,
+            "offset": 0
+          },
+          {
+            "index": 28672,
+            "subIndex": 2,
+            "name": "Analog output 2",
+            "bitLength": 16,
+            "dataType": "integer16",
+            "mapping": "fixed",
+            "semantic": "analog-output-2",
+            "unit": "permille",
+            "scale": 0.030518509475997192,
+            "offset": 0
+          },
+          {
+            "index": 28672,
+            "subIndex": 3,
+            "name": "Analog output 3",
+            "bitLength": 16,
+            "dataType": "integer16",
+            "mapping": "fixed",
+            "semantic": "analog-output-3",
+            "unit": "permille",
+            "scale": 0.030518509475997192,
+            "offset": 0
+          },
+          {
+            "index": 28672,
+            "subIndex": 4,
+            "name": "Analog output 4",
+            "bitLength": 16,
+            "dataType": "integer16",
+            "mapping": "fixed",
+            "semantic": "analog-output-4",
+            "unit": "permille",
+            "scale": 0.030518509475997192,
+            "offset": 0
+          }
+        ]
+      }
+    ],
+    "txPdos": [
+      {
+        "index": 6656,
+        "name": "Analog inputs",
+        "syncManager": 3,
+        "fixed": true,
+        "mandatory": true,
+        "entries": [
+          {
+            "index": 24576,
+            "subIndex": 1,
+            "name": "Analog input 1",
+            "bitLength": 16,
+            "dataType": "integer16",
+            "mapping": "fixed",
+            "semantic": "analog-input-1",
+            "unit": "permille",
+            "scale": 0.030518509475997192,
+            "offset": 0
+          },
+          {
+            "index": 24576,
+            "subIndex": 2,
+            "name": "Analog input 2",
+            "bitLength": 16,
+            "dataType": "integer16",
+            "mapping": "fixed",
+            "semantic": "analog-input-2",
+            "unit": "permille",
+            "scale": 0.030518509475997192,
+            "offset": 0
+          },
+          {
+            "index": 24576,
+            "subIndex": 3,
+            "name": "Analog input 3",
+            "bitLength": 16,
+            "dataType": "integer16",
+            "mapping": "fixed",
+            "semantic": "analog-input-3",
+            "unit": "permille",
+            "scale": 0.030518509475997192,
+            "offset": 0
+          },
+          {
+            "index": 24576,
+            "subIndex": 4,
+            "name": "Analog input 4",
+            "bitLength": 16,
+            "dataType": "integer16",
+            "mapping": "fixed",
+            "semantic": "analog-input-4",
+            "unit": "permille",
+            "scale": 0.030518509475997192,
+            "offset": 0
+          }
+        ]
+      }
+    ],
+    "objectDictionary": [
+      {
+        "index": 28672,
+        "subIndex": 1,
+        "name": "Analog output 1",
+        "dataType": "integer16",
+        "access": "rw",
+        "pdoMappable": true,
+        "semantic": "analog-output-1",
+        "unit": "permille"
+      },
+      {
+        "index": 24576,
+        "subIndex": 1,
+        "name": "Analog input 1",
+        "dataType": "integer16",
+        "access": "ro",
+        "pdoMappable": true,
+        "semantic": "analog-input-1",
+        "unit": "permille"
+      }
+    ],
+    "distributedClocks": {
+      "supported": false,
+      "referenceClockCapable": false,
+      "sync0": {
+        "supported": false,
+        "minimumCycleNs": 0,
+        "maximumCycleNs": 0,
+        "minimumShiftNs": 0,
+        "maximumShiftNs": 0
+      },
+      "sync1": {
+        "supported": false,
+        "minimumCycleNs": 0,
+        "maximumCycleNs": 0,
+        "minimumShiftNs": 0,
+        "maximumShiftNs": 0
+      },
+      "modes": []
+    },
+    "cycle": {
+      "minimumUs": 250,
+      "maximumUs": 100000,
+      "supportedUs": [
+        250,
+        500,
+        1000,
+        2000,
+        4000
+      ]
+    },
+    "watchdog": {
+      "supported": true,
+      "minimumMs": 2,
+      "maximumMs": 10000,
+      "defaultMs": 100,
+      "safeState": "zero-outputs"
+    },
+    "startupSdos": [],
+    "cia402": {
+      "supported": false,
+      "axes": 0,
+      "modes": [],
+      "requiredObjects": []
+    },
+    "processImage": {
+      "inputBytes": 8,
+      "outputBytes": 8,
+      "variables": [
+        {
+          "id": "analog-output-1",
+          "direction": "output",
+          "byteOffset": 0,
+          "bitOffset": 0,
+          "bitLength": 16,
+          "dataType": "integer16",
+          "object": {
+            "index": 28672,
+            "subIndex": 1
+          }
+        },
+        {
+          "id": "analog-input-1",
+          "direction": "input",
+          "byteOffset": 0,
+          "bitOffset": 0,
+          "bitLength": 16,
+          "dataType": "integer16",
+          "object": {
+            "index": 24576,
+            "subIndex": 1
+          }
+        }
+      ]
+    },
+    "safeOutputs": [
+      {
+        "variable": "analog-output-1",
+        "value": 0,
+        "reason": "Unknown or stopped tasks drive the mock channel to zero."
+      }
+    ],
+    "privateInitialization": {
+      "status": "not-required",
+      "steps": [],
+      "missingInformation": []
+    },
+    "diagnostics": {
+      "rules": [
+        {
+          "code": "analog-range-error",
+          "source": "emergency",
+          "severity": "error",
+          "recovery": "Set outputs to zero and inspect channel wiring and scaling."
+        }
+      ],
+      "unknownCodePolicy": "report-raw-and-stop-if-severe"
+    }
+  }
+}

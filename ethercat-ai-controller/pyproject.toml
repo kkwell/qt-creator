@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ethercat-ai-controller-contract-lab"
+version = "0.1.0"
+description = "Mock-only controller-tools-v1 contracts and read-only gateway"
+requires-python = ">=3.10"
+license = {text = "GPL-3.0-only"}
+authors = [{name = "Embed Labs"}]
+dependencies = []
+
+[project.scripts]
+controller-tools-v1 = "controller_tools_v1.__main__:main"
+
+[tool.setuptools]
+packages = ["controller_tools_v1"]
+
+[tool.setuptools.package-data]
+controller_tools_v1 = ["py.typed"]

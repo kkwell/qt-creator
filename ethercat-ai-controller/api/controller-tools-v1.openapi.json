@@ -1,0 +1,513 @@
+{
+  "openapi": "3.1.1",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "EtherCAT Controller Tools",
+    "version": "1.0.0",
+    "description": "Mock-only, read-only controller-tools-v1 facade. No endpoint acquires a lease, scans a bus, changes PDO/SDO, deploys ECPKG, starts a task, or commands motion."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8765",
+      "description": "Loopback mock server"
+    }
+  ],
+  "security": [],
+  "tags": [
+    {
+      "name": "Gateway"
+    },
+    {
+      "name": "Controller"
+    },
+    {
+      "name": "Adapter"
+    },
+    {
+      "name": "Validation"
+    },
+    {
+      "name": "MCP"
+    }
+  ],
+  "paths": {
+    "/api/controller-tools/v1/protocol": {
+      "get": {
+        "tags": [
+          "Gateway"
+        ],
+        "operationId": "gateway.get-protocol",
+        "summary": "Get protocol and safety boundary",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/controllers": {
+      "get": {
+        "tags": [
+          "Controller"
+        ],
+        "operationId": "controller.list",
+        "summary": "List configured mock controllers",
+        "description": "This reads configured inventory and does not perform network discovery.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/controllers/{controllerId}/capabilities": {
+      "get": {
+        "tags": [
+          "Controller"
+        ],
+        "operationId": "controller.get-capabilities",
+        "summary": "Get controller capabilities",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/controllers/{controllerId}/state": {
+      "get": {
+        "tags": [
+          "Controller"
+        ],
+        "operationId": "controller.get-state",
+        "summary": "Get immutable mock controller state",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/controllers/{controllerId}/topology": {
+      "get": {
+        "tags": [
+          "Controller"
+        ],
+        "operationId": "controller.get-topology",
+        "summary": "Get static mock topology",
+        "description": "Returns a checked-in snapshot; scanned is always false.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/controllers/{controllerId}/devices/{position}": {
+      "get": {
+        "tags": [
+          "Controller"
+        ],
+        "operationId": "controller.get-device",
+        "summary": "Get exact normalized device by position",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          },
+          {
+            "name": "position",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/controllers/{controllerId}/diagnostics": {
+      "get": {
+        "tags": [
+          "Controller"
+        ],
+        "operationId": "controller.get-diagnostics",
+        "summary": "Get static mock diagnostics",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/adapters": {
+      "get": {
+        "tags": [
+          "Adapter"
+        ],
+        "operationId": "adapter.list",
+        "summary": "List mock adapter manifests",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/artifacts/validate": {
+      "post": {
+        "tags": [
+          "Validation"
+        ],
+        "operationId": "artifact.validate",
+        "summary": "Validate an artifact without storing it",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "artifact"
+                ],
+                "properties": {
+                  "artifact": {
+                    "type": "object"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true,
+        "x-idempotent": true
+      }
+    },
+    "/api/controller-tools/v1/openapi.json": {
+      "get": {
+        "tags": [
+          "Gateway"
+        ],
+        "operationId": "gateway.get-openapi",
+        "summary": "Get this OpenAPI document",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1.1 JSON document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "x-read-only": true
+      }
+    },
+    "/mcp": {
+      "get": {
+        "tags": [
+          "MCP"
+        ],
+        "operationId": "mcp.listen",
+        "summary": "SSE listening is not implemented",
+        "responses": {
+          "405": {
+            "description": "This skeleton does not expose an SSE stream"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "MCP"
+        ],
+        "operationId": "mcp.dispatch",
+        "summary": "MCP 2025-11-25 Streamable HTTP JSON response mode",
+        "parameters": [
+          {
+            "name": "MCP-Session-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "MCP-Protocol-Version",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "const": "2025-11-25"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "jsonrpc",
+                  "method"
+                ],
+                "properties": {
+                  "jsonrpc": {
+                    "type": "string",
+                    "const": "2.0"
+                  },
+                  "id": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "method": {
+                    "type": "string"
+                  },
+                  "params": {
+                    "type": "object"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Notification accepted without a body"
+          },
+          "400": {
+            "description": "Malformed request, missing session, or unsupported protocol"
+          },
+          "403": {
+            "description": "Origin rejected"
+          }
+        },
+        "x-read-only": true
+      },
+      "delete": {
+        "tags": [
+          "MCP"
+        ],
+        "operationId": "mcp.close-session",
+        "summary": "Terminate one mock MCP session",
+        "parameters": [
+          {
+            "name": "MCP-Session-Id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Session removed"
+          },
+          "404": {
+            "description": "Session not found"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "ControllerId": {
+        "name": "controllerId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        }
+      }
+    },
+    "schemas": {
+      "ToolEnvelope": {
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "object"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "audit": {
+            "type": "object",
+            "required": [
+              "userId",
+              "aiClientId",
+              "controllerId",
+              "bootId",
+              "sessionId",
+              "leaseId",
+              "operationId",
+              "parametersSha256",
+              "beforeStateSha256",
+              "afterStateSha256",
+              "result"
+            ]
+          },
+          "error": {
+            "$ref": "#/components/schemas/Error"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "path",
+          "recovery"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^CT[0-9]{3}_[A-Z0-9_]+$"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "recovery": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "responses": {
+      "ToolEnvelope": {
+        "description": "Versioned result envelope with mock-only audit evidence",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ToolEnvelope"
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-controller-tools-version": "controller-tools/v1",
+  "x-safety-boundary": {
+    "mockOnly": true,
+    "readOnly": true,
+    "lease": false,
+    "scan": false,
+    "deployment": false,
+    "motion": false
+  }
+}

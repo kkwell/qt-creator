@@ -1,0 +1,445 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.embed-labs.dev/controller-tools/v1/control-intent.schema.json",
+  "title": "ControlIntent v1",
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "properties": {
+    "apiVersion": {
+      "$ref": "common.schema.json#/$defs/ApiVersion"
+    },
+    "kind": {
+      "type": "string",
+      "const": "ControlIntent"
+    },
+    "metadata": {
+      "$ref": "common.schema.json#/$defs/ArtifactMetadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/ControlIntentSpec"
+    }
+  },
+  "$defs": {
+    "ResourceSelector": {
+      "type": "object",
+      "required": [
+        "resourceId",
+        "position",
+        "identity",
+        "variable",
+        "access"
+      ],
+      "properties": {
+        "resourceId": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "identity": {
+          "$ref": "common.schema.json#/$defs/Identity"
+        },
+        "variable": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "access": {
+          "type": "string",
+          "enum": [
+            "read",
+            "write"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "MotionEnvelope": {
+      "type": "object",
+      "required": [
+        "axisId",
+        "minimumPosition",
+        "maximumPosition",
+        "maximumVelocity",
+        "maximumAcceleration",
+        "maximumDeceleration",
+        "maximumDurationMs"
+      ],
+      "properties": {
+        "axisId": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "minimumPosition": {
+          "type": "number"
+        },
+        "maximumPosition": {
+          "type": "number"
+        },
+        "maximumVelocity": {
+          "type": "number",
+          "minimum": 0
+        },
+        "maximumAcceleration": {
+          "type": "number",
+          "minimum": 0
+        },
+        "maximumDeceleration": {
+          "type": "number",
+          "minimum": 0
+        },
+        "maximumDurationMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400000
+        }
+      },
+      "additionalProperties": false
+    },
+    "SafeOutput": {
+      "type": "object",
+      "required": [
+        "resourceId",
+        "variable",
+        "value"
+      ],
+      "properties": {
+        "resourceId": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "variable": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Condition": {
+      "type": "object",
+      "required": [
+        "resourceId",
+        "variable",
+        "operator",
+        "value"
+      ],
+      "properties": {
+        "resourceId": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "variable": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "operator": {
+          "type": "string",
+          "enum": [
+            "eq",
+            "ne",
+            "lt",
+            "le",
+            "gt",
+            "ge"
+          ]
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "StepParameters": {
+      "type": "object",
+      "properties": {
+        "channel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "maxLength": 256
+            }
+          ]
+        },
+        "position": {
+          "type": "number"
+        },
+        "distance": {
+          "type": "number"
+        },
+        "velocity": {
+          "type": "number"
+        },
+        "acceleration": {
+          "type": "number",
+          "minimum": 0
+        },
+        "deceleration": {
+          "type": "number",
+          "minimum": 0
+        },
+        "jerk": {
+          "type": "number",
+          "minimum": 0
+        },
+        "enable": {
+          "type": "boolean"
+        },
+        "loopCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "bodyEntryNodeId": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "alarmCode": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "information",
+            "warning",
+            "error",
+            "fatal"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "functionBlock": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "condition": {
+          "$ref": "#/$defs/Condition"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProgramNode": {
+      "type": "object",
+      "required": [
+        "nodeId",
+        "op",
+        "resources",
+        "timeoutMs",
+        "parameters",
+        "next"
+      ],
+      "properties": {
+        "nodeId": {
+          "$ref": "common.schema.json#/$defs/Id"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "SetDigitalOutput",
+            "SetAnalogOutput",
+            "AxisPower",
+            "AxisReset",
+            "AxisHome",
+            "MoveAbsolute",
+            "MoveRelative",
+            "MoveVelocity",
+            "Stop",
+            "ControlledStop",
+            "WaitAxisDone",
+            "WaitInput",
+            "RaiseAlarm",
+            "EmitEvent",
+            "CallFunctionBlock",
+            "Branch",
+            "Jump",
+            "Repeat"
+          ]
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          },
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400000
+        },
+        "parameters": {
+          "$ref": "#/$defs/StepParameters"
+        },
+        "next": {
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/Id"
+          },
+          "maxItems": 2,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ControlIntentSpec": {
+      "type": "object",
+      "required": [
+        "naturalLanguage",
+        "naturalLanguageSha256",
+        "requestedCycleUs",
+        "executionMode",
+        "bindings",
+        "safety",
+        "program",
+        "approval"
+      ],
+      "properties": {
+        "naturalLanguage": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "naturalLanguageSha256": {
+          "$ref": "common.schema.json#/$defs/Sha256"
+        },
+        "requestedCycleUs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "executionMode": {
+          "type": "string",
+          "enum": [
+            "simulation",
+            "offline-validation",
+            "deployment-candidate"
+          ]
+        },
+        "bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResourceSelector"
+          },
+          "minItems": 1,
+          "maxItems": 1024
+        },
+        "safety": {
+          "type": "object",
+          "required": [
+            "clientDisconnectAction",
+            "motionEnvelopes",
+            "safeOutputs"
+          ],
+          "properties": {
+            "clientDisconnectAction": {
+              "type": "string",
+              "enum": [
+                "continue-approved-task",
+                "controlled-stop",
+                "safe-output"
+              ]
+            },
+            "motionEnvelopes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/MotionEnvelope"
+              },
+              "maxItems": 128
+            },
+            "safeOutputs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SafeOutput"
+              },
+              "maxItems": 1024
+            }
+          },
+          "additionalProperties": false
+        },
+        "program": {
+          "type": "object",
+          "required": [
+            "language",
+            "entryNodeId",
+            "nodes"
+          ],
+          "properties": {
+            "language": {
+              "type": "string",
+              "const": "ecl-v1"
+            },
+            "entryNodeId": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "nodes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ProgramNode"
+              },
+              "minItems": 1,
+              "maxItems": 4096
+            }
+          },
+          "additionalProperties": false
+        },
+        "approval": {
+          "type": "object",
+          "required": [
+            "policyId",
+            "policyVersion",
+            "decision"
+          ],
+          "properties": {
+            "policyId": {
+              "$ref": "common.schema.json#/$defs/Id"
+            },
+            "policyVersion": {
+              "$ref": "common.schema.json#/$defs/SemVer"
+            },
+            "decision": {
+              "type": "string",
+              "enum": [
+                "not-evaluated",
+                "preauthorized",
+                "requires-approval",
+                "rejected"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
