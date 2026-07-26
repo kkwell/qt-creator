@@ -23,6 +23,11 @@ inline constexpr quint16 CurrentMinor = ExplicitTimingModeMinor;
 inline constexpr quint32 ControlMaximumPayloadBytes = 4096;
 inline constexpr quint32 PushMaximumPayloadBytes = 65536;
 inline constexpr quint32 BulkMaximumPayloadBytes = 65536;
+inline constexpr quint32 BulkChunkHeaderBytes = 8;
+inline constexpr quint32 BulkChunkMaximumBytes
+    = BulkMaximumPayloadBytes - BulkChunkHeaderBytes;
+inline constexpr quint32 PackageObjectKind = 4;
+inline constexpr quint32 PackageUploadMode = 1;
 
 enum class Role : quint32 {
     Control = 1,
@@ -54,10 +59,17 @@ enum class MessageType : quint16 {
     FirmwareProgress = 0x020b,
     ResumeEvents = 0x0210,
     ResumeEventsResult = 0x0280,
+    BulkBegin = 0x0300,
+    BulkChunk = 0x0301,
+    BulkCommit = 0x0302,
+    BulkAbort = 0x0303,
     BulkStatus = 0x0380,
     GetCapability = 0x0400,
     DiscoverTopology = 0x0401,
     GetPackageState = 0x0403,
+    ValidatePackage = 0x0404,
+    ActivatePackage = 0x0405,
+    RollbackPackage = 0x0406,
     RestoreActivePackage = 0x0407,
     Capability = 0x0480,
     TopologyResult = 0x0481,
@@ -271,6 +283,7 @@ struct TopologyResult
 
 quint32 maximumPayloadBytes(Role role);
 bool isReadOnlyRequest(MessageType type);
+bool isPackageDeploymentRequest(MessageType type);
 bool isSupportedRequest(MessageType type);
 quint32 crc32c(QByteArrayView bytes);
 

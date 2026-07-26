@@ -1960,7 +1960,6 @@ void EtherCATProductApiTests::testSupportedRequestPolicy()
     }
 
     const QList<Protocol::MessageType> forbidden{
-        static_cast<Protocol::MessageType>(0x0300), // BulkBegin
         static_cast<Protocol::MessageType>(0x0500), // BeginFirmwareUpload
     };
     for (const Protocol::MessageType type : forbidden) {
@@ -1984,6 +1983,142 @@ void EtherCATProductApiTests::testSupportedRequestPolicy()
                                     &error)
                 .isEmpty());
     QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+}
+
+void EtherCATProductApiTests::testPackageDeploymentRequestPolicy()
+{
+    QCOMPARE(Protocol::BulkChunkMaximumBytes, quint32(65528));
+
+    QByteArray begin(24, '\0');
+    putU64(begin, 0, 813);
+    putU32(begin, 8, 67648);
+    putU32(begin, 20, Protocol::PackageUploadMode);
+
+    QByteArray chunk(Protocol::BulkChunkHeaderBytes, '\0');
+    putU32(chunk, 0, Protocol::PackageObjectKind);
+    putU32(chunk, 4, 0);
+    chunk.append("ecpkg");
+
+    QByteArray selector(24, '\0');
+    putU32(selector, 0, 'B');
+    putU64(selector, 8, 12);
+    putU64(selector, 16, 813);
+
+    struct RequestCase
+    {
+        Protocol::MessageType type;
+        Protocol::Role role;
+        QByteArray payload;
+    };
+    const QList<RequestCase> requests{
+        {Protocol::MessageType::BulkBegin, Protocol::Role::Bulk, begin},
+        {Protocol::MessageType::BulkChunk, Protocol::Role::Bulk, chunk},
+        {Protocol::MessageType::BulkCommit, Protocol::Role::Bulk, {}},
+        {Protocol::MessageType::BulkAbort, Protocol::Role::Bulk, {}},
+        {Protocol::MessageType::ValidatePackage, Protocol::Role::Control, selector},
+        {Protocol::MessageType::ActivatePackage, Protocol::Role::Control, selector},
+        {Protocol::MessageType::RollbackPackage, Protocol::Role::Control, selector},
+        {Protocol::MessageType::RestoreActivePackage, Protocol::Role::Control, selector},
+    };
+    quint64 requestId = 1;
+    for (const RequestCase &request : requests) {
+        QVERIFY(Protocol::isPackageDeploymentRequest(request.type));
+        QVERIFY(Protocol::isSupportedRequest(request.type));
+        QVERIFY(!Protocol::isReadOnlyRequest(request.type));
+
+        Protocol::Error error;
+        const QByteArray wire = Protocol::encodeRequest(
+            request.type,
+            request.payload,
+            TestSessionId,
+            requestId,
+            requestId,
+            TestBootId,
+            Protocol::CurrentMinor,
+            &error);
+        QVERIFY(!wire.isEmpty());
+        QVERIFY(!error);
+
+        Protocol::FrameParser parser(
+            request.role, Protocol::FrameDirection::ClientRequest);
+        const Protocol::ParseResult result = parser.append(wire);
+        QVERIFY(!result.error);
+        QCOMPARE(result.frames.size(), 1);
+        QCOMPARE(result.frames.constFirst().header.messageType, request.type);
+        QCOMPARE(result.frames.constFirst().payload, request.payload);
+
+        const Protocol::Role wrongRole = request.role == Protocol::Role::Bulk
+                                             ? Protocol::Role::Control
+                                             : Protocol::Role::Bulk;
+        Protocol::FrameParser wrongParser(
+            wrongRole, Protocol::FrameDirection::ClientRequest);
+        const Protocol::ParseResult wrongResult = wrongParser.append(wire);
+        QVERIFY(wrongResult.error);
+        QCOMPARE(
+            wrongResult.error->category, Protocol::ErrorCategory::UnsupportedMessage);
+        ++requestId;
+    }
+
+    const auto rejectsPayload = [](Protocol::MessageType type, const QByteArray &payload) {
+        Protocol::Error error;
+        QVERIFY(Protocol::encodeRequest(type,
+                                        payload,
+                                        TestSessionId,
+                                        1,
+                                        1,
+                                        TestBootId,
+                                        Protocol::CurrentMinor,
+                                        &error)
+                    .isEmpty());
+        QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+    };
+
+    QByteArray invalid = begin;
+    putU64(invalid, 0, 0);
+    rejectsPayload(Protocol::MessageType::BulkBegin, invalid);
+    invalid = begin;
+    putU32(invalid, 8, 0);
+    rejectsPayload(Protocol::MessageType::BulkBegin, invalid);
+    invalid = begin;
+    putU32(invalid, 12, 1);
+    rejectsPayload(Protocol::MessageType::BulkBegin, invalid);
+    invalid = begin;
+    putU32(invalid, 16, 1);
+    rejectsPayload(Protocol::MessageType::BulkBegin, invalid);
+    invalid = begin;
+    putU32(invalid, 20, 2);
+    rejectsPayload(Protocol::MessageType::BulkBegin, invalid);
+
+    invalid = chunk.left(Protocol::BulkChunkHeaderBytes);
+    rejectsPayload(Protocol::MessageType::BulkChunk, invalid);
+    invalid = chunk;
+    putU32(invalid, 0, Protocol::PackageObjectKind - 1);
+    rejectsPayload(Protocol::MessageType::BulkChunk, invalid);
+    invalid = QByteArray(Protocol::BulkMaximumPayloadBytes + 1, '\0');
+    putU32(invalid, 0, Protocol::PackageObjectKind);
+    rejectsPayload(Protocol::MessageType::BulkChunk, invalid);
+
+    rejectsPayload(Protocol::MessageType::BulkCommit, QByteArray("unexpected"));
+    rejectsPayload(Protocol::MessageType::BulkAbort, QByteArray("unexpected"));
+
+    for (const Protocol::MessageType type :
+         {Protocol::MessageType::ValidatePackage,
+          Protocol::MessageType::ActivatePackage,
+          Protocol::MessageType::RollbackPackage,
+          Protocol::MessageType::RestoreActivePackage}) {
+        invalid = selector;
+        putU32(invalid, 0, 'C');
+        rejectsPayload(type, invalid);
+        invalid = selector;
+        putU32(invalid, 4, 1);
+        rejectsPayload(type, invalid);
+        invalid = selector;
+        putU64(invalid, 8, 0);
+        rejectsPayload(type, invalid);
+        invalid = selector;
+        putU64(invalid, 16, 0);
+        rejectsPayload(type, invalid);
+    }
 }
 
 void EtherCATProductApiTests::testConnectionProfileEndpointConfiguration_data()

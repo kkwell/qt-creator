@@ -97,11 +97,22 @@ After an explicit typed control request, the adapter can additionally emit:
 | Control | `DiscoverTopology (0x0401)` |
 | Control | `RestoreActivePackage (0x0407)` |
 
-Both lists are closed at the private codec/session boundary. A consumer cannot
+The private codec also defines this closed ECPKG deployment vocabulary for the
+next typed session layer:
+
+| Channel | Deployment request |
+|---|---|
+| Bulk | `BulkBegin (0x0300)` with configuration ID, package size, zero reserved fields, and package mode `1` |
+| Bulk | `BulkChunk (0x0301)` with object kind `4`, an offset, and 1 through 65,528 package bytes |
+| Bulk | `BulkCommit (0x0302)` or `BulkAbort (0x0303)` with an empty payload |
+| Control | `ValidatePackage (0x0404)`, `ActivatePackage (0x0405)`, or `RollbackPackage (0x0406)` with an exact 24-byte slot/generation/configuration selector |
+
+All three tables are closed at the private codec boundary. A consumer cannot
 expand them through a profile, endpoint string, Workbench action, generic
-Provider field, or arbitrary numeric message type. A request not listed above
-is rejected before a frame is emitted. Reset, SDO/PDO access, package
-upload/activation, firmware write, and arbitrary bulk operations remain
+Provider field, or arbitrary numeric message type. The session and Provider do
+not yet expose or emit the new deployment requests, so this codec foundation
+cannot upload, validate, activate, roll back, or otherwise change a controller.
+Reset, SDO/PDO access, firmware write, and arbitrary bulk operations remain
 excluded.
 
 Connect is not Scan. The adapter's Connect request establishes the transport
@@ -418,11 +429,10 @@ extension:
 - real Diagnostics Provider mapping; and
 - SDO/PDO and firmware writes.
 
-The current English regression passed 71 ProductApi tests and 226 tests across
-Workbench, Project, Devices, Core, Scan, Diagnostics, and ProductApi, with one
-ProductApi hardware test skipped and no failures. The `WITH_TESTS=OFF` product
-build passed with exactly 17 plugin dylibs, and all EtherCAT Simplified Chinese
-contexts contain no unfinished or empty translations.
+The focused Qt 6.11 ProductApi regression passed 74 rows, with one
+real-controller lifecycle row skipped by its explicit environment gate and no
+failures. The broader multi-plugin baseline was not rerun for this codec-only
+change. The `WITH_TESTS=OFF` ProductApi build also passed.
 
 The generic Start and explicit DC real-controller lifecycles each passed 3
 tests with 0 failures and completed safe cleanup in `SHUTDOWN`/EMPTY with no

@@ -18,6 +18,7 @@ private slots:
     void testSemanticControllerState();
     void testSemanticAuxiliaryRecords();
     void testSupportedRequestPolicy();
+    void testPackageDeploymentRequestPolicy();
     void testConnectionProfileEndpointConfiguration_data();
     void testConnectionProfileEndpointConfiguration();
     void testConnectionProfileEndpointReconfigurationGuards();

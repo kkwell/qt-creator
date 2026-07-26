@@ -88,6 +88,17 @@ bool validRole(Role role)
     return role == Role::Control || role == Role::Push || role == Role::Bulk;
 }
 
+bool validPackageSelector(QByteArrayView payload)
+{
+    if (payload.size() != 24)
+        return false;
+    const quint32 slot = readBigEndian<quint32>(payload, 0);
+    return (slot == quint32('A') || slot == quint32('B'))
+           && readBigEndian<quint32>(payload, 4) == 0
+           && readBigEndian<quint64>(payload, 8)
+           && readBigEndian<quint64>(payload, 16);
+}
+
 bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type)
 {
     if (direction == FrameDirection::ClientRequest) {
@@ -104,12 +115,18 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
                    || type == MessageType::GetCapability
                    || type == MessageType::DiscoverTopology
                    || type == MessageType::GetPackageState
+                   || type == MessageType::ValidatePackage
+                   || type == MessageType::ActivatePackage
+                   || type == MessageType::RollbackPackage
                    || type == MessageType::RestoreActivePackage
                    || type == MessageType::GetFirmwareState;
         }
         if (role == Role::Push)
             return type == MessageType::ResumeEvents;
-        return role == Role::Bulk && type == MessageType::GetCapability;
+        return role == Role::Bulk
+               && (type == MessageType::GetCapability || type == MessageType::BulkBegin
+                   || type == MessageType::BulkChunk || type == MessageType::BulkCommit
+                   || type == MessageType::BulkAbort);
     }
 
     if (type == MessageType::HelloAck || type == MessageType::Error)
@@ -625,6 +642,15 @@ bool isReadOnlyRequest(MessageType type)
            || type == MessageType::ResumeEvents;
 }
 
+bool isPackageDeploymentRequest(MessageType type)
+{
+    return type == MessageType::BulkBegin || type == MessageType::BulkChunk
+           || type == MessageType::BulkCommit || type == MessageType::BulkAbort
+           || type == MessageType::ValidatePackage || type == MessageType::ActivatePackage
+           || type == MessageType::RollbackPackage
+           || type == MessageType::RestoreActivePackage;
+}
+
 bool isSupportedRequest(MessageType type)
 {
     return type == MessageType::Hello || isReadOnlyRequest(type)
@@ -635,7 +661,7 @@ bool isSupportedRequest(MessageType type)
            || type == MessageType::Heartbeat
            || type == MessageType::EnterConfigurationMode
            || type == MessageType::DiscoverTopology
-           || type == MessageType::RestoreActivePackage;
+           || isPackageDeploymentRequest(type);
 }
 
 quint32 crc32c(QByteArrayView bytes)
@@ -726,12 +752,21 @@ QByteArray encodeRequest(
                        && readBigEndian<quint16>(payload, 2) >= 1
                        && readBigEndian<quint16>(payload, 2) <= 64
                        && readBigEndian<quint32>(payload, 4) == 0;
-    } else if (type == MessageType::RestoreActivePackage) {
-        const quint32 slot = payload.size() == 24 ? readBigEndian<quint32>(payload, 0) : 0;
-        payloadValid = payload.size() == 24 && (slot == quint32('A') || slot == quint32('B'))
-                       && readBigEndian<quint32>(payload, 4) == 0
-                       && readBigEndian<quint64>(payload, 8)
-                       && readBigEndian<quint64>(payload, 16);
+    } else if (type == MessageType::BulkBegin) {
+        payloadValid = payload.size() == 24 && readBigEndian<quint64>(payload, 0)
+                       && readBigEndian<quint32>(payload, 8)
+                       && readBigEndian<quint32>(payload, 12) == 0
+                       && readBigEndian<quint32>(payload, 16) == 0
+                       && readBigEndian<quint32>(payload, 20) == PackageUploadMode;
+    } else if (type == MessageType::BulkChunk) {
+        payloadValid = payload.size() > BulkChunkHeaderBytes
+                       && payload.size() <= BulkMaximumPayloadBytes
+                       && readBigEndian<quint32>(payload, 0) == PackageObjectKind;
+    } else if (
+        type == MessageType::ValidatePackage || type == MessageType::ActivatePackage
+        || type == MessageType::RollbackPackage
+        || type == MessageType::RestoreActivePackage) {
+        payloadValid = validPackageSelector(payload);
     } else {
         payloadValid = payload.isEmpty();
     }
