@@ -97,8 +97,10 @@ Qt Core and existing `EtherCATData` values. CMake and qbs list the same source
 files.
 
 `OfflineSlaveConfiguration` now owns these three values. EtherCATProject format
-version 2 persists them, rejects corrupt or domain-invalid records, migrates
-version 1 with an exact recovery backup, and exposes checked replacement
+version 3 persists them together with `MasterConfiguration`. The master value
+stores `unassigned`, `free-run`, or `distributed-clocks` plus a nanosecond
+cycle period. The Project plugin rejects inconsistent timing values, migrates
+versions 1 and 2 with exact recovery backups, and exposes checked replacement
 commands through `ProjectService`. Each accepted replacement enters the
 project's unified Undo/Redo stack.
 

@@ -14,6 +14,15 @@
 namespace EtherCAT::Data {
 
 enum class ConfigurationIssueSeverity { Information, Warning, Error };
+enum class MasterTimingMode { Unassigned, FreeRun, DistributedClocks };
+
+struct ETHERCATDATA_EXPORT MasterConfiguration
+{
+    MasterTimingMode timingMode = MasterTimingMode::Unassigned;
+    quint32 cyclePeriodNs = 0;
+
+    friend bool operator==(const MasterConfiguration &, const MasterConfiguration &) = default;
+};
 
 enum class ConfigurationIssueCode {
     DuplicateSyncManager,
@@ -215,6 +224,8 @@ ETHERCATDATA_EXPORT QList<ConfigurationIssue> validateDcConfiguration(
 } // namespace EtherCAT::Data
 
 Q_DECLARE_METATYPE(EtherCAT::Data::ConfigurationIssueSeverity)
+Q_DECLARE_METATYPE(EtherCAT::Data::MasterTimingMode)
+Q_DECLARE_METATYPE(EtherCAT::Data::MasterConfiguration)
 Q_DECLARE_METATYPE(EtherCAT::Data::ConfigurationIssueCode)
 Q_DECLARE_METATYPE(EtherCAT::Data::ConfigurationIssue)
 Q_DECLARE_METATYPE(EtherCAT::Data::SyncManagerConfiguration)

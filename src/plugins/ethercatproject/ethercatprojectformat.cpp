@@ -262,6 +262,51 @@ static Utils::Result<Data::PdoDirection> parsePdoDirection(
         Tr::tr("%1 has an unsupported PDO direction '%2'.").arg(objectName, *value));
 }
 
+static QString masterTimingModeName(Data::MasterTimingMode mode)
+{
+    switch (mode) {
+    case Data::MasterTimingMode::Unassigned:
+        return "unassigned";
+    case Data::MasterTimingMode::FreeRun:
+        return "free-run";
+    case Data::MasterTimingMode::DistributedClocks:
+        return "distributed-clocks";
+    }
+    return "unassigned";
+}
+
+static Utils::Result<Data::MasterConfiguration> parseMasterConfiguration(
+    const QJsonObject &masterObject)
+{
+    const auto object = parseObject(masterObject, "configuration", Tr::tr("Master"));
+    if (!object)
+        return Utils::ResultError(object.error());
+    const auto mode = parseString(*object, "timingMode", Tr::tr("Master configuration"));
+    const auto cycle = parseUnsigned(*object, "cyclePeriodNs", Tr::tr("Master configuration"));
+    if (!mode || !cycle)
+        return Utils::ResultError(!mode ? mode.error() : cycle.error());
+
+    Data::MasterTimingMode timingMode = Data::MasterTimingMode::Unassigned;
+    if (*mode == "free-run") {
+        timingMode = Data::MasterTimingMode::FreeRun;
+    } else if (*mode == "distributed-clocks") {
+        timingMode = Data::MasterTimingMode::DistributedClocks;
+    } else if (*mode != "unassigned") {
+        return Utils::ResultError(
+            Tr::tr("Master configuration has an unsupported timing mode '%1'.").arg(*mode));
+    }
+
+    if (timingMode == Data::MasterTimingMode::Unassigned && *cycle != 0) {
+        return Utils::ResultError(
+            Tr::tr("An unassigned EtherCAT timing mode cannot have a cycle period."));
+    }
+    if (timingMode != Data::MasterTimingMode::Unassigned && *cycle == 0) {
+        return Utils::ResultError(
+            Tr::tr("FreeRun and Distributed Clocks require a non-zero cycle period."));
+    }
+    return Data::MasterConfiguration{timingMode, *cycle};
+}
+
 static Utils::Result<QList<Data::SyncManagerConfiguration>> parseSyncManagers(
     const QJsonObject &processDataObject, const QString &slaveName, QSet<Data::NodeId> *uniqueIds)
 {
@@ -730,6 +775,7 @@ Data::ProjectSnapshot createProjectSnapshot(const QString &name, const QString &
         false,
         {},
         {},
+        {},
     };
 }
 
@@ -772,7 +818,7 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
     const int version = root.value("formatVersion").toInt(root.value("version").toInt(-1));
     if (version == 0)
         return parseVersionZero(root, fallbackName);
-    if (version != 1 && version != Constants::CURRENT_FORMAT_VERSION) {
+    if (version != 1 && version != 2 && version != Constants::CURRENT_FORMAT_VERSION) {
         return Utils::ResultError(
             Tr::tr("Unsupported EtherCAT project format version %1.").arg(version));
     }
@@ -805,8 +851,15 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
     if (!masterName)
         return Utils::ResultError(masterName.error());
 
-    const auto slaves = parseOfflineSlaves(
-        masterObject, *masterId, &uniqueIds, version == Constants::CURRENT_FORMAT_VERSION);
+    Data::MasterConfiguration masterConfiguration;
+    if (version == Constants::CURRENT_FORMAT_VERSION) {
+        const auto parsedMasterConfiguration = parseMasterConfiguration(masterObject);
+        if (!parsedMasterConfiguration)
+            return Utils::ResultError(parsedMasterConfiguration.error());
+        masterConfiguration = *parsedMasterConfiguration;
+    }
+
+    const auto slaves = parseOfflineSlaves(masterObject, *masterId, &uniqueIds, version >= 2);
     if (!slaves)
         return Utils::ResultError(slaves.error());
 
@@ -824,6 +877,7 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
         migrationRequired,
         {},
         *slaves,
+        masterConfiguration,
     };
     for (const Data::OfflineSlaveConfiguration &slave : *slaves) {
         snapshot.nodes.append({slave.id, slave.masterId, Data::ProjectNodeKind::Slave, slave.name});
@@ -971,6 +1025,11 @@ QByteArray serializeProject(const Data::ProjectSnapshot &snapshot)
         object.insert("configuration", configuration);
         slaves.append(object);
     }
+    QJsonObject masterConfiguration;
+    masterConfiguration.insert(
+        "timingMode", masterTimingModeName(snapshot.masterConfiguration.timingMode));
+    masterConfiguration.insert("cyclePeriodNs", double(snapshot.masterConfiguration.cyclePeriodNs));
+    masterObject.insert("configuration", masterConfiguration);
     masterObject.insert("slaves", slaves);
 
     QJsonObject root;

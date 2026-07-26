@@ -22,20 +22,21 @@ All Project objects are GUI-thread-owned. This plugin has no worker thread,
 timer, future, or cancellation path. Document signals are disconnected before
 the document and undo stack are destroyed.
 
-## Version 2 format
+## Version 3 format
 
 The current file is indented UTF-8 JSON with MIME type
 `application/x-ethercat-project`, format name `ethercat-project`, and
-`formatVersion` 2. Version 2 adds per-slave Process Data, Startup, and DC
-configuration. It is local editor data, not ECPKG, ECFG, ETIR, a network
-message, or a TwinCAT project file.
+`formatVersion` 3. Version 2 added per-slave Process Data, Startup, and DC
+configuration. Version 3 adds the provider-neutral master timing mode and
+cycle period needed to build a controller package. It is local editor data,
+not ECPKG, ECFG, ETIR, a network message, or a TwinCAT project file.
 
 The top-level shape is:
 
 ```json
 {
     "format": "ethercat-project",
-    "formatVersion": 2,
+    "formatVersion": 3,
     "project": {
         "id": "lowercase-uuid-without-braces",
         "name": "Packaging Line",
@@ -48,10 +49,20 @@ The top-level shape is:
     "master": {
         "id": "lowercase-uuid-without-braces",
         "name": "EtherCAT Master",
+        "configuration": {
+            "timingMode": "unassigned",
+            "cyclePeriodNs": 0
+        },
         "slaves": []
     }
 }
 ```
+
+`timingMode` is `unassigned`, `free-run`, or `distributed-clocks`. An
+unassigned master must have a zero cycle. FreeRun and Distributed Clocks must
+have a cycle from 1 through 4294967295 ns. The master setting expresses
+engineering intent; a later adapter still validates it against controller
+capabilities and the selected slaves before building or deploying a package.
 
 Every slave has this structural data plus one required `configuration` object:
 
@@ -200,21 +211,28 @@ unchanged.
 
 Version 1 contains the same structural project and optional slave list but no
 per-slave `configuration`. It loads with empty Process Data and Startup values
-and disabled DC, is marked migrated/modified, and is rewritten as version 2
+and disabled DC, is marked migrated/modified, and is rewritten as version 3
 only after explicit Save or Save All. Before replacement, the exact source
 bytes are copied to `<project>.v1.bak`; existing backups receive a numeric
 suffix and are never overwritten.
+
+Version 2 preserves all per-slave configuration but has no master timing
+configuration. It loads with an unassigned master, is marked
+migrated/modified, and is rewritten as version 3 only after explicit Save or
+Save All. The exact version-2 bytes are first copied to
+`<project>.v2.bak`.
 
 The legacy version-0 root shape with `id`, `name`, and `createdBy` remains
 supported. It preserves the project ID, creates stable target/master IDs, and
 uses the same explicit-save flow with `<project>.v0.bak` recovery.
 
-Invalid JSON, unsupported versions, missing version-2 configuration objects,
-invalid scalar types/ranges, invalid raw hex, duplicate stable IDs, and
-domain-invalid configuration are rejected. An initially damaged file opens as
-an invalid, non-saveable snapshot and adds a ProjectExplorer error task; its
-bytes are never overwritten. Reload of an already valid project also rejects a
-changed project ID and keeps the last valid in-memory snapshot.
+Invalid JSON, unsupported versions, missing current-format configuration
+objects, inconsistent master timing, invalid scalar types/ranges, invalid raw
+hex, duplicate stable IDs, and domain-invalid configuration are rejected. An
+initially damaged file opens as an invalid, non-saveable snapshot and adds a
+ProjectExplorer error task; its bytes are never overwritten. Reload of an
+already valid project also rejects a changed project ID and keeps the last
+valid in-memory snapshot.
 
 The current file is written through `Utils::FileSaver`. A temporary-file or
 finalization failure leaves the last valid file intact. Save As remains
@@ -224,7 +242,7 @@ explicit Save and Save All are the supported persistence paths.
 
 ## New-project and close behavior
 
-The `EtherCAT Engineering Project` wizard creates one version-2 file and opens
+The `EtherCAT Engineering Project` wizard creates one version-3 file and opens
 it through ProjectExplorer. The wizard uses current Qt Creator factory and
 GeneratedFile APIs.
 
@@ -238,13 +256,13 @@ unload or shutdown. There is no second close-time serializer.
 The focused Project suite covers:
 
 - metadata, dependencies, service registration, and wizard discovery;
-- version-2 structural and configuration round trips;
+- version-3 structural, master-cycle, and slave-configuration round trips;
 - malformed JSON, unsupported versions, missing configuration, duplicate IDs,
   invalid raw hex, and domain-invalid PDO mapping;
 - Project and Target/Master rename, topology replacement, Process Data,
   Startup, and DC command validation plus Undo/Redo;
 - Save All registration, Save As rejection, atomic write failure, and success;
-- exact version-0 and version-1 migration backups;
+- exact version-0, version-1, and version-2 migration backups;
 - two real ProjectExplorer projects, startup-project switching, close-save,
   signal publication, close order, and cleanup.
 

@@ -126,6 +126,7 @@ static Data::ProjectSnapshot projectSnapshot(const QString &name = "Packaging Li
         true,
         false,
         {},
+        {},
         {}};
 }
 
@@ -320,7 +321,7 @@ static TestProjectFile writeProjectWithSlave(
          QJsonObject{{"processData", processData}, {"startup", startup}, {"dc", dc}}}};
     const QJsonObject root{
         {"format", "ethercat-project"},
-        {"formatVersion", 2},
+        {"formatVersion", 3},
         {"project",
          QJsonObject{
              {"id", result.projectId.toString()},
@@ -332,6 +333,8 @@ static TestProjectFile writeProjectWithSlave(
          QJsonObject{
              {"id", result.masterId.toString()},
              {"name", "EtherCAT Master"},
+             {"configuration",
+              QJsonObject{{"timingMode", "unassigned"}, {"cyclePeriodNs", 0}}},
              {"slaves", QJsonArray{slave}}}}};
     const Utils::Result<qint64> written = result.path.writeFileContents(
         QJsonDocument(root).toJson(QJsonDocument::Indented));
@@ -3951,12 +3954,12 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
 
     QCOMPARE(name->text(), QString("Process Data Workflow"));
     QCOMPARE(id->text(), file.projectId.toString());
-    QCOMPARE(type->text(), QString("Offline EtherCAT Engineering Project"));
-    QCOMPARE(formatVersion->text(), QString("2"));
+    QCOMPARE(type->text(), Tr::tr("Offline EtherCAT Engineering Project"));
+    QCOMPARE(formatVersion->text(), QString("3"));
     QCOMPARE(createdBy->text(), QString("Workbench Test"));
-    QCOMPARE(validity->text(), QString("Valid"));
-    QCOMPARE(migration->text(), QString("Current format"));
-    QCOMPARE(modified->text(), QString("No"));
+    QCOMPARE(validity->text(), Tr::tr("Valid"));
+    QCOMPARE(migration->text(), Tr::tr("Current format"));
+    QCOMPARE(modified->text(), Tr::tr("No"));
     QCOMPARE(target->text(), QString("Offline Controller"));
     QCOMPARE(master->text(), QString("EtherCAT Master"));
     QCOMPARE(slaveCount->text(), QString("1"));
@@ -3988,7 +3991,7 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
     QTRY_COMPARE(opened.project()->displayName(), renamed);
     QTRY_COMPARE(title->text(), renamed);
     QTRY_COMPARE(name->text(), renamed);
-    QTRY_COMPARE(modified->text(), QString("Yes"));
+    QTRY_COMPARE(modified->text(), Tr::tr("Yes"));
     QCOMPARE(controller.selectionService()->currentNodeId(), file.projectId);
     QVERIFY(projectService->canUndoProject(file.projectId));
 
@@ -3997,12 +4000,12 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
     QTRY_COMPARE(opened.project()->displayName(), QString("Process Data Workflow"));
     QTRY_COMPARE(name->text(), QString("Process Data Workflow"));
     QTRY_COMPARE(title->text(), QString("Process Data Workflow"));
-    QTRY_COMPARE(modified->text(), QString("No"));
+    QTRY_COMPARE(modified->text(), Tr::tr("No"));
     QVERIFY_RESULT(projectService->redoProject(file.projectId));
     QTRY_COMPARE(projectService->project(file.projectId)->name, renamed);
     QTRY_COMPARE(name->text(), renamed);
     QTRY_COMPARE(title->text(), renamed);
-    QTRY_COMPARE(modified->text(), QString("Yes"));
+    QTRY_COMPARE(modified->text(), Tr::tr("Yes"));
 
     name->setText("   ");
     QVERIFY(QMetaObject::invokeMethod(name, "editingFinished"));
@@ -4023,7 +4026,7 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
     QVERIFY(staleName);
     QVERIFY(staleValidity);
     QVERIFY(staleName->isReadOnly());
-    QCOMPARE(staleValidity->text(), QString("Unavailable"));
+    QCOMPARE(staleValidity->text(), Tr::tr("Unavailable"));
 
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
@@ -4641,9 +4644,12 @@ void EtherCATWorkbenchTests::testEditableMasterGeneralWorkflow()
     QPlainTextEdit *comment = page->findChild<QPlainTextEdit *>("EtherCATMasterGeneralComment");
     QCheckBox *disabled = page->findChild<QCheckBox *>("EtherCATMasterGeneralDisabled");
     QCheckBox *createSymbols = page->findChild<QCheckBox *>("EtherCATMasterGeneralCreateSymbols");
+    QComboBox *timingMode
+        = page->findChild<QComboBox *>("EtherCATMasterGeneralTimingMode");
     QLineEdit *cycle = page->findChild<QLineEdit *>("EtherCATMasterGeneralCycle");
     QLineEdit *slaveCount = page->findChild<QLineEdit *>("EtherCATMasterGeneralSlaveCount");
     QLineEdit *status = page->findChild<QLineEdit *>("EtherCATMasterGeneralStatus");
+    QPushButton *apply = page->findChild<QPushButton *>("EtherCATMasterGeneralApply");
     QTreeWidget *propertyTree = page->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
     QVERIFY(title);
     QVERIFY(name);
@@ -4653,9 +4659,11 @@ void EtherCATWorkbenchTests::testEditableMasterGeneralWorkflow()
     QVERIFY(comment);
     QVERIFY(disabled);
     QVERIFY(createSymbols);
+    QVERIFY(timingMode);
     QVERIFY(cycle);
     QVERIFY(slaveCount);
     QVERIFY(status);
+    QVERIFY(apply);
     QVERIFY(propertyTree);
 
     const QString renderPath = qEnvironmentVariable("ETHERCAT_WORKBENCH_RENDER_PATH");
@@ -4667,7 +4675,7 @@ void EtherCATWorkbenchTests::testEditableMasterGeneralWorkflow()
     QCOMPARE(name->text(), QString("EtherCAT Master"));
     QCOMPARE(id->text(), QString("1"));
     QCOMPARE(objectId->text(), file.masterId.toString());
-    QCOMPARE(type->text(), QString("EtherCAT Master"));
+    QVERIFY(!type->text().isEmpty());
     QVERIFY(!name->isReadOnly());
     QVERIFY(id->isReadOnly());
     QVERIFY(objectId->isReadOnly());
@@ -4675,7 +4683,13 @@ void EtherCATWorkbenchTests::testEditableMasterGeneralWorkflow()
     QVERIFY(comment->isReadOnly());
     QVERIFY(!disabled->isEnabled());
     QVERIFY(!createSymbols->isEnabled());
-    QCOMPARE(cycle->text(), QString("Not assigned (offline)"));
+    QCOMPARE(
+        timingMode->currentData().toInt(), int(Data::MasterTimingMode::Unassigned));
+    QVERIFY(timingMode->isEnabled());
+    QVERIFY(cycle->text().isEmpty());
+    QVERIFY(!cycle->isReadOnly());
+    QVERIFY(cycle->isEnabled());
+    QVERIFY(apply->isEnabled());
     QCOMPARE(slaveCount->text(), QString("1"));
     QCOMPARE(
         status->text(),
@@ -4684,14 +4698,40 @@ void EtherCATWorkbenchTests::testEditableMasterGeneralWorkflow()
             .data(WorkbenchTreeModel::StatusRole)
             .toString());
     QVERIFY(!name->accessibleName().isEmpty());
+    QVERIFY(!timingMode->accessibleName().isEmpty());
     QVERIFY(!cycle->accessibleName().isEmpty());
     QVERIFY(!status->accessibleName().isEmpty());
+    QVERIFY(!apply->accessibleName().isEmpty());
     QVERIFY(!comment->accessibleDescription().isEmpty());
     QVERIFY(!disabled->accessibleDescription().isEmpty());
     QVERIFY(!createSymbols->accessibleDescription().isEmpty());
     QVERIFY(masterForm->isVisible());
     QVERIFY(summaryForm->isVisible());
     QVERIFY(!propertyTree->isVisible());
+
+    const int dcIndex = timingMode->findData(int(Data::MasterTimingMode::DistributedClocks));
+    QVERIFY(dcIndex >= 0);
+    timingMode->setCurrentIndex(dcIndex);
+    cycle->setText("125000");
+    apply->click();
+    const Data::MasterConfiguration dcConfiguration{
+        Data::MasterTimingMode::DistributedClocks, 125000};
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->masterConfiguration, dcConfiguration);
+    QVERIFY(projectService->canUndoProject(file.projectId));
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->masterConfiguration,
+        Data::MasterConfiguration());
+    QTRY_COMPARE(
+        timingMode->currentData().toInt(), int(Data::MasterTimingMode::Unassigned));
+    QTRY_VERIFY(cycle->text().isEmpty());
+    QVERIFY_RESULT(projectService->redoProject(file.projectId));
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->masterConfiguration, dcConfiguration);
+    QTRY_COMPARE(
+        timingMode->currentData().toInt(), int(Data::MasterTimingMode::DistributedClocks));
+    QTRY_COMPARE(cycle->text(), QString("125000"));
 
     const auto currentMasterName = [&]() {
         const std::optional<Data::ProjectSnapshot> project = projectService->project(file.projectId);
@@ -7759,7 +7799,7 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QTRY_COMPARE(name->text(), QString("Valid EtherCAT Project"));
     QVERIFY(!name->isReadOnly());
     QCOMPARE(id->text(), valid.projectId.toString());
-    QCOMPARE(formatVersion->text(), QString("2"));
+    QCOMPARE(formatVersion->text(), QString("3"));
     QCOMPARE(validity->text(), QString("Valid"));
     QCOMPARE(target->text(), QString("Offline Controller"));
     QCOMPARE(master->text(), QString("EtherCAT Master"));

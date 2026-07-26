@@ -55,6 +55,7 @@ struct ETHERCATDATA_EXPORT ProjectSnapshot
     bool migrated = false;
     QString error;
     QList<OfflineSlaveConfiguration> slaves;
+    MasterConfiguration masterConfiguration;
 
     friend bool operator==(const ProjectSnapshot &, const ProjectSnapshot &) = default;
 };

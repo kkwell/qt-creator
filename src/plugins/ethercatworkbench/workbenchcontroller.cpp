@@ -2203,6 +2203,16 @@ Utils::Result<> WorkbenchController::renameStructuralNode(
     return m_projectService->renameStructuralNode(projectId, nodeId, name);
 }
 
+Utils::Result<> WorkbenchController::setMasterConfiguration(
+    const Data::NodeId &projectId,
+    const Data::NodeId &masterId,
+    const Data::MasterConfiguration &configuration)
+{
+    if (m_shuttingDown || !m_projectService)
+        return Utils::ResultError(Tr::tr("The offline topology services are unavailable."));
+    return m_projectService->setMasterConfiguration(projectId, masterId, configuration);
+}
+
 Utils::Result<> WorkbenchController::setOfflineSlaveAlias(
     const Data::NodeId &projectId, const Data::NodeId &slaveId, quint16 alias)
 {

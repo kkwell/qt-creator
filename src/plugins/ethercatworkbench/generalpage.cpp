@@ -18,6 +18,7 @@
 #include <QAccessible>
 #endif
 #include <QCheckBox>
+#include <QComboBox>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -27,6 +28,7 @@
 #include <QMargins>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRegularExpressionValidator>
 #include <QScopedValueRollback>
 #include <QSizePolicy>
 #include <QStyle>
@@ -34,6 +36,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <limits>
 
 namespace EtherCAT::Workbench::Internal {
 
@@ -159,10 +162,12 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     , m_masterComment(new QPlainTextEdit(m_masterForm))
     , m_masterDisabled(new QCheckBox(Tr::tr("Disabled"), m_masterForm))
     , m_masterCreateSymbols(new QCheckBox(Tr::tr("Create symbols"), m_masterForm))
-    , m_masterSummaryForm(new QGroupBox(Tr::tr("Offline configuration summary"), m_masterContent))
+    , m_masterSummaryForm(new QGroupBox(Tr::tr("Cycle configuration"), m_masterContent))
+    , m_masterTimingMode(new QComboBox(m_masterSummaryForm))
     , m_masterCycle(new QLineEdit(m_masterSummaryForm))
     , m_masterSlaveCount(new QLineEdit(m_masterSummaryForm))
     , m_masterStatus(new QLineEdit(m_masterSummaryForm))
+    , m_masterApply(new QPushButton(Tr::tr("Apply"), m_masterSummaryForm))
     , m_tree(new QTreeWidget(this))
 {
     m_summary->setObjectName("EtherCATWorkbenchPageSummary");
@@ -421,24 +426,36 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
 
     m_masterSummaryForm->setObjectName("EtherCATMasterConfigurationSummary");
     m_masterSummaryForm->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    m_masterTimingMode->setObjectName("EtherCATMasterGeneralTimingMode");
     m_masterCycle->setObjectName("EtherCATMasterGeneralCycle");
     m_masterSlaveCount->setObjectName("EtherCATMasterGeneralSlaveCount");
     m_masterStatus->setObjectName("EtherCATMasterGeneralStatus");
-    m_masterCycle->setAccessibleName(Tr::tr("EtherCAT master cycle time"));
+    m_masterApply->setObjectName("EtherCATMasterGeneralApply");
+    m_masterTimingMode->setAccessibleName(Tr::tr("EtherCAT master timing mode"));
+    m_masterCycle->setAccessibleName(Tr::tr("EtherCAT master cycle period"));
     m_masterSlaveCount->setAccessibleName(Tr::tr("Configured EtherCAT slave count"));
     m_masterStatus->setAccessibleName(Tr::tr("EtherCAT master status summary"));
+    m_masterApply->setAccessibleName(Tr::tr("Apply EtherCAT master cycle configuration"));
+    m_masterTimingMode->addItem(
+        Tr::tr("Not assigned"), int(Data::MasterTimingMode::Unassigned));
+    m_masterTimingMode->addItem(Tr::tr("FreeRun"), int(Data::MasterTimingMode::FreeRun));
+    m_masterTimingMode->addItem(
+        Tr::tr("Distributed Clocks"), int(Data::MasterTimingMode::DistributedClocks));
     m_masterCycle->setToolTip(
-        Tr::tr("Cycle time is assigned by a real-time task in a later configuration stage."));
+        Tr::tr("Master cycle period in nanoseconds; it must match the selected bus configuration."));
+    m_masterCycle->setValidator(
+        new QRegularExpressionValidator(QRegularExpression("[0-9]{0,10}"), m_masterCycle));
     m_masterStatus->setToolTip(
         Tr::tr("Summary from the shared Workbench scan and diagnostics presentation."));
-    m_masterCycle->setReadOnly(true);
     m_masterSlaveCount->setReadOnly(true);
     m_masterStatus->setReadOnly(true);
     auto masterSummary = new QFormLayout(m_masterSummaryForm);
     masterSummary->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
     masterSummary->setHorizontalSpacing(Utils::StyleHelper::SpacingTokens::GapHM);
     masterSummary->setVerticalSpacing(Utils::StyleHelper::SpacingTokens::GapVS);
-    masterSummary->addRow(Tr::tr("Cycle time:"), m_masterCycle);
+    masterSummary->addRow(Tr::tr("Timing mode:"), m_masterTimingMode);
+    masterSummary->addRow(Tr::tr("Cycle period (ns):"), m_masterCycle);
+    masterSummary->addRow(m_masterApply);
     masterSummary->addRow(Tr::tr("Configured slaves:"), m_masterSlaveCount);
     masterSummary->addRow(Tr::tr("Status:"), m_masterStatus);
 
@@ -480,6 +497,7 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     connect(m_name, &QLineEdit::editingFinished, this, &GeneralPage::commitName);
     connect(m_targetName, &QLineEdit::editingFinished, this, &GeneralPage::commitTargetName);
     connect(m_masterName, &QLineEdit::editingFinished, this, &GeneralPage::commitMasterName);
+    connect(m_masterApply, &QPushButton::clicked, this, &GeneralPage::commitMasterConfiguration);
     for (QLineEdit *name : {m_projectName, m_name, m_targetName, m_masterName}) {
         connect(name, &QLineEdit::textEdited, this, [this] { clearNameFeedback(); });
     }
@@ -819,7 +837,11 @@ void GeneralPage::reset(const QString &summary, QLineEdit *preservedName)
     m_masterComment->clear();
     m_masterDisabled->setChecked(false);
     m_masterCreateSymbols->setChecked(false);
+    m_masterTimingMode->setCurrentIndex(0);
+    m_masterTimingMode->setEnabled(false);
     m_masterCycle->clear();
+    m_masterCycle->setEnabled(false);
+    m_masterApply->setEnabled(false);
     m_masterSlaveCount->clear();
     m_masterStatus->clear();
     m_tree->clear();
@@ -960,11 +982,60 @@ void GeneralPage::commitMasterName()
         showNameFeedback(error);
 }
 
+void GeneralPage::commitMasterConfiguration()
+{
+    if (m_updating || !m_controller || m_context.nodeKind != Core::WorkbenchNodeKind::Master)
+        return;
+
+    const auto timingMode
+        = static_cast<Data::MasterTimingMode>(m_masterTimingMode->currentData().toInt());
+    const QString cycleText = m_masterCycle->text().trimmed();
+    bool validCycle = false;
+    const qulonglong rawCycle = cycleText.isEmpty() ? 0 : cycleText.toULongLong(&validCycle);
+    if (cycleText.isEmpty())
+        validCycle = timingMode == Data::MasterTimingMode::Unassigned;
+    if (!validCycle || rawCycle > std::numeric_limits<quint32>::max()) {
+        m_controller->writeControllerOutput(
+            Tr::tr("Enter a valid EtherCAT master cycle period from 1 through 4294967295 ns."),
+            ControllerOutputLevel::Error);
+        refreshMasterSummary();
+        return;
+    }
+
+    const Utils::Result<> result = m_controller->setMasterConfiguration(
+        m_context.projectId,
+        m_context.nodeId,
+        {timingMode, quint32(rawCycle)});
+    if (!result) {
+        m_controller->writeControllerOutput(
+            Tr::tr("Cannot update the EtherCAT master cycle configuration: %1")
+                .arg(result.error()),
+            ControllerOutputLevel::Error);
+    } else {
+        m_controller->writeControllerOutput(
+            Tr::tr("EtherCAT master cycle configuration updated."));
+    }
+    refreshMasterSummary();
+}
+
 void GeneralPage::refreshMasterSummary()
 {
     if (!m_controller || m_context.nodeKind != Core::WorkbenchNodeKind::Master)
         return;
-    m_masterCycle->setText(Tr::tr("Not assigned (offline)"));
+    const std::optional<Data::ProjectSnapshot> project
+        = m_controller->projectService()
+              ? m_controller->projectService()->project(m_context.projectId)
+              : std::nullopt;
+    const bool editable = project && project->valid;
+    const Data::MasterConfiguration configuration
+        = editable ? project->masterConfiguration : Data::MasterConfiguration();
+    const int modeIndex = m_masterTimingMode->findData(int(configuration.timingMode));
+    m_masterTimingMode->setCurrentIndex(modeIndex < 0 ? 0 : modeIndex);
+    m_masterCycle->setText(
+        configuration.cyclePeriodNs ? QString::number(configuration.cyclePeriodNs) : QString());
+    m_masterTimingMode->setEnabled(editable);
+    m_masterCycle->setEnabled(editable);
+    m_masterApply->setEnabled(editable);
     m_masterSlaveCount->setText(QString::number(
         m_controller->treeModel()->offlineSlavesForMaster(m_context.nodeId).size()));
     const QModelIndex masterIndex = m_controller->treeModel()->indexForNodeId(m_context.nodeId);

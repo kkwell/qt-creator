@@ -123,6 +123,18 @@ Utils::Result<> ProjectServiceImpl::redoProject(const Data::NodeId &projectId)
     return Utils::ResultOk;
 }
 
+Utils::Result<> ProjectServiceImpl::setMasterConfiguration(
+    const Data::NodeId &projectId,
+    const Data::NodeId &masterId,
+    const Data::MasterConfiguration &configuration)
+{
+    QTC_ASSERT(isGuiThread(), return Utils::ResultError(Tr::tr("Project service thread error.")));
+    EtherCATProject *project = findProject(projectId);
+    if (!project)
+        return Utils::ResultError(Tr::tr("The requested EtherCAT project is not open."));
+    return project->document()->setMasterConfiguration(masterId, configuration);
+}
+
 Utils::Result<> ProjectServiceImpl::replaceOfflineSlaves(
     const Data::NodeId &projectId,
     const Data::NodeId &masterId,

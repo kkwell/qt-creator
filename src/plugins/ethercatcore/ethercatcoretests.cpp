@@ -647,6 +647,14 @@ void EtherCATCoreTests::testProjectSnapshotValueSemantics()
     static_assert(
         std::is_same_v<
             decltype(&ProjectService::renameStructuralNode), RenameStructuralNodeMethod>);
+    using SetMasterConfigurationMethod = Utils::Result<> (ProjectService::*)(
+        const Data::NodeId &,
+        const Data::NodeId &,
+        const Data::MasterConfiguration &);
+    static_assert(
+        std::is_same_v<
+            decltype(&ProjectService::setMasterConfiguration),
+            SetMasterConfigurationMethod>);
 
     const Data::NodeId projectId = Data::NodeId::create();
     const Data::NodeId targetId = Data::NodeId::create();
@@ -660,6 +668,7 @@ void EtherCATCoreTests::testProjectSnapshotValueSemantics()
         true,
         true,
         false,
+        {},
         {},
         {},
     };

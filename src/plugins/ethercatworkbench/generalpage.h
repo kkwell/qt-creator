@@ -9,6 +9,7 @@
 
 QT_BEGIN_NAMESPACE
 class QCheckBox;
+class QComboBox;
 class QGroupBox;
 class QLabel;
 class QLineEdit;
@@ -46,6 +47,7 @@ private:
     void commitName();
     void commitTargetName();
     void commitMasterName();
+    void commitMasterConfiguration();
     void refreshMasterSummary();
 
     QPointer<WorkbenchController> m_controller;
@@ -95,9 +97,11 @@ private:
     QCheckBox *m_masterDisabled;
     QCheckBox *m_masterCreateSymbols;
     QGroupBox *m_masterSummaryForm;
+    QComboBox *m_masterTimingMode;
     QLineEdit *m_masterCycle;
     QLineEdit *m_masterSlaveCount;
     QLineEdit *m_masterStatus;
+    QPushButton *m_masterApply;
     QTreeWidget *m_tree;
     Data::NodeId m_nameBaselineProjectId;
     Data::NodeId m_nameBaselineNodeId;

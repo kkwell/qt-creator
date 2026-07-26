@@ -764,10 +764,13 @@ The current project contract does not persist Comment, Disabled, or symbol
 generation. Those controls remain visibly unavailable with explanatory text
 and tooltips; they do not store UI-only state or pretend that configuration was
 accepted. Enabling each setting requires a separate Project/data-contract
-issue. The offline summary below the reference form reports an explicit
-`Not assigned (offline)` cycle-time placeholder, the actual configured-slave
-count, and the shared Workbench master status. It never invents a task cycle or
-online controller value.
+issue. The cycle configuration below the reference form edits the
+provider-neutral master timing mode and nanosecond cycle period. `Not
+assigned`, `FreeRun`, and `Distributed Clocks` are explicit values; an Apply
+action submits both fields through the checked Project service and unified
+Undo/Redo stack. The page also reports the actual configured-slave count and
+shared Workbench master status. It does not activate a package or write a
+controller merely because an offline field changed.
 
 Finishing a master-name edit routes through the Workbench controller to the
 checked `ProjectService::renameStructuralNode()` command. Whitespace is

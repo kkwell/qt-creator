@@ -64,6 +64,29 @@ private:
     QString m_newName;
 };
 
+class UpdateMasterConfigurationCommand final : public QUndoCommand
+{
+public:
+    UpdateMasterConfigurationCommand(
+        EtherCATProjectDocument *document,
+        const Data::MasterConfiguration &oldConfiguration,
+        const Data::MasterConfiguration &newConfiguration)
+        : m_document(document)
+        , m_oldConfiguration(oldConfiguration)
+        , m_newConfiguration(newConfiguration)
+    {
+        setText(Tr::tr("Configure EtherCAT master cycle"));
+    }
+
+    void undo() final { m_document->applyMasterConfiguration(m_oldConfiguration); }
+    void redo() final { m_document->applyMasterConfiguration(m_newConfiguration); }
+
+private:
+    EtherCATProjectDocument *m_document;
+    Data::MasterConfiguration m_oldConfiguration;
+    Data::MasterConfiguration m_newConfiguration;
+};
+
 class ReplaceOfflineSlavesCommand final : public QUndoCommand
 {
 public:
@@ -162,6 +185,21 @@ static Utils::Result<> insertConfigurationId(
 
 static Utils::Result<> validateProjectConfigurations(const Data::ProjectSnapshot &snapshot)
 {
+    if (snapshot.masterConfiguration.timingMode != Data::MasterTimingMode::Unassigned
+        && snapshot.masterConfiguration.timingMode != Data::MasterTimingMode::FreeRun
+        && snapshot.masterConfiguration.timingMode != Data::MasterTimingMode::DistributedClocks) {
+        return Utils::ResultError(Tr::tr("The EtherCAT master timing mode is unsupported."));
+    }
+    if (snapshot.masterConfiguration.timingMode == Data::MasterTimingMode::Unassigned) {
+        if (snapshot.masterConfiguration.cyclePeriodNs) {
+            return Utils::ResultError(
+                Tr::tr("An unassigned EtherCAT timing mode cannot have a cycle period."));
+        }
+    } else if (!snapshot.masterConfiguration.cyclePeriodNs) {
+        return Utils::ResultError(
+            Tr::tr("FreeRun and Distributed Clocks require a non-zero cycle period."));
+    }
+
     QSet<Data::NodeId> ids;
     for (const Data::ProjectNodeSnapshot &node : snapshot.nodes)
         ids.insert(node.id);
@@ -350,6 +388,31 @@ Utils::Result<> EtherCATProjectDocument::renameStructuralNode(
 
     m_undoStack.push(
         new RenameStructuralNodeCommand(this, nodeId, node->name, trimmedName));
+    return Utils::ResultOk;
+}
+
+Utils::Result<> EtherCATProjectDocument::setMasterConfiguration(
+    const Data::NodeId &masterId, const Data::MasterConfiguration &configuration)
+{
+    if (!m_snapshot.valid)
+        return Utils::ResultError(Tr::tr("Cannot edit an invalid EtherCAT project."));
+
+    const auto master = std::find_if(
+        m_snapshot.nodes.cbegin(), m_snapshot.nodes.cend(), [&masterId](const auto &node) {
+            return node.id == masterId && node.kind == Data::ProjectNodeKind::Master;
+        });
+    if (master == m_snapshot.nodes.cend())
+        return Utils::ResultError(Tr::tr("The requested EtherCAT master does not exist."));
+    if (configuration == m_snapshot.masterConfiguration)
+        return Utils::ResultOk;
+
+    Data::ProjectSnapshot candidate = m_snapshot;
+    candidate.masterConfiguration = configuration;
+    if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
+        return validation;
+
+    m_undoStack.push(new UpdateMasterConfigurationCommand(
+        this, m_snapshot.masterConfiguration, configuration));
     return Utils::ResultOk;
 }
 
@@ -591,6 +654,12 @@ void EtherCATProjectDocument::applyStructuralNodeName(
         });
     if (node != m_snapshot.nodes.end())
         node->name = name;
+}
+
+void EtherCATProjectDocument::applyMasterConfiguration(
+    const Data::MasterConfiguration &configuration)
+{
+    m_snapshot.masterConfiguration = configuration;
 }
 
 void EtherCATProjectDocument::applyOfflineSlaves(

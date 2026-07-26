@@ -191,6 +191,10 @@ public:
         const Data::NodeId &projectId, const Data::NodeId &slaveId, const QString &name);
     Utils::Result<> renameStructuralNode(
         const Data::NodeId &projectId, const Data::NodeId &nodeId, const QString &name);
+    Utils::Result<> setMasterConfiguration(
+        const Data::NodeId &projectId,
+        const Data::NodeId &masterId,
+        const Data::MasterConfiguration &configuration);
     Utils::Result<> setOfflineSlaveAlias(
         const Data::NodeId &projectId, const Data::NodeId &slaveId, quint16 alias);
 

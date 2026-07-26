@@ -17,8 +17,10 @@ private slots:
     void testDocumentUndoRedoAndAtomicFailure();
     void testStructuralNodeRenameAndPersistence();
     void testOfflineSlavePersistenceAndUndo();
+    void testMasterConfigurationPersistenceAndUndo();
     void testOfflineConfigurationPersistenceAndUndo();
     void testVersionOneConfigurationMigration();
+    void testVersionTwoMasterConfigurationMigration();
     void testOfflineConfigurationCorruption();
     void testMigrationCreatesRecoveryBackup();
     void testProjectExplorerMultiProjectLifecycle();

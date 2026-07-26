@@ -24,6 +24,8 @@ public:
 
     Utils::Result<> renameProject(const QString &name);
     Utils::Result<> renameStructuralNode(const Data::NodeId &nodeId, const QString &name);
+    Utils::Result<> setMasterConfiguration(
+        const Data::NodeId &masterId, const Data::MasterConfiguration &configuration);
     Utils::Result<> replaceOfflineSlaves(
         const Data::NodeId &masterId, const QList<Data::OfflineSlaveConfiguration> &slaves);
     Utils::Result<> setProcessDataConfiguration(
@@ -49,6 +51,7 @@ protected:
 private:
     void applyProjectName(const QString &name);
     void applyStructuralNodeName(const Data::NodeId &nodeId, const QString &name);
+    void applyMasterConfiguration(const Data::MasterConfiguration &configuration);
     void applyOfflineSlaves(
         const Data::NodeId &masterId, const QList<Data::OfflineSlaveConfiguration> &slaves);
     void applyOfflineSlave(const Data::OfflineSlaveConfiguration &slave);
@@ -64,6 +67,7 @@ private:
 
     friend class RenameProjectCommand;
     friend class RenameStructuralNodeCommand;
+    friend class UpdateMasterConfigurationCommand;
     friend class ReplaceOfflineSlavesCommand;
     friend class UpdateOfflineSlaveCommand;
 };
