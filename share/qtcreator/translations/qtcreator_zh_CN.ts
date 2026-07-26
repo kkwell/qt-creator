@@ -54023,6 +54023,14 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>建立 Control、Push 和 Bulk 通道，读取权威控制器快照，然后自动请求独占控制租约。控制器安全处于关停状态时，将自动扫描 EtherCAT 总线，但不会写入离线工程。</translation>
     </message>
     <message>
+        <source>Scan the live EtherCAT bus connected to the selected Master. This does not modify the offline project.</source>
+        <translation>扫描连接到所选主站的实际 EtherCAT 总线。此操作不会修改离线项目。</translation>
+    </message>
+    <message>
+        <source>Cannot scan the EtherCAT bus: %1</source>
+        <translation>无法扫描 EtherCAT 总线：%1</translation>
+    </message>
+    <message>
         <source>Close the controller connection for the selected EtherCAT Master.</source>
         <translation>关闭所选 EtherCAT 主站的控制器连接。</translation>
     </message>

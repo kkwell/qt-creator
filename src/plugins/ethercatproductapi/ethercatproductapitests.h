@@ -31,6 +31,8 @@ private slots:
     void testShutdownReleaseSafety();
     void testDisconnectWaitsForRelease();
     void testHeartbeatTimeoutDoesNotPreemptDisconnectRelease();
+    void testLongControlKeepsHeartbeatResponseWindow_data();
+    void testLongControlKeepsHeartbeatResponseWindow();
     void testDisconnectRejectedReleasePreservesSession();
     void testDisconnectReleaseWriteFailure();
     void testDisconnectReleaseTimeoutPreservesEvidence();

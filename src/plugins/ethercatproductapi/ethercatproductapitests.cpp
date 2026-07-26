@@ -476,8 +476,10 @@ public:
 
     void holdNextHeartbeat() { m_holdNextHeartbeat = true; }
     void holdNextRelease() { m_holdNextRelease = true; }
+    void holdNextRestore() { m_holdNextRestore = true; }
     bool hasHeldHeartbeat() const { return m_heldHeartbeatPeer && m_heldHeartbeatRequestId; }
     bool hasHeldRelease() const { return m_heldReleasePeer && m_heldReleaseRequestId; }
+    bool hasHeldRestore() const { return m_heldRestorePeer && m_heldRestoreRequestId; }
 
     void rejectHeldHeartbeat(qint32 status)
     {
@@ -526,6 +528,30 @@ public:
                 Protocol::MessageType::ReleaseControl, 4, m_serviceState, true));
         m_heldReleasePeer = nullptr;
         m_heldReleaseRequestId = 0;
+    }
+
+    void completeHeldRestore()
+    {
+        if (!hasHeldRestore()) {
+            m_violations.append(
+                QStringLiteral("No held RestoreActivePackage was available to complete."));
+            return;
+        }
+        m_serviceState = 3;
+        m_controllerPackageActive = true;
+        sendResponse(
+            *m_heldRestorePeer,
+            Protocol::MessageType::CommandStatus,
+            m_heldRestoreRequestId,
+            successfulCommandStatusPayload(
+                Protocol::MessageType::RestoreActivePackage, 4, m_serviceState, false));
+        sendResponse(
+            *m_heldRestorePeer,
+            Protocol::MessageType::PackageState,
+            m_heldRestoreRequestId,
+            packageStatePayload(Protocol::MessageType::RestoreActivePackage, true));
+        m_heldRestorePeer = nullptr;
+        m_heldRestoreRequestId = 0;
     }
 
     bool sendLiveAlarm(quint32 sequence)
@@ -941,6 +967,21 @@ private:
                 m_violations.append(
                     QStringLiteral("RestoreActivePackage selector was not exact."));
             }
+            if (m_holdNextRestore) {
+                m_holdNextRestore = false;
+                m_serviceState = 2;
+                for (quint16 stage = 1; stage <= 3; ++stage) {
+                    sendResponse(
+                        peer,
+                        Protocol::MessageType::CommandStatus,
+                        request.header.requestId,
+                        successfulCommandStatusPayload(
+                            request.header.messageType, stage, m_serviceState, false));
+                }
+                m_heldRestorePeer = &peer;
+                m_heldRestoreRequestId = request.header.requestId;
+                return;
+            }
             m_serviceState = 3;
             m_controllerPackageActive = true;
             sendCommandStages(peer, request, false);
@@ -1221,9 +1262,12 @@ private:
     quint64 m_heldHeartbeatRequestId = 0;
     Peer *m_heldReleasePeer = nullptr;
     quint64 m_heldReleaseRequestId = 0;
+    Peer *m_heldRestorePeer = nullptr;
+    quint64 m_heldRestoreRequestId = 0;
     bool m_allowCapacitySuccess = false;
     bool m_holdNextHeartbeat = false;
     bool m_holdNextRelease = false;
+    bool m_holdNextRestore = false;
     qint32 m_nextResumeStatus = 0;
     qint32 m_nextStateStatus = 0;
     qint32 m_nextControlStatus = 0;
@@ -3421,6 +3465,91 @@ void EtherCATProductApiTests::testHeartbeatTimeoutDoesNotPreemptDisconnectReleas
     QCOMPARE(controller.requestCount(Protocol::MessageType::ReleaseControl), 1);
     QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
     QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testLongControlKeepsHeartbeatResponseWindow_data()
+{
+    QTest::addColumn<bool>("heartbeatAlreadyPending");
+
+    QTest::newRow("heartbeat-before-restore") << true;
+    QTest::newRow("heartbeat-during-restore") << false;
+}
+
+void EtherCATProductApiTests::testLongControlKeepsHeartbeatResponseWindow()
+{
+    QFETCH(bool, heartbeatAlreadyPending);
+
+    LoopbackController controller(LoopbackController::Behavior::ControlLifecycle);
+    controller.setDefaultLeaseDurationMs(300);
+    QVERIFY(controller.start());
+    ProductApiSession::Options options = testOptions();
+    options.requestTimeoutMs = 120;
+    options.reconnectAttempts = 0;
+    ProductApiConnectionProvider provider(controller.endpoints(), options);
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+    Data::ControllerControlRequest control;
+    control.command = Data::ControllerControlCommand::AcquireControl;
+    QVERIFY(provider.executeControlCommand(control));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().controlProgress.state,
+        Data::ControllerControlState::Succeeded,
+        1000);
+
+    control.command = Data::ControllerControlCommand::EnterConfigurationMode;
+    QVERIFY(provider.executeControlCommand(control));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().controlProgress.state,
+        Data::ControllerControlState::Succeeded,
+        1000);
+
+    if (heartbeatAlreadyPending) {
+        controller.holdNextHeartbeat();
+        QTRY_VERIFY_WITH_TIMEOUT(controller.hasHeldHeartbeat(), 1000);
+    }
+    controller.holdNextRestore();
+    control.command = Data::ControllerControlCommand::RestoreActivePackage;
+    QVERIFY(provider.executeControlCommand(control));
+    QTRY_VERIFY_WITH_TIMEOUT(controller.hasHeldRestore(), 1000);
+    if (!heartbeatAlreadyPending) {
+        controller.holdNextHeartbeat();
+        QTRY_VERIFY_WITH_TIMEOUT(controller.hasHeldHeartbeat(), 1000);
+    }
+
+    QTest::qWait(options.requestTimeoutMs * 2);
+    QCOMPARE(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected);
+    QCOMPARE(
+        provider.connectionSnapshot().controlProgress.command,
+        Data::ControllerControlCommand::RestoreActivePackage);
+    QCOMPARE(
+        provider.connectionSnapshot().controlProgress.state,
+        Data::ControllerControlState::Pending);
+    QVERIFY(provider.connectionSnapshot().session);
+    QVERIFY(provider.connectionSnapshot().session->ownsControlLease);
+
+    controller.completeHeldRestore();
+    controller.completeHeldHeartbeat();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().controlProgress.state,
+        Data::ControllerControlState::Succeeded,
+        2000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        provider.connectionSnapshot().controllerState
+            && provider.connectionSnapshot().controllerState->serviceState
+                   == Data::ControllerServiceState::OperationalSafe,
+        2000);
+    QCOMPARE(controller.acceptCount(Protocol::Role::Control), 1);
+    QVERIFY(controller.violations().isEmpty());
+
+    QVERIFY(provider.disconnectFromController());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        1000);
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
 }
 
 void EtherCATProductApiTests::testDisconnectRejectedReleasePreservesSession()

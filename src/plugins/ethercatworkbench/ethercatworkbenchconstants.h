@@ -14,6 +14,7 @@ const char MENU_ID[] = "EtherCAT.Menu";
 const char OPEN_ACTION_ID[] = "EtherCAT.Workbench.Open";
 const char REFRESH_ACTION_ID[] = "EtherCAT.Workbench.Refresh";
 const char CONNECT_CONTROLLER_ACTION_ID[] = "EtherCAT.Workbench.ConnectController";
+const char SCAN_CONTROLLER_ACTION_ID[] = "EtherCAT.Workbench.ScanController";
 const char REFRESH_CONTROLLER_ACTION_ID[] = "EtherCAT.Workbench.RefreshController";
 const char DISCONNECT_CONTROLLER_ACTION_ID[] = "EtherCAT.Workbench.DisconnectController";
 const char DEBUG_ACTION_ID[] = "Debugger.Debug";

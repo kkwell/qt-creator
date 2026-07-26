@@ -21,6 +21,8 @@
 #include <coreplugin/modemanager.h>
 #include <coreplugin/statusbarmanager.h>
 
+#include <debugger/debuggerconstants.h>
+
 #include <ethercatcore/providers.h>
 #include <ethercatcore/selectionservice.h>
 #include <ethercatcore/stateservice.h>
@@ -42,6 +44,7 @@
 #include <QMessageBox>
 #include <QPointer>
 #include <QStringList>
+#include <QTimer>
 
 #include <memory>
 
@@ -140,6 +143,8 @@ private:
     void updateControllerControlContext();
     void updateQuickControllerActions();
     void triggerQuickControllerAction(ControllerQuickControlAction action);
+    void scheduleProjectPresentation();
+    void activateProjectPresentation();
     void shutdown();
 
     std::unique_ptr<WorkbenchController> m_controller;
@@ -152,6 +157,7 @@ private:
     QPointer<QAction> m_debugControllerAction;
     QPointer<QAction> m_stopControllerAction;
     bool m_controllerControlContextActive = false;
+    bool m_projectPresentationScheduled = false;
     bool m_providerRegistered = false;
     bool m_automationServiceRegistered = false;
     bool m_shuttingDown = false;
@@ -193,6 +199,8 @@ void EtherCATWorkbenchPlugin::initialize()
     m_navigationFactory = std::make_unique<WorkbenchNavigationFactory>(m_controller.get());
     m_mode = std::make_unique<WorkbenchMode>(m_controller.get());
     setupActions();
+    if (!m_controller->projectService()->projects().isEmpty())
+        scheduleProjectPresentation();
     m_statusWidget = new WorkbenchStatusWidget(stateService, m_controller.get());
     ::Core::StatusBarManager::addStatusBarWidget(
         m_statusWidget,
@@ -269,7 +277,10 @@ void EtherCATWorkbenchPlugin::setupQuickControllerActions()
         m_controller->projectService(),
         &Core::ProjectService::projectAdded,
         this,
-        [this] { updateQuickControllerActions(); });
+        [this] {
+            updateQuickControllerActions();
+            scheduleProjectPresentation();
+        });
     connect(
         m_controller->projectService(),
         &Core::ProjectService::projectChanged,
@@ -307,6 +318,42 @@ void EtherCATWorkbenchPlugin::setupQuickControllerActions()
         this,
         [this] { updateQuickControllerActions(); });
     updateQuickControllerActions();
+}
+
+void EtherCATWorkbenchPlugin::scheduleProjectPresentation()
+{
+    if (m_shuttingDown || m_projectPresentationScheduled)
+        return;
+    m_projectPresentationScheduled = true;
+    QTimer::singleShot(0, this, [this] { activateProjectPresentation(); });
+}
+
+void EtherCATWorkbenchPlugin::activateProjectPresentation()
+{
+    m_projectPresentationScheduled = false;
+    if (m_shuttingDown || !m_controller || !m_controller->projectService()
+        || m_controller->projectService()->projects().isEmpty()) {
+        return;
+    }
+
+    ::Core::ModeManager::activateMode(Constants::MODE_ID);
+
+    const auto hideMode = [](const Utils::Id &modeId) {
+        const Utils::Id visibilityActionId
+            = modeId.withPrefix("QtCreator.Modes.View.");
+        ::Core::Command *command = ::Core::ActionManager::command(visibilityActionId);
+        QAction *action = command ? command->action() : nullptr;
+        if (action && action->isCheckable() && action->isChecked())
+            action->trigger();
+    };
+    for (const Utils::Id &modeId :
+         {Utils::Id(::Core::Constants::MODE_EDIT),
+          Utils::Id(::Core::Constants::MODE_DESIGN),
+          Utils::Id(::Debugger::Constants::MODE_DEBUG),
+          Utils::Id(ProjectExplorer::Constants::MODE_SESSION),
+          Utils::Id(::Core::Constants::MODE_EASYBOARD)}) {
+        hideMode(modeId);
+    }
 }
 
 std::optional<Data::ControllerConnectionScope>
@@ -548,6 +595,37 @@ void EtherCATWorkbenchPlugin::setupActions()
                 ControllerOutputLevel::Error);
         }
     });
+
+    auto scanControllerAction
+        = new QAction(Utils::Icons::NEWSEARCH_TOOLBAR.icon(), Tr::tr("Scan Bus"), this);
+    const QString scanControllerDescription = Tr::tr(
+        "Scan the live EtherCAT bus connected to the selected Master. This does not modify the "
+        "offline project.");
+    scanControllerAction->setToolTip(scanControllerDescription);
+    scanControllerAction->setStatusTip(scanControllerDescription);
+    ::Core::Command *scanControllerCommand = ::Core::ActionManager::registerAction(
+        scanControllerAction,
+        Constants::SCAN_CONTROLLER_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    scanControllerCommand->setDescription(scanControllerAction->text());
+    menu->addAction(scanControllerCommand);
+    connect(scanControllerAction, &QAction::triggered, m_controller.get(), [this] {
+        Data::ControllerControlRequest request;
+        request.command = Data::ControllerControlCommand::DiscoverTopology;
+        if (const Utils::Result<> result
+            = m_controller->executeSelectedControllerControl(request);
+            !result) {
+            m_controller->writeControllerOutput(
+                Tr::tr("Cannot scan the EtherCAT bus: %1").arg(result.error()),
+                ControllerOutputLevel::Error);
+        }
+    });
+
+    menu->addSeparator();
+    menu->addAction(::Core::ActionManager::command(ProjectExplorer::Constants::RUN));
+    menu->addAction(::Core::ActionManager::command(Constants::DEBUG_ACTION_ID));
+    menu->addAction(::Core::ActionManager::command(Constants::CONTROLLED_STOP_ACTION_ID));
+    menu->addSeparator();
 
     auto refreshControllerAction
         = new QAction(Utils::Icons::RELOAD.icon(), Tr::tr("Refresh Controller Snapshot"), this);
@@ -860,6 +938,7 @@ void EtherCATWorkbenchPlugin::setupActions()
         [this,
          updateQuickAddPresentation,
          connectControllerAction,
+         scanControllerAction,
          refreshControllerAction,
          disconnectControllerAction,
          locateDifferenceAction,
@@ -876,6 +955,7 @@ void EtherCATWorkbenchPlugin::setupActions()
             updateQuickAddPresentation();
             if (!m_controller) {
                 connectControllerAction->setEnabled(false);
+                scanControllerAction->setEnabled(false);
                 refreshControllerAction->setEnabled(false);
                 disconnectControllerAction->setEnabled(false);
                 locateDifferenceAction->setEnabled(false);
@@ -892,6 +972,9 @@ void EtherCATWorkbenchPlugin::setupActions()
                 return;
             }
             connectControllerAction->setEnabled(m_controller->canConnectSelectedController());
+            scanControllerAction->setEnabled(
+                m_controller->canExecuteSelectedControllerControl(
+                    Data::ControllerControlCommand::DiscoverTopology));
             refreshControllerAction->setEnabled(m_controller->canRefreshSelectedController());
             disconnectControllerAction->setEnabled(m_controller->canDisconnectSelectedController());
             Core::SelectionService *selectionService = m_controller->selectionService();

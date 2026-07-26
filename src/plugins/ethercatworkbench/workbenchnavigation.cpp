@@ -13,6 +13,8 @@
 
 #include <ethercatcore/selectionservice.h>
 
+#include <projectexplorer/projectexplorerconstants.h>
+
 #include <utils/stylehelper.h>
 
 #include <QAction>
@@ -619,6 +621,23 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position, bool mou
         Constants::MOVE_OFFLINE_SLAVE_DOWN_ACTION_ID,
         contextMatchesSelection && m_controller
             && m_controller->canMoveSelectedOfflineSlaveDown());
+    setCommandEnabled(
+        Constants::CONNECT_CONTROLLER_ACTION_ID,
+        contextMatchesSelection && m_controller
+            && m_controller->canConnectSelectedController());
+    setCommandEnabled(
+        Constants::SCAN_CONTROLLER_ACTION_ID,
+        contextMatchesSelection && m_controller
+            && m_controller->canExecuteSelectedControllerControl(
+                Data::ControllerControlCommand::DiscoverTopology));
+    setCommandEnabled(
+        Constants::REFRESH_CONTROLLER_ACTION_ID,
+        contextMatchesSelection && m_controller
+            && m_controller->canRefreshSelectedController());
+    setCommandEnabled(
+        Constants::DISCONNECT_CONTROLLER_ACTION_ID,
+        contextMatchesSelection && m_controller
+            && m_controller->canDisconnectSelectedController());
 
     QMenu menu(this);
     if (selectionService) {
@@ -660,6 +679,16 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position, bool mou
     if (context.nodeKind == Core::WorkbenchNodeKind::Project && canActivateSelectedProject) {
         menu.addSeparator();
         addCommand(Constants::SET_ACTIVE_PROJECT_ACTION_ID);
+    }
+    if (contextMatchesSelection && !context.projectId.isNull()) {
+        menu.addSeparator();
+        addCommand(Constants::CONNECT_CONTROLLER_ACTION_ID);
+        addCommand(Constants::SCAN_CONTROLLER_ACTION_ID);
+        addCommand(ProjectExplorer::Constants::RUN);
+        addCommand(Constants::DEBUG_ACTION_ID);
+        addCommand(Constants::CONTROLLED_STOP_ACTION_ID);
+        addCommand(Constants::REFRESH_CONTROLLER_ACTION_ID);
+        addCommand(Constants::DISCONNECT_CONTROLLER_ACTION_ID);
     }
     if (canCopyNodeId) {
         menu.addSeparator();

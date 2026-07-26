@@ -30,6 +30,8 @@
 #include <coreplugin/imode.h>
 #include <coreplugin/modemanager.h>
 
+#include <debugger/debuggerconstants.h>
+
 #include <ethercatcore/providerregistry.h>
 #include <ethercatcore/selectionservice.h>
 #include <ethercatcore/stateservice.h>
@@ -1074,6 +1076,7 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
     QVERIFY(::Core::ActionManager::command(Constants::OPEN_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::REFRESH_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::CONNECT_CONTROLLER_ACTION_ID));
+    QVERIFY(::Core::ActionManager::command(Constants::SCAN_CONTROLLER_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::REFRESH_CONTROLLER_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::DISCONNECT_CONTROLLER_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::LOCATE_DIFFERENCE_ACTION_ID));
@@ -1157,6 +1160,16 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
     QVERIFY(selectionService);
     selectionService->clear();
     QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_COMPARE(::Core::ModeManager::currentModeId(), Utils::Id(Constants::MODE_ID));
+    for (const Utils::Id &modeId :
+         {Utils::Id(::Core::Constants::MODE_EDIT),
+          Utils::Id(::Debugger::Constants::MODE_DEBUG),
+          Utils::Id(ProjectExplorer::Constants::MODE_SESSION)}) {
+        ::Core::Command *visibilityCommand = ::Core::ActionManager::command(
+            modeId.withPrefix("QtCreator.Modes.View."));
+        QVERIFY(visibilityCommand);
+        QTRY_VERIFY(!visibilityCommand->action()->isChecked());
+    }
     ProjectExplorer::ProjectManager::setStartupProject(ordinaryProject);
     QTRY_VERIFY(projectService->activeProjectId().isNull());
 
@@ -1480,6 +1493,7 @@ void EtherCATWorkbenchTests::testModeCommandStripMirrorsRegisteredActions()
     for (const Utils::Id id :
          {Utils::Id(Constants::REFRESH_ACTION_ID),
           Utils::Id(Constants::CONNECT_CONTROLLER_ACTION_ID),
+          Utils::Id(Constants::SCAN_CONTROLLER_ACTION_ID),
           Utils::Id(Constants::REFRESH_CONTROLLER_ACTION_ID),
           Utils::Id(Constants::DISCONNECT_CONTROLLER_ACTION_ID),
           Utils::Id(Constants::EXPAND_ACTION_ID),
@@ -1491,6 +1505,14 @@ void EtherCATWorkbenchTests::testModeCommandStripMirrorsRegisteredActions()
         QVERIFY(command);
         QVERIFY(commandActions.contains(command->action()));
         QVERIFY(!command->action()->icon().isNull());
+    }
+    for (const Utils::Id id :
+         {Utils::Id(ProjectExplorer::Constants::RUN),
+          Utils::Id(Constants::DEBUG_ACTION_ID),
+          Utils::Id(Constants::CONTROLLED_STOP_ACTION_ID)}) {
+        ::Core::Command *command = ::Core::ActionManager::command(id);
+        QVERIFY(command);
+        QVERIFY(commandActions.contains(command->action()));
     }
     for (const Utils::Id id :
          {Utils::Id(Constants::LOCATE_UNSUPPORTED_DEVICE_ACTION_ID),
@@ -9430,7 +9452,7 @@ void EtherCATWorkbenchTests::testNavigationKeyboardContextMenuTargetsCurrentNode
 
     QTreeView *tree = navigation.treeView();
     const QModelIndex targetIndex = findByKind(
-        tree->model(), Core::WorkbenchNodeKind::Target);
+        tree->model(), Core::WorkbenchNodeKind::Project);
     const QModelIndex masterIndex = findByKind(
         tree->model(), Core::WorkbenchNodeKind::Master);
     QVERIFY(targetIndex.isValid());
@@ -9453,6 +9475,8 @@ void EtherCATWorkbenchTests::testNavigationKeyboardContextMenuTargetsCurrentNode
 
     bool popupSeen = false;
     bool insertActionPresent = false;
+    bool controllerScanActionPresent = false;
+    bool controllerRunActionPresent = false;
     QPoint popupPosition;
     QModelIndex popupCurrentIndex;
     Data::NodeId popupNodeId;
@@ -9462,6 +9486,10 @@ void EtherCATWorkbenchTests::testNavigationKeyboardContextMenuTargetsCurrentNode
             return;
         popupSeen = true;
         insertActionPresent = popup->actions().contains(insertCommand->action());
+        controllerScanActionPresent = popup->actions().contains(
+            ::Core::ActionManager::command(Constants::SCAN_CONTROLLER_ACTION_ID)->action());
+        controllerRunActionPresent = popup->actions().contains(
+            ::Core::ActionManager::command(ProjectExplorer::Constants::RUN)->action());
         popupPosition = popup->mapToGlobal(QPoint());
         popupCurrentIndex = tree->currentIndex();
         popupNodeId = controller.selectionService()->currentNodeId();
@@ -9477,6 +9505,8 @@ void EtherCATWorkbenchTests::testNavigationKeyboardContextMenuTargetsCurrentNode
     QCOMPARE(popupCurrentIndex, masterIndex);
     QCOMPARE(popupNodeId, masterNodeId);
     QVERIFY(insertActionPresent);
+    QVERIFY(controllerScanActionPresent);
+    QVERIFY(controllerRunActionPresent);
     QCOMPARE(popupPosition.y(), masterAnchor.y());
 
     const QRect targetRect = tree->visualRect(targetIndex);
@@ -9604,7 +9634,16 @@ void EtherCATWorkbenchTests::testNavigationKeyboardContextMenuTargetsCurrentNode
             nodeActionStatesBeforeBlank.at(i));
     }
 
-    controller.treeModel()->syncDevices(deviceSummaries(50));
+    Data::ProjectSnapshot tallProject = project;
+    const Data::NodeId tallMasterId = masterId(tallProject);
+    for (int index = 0; index < 50; ++index) {
+        tallProject.nodes.append(
+            {Data::NodeId::create(),
+             tallMasterId,
+             Data::ProjectNodeKind::Slave,
+             QString("Configured Slave %1").arg(index)});
+    }
+    controller.treeModel()->setProjects({tallProject});
     tree->expandAll();
     const QModelIndex scrolledMasterIndex = findByKind(
         tree->model(), Core::WorkbenchNodeKind::Master);

@@ -1158,6 +1158,34 @@ public:
         return requestId;
     }
 
+    int heartbeatResponseTimeoutMs() const
+    {
+        int timeoutMs = options.requestTimeoutMs;
+        for (const PendingRequest &request : std::as_const(pendingRequests)) {
+            if ((request.kind == PendingKind::ControlCommand
+                 || request.kind == PendingKind::Topology
+                 || request.kind == PendingKind::RestorePackage)
+                && request.responseTimeoutMs > options.requestTimeoutMs) {
+                timeoutMs = std::max(timeoutMs, request.responseTimeoutMs);
+            }
+        }
+        return timeoutMs;
+    }
+
+    void extendPendingHeartbeatTimeout(int timeoutMs)
+    {
+        if (!heartbeatRequestId || timeoutMs <= options.requestTimeoutMs)
+            return;
+        auto heartbeat = pendingRequests.find(heartbeatRequestId);
+        if (heartbeat == pendingRequests.end() || heartbeat->kind != PendingKind::Heartbeat
+            || heartbeat->responseTimeoutMs > timeoutMs) {
+            return;
+        }
+        heartbeat->responseTimeoutMs = timeoutMs;
+        if (heartbeat->timer)
+            heartbeat->timer->start(timeoutMs);
+    }
+
     quint64 sendControlRequest(
         Data::ControllerControlCommand command,
         PendingKind kind,
@@ -1184,6 +1212,7 @@ public:
         found->controlCommand = command;
         found->nextExpectedStage = firstExpectedStage;
         found->terminalCommandStatus = terminalCommandStatus;
+        extendPendingHeartbeatTimeout(responseTimeoutMs);
         if (disconnectAfterRelease
             && command == Data::ControllerControlCommand::ReleaseControl) {
             disconnectReleaseRequestId = requestId;
@@ -1215,7 +1244,9 @@ public:
             control,
             Protocol::MessageType::Heartbeat,
             PendingKind::Heartbeat,
-            Data::ControllerOperation::Heartbeat);
+            Data::ControllerOperation::Heartbeat,
+            {},
+            heartbeatResponseTimeoutMs());
         auto found = pendingRequests.find(requestId);
         if (found == pendingRequests.end())
             return;
@@ -1626,6 +1657,8 @@ public:
             return true;
         if (found->timer)
             found->timer->start(found->responseTimeoutMs);
+        if (request.kind != PendingKind::Heartbeat)
+            extendPendingHeartbeatTimeout(found->responseTimeoutMs);
         if (found->nextExpectedStage <= 4)
             ++found->nextExpectedStage;
 
