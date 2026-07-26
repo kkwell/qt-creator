@@ -1946,6 +1946,127 @@ Utils::Result<> WorkbenchController::executeSelectedControllerControl(
     return executeControllerControl(*scope, request);
 }
 
+QString WorkbenchController::packageDeploymentUnavailableReason(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (m_shuttingDown)
+        return Tr::tr("The controller connection workflow is shutting down.");
+    if (!controllerConnectionScopeIsValid(scope))
+        return Tr::tr("The requested EtherCAT Master is not available in an open project.");
+
+    const ControllerConnectionSelection selection = controllerConnectionSelection(scope);
+    if (!selection.providerExplicitlySelected || !selection.providerId.isValid())
+        return Tr::tr("Select a controller adapter for the active EtherCAT Master.");
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider)
+        return Tr::tr("The selected controller adapter is unavailable.");
+    if (!provider->isAvailable())
+        return Tr::tr("The selected controller adapter is not available.");
+    if (!selection.profileExplicitlySelected || selection.profileId.isNull()) {
+        return Tr::tr(
+            "Select a controller connection profile for the active EtherCAT Master.");
+    }
+    if (!provider->supportsPackageDeployment())
+        return Tr::tr("The connected controller adapter does not support package deployment.");
+
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (snapshot.state != Data::ControllerConnectionState::Connected
+        && snapshot.state != Data::ControllerConnectionState::Degraded) {
+        return Tr::tr("Connect the controller before deploying a package.");
+    }
+    if (snapshot.scope != scope)
+        return Tr::tr("The connected controller session belongs to a different EtherCAT Master.");
+    if (snapshot.profileId != selection.profileId) {
+        return Tr::tr(
+            "The connected controller session uses a different connection profile.");
+    }
+    if (snapshot.mock)
+        return Tr::tr("Controller package deployment is unavailable for a Mock connection.");
+    if (snapshot.readOnly)
+        return Tr::tr("The controller connection is read-only.");
+    if (!snapshot.session || !snapshot.session->sessionId || !snapshot.session->bootId)
+        return Tr::tr("The controller session identity is not available.");
+    if (!snapshot.session->ownsControlLease)
+        return Tr::tr("Acquire the control lease before deploying a package.");
+    if (!snapshot.capability || !snapshot.capability->transactionalBulk) {
+        return Tr::tr(
+            "The controller does not support transactional package upload.");
+    }
+    if (snapshot.controlProgress.state == Data::ControllerControlState::Pending)
+        return Tr::tr("Wait for the current controller control operation to finish.");
+
+    using DeploymentState = Data::ControllerPackageDeploymentState;
+    switch (snapshot.packageDeploymentProgress.state) {
+    case DeploymentState::Uploading:
+    case DeploymentState::Committing:
+    case DeploymentState::Validating:
+    case DeploymentState::Activating:
+    case DeploymentState::RollingBack:
+    case DeploymentState::Canceling:
+        return Tr::tr("Wait for the current package deployment to finish.");
+    case DeploymentState::OutcomeUnknown:
+        return Tr::tr(
+            "Reconnect and verify the authoritative package state before starting another "
+            "deployment.");
+    case DeploymentState::Idle:
+    case DeploymentState::Succeeded:
+    case DeploymentState::Canceled:
+    case DeploymentState::Failed:
+        break;
+    }
+
+    if (!snapshot.controllerState || !snapshot.controllerState->ready
+        || snapshot.controllerState->serviceState != Data::ControllerServiceState::Shutdown) {
+        return Tr::tr(
+            "Enter configuration mode before deploying a controller package.");
+    }
+    return {};
+}
+
+bool WorkbenchController::canDeployControllerPackage(
+    const Data::ControllerConnectionScope &scope) const
+{
+    return packageDeploymentUnavailableReason(scope).isEmpty();
+}
+
+bool WorkbenchController::canCancelControllerPackageDeployment(
+    const Data::ControllerConnectionScope &scope) const
+{
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider || !provider->isAvailable() || !provider->supportsPackageDeployment())
+        return false;
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (snapshot.scope != scope)
+        return false;
+    using DeploymentState = Data::ControllerPackageDeploymentState;
+    return snapshot.packageDeploymentProgress.state == DeploymentState::Uploading
+           || snapshot.packageDeploymentProgress.state == DeploymentState::Committing;
+}
+
+Utils::Result<> WorkbenchController::deployControllerPackage(
+    const Data::ControllerConnectionScope &scope,
+    const Data::ControllerPackageDeploymentRequest &request)
+{
+    const QString unavailableReason = packageDeploymentUnavailableReason(scope);
+    if (!unavailableReason.isEmpty())
+        return Utils::ResultError(unavailableReason);
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    QTC_ASSERT(provider, return Utils::ResultError(Tr::tr("The controller adapter is unavailable.")));
+    return provider->deployPackage(request);
+}
+
+Utils::Result<> WorkbenchController::cancelControllerPackageDeployment(
+    const Data::ControllerConnectionScope &scope, const QString &operationId)
+{
+    if (!canCancelControllerPackageDeployment(scope)) {
+        return Utils::ResultError(
+            Tr::tr("Package deployment can only be canceled during upload or commit."));
+    }
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    QTC_ASSERT(provider, return Utils::ResultError(Tr::tr("The controller adapter is unavailable.")));
+    return provider->cancelPackageDeployment(operationId);
+}
+
 void WorkbenchController::writeControllerOutput(
     const QString &message, ControllerOutputLevel level)
 {

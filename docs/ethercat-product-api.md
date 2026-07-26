@@ -112,8 +112,9 @@ expand them through a profile, endpoint string, Workbench action, generic
 Provider field, or arbitrary numeric message type. The generic Provider accepts
 only one immutable, already-built ECPKG plus a nonzero ConfigurationId and
 client OperationId. Reset, SDO/PDO access, firmware write, arbitrary bulk
-objects, package construction, signing, and a Workbench deployment action
-remain excluded.
+objects, package construction, and signing remain excluded. Workbench's
+Deployment page calls only this semantic Provider request and never sees a
+numeric Product API message.
 
 Connect is not Scan. The adapter's Connect request establishes the transport
 and authoritative read-only snapshot; it does not itself enter configuration
@@ -308,11 +309,13 @@ request an explicit mode; they are not the Workbench runtime-control path.
 
 This control extension can restore and run an already persistent package. The
 headless Provider can also upload, validate, and optionally activate an
-already-built immutable ECPKG through its semantic deployment API, but
-Workbench does not yet expose that API and the Qt Project cannot yet construct
-or sign the package. Demonstrating FreeRun or DC mode through Workbench
-therefore still requires an appropriately deployed package, generic Run, and
-separate real-hardware observation.
+already-built immutable ECPKG through its semantic deployment API. Workbench
+exposes that API on the selected Master's Deployment page with an explicit
+OperationId, configuration ID, activation and rollback options, bounded
+progress, and audit events. The Qt Project still cannot construct or sign the
+package. Demonstrating FreeRun or DC mode therefore still requires an
+appropriately built and signed package, generic Run, and separate
+real-hardware observation.
 
 ## Semantic and error boundary
 
@@ -479,8 +482,6 @@ extension:
 - authentication, authorization, or transport encryption;
 - physical port-to-port topology edges;
 - ECPKG construction, signing, and changing validated ECFG/DC content;
-- a Workbench action that supplies an already-built package to the headless
-  deployment API;
 - ESI matching and applying actual topology into the offline Project;
 - real Diagnostics Provider mapping; and
 - SDO/PDO and firmware writes.

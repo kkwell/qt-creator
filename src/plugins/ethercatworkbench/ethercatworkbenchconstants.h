@@ -37,6 +37,7 @@ const char MOVE_OFFLINE_SLAVE_DOWN_ACTION_ID[] = "EtherCAT.Workbench.MoveOffline
 const char BUILTIN_PAGE_PROVIDER_ID[] = "EtherCAT.Workbench.BuiltinPages";
 const char GENERAL_PAGE_ID[] = "EtherCAT.Workbench.General";
 const char COMMUNICATION_PAGE_ID[] = "EtherCAT.Workbench.Communication";
+const char DEPLOYMENT_PAGE_ID[] = "EtherCAT.Workbench.Deployment";
 const char ETHERCAT_PAGE_ID[] = "EtherCAT.Workbench.EtherCAT";
 const char PROCESS_DATA_PAGE_ID[] = "EtherCAT.Workbench.ProcessData";
 const char COE_ONLINE_PAGE_ID[] = "EtherCAT.Workbench.CoEOnline";

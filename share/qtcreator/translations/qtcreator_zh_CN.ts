@@ -55474,6 +55474,342 @@ AL 状态：%3
         <source> %1/%2 bytes</source>
         <translation> %1/%2 字节</translation>
     </message>
+    <message>
+        <source>Uploading</source>
+        <translation>正在上传</translation>
+    </message>
+    <message>
+        <source>Committing</source>
+        <translation>正在提交</translation>
+    </message>
+    <message>
+        <source>Validating</source>
+        <translation>正在校验</translation>
+    </message>
+    <message>
+        <source>Activating</source>
+        <translation>正在激活</translation>
+    </message>
+    <message>
+        <source>Rolling back</source>
+        <translation>正在回滚</translation>
+    </message>
+    <message>
+        <source>Canceling</source>
+        <translation>正在取消</translation>
+    </message>
+    <message>
+        <source>Succeeded</source>
+        <translation>已成功</translation>
+    </message>
+    <message>
+        <source>Canceled</source>
+        <translation>已取消</translation>
+    </message>
+    <message>
+        <source>Outcome unknown</source>
+        <translation>结果未知</translation>
+    </message>
+    <message>
+        <source>Upload package</source>
+        <translation>上传软件包</translation>
+    </message>
+    <message>
+        <source>Abort package upload</source>
+        <translation>中止软件包上传</translation>
+    </message>
+    <message>
+        <source>Validate package</source>
+        <translation>校验软件包</translation>
+    </message>
+    <message>
+        <source>Activate package</source>
+        <translation>激活软件包</translation>
+    </message>
+    <message>
+        <source>Rollback package</source>
+        <translation>回滚软件包</translation>
+    </message>
+    <message>
+        <source>Query package state</source>
+        <translation>查询软件包状态</translation>
+    </message>
+    <message>
+        <source>Controller operation</source>
+        <translation>控制器操作</translation>
+    </message>
+    <message>
+        <source>%1 / generation %2 / configuration %3</source>
+        <translation>%1 / 代次 %2 / 配置 %3</translation>
+    </message>
+    <message>
+        <source>Activate after validation</source>
+        <translation>校验后激活</translation>
+    </message>
+    <message>
+        <source>Rollback on explicit activation failure</source>
+        <translation>明确的激活失败时回滚</translation>
+    </message>
+    <message>
+        <source>Controller package deployment</source>
+        <translation>控制器软件包部署</translation>
+    </message>
+    <message>
+        <source>Deploys one already-built and signed ECPKG through the selected controller adapter&apos;s transactional package service.</source>
+        <translation>通过所选控制器适配器的事务性软件包服务部署一个已构建并签名的 ECPKG。</translation>
+    </message>
+    <message>
+        <source>Select an immutable, already-built and signed ECPKG. Deployment requires an exclusive control lease, transactional Bulk support, and a ready controller in Shutdown. Embed Labs does not construct, rewrite, or sign the package.</source>
+        <translation>请选择不可变、已构建并签名的 ECPKG。部署要求拥有独占控制租约、支持事务性 Bulk，并且控制器已就绪且处于关停状态。Embed Labs 不会构建、改写或签名该软件包。</translation>
+    </message>
+    <message>
+        <source>ECPKG artifact path</source>
+        <translation>ECPKG 文件路径</translation>
+    </message>
+    <message>
+        <source>Select an .ecpkg file</source>
+        <translation>选择 .ecpkg 文件</translation>
+    </message>
+    <message>
+        <source>Browse for ECPKG</source>
+        <translation>浏览 ECPKG 文件</translation>
+    </message>
+    <message>
+        <source>Package configuration ID</source>
+        <translation>软件包配置 ID</translation>
+    </message>
+    <message>
+        <source>For example, 813</source>
+        <translation>例如 813</translation>
+    </message>
+    <message>
+        <source>Package deployment OperationId</source>
+        <translation>软件包部署 OperationId</translation>
+    </message>
+    <message>
+        <source>New Operation ID</source>
+        <translation>新建操作 ID</translation>
+    </message>
+    <message>
+        <source>Generate a new package deployment OperationId</source>
+        <translation>生成新的软件包部署 OperationId</translation>
+    </message>
+    <message>
+        <source>Generate a new client audit and idempotency identifier. Do not retry an unknown outcome with a new identifier.</source>
+        <translation>生成新的客户端审计与幂等标识符。结果未知时不要使用新标识符重试。</translation>
+    </message>
+    <message>
+        <source>ECPKG artifact:</source>
+        <translation>ECPKG 文件：</translation>
+    </message>
+    <message>
+        <source>Configuration ID:</source>
+        <translation>配置 ID：</translation>
+    </message>
+    <message>
+        <source>Operation ID:</source>
+        <translation>操作 ID：</translation>
+    </message>
+    <message>
+        <source>Deployment options:</source>
+        <translation>部署选项：</translation>
+    </message>
+    <message>
+        <source>Deploy Package</source>
+        <translation>部署软件包</translation>
+    </message>
+    <message>
+        <source>Deploy controller package</source>
+        <translation>部署控制器软件包</translation>
+    </message>
+    <message>
+        <source>Cancel Upload</source>
+        <translation>取消上传</translation>
+    </message>
+    <message>
+        <source>Cancel controller package upload</source>
+        <translation>取消控制器软件包上传</translation>
+    </message>
+    <message>
+        <source>No deployment</source>
+        <translation>无部署任务</translation>
+    </message>
+    <message>
+        <source>Controller package status</source>
+        <translation>控制器软件包状态</translation>
+    </message>
+    <message>
+        <source>Package deployment audit events</source>
+        <translation>软件包部署审计事件</translation>
+    </message>
+    <message>
+        <source>Sequence</source>
+        <translation>序号</translation>
+    </message>
+    <message>
+        <source>Request</source>
+        <translation>请求</translation>
+    </message>
+    <message>
+        <source>Status / Result</source>
+        <translation>状态/结果</translation>
+    </message>
+    <message>
+        <source>Deployment state</source>
+        <translation>部署状态</translation>
+    </message>
+    <message>
+        <source>Deployment audit</source>
+        <translation>部署审计</translation>
+    </message>
+    <message>
+        <source>Select Controller Package</source>
+        <translation>选择控制器软件包</translation>
+    </message>
+    <message>
+        <source>EtherCAT controller packages (*.ecpkg);;All files (*)</source>
+        <translation>EtherCAT 控制器软件包 (*.ecpkg);;所有文件 (*)</translation>
+    </message>
+    <message>
+        <source>Select an ECPKG artifact.</source>
+        <translation>请选择 ECPKG 文件。</translation>
+    </message>
+    <message>
+        <source>The selected artifact must use the .ecpkg extension.</source>
+        <translation>所选文件必须使用 .ecpkg 扩展名。</translation>
+    </message>
+    <message>
+        <source>The selected ECPKG artifact is not a readable file.</source>
+        <translation>所选 ECPKG 不是可读取的文件。</translation>
+    </message>
+    <message>
+        <source>The selected ECPKG artifact is empty.</source>
+        <translation>所选 ECPKG 文件为空。</translation>
+    </message>
+    <message>
+        <source>The selected ECPKG exceeds the protocol maximum of 16 MiB.</source>
+        <translation>所选 ECPKG 超过协议规定的 16 MiB 上限。</translation>
+    </message>
+    <message>
+        <source>%1 bytes · SHA-256 %2</source>
+        <translation>%1 字节 · SHA-256 %2</translation>
+    </message>
+    <message>
+        <source>Cannot load the controller package: %1</source>
+        <translation>无法加载控制器软件包：%1</translation>
+    </message>
+    <message>
+        <source>Cannot deploy the controller package: enter a nonzero configuration ID.</source>
+        <translation>无法部署控制器软件包：请输入非零配置 ID。</translation>
+    </message>
+    <message>
+        <source>Cannot deploy the controller package: %1</source>
+        <translation>无法部署控制器软件包：%1</translation>
+    </message>
+    <message>
+        <source>Queued package deployment [%1] from %2: %3 bytes, SHA-256 %4, configuration %5.</source>
+        <translation>已将软件包部署 [%1] 加入队列，来源 %2：%3 字节，SHA-256 %4，配置 %5。</translation>
+    </message>
+    <message>
+        <source>Cannot cancel the package deployment: %1</source>
+        <translation>无法取消软件包部署：%1</translation>
+    </message>
+    <message>
+        <source>Package deployment cancellation requested [%1].</source>
+        <translation>已请求取消软件包部署 [%1]。</translation>
+    </message>
+    <message>
+        <source>Upload, validate, and optionally activate the exact selected ECPKG.</source>
+        <translation>上传并校验所选的准确 ECPKG，并可选择激活。</translation>
+    </message>
+    <message>
+        <source>Request BulkAbort before package validation begins.</source>
+        <translation>在软件包校验开始前请求 BulkAbort。</translation>
+    </message>
+    <message>
+        <source>Package deployment can only be canceled during upload or commit.</source>
+        <translation>只能在上传或提交期间取消软件包部署。</translation>
+    </message>
+    <message>
+        <source>Operation ID</source>
+        <translation>操作 ID</translation>
+    </message>
+    <message>
+        <source>Artifact SHA-256</source>
+        <translation>文件 SHA-256</translation>
+    </message>
+    <message>
+        <source>Operation result</source>
+        <translation>操作结果</translation>
+    </message>
+    <message>
+        <source>%1 / %2 bytes</source>
+        <translation>%1 / %2 字节</translation>
+    </message>
+    <message>
+        <source>Select an EtherCAT Master before deploying a package.</source>
+        <translation>请先选择 EtherCAT 主站，再部署软件包。</translation>
+    </message>
+    <message>
+        <source>Enter a nonzero package configuration ID.</source>
+        <translation>请输入非零的软件包配置 ID。</translation>
+    </message>
+    <message>
+        <source>Generate a package deployment OperationId.</source>
+        <translation>请生成软件包部署 OperationId。</translation>
+    </message>
+    <message>
+        <source>The connected controller adapter does not support package deployment.</source>
+        <translation>已连接的控制器适配器不支持软件包部署。</translation>
+    </message>
+    <message>
+        <source>Connect the controller before deploying a package.</source>
+        <translation>部署软件包前，请先连接控制器。</translation>
+    </message>
+    <message>
+        <source>Controller package deployment is unavailable for a Mock connection.</source>
+        <translation>Mock 连接不能部署控制器软件包。</translation>
+    </message>
+    <message>
+        <source>Wait for the current package deployment to finish.</source>
+        <translation>请等待当前软件包部署完成。</translation>
+    </message>
+    <message>
+        <source>Reconnect and verify the authoritative package state before starting another deployment.</source>
+        <translation>开始另一项部署前，请重新连接并核验权威软件包状态。</translation>
+    </message>
+    <message>
+        <source>Acquire the control lease before deploying a package.</source>
+        <translation>部署软件包前，请先取得控制租约。</translation>
+    </message>
+    <message>
+        <source>Browse...</source>
+        <translation>浏览...</translation>
+    </message>
+    <message>
+        <source>Deployment</source>
+        <translation>部署</translation>
+    </message>
+    <message>
+        <source>Enter configuration mode before deploying a controller package.</source>
+        <translation>部署控制器软件包前，请先进入配置模式。</translation>
+    </message>
+    <message>
+        <source>Operation</source>
+        <translation>操作</translation>
+    </message>
+    <message>
+        <source>The controller does not support transactional package upload.</source>
+        <translation>控制器不支持事务性软件包上传。</translation>
+    </message>
+    <message>
+        <source>The controller session identity is not available.</source>
+        <translation>控制器会话标识不可用。</translation>
+    </message>
+    <message>
+        <source>Time</source>
+        <translation>时间</translation>
+    </message>
 </context>
 <context>
     <name>QtC::EtherCATProductApi</name>

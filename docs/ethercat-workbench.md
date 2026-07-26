@@ -7079,6 +7079,28 @@ upload, stage, activate, or run an ECPKG. After importing matching ESI XML for
 an unknown device, the operator explicitly applies the current bus again
 before editing detailed parameters.
 
+### Prebuilt ECPKG deployment
+
+Selecting an EtherCAT Master exposes an embedded **Deployment** page. It
+accepts exactly one already-built `.ecpkg` artifact and nonzero configuration
+ID, generates an explicit client OperationId, and offers validation with
+optional activation and guarded rollback on an explicit activation failure.
+The page never constructs, rewrites, signs, or infers package content.
+
+Deployment is enabled only for the selected Provider/profile/scope when the
+three-channel controller session is live, non-Mock, writable, owns the
+exclusive lease, advertises transactional Bulk, has no competing operation,
+and reports a ready `SHUTDOWN` state. Empty artifacts and files over the
+Product API v1.10 maximum of 16 MiB are rejected before the Provider is
+called. Cancellation is available only during upload or commit.
+
+The page mirrors the active and staged selectors, byte progress, terminal
+status, and bounded audit events. Timeout, disconnect, or an incoherent
+terminal response is shown as `OutcomeUnknown`; another deployment remains
+blocked until reconnect and authoritative package-state verification. All
+requests, failures, progress changes, and cancellation results also use the
+unified **EtherCAT Controller** Application Output channel.
+
 ### Package-determined FreeRun and DC semantics
 
 Product API v1.10 adds separate `StartFreeRun (0x010c)` and
@@ -7095,10 +7117,11 @@ timing metadata and imply requested `auto`. The start command does not change
 the package's cycle source, SYNC configuration, or DC policy.
 
 The existing offline Distributed Clocks page edits Project/ESI configuration.
-This control extension does not serialize that Project into ECPKG, upload or
-activate it, or prove that the persistent controller package matches the
-offline Project. The controller summary can display DC lock and DC difference,
-but those fields do not identify the package mode.
+Workbench still does not serialize that Project into ECPKG or prove that a
+selected prebuilt package matches the offline Project. The Deployment page can
+upload and activate an externally built package, while the controller summary
+can display DC lock and DC difference; those fields do not identify the
+package mode.
 
 For an external client that uses an explicit timing-mode command, a mismatch
 returns terminal stage-2 `TIMING_MODE_MISMATCH (-35)` with
@@ -7108,8 +7131,8 @@ Workbench does not infer the actual mode from DC lock.
 
 Consequently, a FreeRun or DC demonstration requires the corresponding
 ECPKG, the generic Run action, and observed runtime evidence. Switching the
-package between modes still requires a deployment workflow outside this
-control extension.
+package between modes uses the embedded Deployment page, but constructing and
+signing those mode-specific packages remains outside Workbench.
 
 ### Production Mock visibility
 

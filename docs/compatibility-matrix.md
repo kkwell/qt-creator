@@ -158,7 +158,7 @@ function is outside the product target and records migration or recovery.
 | Real EtherCAT scan | Typed leased discovery is verified against three real slaves and remains separate from the offline Project; Project Apply remains pending |
 | Real controller diagnostics | Existing Mock contract reusable; ProductApi Push/Bulk source pending |
 | Physical topology graph | Linear scan order only with current API; branch/star graph blocked by missing port-neighbor edge ABI |
-| ECPKG/ECFG/ETIR | Headless transfer/validate/optional-activate accepts only already-built immutable ECPKG bytes; construction, signing, Workbench invocation, ECFG/DC editing, and ETIR generation remain out of scope |
+| ECPKG/ECFG/ETIR | Headless transfer and the embedded Master Deployment page accept only already-built immutable ECPKG bytes for validate/optional-activate; construction, signing, ECFG/DC serialization, and ETIR generation remain out of scope |
 | ST/LD/FBD | Explicitly out of scope |
 
 ## EtherCATCore stage-1 qualification
@@ -3575,7 +3575,7 @@ historical results of those earlier issues.
 | Disconnect | Running/Paused Disconnect is rejected; a non-running owned lease is released before channel teardown |
 | FreeRun/DC | Workbench Start runs the active package, whose validated ECFG/DC content determines FreeRun or DC. Explicit StartFreeRun/StartDc remain adapter protocol capabilities, not UI buttons; DC lock remains observation |
 | Mode mismatch | An external explicit-mode request may receive terminal stage-2 `TIMING_MODE_MISMATCH (-35)` with `(requested_mode << 32) \| actual_mode`; this is not a Workbench timing-mode selection |
-| Package boundary | Exact persistent restore and a headless prebuilt-ECPKG upload/validate/optional-activate API are supported; construction/signing, Workbench invocation, ECFG/DC editing, and offline-project package generation remain absent |
+| Package boundary | Exact persistent restore plus a Workbench page for the semantic prebuilt-ECPKG upload/validate/optional-activate API are supported; construction/signing, ECFG/DC serialization, and offline-project package generation remain absent |
 | Topology boundary | Position and device identity support truthful linear display; physical port-to-port edges remain unavailable |
 | Mock visibility | Production hides local Mock Scan/Diagnostics UI by default; it is available only with `WITH_TESTS` or `QTC_ETHER_CAT_ENABLE_MOCK_UI=1` |
 | Current English regression | Workbench 95, Project 15, Devices 8, Core 19, Scan 11, Diagnostics 7, and ProductApi 71; 226 passed, 0 failed, and 1 ProductApi hardware test skipped |

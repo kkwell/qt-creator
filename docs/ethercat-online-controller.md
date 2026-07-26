@@ -39,8 +39,10 @@ Product API lease/command handling, a read-only Actual Bus result, and
 Workbench commissioning controls in the embedded Communication page. Runtime
 Run, Pause/Resume, and Controlled Stop use Qt Creator's native lower-left
 quick-control area. The headless Provider now accepts an already-built ECPKG
-for typed upload/validate/optional-activate, but no Workbench action or package
-builder calls it yet. ECPKG construction/signing, SDO/PDO access, firmware
+for typed upload/validate/optional-activate. The selected Master's embedded
+Deployment page now invokes that semantic API, presents its OperationId,
+progress, selectors, and audit events, and sends all operator-facing results
+to Application Output. ECPKG construction/signing, SDO/PDO access, firmware
 writes, and a vendor-neutral physical-edge graph remain absent.
 
 ## Multi-vendor adapter boundary
@@ -148,10 +150,11 @@ current adapter. The typed control extension additionally allows only:
 | Bulk | ECPKG `BulkBegin`, `BulkChunk`, `BulkCommit`, and safe `BulkAbort` |
 | Control | exact-selector `ValidatePackage`, `ActivatePackage`, and recovery `RollbackPackage` |
 
-Neither a generic Provider consumer nor a Workbench action may add an
-arbitrary numeric message outside these lists. Reset, DiscoverModules,
+Neither a generic Provider consumer nor the Workbench Deployment page may add
+an arbitrary numeric message outside these lists. Reset, DiscoverModules,
 SDO/PDO, firmware writes, and other bulk or controller commands remain
-excluded. Workbench currently invokes none of the deployment requests.
+excluded. Workbench supplies one immutable artifact and semantic options to
+the Provider; only the vendor adapter emits the listed requests.
 
 The control lease is controller-authoritative and exclusive. After an
 authoritative connected snapshot is available, Workbench normally submits one
@@ -478,7 +481,6 @@ not restore or runtime transitions.
 The current Qt product still lacks:
 
 - ECPKG construction, signing, and editing of validated ECFG/DC content;
-- a Workbench page/action for the headless prebuilt-package deployment API;
 - serialization of an applied offline Project into a validated controller
   package and proof that the deployed package matches that Project;
 - an embedded Project/Actual/Overlay topology page; and
@@ -647,9 +649,10 @@ internal directory directly.
    `OP_SAFE`, WKC 11/11, faults 0, and lease 0. The Windows session continues
    with `ISSUE-API-016` and the smallest isolated fix
 9. ECPKG construction/signing and Workbench deployment with explicit
-   validated ECFG/DC mode content — headless upload/validate/activate and safe
-   rollback semantics are implemented and loopback-qualified; builder, UI, and
-   real-controller deployment remain pending
+   validated ECFG/DC mode content — headless upload/validate/activate, safe
+   rollback, and the prebuilt-package Deployment page are implemented and
+   loopback-qualified; the builder, signing pipeline, and real-controller
+   deployment remain pending
 10. ESI match/import/re-match — implemented for explicit Current Bus apply;
     an unknown identity remains unconfigured until matching XML is imported
 11. Project Configuration versus Current Bus Apply — implemented as an

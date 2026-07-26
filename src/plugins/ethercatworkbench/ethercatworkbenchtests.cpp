@@ -4,6 +4,7 @@
 
 #include "builtinpropertypages.h"
 #include "communicationpage.h"
+#include "deploymentpage.h"
 #include "detailsview.h"
 #include "esiconfigurationfactory.h"
 #include "esideviceselectiondialog.h"
@@ -60,6 +61,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QContextMenuEvent>
+#include <QCryptographicHash>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDragEnterEvent>
@@ -878,6 +880,46 @@ public:
         return Utils::ResultOk;
     }
 
+    bool supportsPackageDeployment() const final
+    {
+        return m_packageDeploymentSupported;
+    }
+
+    Utils::Result<> deployPackage(
+        const Data::ControllerPackageDeploymentRequest &request) final
+    {
+        if (!m_packageDeploymentSupported)
+            return Utils::ResultError("Package deployment is not supported");
+        ++deploymentCalls;
+        lastDeploymentRequest = request;
+        if (!deploymentError.isEmpty())
+            return Utils::ResultError(deploymentError);
+        m_snapshot.packageDeploymentProgress = {};
+        m_snapshot.packageDeploymentProgress.operationId = request.operationId;
+        m_snapshot.packageDeploymentProgress.artifactSha256
+            = QCryptographicHash::hash(request.artifact, QCryptographicHash::Sha256);
+        m_snapshot.packageDeploymentProgress.state
+            = Data::ControllerPackageDeploymentState::Uploading;
+        m_snapshot.packageDeploymentProgress.totalBytes = request.artifact.size();
+        m_snapshot.packageDeploymentProgress.startedAt = QDateTime::currentDateTimeUtc();
+        emit connectionSnapshotChanged();
+        return Utils::ResultOk;
+    }
+
+    Utils::Result<> cancelPackageDeployment(const QString &operationId) final
+    {
+        if (!m_packageDeploymentSupported)
+            return Utils::ResultError("Package deployment is not supported");
+        ++cancelDeploymentCalls;
+        lastCanceledOperationId = operationId;
+        if (!cancelDeploymentError.isEmpty())
+            return Utils::ResultError(cancelDeploymentError);
+        m_snapshot.packageDeploymentProgress.state
+            = Data::ControllerPackageDeploymentState::Canceling;
+        emit connectionSnapshotChanged();
+        return Utils::ResultOk;
+    }
+
     Data::NodeId primaryProfileId() const { return m_primaryProfile.id; }
     Data::NodeId alternateProfileId() const { return m_alternateProfile.id; }
 
@@ -898,6 +940,12 @@ public:
     {
         m_includeAlternateProfile = !singleProfile;
         emit connectionProfilesChanged();
+    }
+
+    void setPackageDeploymentSupported(bool supported)
+    {
+        m_packageDeploymentSupported = supported;
+        emit connectionSnapshotChanged();
     }
 
     void publishState(
@@ -933,11 +981,18 @@ public:
     QString lastEndpoint;
     QString storedEndpointOverride;
     QString setEndpointError;
+    Data::ControllerPackageDeploymentRequest lastDeploymentRequest;
+    QString lastCanceledOperationId;
+    QString deploymentError;
+    QString cancelDeploymentError;
+    int deploymentCalls = 0;
+    int cancelDeploymentCalls = 0;
 
 private:
     Data::ControllerConnectionProfile m_primaryProfile;
     Data::ControllerConnectionProfile m_alternateProfile;
     bool m_includeAlternateProfile = true;
+    bool m_packageDeploymentSupported = false;
     QList<Data::ControllerControlCommand> m_supportedControlCommands;
     Data::ControllerConnectionSnapshot m_snapshot;
 };
@@ -19493,6 +19548,214 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     QCOMPARE(provider.controlCalls, 10);
     QCOMPARE(
         provider.lastControlRequest.command, Data::ControllerControlCommand::ReleaseControl);
+}
+
+void EtherCATWorkbenchTests::testControllerPackageDeploymentWorkflow()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+    controller.selectionService()->clear();
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        deviceSummaries(1).constFirst(),
+        "controller-package-deployment.ecatproject",
+        "Controller Package Deployment");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    ProjectExplorer::ProjectManager::setStartupProject(opened.project());
+
+    ControlledControllerConnectionProvider provider(
+        Utils::Id("EtherCAT.Workbench.TestControllerConnection.Deployment"),
+        "Deployment controller");
+    provider.setAvailable(true);
+    provider.setPackageDeploymentSupported(true);
+    bool providerRegistered = false;
+    const QScopeGuard cleanup([&] {
+        controller.selectionService()->clear();
+        if (providerRegistered)
+            ExtensionSystem::PluginManager::removeObject(&provider);
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    ExtensionSystem::PluginManager::addObject(&provider);
+    providerRegistered = true;
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+
+    const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
+    QVERIFY_RESULT(controller.selectControllerConnectionProvider(scope, provider.id()));
+    QVERIFY_RESULT(
+        controller.selectControllerConnectionProfile(scope, provider.primaryProfileId()));
+
+    DeploymentPage page(&controller);
+    page.setContext(
+        {scope.projectId,
+         scope.masterId,
+         Core::WorkbenchNodeKind::Master,
+         "Controller Package Deployment Master"});
+    page.resize(1100, 800);
+    page.show();
+    QTRY_VERIFY(page.isVisible());
+
+    QLineEdit *artifactPath
+        = page.findChild<QLineEdit *>("EtherCATDeploymentArtifactPath");
+    QLineEdit *configurationId
+        = page.findChild<QLineEdit *>("EtherCATDeploymentConfigurationId");
+    QLineEdit *operationId
+        = page.findChild<QLineEdit *>("EtherCATDeploymentOperationId");
+    QCheckBox *activate
+        = page.findChild<QCheckBox *>("EtherCATDeploymentActivate");
+    QCheckBox *rollback
+        = page.findChild<QCheckBox *>("EtherCATDeploymentRollback");
+    QToolButton *deploy
+        = page.findChild<QToolButton *>("EtherCATDeploymentStart");
+    QToolButton *cancel
+        = page.findChild<QToolButton *>("EtherCATDeploymentCancel");
+    QProgressBar *progress
+        = page.findChild<QProgressBar *>("EtherCATDeploymentProgress");
+    QTreeWidget *status
+        = page.findChild<QTreeWidget *>("EtherCATDeploymentStatus");
+    QTreeWidget *audit
+        = page.findChild<QTreeWidget *>("EtherCATDeploymentAudit");
+    QVERIFY(artifactPath);
+    QVERIFY(configurationId);
+    QVERIFY(operationId);
+    QVERIFY(activate);
+    QVERIFY(rollback);
+    QVERIFY(deploy);
+    QVERIFY(cancel);
+    QVERIFY(progress);
+    QVERIFY(status);
+    QVERIFY(audit);
+    QVERIFY(!operationId->text().isEmpty());
+    QVERIFY(activate->isChecked());
+    QVERIFY(rollback->isChecked());
+    QVERIFY(!deploy->isEnabled());
+    QVERIFY(!cancel->isEnabled());
+
+    const Utils::FilePath packagePath
+        = Utils::FilePath::fromString(directory.path()).pathAppended("qualified.ecpkg");
+    const QByteArray artifact("qualified-signed-ecpkg");
+    QVERIFY_RESULT(packagePath.writeFileContents(artifact));
+    artifactPath->setText(packagePath.toUserOutput());
+    configurationId->setText("814");
+
+    Data::ControllerConnectionSnapshot snapshot;
+    snapshot.scope = scope;
+    snapshot.profileId = provider.primaryProfileId();
+    snapshot.endpointSummary = "192.0.2.10:15200";
+    snapshot.state = Data::ControllerConnectionState::Connected;
+    snapshot.protocolVersion = {1, 10};
+    snapshot.readOnly = false;
+    snapshot.mock = false;
+    Data::ControllerSessionSummary session;
+    session.sessionId = 42;
+    session.bootId = 73;
+    session.controlLeaseOwnerSessionId = session.sessionId;
+    session.ownsControlLease = true;
+    snapshot.session = session;
+    Data::ControllerCapabilitySummary capability;
+    capability.transactionalBulk = true;
+    snapshot.capability = capability;
+    Data::ControllerStateSummary controllerState;
+    controllerState.serviceState = Data::ControllerServiceState::Shutdown;
+    controllerState.ready = true;
+    snapshot.controllerState = controllerState;
+    Data::ControllerPackageSummary package;
+    package.stagedSlot = Data::ControllerSlot::B;
+    package.stagedGeneration = 12;
+    package.stagedConfigurationId = 813;
+    package.activeSlot = Data::ControllerSlot::B;
+    package.activeGeneration = 12;
+    package.activeConfigurationId = 813;
+    package.controllerState = Data::ControllerPackageState::Active;
+    snapshot.package = package;
+    provider.publishSnapshot(snapshot);
+
+    QTRY_VERIFY(deploy->isEnabled());
+    QVERIFY(!cancel->isEnabled());
+    QVERIFY(controller.canDeployControllerPackage(scope));
+    QVERIFY(controller.packageDeploymentUnavailableReason(scope).isEmpty());
+    QCOMPARE(status->topLevelItemCount(), 7);
+    QVERIFY(status->topLevelItem(1)->text(1).contains("813"));
+    QVERIFY(status->topLevelItem(2)->text(1).contains("813"));
+
+    QSignalSpy controllerOutput(&controller, &WorkbenchController::controllerOutputRequested);
+    QVERIFY(controllerOutput.isValid());
+    controllerOutput.clear();
+    const QString firstOperationId = operationId->text();
+    deploy->click();
+    QCOMPARE(provider.deploymentCalls, 1);
+    QCOMPARE(provider.lastDeploymentRequest.operationId, firstOperationId);
+    QCOMPARE(provider.lastDeploymentRequest.artifact, artifact);
+    QCOMPARE(provider.lastDeploymentRequest.configurationId, quint64(814));
+    QVERIFY(provider.lastDeploymentRequest.activate);
+    QVERIFY(provider.lastDeploymentRequest.rollbackOnActivationFailure);
+    QTRY_VERIFY(cancel->isEnabled());
+    QVERIFY(!deploy->isEnabled());
+    QTRY_VERIFY(controllerOutput.count() >= 1);
+    QVERIFY(std::any_of(
+        controllerOutput.cbegin(),
+        controllerOutput.cend(),
+        [&firstOperationId](const QList<QVariant> &arguments) {
+            return arguments.at(0).toString().contains(firstOperationId)
+                   && arguments.at(0).toString().contains("SHA-256");
+        }));
+
+    snapshot = provider.connectionSnapshot();
+    snapshot.packageDeploymentProgress.transferredBytes = artifact.size() / 2;
+    Data::ControllerPackageDeploymentAuditEvent event;
+    event.sequence = 1;
+    event.operation = Data::ControllerOperation::UploadPackage;
+    event.requestId = 9;
+    event.status = 0;
+    event.operationResult = 0;
+    event.detail = "BulkBegin accepted";
+    event.occurredAt = QDateTime::currentDateTimeUtc();
+    snapshot.packageDeploymentProgress.audit = {event};
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(progress->value() > 0);
+    QTRY_COMPARE(audit->topLevelItemCount(), 1);
+    QCOMPARE(audit->topLevelItem(0)->text(0), QString("1"));
+    QCOMPARE(audit->topLevelItem(0)->text(3), QString("9"));
+    QVERIFY(audit->topLevelItem(0)->text(5).contains("BulkBegin"));
+
+    cancel->click();
+    QCOMPARE(provider.cancelDeploymentCalls, 1);
+    QCOMPARE(provider.lastCanceledOperationId, firstOperationId);
+    QTRY_VERIFY(!cancel->isEnabled());
+    QCOMPARE(
+        provider.connectionSnapshot().packageDeploymentProgress.state,
+        Data::ControllerPackageDeploymentState::Canceling);
+
+    snapshot = provider.connectionSnapshot();
+    snapshot.packageDeploymentProgress.state
+        = Data::ControllerPackageDeploymentState::OutcomeUnknown;
+    snapshot.packageDeploymentProgress.detail = "Authoritative package state required";
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(!deploy->isEnabled());
+    QVERIFY(deploy->toolTip().contains("Reconnect and verify the authoritative package state"));
+
+    snapshot.packageDeploymentProgress.state
+        = Data::ControllerPackageDeploymentState::Succeeded;
+    snapshot.packageDeploymentProgress.detail = "Package activated";
+    snapshot.packageDeploymentProgress.transferredBytes
+        = snapshot.packageDeploymentProgress.totalBytes;
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(deploy->isEnabled());
+    deploy->click();
+    QCOMPARE(provider.deploymentCalls, 2);
+    QVERIFY(provider.lastDeploymentRequest.operationId != firstOperationId);
+    QVERIFY(!provider.lastDeploymentRequest.operationId.isEmpty());
 }
 
 void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()

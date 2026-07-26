@@ -10,6 +10,8 @@ add_qtc_plugin(EtherCATWorkbench
     communicationpage.h
     dcpage.cpp
     dcpage.h
+    deploymentpage.cpp
+    deploymentpage.h
     detailsview.cpp
     detailsview.h
     esiconfigurationfactory.cpp

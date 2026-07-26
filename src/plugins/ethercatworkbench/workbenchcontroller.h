@@ -162,6 +162,16 @@ public:
         const Data::ControllerControlRequest &request);
     Utils::Result<> executeSelectedControllerControl(
         const Data::ControllerControlRequest &request);
+    QString packageDeploymentUnavailableReason(
+        const Data::ControllerConnectionScope &scope) const;
+    bool canDeployControllerPackage(const Data::ControllerConnectionScope &scope) const;
+    bool canCancelControllerPackageDeployment(
+        const Data::ControllerConnectionScope &scope) const;
+    Utils::Result<> deployControllerPackage(
+        const Data::ControllerConnectionScope &scope,
+        const Data::ControllerPackageDeploymentRequest &request);
+    Utils::Result<> cancelControllerPackageDeployment(
+        const Data::ControllerConnectionScope &scope, const QString &operationId);
     void writeControllerOutput(
         const QString &message,
         ControllerOutputLevel level = ControllerOutputLevel::Information);
