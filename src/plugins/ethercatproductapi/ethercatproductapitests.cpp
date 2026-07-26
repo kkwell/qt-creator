@@ -2611,10 +2611,11 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
 
     const QString timingMode = qEnvironmentVariable(TimingModeVariable).trimmed();
     if (timingMode != QStringLiteral("auto") && timingMode != QStringLiteral("free_run")
-        && timingMode != QStringLiteral("dc")) {
-        QFAIL("QTC_ETHER_CAT_TIMING_MODE must be set to exactly auto, free_run, or dc before "
-              "the hardware test can run.");
+        && timingMode != QStringLiteral("dc") && timingMode != QStringLiteral("scan_only")) {
+        QFAIL("QTC_ETHER_CAT_TIMING_MODE must be set to exactly auto, free_run, dc, or "
+              "scan_only before the hardware test can run.");
     }
+    const bool scanOnly = timingMode == QStringLiteral("scan_only");
 
     QString host = qEnvironmentVariable(HostVariable).trimmed();
     if (host.isEmpty())
@@ -2827,7 +2828,8 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         startCommand = Data::ControllerControlCommand::StartDistributedClocks;
     if (failure.isEmpty()) {
         const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
-        const bool explicitTimingMode = timingMode != QStringLiteral("auto");
+        const bool explicitTimingMode = timingMode == QStringLiteral("free_run")
+                                        || timingMode == QStringLiteral("dc");
         if (explicitTimingMode
             && (snapshot.protocolVersion.major != 1
                 || snapshot.protocolVersion.minor < Protocol::ExplicitTimingModeMinor)) {
@@ -2843,7 +2845,19 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
             recordFailure(
                 QStringLiteral("The controller did not advertise explicitTimingModeStart before "
                                "lease acquisition."));
-        } else if (!provider.supportsControlCommand(startCommand)) {
+        } else if (
+            scanOnly
+            && (!provider.supportsControlCommand(
+                    Data::ControllerControlCommand::AcquireControl)
+                || !provider.supportsControlCommand(
+                    Data::ControllerControlCommand::EnterConfigurationMode)
+                || !provider.supportsControlCommand(
+                    Data::ControllerControlCommand::DiscoverTopology)
+                || !provider.supportsControlCommand(
+                    Data::ControllerControlCommand::ReleaseControl))) {
+            recordFailure(QStringLiteral(
+                "The production session does not expose the scan-only command set."));
+        } else if (!scanOnly && !provider.supportsControlCommand(startCommand)) {
             recordFailure(
                 QStringLiteral("The production session does not expose the requested %1 command.")
                     .arg(hardwareCommandName(startCommand)));
@@ -2860,34 +2874,60 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         } else if (snapshot.controllerState->controllerBootId != snapshot.session->bootId) {
             recordFailure(
                 QStringLiteral("The controller-state BootId does not match the session epoch."));
+        } else if (!snapshot.package) {
+            recordFailure(QStringLiteral("No authoritative package snapshot was returned."));
         } else if (
-            !snapshot.package || snapshot.package->activeSlot == Data::ControllerSlot::None
-            || !snapshot.package->activeGeneration || !snapshot.package->activeConfigurationId) {
+            scanOnly
+            && (snapshot.controllerState->serviceState
+                    != Data::ControllerServiceState::Shutdown
+                || snapshot.controllerState->applicationActive
+                || snapshot.controllerState->busOperational
+                || snapshot.controllerState->fault
+                || snapshot.controllerState->currentFaults
+                || snapshot.controllerState->latchedFaults
+                || snapshot.controllerState->ethercatAlStateBits
+                || snapshot.controllerState->expectedWorkingCounter
+                || snapshot.controllerState->actualWorkingCounter
+                || snapshot.package->controllerState == Data::ControllerPackageState::Active)) {
+            recordFailure(QStringLiteral(
+                "Scan-only acceptance requires fault-free SHUTDOWN with no active bus or runtime "
+                "package."));
+        } else if (!scanOnly
+                   && (snapshot.package->activeSlot == Data::ControllerSlot::None
+                       || !snapshot.package->activeGeneration
+                       || !snapshot.package->activeConfigurationId)) {
             recordFailure(QStringLiteral(
                 "No exact persistent active-package selector was returned by preflight."));
         } else {
             using ServiceState = Data::ControllerServiceState;
             const ServiceState state = snapshot.controllerState->serviceState;
-            const bool canEnterConfiguration = state == ServiceState::OperationalSafe
-                                               || state == ServiceState::Running
-                                               || state == ServiceState::Paused
-                                               || state == ServiceState::Fault
-                                               || state == ServiceState::Shutdown;
+            const bool canEnterConfiguration
+                = scanOnly
+                      ? state == ServiceState::Shutdown
+                      : state == ServiceState::OperationalSafe || state == ServiceState::Running
+                            || state == ServiceState::Paused || state == ServiceState::Fault
+                            || state == ServiceState::Shutdown;
             if (!canEnterConfiguration) {
                 recordFailure(
                     QStringLiteral("The initial controller state %1 cannot enter configuration.")
                         .arg(hardwareServiceStateName(state)));
             } else {
                 initialBootId = snapshot.session->bootId;
-                initialActiveSlot = snapshot.package->activeSlot;
-                initialActiveGeneration = snapshot.package->activeGeneration;
-                initialActiveConfigurationId = snapshot.package->activeConfigurationId;
-                qInfo().noquote() << "[Product API hardware] saved initial selector="
-                                  << QStringLiteral("%1:%2:%3")
-                                         .arg(hardwareSlotName(initialActiveSlot))
-                                         .arg(initialActiveGeneration)
-                                         .arg(initialActiveConfigurationId)
-                                  << "boot=" << QString::number(initialBootId);
+                if (!scanOnly) {
+                    initialActiveSlot = snapshot.package->activeSlot;
+                    initialActiveGeneration = snapshot.package->activeGeneration;
+                    initialActiveConfigurationId = snapshot.package->activeConfigurationId;
+                    qInfo().noquote() << "[Product API hardware] saved initial selector="
+                                      << QStringLiteral("%1:%2:%3")
+                                             .arg(hardwareSlotName(initialActiveSlot))
+                                             .arg(initialActiveGeneration)
+                                             .arg(initialActiveConfigurationId)
+                                      << "boot=" << QString::number(initialBootId);
+                } else {
+                    qInfo().noquote()
+                        << "[Product API hardware] scan-only preflight confirmed boot="
+                        << QString::number(initialBootId);
+                }
             }
         }
     }
@@ -3007,19 +3047,25 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
                     << "product="
                     << QStringLiteral("0x%1").arg(slave.productCode, 8, 16, QLatin1Char('0'))
                     << "revision="
-                    << QStringLiteral("0x%1").arg(slave.revision, 8, 16, QLatin1Char('0'));
+                    << QStringLiteral("0x%1").arg(slave.revision, 8, 16, QLatin1Char('0'))
+                    << "serial="
+                    << QStringLiteral("0x%1").arg(slave.serial, 8, 16, QLatin1Char('0'))
+                    << "al="
+                    << QStringLiteral("0x%1").arg(slave.alState, 2, 16, QLatin1Char('0'))
+                    << "flags="
+                    << QStringLiteral("0x%1").arg(slave.flags, 4, 16, QLatin1Char('0'));
             }
         }
     }
 
-    if (failure.isEmpty()) {
+    if (failure.isEmpty() && !scanOnly) {
         control = {};
         control.command = Data::ControllerControlCommand::RestoreActivePackage;
         executeMainCommand(control, QStringLiteral("restore exact active package"));
         waitForMainGate(QStringLiteral("restored OP_SAFE"), strictOperationalSafeGate);
     }
 
-    if (failure.isEmpty()) {
+    if (failure.isEmpty() && !scanOnly) {
         runtimeStartAttempted = true;
         control = {};
         control.command = startCommand;
@@ -3032,28 +3078,28 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         waitForMainGate(QStringLiteral("RUNNING"), strictRunningGate);
     }
 
-    if (failure.isEmpty()) {
+    if (failure.isEmpty() && !scanOnly) {
         control = {};
         control.command = Data::ControllerControlCommand::Pause;
         executeMainCommand(control, QStringLiteral("pause"));
         waitForMainGate(QStringLiteral("PAUSED"), strictPausedGate);
     }
 
-    if (failure.isEmpty()) {
+    if (failure.isEmpty() && !scanOnly) {
         control = {};
         control.command = Data::ControllerControlCommand::Resume;
         executeMainCommand(control, QStringLiteral("resume"));
         waitForMainGate(QStringLiteral("resumed RUNNING"), strictRunningGate);
     }
 
-    if (failure.isEmpty()) {
+    if (failure.isEmpty() && !scanOnly) {
         control = {};
         control.command = Data::ControllerControlCommand::ControlledStop;
         executeMainCommand(control, QStringLiteral("controlled stop"));
         waitForMainGate(QStringLiteral("stopped OP_SAFE"), strictOperationalSafeGate);
     }
 
-    if (failure.isEmpty()) {
+    if (failure.isEmpty() && !scanOnly) {
         control = {};
         control.command = Data::ControllerControlCommand::EnterConfigurationMode;
         executeMainCommand(control, QStringLiteral("final enter configuration"));
@@ -3084,8 +3130,11 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
             recordFailure(
                 QStringLiteral("Disconnect did not finish within %1 ms.").arg(ConnectStepTimeoutMs));
         } else {
-            qInfo().noquote()
-                << "[Product API hardware] lifecycle completed in SHUTDOWN and disconnected";
+            qInfo().noquote() << (scanOnly
+                                      ? "[Product API hardware] scan-only acceptance completed in "
+                                        "SHUTDOWN and disconnected"
+                                      : "[Product API hardware] lifecycle completed in SHUTDOWN "
+                                        "and disconnected");
         }
     }
 

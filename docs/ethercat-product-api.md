@@ -347,6 +347,60 @@ issue Pause, Resume, or ControlledStop. Controller deployment and real
 hardware evidence for this contract remain gated on Windows
 `ISSUE-API-021`.
 
+## Hardware-gated acceptance modes
+
+`testHardwareControlLifecycle` remains disabled unless
+`QTC_ETHER_CAT_PRODUCT_API_HARDWARE=1` is explicitly set. Its required
+`QTC_ETHER_CAT_TIMING_MODE` accepts:
+
+- `auto`, `free_run`, or `dc` for the complete package-dependent lifecycle;
+  and
+- `scan_only` for an identity-discovery acceptance that never restores or
+  starts a package.
+
+`scan_only` fails its preflight before lease acquisition unless the
+authoritative controller snapshot is ready `SHUTDOWN`, has no current lease
+owner, has no current or latched fault, has no active application or bus, has
+zero AL/WKC evidence, and has no Active runtime package. A successful run
+performs only Connect, AcquireControl,
+EnterConfigurationMode, DiscoverTopology, ReleaseControl, and Disconnect. It
+requires a non-empty complete topology and confirms the same Session/Boot
+epoch throughout. The normal failure cleanup may release an owned lease and
+disconnect, but with this mode it never issues RestoreActivePackage, Start,
+Pause, Resume, or ControlledStop.
+
+This mode exists so a stale persistent selector does not become a prerequisite
+for observing the currently wired modules. It remains a real hardware test,
+not a production auto-scan path, and its output must be retained before any ESI
+matching or package construction claim.
+
+### 2026-07-26 scan-only evidence
+
+Windows `ISSUE-API-022` replaced only the RAM-resident CPU0 Product API
+service with the combined API-021/API-022 candidate. The new process reported
+`startup_policy=observe-only`, `startup_cpu1_commands=0`, and
+`boot_restore=5`. Two post-deployment snapshots matched the three
+pre-deployment snapshots for BootId, persistent selector `B/12/813`, CPU1
+package `REJECTED/-2/sequence 38`, service/bus/AL/WKC/cycle state, faults, and
+zero lease ownership.
+
+The first `scan_only` run then connected to all three v1.10 channels, acquired
+a 30-second lease, and entered Configuration. DiscoverTopology reached stages
+1 and 2 but was rejected by CPU1 at stage 3 with
+`CPU1_REJECTED (-15)` and operation result `-3`. The test refreshed the
+authoritative snapshot, released its lease, and disconnected. Final evidence
+remained fault-free `SHUTDOWN`, AL/WKC `0/0`, zero lease ownership, and the
+same package selector and CPU1 package state. It issued no Restore or runtime
+command.
+
+This run proves the client-side scan-only boundary and cleanup, but it does
+not qualify discovery or provide current topology evidence. Controller
+`ISSUE-API-023` owns the rejected CPU1 discovery path; no ESI matching,
+project update, package construction, or DC claim may use this failed run.
+The field bus was subsequently changed from the earlier virtual-slave setup
+to real EtherCAT modules, so all historical slave identities and WKC values
+are stale. Only a new successful physical-bus scan may seed the Project.
+
 ## Capability and evidence limits
 
 The following remain intentionally unknown or outside the current control
