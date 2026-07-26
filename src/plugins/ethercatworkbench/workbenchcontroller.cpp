@@ -20,10 +20,12 @@
 #include <utils/qtcassert.h>
 
 #include <QScopedValueRollback>
+#include <QSet>
 #include <QStringList>
 #include <QTimer>
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace EtherCAT::Workbench::Internal {
@@ -146,6 +148,191 @@ static QString uniqueSlaveName(
         if (!isUsed(candidate))
             return candidate;
     }
+}
+
+struct CurrentBusApplyPlan
+{
+    Data::ControllerConnectionScope scope;
+    QList<Data::OfflineSlaveConfiguration> currentSlaves;
+    QList<Data::OfflineSlaveConfiguration> candidateSlaves;
+    int esiMatches = 0;
+    int unknownDevices = 0;
+    int ambiguousEsiMatches = 0;
+    int unsupportedEsiMatches = 0;
+    int preservedConfigurations = 0;
+    int removedConfigurations = 0;
+};
+
+static Data::DeviceIdentity controllerIdentity(const Data::ControllerTopologySlave &slave)
+{
+    return {slave.vendorId, slave.productCode, slave.revision};
+}
+
+static bool configurationIsEmpty(const Data::OfflineSlaveConfiguration &slave)
+{
+    return slave.processData == Data::ProcessDataConfiguration{}
+           && slave.startup == Data::StartupConfiguration{}
+           && slave.dc == Data::DcConfiguration{};
+}
+
+static std::optional<Data::DeviceDescription> matchingDeviceDescription(
+    Core::DeviceRepositoryProvider *repository,
+    const QList<Data::DeviceSummary> &devices,
+    const Data::ControllerTopologySlave &slave,
+    const Data::OfflineSlaveConfiguration *existing,
+    int *ambiguousMatches,
+    int *unsupportedMatches)
+{
+    if (!repository)
+        return std::nullopt;
+
+    const Data::DeviceIdentity identity = controllerIdentity(slave);
+    if (existing && !existing->deviceDescriptionId.isNull()) {
+        const std::optional<Data::DeviceDescription> configured
+            = repository->device(existing->deviceDescriptionId);
+        if (configured && configured->summary.supported
+            && configured->summary.identity == identity) {
+            return configured;
+        }
+    }
+
+    QList<Data::DeviceSummary> matches;
+    for (const Data::DeviceSummary &device : devices) {
+        if (device.identity == identity)
+            matches.append(device);
+    }
+    if (matches.size() > 1) {
+        if (ambiguousMatches)
+            ++*ambiguousMatches;
+        return std::nullopt;
+    }
+    if (matches.isEmpty())
+        return std::nullopt;
+    if (!matches.constFirst().supported) {
+        if (unsupportedMatches)
+            ++*unsupportedMatches;
+        return std::nullopt;
+    }
+    return repository->device(matches.constFirst().id);
+}
+
+static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
+    const Data::ControllerConnectionScope &scope,
+    const Data::ProjectSnapshot &project,
+    const Data::ControllerTopologySnapshot &topology,
+    Core::DeviceRepositoryProvider *repository)
+{
+    if (!project.valid || project.id != scope.projectId) {
+        return Utils::ResultError(
+            Tr::tr("The selected EtherCAT project is invalid or no longer available."));
+    }
+    if (topology.result != 0) {
+        return Utils::ResultError(
+            Tr::tr("The current bus scan did not complete successfully."));
+    }
+    if (!topology.respondingCount || topology.slaves.isEmpty()) {
+        return Utils::ResultError(
+            Tr::tr("The current bus scan contains no responding EtherCAT devices."));
+    }
+    if (topology.respondingCount != quint32(topology.slaves.size())) {
+        return Utils::ResultError(
+            Tr::tr("The current bus scan is incomplete and cannot configure the project."));
+    }
+
+    QList<Data::ControllerTopologySlave> sortedTopology = topology.slaves;
+    std::sort(
+        sortedTopology.begin(),
+        sortedTopology.end(),
+        [](const Data::ControllerTopologySlave &left,
+           const Data::ControllerTopologySlave &right) { return left.position < right.position; });
+    QSet<quint32> positions;
+    for (const Data::ControllerTopologySlave &slave : std::as_const(sortedTopology)) {
+        if (slave.position > quint32(std::numeric_limits<int>::max())
+            || positions.contains(slave.position)) {
+            return Utils::ResultError(
+                Tr::tr("The current bus scan contains an invalid or duplicate position."));
+        }
+        if (!slave.vendorId || !slave.productCode) {
+            return Utils::ResultError(
+                Tr::tr("A detected EtherCAT device has an incomplete identity."));
+        }
+        positions.insert(slave.position);
+    }
+
+    CurrentBusApplyPlan plan;
+    plan.scope = scope;
+    plan.currentSlaves = slavesForMaster(project, scope.masterId);
+    const QList<Data::DeviceSummary> devices = repository ? repository->devices()
+                                                          : QList<Data::DeviceSummary>();
+
+    for (const Data::ControllerTopologySlave &topologySlave : std::as_const(sortedTopology)) {
+        const int position = int(topologySlave.position);
+        const Data::DeviceIdentity identity = controllerIdentity(topologySlave);
+        const auto existing = std::find_if(
+            plan.currentSlaves.cbegin(),
+            plan.currentSlaves.cend(),
+            [position](const Data::OfflineSlaveConfiguration &slave) {
+                return slave.position == position;
+            });
+        const bool preserveExisting = existing != plan.currentSlaves.cend()
+                                      && existing->identity == identity;
+        const Data::OfflineSlaveConfiguration *existingPointer
+            = preserveExisting ? &*existing : nullptr;
+        const std::optional<Data::DeviceDescription> device = matchingDeviceDescription(
+            repository,
+            devices,
+            topologySlave,
+            existingPointer,
+            &plan.ambiguousEsiMatches,
+            &plan.unsupportedEsiMatches);
+
+        Data::OfflineSlaveConfiguration candidate;
+        if (preserveExisting) {
+            candidate = *existing;
+            candidate.serialNumber = topologySlave.serial;
+            ++plan.preservedConfigurations;
+            if (device) {
+                candidate.deviceDescriptionId = device->summary.id;
+                if (configurationIsEmpty(candidate)) {
+                    candidate.processData = processDataDefaultsFromDevice(*device, candidate.id);
+                    candidate.startup = startupDefaultsFromDevice(*device, candidate.id);
+                    candidate.dc = dcDefaultsFromDevice(*device);
+                }
+            } else {
+                candidate.deviceDescriptionId = {};
+            }
+        } else if (device) {
+            const QString requestedName = device->summary.name.isEmpty()
+                                              ? device->summary.typeName
+                                              : device->summary.name;
+            const Data::NodeId slaveId = Data::NodeId::create();
+            candidate = offlineSlaveFromDevice(
+                *device,
+                slaveId,
+                scope.masterId,
+                position,
+                uniqueSlaveName(requestedName, plan.candidateSlaves));
+            candidate.serialNumber = topologySlave.serial;
+        } else {
+            candidate.id = Data::NodeId::create();
+            candidate.masterId = scope.masterId;
+            candidate.position = position;
+            candidate.identity = identity;
+            candidate.serialNumber = topologySlave.serial;
+            candidate.name = uniqueSlaveName(
+                Tr::tr("Unknown EtherCAT Device %1").arg(position + 1),
+                plan.candidateSlaves);
+        }
+
+        if (device)
+            ++plan.esiMatches;
+        else
+            ++plan.unknownDevices;
+        plan.candidateSlaves.append(candidate);
+    }
+
+    plan.removedConfigurations = plan.currentSlaves.size() - plan.preservedConfigurations;
+    return plan;
 }
 
 static int optionalProviderScore(Core::Provider *provider, Core::ProviderKind kind)
@@ -1328,6 +1515,119 @@ bool WorkbenchController::canRefreshSelectedController() const
            && (snapshot.state == Data::ControllerConnectionState::Connected
                || snapshot.state == Data::ControllerConnectionState::Degraded)
            && snapshot.controlProgress.state != Data::ControllerControlState::Pending;
+}
+
+QString WorkbenchController::currentBusApplyUnavailableReason() const
+{
+    if (m_shuttingDown)
+        return Tr::tr("The EtherCAT Workbench is shutting down.");
+    if (!m_projectService || !m_deviceRepository)
+        return Tr::tr("The EtherCAT project or ESI repository service is unavailable.");
+    if (m_deviceRepository->isIndexing())
+        return Tr::tr("Wait for the ESI repository update to finish.");
+
+    const std::optional<Data::ControllerConnectionScope> scope = quickControllerControlScope();
+    if (!scope)
+        return quickControllerControlScopeUnavailableReason();
+    const ControllerConnectionSelection selection = controllerConnectionSelection(*scope);
+    if (!selection.providerExplicitlySelected || !selection.providerId.isValid())
+        return Tr::tr("Select a controller adapter for this EtherCAT Master.");
+    if (!selection.profileExplicitlySelected || selection.profileId.isNull())
+        return Tr::tr("Select a controller connection profile for this EtherCAT Master.");
+
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
+    if (!provider || !provider->isAvailable())
+        return Tr::tr("The selected controller adapter is unavailable.");
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (snapshot.scope != *scope || snapshot.profileId != selection.profileId
+        || (snapshot.state != Data::ControllerConnectionState::Connected
+            && snapshot.state != Data::ControllerConnectionState::Degraded)) {
+        return Tr::tr("Connect and scan this EtherCAT Master before applying the current bus.");
+    }
+    if (snapshot.mock)
+        return Tr::tr("A Mock topology cannot configure a production EtherCAT project.");
+    if (snapshot.controlProgress.state == Data::ControllerControlState::Pending)
+        return Tr::tr("Wait for the current controller operation to finish.");
+    if (!snapshot.topology)
+        return Tr::tr("Scan the EtherCAT bus before applying it to the project.");
+
+    const std::optional<Data::ProjectSnapshot> project = m_projectService->project(scope->projectId);
+    if (!project)
+        return Tr::tr("The selected EtherCAT project is no longer available.");
+    const Utils::Result<CurrentBusApplyPlan> plan
+        = currentBusApplyPlan(*scope, *project, *snapshot.topology, m_deviceRepository);
+    if (!plan)
+        return plan.error();
+    if (plan->candidateSlaves == plan->currentSlaves)
+        return Tr::tr("The current bus already matches the offline project configuration.");
+    return {};
+}
+
+bool WorkbenchController::canApplyCurrentBusToProject() const
+{
+    return currentBusApplyUnavailableReason().isEmpty();
+}
+
+Utils::Result<> WorkbenchController::applyCurrentBusToProject()
+{
+    const QString unavailableReason = currentBusApplyUnavailableReason();
+    if (!unavailableReason.isEmpty())
+        return Utils::ResultError(unavailableReason);
+
+    const std::optional<Data::ControllerConnectionScope> scope = quickControllerControlScope();
+    QTC_ASSERT(
+        scope,
+        return Utils::ResultError(
+            Tr::tr("The EtherCAT project no longer has an available Master.")));
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
+    QTC_ASSERT(
+        provider,
+        return Utils::ResultError(Tr::tr("The selected controller adapter is unavailable.")));
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    const std::optional<Data::ProjectSnapshot> project = m_projectService->project(scope->projectId);
+    QTC_ASSERT(
+        snapshot.topology && project,
+        return Utils::ResultError(
+            Tr::tr("The current bus or EtherCAT project is no longer available.")));
+
+    const Utils::Result<CurrentBusApplyPlan> plan
+        = currentBusApplyPlan(*scope, *project, *snapshot.topology, m_deviceRepository);
+    if (!plan)
+        return Utils::ResultError(plan.error());
+    const Utils::Result<> applied = m_projectService->replaceOfflineSlaves(
+        scope->projectId, scope->masterId, plan->candidateSlaves);
+    if (!applied)
+        return applied;
+
+    QString message = Tr::tr(
+                          "Applied the current bus to the offline project: %1 device(s), %2 ESI "
+                          "match(es), %3 unknown device(s), %4 existing configuration(s) "
+                          "preserved, and %5 configuration(s) removed or replaced.")
+                          .arg(plan->candidateSlaves.size())
+                          .arg(plan->esiMatches)
+                          .arg(plan->unknownDevices)
+                          .arg(plan->preservedConfigurations)
+                          .arg(plan->removedConfigurations);
+    if (plan->ambiguousEsiMatches) {
+        message += Tr::tr(" %n device(s) have ambiguous ESI matches.",
+                          nullptr,
+                          plan->ambiguousEsiMatches);
+    }
+    if (plan->unsupportedEsiMatches) {
+        message += Tr::tr(" %n matching ESI device(s) contain unsupported structures.",
+                          nullptr,
+                          plan->unsupportedEsiMatches);
+    }
+    if (plan->unknownDevices) {
+        message += Tr::tr(
+            " Import matching ESI XML files, then apply the current bus again to enable detailed "
+            "Process Data, Startup, and Distributed Clocks configuration.");
+    }
+    writeControllerOutput(
+        message,
+        plan->unknownDevices ? ControllerOutputLevel::Warning
+                             : ControllerOutputLevel::Information);
+    return Utils::ResultOk;
 }
 
 QString WorkbenchController::controllerControlCommonUnavailableReason(

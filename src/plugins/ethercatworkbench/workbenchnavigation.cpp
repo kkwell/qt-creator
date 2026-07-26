@@ -631,6 +631,10 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position, bool mou
             && m_controller->canExecuteSelectedControllerControl(
                 Data::ControllerControlCommand::DiscoverTopology));
     setCommandEnabled(
+        Constants::APPLY_CURRENT_BUS_ACTION_ID,
+        contextMatchesSelection && m_controller
+            && m_controller->canApplyCurrentBusToProject());
+    setCommandEnabled(
         Constants::REFRESH_CONTROLLER_ACTION_ID,
         contextMatchesSelection && m_controller
             && m_controller->canRefreshSelectedController());
@@ -684,6 +688,7 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position, bool mou
         menu.addSeparator();
         addCommand(Constants::CONNECT_CONTROLLER_ACTION_ID);
         addCommand(Constants::SCAN_CONTROLLER_ACTION_ID);
+        addCommand(Constants::APPLY_CURRENT_BUS_ACTION_ID);
         addCommand(ProjectExplorer::Constants::RUN);
         addCommand(Constants::DEBUG_ACTION_ID);
         addCommand(Constants::CONTROLLED_STOP_ACTION_ID);
@@ -752,6 +757,9 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position, bool mou
     setCommandEnabled(
         Constants::MOVE_OFFLINE_SLAVE_DOWN_ACTION_ID,
         m_controller && m_controller->canMoveSelectedOfflineSlaveDown());
+    setCommandEnabled(
+        Constants::APPLY_CURRENT_BUS_ACTION_ID,
+        m_controller && m_controller->canApplyCurrentBusToProject());
 }
 
 void WorkbenchNavigationWidget::locateUnsupportedDevice()

@@ -1077,6 +1077,7 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
     QVERIFY(::Core::ActionManager::command(Constants::REFRESH_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::CONNECT_CONTROLLER_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::SCAN_CONTROLLER_ACTION_ID));
+    QVERIFY(::Core::ActionManager::command(Constants::APPLY_CURRENT_BUS_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::REFRESH_CONTROLLER_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::DISCONNECT_CONTROLLER_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::LOCATE_DIFFERENCE_ACTION_ID));
@@ -1494,6 +1495,7 @@ void EtherCATWorkbenchTests::testModeCommandStripMirrorsRegisteredActions()
          {Utils::Id(Constants::REFRESH_ACTION_ID),
           Utils::Id(Constants::CONNECT_CONTROLLER_ACTION_ID),
           Utils::Id(Constants::SCAN_CONTROLLER_ACTION_ID),
+          Utils::Id(Constants::APPLY_CURRENT_BUS_ACTION_ID),
           Utils::Id(Constants::REFRESH_CONTROLLER_ACTION_ID),
           Utils::Id(Constants::DISCONNECT_CONTROLLER_ACTION_ID),
           Utils::Id(Constants::EXPAND_ACTION_ID),
@@ -19997,6 +19999,186 @@ void EtherCATWorkbenchTests::testControllerCommunicationAutoDiscovery()
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     QCOMPARE(provider.controlCalls, 2);
+}
+
+void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+    controller.selectionService()->clear();
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("current-bus-apply.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(deviceEsi()));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> repositoryDevices = repository->devices();
+    const auto matchingSummary = std::find_if(
+        repositoryDevices.cbegin(),
+        repositoryDevices.cend(),
+        [](const Data::DeviceSummary &device) {
+            return device.identity.vendorId == 0x00000002
+                   && device.identity.productCode == 0x00005678
+                   && device.identity.revisionNumber == 0x00000011;
+        });
+    QVERIFY(matchingSummary != repositoryDevices.cend());
+    const std::optional<Data::DeviceDescription> matchingDevice
+        = repository->device(matchingSummary->id);
+    QVERIFY(matchingDevice);
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        *matchingSummary,
+        "controller-current-bus-apply.ecatproject",
+        "Current Bus Apply");
+    QVERIFY(!file.path.isEmpty());
+    const Utils::Result<QByteArray> projectContents = file.path.fileContents();
+    QVERIFY_RESULT(projectContents);
+    QJsonDocument projectDocument = QJsonDocument::fromJson(*projectContents);
+    QVERIFY(projectDocument.isObject());
+    QJsonObject root = projectDocument.object();
+    QJsonObject master = root.value("master").toObject();
+    QJsonArray slaves = master.value("slaves").toArray();
+    QCOMPARE(slaves.size(), 1);
+    const QJsonObject originalSlave = slaves.at(0).toObject();
+    QJsonObject customizedSlave = originalSlave;
+    customizedSlave["name"] = "Customized Servo";
+    customizedSlave["serialNumber"] = 7;
+    customizedSlave["alias"] = 9;
+    QJsonObject customizedConfiguration = customizedSlave.value("configuration").toObject();
+    customizedConfiguration["dc"] = QJsonObject{
+        {"enabled", true},
+        {"modeName", "Customized DC"},
+        {"assignActivate", 0x0300},
+        {"sync0",
+         QJsonObject{{"enabled", true}, {"cycleTimeNs", 250000}, {"shiftTimeNs", 125}}},
+        {"sync1",
+         QJsonObject{{"enabled", false}, {"cycleTimeNs", 0}, {"shiftTimeNs", 0}}},
+        {"potentialReferenceClock", false},
+    };
+    customizedSlave["configuration"] = customizedConfiguration;
+
+    QJsonObject removedSlave = originalSlave;
+    removedSlave["id"] = Data::NodeId::create().toString();
+    removedSlave["name"] = "Removed Offline Device";
+    removedSlave["position"] = 3;
+    removedSlave["vendorId"] = double(0x00000003);
+    removedSlave["productCode"] = double(0x00007777);
+    removedSlave["revisionNumber"] = double(0x00000001);
+    removedSlave["serialNumber"] = 33;
+    removedSlave["alias"] = 0;
+    removedSlave["deviceDescriptionId"] = QString();
+    slaves[0] = customizedSlave;
+    slaves.append(removedSlave);
+    master["slaves"] = slaves;
+    root["master"] = master;
+    QVERIFY_RESULT(
+        file.path.writeFileContents(QJsonDocument(root).toJson(QJsonDocument::Indented)));
+
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    ProjectExplorer::ProjectManager::setStartupProject(opened.project());
+
+    ControlledControllerConnectionProvider provider(
+        Utils::Id("EtherCAT.Workbench.TestControllerConnection.CurrentBusApply"),
+        "Current bus apply controller");
+    provider.setAvailable(true);
+    provider.setSingleProfile(true);
+    bool providerRegistered = false;
+    const QScopeGuard cleanup([&] {
+        controller.selectionService()->clear();
+        if (providerRegistered)
+            ExtensionSystem::PluginManager::removeObject(&provider);
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    ExtensionSystem::PluginManager::addObject(&provider);
+    providerRegistered = true;
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+
+    Data::ProjectSnapshot project = *projectService->project(file.projectId);
+    QCOMPARE(project.slaves.size(), 2);
+    Data::OfflineSlaveConfiguration preserved = project.slaves.constFirst();
+    const Data::OfflineSlaveConfiguration removed = project.slaves.at(1);
+    QCOMPARE(preserved.name, QString("Customized Servo"));
+    QCOMPARE(preserved.alias, quint16(9));
+    QVERIFY(preserved.dc.enabled);
+    QCOMPARE(preserved.dc.modeName, QString("Customized DC"));
+
+    const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    QVERIFY_RESULT(controller.selectControllerConnectionProvider(scope, provider.id()));
+    QVERIFY_RESULT(
+        controller.selectControllerConnectionProfile(scope, provider.primaryProfileId()));
+
+    Data::ControllerTopologySnapshot topology;
+    topology.firstStationAddress = 0x1001;
+    topology.respondingCount = 3;
+    topology.result = 0;
+    topology.discoveredAt = QDateTime::currentDateTimeUtc();
+    topology.slaves = {
+        {0, 0x1001, 0x0002, 0, 0x00000002, 0x00005678, 0x00000011, 77},
+        {1, 0x1002, 0x0002, 0, 0x00000002, 0x00005678, 0x00000011, 88},
+        {2, 0x1003, 0x0002, 0, 0x0000dead, 0x0000beef, 0x00000001, 99},
+    };
+
+    Data::ControllerConnectionSnapshot snapshot;
+    snapshot.scope = scope;
+    snapshot.profileId = provider.primaryProfileId();
+    snapshot.state = Data::ControllerConnectionState::Connected;
+    snapshot.protocolVersion = {1, 10};
+    snapshot.sessionGeneration = 1;
+    snapshot.topology = topology;
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(controller.canApplyCurrentBusToProject());
+
+    QSignalSpy output(&controller, &WorkbenchController::controllerOutputRequested);
+    QVERIFY_RESULT(controller.applyCurrentBusToProject());
+    QTRY_COMPARE(output.size(), 1);
+    QVERIFY(output.constFirst().constFirst().toString().contains("3"));
+    QVERIFY(output.constFirst().constFirst().toString().contains("ESI"));
+    QCOMPARE(
+        output.constFirst().at(1).value<ControllerOutputLevel>(),
+        ControllerOutputLevel::Warning);
+
+    project = *projectService->project(file.projectId);
+    QCOMPARE(project.slaves.size(), 3);
+    QCOMPARE(project.slaves.at(0).id, preserved.id);
+    QCOMPARE(project.slaves.at(0).name, preserved.name);
+    QCOMPARE(project.slaves.at(0).serialNumber, quint32(77));
+    QCOMPARE(project.slaves.at(0).alias, preserved.alias);
+    QCOMPARE(project.slaves.at(0).processData, preserved.processData);
+    QCOMPARE(project.slaves.at(0).dc, preserved.dc);
+
+    QCOMPARE(project.slaves.at(1).position, 1);
+    QCOMPARE(project.slaves.at(1).serialNumber, quint32(88));
+    QCOMPARE(project.slaves.at(1).deviceDescriptionId, matchingSummary->id);
+    QVERIFY(!project.slaves.at(1).processData.pdos.isEmpty());
+    QVERIFY(!project.slaves.at(1).startup.parameters.isEmpty());
+    QVERIFY(project.slaves.at(1).dc.enabled);
+
+    QCOMPARE(project.slaves.at(2).position, 2);
+    QCOMPARE(project.slaves.at(2).serialNumber, quint32(99));
+    QVERIFY(project.slaves.at(2).deviceDescriptionId.isNull());
+    QVERIFY(project.slaves.at(2).processData.pdos.isEmpty());
+    QVERIFY(project.slaves.at(2).startup.parameters.isEmpty());
+    QVERIFY(!project.slaves.at(2).dc.enabled);
+
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    project = *projectService->project(file.projectId);
+    QCOMPARE(project.slaves, QList<Data::OfflineSlaveConfiguration>({preserved, removed}));
+    QVERIFY_RESULT(projectService->redoProject(file.projectId));
+    QCOMPARE(projectService->project(file.projectId)->slaves.size(), 3);
+    QVERIFY(!controller.canApplyCurrentBusToProject());
+    QVERIFY(!controller.applyCurrentBusToProject());
 }
 
 void EtherCATWorkbenchTests::testControllerCommunicationAutoAcquireAcrossProjects()

@@ -475,14 +475,20 @@ The current Qt product still lacks:
 
 - ECPKG construction, upload, stage, accept, activation, and editing of
   validated ECFG/DC content;
-- ESI re-match and config/actual Apply;
+- serialization of an applied offline Project into a validated controller
+  package and proof that the deployed package matches that Project;
 - an embedded Project/Actual/Overlay topology page; and
 - real Push/Bulk diagnostics mapping.
 
 The current local implementation does contain typed leased discovery and a
-separate read-only linear Actual Bus tree. Their real-controller behavior is
-covered by the dated discovery evidence only; the remaining lifecycle was
-blocked at exact package restore as described above.
+separate read-only linear Actual Bus tree. It also provides an explicit
+undoable `Apply Current Bus to Project` engineering command. That command
+matches each actual identity against the local ESI repository, preserves
+customized configuration only when the same identity remains at the same
+position, and retains unknown devices without inventing configuration. It
+changes only the local Project and never writes to the controller. Its current
+evidence is a deterministic Provider regression; real-controller application
+must follow a fresh safe scan.
 
 ### Embedded Communication page boundary
 
@@ -636,8 +642,10 @@ internal directory directly.
    `OP_SAFE`, WKC 11/11, faults 0, and lease 0. The Windows session continues
    with `ISSUE-API-016` and the smallest isolated fix
 9. ECPKG construction/deployment with explicit validated ECFG/DC mode content
-10. ESI match/import/re-match
-11. Project Configuration versus Current Bus tree and Apply
+10. ESI match/import/re-match — implemented for explicit Current Bus apply;
+    an unknown identity remains unconfigured until matching XML is imported
+11. Project Configuration versus Current Bus Apply — implemented as an
+    undoable local-project action; an embedded Overlay view remains pending
 12. Embedded Project/Actual/Overlay topology
 13. Real diagnostics Provider
 

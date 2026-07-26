@@ -621,6 +621,30 @@ void EtherCATWorkbenchPlugin::setupActions()
         }
     });
 
+    auto applyCurrentBusAction
+        = new QAction(Utils::Icons::DOWNLOAD.icon(), Tr::tr("Apply Current Bus to Project"), this);
+    const QString applyCurrentBusDescription = Tr::tr(
+        "Replace the selected Master's local offline device list with the latest live bus scan. "
+        "Existing parameter, Process Data, Startup, and Distributed Clocks settings are preserved "
+        "when the same device remains at the same position. Unknown devices require matching ESI "
+        "XML before detailed configuration is available. This action is undoable and does not "
+        "write to the controller.");
+    applyCurrentBusAction->setToolTip(applyCurrentBusDescription);
+    applyCurrentBusAction->setStatusTip(applyCurrentBusDescription);
+    ::Core::Command *applyCurrentBusCommand = ::Core::ActionManager::registerAction(
+        applyCurrentBusAction,
+        Constants::APPLY_CURRENT_BUS_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    applyCurrentBusCommand->setDescription(applyCurrentBusAction->text());
+    menu->addAction(applyCurrentBusCommand);
+    connect(applyCurrentBusAction, &QAction::triggered, m_controller.get(), [this] {
+        if (const Utils::Result<> result = m_controller->applyCurrentBusToProject(); !result) {
+            m_controller->writeControllerOutput(
+                Tr::tr("Cannot apply the current bus to the project: %1").arg(result.error()),
+                ControllerOutputLevel::Error);
+        }
+    });
+
     menu->addSeparator();
     menu->addAction(::Core::ActionManager::command(ProjectExplorer::Constants::RUN));
     menu->addAction(::Core::ActionManager::command(Constants::DEBUG_ACTION_ID));
@@ -940,6 +964,7 @@ void EtherCATWorkbenchPlugin::setupActions()
          updateQuickAddPresentation,
          connectControllerAction,
          scanControllerAction,
+         applyCurrentBusAction,
          refreshControllerAction,
          disconnectControllerAction,
          locateDifferenceAction,
@@ -957,6 +982,7 @@ void EtherCATWorkbenchPlugin::setupActions()
             if (!m_controller) {
                 connectControllerAction->setEnabled(false);
                 scanControllerAction->setEnabled(false);
+                applyCurrentBusAction->setEnabled(false);
                 refreshControllerAction->setEnabled(false);
                 disconnectControllerAction->setEnabled(false);
                 locateDifferenceAction->setEnabled(false);
@@ -976,6 +1002,7 @@ void EtherCATWorkbenchPlugin::setupActions()
             scanControllerAction->setEnabled(
                 m_controller->canExecuteSelectedControllerControl(
                     Data::ControllerControlCommand::DiscoverTopology));
+            applyCurrentBusAction->setEnabled(m_controller->canApplyCurrentBusToProject());
             refreshControllerAction->setEnabled(m_controller->canRefreshSelectedController());
             disconnectControllerAction->setEnabled(m_controller->canDisconnectSelectedController());
             Core::SelectionService *selectionService = m_controller->selectionService();

@@ -154,6 +154,9 @@ public:
     Utils::Result<> connectSelectedController();
     Utils::Result<> disconnectSelectedController();
     Utils::Result<> refreshSelectedController();
+    QString currentBusApplyUnavailableReason() const;
+    bool canApplyCurrentBusToProject() const;
+    Utils::Result<> applyCurrentBusToProject();
     Utils::Result<> executeControllerControl(
         const Data::ControllerConnectionScope &scope,
         const Data::ControllerControlRequest &request);

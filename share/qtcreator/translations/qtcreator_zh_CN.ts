@@ -54031,6 +54031,114 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>无法扫描 EtherCAT 总线：%1</translation>
     </message>
     <message>
+        <source>Apply Current Bus to Project</source>
+        <translation>将当前总线应用到项目</translation>
+    </message>
+    <message>
+        <source>Replace the selected Master&apos;s local offline device list with the latest live bus scan. Existing parameter, Process Data, Startup, and Distributed Clocks settings are preserved when the same device remains at the same position. Unknown devices require matching ESI XML before detailed configuration is available. This action is undoable and does not write to the controller.</source>
+        <translation>使用最新实际总线扫描结果替换所选主站的本地离线设备列表。同一设备保持在同一位置时，将保留现有参数、过程数据、启动和分布式时钟设置。未知设备需要匹配的 ESI XML 才能进行详细配置。此操作可撤销，且不会写入控制器。</translation>
+    </message>
+    <message>
+        <source>Cannot apply the current bus to the project: %1</source>
+        <translation>无法将当前总线应用到项目：%1</translation>
+    </message>
+    <message>
+        <source>The selected EtherCAT project is invalid or no longer available.</source>
+        <translation>所选 EtherCAT 项目无效或已不可用。</translation>
+    </message>
+    <message>
+        <source>The current bus scan did not complete successfully.</source>
+        <translation>当前总线扫描未成功完成。</translation>
+    </message>
+    <message>
+        <source>The current bus scan contains no responding EtherCAT devices.</source>
+        <translation>当前总线扫描中没有响应的 EtherCAT 设备。</translation>
+    </message>
+    <message>
+        <source>The current bus scan is incomplete and cannot configure the project.</source>
+        <translation>当前总线扫描结果不完整，无法用于配置项目。</translation>
+    </message>
+    <message>
+        <source>The current bus scan contains an invalid or duplicate position.</source>
+        <translation>当前总线扫描包含无效或重复的位置。</translation>
+    </message>
+    <message>
+        <source>A detected EtherCAT device has an incomplete identity.</source>
+        <translation>检测到的 EtherCAT 设备身份信息不完整。</translation>
+    </message>
+    <message>
+        <source>Unknown EtherCAT Device %1</source>
+        <translation>未知 EtherCAT 设备 %1</translation>
+    </message>
+    <message>
+        <source>The EtherCAT Workbench is shutting down.</source>
+        <translation>EtherCAT Workbench 正在关闭。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project or ESI repository service is unavailable.</source>
+        <translation>EtherCAT 项目服务或 ESI 设备库服务不可用。</translation>
+    </message>
+    <message>
+        <source>Wait for the ESI repository update to finish.</source>
+        <translation>请等待 ESI 设备库更新完成。</translation>
+    </message>
+    <message>
+        <source>Select a controller adapter for this EtherCAT Master.</source>
+        <translation>请为此 EtherCAT 主站选择控制器适配器。</translation>
+    </message>
+    <message>
+        <source>Select a controller connection profile for this EtherCAT Master.</source>
+        <translation>请为此 EtherCAT 主站选择控制器连接配置。</translation>
+    </message>
+    <message>
+        <source>Connect and scan this EtherCAT Master before applying the current bus.</source>
+        <translation>应用当前总线前，请先连接并扫描此 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source>A Mock topology cannot configure a production EtherCAT project.</source>
+        <translation>Mock 拓扑不能用于配置生产 EtherCAT 项目。</translation>
+    </message>
+    <message>
+        <source>Wait for the current controller operation to finish.</source>
+        <translation>请等待当前控制器操作完成。</translation>
+    </message>
+    <message>
+        <source>Scan the EtherCAT bus before applying it to the project.</source>
+        <translation>应用到项目前，请先扫描 EtherCAT 总线。</translation>
+    </message>
+    <message>
+        <source>The current bus already matches the offline project configuration.</source>
+        <translation>当前总线已与离线项目配置一致。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project no longer has an available Master.</source>
+        <translation>EtherCAT 项目已没有可用的主站。</translation>
+    </message>
+    <message>
+        <source>The current bus or EtherCAT project is no longer available.</source>
+        <translation>当前总线或 EtherCAT 项目已不可用。</translation>
+    </message>
+    <message>
+        <source>Applied the current bus to the offline project: %1 device(s), %2 ESI match(es), %3 unknown device(s), %4 existing configuration(s) preserved, and %5 configuration(s) removed or replaced.</source>
+        <translation>已将当前总线应用到离线项目：共 %1 个设备，%2 个 ESI 匹配，%3 个未知设备，保留 %4 个现有配置，并移除或替换 %5 个配置。</translation>
+    </message>
+    <message numerus="yes">
+        <source> %n device(s) have ambiguous ESI matches.</source>
+        <translation>
+            <numerusform> %n 个设备存在不明确的 ESI 匹配。</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source> %n matching ESI device(s) contain unsupported structures.</source>
+        <translation>
+            <numerusform> %n 个匹配的 ESI 设备包含不受支持的结构。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source> Import matching ESI XML files, then apply the current bus again to enable detailed Process Data, Startup, and Distributed Clocks configuration.</source>
+        <translation> 请导入匹配的 ESI XML 文件，然后再次应用当前总线，以启用详细的过程数据、启动和分布式时钟配置。</translation>
+    </message>
+    <message>
         <source>Release this session&apos;s management lease and close its connection. An already running autonomous cyclic task continues on the controller.</source>
         <translation>释放当前会话的管理租约并关闭连接。已经运行的自主周期任务会继续在控制器上执行。</translation>
     </message>

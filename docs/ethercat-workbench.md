@@ -7041,6 +7041,41 @@ configuration ID, then the provider refreshes authoritative controller and
 package state. The quick Run control becomes available only after the restored
 package and real bus satisfy the common startup gate.
 
+### Apply Current Bus to Project
+
+`ISSUE-WORKBENCH-CURRENT-BUS-APPLY-001` turns a successful production
+Controller topology result into an explicit local engineering operation.
+`Apply Current Bus to Project` is registered in the shared EtherCAT menu, so it
+also appears in the Workbench command strip, and it is available beside
+`Scan Bus` in the selected Project/Master device-tree context menu.
+
+The command is enabled only for a current, complete, non-Mock scan from the
+explicit Provider/profile selected for the open Project's Master. Duplicate
+positions, incomplete identities, failed or partial scans, an unstable ESI
+index, a pending controller command, and stale Project or connection state are
+rejected before mutation.
+
+The operation sorts actual devices by scan position and replaces only that
+Master's offline slave list in one checked Project command:
+
+- the same VendorId/ProductCode/Revision at the same position retains its
+  stable node ID, name, Alias, Process Data, Startup, and Distributed Clocks
+  customization while its actual serial number is refreshed;
+- a new or replaced identity with exactly one supported ESI match receives
+  ESI-derived Process Data, Startup, and DC defaults;
+- a missing, ambiguous, or unsupported ESI match retains the actual identity,
+  serial number, and position but receives no fabricated PDO, Startup, or DC
+  configuration; and
+- devices absent from the current bus are removed from the candidate Project.
+
+The complete replacement is one Undo/Redo step. Applying the same result again
+is disabled and idempotent. Success and all warnings are written to
+**EtherCAT Controller** in **Application Output**. The action never sends a
+controller command, never changes a lease or bus state, and does not build,
+upload, stage, activate, or run an ECPKG. After importing matching ESI XML for
+an unknown device, the operator explicitly applies the current bus again
+before editing detailed parameters.
+
 ### Package-determined FreeRun and DC semantics
 
 Product API v1.10 adds separate `StartFreeRun (0x010c)` and
