@@ -38,6 +38,9 @@ public:
     bool supportsControlCommand(Data::ControllerControlCommand command) const override;
     Utils::Result<> executeControlCommand(
         const Data::ControllerControlRequest &request) override;
+    bool supportsPackageDeployment() const override;
+    Utils::Result<> deployPackage(const Data::ControllerPackageDeploymentRequest &request) override;
+    Utils::Result<> cancelPackageDeployment(const QString &operationId) override;
 
     void shutdown();
 

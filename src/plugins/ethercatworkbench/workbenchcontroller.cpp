@@ -711,6 +711,36 @@ static QString controllerControlStateName(Data::ControllerControlState state)
     return Tr::tr("unknown");
 }
 
+static QString controllerPackageDeploymentStateName(Data::ControllerPackageDeploymentState state)
+{
+    using State = Data::ControllerPackageDeploymentState;
+    switch (state) {
+    case State::Idle:
+        return Tr::tr("idle");
+    case State::Uploading:
+        return Tr::tr("uploading");
+    case State::Committing:
+        return Tr::tr("committing");
+    case State::Validating:
+        return Tr::tr("validating");
+    case State::Activating:
+        return Tr::tr("activating");
+    case State::RollingBack:
+        return Tr::tr("rolling back");
+    case State::Canceling:
+        return Tr::tr("canceling");
+    case State::Succeeded:
+        return Tr::tr("succeeded");
+    case State::Canceled:
+        return Tr::tr("canceled");
+    case State::Failed:
+        return Tr::tr("failed");
+    case State::OutcomeUnknown:
+        return Tr::tr("outcome unknown");
+    }
+    return Tr::tr("unknown");
+}
+
 static QString controllerOutputFingerprint(const Data::ControllerConnectionSnapshot &snapshot)
 {
     QStringList fields{QString::number(int(snapshot.state))};
@@ -753,6 +783,17 @@ static QString controllerOutputFingerprint(const Data::ControllerConnectionSnaps
                 progress.operationResult ? QString::number(*progress.operationResult)
                                          : QString())
             .arg(progress.detail));
+    const Data::ControllerPackageDeploymentProgress &deployment = snapshot.packageDeploymentProgress;
+    fields.append(QStringLiteral("deployment:%1:%2:%3:%4:%5:%6:%7")
+                      .arg(deployment.operationId)
+                      .arg(int(deployment.state))
+                      .arg(deployment.transferredBytes)
+                      .arg(deployment.totalBytes)
+                      .arg(deployment.status ? QString::number(*deployment.status) : QString())
+                      .arg(
+                          deployment.operationResult ? QString::number(*deployment.operationResult)
+                                                     : QString())
+                      .arg(deployment.detail));
     if (snapshot.topology) {
         fields.append(
             QStringLiteral("topology:%1:%2:%3:%4")
@@ -779,6 +820,9 @@ static ControllerOutputLevel controllerOutputLevel(
 {
     if (snapshot.state == Data::ControllerConnectionState::Failed || snapshot.lastError
         || snapshot.controlProgress.state == Data::ControllerControlState::Failed
+        || snapshot.packageDeploymentProgress.state == Data::ControllerPackageDeploymentState::Failed
+        || snapshot.packageDeploymentProgress.state
+               == Data::ControllerPackageDeploymentState::OutcomeUnknown
         || (snapshot.controllerState
             && (snapshot.controllerState->serviceState == Data::ControllerServiceState::Fault
                 || snapshot.controllerState->currentFaults
@@ -786,6 +830,8 @@ static ControllerOutputLevel controllerOutputLevel(
         return ControllerOutputLevel::Error;
     }
     if (snapshot.state == Data::ControllerConnectionState::Degraded || snapshot.readOnly
+        || snapshot.packageDeploymentProgress.state
+               == Data::ControllerPackageDeploymentState::Canceled
         || (snapshot.state == Data::ControllerConnectionState::Connected
             && snapshot.session && !snapshot.session->ownsControlLease)) {
         return ControllerOutputLevel::Warning;
@@ -830,6 +876,22 @@ static QString controllerOutputMessage(
                                    controllerControlStateName(snapshot.controlProgress.state));
         if (!snapshot.controlProgress.detail.isEmpty())
             progress += Tr::tr(" (%1)").arg(snapshot.controlProgress.detail);
+        fields.append(progress);
+    }
+    if (snapshot.packageDeploymentProgress.state != Data::ControllerPackageDeploymentState::Idle) {
+        const Data::ControllerPackageDeploymentProgress &deployment
+            = snapshot.packageDeploymentProgress;
+        QString progress = Tr::tr("Package deployment %1")
+                               .arg(controllerPackageDeploymentStateName(deployment.state));
+        if (!deployment.operationId.isEmpty())
+            progress += Tr::tr(" [%1]").arg(deployment.operationId);
+        if (deployment.totalBytes > 0) {
+            progress += Tr::tr(" %1/%2 bytes")
+                            .arg(deployment.transferredBytes)
+                            .arg(deployment.totalBytes);
+        }
+        if (!deployment.detail.isEmpty())
+            progress += Tr::tr(" (%1)").arg(deployment.detail);
         fields.append(progress);
     }
     if (snapshot.topology) {

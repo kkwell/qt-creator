@@ -48656,6 +48656,14 @@ What do you want to do?</source>
         <translation>此控制器提供程序不支持控制命令。</translation>
     </message>
     <message>
+        <source>This controller provider does not support package deployment.</source>
+        <translation>此控制器提供程序不支持控制器包部署。</translation>
+    </message>
+    <message>
+        <source>This controller provider does not support canceling package deployment.</source>
+        <translation>此控制器提供程序不支持取消控制器包部署。</translation>
+    </message>
+    <message>
         <source>This controller provider does not support editing connection profiles.</source>
         <translation>此控制器提供程序不支持编辑连接配置。</translation>
     </message>
@@ -55422,6 +55430,50 @@ AL 状态：%3
         <source>Timed out while waiting for automatic controller startup.</source>
         <translation>等待控制器自动启动超时。</translation>
     </message>
+    <message>
+        <source>uploading</source>
+        <translation>正在上传</translation>
+    </message>
+    <message>
+        <source>committing</source>
+        <translation>正在提交</translation>
+    </message>
+    <message>
+        <source>validating</source>
+        <translation>正在校验</translation>
+    </message>
+    <message>
+        <source>activating</source>
+        <translation>正在激活</translation>
+    </message>
+    <message>
+        <source>rolling back</source>
+        <translation>正在回滚</translation>
+    </message>
+    <message>
+        <source>canceling</source>
+        <translation>正在取消</translation>
+    </message>
+    <message>
+        <source>canceled</source>
+        <translation>已取消</translation>
+    </message>
+    <message>
+        <source>outcome unknown</source>
+        <translation>结果未知</translation>
+    </message>
+    <message>
+        <source>Package deployment %1</source>
+        <translation>软件包部署：%1</translation>
+    </message>
+    <message>
+        <source> [%1]</source>
+        <translation> [%1]</translation>
+    </message>
+    <message>
+        <source> %1/%2 bytes</source>
+        <translation> %1/%2 字节</translation>
+    </message>
 </context>
 <context>
     <name>QtC::EtherCATProductApi</name>
@@ -55996,6 +56048,286 @@ AL 状态：%3
     <message>
         <source>TopologyResult contains an invalid station address.</source>
         <translation>TopologyResult 包含无效的站地址。</translation>
+    </message>
+    <message>
+        <source>Package deployment started for operation %1.</source>
+        <translation>操作 %1 的软件包部署已开始。</translation>
+    </message>
+    <message>
+        <source>A best-effort package upload abort was queued during shutdown.</source>
+        <translation>关闭期间已将尽力中止软件包上传的请求加入队列。</translation>
+    </message>
+    <message>
+        <source>The session shut down before the package upload abort was confirmed.</source>
+        <translation>软件包上传中止得到确认前，会话已关闭。</translation>
+    </message>
+    <message>
+        <source>The session shut down before the package operation result was confirmed.</source>
+        <translation>软件包操作结果得到确认前，会话已关闭。</translation>
+    </message>
+    <message>
+        <source>The deployment result is unknown because the controller returned an invalid protocol response.</source>
+        <translation>控制器返回了无效的协议响应，因此部署结果未知。</translation>
+    </message>
+    <message>
+        <source>The deployment request was not queued.</source>
+        <translation>部署请求未加入发送队列。</translation>
+    </message>
+    <message>
+        <source>The deployment result is unknown because the connection ended before confirmation.</source>
+        <translation>连接在确认前已结束，因此部署结果未知。</translation>
+    </message>
+    <message>
+        <source>The deployment request was not queued because the connection failed.</source>
+        <translation>连接失败，因此部署请求未加入发送队列。</translation>
+    </message>
+    <message>
+        <source>%1 request queued.</source>
+        <translation>%1 请求已加入发送队列。</translation>
+    </message>
+    <message>
+        <source>Committing the uploaded controller package.</source>
+        <translation>正在提交已上传的控制器软件包。</translation>
+    </message>
+    <message>
+        <source>Validating the staged controller package.</source>
+        <translation>正在校验已暂存的控制器软件包。</translation>
+    </message>
+    <message>
+        <source>Activating the validated controller package.</source>
+        <translation>正在激活已校验的控制器软件包。</translation>
+    </message>
+    <message>
+        <source>Rolling back after package activation failed.</source>
+        <translation>软件包激活失败，正在回滚。</translation>
+    </message>
+    <message>
+        <source>Activation failed; confirming the exact active package before rollback.</source>
+        <translation>激活失败；正在回滚前确认精确的活动软件包。</translation>
+    </message>
+    <message>
+        <source>Authoritative package-state recovery query queued.</source>
+        <translation>权威软件包状态恢复查询已加入发送队列。</translation>
+    </message>
+    <message>
+        <source>Canceling the package upload.</source>
+        <translation>正在取消软件包上传。</translation>
+    </message>
+    <message>
+        <source>Aborting the failed package upload.</source>
+        <translation>正在中止失败的软件包上传。</translation>
+    </message>
+    <message>
+        <source>The controller rejected the package deployment request.</source>
+        <translation>控制器拒绝了软件包部署请求。</translation>
+    </message>
+    <message>
+        <source>Package deployment failed with %1.</source>
+        <translation>软件包部署失败：%1。</translation>
+    </message>
+    <message>
+        <source>The deployment result is unknown because the controller session became stale.</source>
+        <translation>控制器会话已过期，因此部署结果未知。</translation>
+    </message>
+    <message>
+        <source>%1 The active package could not be confirmed, so no rollback was sent.</source>
+        <translation>%1 无法确认活动软件包，因此未发送回滚请求。</translation>
+    </message>
+    <message>
+        <source>BulkStatus does not match the deployment request.</source>
+        <translation>BulkStatus 与部署请求不匹配。</translation>
+    </message>
+    <message>
+        <source>The controller accepted the package deployment request.</source>
+        <translation>控制器已接受软件包部署请求。</translation>
+    </message>
+    <message>
+        <source>Package deployment was canceled before activation.</source>
+        <translation>软件包部署已在激活前取消。</translation>
+    </message>
+    <message>
+        <source>Uploaded %1 of %2 bytes.</source>
+        <translation>已上传 %1/%2 字节。</translation>
+    </message>
+    <message>
+        <source>BulkCommit returned an invalid package selector.</source>
+        <translation>BulkCommit 返回了无效的软件包选择器。</translation>
+    </message>
+    <message>
+        <source>The committed package could not be queued for validation.</source>
+        <translation>无法将已提交软件包的校验请求加入发送队列。</translation>
+    </message>
+    <message>
+        <source>An unexpected bulk deployment response was received.</source>
+        <translation>收到了意外的批量部署响应。</translation>
+    </message>
+    <message>
+        <source>CommandStatus does not match the package request.</source>
+        <translation>CommandStatus 与软件包请求不匹配。</translation>
+    </message>
+    <message>
+        <source>Package CommandStatus stages violate the deployment contract.</source>
+        <translation>软件包 CommandStatus 阶段不符合部署协议约定。</translation>
+    </message>
+    <message>
+        <source>Package command stage %1 of 4 completed.</source>
+        <translation>软件包命令阶段 %1/4 已完成。</translation>
+    </message>
+    <message>
+        <source>The recovery PackageState does not match GetPackageState.</source>
+        <translation>恢复查询的 PackageState 与 GetPackageState 不匹配。</translation>
+    </message>
+    <message>
+        <source>The controller rejected the package-state recovery query.</source>
+        <translation>控制器拒绝了软件包状态恢复查询。</translation>
+    </message>
+    <message>
+        <source>%1 No exact active/fallback package pair is available, so no rollback was sent.</source>
+        <translation>%1 没有可用的精确活动/回退软件包对，因此未发送回滚请求。</translation>
+    </message>
+    <message>
+        <source>%1 The current active package is neither the candidate nor the confirmed fallback, so no rollback was sent.</source>
+        <translation>%1 当前活动软件包既不是候选包，也不是已确认的回退包，因此未发送回滚请求。</translation>
+    </message>
+    <message>
+        <source>Confirmed the exact active selector before rollback.</source>
+        <translation>已在回滚前确认精确的活动软件包选择器。</translation>
+    </message>
+    <message>
+        <source>%1 The confirmed rollback request could not be queued.</source>
+        <translation>%1 无法将已确认的回滚请求加入发送队列。</translation>
+    </message>
+    <message>
+        <source>PackageState arrived before all package command stages completed.</source>
+        <translation>所有软件包命令阶段完成前收到了 PackageState。</translation>
+    </message>
+    <message>
+        <source>PackageState does not match the package request.</source>
+        <translation>PackageState 与软件包请求不匹配。</translation>
+    </message>
+    <message>
+        <source>The controller could not return a coherent final package state.</source>
+        <translation>控制器无法返回一致的最终软件包状态。</translation>
+    </message>
+    <message>
+        <source>All package command stages completed, but the final package state was not coherent. Authoritative state is being refreshed before any further action.</source>
+        <translation>所有软件包命令阶段均已完成，但最终软件包状态不一致。正在刷新权威状态，完成前不会执行后续操作。</translation>
+    </message>
+    <message>
+        <source>No committed package selector is available.</source>
+        <translation>没有可用的已提交软件包选择器。</translation>
+    </message>
+    <message>
+        <source>The controller returned the authoritative package state.</source>
+        <translation>控制器已返回权威软件包状态。</translation>
+    </message>
+    <message>
+        <source>The validated package state does not match the committed package.</source>
+        <translation>已校验的软件包状态与已提交软件包不匹配。</translation>
+    </message>
+    <message>
+        <source>The controller package was uploaded and validated.</source>
+        <translation>控制器软件包已上传并通过校验。</translation>
+    </message>
+    <message>
+        <source>The active package state does not match the deployed package.</source>
+        <translation>活动软件包状态与已部署软件包不匹配。</translation>
+    </message>
+    <message>
+        <source>The controller package was uploaded, validated, and activated.</source>
+        <translation>控制器软件包已上传、校验并激活。</translation>
+    </message>
+    <message>
+        <source>Rollback did not restore the exact previously confirmed active package.</source>
+        <translation>回滚未恢复此前精确确认的活动软件包。</translation>
+    </message>
+    <message>
+        <source>Package activation failed and rollback completed.</source>
+        <translation>软件包激活失败，回滚已完成。</translation>
+    </message>
+    <message>
+        <source>%1 Rollback completed.</source>
+        <translation>%1 回滚已完成。</translation>
+    </message>
+    <message>
+        <source>An unexpected package-state response was received.</source>
+        <translation>收到了意外的软件包状态响应。</translation>
+    </message>
+    <message>
+        <source>The controller returned a malformed package upload status.</source>
+        <translation>控制器返回了格式错误的软件包上传状态。</translation>
+    </message>
+    <message>
+        <source>The controller returned a malformed recovery package state.</source>
+        <translation>控制器返回了格式错误的恢复软件包状态。</translation>
+    </message>
+    <message>
+        <source>The controller returned a malformed package command response.</source>
+        <translation>控制器返回了格式错误的软件包命令响应。</translation>
+    </message>
+    <message>
+        <source>Wait for the package deployment to finish.</source>
+        <translation>请等待软件包部署完成。</translation>
+    </message>
+    <message>
+        <source>Package deployment is not supported.</source>
+        <translation>不支持软件包部署。</translation>
+    </message>
+    <message>
+        <source>OperationId must contain between 1 and 128 non-control characters.</source>
+        <translation>OperationId 必须包含 1 至 128 个非控制字符。</translation>
+    </message>
+    <message>
+        <source>The controller package must contain between 1 and 16777216 bytes.</source>
+        <translation>控制器软件包大小必须为 1 至 16777216 字节。</translation>
+    </message>
+    <message>
+        <source>The package configuration ID must be nonzero.</source>
+        <translation>软件包配置 ID 必须为非零值。</translation>
+    </message>
+    <message>
+        <source>OperationId is already bound to a different package deployment.</source>
+        <translation>OperationId 已绑定到另一个软件包部署。</translation>
+    </message>
+    <message>
+        <source>Connect to the controller before deploying a package.</source>
+        <translation>部署软件包前请先连接控制器。</translation>
+    </message>
+    <message>
+        <source>Acquire the control lease before deploying a package.</source>
+        <translation>部署软件包前请先获取控制租约。</translation>
+    </message>
+    <message>
+        <source>The controller does not support transactional package upload.</source>
+        <translation>控制器不支持事务式软件包上传。</translation>
+    </message>
+    <message>
+        <source>Enter configuration mode before deploying a controller package.</source>
+        <translation>部署控制器软件包前请先进入配置模式。</translation>
+    </message>
+    <message>
+        <source>Another package deployment is already active.</source>
+        <translation>另一个软件包部署正在进行。</translation>
+    </message>
+    <message>
+        <source>The package upload could not be started.</source>
+        <translation>无法启动软件包上传。</translation>
+    </message>
+    <message>
+        <source>The package deployment OperationId does not match.</source>
+        <translation>软件包部署 OperationId 不匹配。</translation>
+    </message>
+    <message>
+        <source>Package deployment can only be canceled before validation begins.</source>
+        <translation>只能在校验开始前取消软件包部署。</translation>
+    </message>
+    <message>
+        <source>Package deployment cancellation requested.</source>
+        <translation>已请求取消软件包部署。</translation>
+    </message>
+    <message>
+        <source>The package upload cancellation could not be sent.</source>
+        <translation>无法发送软件包上传取消请求。</translation>
     </message>
 </context>
 </TS>

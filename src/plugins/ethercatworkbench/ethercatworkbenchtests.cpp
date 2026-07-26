@@ -18887,6 +18887,38 @@ void EtherCATWorkbenchTests::testControllerCommunicationPagePresentation()
     provider.publishSnapshot(controlledSnapshot);
     QCOMPARE(summaryValue(Tr::tr("Access")), Tr::tr("Exclusive control"));
 
+    controllerOutput.clear();
+    Data::ControllerConnectionSnapshot deploymentSnapshot = controlledSnapshot;
+    deploymentSnapshot.packageDeploymentProgress.operationId = "deploy-output";
+    deploymentSnapshot.packageDeploymentProgress.state
+        = Data::ControllerPackageDeploymentState::Uploading;
+    deploymentSnapshot.packageDeploymentProgress.transferredBytes = 25;
+    deploymentSnapshot.packageDeploymentProgress.totalBytes = 100;
+    deploymentSnapshot.packageDeploymentProgress.detail = "Uploading package chunk";
+    provider.publishSnapshot(deploymentSnapshot);
+    QTRY_COMPARE(controllerOutput.count(), 1);
+    QVERIFY(controllerOutput.constLast().at(0).toString().contains(
+        Tr::tr("Package deployment %1").arg(Tr::tr("uploading"))));
+    QVERIFY(controllerOutput.constLast().at(0).toString().contains("deploy-output"));
+    QVERIFY(controllerOutput.constLast().at(0).toString().contains("25/100"));
+    QCOMPARE(
+        controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
+        ControllerOutputLevel::Information);
+
+    deploymentSnapshot.packageDeploymentProgress.state
+        = Data::ControllerPackageDeploymentState::OutcomeUnknown;
+    deploymentSnapshot.packageDeploymentProgress.detail = "Authoritative refresh required";
+    provider.publishSnapshot(deploymentSnapshot);
+    QTRY_COMPARE(controllerOutput.count(), 2);
+    QCOMPARE(
+        controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
+        ControllerOutputLevel::Error);
+    deploymentSnapshot.updatedAt = QDateTime::currentDateTimeUtc().addSecs(1);
+    provider.publishSnapshot(deploymentSnapshot);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCOMPARE(controllerOutput.count(), 2);
+
     const auto verifyButtonAction = [&page](const char *objectName, Utils::Id actionId) {
         QToolButton *button = page.findChild<QToolButton *>(objectName);
         ::Core::Command *command = ::Core::ActionManager::command(actionId);

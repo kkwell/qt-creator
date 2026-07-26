@@ -158,7 +158,7 @@ function is outside the product target and records migration or recovery.
 | Real EtherCAT scan | Typed leased discovery is verified against three real slaves and remains separate from the offline Project; Project Apply remains pending |
 | Real controller diagnostics | Existing Mock contract reusable; ProductApi Push/Bulk source pending |
 | Physical topology graph | Linear scan order only with current API; branch/star graph blocked by missing port-neighbor edge ABI |
-| ECPKG/ECFG/ETIR | Construction, transfer, activation, and editing remain out of scope; v1.10 classifies the active package mode from validated ECFG/DC content |
+| ECPKG/ECFG/ETIR | Headless transfer/validate/optional-activate accepts only already-built immutable ECPKG bytes; construction, signing, Workbench invocation, ECFG/DC editing, and ETIR generation remain out of scope |
 | ST/LD/FBD | Explicitly out of scope |
 
 ## EtherCATCore stage-1 qualification
@@ -3575,7 +3575,7 @@ historical results of those earlier issues.
 | Disconnect | Running/Paused Disconnect is rejected; a non-running owned lease is released before channel teardown |
 | FreeRun/DC | Workbench Start runs the active package, whose validated ECFG/DC content determines FreeRun or DC. Explicit StartFreeRun/StartDc remain adapter protocol capabilities, not UI buttons; DC lock remains observation |
 | Mode mismatch | An external explicit-mode request may receive terminal stage-2 `TIMING_MODE_MISMATCH (-35)` with `(requested_mode << 32) \| actual_mode`; this is not a Workbench timing-mode selection |
-| Package boundary | Exact persistent package restore is supported; ECPKG build/upload/stage/accept/activate, ECFG/DC editing, and offline-to-actual Apply remain absent |
+| Package boundary | Exact persistent restore and a headless prebuilt-ECPKG upload/validate/optional-activate API are supported; construction/signing, Workbench invocation, ECFG/DC editing, and offline-project package generation remain absent |
 | Topology boundary | Position and device identity support truthful linear display; physical port-to-port edges remain unavailable |
 | Mock visibility | Production hides local Mock Scan/Diagnostics UI by default; it is available only with `WITH_TESTS` or `QTC_ETHER_CAT_ENABLE_MOCK_UI=1` |
 | Current English regression | Workbench 95, Project 15, Devices 8, Core 19, Scan 11, Diagnostics 7, and ProductApi 71; 226 passed, 0 failed, and 1 ProductApi hardware test skipped |
@@ -3588,3 +3588,28 @@ historical results of those earlier issues.
 | Historical hardware evidence | On 2026-07-24 RAM-only v1.10 passed Connect, Acquire, Configuration, three-slave Scan, Release, and safe cleanup; Restore returned typed `CAPABILITY_MISMATCH (-20)` |
 | Historical runtime observation | The 2026-07-24 RAM service negotiated v1.10/`0xfff`; the recorded reboot behavior returned to persistent release24/v1.9 |
 | Publication | Current work remains local on `embed-labs`; no remote publication is authorized |
+
+## Headless ECPKG deployment session qualification
+
+This is the current offline qualification for the provider-neutral deployment
+session. It does not authorize a real-controller package mutation.
+
+| Gate | Result |
+|---|---|
+| Windows authority | Latest audited authority was commit `6af2f4878f5d40c47a7cd2ffff5ace932efc0c2b`; `product_api_v1.md` SHA-256 was `dc3fa69c97b3e36ff3ce51aef7e0610e9e79f680953412a8b7af0337d411afbb` |
+| Provider boundary | Core exposes an optional immutable package transaction and cancellation request; default Providers reject both, and no vendor message number crosses the interface |
+| Exact sequence | Begin, every Chunk, Commit, and Abort each require one terminal BulkStatus; Validate, Activate, and Rollback require successful stages 1 through 4 with `final=0`, followed by PackageState |
+| Idempotency | OperationId is a client-only bounded journal key; exact replay returns the stored semantic result, conflicting reuse is rejected, and a historical replay cannot replace a different active deployment; it is not represented as a Product API wire field |
+| Ambiguous result | Timeout, disconnect, or incoherent terminal PackageState becomes OutcomeUnknown; the mutation is not replayed |
+| Rollback safety | An explicit Activate failure first queries authoritative PackageState and rolls back only an exact confirmed candidate/fallback pair; an ambiguous final result never triggers speculative rollback |
+| Cancellation | Cancellation is limited to upload/commit and becomes Canceled only after a successful BulkAbort response |
+| Input bound | Empty packages and ECPKG artifacts larger than the protocol maximum of 16 MiB are rejected before BulkBegin |
+| Application Output | Workbench reports deployment state, OperationId, byte progress, and detail through the unified Application Output stream; Failed and OutcomeUnknown use error severity |
+| Core regression | 20 passed, 0 failed |
+| ProductApi regression | 77 passed, 0 failed, 1 real-hardware lifecycle skipped by its explicit environment gate |
+| Workbench focus | Deployment-output presentation and existing controller-output workflow each passed in isolated offscreen runs; each run recorded initialization, the selected test, and cleanup |
+| Workbench broad boundary | The complete suite is not claimed: the pre-existing navigation command test still times out locating the unsupported device, and an early failure leaves a later tree-model fixture unsafe |
+| Translation | The 407 strings extracted from the changed Core, ProductApi, and Workbench sources have 0 missing and 0 unfinished Simplified Chinese entries; XML validation and `lrelease` passed |
+| Product build | Qt 6.11 `WITH_TESTS=OFF` EtherCATCore, EtherCATProductApi, and EtherCATWorkbench targets passed |
+| Hardware claim | None; this issue opened no controller socket and sent no lease, Bulk, package, state-transition, or runtime request |
+| Publication | Local `embed-labs` only; no fetch, pull, merge, rebase, branch switch, push, PR, or remote publication |

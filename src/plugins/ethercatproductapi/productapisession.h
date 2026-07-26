@@ -61,11 +61,15 @@ public:
     Utils::Result<> refreshController();
     bool supportsControlCommand(Data::ControllerControlCommand command) const;
     Utils::Result<> executeControlCommand(const Data::ControllerControlRequest &request);
+    bool supportsPackageDeployment() const;
+    Utils::Result<> deployPackage(const Data::ControllerPackageDeploymentRequest &request);
+    Utils::Result<> cancelPackageDeployment(const QString &operationId);
     void shutdown();
 
 #ifdef WITH_TESTS
     EndpointSet endpointsForTests() const;
     bool isIdleForTests() const;
+    bool refreshInProgressForTests() const;
     int activeSocketCountForTests() const;
     int pendingRequestCountForTests() const;
     void failNextWriteForTests();

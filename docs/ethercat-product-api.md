@@ -97,8 +97,8 @@ After an explicit typed control request, the adapter can additionally emit:
 | Control | `DiscoverTopology (0x0401)` |
 | Control | `RestoreActivePackage (0x0407)` |
 
-The private codec also defines this closed ECPKG deployment vocabulary for the
-next typed session layer:
+The private codec and typed session expose this closed ECPKG deployment
+vocabulary:
 
 | Channel | Deployment request |
 |---|---|
@@ -109,11 +109,11 @@ next typed session layer:
 
 All three tables are closed at the private codec boundary. A consumer cannot
 expand them through a profile, endpoint string, Workbench action, generic
-Provider field, or arbitrary numeric message type. The session and Provider do
-not yet expose or emit the new deployment requests, so this codec foundation
-cannot upload, validate, activate, roll back, or otherwise change a controller.
-Reset, SDO/PDO access, firmware write, and arbitrary bulk operations remain
-excluded.
+Provider field, or arbitrary numeric message type. The generic Provider accepts
+only one immutable, already-built ECPKG plus a nonzero ConfigurationId and
+client OperationId. Reset, SDO/PDO access, firmware write, arbitrary bulk
+objects, package construction, signing, and a Workbench deployment action
+remain excluded.
 
 Connect is not Scan. The adapter's Connect request establishes the transport
 and authoritative read-only snapshot; it does not itself enter configuration
@@ -168,6 +168,60 @@ Controlled Stop must progress through the ordered command stages. Discovery
 ends with a typed TopologyResult, while Restore ends with the exact typed
 PackageState response. An unrelated, repeated, skipped, malformed, or
 wrong-response-form frame is a protocol failure rather than command success.
+
+## Transactional package deployment
+
+The headless Provider now implements one asynchronous package transaction at a
+time. It requires a live same-BootId session, the exclusive control lease,
+transactional-bulk capability, a ready controller in `SHUTDOWN`, and no
+concurrent refresh, control command, or deployment. The caller supplies exact
+ECPKG bytes; the adapter never constructs, rewrites, signs, trusts, or infers
+package content. The client enforces the v1.10 ECPKG size bound of 16 MiB
+before opening a Bulk transaction.
+
+The v1.10 line sequence is:
+
+1. `BulkBegin`, every `BulkChunk`, `BulkCommit`, and `BulkAbort` each receive
+   exactly one terminal `BulkStatus`.
+2. Successful Commit must return the exact staged slot, generation, and
+   ConfigurationId.
+3. Validate and optional Activate each receive ordered `CommandStatus` stages
+   1 through 4 with `final=0`, followed by one typed `PackageState`.
+4. A failed package command receives one terminal failed `CommandStatus` and
+   no `PackageState`.
+
+Upload uses contiguous chunks no larger than 65,528 bytes. Cancel is accepted
+only before validation and is completed only after `BulkAbort` succeeds. A
+bulk failure after a successful Begin also attempts Abort while that Bulk
+connection remains usable. A disconnect discards the connection-local upload;
+the adapter never resumes at an old byte offset.
+
+Product API v1.10 has no generic OperationId. The adapter binds the caller's
+OperationId to an artifact/configuration/options SHA-256 fingerprint in a
+bounded 32-entry in-memory journal. An identical replay returns the stored
+semantic result without another controller mutation; reusing the same ID with
+different arguments is rejected. This journal is client evidence only and
+does not survive process restart. A historical replay cannot replace the
+visible state of a different deployment that is still active. Wire correlation
+remains SessionId/BootId/RequestId/message type.
+
+A missing transport or protocol confirmation becomes `OutcomeUnknown`; the
+mutation is not replayed. The complete session reconnect path obtains a fresh
+GetState/GetPackageState snapshot so an operator can compare exact staged and
+active selectors. If Activate returns an explicit terminal failure and the
+caller requested recovery, the adapter first queries PackageState, then sends
+Rollback only when the exact current active selector and previously confirmed
+fallback are both known. If stages 1 through 4 complete but the terminal
+PackageState is erroneous or incoherent, the adapter refreshes state and does
+not issue a speculative rollback.
+
+This implementation follows the Windows authority commit
+`6af2f4878f5d40c47a7cd2ffff5ace932efc0c2b`
+(`docs: freeze Product API ECPKG deployment contract`). The audited
+`product_api_v1.md` SHA-256 is
+`dc3fa69c97b3e36ff3ce51aef7e0610e9e79f680953412a8b7af0337d411afbb`.
+The current qualification is loopback/offline only: no ECPKG was sent to the
+real controller.
 
 ## Real control lifecycle
 
@@ -252,10 +306,12 @@ exposes no independent FreeRun or DC button. `StartFreeRun` and `StartDc`
 remain typed protocol capabilities for external clients that deliberately
 request an explicit mode; they are not the Workbench runtime-control path.
 
-This control extension can restore and run an already persistent package. It
-does not build, upload, stage, accept, activate, or modify an ECPKG from the
-offline Qt Project. Demonstrating FreeRun or DC mode through Workbench
-therefore requires an appropriately deployed package, generic Run, and
+This control extension can restore and run an already persistent package. The
+headless Provider can also upload, validate, and optionally activate an
+already-built immutable ECPKG through its semantic deployment API, but
+Workbench does not yet expose that API and the Qt Project cannot yet construct
+or sign the package. Demonstrating FreeRun or DC mode through Workbench
+therefore still requires an appropriately deployed package, generic Run, and
 separate real-hardware observation.
 
 ## Semantic and error boundary
@@ -422,17 +478,21 @@ extension:
   (`ISSUE-API-013`);
 - authentication, authorization, or transport encryption;
 - physical port-to-port topology edges;
-- ECPKG construction, upload, stage, accept, and activation;
-- ECPKG construction or changing its validated ECFG/DC mode content from this
-  client;
+- ECPKG construction, signing, and changing validated ECFG/DC content;
+- a Workbench action that supplies an already-built package to the headless
+  deployment API;
 - ESI matching and applying actual topology into the offline Project;
 - real Diagnostics Provider mapping; and
 - SDO/PDO and firmware writes.
 
-The focused Qt 6.11 ProductApi regression passed 74 rows, with one
+The focused Qt 6.11 ProductApi regression passed 77 rows, with one
 real-controller lifecycle row skipped by its explicit environment gate and no
-failures. The broader multi-plugin baseline was not rerun for this codec-only
-change. The `WITH_TESTS=OFF` ProductApi build also passed.
+failures. EtherCATCore passed 20 rows. The two Workbench tests that consume
+controller output passed individually, including the package deployment
+progress, error-level, and duplicate-suppression assertions. The full
+Workbench suite is not claimed for this issue because an unrelated navigation
+test still fails before the deployment-output test. The `WITH_TESTS=OFF`
+EtherCATCore, ProductApi, and Workbench product targets passed.
 
 The generic Start and explicit DC real-controller lifecycles each passed 3
 tests with 0 failures and completed safe cleanup in `SHUTDOWN`/EMPTY with no

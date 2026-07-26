@@ -220,6 +220,26 @@ Utils::Result<> ProductApiConnectionProvider::executeControlCommand(
     return m_session->executeControlCommand(request);
 }
 
+bool ProductApiConnectionProvider::supportsPackageDeployment() const
+{
+    return isAvailable() && m_session->supportsPackageDeployment();
+}
+
+Utils::Result<> ProductApiConnectionProvider::deployPackage(
+    const Data::ControllerPackageDeploymentRequest &request)
+{
+    if (!isAvailable())
+        return Utils::ResultError(Tr::tr("The Embed Labs controller provider is unavailable."));
+    return m_session->deployPackage(request);
+}
+
+Utils::Result<> ProductApiConnectionProvider::cancelPackageDeployment(const QString &operationId)
+{
+    if (!isAvailable())
+        return Utils::ResultError(Tr::tr("The Embed Labs controller provider is unavailable."));
+    return m_session->cancelPackageDeployment(operationId);
+}
+
 void ProductApiConnectionProvider::shutdown()
 {
     if (!m_session)

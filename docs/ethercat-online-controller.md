@@ -38,9 +38,10 @@ current local control extension adds typed provider-neutral control requests,
 Product API lease/command handling, a read-only Actual Bus result, and
 Workbench commissioning controls in the embedded Communication page. Runtime
 Run, Pause/Resume, and Controlled Stop use Qt Creator's native lower-left
-quick-control area. It does not add ECPKG construction/deployment,
-offline-to-actual Apply, SDO/PDO access, firmware writes, or a vendor-neutral
-physical-edge graph.
+quick-control area. The headless Provider now accepts an already-built ECPKG
+for typed upload/validate/optional-activate, but no Workbench action or package
+builder calls it yet. ECPKG construction/signing, SDO/PDO access, firmware
+writes, and a vendor-neutral physical-edge graph remain absent.
 
 ## Multi-vendor adapter boundary
 
@@ -144,11 +145,13 @@ current adapter. The typed control extension additionally allows only:
 | Control | `RestoreActivePackage` |
 | Control | v1.10 `StartFreeRun (0x010c)` and `StartDc (0x010d)` |
 | Control | backward-compatible automatic `Start (0x0102)`, plus `Pause`, `Resume`, and `ControlledStop` |
+| Bulk | ECPKG `BulkBegin`, `BulkChunk`, `BulkCommit`, and safe `BulkAbort` |
+| Control | exact-selector `ValidatePackage`, `ActivatePackage`, and recovery `RollbackPackage` |
 
 Neither a generic Provider consumer nor a Workbench action may add an
 arbitrary numeric message outside these lists. Reset, DiscoverModules,
-SDO/PDO, package upload/activation, firmware writes, and other bulk or
-controller commands remain excluded.
+SDO/PDO, firmware writes, and other bulk or controller commands remain
+excluded. Workbench currently invokes none of the deployment requests.
 
 The control lease is controller-authoritative and exclusive. After an
 authoritative connected snapshot is available, Workbench normally submits one
@@ -252,10 +255,11 @@ The adapter reports this controller detail without treating it as a network or
 framing failure.
 
 DC lock and DC difference remain observable evidence; neither identifies the
-package timing mode. The current Qt extension cannot build, upload, stage,
-accept, activate, or change ECPKG content, so a FreeRun or DC demonstration
-requires a matching package to exist on the controller before Restore and the
-generic Workbench Run action.
+package timing mode. The current Qt extension cannot build, sign, or change
+ECPKG content. Its headless adapter can transfer and activate already-built
+bytes, but Workbench cannot select such an artifact yet. A FreeRun or DC
+demonstration therefore still requires a matching package to exist on the
+controller before Restore and the generic Workbench Run action.
 
 Legacy `Start (0x0102)` remains a backward-compatible automatic-mode request
 on v1.10 and older runtimes. Workbench uses it through the standard Run
@@ -473,8 +477,8 @@ not restore or runtime transitions.
 
 The current Qt product still lacks:
 
-- ECPKG construction, upload, stage, accept, activation, and editing of
-  validated ECFG/DC content;
+- ECPKG construction, signing, and editing of validated ECFG/DC content;
+- a Workbench page/action for the headless prebuilt-package deployment API;
 - serialization of an applied offline Project into a validated controller
   package and proof that the deployed package matches that Project;
 - an embedded Project/Actual/Overlay topology page; and
@@ -564,8 +568,9 @@ exclusive lease. Its Scan Bus result is separate from the local Mock Scan
 Provider and never changes the offline Project. Mock Scan/Diagnostics UI is
 hidden by default in production and is registered only in a `WITH_TESTS` build
 or with `QTC_ETHER_CAT_ENABLE_MOCK_UI=1`. The page still does not implement
-configuration/actual Apply, ECPKG construction/upload/activation or ECFG/DC
-editing, SDO/PDO access, firmware writes, or real Diagnostics Provider mapping.
+ECPKG construction/signing, invocation of the headless upload/activation API,
+ECFG/DC editing, SDO/PDO access, firmware writes, or real Diagnostics Provider
+mapping.
 
 The following qualification is the historical read-only Communication issue
 and does not qualify the later control extension. It is retained as dated
@@ -641,7 +646,10 @@ internal directory directly.
    four attempts. The controller was safely rolled back to `B/12/813`,
    `OP_SAFE`, WKC 11/11, faults 0, and lease 0. The Windows session continues
    with `ISSUE-API-016` and the smallest isolated fix
-9. ECPKG construction/deployment with explicit validated ECFG/DC mode content
+9. ECPKG construction/signing and Workbench deployment with explicit
+   validated ECFG/DC mode content — headless upload/validate/activate and safe
+   rollback semantics are implemented and loopback-qualified; builder, UI, and
+   real-controller deployment remain pending
 10. ESI match/import/re-match — implemented for explicit Current Bus apply;
     an unknown identity remains unconfigured until matching XML is imported
 11. Project Configuration versus Current Bus Apply — implemented as an

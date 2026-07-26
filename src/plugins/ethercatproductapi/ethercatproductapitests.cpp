@@ -325,11 +325,79 @@ QByteArray bulkStatusPayload(quint16 originalType = quint16(Protocol::MessageTyp
     return payload;
 }
 
-QByteArray packageStateErrorPayload()
+QByteArray successfulBulkStatusPayload(
+    Protocol::MessageType originalType,
+    Data::ControllerSlot selectedSlot = Data::ControllerSlot::None,
+    quint64 generation = 0,
+    quint64 configurationId = 0)
+{
+    QByteArray payload(40, '\0');
+    if (selectedSlot != Data::ControllerSlot::None) {
+        putU32(payload, 8, selectedSlot == Data::ControllerSlot::A ? quint32('A') : quint32('B'));
+        putU64(payload, 12, generation);
+        putU64(payload, 20, configurationId);
+        putU32(payload, 28, 125000);
+        putU32(payload, 32, 62500);
+    }
+    putU16(payload, 38, quint16(originalType));
+    return payload;
+}
+
+QByteArray deploymentPackageStatePayload(
+    Protocol::MessageType originalType,
+    Data::ControllerPackageState state,
+    Data::ControllerSlot stagedSlot,
+    quint64 stagedGeneration,
+    quint64 stagedConfigurationId,
+    Data::ControllerSlot activeSlot,
+    quint64 activeGeneration,
+    quint64 activeConfigurationId)
 {
     QByteArray payload(72, '\0');
-    putU16(payload, 0, quint16(Protocol::MessageType::GetPackageState));
-    putI32(payload, 4, -17); // STALE_PACKAGE
+    putU16(payload, 0, quint16(originalType));
+    if (stagedSlot != Data::ControllerSlot::None) {
+        putU32(payload, 12, stagedSlot == Data::ControllerSlot::A ? quint32('A') : quint32('B'));
+        putU64(payload, 16, stagedGeneration);
+        putU64(payload, 24, stagedConfigurationId);
+    }
+    if (activeSlot != Data::ControllerSlot::None) {
+        putU32(payload, 32, activeSlot == Data::ControllerSlot::A ? quint32('A') : quint32('B'));
+        putU64(payload, 40, activeGeneration);
+        putU64(payload, 48, activeConfigurationId);
+    }
+    quint32 stateValue = 0;
+    switch (state) {
+    case Data::ControllerPackageState::Empty:
+        stateValue = 0;
+        break;
+    case Data::ControllerPackageState::Staged:
+        stateValue = 1;
+        break;
+    case Data::ControllerPackageState::Accepted:
+        stateValue = 2;
+        break;
+    case Data::ControllerPackageState::Active:
+        stateValue = 3;
+        break;
+    case Data::ControllerPackageState::Rejected:
+        stateValue = 4;
+        break;
+    case Data::ControllerPackageState::Unavailable:
+        break;
+    }
+    putU32(payload, 36, stateValue);
+    putU32(payload, 60, 6);
+    putU64(payload, 64, TestBootId);
+    return payload;
+}
+
+QByteArray packageStateErrorPayload(
+    Protocol::MessageType originalType = Protocol::MessageType::GetPackageState,
+    qint32 status = -17)
+{
+    QByteArray payload(72, '\0');
+    putU16(payload, 0, quint16(originalType));
+    putI32(payload, 4, status);
     putI32(payload, 8, -3);
     return payload;
 }
@@ -397,6 +465,7 @@ public:
         MalformedCapacity,
         HoldCapability,
         ControlLifecycle,
+        PackageDeployment,
     };
 
     explicit LoopbackController(Behavior behavior = Behavior::Normal)
@@ -480,6 +549,24 @@ public:
     {
         m_rejectedControlType = type;
         m_nextControlStatus = status;
+    }
+
+    void rejectNextDeployment(
+        Protocol::MessageType type,
+        qint32 status,
+        quint16 stage = 1,
+        bool final = true)
+    {
+        m_rejectedDeploymentType = type;
+        m_nextDeploymentStatus = status;
+        m_nextDeploymentFailureStage = stage;
+        m_nextDeploymentFailureFinal = final;
+    }
+
+    void rejectNextDeploymentPackageState(Protocol::MessageType type, qint32 status)
+    {
+        m_rejectedDeploymentPackageStateType = type;
+        m_nextDeploymentPackageStateStatus = status;
     }
 
     void holdNextHeartbeat() { m_holdNextHeartbeat = true; }
@@ -719,6 +806,17 @@ private:
             requireRoleAndPayload(peer, Protocol::Role::Push, frame, 4);
             sendProgressResumeAndHeartbeat(peer, frame);
             return;
+        case Protocol::MessageType::BulkBegin:
+        case Protocol::MessageType::BulkChunk:
+        case Protocol::MessageType::BulkCommit:
+        case Protocol::MessageType::BulkAbort:
+            handlePackageBulkRequest(peer, frame);
+            return;
+        case Protocol::MessageType::ValidatePackage:
+        case Protocol::MessageType::ActivatePackage:
+        case Protocol::MessageType::RollbackPackage:
+            handlePackageCommandRequest(peer, frame);
+            return;
         case Protocol::MessageType::AcquireControl:
         case Protocol::MessageType::ReleaseControl:
         case Protocol::MessageType::Start:
@@ -777,7 +875,7 @@ private:
             sendResponse(peer,
                          Protocol::MessageType::ControllerState,
                          request.header.requestId,
-                         m_behavior == Behavior::ControlLifecycle
+                         m_behavior == Behavior::ControlLifecycle || m_behavior == Behavior::PackageDeployment
                              ? lifecycleControllerStatePayload(m_serviceState, cycleCount())
                              : controllerStatePayload());
             return;
@@ -832,13 +930,26 @@ private:
                          Protocol::Flag::Response | Protocol::Flag::Error);
             return;
         }
+        QByteArray payload;
+        if (m_behavior == Behavior::PackageDeployment && m_deploymentActivated) {
+            payload = deploymentPackageStatePayload(
+                Protocol::MessageType::GetPackageState,
+                Data::ControllerPackageState::Active,
+                m_candidateSlot,
+                m_candidateGeneration,
+                m_deploymentConfigurationId,
+                m_candidateSlot,
+                m_candidateGeneration,
+                m_deploymentConfigurationId);
+        } else if (m_behavior == Behavior::ControlLifecycle || m_behavior == Behavior::PackageDeployment) {
+            payload = packageStatePayload(
+                Protocol::MessageType::GetPackageState, m_controllerPackageActive);
+        } else {
+            payload = packageStatePayload();
+        }
         sendResponse(peer,
                      Protocol::MessageType::PackageState,
-                     request.header.requestId,
-                     m_behavior == Behavior::ControlLifecycle
-                         ? packageStatePayload(
-                               Protocol::MessageType::GetPackageState, m_controllerPackageActive)
-                         : packageStatePayload());
+                     request.header.requestId, payload);
     }
 
     void sendFirmwareResponse(Peer &peer, const Protocol::Frame &request)
@@ -883,9 +994,169 @@ private:
                 request.header.messageType, 4, m_serviceState, true));
     }
 
+    void handlePackageBulkRequest(Peer &peer, const Protocol::Frame &request)
+    {
+        if (m_behavior != Behavior::PackageDeployment) {
+            m_violations.append(
+                QStringLiteral("A package bulk request was emitted outside its test."));
+            return;
+        }
+        if (peer.role != Protocol::Role::Bulk)
+            m_violations.append(QStringLiteral("A package upload used the wrong channel."));
+        if (!m_leaseOwned || m_serviceState != 8)
+            m_violations.append(QStringLiteral("A package upload violated its preconditions."));
+        if (m_nextDeploymentStatus && request.header.messageType == m_rejectedDeploymentType) {
+            QByteArray payload = successfulBulkStatusPayload(request.header.messageType);
+            putI32(payload, 0, m_nextDeploymentStatus);
+            putI32(payload, 4, -1);
+            m_nextDeploymentStatus = 0;
+            m_rejectedDeploymentType = Protocol::MessageType::Error;
+            m_nextDeploymentFailureStage = 1;
+            m_nextDeploymentFailureFinal = true;
+            sendResponse(
+                peer,
+                Protocol::MessageType::BulkStatus,
+                request.header.requestId,
+                payload,
+                Protocol::Flag::Response | Protocol::Flag::Error);
+            return;
+        }
+
+        switch (request.header.messageType) {
+        case Protocol::MessageType::BulkBegin:
+            if (request.payload.size() != 24 || !readU64(request.payload, 0)
+                || !readU32(request.payload, 8) || readU32(request.payload, 12)
+                || readU32(request.payload, 16)
+                || readU32(request.payload, 20) != Protocol::PackageUploadMode) {
+                m_violations.append(QStringLiteral("BulkBegin payload was invalid."));
+            }
+            m_deploymentConfigurationId = readU64(request.payload, 0);
+            m_expectedPackageBytes = readU32(request.payload, 8);
+            m_uploadedPackage.clear();
+            break;
+        case Protocol::MessageType::BulkChunk:
+            if (request.payload.size() <= qsizetype(Protocol::BulkChunkHeaderBytes)
+                || readU32(request.payload, 0) != Protocol::PackageObjectKind
+                || readU32(request.payload, 4) != quint32(m_uploadedPackage.size())) {
+                m_violations.append(QStringLiteral("BulkChunk offset or header was invalid."));
+            } else {
+                m_uploadedPackage.append(request.payload.sliced(Protocol::BulkChunkHeaderBytes));
+            }
+            break;
+        case Protocol::MessageType::BulkCommit:
+            if (!request.payload.isEmpty()
+                || m_uploadedPackage.size() != qsizetype(m_expectedPackageBytes)) {
+                m_violations.append(QStringLiteral("BulkCommit did not cover the full package."));
+            }
+            break;
+        case Protocol::MessageType::BulkAbort:
+            if (!request.payload.isEmpty())
+                m_violations.append(QStringLiteral("BulkAbort payload was not empty."));
+            m_uploadedPackage.clear();
+            break;
+        default:
+            return;
+        }
+
+        const bool commit = request.header.messageType == Protocol::MessageType::BulkCommit;
+        sendResponse(
+            peer,
+            Protocol::MessageType::BulkStatus,
+            request.header.requestId,
+            successfulBulkStatusPayload(
+                request.header.messageType,
+                commit ? m_candidateSlot : Data::ControllerSlot::None,
+                commit ? m_candidateGeneration : 0,
+                commit ? m_deploymentConfigurationId : 0));
+    }
+
+    void handlePackageCommandRequest(Peer &peer, const Protocol::Frame &request)
+    {
+        if (m_behavior != Behavior::PackageDeployment) {
+            m_violations.append(QStringLiteral("A package command was emitted outside its test."));
+            return;
+        }
+        requireRoleAndPayload(peer, Protocol::Role::Control, request, 24);
+        const bool rollback = request.header.messageType == Protocol::MessageType::RollbackPackage;
+        const quint32 expectedSlot = rollback                                     ? quint32('B')
+                                     : m_candidateSlot == Data::ControllerSlot::A ? quint32('A')
+                                                                                  : quint32('B');
+        const quint64 expectedGeneration = rollback ? 33 : m_candidateGeneration;
+        const quint64 expectedConfigurationId = rollback ? 44 : m_deploymentConfigurationId;
+        if (!m_leaseOwned || readU32(request.payload, 0) != expectedSlot
+            || readU32(request.payload, 4) || readU64(request.payload, 8) != expectedGeneration
+            || readU64(request.payload, 16) != expectedConfigurationId) {
+            m_violations.append(QStringLiteral("The package command selector was not exact."));
+        }
+        if (m_nextDeploymentStatus && request.header.messageType == m_rejectedDeploymentType) {
+            const qint32 status = m_nextDeploymentStatus;
+            const quint16 stage = m_nextDeploymentFailureStage;
+            const bool final = m_nextDeploymentFailureFinal;
+            m_nextDeploymentStatus = 0;
+            m_rejectedDeploymentType = Protocol::MessageType::Error;
+            m_nextDeploymentFailureStage = 1;
+            m_nextDeploymentFailureFinal = true;
+            QByteArray payload = rejectedCommandStatusPayload(
+                request.header.messageType, stage, m_serviceState, status);
+            putU32(payload, 36, final ? 1 : 0);
+            sendResponse(
+                peer,
+                Protocol::MessageType::CommandStatus,
+                request.header.requestId,
+                payload,
+                Protocol::Flag::Response | Protocol::Flag::Error);
+            return;
+        }
+
+        sendCommandStages(peer, request, false);
+        if (m_nextDeploymentPackageStateStatus
+            && request.header.messageType == m_rejectedDeploymentPackageStateType) {
+            const qint32 status = m_nextDeploymentPackageStateStatus;
+            m_nextDeploymentPackageStateStatus = 0;
+            m_rejectedDeploymentPackageStateType = Protocol::MessageType::Error;
+            sendResponse(
+                peer,
+                Protocol::MessageType::PackageState,
+                request.header.requestId,
+                packageStateErrorPayload(request.header.messageType, status),
+                Protocol::Flag::Response | Protocol::Flag::Error);
+            return;
+        }
+        Data::ControllerPackageState state = Data::ControllerPackageState::Accepted;
+        Data::ControllerSlot activeSlot = Data::ControllerSlot::B;
+        quint64 activeGeneration = 33;
+        quint64 activeConfigurationId = 44;
+        if (request.header.messageType == Protocol::MessageType::ActivatePackage) {
+            state = Data::ControllerPackageState::Active;
+            activeSlot = m_candidateSlot;
+            activeGeneration = m_candidateGeneration;
+            activeConfigurationId = m_deploymentConfigurationId;
+            m_controllerPackageActive = true;
+            m_deploymentActivated = true;
+            m_serviceState = 3;
+        } else if (request.header.messageType == Protocol::MessageType::RollbackPackage) {
+            state = Data::ControllerPackageState::Active;
+            m_controllerPackageActive = true;
+            m_serviceState = 3;
+        }
+        sendResponse(
+            peer,
+            Protocol::MessageType::PackageState,
+            request.header.requestId,
+            deploymentPackageStatePayload(
+                request.header.messageType,
+                state,
+                m_candidateSlot,
+                m_candidateGeneration,
+                m_deploymentConfigurationId,
+                activeSlot,
+                activeGeneration,
+                activeConfigurationId));
+    }
+
     void handleControlRequest(Peer &peer, const Protocol::Frame &request)
     {
-        if (m_behavior != Behavior::ControlLifecycle) {
+        if (m_behavior != Behavior::ControlLifecycle && m_behavior != Behavior::PackageDeployment) {
             m_violations.append(
                 QStringLiteral("A control request was emitted outside the lifecycle test."));
             return;
@@ -1281,14 +1552,26 @@ private:
     qint32 m_nextResumeStatus = 0;
     qint32 m_nextStateStatus = 0;
     qint32 m_nextControlStatus = 0;
+    qint32 m_nextDeploymentStatus = 0;
+    qint32 m_nextDeploymentPackageStateStatus = 0;
+    quint16 m_nextDeploymentFailureStage = 1;
+    bool m_nextDeploymentFailureFinal = true;
     quint32 m_defaultLeaseDurationMs = 5000;
     quint64 m_helloLeaseOwnerSessionId = 0;
     quint16 m_protocolMinor = Protocol::CurrentMinor;
     Protocol::MessageType m_rejectedControlType = Protocol::MessageType::Error;
+    Protocol::MessageType m_rejectedDeploymentType = Protocol::MessageType::Error;
+    Protocol::MessageType m_rejectedDeploymentPackageStateType = Protocol::MessageType::Error;
     Behavior m_behavior = Behavior::Normal;
     quint32 m_serviceState = 8;
     bool m_controllerPackageActive = false;
     bool m_leaseOwned = false;
+    bool m_deploymentActivated = false;
+    Data::ControllerSlot m_candidateSlot = Data::ControllerSlot::A;
+    quint64 m_candidateGeneration = 55;
+    quint64 m_deploymentConfigurationId = 0;
+    quint32 m_expectedPackageBytes = 0;
+    QByteArray m_uploadedPackage;
 };
 
 ProductApiSession::Options testOptions()
@@ -2727,6 +3010,467 @@ void EtherCATProductApiTests::testControlLifecycle()
     QCOMPARE(controller.requestCount(Protocol::MessageType::ControlledStop), 1);
     QCOMPARE(controller.requestCount(Protocol::MessageType::ReleaseControl), 1);
     QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testPackageDeploymentLifecycle()
+{
+    LoopbackController controller(LoopbackController::Behavior::PackageDeployment);
+    QVERIFY(controller.start());
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.supportsPackageDeployment());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+    Data::ControllerControlRequest control;
+    control.command = Data::ControllerControlCommand::AcquireControl;
+    QVERIFY(provider.executeControlCommand(control));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().controlProgress.state,
+        Data::ControllerControlState::Succeeded,
+        1000);
+
+    Data::ControllerPackageDeploymentRequest request;
+    request.operationId = QStringLiteral("deploy-cfg813");
+    request.configurationId = 813;
+    request.artifact.resize(Protocol::BulkChunkMaximumBytes + 17);
+    for (qsizetype index = 0; index < request.artifact.size(); ++index)
+        request.artifact[index] = char(index & 0xff);
+
+    QVERIFY(provider.deployPackage(request));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().packageDeploymentProgress.state,
+        Data::ControllerPackageDeploymentState::Succeeded,
+        2000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        provider.connectionSnapshot().controllerState
+            && provider.connectionSnapshot().controllerState->serviceState
+                   == Data::ControllerServiceState::OperationalSafe,
+        2000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !provider.sessionForTests()->refreshInProgressForTests(), 1000);
+
+    const Data::ControllerPackageDeploymentProgress progress
+        = provider.connectionSnapshot().packageDeploymentProgress;
+    QCOMPARE(progress.operationId, request.operationId);
+    QCOMPARE(
+        progress.artifactSha256,
+        QCryptographicHash::hash(request.artifact, QCryptographicHash::Sha256));
+    QCOMPARE(progress.totalBytes, qint64(request.artifact.size()));
+    QCOMPARE(progress.transferredBytes, qint64(request.artifact.size()));
+    QVERIFY(progress.candidate);
+    QCOMPARE(progress.candidate->slot, Data::ControllerSlot::A);
+    QCOMPARE(progress.candidate->generation, quint64(55));
+    QCOMPARE(progress.candidate->configurationId, request.configurationId);
+    QVERIFY(progress.previousActive);
+    QCOMPARE(progress.previousActive->slot, Data::ControllerSlot::B);
+    QCOMPARE(progress.previousActive->generation, quint64(33));
+    QCOMPARE(progress.previousActive->configurationId, quint64(44));
+    QVERIFY(progress.startedAt.isValid());
+    QVERIFY(progress.completedAt.isValid());
+    QVERIFY(!progress.audit.isEmpty());
+    for (qsizetype index = 0; index < progress.audit.size(); ++index)
+        QCOMPARE(progress.audit.at(index).sequence, quint64(index + 1));
+
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkChunk), 2);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkCommit), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkAbort), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ValidatePackage), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ActivatePackage), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::RollbackPackage), 0);
+
+    QVERIFY(provider.deployPackage(request));
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 1);
+    Data::ControllerPackageDeploymentRequest conflict = request;
+    conflict.artifact.append('x');
+    QVERIFY(!provider.deployPackage(conflict));
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 1);
+
+    control.command = Data::ControllerControlCommand::ReleaseControl;
+    QVERIFY(provider.executeControlCommand(control));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().controlProgress.state,
+        Data::ControllerControlState::Succeeded,
+        1000);
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testPackageDeploymentGuardsAndIdempotency()
+{
+    LoopbackController controller(LoopbackController::Behavior::PackageDeployment);
+    QVERIFY(controller.start());
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+
+    Data::ControllerPackageDeploymentRequest request;
+    request.operationId = QStringLiteral("validate-only");
+    request.artifact = QByteArray("signed-controller-package");
+    request.configurationId = 813;
+    request.activate = false;
+    QVERIFY(!provider.deployPackage(request));
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 0);
+
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(!provider.deployPackage(request));
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 0);
+
+    Data::ControllerControlRequest control;
+    control.command = Data::ControllerControlCommand::AcquireControl;
+    QVERIFY(provider.executeControlCommand(control));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().controlProgress.state,
+        Data::ControllerControlState::Succeeded,
+        1000);
+
+    Data::ControllerPackageDeploymentRequest invalid = request;
+    invalid.operationId = QStringLiteral(" bad-id");
+    QVERIFY(!provider.deployPackage(invalid));
+    invalid = request;
+    invalid.artifact.clear();
+    QVERIFY(!provider.deployPackage(invalid));
+    invalid = request;
+    invalid.artifact.resize(16 * 1024 * 1024 + 1);
+    QVERIFY(!provider.deployPackage(invalid));
+    invalid = request;
+    invalid.configurationId = 0;
+    QVERIFY(!provider.deployPackage(invalid));
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 0);
+
+    QVERIFY(provider.deployPackage(request));
+    QVERIFY(provider.deployPackage(request));
+    Data::ControllerPackageDeploymentRequest conflict = request;
+    conflict.configurationId = 814;
+    QVERIFY(!provider.deployPackage(conflict));
+    Data::ControllerPackageDeploymentRequest concurrent = request;
+    concurrent.operationId = QStringLiteral("different-operation");
+    QVERIFY(!provider.deployPackage(concurrent));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().packageDeploymentProgress.state,
+        Data::ControllerPackageDeploymentState::Succeeded,
+        2000);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ValidatePackage), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ActivatePackage), 0);
+    QVERIFY(provider.deployPackage(request));
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 1);
+
+    Data::ControllerPackageDeploymentRequest second = request;
+    second.operationId = QStringLiteral("validate-only-second");
+    second.artifact.append("-second");
+    second.configurationId = 815;
+    QVERIFY(provider.deployPackage(second));
+    QVERIFY(!provider.deployPackage(request));
+    QCOMPARE(
+        provider.connectionSnapshot().packageDeploymentProgress.operationId, second.operationId);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().packageDeploymentProgress.state,
+        Data::ControllerPackageDeploymentState::Succeeded,
+        2000);
+    QCOMPARE(provider.connectionSnapshot().packageDeploymentProgress.operationId, second.operationId);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 2);
+    QVERIFY(provider.deployPackage(request));
+    QCOMPARE(provider.connectionSnapshot().packageDeploymentProgress.operationId, request.operationId);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 2);
+
+    control.command = Data::ControllerControlCommand::ReleaseControl;
+    QVERIFY(provider.executeControlCommand(control));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().controlProgress.state,
+        Data::ControllerControlState::Succeeded,
+        1000);
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testPackageDeploymentCancellationAndAbort()
+{
+    {
+        LoopbackController controller(LoopbackController::Behavior::PackageDeployment);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+        Data::ControllerControlRequest control;
+        control.command = Data::ControllerControlCommand::AcquireControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+
+        Data::ControllerPackageDeploymentRequest request;
+        request.operationId = QStringLiteral("cancel-before-chunk");
+        request.artifact = QByteArray("signed-controller-package");
+        request.configurationId = 813;
+        QVERIFY(provider.deployPackage(request));
+        QVERIFY(provider.cancelPackageDeployment(request.operationId));
+        QVERIFY(provider.cancelPackageDeployment(request.operationId));
+        QVERIFY(
+            provider.connectionSnapshot().packageDeploymentProgress.state
+            == Data::ControllerPackageDeploymentState::Canceling);
+        QVERIFY(!provider.disconnectFromController());
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().packageDeploymentProgress.state,
+            Data::ControllerPackageDeploymentState::Canceled,
+            1000);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkChunk), 0);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkAbort), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkCommit), 0);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ValidatePackage), 0);
+
+        control.command = Data::ControllerControlCommand::ReleaseControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+        QVERIFY(controller.violations().isEmpty());
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::PackageDeployment);
+        controller.rejectNextDeployment(Protocol::MessageType::BulkBegin, -21);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+        Data::ControllerControlRequest control;
+        control.command = Data::ControllerControlCommand::AcquireControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+
+        Data::ControllerPackageDeploymentRequest request;
+        request.operationId = QStringLiteral("begin-rejected");
+        request.artifact = QByteArray("invalid-controller-package");
+        request.configurationId = 818;
+        QVERIFY(provider.deployPackage(request));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().packageDeploymentProgress.state,
+            Data::ControllerPackageDeploymentState::Failed,
+            1000);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkChunk), 0);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkAbort), 0);
+
+        control.command = Data::ControllerControlCommand::ReleaseControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+        QVERIFY(controller.violations().isEmpty());
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::PackageDeployment);
+        controller.rejectNextDeployment(Protocol::MessageType::BulkCommit, -21);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+        Data::ControllerControlRequest control;
+        control.command = Data::ControllerControlCommand::AcquireControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+
+        Data::ControllerPackageDeploymentRequest request;
+        request.operationId = QStringLiteral("commit-rejected");
+        request.artifact = QByteArray("invalid-controller-package");
+        request.configurationId = 814;
+        QVERIFY(provider.deployPackage(request));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().packageDeploymentProgress.state,
+            Data::ControllerPackageDeploymentState::Failed,
+            1000);
+        const Data::ControllerPackageDeploymentProgress progress
+            = provider.connectionSnapshot().packageDeploymentProgress;
+        QCOMPARE(progress.status, std::optional<qint32>(-21));
+        QVERIFY(progress.detail.contains(QStringLiteral("ECPKG_INVALID")));
+        QVERIFY(provider.connectionSnapshot().lastError);
+        QCOMPARE(provider.connectionSnapshot().lastError->codeName, QStringLiteral("ECPKG_INVALID"));
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkChunk), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkCommit), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkAbort), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ValidatePackage), 0);
+
+        control.command = Data::ControllerControlCommand::ReleaseControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+        QVERIFY(controller.violations().isEmpty());
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::PackageDeployment);
+        controller.rejectNextDeployment(
+            Protocol::MessageType::ActivatePackage, -19, 3, true);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+        Data::ControllerControlRequest control;
+        control.command = Data::ControllerControlCommand::AcquireControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+
+        Data::ControllerPackageDeploymentRequest request;
+        request.operationId = QStringLiteral("activation-rejected");
+        request.artifact = QByteArray("signed-controller-package");
+        request.configurationId = 816;
+        request.activate = true;
+        request.rollbackOnActivationFailure = true;
+        QVERIFY(provider.deployPackage(request));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().packageDeploymentProgress.state,
+            Data::ControllerPackageDeploymentState::Failed,
+            2000);
+        const Data::ControllerPackageDeploymentProgress progress
+            = provider.connectionSnapshot().packageDeploymentProgress;
+        QCOMPARE(progress.status, std::optional<qint32>(-19));
+        QVERIFY(progress.detail.contains(QStringLiteral("Rollback completed")));
+        QVERIFY(progress.previousActive);
+        QCOMPARE(progress.previousActive->slot, Data::ControllerSlot::B);
+        QCOMPARE(progress.previousActive->generation, quint64(33));
+        QCOMPARE(progress.previousActive->configurationId, quint64(44));
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkChunk), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkCommit), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ValidatePackage), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ActivatePackage), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::RollbackPackage), 1);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            controller.requestCount(Protocol::MessageType::GetPackageState) >= 3, 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !provider.sessionForTests()->refreshInProgressForTests(), 1000);
+
+        control.command = Data::ControllerControlCommand::ReleaseControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+        QVERIFY(controller.violations().isEmpty());
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::PackageDeployment);
+        controller.rejectNextDeploymentPackageState(Protocol::MessageType::ActivatePackage, -16);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+        Data::ControllerControlRequest control;
+        control.command = Data::ControllerControlCommand::AcquireControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+
+        Data::ControllerPackageDeploymentRequest request;
+        request.operationId = QStringLiteral("activation-result-unknown");
+        request.artifact = QByteArray("signed-controller-package");
+        request.configurationId = 817;
+        request.activate = true;
+        request.rollbackOnActivationFailure = true;
+        QVERIFY(provider.deployPackage(request));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().packageDeploymentProgress.state,
+            Data::ControllerPackageDeploymentState::OutcomeUnknown,
+            2000);
+        QVERIFY(provider.connectionSnapshot().packageDeploymentProgress.detail.contains(
+            QStringLiteral("final package state")));
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ActivatePackage), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::RollbackPackage), 0);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            controller.requestCount(Protocol::MessageType::GetPackageState) >= 2, 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !provider.sessionForTests()->refreshInProgressForTests(), 1000);
+
+        control.command = Data::ControllerControlCommand::ReleaseControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+        QVERIFY(controller.violations().isEmpty());
+    }
+
+    const QList<QPair<quint16, bool>> malformedFailures{{0, true}, {1, false}};
+    for (qsizetype index = 0; index < malformedFailures.size(); ++index) {
+        const auto [stage, final] = malformedFailures.at(index);
+        LoopbackController controller(LoopbackController::Behavior::PackageDeployment);
+        controller.rejectNextDeployment(
+            Protocol::MessageType::ValidatePackage, -16, stage, final);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+        Data::ControllerControlRequest control;
+        control.command = Data::ControllerControlCommand::AcquireControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+
+        Data::ControllerPackageDeploymentRequest request;
+        request.operationId = QStringLiteral("malformed-failure-%1").arg(index);
+        request.artifact = QByteArray("signed-controller-package");
+        request.configurationId = 820 + index;
+        QVERIFY(provider.deployPackage(request));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().packageDeploymentProgress.state,
+            Data::ControllerPackageDeploymentState::OutcomeUnknown,
+            2000);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ValidatePackage), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::BulkAbort), 0);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::RollbackPackage), 0);
+
+        provider.shutdown();
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+        QVERIFY(controller.violations().isEmpty());
+    }
 }
 
 void EtherCATProductApiTests::testHardwareControlLifecycle()

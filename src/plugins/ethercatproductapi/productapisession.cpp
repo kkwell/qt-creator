@@ -6,6 +6,7 @@
 #include "ethercatproductapitr.h"
 #include "productapicodec.h"
 
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QHash>
 #include <QRandomGenerator>
@@ -279,6 +280,98 @@ QString commandDisplayName(Data::ControllerControlCommand command)
     return Tr::tr("Unknown operation");
 }
 
+bool packageDeploymentIsActive(Data::ControllerPackageDeploymentState state)
+{
+    using State = Data::ControllerPackageDeploymentState;
+    return state == State::Uploading || state == State::Committing || state == State::Validating
+           || state == State::Activating || state == State::RollingBack
+           || state == State::Canceling;
+}
+
+bool operationIsPackageDeployment(Data::ControllerOperation operation)
+{
+    using Operation = Data::ControllerOperation;
+    return operation == Operation::UploadPackage || operation == Operation::AbortPackageUpload
+           || operation == Operation::ValidatePackage || operation == Operation::ActivatePackage
+           || operation == Operation::RollbackPackage;
+}
+
+constexpr qsizetype MaximumPackageBytes = 16 * 1024 * 1024;
+
+template<typename T>
+void appendBigEndian(QByteArray &bytes, T value)
+{
+    const qsizetype offset = bytes.size();
+    bytes.resize(offset + qsizetype(sizeof(T)));
+    qToBigEndian<T>(value, reinterpret_cast<uchar *>(bytes.data() + offset));
+}
+
+QByteArray packageBeginPayload(quint64 configurationId, quint32 packageBytes)
+{
+    QByteArray payload;
+    payload.reserve(24);
+    appendBigEndian(payload, configurationId);
+    appendBigEndian(payload, packageBytes);
+    appendBigEndian(payload, quint32(0));
+    appendBigEndian(payload, quint32(0));
+    appendBigEndian(payload, Protocol::PackageUploadMode);
+    return payload;
+}
+
+QByteArray packageChunkPayload(quint32 offset, QByteArrayView bytes)
+{
+    QByteArray payload;
+    payload.reserve(Protocol::BulkChunkHeaderBytes + bytes.size());
+    appendBigEndian(payload, Protocol::PackageObjectKind);
+    appendBigEndian(payload, offset);
+    payload.append(bytes.data(), bytes.size());
+    return payload;
+}
+
+QByteArray packageSelectorPayload(const Data::ControllerPackageSelector &selector)
+{
+    QByteArray payload;
+    payload.reserve(24);
+    appendBigEndian(payload, selector.slot == Data::ControllerSlot::A ? quint32('A') : quint32('B'));
+    appendBigEndian(payload, quint32(0));
+    appendBigEndian(payload, selector.generation);
+    appendBigEndian(payload, selector.configurationId);
+    return payload;
+}
+
+QByteArray deploymentFingerprint(const Data::ControllerPackageDeploymentRequest &request)
+{
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.addData(request.artifact);
+    QByteArray metadata;
+    appendBigEndian(metadata, request.configurationId);
+    metadata.append(request.activate ? '\x01' : '\x00');
+    metadata.append(request.rollbackOnActivationFailure ? '\x01' : '\x00');
+    hash.addData(metadata);
+    return hash.result();
+}
+
+bool operationIdIsValid(const QString &operationId)
+{
+    if (operationId.size() < 1 || operationId.size() > 128 || operationId.trimmed() != operationId) {
+        return false;
+    }
+    return std::none_of(operationId.cbegin(), operationId.cend(), [](QChar character) {
+        return character.isNull() || character.category() == QChar::Other_Control;
+    });
+}
+
+std::optional<Data::ControllerPackageSelector> activePackageSelector(
+    const Data::ControllerPackageSummary &package)
+{
+    const Data::ControllerPackageSelector selector{
+        package.activeSlot,
+        package.activeGeneration,
+        package.activeConfigurationId,
+    };
+    return selector.isValid() ? std::optional(selector) : std::nullopt;
+}
+
 } // namespace
 
 class ProductApiSessionPrivate
@@ -296,6 +389,9 @@ public:
         Topology,
         RestorePackage,
         Heartbeat,
+        PackageBulk,
+        PackageCommand,
+        PackageRecovery,
     };
 
     struct PendingRequest
@@ -313,6 +409,7 @@ public:
         Data::ControllerControlCommand controlCommand = Data::ControllerControlCommand::None;
         quint16 nextExpectedStage = 0;
         quint16 firstStationAddress = 0;
+        quint32 deploymentChunkBytes = 0;
         int responseTimeoutMs = 0;
         bool terminalCommandStatus = false;
         QTimer *timer = nullptr;
@@ -324,6 +421,12 @@ public:
         quint64 generation = 0;
         quint64 configurationId = 0;
         quint64 bootId = 0;
+    };
+
+    struct DeploymentJournalEntry
+    {
+        QByteArray fingerprint;
+        Data::ControllerPackageDeploymentProgress progress;
     };
 
     struct Channel
@@ -443,6 +546,149 @@ public:
     {
         snapshot.updatedAt = QDateTime::currentDateTimeUtc();
         emit q->snapshotChanged();
+    }
+
+    static Data::ControllerOperation deploymentOperation(Protocol::MessageType type)
+    {
+        switch (type) {
+        case Protocol::MessageType::BulkBegin:
+        case Protocol::MessageType::BulkChunk:
+        case Protocol::MessageType::BulkCommit:
+            return Data::ControllerOperation::UploadPackage;
+        case Protocol::MessageType::BulkAbort:
+            return Data::ControllerOperation::AbortPackageUpload;
+        case Protocol::MessageType::ValidatePackage:
+            return Data::ControllerOperation::ValidatePackage;
+        case Protocol::MessageType::ActivatePackage:
+            return Data::ControllerOperation::ActivatePackage;
+        case Protocol::MessageType::RollbackPackage:
+            return Data::ControllerOperation::RollbackPackage;
+        default:
+            return Data::ControllerOperation::None;
+        }
+    }
+
+    void appendDeploymentAudit(
+        Data::ControllerOperation operation,
+        const QString &detail,
+        std::optional<quint64> requestId = {},
+        std::optional<qint32> status = {},
+        std::optional<qint32> operationResult = {})
+    {
+        Data::ControllerPackageDeploymentAuditEvent event;
+        event.sequence = ++deploymentAuditSequence;
+        event.operation = operation;
+        event.requestId = requestId;
+        event.status = status;
+        event.operationResult = operationResult;
+        event.detail = detail;
+        event.occurredAt = QDateTime::currentDateTimeUtc();
+        auto &audit = snapshot.packageDeploymentProgress.audit;
+        audit.append(event);
+        constexpr qsizetype MaximumAuditEvents = 256;
+        if (audit.size() > MaximumAuditEvents)
+            audit.remove(0, audit.size() - MaximumAuditEvents);
+    }
+
+    void rememberDeploymentJournal()
+    {
+        const Data::ControllerPackageDeploymentProgress &progress
+            = snapshot.packageDeploymentProgress;
+        if (progress.operationId.isEmpty() || deploymentFingerprintValue.isEmpty())
+            return;
+        if (!deploymentJournal.contains(progress.operationId))
+            deploymentJournalOrder.append(progress.operationId);
+        deploymentJournal.insert(progress.operationId, {deploymentFingerprintValue, progress});
+        constexpr qsizetype MaximumJournalEntries = 32;
+        while (deploymentJournalOrder.size() > MaximumJournalEntries) {
+            const QString oldest = deploymentJournalOrder.takeFirst();
+            deploymentJournal.remove(oldest);
+        }
+    }
+
+    void setDeploymentState(
+        Data::ControllerPackageDeploymentState state,
+        const QString &detail,
+        std::optional<qint32> status = {},
+        std::optional<qint32> operationResult = {},
+        Data::ControllerOperation operation = Data::ControllerOperation::None,
+        std::optional<quint64> requestId = {})
+    {
+        Data::ControllerPackageDeploymentProgress &progress = snapshot.packageDeploymentProgress;
+        progress.state = state;
+        progress.status = status;
+        progress.operationResult = operationResult;
+        progress.detail = detail;
+        if (operation != Data::ControllerOperation::None) {
+            appendDeploymentAudit(operation, detail, requestId, status, operationResult);
+        }
+        if (!packageDeploymentIsActive(state)) {
+            progress.completedAt = QDateTime::currentDateTimeUtc();
+            deploymentArtifact.clear();
+            activeDeploymentRequestId = 0;
+            deploymentCancelRequested = false;
+        }
+        rememberDeploymentJournal();
+        publish();
+    }
+
+    void beginDeployment(
+        const Data::ControllerPackageDeploymentRequest &request, const QByteArray &fingerprint)
+    {
+        deploymentFingerprintValue = fingerprint;
+        deploymentArtifact = request.artifact;
+        deploymentConfigurationId = request.configurationId;
+        deploymentActivate = request.activate;
+        deploymentRollbackOnActivationFailure = request.rollbackOnActivationFailure;
+        deploymentOffset = 0;
+        deploymentCancelRequested = false;
+        deploymentFailureStatus.reset();
+        deploymentFailureOperationResult.reset();
+        deploymentFailureDetail.clear();
+        deploymentRollbackRequestSelector.reset();
+        deploymentAuditSequence = 0;
+        activeDeploymentRequestId = 0;
+        snapshot.lastError.reset();
+
+        Data::ControllerPackageDeploymentProgress progress;
+        progress.operationId = request.operationId;
+        progress.artifactSha256
+            = QCryptographicHash::hash(request.artifact, QCryptographicHash::Sha256);
+        progress.state = Data::ControllerPackageDeploymentState::Uploading;
+        progress.totalBytes = request.artifact.size();
+        progress.startedAt = QDateTime::currentDateTimeUtc();
+        if (snapshot.package && snapshot.package->activeSlot != Data::ControllerSlot::None
+            && snapshot.package->activeGeneration && snapshot.package->activeConfigurationId) {
+            progress.previousActive = Data::ControllerPackageSelector{
+                snapshot.package->activeSlot,
+                snapshot.package->activeGeneration,
+                snapshot.package->activeConfigurationId,
+            };
+        }
+        snapshot.packageDeploymentProgress = progress;
+        appendDeploymentAudit(
+            Data::ControllerOperation::UploadPackage,
+            Tr::tr("Package deployment started for operation %1.").arg(request.operationId));
+        rememberDeploymentJournal();
+        publish();
+    }
+
+    void markDeploymentOutcomeUnknown(
+        const QString &detail,
+        Data::ControllerOperation operation = Data::ControllerOperation::UploadPackage,
+        std::optional<quint64> requestId = {})
+    {
+        if (!packageDeploymentIsActive(snapshot.packageDeploymentProgress.state))
+            return;
+        setDeploymentState(
+            Data::ControllerPackageDeploymentState::OutcomeUnknown,
+            detail,
+            {},
+            {},
+            operation,
+            requestId                   ? requestId
+            : activeDeploymentRequestId ? std::optional(activeDeploymentRequestId)
+                                        : std::nullopt);
     }
 
     void beginControlProgress(Data::ControllerControlCommand command)
@@ -625,6 +871,53 @@ public:
         control.socket->waitForBytesWritten(100);
     }
 
+    void sendBestEffortDeploymentAbort()
+    {
+        if (!hasActiveDeployment() || !sessionId || !bootId)
+            return;
+        const Data::ControllerPackageDeploymentState state
+            = snapshot.packageDeploymentProgress.state;
+        const bool bulkTransactionMayBeActive
+            = state == Data::ControllerPackageDeploymentState::Uploading
+              || state == Data::ControllerPackageDeploymentState::Committing
+              || state == Data::ControllerPackageDeploymentState::Canceling;
+        Channel &bulk = channel(Protocol::Role::Bulk);
+        if (bulkTransactionMayBeActive && bulk.handshaken && bulk.socket) {
+            Protocol::Error codecError;
+            const quint64 requestId = allocateRequestId();
+            const QByteArray wire = Protocol::encodeRequest(
+                Protocol::MessageType::BulkAbort,
+                {},
+                sessionId,
+                requestId,
+                ++bulk.sendSequence,
+                bootId,
+                negotiatedMinor,
+                &codecError);
+            if (!wire.isEmpty()) {
+                appendDeploymentAudit(
+                    Data::ControllerOperation::AbortPackageUpload,
+                    Tr::tr("A best-effort package upload abort was queued during shutdown."),
+                    requestId);
+                bulk.socket->write(wire);
+                bulk.socket->flush();
+                bulk.socket->waitForBytesWritten(100);
+            }
+        }
+        Data::ControllerPackageDeploymentProgress &progress = snapshot.packageDeploymentProgress;
+        progress.state = Data::ControllerPackageDeploymentState::OutcomeUnknown;
+        progress.detail
+            = bulkTransactionMayBeActive
+                  ? Tr::tr("The session shut down before the package upload abort was confirmed.")
+                  : Tr::tr(
+                        "The session shut down before the package operation result was confirmed.");
+        progress.completedAt = QDateTime::currentDateTimeUtc();
+        deploymentArtifact.clear();
+        activeDeploymentRequestId = 0;
+        deploymentCancelRequested = false;
+        rememberDeploymentJournal();
+    }
+
     void armChannelTimer(Channel &value, int timeoutMs, const QString &summary)
     {
         if (value.phaseTimer) {
@@ -725,6 +1018,24 @@ public:
         std::optional<quint64> requestId = {},
         bool requestMayHaveReachedController = true)
     {
+        if (operationIsPackageDeployment(operation) || hasActiveDeployment()) {
+            if (requestMayHaveReachedController) {
+                markDeploymentOutcomeUnknown(
+                    Tr::tr(
+                        "The deployment result is unknown because the controller returned an "
+                        "invalid protocol response."),
+                    operation,
+                    requestId);
+            } else {
+                setDeploymentState(
+                    Data::ControllerPackageDeploymentState::Failed,
+                    Tr::tr("The deployment request was not queued."),
+                    {},
+                    {},
+                    operation,
+                    requestId);
+            }
+        }
         if (disconnectAfterRelease) {
             if (!requestMayHaveReachedController) {
                 setError(
@@ -788,6 +1099,24 @@ public:
     {
         if (shuttingDown || userDisconnecting)
             return;
+        if (operationIsPackageDeployment(operation) || hasActiveDeployment()) {
+            if (requestMayHaveReachedController) {
+                markDeploymentOutcomeUnknown(
+                    Tr::tr(
+                        "The deployment result is unknown because the connection ended before "
+                        "confirmation."),
+                    operation,
+                    requestId);
+            } else {
+                setDeploymentState(
+                    Data::ControllerPackageDeploymentState::Failed,
+                    Tr::tr("The deployment request was not queued because the connection failed."),
+                    {},
+                    {},
+                    operation,
+                    requestId);
+            }
+        }
         if (disconnectAfterRelease) {
             if (!requestMayHaveReachedController) {
                 setError(
@@ -1153,13 +1482,167 @@ public:
         return requestId;
     }
 
+    quint64 sendDeploymentRequest(
+        Channel &value, Protocol::MessageType type, PendingKind kind, QByteArrayView payload)
+    {
+        const Data::ControllerOperation operation = deploymentOperation(type);
+        const int timeoutMs = std::max(options.requestTimeoutMs, 40000);
+        const quint64 requestId = sendRequest(value, type, kind, operation, payload, timeoutMs);
+        if (!requestId)
+            return 0;
+        activeDeploymentRequestId = requestId;
+        if (value.role == Protocol::Role::Control)
+            extendPendingHeartbeatTimeout(timeoutMs);
+        appendDeploymentAudit(
+            operation,
+            Tr::tr("%1 request queued.").arg(QString::number(quint16(type), 16)),
+            requestId);
+        publish();
+        return requestId;
+    }
+
+    bool sendDeploymentBegin()
+    {
+        const QByteArray payload
+            = packageBeginPayload(deploymentConfigurationId, quint32(deploymentArtifact.size()));
+        return sendDeploymentRequest(
+                   channel(Protocol::Role::Bulk),
+                   Protocol::MessageType::BulkBegin,
+                   PendingKind::PackageBulk,
+                   payload)
+               != 0;
+    }
+
+    bool sendDeploymentChunk()
+    {
+        if (deploymentOffset < 0 || deploymentOffset >= deploymentArtifact.size())
+            return false;
+        const qsizetype chunkBytes = std::min(
+            qsizetype(Protocol::BulkChunkMaximumBytes),
+            deploymentArtifact.size() - deploymentOffset);
+        const QByteArray payload = packageChunkPayload(
+            quint32(deploymentOffset),
+            QByteArrayView(deploymentArtifact).sliced(deploymentOffset, chunkBytes));
+        const quint64 requestId = sendDeploymentRequest(
+            channel(Protocol::Role::Bulk),
+            Protocol::MessageType::BulkChunk,
+            PendingKind::PackageBulk,
+            payload);
+        auto found = pendingRequests.find(requestId);
+        if (found == pendingRequests.end())
+            return false;
+        found->deploymentChunkBytes = quint32(chunkBytes);
+        return true;
+    }
+
+    bool sendDeploymentCommit()
+    {
+        snapshot.packageDeploymentProgress.state
+            = Data::ControllerPackageDeploymentState::Committing;
+        snapshot.packageDeploymentProgress.detail = Tr::tr(
+            "Committing the uploaded controller package.");
+        publish();
+        return sendDeploymentRequest(
+                   channel(Protocol::Role::Bulk),
+                   Protocol::MessageType::BulkCommit,
+                   PendingKind::PackageBulk,
+                   {})
+               != 0;
+    }
+
+    bool sendDeploymentCommand(
+        Protocol::MessageType type,
+        std::optional<Data::ControllerPackageSelector> requestedSelector = {})
+    {
+        const auto selector = requestedSelector ? requestedSelector
+                                                : snapshot.packageDeploymentProgress.candidate;
+        if (!selector || !selector->isValid())
+            return false;
+        switch (type) {
+        case Protocol::MessageType::ValidatePackage:
+            snapshot.packageDeploymentProgress.state
+                = Data::ControllerPackageDeploymentState::Validating;
+            snapshot.packageDeploymentProgress.detail = Tr::tr(
+                "Validating the staged controller package.");
+            break;
+        case Protocol::MessageType::ActivatePackage:
+            snapshot.packageDeploymentProgress.state
+                = Data::ControllerPackageDeploymentState::Activating;
+            snapshot.packageDeploymentProgress.detail = Tr::tr(
+                "Activating the validated controller package.");
+            break;
+        case Protocol::MessageType::RollbackPackage:
+            snapshot.packageDeploymentProgress.state
+                = Data::ControllerPackageDeploymentState::RollingBack;
+            snapshot.packageDeploymentProgress.detail = Tr::tr(
+                "Rolling back after package activation failed.");
+            break;
+        default:
+            return false;
+        }
+        publish();
+        const QByteArray payload = packageSelectorPayload(*selector);
+        const quint64 requestId = sendDeploymentRequest(
+            channel(Protocol::Role::Control), type, PendingKind::PackageCommand, payload);
+        auto found = pendingRequests.find(requestId);
+        if (found == pendingRequests.end())
+            return false;
+        found->nextExpectedStage = 1;
+        return true;
+    }
+
+    bool sendDeploymentRecoveryQuery()
+    {
+        snapshot.packageDeploymentProgress.state
+            = Data::ControllerPackageDeploymentState::RollingBack;
+        snapshot.packageDeploymentProgress.detail = Tr::tr(
+            "Activation failed; confirming the exact active package before rollback.");
+        publish();
+        const int timeoutMs = std::max(options.requestTimeoutMs, 10000);
+        const quint64 requestId = sendRequest(
+            channel(Protocol::Role::Control),
+            Protocol::MessageType::GetPackageState,
+            PendingKind::PackageRecovery,
+            Data::ControllerOperation::QueryPackageState,
+            {},
+            timeoutMs);
+        if (!requestId)
+            return false;
+        activeDeploymentRequestId = requestId;
+        extendPendingHeartbeatTimeout(timeoutMs);
+        appendDeploymentAudit(
+            Data::ControllerOperation::QueryPackageState,
+            Tr::tr("Authoritative package-state recovery query queued."),
+            requestId);
+        publish();
+        return true;
+    }
+
+    bool sendDeploymentAbort(bool userCanceled)
+    {
+        deploymentCancelRequested = userCanceled;
+        snapshot.packageDeploymentProgress.state = Data::ControllerPackageDeploymentState::Canceling;
+        snapshot.packageDeploymentProgress.detail
+            = userCanceled ? Tr::tr("Canceling the package upload.")
+                           : Tr::tr("Aborting the failed package upload.");
+        publish();
+        return sendDeploymentRequest(
+                   channel(Protocol::Role::Bulk),
+                   Protocol::MessageType::BulkAbort,
+                   PendingKind::PackageBulk,
+                   {})
+               != 0;
+    }
+
     int heartbeatResponseTimeoutMs() const
     {
         int timeoutMs = options.requestTimeoutMs;
         for (const PendingRequest &request : std::as_const(pendingRequests)) {
             if ((request.kind == PendingKind::ControlCommand
                  || request.kind == PendingKind::Topology
-                 || request.kind == PendingKind::RestorePackage)
+                 || request.kind == PendingKind::RestorePackage
+                 || request.kind == PendingKind::PackageCommand
+                 || request.kind == PendingKind::PackageRecovery)
                 && request.responseTimeoutMs > options.requestTimeoutMs) {
                 timeoutMs = std::max(timeoutMs, request.responseTimeoutMs);
             }
@@ -1685,6 +2168,465 @@ public:
         return true;
     }
 
+    void finishDeploymentFailure(
+        const PendingRequest &request,
+        quint64 requestId,
+        qint32 status,
+        qint32 operationResult,
+        const QString &detail)
+    {
+        setError(
+            Data::ControllerErrorSource::Controller,
+            request.role,
+            request.operation,
+            Tr::tr("The controller rejected the package deployment request."),
+            detail,
+            status,
+            requestId,
+            retryDisposition(status));
+        snapshot.lastError->operationResult = operationResult;
+        deploymentFailureStatus = status;
+        deploymentFailureOperationResult = operationResult;
+        deploymentFailureDetail
+            = detail.isEmpty()
+                  ? Tr::tr("Package deployment failed with %1.").arg(statusName(status))
+                  : detail;
+        if (invalidatesControlLease(status)) {
+            heartbeatTimer->stop();
+            if (snapshot.session) {
+                snapshot.session->controlLeaseOwnerSessionId = 0;
+                snapshot.session->ownsControlLease = false;
+            }
+        }
+        removePending(requestId);
+        activeDeploymentRequestId = 0;
+
+        if (isReconnectStatus(status)) {
+            markDeploymentOutcomeUnknown(
+                Tr::tr(
+                    "The deployment result is unknown because the controller session became "
+                    "stale."));
+            scheduleReconnect();
+            return;
+        }
+
+        if (request.kind == PendingKind::PackageBulk
+            && request.requestType != Protocol::MessageType::BulkBegin
+            && request.requestType != Protocol::MessageType::BulkAbort
+            && channel(Protocol::Role::Bulk).handshaken) {
+            if (sendDeploymentAbort(false))
+                return;
+        }
+
+        if (request.requestType == Protocol::MessageType::ActivatePackage
+            && deploymentRollbackOnActivationFailure
+            && snapshot.packageDeploymentProgress.previousActive
+            && snapshot.packageDeploymentProgress.previousActive->isValid() && snapshot.session
+            && snapshot.session->ownsControlLease && channel(Protocol::Role::Control).handshaken) {
+            if (sendDeploymentRecoveryQuery())
+                return;
+            deploymentFailureDetail
+                = Tr::tr("%1 The active package could not be confirmed, so no rollback was sent.")
+                      .arg(deploymentFailureDetail);
+        }
+
+        setDeploymentState(
+            Data::ControllerPackageDeploymentState::Failed,
+            deploymentFailureDetail,
+            status,
+            operationResult,
+            request.operation,
+            requestId);
+    }
+
+    bool handlePackageBulkStatus(
+        const Protocol::Frame &frame,
+        const PendingRequest &request,
+        quint64 requestId,
+        QString *protocolDetail)
+    {
+        Protocol::Error decodeError;
+        const auto status = Protocol::decodeBulkStatus(frame, &decodeError);
+        if (!status) {
+            *protocolDetail = decodeError.text;
+            return false;
+        }
+        if (status->originalType != quint16(request.requestType)) {
+            *protocolDetail = Tr::tr("BulkStatus does not match the deployment request.");
+            return false;
+        }
+        if (status->status) {
+            finishDeploymentFailure(
+                request,
+                requestId,
+                status->status,
+                status->operationResult,
+                Tr::tr("%1 was rejected by the controller.").arg(statusName(status->status)));
+            return true;
+        }
+
+        removePending(requestId);
+        activeDeploymentRequestId = 0;
+        appendDeploymentAudit(
+            request.operation,
+            Tr::tr("The controller accepted the package deployment request."),
+            requestId,
+            status->status,
+            status->operationResult);
+
+        if (request.requestType == Protocol::MessageType::BulkAbort) {
+            const bool canceled = deploymentCancelRequested;
+            setDeploymentState(
+                canceled ? Data::ControllerPackageDeploymentState::Canceled
+                         : Data::ControllerPackageDeploymentState::Failed,
+                canceled ? Tr::tr("Package deployment was canceled before activation.")
+                         : deploymentFailureDetail,
+                deploymentFailureStatus,
+                deploymentFailureOperationResult,
+                Data::ControllerOperation::AbortPackageUpload,
+                requestId);
+            return true;
+        }
+
+        if (request.requestType == Protocol::MessageType::BulkBegin) {
+            return deploymentCancelRequested ? sendDeploymentAbort(true) : sendDeploymentChunk();
+        }
+
+        if (request.requestType == Protocol::MessageType::BulkChunk) {
+            deploymentOffset += request.deploymentChunkBytes;
+            snapshot.packageDeploymentProgress.transferredBytes = deploymentOffset;
+            snapshot.packageDeploymentProgress.detail = Tr::tr("Uploaded %1 of %2 bytes.")
+                                                            .arg(deploymentOffset)
+                                                            .arg(deploymentArtifact.size());
+            publish();
+            if (deploymentCancelRequested)
+                return sendDeploymentAbort(true);
+            if (deploymentOffset < deploymentArtifact.size())
+                return sendDeploymentChunk();
+            return sendDeploymentCommit();
+        }
+
+        if (request.requestType == Protocol::MessageType::BulkCommit) {
+            const Data::ControllerSlot slot = status->selectedSlot == quint32('A')
+                                                  ? Data::ControllerSlot::A
+                                              : status->selectedSlot == quint32('B')
+                                                  ? Data::ControllerSlot::B
+                                                  : Data::ControllerSlot::None;
+            const Data::ControllerPackageSelector selector{
+                slot,
+                status->generation,
+                status->configurationId,
+            };
+            if (!selector.isValid() || selector.configurationId != deploymentConfigurationId) {
+                *protocolDetail = Tr::tr("BulkCommit returned an invalid package selector.");
+                return false;
+            }
+            snapshot.packageDeploymentProgress.candidate = selector;
+            snapshot.packageDeploymentProgress.transferredBytes
+                = snapshot.packageDeploymentProgress.totalBytes;
+            if (deploymentCancelRequested)
+                return sendDeploymentAbort(true);
+            if (!sendDeploymentCommand(Protocol::MessageType::ValidatePackage)) {
+                *protocolDetail = Tr::tr(
+                    "The committed package could not be queued for validation.");
+                return false;
+            }
+            return true;
+        }
+
+        *protocolDetail = Tr::tr("An unexpected bulk deployment response was received.");
+        return false;
+    }
+
+    bool handlePackageCommandStatus(
+        const Protocol::Frame &frame,
+        const PendingRequest &request,
+        quint64 requestId,
+        QString *protocolDetail)
+    {
+        Protocol::Error decodeError;
+        const auto status = Protocol::decodeCommandStatus(frame, &decodeError);
+        if (!status) {
+            *protocolDetail = decodeError.text;
+            return false;
+        }
+        if (status->originalType != quint16(request.requestType)) {
+            *protocolDetail = Tr::tr("CommandStatus does not match the package request.");
+            return false;
+        }
+        if (status->status) {
+            finishDeploymentFailure(
+                request,
+                requestId,
+                status->status,
+                status->operationResult,
+                Tr::tr("%1 was rejected by the controller.").arg(statusName(status->status)));
+            return true;
+        }
+        if (status->stage != request.nextExpectedStage || status->final) {
+            *protocolDetail = Tr::tr(
+                "Package CommandStatus stages violate the deployment contract.");
+            return false;
+        }
+
+        auto found = pendingRequests.find(requestId);
+        if (found == pendingRequests.end())
+            return true;
+        if (found->timer)
+            found->timer->start(found->responseTimeoutMs);
+        extendPendingHeartbeatTimeout(found->responseTimeoutMs);
+        if (found->nextExpectedStage <= 4)
+            ++found->nextExpectedStage;
+        appendDeploymentAudit(
+            request.operation,
+            Tr::tr("Package command stage %1 of 4 completed.").arg(status->stage),
+            requestId,
+            status->status,
+            status->operationResult);
+        publish();
+        return true;
+    }
+
+    bool handleDeploymentRecoveryPackageState(
+        const Protocol::Frame &frame,
+        const PendingRequest &request,
+        quint64 requestId,
+        QString *protocolDetail)
+    {
+        if (frame.payload.size() < 2
+            || qFromBigEndian<quint16>(reinterpret_cast<const uchar *>(frame.payload.constData()))
+                   != quint16(Protocol::MessageType::GetPackageState)) {
+            *protocolDetail = Tr::tr("The recovery PackageState does not match GetPackageState.");
+            return false;
+        }
+        Protocol::Error decodeError;
+        const auto package = Protocol::decodePackageState(frame, &decodeError);
+        if (!package) {
+            if (decodeError.category != Protocol::ErrorCategory::ControllerStatus
+                || !decodeError.status) {
+                *protocolDetail = decodeError.text;
+                return false;
+            }
+            setError(
+                Data::ControllerErrorSource::Controller,
+                request.role,
+                request.operation,
+                Tr::tr("The controller rejected the package-state recovery query."),
+                decodeError.text,
+                *decodeError.status,
+                requestId,
+                retryDisposition(*decodeError.status));
+            snapshot.lastError->operationResult = decodeError.operationResult.value_or(0);
+            removePending(requestId);
+            activeDeploymentRequestId = 0;
+            setDeploymentState(
+                Data::ControllerPackageDeploymentState::Failed,
+                Tr::tr("%1 The active package could not be confirmed, so no rollback was sent.")
+                    .arg(deploymentFailureDetail),
+                deploymentFailureStatus,
+                deploymentFailureOperationResult,
+                Data::ControllerOperation::QueryPackageState,
+                requestId);
+            return true;
+        }
+
+        snapshot.package = *package;
+        rememberPersistentPackageSelector(*package);
+        removePending(requestId);
+        activeDeploymentRequestId = 0;
+
+        const auto currentActive = activePackageSelector(*package);
+        const auto candidate = snapshot.packageDeploymentProgress.candidate;
+        const auto previousActive = snapshot.packageDeploymentProgress.previousActive;
+        if (!currentActive || !candidate || !previousActive) {
+            setDeploymentState(
+                Data::ControllerPackageDeploymentState::Failed,
+                Tr::tr(
+                    "%1 No exact active/fallback package pair is available, so no rollback was "
+                    "sent.")
+                    .arg(deploymentFailureDetail),
+                deploymentFailureStatus,
+                deploymentFailureOperationResult,
+                Data::ControllerOperation::QueryPackageState,
+                requestId);
+            return true;
+        }
+
+        const bool candidateConfirmedActive = *currentActive == *candidate
+                                              && package->controllerState
+                                                     == Data::ControllerPackageState::Active;
+        const bool previousStillActive = *currentActive == *previousActive;
+        if (!candidateConfirmedActive && !previousStillActive) {
+            setDeploymentState(
+                Data::ControllerPackageDeploymentState::Failed,
+                Tr::tr(
+                    "%1 The current active package is neither the candidate nor the confirmed "
+                    "fallback, so no rollback was sent.")
+                    .arg(deploymentFailureDetail),
+                deploymentFailureStatus,
+                deploymentFailureOperationResult,
+                Data::ControllerOperation::QueryPackageState,
+                requestId);
+            return true;
+        }
+
+        deploymentRollbackRequestSelector = currentActive;
+        appendDeploymentAudit(
+            Data::ControllerOperation::RollbackPackage,
+            Tr::tr("Confirmed the exact active selector before rollback."),
+            requestId,
+            0,
+            package->controllerResult);
+        if (!sendDeploymentCommand(
+                Protocol::MessageType::RollbackPackage, deploymentRollbackRequestSelector)) {
+            setDeploymentState(
+                Data::ControllerPackageDeploymentState::Failed,
+                Tr::tr("%1 The confirmed rollback request could not be queued.")
+                    .arg(deploymentFailureDetail),
+                deploymentFailureStatus,
+                deploymentFailureOperationResult,
+                Data::ControllerOperation::RollbackPackage);
+        }
+        return true;
+    }
+
+    bool handlePackageStateResult(
+        const Protocol::Frame &frame,
+        const PendingRequest &request,
+        quint64 requestId,
+        QString *protocolDetail)
+    {
+        if (request.nextExpectedStage != 5) {
+            *protocolDetail = Tr::tr(
+                "PackageState arrived before all package command stages completed.");
+            return false;
+        }
+        if (frame.payload.size() < 2
+            || qFromBigEndian<quint16>(reinterpret_cast<const uchar *>(frame.payload.constData()))
+                   != quint16(request.requestType)) {
+            *protocolDetail = Tr::tr("PackageState does not match the package request.");
+            return false;
+        }
+        Protocol::Error decodeError;
+        const auto package = Protocol::decodePackageState(frame, &decodeError);
+        if (!package) {
+            if (decodeError.category == Protocol::ErrorCategory::ControllerStatus
+                && decodeError.status) {
+                setError(
+                    Data::ControllerErrorSource::Controller,
+                    request.role,
+                    request.operation,
+                    Tr::tr("The controller could not return a coherent final package state."),
+                    decodeError.text,
+                    *decodeError.status,
+                    requestId,
+                    retryDisposition(*decodeError.status));
+                snapshot.lastError->operationResult = decodeError.operationResult.value_or(0);
+                removePending(requestId);
+                activeDeploymentRequestId = 0;
+                markDeploymentOutcomeUnknown(
+                    Tr::tr(
+                        "All package command stages completed, but the final package state was "
+                        "not coherent. Authoritative state is being refreshed before any further "
+                        "action."),
+                    request.operation,
+                    requestId);
+                beginRefresh(true);
+                return true;
+            }
+            *protocolDetail = decodeError.text;
+            return false;
+        }
+
+        const auto candidate = snapshot.packageDeploymentProgress.candidate;
+        if (!candidate || !candidate->isValid()) {
+            *protocolDetail = Tr::tr("No committed package selector is available.");
+            return false;
+        }
+        snapshot.package = *package;
+        rememberPersistentPackageSelector(*package);
+        removePending(requestId);
+        activeDeploymentRequestId = 0;
+        appendDeploymentAudit(
+            request.operation,
+            Tr::tr("The controller returned the authoritative package state."),
+            requestId,
+            0,
+            package->controllerResult);
+
+        if (request.requestType == Protocol::MessageType::ValidatePackage) {
+            const bool candidateAccepted
+                = package->stagedSlot == candidate->slot
+                  && package->stagedGeneration == candidate->generation
+                  && package->stagedConfigurationId == candidate->configurationId
+                  && (package->controllerState == Data::ControllerPackageState::Accepted
+                      || package->controllerState == Data::ControllerPackageState::Active);
+            if (!candidateAccepted) {
+                *protocolDetail = Tr::tr(
+                    "The validated package state does not match the committed package.");
+                return false;
+            }
+            if (deploymentActivate)
+                return sendDeploymentCommand(Protocol::MessageType::ActivatePackage);
+            setDeploymentState(
+                Data::ControllerPackageDeploymentState::Succeeded,
+                Tr::tr("The controller package was uploaded and validated."),
+                0,
+                package->controllerResult,
+                Data::ControllerOperation::ValidatePackage,
+                requestId);
+            return true;
+        }
+
+        if (request.requestType == Protocol::MessageType::ActivatePackage) {
+            const bool candidateActive = package->activeSlot == candidate->slot
+                                         && package->activeGeneration == candidate->generation
+                                         && package->activeConfigurationId
+                                                == candidate->configurationId
+                                         && package->controllerState
+                                                == Data::ControllerPackageState::Active;
+            if (!candidateActive) {
+                *protocolDetail = Tr::tr(
+                    "The active package state does not match the deployed package.");
+                return false;
+            }
+            setDeploymentState(
+                Data::ControllerPackageDeploymentState::Succeeded,
+                Tr::tr("The controller package was uploaded, validated, and activated."),
+                0,
+                package->controllerResult,
+                Data::ControllerOperation::ActivatePackage,
+                requestId);
+            beginRefresh();
+            return true;
+        }
+
+        if (request.requestType == Protocol::MessageType::RollbackPackage) {
+            const auto restored = activePackageSelector(*package);
+            const auto previousActive = snapshot.packageDeploymentProgress.previousActive;
+            if (!restored || !previousActive || *restored != *previousActive
+                || package->controllerState != Data::ControllerPackageState::Active) {
+                *protocolDetail = Tr::tr(
+                    "Rollback did not restore the exact previously confirmed active package.");
+                return false;
+            }
+            setDeploymentState(
+                Data::ControllerPackageDeploymentState::Failed,
+                deploymentFailureDetail.isEmpty()
+                    ? Tr::tr("Package activation failed and rollback completed.")
+                    : Tr::tr("%1 Rollback completed.").arg(deploymentFailureDetail),
+                deploymentFailureStatus,
+                deploymentFailureOperationResult,
+                Data::ControllerOperation::RollbackPackage,
+                requestId);
+            beginRefresh(true);
+            return true;
+        }
+
+        *protocolDetail = Tr::tr("An unexpected package-state response was received.");
+        return false;
+    }
+
     bool handleControllerStatus(
         const Protocol::Frame &frame,
         const PendingRequest &request,
@@ -1772,6 +2714,50 @@ public:
         }
         if (!validateEstablishedIdentity(frame, request, requestId))
             return;
+        if (request.kind == PendingKind::PackageBulk) {
+            QString protocolDetail;
+            if (frame.header.messageType != Protocol::MessageType::BulkStatus
+                || !handlePackageBulkStatus(frame, request, requestId, &protocolDetail)) {
+                failProtocol(
+                    request.role,
+                    request.operation,
+                    Tr::tr("The controller returned a malformed package upload status."),
+                    protocolDetail,
+                    requestId);
+            }
+            return;
+        }
+        if (request.kind == PendingKind::PackageRecovery) {
+            QString protocolDetail;
+            if (frame.header.messageType != Protocol::MessageType::PackageState
+                || !handleDeploymentRecoveryPackageState(frame, request, requestId, &protocolDetail)) {
+                failProtocol(
+                    request.role,
+                    request.operation,
+                    Tr::tr("The controller returned a malformed recovery package state."),
+                    protocolDetail,
+                    requestId);
+            }
+            return;
+        }
+        if (request.kind == PendingKind::PackageCommand) {
+            QString protocolDetail;
+            const bool handled
+                = frame.header.messageType == Protocol::MessageType::CommandStatus
+                      ? handlePackageCommandStatus(frame, request, requestId, &protocolDetail)
+                  : frame.header.messageType == Protocol::MessageType::PackageState
+                      ? handlePackageStateResult(frame, request, requestId, &protocolDetail)
+                      : false;
+            if (!handled) {
+                failProtocol(
+                    request.role,
+                    request.operation,
+                    Tr::tr("The controller returned a malformed package command response."),
+                    protocolDetail,
+                    requestId);
+            }
+            return;
+        }
         const bool statefulRequest = request.kind == PendingKind::ControlCommand
                                      || request.kind == PendingKind::Topology
                                      || request.kind == PendingKind::RestorePackage
@@ -1952,6 +2938,9 @@ public:
         }
         case PendingKind::ControlCommand:
         case PendingKind::Heartbeat:
+        case PendingKind::PackageBulk:
+        case PendingKind::PackageCommand:
+        case PendingKind::PackageRecovery:
             break;
         case PendingKind::Hello:
             return;
@@ -2245,6 +3234,11 @@ public:
             });
     }
 
+    bool hasActiveDeployment() const
+    {
+        return packageDeploymentIsActive(snapshot.packageDeploymentProgress.state);
+    }
+
     std::optional<QString> controlPostconditionError() const
     {
         using Command = Data::ControllerControlCommand;
@@ -2500,6 +3494,21 @@ public:
     std::optional<Data::ControllerConnectionState> stateBeforeDisconnectRelease;
     bool controlRefreshPending = false;
     bool controlRefreshCompletesCommand = false;
+    QByteArray deploymentFingerprintValue;
+    QByteArray deploymentArtifact;
+    quint64 deploymentConfigurationId = 0;
+    quint64 deploymentAuditSequence = 0;
+    quint64 activeDeploymentRequestId = 0;
+    qsizetype deploymentOffset = 0;
+    bool deploymentActivate = true;
+    bool deploymentRollbackOnActivationFailure = true;
+    bool deploymentCancelRequested = false;
+    std::optional<qint32> deploymentFailureStatus;
+    std::optional<qint32> deploymentFailureOperationResult;
+    QString deploymentFailureDetail;
+    std::optional<Data::ControllerPackageSelector> deploymentRollbackRequestSelector;
+    QHash<QString, DeploymentJournalEntry> deploymentJournal;
+    QList<QString> deploymentJournalOrder;
 #ifdef WITH_TESTS
     bool failNextWriteForTests = false;
 #endif
@@ -2629,6 +3638,7 @@ Utils::Result<> ProductApiSession::connectToController(
     d->snapshot.package.reset();
     d->snapshot.firmware.reset();
     d->snapshot.controlProgress = {};
+    d->snapshot.packageDeploymentProgress = {};
     d->snapshot.topology.reset();
     d->reconnectAttempt = 0;
     d->markChannelsDisconnected();
@@ -2645,6 +3655,8 @@ Utils::Result<> ProductApiSession::disconnectFromController()
         return {};
     if (d->hasActiveControlOperation())
         return Utils::ResultError(Tr::tr("Wait for the active controller operation to finish."));
+    if (d->hasActiveDeployment())
+        return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
     if (d->snapshot.session) {
         const Data::ControllerSessionSummary &session = *d->snapshot.session;
         if (session.controlLeaseOwnerSessionId
@@ -2691,6 +3703,8 @@ Utils::Result<> ProductApiSession::refreshController()
     }
     if (d->refreshInProgress || !d->pendingRequests.isEmpty())
         return Utils::ResultError(Tr::tr("A controller refresh is already active."));
+    if (d->hasActiveDeployment())
+        return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
     d->beginRefresh();
     return {};
 }
@@ -2739,6 +3753,8 @@ Utils::Result<> ProductApiSession::executeControlCommand(
         return Utils::ResultError(Tr::tr("Wait for the controller refresh to finish."));
     if (d->hasActiveControlOperation())
         return Utils::ResultError(Tr::tr("Another controller operation is already active."));
+    if (d->hasActiveDeployment())
+        return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
 
     const bool ownsLease = d->snapshot.session->ownsControlLease;
     const auto state = d->snapshot.controllerState
@@ -2942,10 +3958,122 @@ Utils::Result<> ProductApiSession::executeControlCommand(
     return {};
 }
 
+bool ProductApiSession::supportsPackageDeployment() const
+{
+    return true;
+}
+
+Utils::Result<> ProductApiSession::deployPackage(
+    const Data::ControllerPackageDeploymentRequest &request)
+{
+    if (!supportsPackageDeployment())
+        return Utils::ResultError(Tr::tr("Package deployment is not supported."));
+    if (d->shuttingDown)
+        return Utils::ResultError(Tr::tr("The controller session is shutting down."));
+    if (!operationIdIsValid(request.operationId)) {
+        return Utils::ResultError(
+            Tr::tr("OperationId must contain between 1 and 128 non-control characters."));
+    }
+    if (request.artifact.isEmpty() || request.artifact.size() > MaximumPackageBytes) {
+        return Utils::ResultError(
+            Tr::tr("The controller package must contain between 1 and 16777216 bytes."));
+    }
+    if (!request.configurationId)
+        return Utils::ResultError(Tr::tr("The package configuration ID must be nonzero."));
+
+    const QByteArray fingerprint = deploymentFingerprint(request);
+    const Data::ControllerPackageDeploymentProgress &current = d->snapshot.packageDeploymentProgress;
+    if (d->hasActiveDeployment() && current.operationId != request.operationId) {
+        return Utils::ResultError(Tr::tr("Another package deployment is already active."));
+    }
+    const auto journalEntry = d->deploymentJournal.constFind(request.operationId);
+    if (journalEntry != d->deploymentJournal.cend()) {
+        if (journalEntry->fingerprint != fingerprint) {
+            return Utils::ResultError(
+                Tr::tr("OperationId is already bound to a different package deployment."));
+        }
+        if (current.operationId != request.operationId) {
+            d->deploymentFingerprintValue = fingerprint;
+            d->snapshot.packageDeploymentProgress = journalEntry->progress;
+            d->snapshot.lastError.reset();
+            d->publish();
+        }
+        return {};
+    }
+
+    if (d->snapshot.state != Data::ControllerConnectionState::Connected
+        && d->snapshot.state != Data::ControllerConnectionState::Degraded) {
+        return Utils::ResultError(Tr::tr("Connect to the controller before deploying a package."));
+    }
+    if (!d->sessionId || !d->bootId || !d->snapshot.session)
+        return Utils::ResultError(Tr::tr("The controller session identity is not available."));
+    if (!d->snapshot.session->ownsControlLease)
+        return Utils::ResultError(Tr::tr("Acquire the control lease before deploying a package."));
+    if (!d->snapshot.capability || !d->snapshot.capability->transactionalBulk) {
+        return Utils::ResultError(
+            Tr::tr("The controller does not support transactional package upload."));
+    }
+    if (!d->snapshot.controllerState || !d->snapshot.controllerState->ready
+        || d->snapshot.controllerState->serviceState != Data::ControllerServiceState::Shutdown) {
+        return Utils::ResultError(
+            Tr::tr("Enter configuration mode before deploying a controller package."));
+    }
+    if (d->refreshInProgress)
+        return Utils::ResultError(Tr::tr("Wait for the controller refresh to finish."));
+    if (d->hasActiveControlOperation())
+        return Utils::ResultError(Tr::tr("Another controller operation is already active."));
+    if (d->hasActiveDeployment())
+        return Utils::ResultError(Tr::tr("Another package deployment is already active."));
+
+    d->beginDeployment(request, fingerprint);
+    if (!d->sendDeploymentBegin()) {
+        if (d->hasActiveDeployment()) {
+            d->setDeploymentState(
+                Data::ControllerPackageDeploymentState::Failed,
+                Tr::tr("The package upload could not be started."),
+                {},
+                {},
+                Data::ControllerOperation::UploadPackage);
+        }
+        return Utils::ResultError(Tr::tr("The package upload could not be started."));
+    }
+    return {};
+}
+
+Utils::Result<> ProductApiSession::cancelPackageDeployment(const QString &operationId)
+{
+    const Data::ControllerPackageDeploymentProgress &progress
+        = d->snapshot.packageDeploymentProgress;
+    if (operationId.isEmpty() || progress.operationId != operationId)
+        return Utils::ResultError(Tr::tr("The package deployment OperationId does not match."));
+    if (progress.state == Data::ControllerPackageDeploymentState::Canceled)
+        return {};
+    if (progress.state == Data::ControllerPackageDeploymentState::Canceling)
+        return {};
+    if (progress.state != Data::ControllerPackageDeploymentState::Uploading
+        && progress.state != Data::ControllerPackageDeploymentState::Committing) {
+        return Utils::ResultError(
+            Tr::tr("Package deployment can only be canceled before validation begins."));
+    }
+
+    d->deploymentCancelRequested = true;
+    d->snapshot.packageDeploymentProgress.state = Data::ControllerPackageDeploymentState::Canceling;
+    d->snapshot.packageDeploymentProgress.detail = Tr::tr("Canceling the package upload.");
+    d->appendDeploymentAudit(
+        Data::ControllerOperation::AbortPackageUpload,
+        Tr::tr("Package deployment cancellation requested."));
+    d->publish();
+    if (!d->activeDeploymentRequestId && !d->sendDeploymentAbort(true)) {
+        return Utils::ResultError(Tr::tr("The package upload cancellation could not be sent."));
+    }
+    return {};
+}
+
 void ProductApiSession::shutdown()
 {
     if (d->shuttingDown)
         return;
+    d->sendBestEffortDeploymentAbort();
     d->sendBestEffortRelease();
     d->shuttingDown = true;
     d->userDisconnecting = true;
@@ -2969,6 +4097,11 @@ bool ProductApiSession::isIdleForTests() const
 {
     return activeSocketCountForTests() == 0 && pendingRequestCountForTests() == 0
            && !d->reconnectTimer->isActive() && !d->refreshInProgress;
+}
+
+bool ProductApiSession::refreshInProgressForTests() const
+{
+    return d->refreshInProgress;
 }
 
 int ProductApiSession::activeSocketCountForTests() const

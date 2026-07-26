@@ -140,7 +140,8 @@ for later feature data.
 Qt Creator pages and one concrete vendor/protocol adapter registered by an
 independent plugin. Multiple providers of this kind may coexist. Each provider
 exposes profiles for a Project/Master scope, one current immutable
-`ControllerConnectionSnapshot`, and three asynchronous operation requests:
+`ControllerConnectionSnapshot`, and three required asynchronous connection
+requests:
 
 - `connectToController(request)`;
 - `refreshController()`; and
@@ -152,6 +153,20 @@ asynchronous transport operation later succeeded. Consumers observe
 `connectionProfilesChanged()` or `connectionSnapshotChanged()` and re-query
 the complete immutable values. A concrete provider must publish every signal
 on its GUI thread; background socket or codec work remains private.
+
+Optional typed capabilities use the same acceptance/result split:
+
+- `supportsControlCommand()` and `executeControlCommand()` expose
+  provider-neutral control semantics;
+- `supportsPackageDeployment()` and `deployPackage()` accept one immutable
+  package transaction; and
+- `cancelPackageDeployment(operationId)` requests cancellation only while the
+  Provider reports an upload phase where cancellation is safe.
+
+The default implementations reject every optional mutation. Deployment
+progress retains caller OperationId, artifact SHA-256, byte counts, exact
+candidate/previous selectors, status/result, timestamps, and bounded audit
+events without exposing a vendor message, socket, or package format.
 
 An adapter may additionally expose an editable presentation value through
 `connectionProfileConfiguration(scope, profileId)` and accept it through
@@ -266,10 +281,11 @@ connectivity failures must not be mislabeled as master defects.
 The original connection-only Core revision authorized no control lease,
 configuration mode, discovery, runtime state transition, package mutation,
 SDO/PDO write, or firmware change. The later typed extension adds only
-provider-neutral command support/dispatch, progress, and linear Actual Bus
-values. The default Provider rejects control; a vendor adapter opts into each
-command. Numeric Product API messages, fixed endpoints, channel layout, frame
-encoding, and status tables remain private to the independent, headless
+provider-neutral command and package-deployment support/dispatch, progress,
+and linear Actual Bus values. The default Provider rejects control and package
+deployment; a vendor adapter opts in explicitly. Numeric Product API messages,
+fixed endpoints, channel layout, frame encoding, package format, trust policy,
+and status tables remain private to the independent, headless
 `EtherCATProductApi` plugin documented in `docs/ethercat-product-api.md` and
 `docs/ethercat-online-controller.md`.
 

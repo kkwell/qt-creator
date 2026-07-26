@@ -107,6 +107,11 @@ enum class ControllerOperation {
     Pause,
     Resume,
     ControlledStop,
+    UploadPackage,
+    AbortPackageUpload,
+    ValidatePackage,
+    ActivatePackage,
+    RollbackPackage,
 };
 
 enum class ControllerControlCommand {
@@ -129,6 +134,20 @@ enum class ControllerControlState {
     Pending,
     Succeeded,
     Failed,
+};
+
+enum class ControllerPackageDeploymentState {
+    Idle,
+    Uploading,
+    Committing,
+    Validating,
+    Activating,
+    RollingBack,
+    Canceling,
+    Succeeded,
+    Canceled,
+    Failed,
+    OutcomeUnknown,
 };
 
 enum class ControllerRetryDisposition { Unknown, Retryable, Reconnect, NotRetryable };
@@ -159,6 +178,71 @@ struct ETHERCATDATA_EXPORT ControllerControlProgress
 
     friend bool operator==(const ControllerControlProgress &,
                            const ControllerControlProgress &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT ControllerPackageSelector
+{
+    ControllerSlot slot = ControllerSlot::None;
+    quint64 generation = 0;
+    quint64 configurationId = 0;
+
+    bool isValid() const
+    {
+        return (slot == ControllerSlot::A || slot == ControllerSlot::B) && generation
+               && configurationId;
+    }
+
+    friend bool operator==(const ControllerPackageSelector &, const ControllerPackageSelector &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT ControllerPackageDeploymentRequest
+{
+    QString operationId;
+    QByteArray artifact;
+    quint64 configurationId = 0;
+    bool activate = true;
+    bool rollbackOnActivationFailure = true;
+
+    friend bool operator==(
+        const ControllerPackageDeploymentRequest &, const ControllerPackageDeploymentRequest &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT ControllerPackageDeploymentAuditEvent
+{
+    quint64 sequence = 0;
+    ControllerOperation operation = ControllerOperation::None;
+    std::optional<quint64> requestId;
+    std::optional<qint32> status;
+    std::optional<qint32> operationResult;
+    QString detail;
+    QDateTime occurredAt;
+
+    friend bool operator==(
+        const ControllerPackageDeploymentAuditEvent &, const ControllerPackageDeploymentAuditEvent &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT ControllerPackageDeploymentProgress
+{
+    QString operationId;
+    QByteArray artifactSha256;
+    ControllerPackageDeploymentState state = ControllerPackageDeploymentState::Idle;
+    qint64 totalBytes = 0;
+    qint64 transferredBytes = 0;
+    std::optional<ControllerPackageSelector> candidate;
+    std::optional<ControllerPackageSelector> previousActive;
+    std::optional<qint32> status;
+    std::optional<qint32> operationResult;
+    QString detail;
+    QList<ControllerPackageDeploymentAuditEvent> audit;
+    QDateTime startedAt;
+    QDateTime completedAt;
+
+    friend bool operator==(
+        const ControllerPackageDeploymentProgress &, const ControllerPackageDeploymentProgress &)
         = default;
 };
 
@@ -410,6 +494,7 @@ struct ETHERCATDATA_EXPORT ControllerConnectionSnapshot
     std::optional<ControllerFirmwareSummary> firmware;
     std::optional<ControllerOperationError> lastError;
     ControllerControlProgress controlProgress;
+    ControllerPackageDeploymentProgress packageDeploymentProgress;
     std::optional<ControllerTopologySnapshot> topology;
 
     friend bool operator==(const ControllerConnectionSnapshot &, const ControllerConnectionSnapshot &)
@@ -429,9 +514,14 @@ Q_DECLARE_METATYPE(EtherCAT::Data::ControllerErrorSource)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerOperation)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerControlCommand)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerControlState)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPackageDeploymentState)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerRetryDisposition)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerControlRequest)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerControlProgress)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPackageSelector)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPackageDeploymentRequest)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPackageDeploymentAuditEvent)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPackageDeploymentProgress)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerTopologySlave)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerTopologySnapshot)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerConnectionScope)

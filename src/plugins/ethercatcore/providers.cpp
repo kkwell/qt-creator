@@ -163,6 +163,24 @@ Utils::Result<> ControllerConnectionProvider::executeControlCommand(
         Tr::tr("This controller provider does not support control commands."));
 }
 
+bool ControllerConnectionProvider::supportsPackageDeployment() const
+{
+    return false;
+}
+
+Utils::Result<> ControllerConnectionProvider::deployPackage(
+    const Data::ControllerPackageDeploymentRequest &)
+{
+    return Utils::ResultError(
+        Tr::tr("This controller provider does not support package deployment."));
+}
+
+Utils::Result<> ControllerConnectionProvider::cancelPackageDeployment(const QString &)
+{
+    return Utils::ResultError(
+        Tr::tr("This controller provider does not support canceling package deployment."));
+}
+
 ScanProvider::ScanProvider(Utils::Id id, const QString &displayName, QObject *parent)
     : Provider(ProviderKind::Scan, id, displayName, parent)
 {}

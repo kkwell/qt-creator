@@ -247,6 +247,9 @@ public:
         Data::ControllerControlCommand command) const;
     virtual Utils::Result<> executeControlCommand(
         const Data::ControllerControlRequest &request);
+    virtual bool supportsPackageDeployment() const;
+    virtual Utils::Result<> deployPackage(const Data::ControllerPackageDeploymentRequest &request);
+    virtual Utils::Result<> cancelPackageDeployment(const QString &operationId);
 
 signals:
     void connectionProfilesChanged();

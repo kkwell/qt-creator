@@ -1001,6 +1001,49 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
     QCOMPARE(
         unsupportedEndpointEdit.error(),
         Tr::tr("This controller provider does not support editing connection profiles."));
+    QVERIFY(!provider.supportsPackageDeployment());
+    Data::ControllerPackageDeploymentRequest deploymentRequest;
+    deploymentRequest.operationId = QStringLiteral("core-contract");
+    deploymentRequest.artifact = QByteArray("signed-controller-package");
+    deploymentRequest.configurationId = 813;
+    QCOMPARE(Data::ControllerPackageDeploymentRequest(deploymentRequest), deploymentRequest);
+    const Utils::Result<> unsupportedDeployment = provider.deployPackage(deploymentRequest);
+    QVERIFY(!unsupportedDeployment);
+    QCOMPARE(
+        unsupportedDeployment.error(),
+        Tr::tr("This controller provider does not support package deployment."));
+    const Utils::Result<> unsupportedCancel = provider.cancelPackageDeployment(
+        deploymentRequest.operationId);
+    QVERIFY(!unsupportedCancel);
+    QCOMPARE(
+        unsupportedCancel.error(),
+        Tr::tr("This controller provider does not support canceling package deployment."));
+
+    Data::ControllerPackageDeploymentProgress deploymentProgress;
+    deploymentProgress.operationId = deploymentRequest.operationId;
+    deploymentProgress.artifactSha256 = QByteArray(32, '\x5a');
+    deploymentProgress.state = Data::ControllerPackageDeploymentState::Uploading;
+    deploymentProgress.totalBytes = deploymentRequest.artifact.size();
+    deploymentProgress.transferredBytes = 7;
+    deploymentProgress.candidate = Data::ControllerPackageSelector{
+        Data::ControllerSlot::B, 12, deploymentRequest.configurationId};
+    deploymentProgress.previousActive
+        = Data::ControllerPackageSelector{Data::ControllerSlot::A, 11, 810};
+    Data::ControllerPackageDeploymentAuditEvent auditEvent;
+    auditEvent.sequence = 1;
+    auditEvent.operation = Data::ControllerOperation::UploadPackage;
+    auditEvent.requestId = 42;
+    auditEvent.detail = QStringLiteral("BulkBegin queued");
+    auditEvent.occurredAt = QDateTime::currentDateTimeUtc();
+    deploymentProgress.audit.append(auditEvent);
+    QCOMPARE(
+        Data::ControllerPackageSelector(*deploymentProgress.candidate),
+        *deploymentProgress.candidate);
+    QVERIFY(deploymentProgress.candidate->isValid());
+    QCOMPARE(
+        Data::ControllerPackageDeploymentAuditEvent(deploymentProgress.audit.constFirst()),
+        auditEvent);
+    QCOMPARE(Data::ControllerPackageDeploymentProgress(deploymentProgress), deploymentProgress);
 
     TestControllerConnectionProvider alternateProvider(
         "EtherCAT.Connection.VendorIpc",
