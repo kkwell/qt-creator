@@ -253,14 +253,6 @@ static bool hasUnmanagedEtherCATProject(Core::ProjectService *projectService)
         });
 }
 
-static bool controllerStateAllowsRelease(const Data::ControllerConnectionSnapshot &snapshot)
-{
-    const std::optional<Data::ControllerStateSummary> &state = snapshot.controllerState;
-    return state && state->ready
-           && (state->serviceState == Data::ControllerServiceState::Shutdown
-               || state->serviceState == Data::ControllerServiceState::OperationalSafe);
-}
-
 static bool controllerControlLeaseOwnershipUnverified(
     const Data::ControllerConnectionSnapshot &snapshot)
 {
@@ -319,11 +311,6 @@ static QString controllerControlStateUnavailableReason(
     case Command::ReleaseControl:
         if (const QString reason = requireOwnedLease(); !reason.isEmpty())
             return reason;
-        if (const QString reason = requireReadyState(); !reason.isEmpty())
-            return reason;
-        if (!controllerStateAllowsRelease(snapshot)) {
-            return Tr::tr("Stop the controller in OP_SAFE or Shutdown before releasing control.");
-        }
         return {};
     case Command::EnterConfigurationMode:
         if (const QString reason = requireOwnedLease(); !reason.isEmpty())
@@ -1321,13 +1308,11 @@ bool WorkbenchController::canDisconnectSelectedController() const
     if (m_controllerStartupStates.contains(provider))
         return false;
     const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
-    const bool releaseRequired = snapshot.session && snapshot.session->ownsControlLease;
     return (snapshot.scope == *scope || !controllerConnectionProjectIsOpen(snapshot.scope))
            && snapshot.state != Data::ControllerConnectionState::Disconnected
            && snapshot.state != Data::ControllerConnectionState::Disconnecting
            && snapshot.controlProgress.state != Data::ControllerControlState::Pending
-           && !controllerControlLeaseOwnershipUnverified(snapshot)
-           && (!releaseRequired || controllerStateAllowsRelease(snapshot));
+           && !controllerControlLeaseOwnershipUnverified(snapshot);
 }
 
 bool WorkbenchController::canRefreshSelectedController() const
@@ -2999,55 +2984,10 @@ void WorkbenchController::advanceControllerCleanup(
         return;
     }
 
-    const std::optional<Data::ControllerStateSummary> &controllerState = snapshot.controllerState;
-    const auto serviceState = controllerState ? std::optional(controllerState->serviceState)
-                                              : std::optional<Data::ControllerServiceState>();
-    const bool safeForRelease = controllerStateAllowsRelease(snapshot);
     switch (stateIt->phase) {
     case ControllerCleanupPhase::WaitingForPending:
         stateIt->phase = ControllerCleanupPhase::Evaluate;
         scheduleControllerCleanup(provider);
-        return;
-    case ControllerCleanupPhase::WaitingForStop:
-        if (safeForRelease) {
-            stateIt->phase = ControllerCleanupPhase::Evaluate;
-            scheduleControllerCleanup(provider);
-            return;
-        }
-        if (controllerState && controllerState->ready
-            && controllerState->serviceState == Data::ControllerServiceState::Fault) {
-            stateIt->phase = ControllerCleanupPhase::Evaluate;
-            scheduleControllerCleanup(provider);
-            return;
-        }
-        if (snapshot.controlProgress.command == Data::ControllerControlCommand::ControlledStop
-            && snapshot.controlProgress.state == Data::ControllerControlState::Failed) {
-            failControllerCleanup(
-                provider,
-                snapshot.controlProgress.detail.isEmpty()
-                    ? Tr::tr("Controlled Stop failed during project cleanup.")
-                    : snapshot.controlProgress.detail);
-            return;
-        }
-        waitForSnapshot(true);
-        return;
-    case ControllerCleanupPhase::WaitingForConfiguration:
-        if (safeForRelease) {
-            stateIt->phase = ControllerCleanupPhase::Evaluate;
-            scheduleControllerCleanup(provider);
-            return;
-        }
-        if (snapshot.controlProgress.command
-                == Data::ControllerControlCommand::EnterConfigurationMode
-            && snapshot.controlProgress.state == Data::ControllerControlState::Failed) {
-            failControllerCleanup(
-                provider,
-                snapshot.controlProgress.detail.isEmpty()
-                    ? Tr::tr("Configuration mode failed during project cleanup.")
-                    : snapshot.controlProgress.detail);
-            return;
-        }
-        waitForSnapshot(true);
         return;
     case ControllerCleanupPhase::WaitingForRelease:
         if (snapshot.session && !snapshot.session->ownsControlLease) {
@@ -3134,65 +3074,16 @@ void WorkbenchController::advanceControllerCleanup(
         waitForSnapshot(true);
         return;
     }
-    if (!controllerState || !controllerState->ready) {
-        stateIt->phase = ControllerCleanupPhase::WaitingForStableState;
-        stateIt->failure = Tr::tr("The controller state is not ready for safe cleanup.");
-        waitForSnapshot(true);
-        return;
-    }
-
     using Command = Data::ControllerControlCommand;
-    using ServiceState = Data::ControllerServiceState;
-    switch (*serviceState) {
-    case ServiceState::Running:
-    case ServiceState::Paused: {
-        const QString reason
-            = controllerControlStateUnavailableReason(snapshot, Command::ControlledStop);
-        if (!reason.isEmpty()) {
-            stateIt->phase = ControllerCleanupPhase::WaitingForStableState;
-            stateIt->failure = reason;
-            waitForSnapshot(true);
-            return;
-        }
-        dispatchControl(Command::ControlledStop, ControllerCleanupPhase::WaitingForStop);
-        return;
-    }
-    case ServiceState::Fault: {
-        const QString reason
-            = controllerControlStateUnavailableReason(snapshot, Command::EnterConfigurationMode);
-        if (!reason.isEmpty()) {
-            stateIt->phase = ControllerCleanupPhase::WaitingForStableState;
-            stateIt->failure = reason;
-            waitForSnapshot(true);
-            return;
-        }
-        dispatchControl(
-            Command::EnterConfigurationMode, ControllerCleanupPhase::WaitingForConfiguration);
-        return;
-    }
-    case ServiceState::OperationalSafe:
-    case ServiceState::Shutdown: {
-        const QString reason
-            = controllerControlStateUnavailableReason(snapshot, Command::ReleaseControl);
-        if (!reason.isEmpty()) {
-            stateIt->phase = ControllerCleanupPhase::WaitingForStableState;
-            stateIt->failure = reason;
-            waitForSnapshot(true);
-            return;
-        }
-        dispatchControl(Command::ReleaseControl, ControllerCleanupPhase::WaitingForRelease);
-        return;
-    }
-    case ServiceState::Unknown:
-    case ServiceState::Boot:
-    case ServiceState::Configuring:
-    case ServiceState::SafeOperational:
-    case ServiceState::Stopping:
-    case ServiceState::Recovering:
+    const QString reason
+        = controllerControlStateUnavailableReason(snapshot, Command::ReleaseControl);
+    if (!reason.isEmpty()) {
         stateIt->phase = ControllerCleanupPhase::WaitingForStableState;
+        stateIt->failure = reason;
         waitForSnapshot(true);
         return;
     }
+    dispatchControl(Command::ReleaseControl, ControllerCleanupPhase::WaitingForRelease);
 }
 
 void WorkbenchController::finishControllerCleanup(Core::ControllerConnectionProvider *provider)

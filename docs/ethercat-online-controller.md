@@ -194,10 +194,12 @@ flow:
    FreeRun versus Distributed Clocks. In `PAUSED`, Run sends Resume.
 9. Use the lower-left Debug control to Pause from `RUNNING` or Resume from
    `PAUSED`, with authoritative state confirmation.
-10. Use Controlled Stop in the same quick-control area and confirm `OP_SAFE`.
-11. EnterConfigurationMode again and confirm `SHUTDOWN` with no active
-    controller package.
-12. ReleaseControl, then Disconnect.
+10. Use Controlled Stop only when the operator intends to stop, then confirm
+    `OP_SAFE`.
+11. A commissioning shutdown may enter Configuration again and confirm
+    `SHUTDOWN` with no active controller package.
+12. ReleaseControl, then Disconnect. Releasing a management lease from
+    `RUNNING` or `PAUSED` leaves the configured cyclic task autonomous.
 
 The client does not report a state-changing command Succeeded merely because
 the controller accepted its final command stage. It performs an authoritative
@@ -205,15 +207,22 @@ state/package refresh and verifies the command-specific postcondition.
 Discovery completes only with a typed TopologyResult; Restore completes only
 with the matching typed PackageState response.
 
-The normal Release point is after the second confirmed Configuration step.
-Disconnect from `RUNNING` or `PAUSED` is rejected and instructs the operator to
-use ControlledStop. If a non-running session still owns the lease, Disconnect
-performs ReleaseControl first and tears down the three channels only after the
-release succeeds. Process shutdown can make only a bounded best-effort release
-attempt when no control operation is active and the last authoritative state
-is ready `SHUTDOWN` or `OP_SAFE`. It does not send ReleaseControl from
-`RUNNING`, `PAUSED`, or an unknown state, and cannot claim controller
-acknowledgement.
+Disconnect is allowed from `RUNNING` or `PAUSED` when no command is pending.
+It performs ReleaseControl first and tears down the three channels only after
+the release succeeds. ReleaseControl changes only management ownership; it
+does not imply ControlledStop or Configuration. Process shutdown makes a
+bounded best-effort release attempt whenever no control operation is active,
+including when the last state is running or unavailable, and cannot claim
+controller acknowledgement.
+
+The controller runtime is autonomous after a valid package reaches
+`RUNNING`. Loss of the supervisory connection or its heartbeat clears the
+lease owner and rejects stale writes, but does not stop the EtherCAT cycle or
+reset the package when bus and hardware health remain valid. A later session
+may acquire control and manage the same running instance. Real-controller
+qualification of this rule waits for the CPU0-only `ISSUE-API-021` deployment;
+the IDE-side state machine and offline tests do not constitute hardware
+evidence.
 
 ### Package-determined FreeRun and Distributed Clocks
 
@@ -523,11 +532,13 @@ service, command, topology, and error changes while ignoring heartbeat
 timestamps. Controller connection state is likewise absent from the global
 status bar; the lower-left actions provide the compact actionable projection.
 
-Closing a Project is the sole automatic safety cleanup. Workbench clears every
+Closing a Project is the sole automatic connection cleanup. Workbench clears every
 in-memory controller selection belonging to that Project and requests
 Disconnect from every Provider whose current snapshot belongs to it and is
 not already Disconnected or Disconnecting. An unrelated Project close does
-not affect the selected or connected scope.
+not affect the selected or connected scope. Cleanup releases only the
+management lease; it never inserts ControlledStop or Configuration before
+Disconnect, so an autonomous runtime continues.
 
 If a Provider rejects that Disconnect request, Workbench performs no more than
 five total Disconnect attempts. The retry identity is the Provider

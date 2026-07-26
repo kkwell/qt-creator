@@ -19127,13 +19127,13 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     controllerState.ready = false;
     snapshot.controllerState = controllerState;
     provider.publishSnapshot(snapshot);
-    QTRY_VERIFY(!release->isEnabled());
-    QVERIFY(!controller.canDisconnectSelectedController());
+    QTRY_VERIFY(release->isEnabled());
+    QVERIFY(controller.canDisconnectSelectedController());
 
     snapshot.controllerState.reset();
     provider.publishSnapshot(snapshot);
-    QTRY_VERIFY(!release->isEnabled());
-    QVERIFY(!controller.canDisconnectSelectedController());
+    QTRY_VERIFY(release->isEnabled());
+    QVERIFY(controller.canDisconnectSelectedController());
 
     controllerState.ready = true;
     snapshot.controllerState = controllerState;
@@ -19219,8 +19219,8 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     QVERIFY(configuration->isEnabled());
     QVERIFY(!scan->isEnabled());
     QVERIFY(!restore->isEnabled());
-    QVERIFY(!release->isEnabled());
-    QVERIFY(!controller.canDisconnectSelectedController());
+    QVERIFY(release->isEnabled());
+    QVERIFY(controller.canDisconnectSelectedController());
     QVERIFY(!controller.quickControllerControlCommand(
         scope, ControllerQuickControlAction::Run));
     const std::optional<Data::ControllerControlCommand> debugFromRunning
@@ -19244,8 +19244,8 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     controllerState.paused = true;
     snapshot.controllerState = controllerState;
     provider.publishSnapshot(snapshot);
-    QVERIFY(!release->isEnabled());
-    QVERIFY(!controller.canDisconnectSelectedController());
+    QVERIFY(release->isEnabled());
+    QVERIFY(controller.canDisconnectSelectedController());
     const std::optional<Data::ControllerControlCommand> runFromPaused
         = controller.quickControllerControlCommand(scope, ControllerQuickControlAction::Run);
     const std::optional<Data::ControllerControlCommand> debugFromPaused
@@ -19402,6 +19402,18 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     snapshot.package = package;
     provider.publishSnapshot(snapshot);
     QTRY_VERIFY(release->isEnabled());
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    QVERIFY(!controller.m_controllerStartupStates.contains(&provider));
+    QTRY_VERIFY(controller.selectedControllerConnectionScope());
+    QCOMPARE(*controller.selectedControllerConnectionScope(), scope);
+    QCOMPARE(provider.connectionSnapshot().scope, scope);
+    QCOMPARE(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected);
+    QVERIFY(
+        provider.connectionSnapshot().controlProgress.state
+        != Data::ControllerControlState::Pending);
+    QVERIFY(provider.connectionSnapshot().session);
+    QVERIFY(provider.connectionSnapshot().session->ownsControlLease);
     QVERIFY(controller.canDisconnectSelectedController());
     release->click();
     QCOMPARE(provider.controlCalls, 10);
@@ -20091,7 +20103,7 @@ void EtherCATWorkbenchTests::testControllerCommunicationAutoAcquireAcrossProject
     QCOMPARE(provider.controlCalls, 1);
 }
 
-void EtherCATWorkbenchTests::testControllerProjectRemovalSafetyCleanup()
+void EtherCATWorkbenchTests::testControllerProjectRemovalPreservesAutonomousRuntime()
 {
     constexpr int cleanupSettleMs = 250;
     WorkbenchController controller;
@@ -20184,7 +20196,7 @@ void EtherCATWorkbenchTests::testControllerProjectRemovalSafetyCleanup()
 
         controller.handleProjectAboutToBeRemoved(scope.projectId);
         QTRY_COMPARE(provider.controlCalls, controlsBefore + 1);
-        QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::ControlledStop);
+        QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::ReleaseControl);
         QCOMPARE(provider.disconnectCalls, disconnectsBefore);
         QVERIFY(controller.controllerConnectionSelection(scope).providerExplicitlySelected);
         provider.notifySnapshotChanged();
@@ -20193,16 +20205,8 @@ void EtherCATWorkbenchTests::testControllerProjectRemovalSafetyCleanup()
         QCOMPARE(provider.disconnectCalls, disconnectsBefore);
 
         completeCommand(
-            Data::ControllerControlCommand::ControlledStop,
-            Data::ControllerServiceState::OperationalSafe,
-            true);
-        QTRY_COMPARE(provider.controlCalls, controlsBefore + 2);
-        QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::ReleaseControl);
-        QCOMPARE(provider.disconnectCalls, disconnectsBefore);
-
-        completeCommand(
             Data::ControllerControlCommand::ReleaseControl,
-            Data::ControllerServiceState::OperationalSafe,
+            initialState,
             false);
         QTRY_COMPARE(provider.disconnectCalls, disconnectsBefore + 1);
         QTRY_VERIFY(!controller.m_controllerCleanupStates.contains(&provider));
@@ -20227,15 +20231,10 @@ void EtherCATWorkbenchTests::testControllerProjectRemovalSafetyCleanup()
     QCOMPARE(provider.disconnectCalls, disconnectsBeforePending);
     completeCommand(Data::ControllerControlCommand::Pause, Data::ControllerServiceState::Paused, true);
     QTRY_COMPARE(provider.controlCalls, controlsBeforePending + 1);
-    QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::ControlledStop);
-    completeCommand(
-        Data::ControllerControlCommand::ControlledStop,
-        Data::ControllerServiceState::OperationalSafe,
-        true);
-    QTRY_COMPARE(provider.controlCalls, controlsBeforePending + 2);
+    QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::ReleaseControl);
     completeCommand(
         Data::ControllerControlCommand::ReleaseControl,
-        Data::ControllerServiceState::OperationalSafe,
+        Data::ControllerServiceState::Paused,
         false);
     QTRY_COMPARE(provider.disconnectCalls, disconnectsBeforePending + 1);
     QTRY_VERIFY(!controller.m_controllerCleanupStates.contains(&provider));
@@ -20256,18 +20255,11 @@ void EtherCATWorkbenchTests::testControllerProjectRemovalSafetyCleanup()
         controller.m_controllerCleanupStates.value(&provider).remainingPolls,
         WorkbenchController::controllerCleanupMaximumPolls);
     QTRY_COMPARE(provider.controlCalls, controlsBeforeFault + 1);
-    QCOMPARE(
-        provider.lastControlRequest.command, Data::ControllerControlCommand::EnterConfigurationMode);
+    QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::ReleaseControl);
     QCOMPARE(provider.disconnectCalls, disconnectsBeforeFault);
     completeCommand(
-        Data::ControllerControlCommand::EnterConfigurationMode,
-        Data::ControllerServiceState::Shutdown,
-        true);
-    QTRY_COMPARE(provider.controlCalls, controlsBeforeFault + 2);
-    QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::ReleaseControl);
-    completeCommand(
         Data::ControllerControlCommand::ReleaseControl,
-        Data::ControllerServiceState::Shutdown,
+        Data::ControllerServiceState::Fault,
         false);
     QTRY_COMPARE(provider.disconnectCalls, disconnectsBeforeFault + 1);
     QTRY_VERIFY(!controller.m_controllerCleanupStates.contains(&provider));
@@ -20289,7 +20281,7 @@ void EtherCATWorkbenchTests::testControllerProjectRemovalSafetyCleanup()
     provider.publishSnapshot(nextGeneration);
     QTRY_COMPARE(provider.controlCalls, controlsBeforeGeneration + 2);
     QVERIFY(controller.m_controllerCleanupStates.value(&provider).remainingPolls <= 123);
-    QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::ControlledStop);
+    QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::ReleaseControl);
     QCOMPARE(provider.disconnectCalls, disconnectsBeforeGeneration);
     provider.notifySnapshotChanged();
     QTest::qWait(cleanupSettleMs);
@@ -20355,15 +20347,16 @@ void EtherCATWorkbenchTests::testControllerProjectRemovalSafetyCleanup()
     const int disconnectsBeforeRemoval = provider.disconnectCalls;
     controller.handleProjectAboutToBeRemoved(removalScope.projectId);
     QTRY_COMPARE(provider.controlCalls, controlsBeforeRemoval + 1);
+    QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::ReleaseControl);
     ExtensionSystem::PluginManager::removeObject(&provider);
     providerRegistered = false;
     QVERIFY(!controller.m_controllerCleanupStates.contains(&provider));
     ExtensionSystem::PluginManager::addObject(&provider);
     providerRegistered = true;
     completeCommand(
-        Data::ControllerControlCommand::ControlledStop,
-        Data::ControllerServiceState::OperationalSafe,
-        true);
+        Data::ControllerControlCommand::ReleaseControl,
+        Data::ControllerServiceState::Running,
+        false);
     QTest::qWait(cleanupSettleMs);
     QCOMPARE(provider.controlCalls, controlsBeforeRemoval + 1);
     QCOMPARE(provider.disconnectCalls, disconnectsBeforeRemoval);

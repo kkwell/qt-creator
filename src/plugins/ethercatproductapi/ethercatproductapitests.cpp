@@ -157,7 +157,7 @@ QByteArray controllerStatePayload()
     return payload;
 }
 
-QByteArray lifecycleControllerStatePayload(quint32 serviceState)
+QByteArray lifecycleControllerStatePayload(quint32 serviceState, quint64 cycleCount = 202)
 {
     QByteArray payload(80, '\0');
     quint32 status = 0x1; // READY
@@ -179,7 +179,7 @@ QByteArray lifecycleControllerStatePayload(quint32 serviceState)
     putU32(payload, 0, serviceState);
     putU32(payload, 4, status);
     putU64(payload, 32, 101);
-    putU64(payload, 40, 202);
+    putU64(payload, 40, cycleCount);
     putU64(payload, 48, TestBootId);
     putU32(payload, 56, alState);
     putU32(payload, 60, workingCounter);
@@ -434,6 +434,14 @@ public:
     }
 
     QStringList violations() const { return m_violations; }
+    quint32 serviceState() const { return m_serviceState; }
+    bool leaseOwned() const { return m_leaseOwned; }
+    quint64 cycleCount() const
+    {
+        return 202 + (m_serviceState == 4 && m_elapsed.isValid()
+                          ? quint64(m_elapsed.elapsed())
+                          : 0);
+    }
 
     int acceptCount(Protocol::Role role) const
     {
@@ -494,6 +502,8 @@ public:
             rejectedCommandStatusPayload(
                 Protocol::MessageType::Heartbeat, 4, m_serviceState, status),
             Protocol::Flag::Response | Protocol::Flag::Error);
+        if (status == -7 || status == -8 || status == -9 || status == -11)
+            m_leaseOwned = false;
         m_heldHeartbeatPeer = nullptr;
         m_heldHeartbeatRequestId = 0;
     }
@@ -768,7 +778,7 @@ private:
                          Protocol::MessageType::ControllerState,
                          request.header.requestId,
                          m_behavior == Behavior::ControlLifecycle
-                             ? lifecycleControllerStatePayload(m_serviceState)
+                             ? lifecycleControllerStatePayload(m_serviceState, cycleCount())
                              : controllerStatePayload());
             return;
         }
@@ -2509,9 +2519,6 @@ void EtherCATProductApiTests::testControlLifecycle()
             && provider.connectionSnapshot().controllerState->serviceState
                    == Data::ControllerServiceState::Running,
         1000);
-    control.command = Data::ControllerControlCommand::ReleaseControl;
-    QVERIFY(!provider.executeControlCommand(control));
-    QVERIFY(!provider.disconnectFromController());
 
     control.command = Data::ControllerControlCommand::Pause;
     QVERIFY(provider.executeControlCommand(control));
@@ -3264,7 +3271,7 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         QFAIL(qPrintable(failure));
 }
 
-void EtherCATProductApiTests::testShutdownReleaseSafety_data()
+void EtherCATProductApiTests::testShutdownReleasePreservesAutonomousRuntime_data()
 {
     QTest::addColumn<int>("targetState");
 
@@ -3274,7 +3281,7 @@ void EtherCATProductApiTests::testShutdownReleaseSafety_data()
     QTest::newRow("pending-release") << -1;
 }
 
-void EtherCATProductApiTests::testShutdownReleaseSafety()
+void EtherCATProductApiTests::testShutdownReleasePreservesAutonomousRuntime()
 {
     QFETCH(int, targetState);
 
@@ -3325,13 +3332,151 @@ void EtherCATProductApiTests::testShutdownReleaseSafety()
             1000);
     }
 
+    quint32 expectedServiceState = 8;
+    if (targetState == int(Data::ControllerServiceState::Running))
+        expectedServiceState = 4;
+    else if (targetState == int(Data::ControllerServiceState::Paused))
+        expectedServiceState = 9;
+    const quint64 cycleBeforeShutdown = controller.cycleCount();
     provider.shutdown();
     QTest::qWait(100);
-    const int expectedReleaseCount
-        = targetState == int(Data::ControllerServiceState::Shutdown) || targetState == -1 ? 1 : 0;
-    QCOMPARE(controller.requestCount(Protocol::MessageType::ReleaseControl), expectedReleaseCount);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ReleaseControl), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ControlledStop), 0);
+    QCOMPARE(controller.serviceState(), expectedServiceState);
+    QVERIFY(!controller.leaseOwned());
+    if (expectedServiceState == 4)
+        QVERIFY(controller.cycleCount() > cycleBeforeShutdown);
     QCOMPARE(provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected);
     QVERIFY(provider.sessionForTests()->isIdleForTests());
+    QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testDisconnectPreservesAutonomousRuntime()
+{
+    LoopbackController controller(LoopbackController::Behavior::ControlLifecycle);
+    QVERIFY(controller.start());
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+    const auto execute = [&provider](Data::ControllerControlCommand command) {
+        Data::ControllerControlRequest request;
+        request.command = command;
+        if (!provider.executeControlCommand(request))
+            return false;
+        return waitForHardwareCondition(
+            [&provider, command] {
+                const Data::ControllerControlProgress progress
+                    = provider.connectionSnapshot().controlProgress;
+                return progress.command == command
+                       && progress.state == Data::ControllerControlState::Succeeded;
+            },
+            2000);
+    };
+
+    QVERIFY(execute(Data::ControllerControlCommand::AcquireControl));
+    QVERIFY(execute(Data::ControllerControlCommand::EnterConfigurationMode));
+    QVERIFY(execute(Data::ControllerControlCommand::RestoreActivePackage));
+    QVERIFY(execute(Data::ControllerControlCommand::StartFreeRun));
+    QCOMPARE(controller.serviceState(), quint32(4));
+    QVERIFY(controller.leaseOwned());
+
+    controller.holdNextRelease();
+    const quint64 cycleBeforeDisconnect = controller.cycleCount();
+    QVERIFY(provider.disconnectFromController());
+    QCOMPARE(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnecting);
+    QTRY_VERIFY_WITH_TIMEOUT(controller.hasHeldRelease(), 1000);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ControlledStop), 0);
+    QCOMPARE(controller.serviceState(), quint32(4));
+    QTest::qWait(20);
+    QVERIFY(controller.cycleCount() > cycleBeforeDisconnect);
+
+    controller.completeHeldRelease();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        1000);
+    QCOMPARE(controller.serviceState(), quint32(4));
+    QVERIFY(!controller.leaseOwned());
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ReleaseControl), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ControlledStop), 0);
+    QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testLeaseExpiryPreservesAutonomousRuntime()
+{
+    LoopbackController controller(LoopbackController::Behavior::ControlLifecycle);
+    controller.setDefaultLeaseDurationMs(300);
+    QVERIFY(controller.start());
+    ProductApiSession::Options options = testOptions();
+    options.requestTimeoutMs = 800;
+    ProductApiConnectionProvider provider(controller.endpoints(), options);
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+    const auto execute = [&provider](Data::ControllerControlCommand command) {
+        Data::ControllerControlRequest request;
+        request.command = command;
+        if (!provider.executeControlCommand(request))
+            return false;
+        return waitForHardwareCondition(
+            [&provider, command] {
+                const Data::ControllerControlProgress progress
+                    = provider.connectionSnapshot().controlProgress;
+                return progress.command == command
+                       && progress.state == Data::ControllerControlState::Succeeded;
+            },
+            2000);
+    };
+
+    QVERIFY(execute(Data::ControllerControlCommand::AcquireControl));
+    QVERIFY(execute(Data::ControllerControlCommand::EnterConfigurationMode));
+    QVERIFY(execute(Data::ControllerControlCommand::RestoreActivePackage));
+    QVERIFY(execute(Data::ControllerControlCommand::StartFreeRun));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        provider.connectionSnapshot().controllerState
+            && provider.connectionSnapshot().controllerState->serviceState
+                   == Data::ControllerServiceState::Running,
+        1000);
+
+    controller.holdNextHeartbeat();
+    QTRY_VERIFY_WITH_TIMEOUT(controller.hasHeldHeartbeat(), 1000);
+    const quint64 cycleBeforeExpiry = controller.cycleCount();
+    controller.rejectHeldHeartbeat(-11);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        provider.connectionSnapshot().session
+            && !provider.connectionSnapshot().session->ownsControlLease,
+        1000);
+    const Data::ControllerConnectionSnapshot expired = provider.connectionSnapshot();
+    QVERIFY(expired.lastError);
+    QCOMPARE(expired.lastError->codeName, QString("LEASE_EXPIRED"));
+    QVERIFY(expired.controllerState);
+    QCOMPARE(
+        expired.controllerState->serviceState, Data::ControllerServiceState::Running);
+    QCOMPARE(controller.serviceState(), quint32(4));
+    QVERIFY(!controller.leaseOwned());
+    QTest::qWait(20);
+    QVERIFY(controller.cycleCount() > cycleBeforeExpiry);
+
+    Data::ControllerControlRequest stop;
+    stop.command = Data::ControllerControlCommand::ControlledStop;
+    const Utils::Result<> stopWithoutLease = provider.executeControlCommand(stop);
+    QVERIFY(!stopWithoutLease);
+    QCOMPARE(
+        stopWithoutLease.error(), Tr::tr("Acquire the control lease before this operation."));
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ControlledStop), 0);
+
+    QVERIFY(execute(Data::ControllerControlCommand::AcquireControl));
+    QVERIFY(execute(Data::ControllerControlCommand::ControlledStop));
+    QCOMPARE(controller.serviceState(), quint32(3));
+    QVERIFY(provider.disconnectFromController());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        1000);
     QVERIFY(controller.violations().isEmpty());
 }
 
@@ -3705,7 +3850,7 @@ void EtherCATProductApiTests::testDisconnectReleaseTimeoutPreservesEvidence()
     QVERIFY(controller.violations().isEmpty());
 }
 
-void EtherCATProductApiTests::testRejectedControlRefreshAndReleaseGates()
+void EtherCATProductApiTests::testRejectedControlRefreshStillAllowsRelease()
 {
     LoopbackController controller(LoopbackController::Behavior::ControlLifecycle);
     QVERIFY(controller.start());
@@ -3745,9 +3890,17 @@ void EtherCATProductApiTests::testRejectedControlRefreshAndReleaseGates()
     QVERIFY(!snapshot.package);
 
     control.command = Data::ControllerControlCommand::ReleaseControl;
-    QVERIFY(!provider.executeControlCommand(control));
-    QVERIFY(!provider.disconnectFromController());
-    QCOMPARE(controller.requestCount(Protocol::MessageType::ReleaseControl), 0);
+    QVERIFY(provider.executeControlCommand(control));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().controlProgress.state,
+        Data::ControllerControlState::Succeeded,
+        1000);
+    QVERIFY(provider.connectionSnapshot().session);
+    QVERIFY(!provider.connectionSnapshot().session->ownsControlLease);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ReleaseControl), 1);
+    QVERIFY(provider.disconnectFromController());
+    QCOMPARE(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected);
     QVERIFY(controller.violations().isEmpty());
 }
 

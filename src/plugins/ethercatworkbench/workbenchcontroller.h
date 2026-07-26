@@ -259,8 +259,6 @@ private:
         Evaluate,
         WaitingForPending,
         WaitingForStableState,
-        WaitingForStop,
-        WaitingForConfiguration,
         WaitingForRelease,
         WaitingForDisconnect,
         Failed,

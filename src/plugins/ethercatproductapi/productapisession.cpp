@@ -601,12 +601,7 @@ public:
     {
         if (!snapshot.session || !snapshot.session->ownsControlLease || !sessionId || !bootId)
             return;
-        if (hasActiveControlOperation() || !snapshot.controllerState
-            || !snapshot.controllerState->ready
-            || (snapshot.controllerState->serviceState
-                    != Data::ControllerServiceState::Shutdown
-                && snapshot.controllerState->serviceState
-                       != Data::ControllerServiceState::OperationalSafe)) {
+        if (hasActiveControlOperation()) {
             return;
         }
         Channel &control = channel(Protocol::Role::Control);
@@ -2661,16 +2656,6 @@ Utils::Result<> ProductApiSession::disconnectFromController()
         }
     }
     if (d->snapshot.session && d->snapshot.session->ownsControlLease) {
-        if (!d->snapshot.controllerState || !d->snapshot.controllerState->ready
-            || (d->snapshot.controllerState->serviceState
-                    != Data::ControllerServiceState::Shutdown
-                && d->snapshot.controllerState->serviceState
-                       != Data::ControllerServiceState::OperationalSafe)) {
-            return Utils::ResultError(
-                Tr::tr(
-                    "Disconnect requires a ready controller in SHUTDOWN or OP_SAFE before "
-                    "releasing control."));
-        }
         Data::ControllerControlRequest release;
         release.command = Data::ControllerControlCommand::ReleaseControl;
         d->disconnectAfterRelease = true;
@@ -2787,6 +2772,7 @@ Utils::Result<> ProductApiSession::executeControlCommand(
         return Utils::ResultError(Tr::tr("Acquire the control lease before this operation."));
     }
     if (request.command != Command::AcquireControl
+        && request.command != Command::ReleaseControl
         && (!d->snapshot.controllerState || !d->snapshot.controllerState->ready)) {
         return Utils::ResultError(
             Tr::tr("The controller is not ready for the selected control operation."));
@@ -2880,12 +2866,7 @@ Utils::Result<> ProductApiSession::executeControlCommand(
         break;
     case Command::AcquireControl:
     case Command::None:
-        break;
     case Command::ReleaseControl:
-        if (!stateIs({ServiceState::Shutdown, ServiceState::OperationalSafe})) {
-            return Utils::ResultError(
-                Tr::tr("Release control requires a ready controller in SHUTDOWN or OP_SAFE."));
-        }
         break;
     }
 

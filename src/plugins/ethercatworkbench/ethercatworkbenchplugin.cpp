@@ -651,7 +651,8 @@ void EtherCATWorkbenchPlugin::setupActions()
     auto disconnectControllerAction
         = new QAction(Utils::Icons::STOP_SMALL.icon(), Tr::tr("Disconnect Controller"), this);
     const QString disconnectControllerDescription = Tr::tr(
-        "Close the controller connection for the selected EtherCAT Master.");
+        "Release this session's management lease and close its connection. An already running "
+        "autonomous cyclic task continues on the controller.");
     disconnectControllerAction->setToolTip(disconnectControllerDescription);
     disconnectControllerAction->setStatusTip(disconnectControllerDescription);
     ::Core::Command *disconnectControllerCommand = ::Core::ActionManager::registerAction(

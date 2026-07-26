@@ -54031,8 +54031,8 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>无法扫描 EtherCAT 总线：%1</translation>
     </message>
     <message>
-        <source>Close the controller connection for the selected EtherCAT Master.</source>
-        <translation>关闭所选 EtherCAT 主站的控制器连接。</translation>
+        <source>Release this session&apos;s management lease and close its connection. An already running autonomous cyclic task continues on the controller.</source>
+        <translation>释放当前会话的管理租约并关闭连接。已经运行的自主周期任务会继续在控制器上执行。</translation>
     </message>
     <message>
         <source>Expand Device Tree</source>
@@ -54967,8 +54967,8 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>释放</translation>
     </message>
     <message>
-        <source>Release this session&apos;s controller control lease.</source>
-        <translation>释放当前会话的控制器控制租约。</translation>
+        <source>Release this session&apos;s management lease without stopping an autonomous cyclic task.</source>
+        <translation>释放当前会话的管理租约，但不停止控制器上的自主周期任务。</translation>
     </message>
     <message>
         <source>Controller control progress</source>

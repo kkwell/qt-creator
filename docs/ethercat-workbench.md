@@ -6849,16 +6849,19 @@ cleanup.
 Opening the project, selecting a Master, opening or closing the Communication
 page, switching Details pages, changing the left-tree selection, or shutting
 down a page never connects or disconnects implicitly. Connection lifecycle
-changes occur through the three explicit commands, the Project-close safety
+changes occur through the three explicit commands, the Project-close connection
 cleanup described below, or the Provider's own reported transport/recovery
 lifecycle. The UI renders the Provider snapshot as evidence; it does not infer
 a locally connected state.
 
-Project close is the sole automatic safety cleanup. Workbench clears every
+Project close is the sole automatic connection cleanup. Workbench clears every
 `{providerId, profileId}` selection owned by that Project and requests
 Disconnect from every Provider whose current snapshot belongs to it and is
 not already Disconnected or Disconnecting. Closing an unrelated Project leaves
-the current connection and selections unchanged.
+the current connection and selections unchanged. If the closing Project owns
+the management lease, cleanup sends ReleaseControl and then Disconnect; it
+does not send ControlledStop or enter Configuration, so a healthy autonomous
+runtime remains on the controller.
 
 A rejected Project-close cleanup performs no more than five total Disconnect
 attempts. Each retry is bound to the Provider registration epoch, exact
@@ -6992,10 +6995,11 @@ Runtime control then uses the standard quick-control area:
 | Controlled Stop | `RUNNING` or `PAUSED` | `ControlledStop` |
 
 Controlled Stop is added beside the native Run/Debug controls. It is an
-operational stop, not a safety-rated emergency stop. Disconnect is not a
-substitute: the Product API Provider rejects Disconnect from `RUNNING` or
-`PAUSED`. After Controlled Stop confirms `OP_SAFE`, the operator may enter
-Configuration again, Release, and Disconnect.
+operational stop, not a safety-rated emergency stop. It is explicit rather
+than part of Disconnect: Release and Disconnect revoke management authority
+without stopping an already configured autonomous `RUNNING` or `PAUSED`
+task. After a deliberate Controlled Stop confirms `OP_SAFE`, the operator may
+enter Configuration again when configuration work is intended.
 
 All page and quick-control commands require the exact active Project/Master
 scope, an explicitly selected available Provider/profile, a real non-Mock and
@@ -7012,7 +7016,14 @@ command-specific state gate:
 | Pause | Lease owned, ready `RUNNING`, and active package |
 | Resume | Lease owned, ready `PAUSED`, active package, operational bus, matching WKC, and no faults |
 | Controlled Stop | Lease owned, ready `RUNNING` or `PAUSED`, and active package |
-| Release | Lease owned and controller ready in `SHUTDOWN` or `OP_SAFE` |
+| Release | Lease owned and no state-changing operation pending; ControllerState readiness and runtime state do not gate management-lease release |
+
+Lease loss is not a cyclic-runtime watchdog. Clean Release, Disconnect,
+process exit, transport loss, or heartbeat expiry must clear the owner and
+invalidate stale writes without changing the active package or healthy
+`RUNNING` task. A new session may acquire control and operate the same runtime.
+Hardware, bus, WKC, DC, CPU1, watchdog, and safety faults remain
+controller-authoritative and may still stop it.
 
 ### Actual Bus presentation
 

@@ -27,8 +27,10 @@ private slots:
     void testProtocolMinorDowngrade();
     void testControlLifecycle();
     void testHardwareControlLifecycle();
-    void testShutdownReleaseSafety_data();
-    void testShutdownReleaseSafety();
+    void testShutdownReleasePreservesAutonomousRuntime_data();
+    void testShutdownReleasePreservesAutonomousRuntime();
+    void testDisconnectPreservesAutonomousRuntime();
+    void testLeaseExpiryPreservesAutonomousRuntime();
     void testDisconnectWaitsForRelease();
     void testHeartbeatTimeoutDoesNotPreemptDisconnectRelease();
     void testLongControlKeepsHeartbeatResponseWindow_data();
@@ -36,7 +38,7 @@ private slots:
     void testDisconnectRejectedReleasePreservesSession();
     void testDisconnectReleaseWriteFailure();
     void testDisconnectReleaseTimeoutPreservesEvidence();
-    void testRejectedControlRefreshAndReleaseGates();
+    void testRejectedControlRefreshStillAllowsRelease();
     void testControllerErrorAttribution_data();
     void testControllerErrorAttribution();
     void testMalformedControllerStatus_data();

@@ -183,12 +183,13 @@ The current typed lifecycle is:
    Distributed Clocks. In `PAUSED`, Run sends Resume.
 9. The lower-left Debug control sends Pause from `RUNNING` and Resume from
    `PAUSED`, confirming the resulting authoritative state.
-10. Controlled Stop in the same quick-control area sends ControlledStop from
-    `RUNNING` or `PAUSED`, then confirms `OP_SAFE` while the package and
-    operational bus remain valid.
-11. Enter Configuration again and confirm `SHUTDOWN` with no active
-    controller package.
-12. Release the control lease, then Disconnect.
+10. Controlled Stop remains an explicit operator command. When requested, it
+    sends ControlledStop from `RUNNING` or `PAUSED`, then confirms `OP_SAFE`
+    while the package and operational bus remain valid.
+11. A commissioning workflow that intends to stop may enter Configuration
+    again and confirm `SHUTDOWN` with no active controller package.
+12. Release the management lease, then Disconnect. Releasing from `RUNNING`
+    or `PAUSED` does not stop or reload the autonomous cyclic task.
 
 Acquire, Configuration, Restore, either explicit Start, legacy Start, Pause,
 Resume, and Controlled Stop remain Pending while the adapter performs an
@@ -316,24 +317,35 @@ plugin shutdown stop every timeout and retry, clear pending requests, abort
 all three sockets, and publish no later callback.
 
 Disconnect is rejected while a control command or its confirming refresh is
-active. A `RUNNING` or `PAUSED` controller must first use Controlled Stop.
-When the session still owns the lease in ready `SHUTDOWN` or `OP_SAFE`,
-explicit Disconnect sends ReleaseControl and waits for its successful terminal
-response before closing the channels. Plugin shutdown makes a bounded
-best-effort ReleaseControl attempt only in the same two confirmed safe states
-and only when no control operation is active. It does not send ReleaseControl
-from `RUNNING`, `PAUSED`, or an unknown state; a best-effort write is not
-evidence that the controller accepted the release.
+active. Otherwise, when the session owns the lease, explicit Disconnect sends
+ReleaseControl and waits for its successful terminal response before closing
+the channels. ReleaseControl manages command authority only: it is allowed
+without a ready ControllerState snapshot and does not send ControlledStop,
+enter Configuration, clear the active package, or stop a `RUNNING`/`PAUSED`
+cyclic task. Plugin shutdown makes the same bounded best-effort
+ReleaseControl attempt whenever no control operation is active. A best-effort
+write is not evidence that the controller accepted the release.
 
 Normal network and control processing uses GUI-thread event-loop objects and
 no blocking socket waits. `aboutToShutdown()` completes synchronously after a
-safe-state-qualified best-effort ReleaseControl write bounded to 100 ms,
-explicit teardown, and object-pool removal.
+management-lease best-effort ReleaseControl write bounded to 100 ms, explicit
+teardown, and object-pool removal.
 
 The adapter preserves controller lease arbitration. `LEASE_BUSY (-10)` is a
 typed controller rejection for a write attempted while another session owns
 the lease; it does not prevent the losing session from continuing supported
 read-only queries.
+
+The lease is deliberately not a runtime watchdog. If a configured task is
+already `RUNNING`, clean ReleaseControl, transport loss, client-process exit,
+or heartbeat expiry revokes that client's management authority but must not
+change the task, package, bus operation, working counter, or cycle counter.
+Actual EtherCAT, WKC, DC, CPU1, watchdog, and controller safety faults remain
+independent and retain their existing controller-owned stop policy. A later
+session may acquire the free lease, observe the same running instance, and
+issue Pause, Resume, or ControlledStop. Controller deployment and real
+hardware evidence for this contract remain gated on Windows
+`ISSUE-API-021`.
 
 ## Capability and evidence limits
 

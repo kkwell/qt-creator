@@ -353,7 +353,8 @@ CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *p
         m_releaseControl,
         "EtherCATCommunicationReleaseControl",
         Tr::tr("Release"),
-        Tr::tr("Release this session's controller control lease."),
+        Tr::tr(
+            "Release this session's management lease without stopping an autonomous cyclic task."),
         Data::ControllerControlCommand::ReleaseControl);
     controlLayout->addWidget(m_acquireControl, 0, 0);
     controlLayout->addWidget(m_enterConfiguration, 0, 1);

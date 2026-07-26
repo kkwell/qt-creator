@@ -99,7 +99,7 @@ private slots:
     void testControllerCommunicationAutoAcquire();
     void testControllerCommunicationAutoDiscovery();
     void testControllerCommunicationAutoAcquireAcrossProjects();
-    void testControllerProjectRemovalSafetyCleanup();
+    void testControllerProjectRemovalPreservesAutonomousRuntime();
     void testControllerCommunicationLifecycleAndProviderRemoval();
     void testProductionMockUiBoundary();
     void testOptionalProviderAvailabilityPresentation();
