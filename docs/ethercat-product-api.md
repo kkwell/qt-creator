@@ -471,6 +471,70 @@ The field bus was subsequently changed from the earlier virtual-slave setup
 to real EtherCAT modules, so all historical slave identities and WKC values
 are stale. Only a new successful physical-bus scan may seed the Project.
 
+### 2026-07-27 real-slave scan and DC lifecycle evidence
+
+Controller `ISSUE-API-025` made a successful EnterConfigurationMode require
+both `SHUTDOWN` and a non-Active CPU1 runtime package. `ISSUE-API-026`
+preserved that fail-closed check while making `SHUTDOWN + EMPTY`
+EnterConfigurationMode idempotent across a new CPU1 BootId. The API-026
+implementation commit is
+`46ab1d4dc7f8c55a173ad0d3960bab7571662490`; the guarded deployment evidence
+commit is `e78dba85d4e94123beec47bff670ee5d1e682a9f`. Its RAM-only candidates were:
+
+- CPU0: 3,441,248 bytes, SHA-256
+  `cc2d135e839473868f0579c604398244b93aec2675c083cff04863991084daf8`;
+- CPU1: 134,496 bytes, SHA-256
+  `9a4076716dd8c486a3004bafa13fe974b5af5e2aaa3e63139e4f6ef152c9513d`.
+
+The guarded deployment changed the controller BootId from
+`0x4f536c2944dc0639` to `0x4f536f408aafbc51` and the CPU0 PID from 819 to
+1040. The Product API listener recovered in about 0.26 seconds. Two
+independent post-deployment snapshots agreed on Product API 1.10/features
+`0xfff`, `SHUTDOWN`, runtime `EMPTY/boot0`, persistent staged/active
+`B/12/813`, lease owner 0, AL/WKC `0/0`, cycle 0, and no current or latched
+fault. Startup remained `observe-only` with `startup_cpu1_commands=0`.
+
+The production Qt provider then completed a headless `scan_only` acceptance
+against the physical bus. All commands reached terminal success and the
+discovered SII identities were:
+
+| Position | Station | Vendor | Product | Revision | Serial |
+| --- | --- | --- | --- | --- | --- |
+| 0 | `0x1001` | `0x00884443` | `0x000000b6` | `0x00000001` | `0x00000000` |
+| 1 | `0x1002` | `0x00100000` | `0x000c0112` | `0x00010000` | `0x00000000` |
+| 2 | `0x1003` | `0x00100000` | `0x000c0112` | `0x00010000` | `0x00000000` |
+
+The same provider next completed the exact DC lifecycle for persistent
+selector `B/12/813`:
+
+1. AcquireControl and idempotent EnterConfigurationMode.
+2. DiscoverTopology with the same three physical slaves.
+3. RestoreActivePackage to `OP_SAFE`, AL `OP`, WKC `11/11`,
+   `dcLocked=true`, and faults `0/0`.
+4. StartDistributedClocks to `RUNNING`, AL `OP`, WKC `11/11`,
+   `dcLocked=true`, and faults `0/0`.
+5. Pause to `PAUSED`, then Resume to `RUNNING`, retaining AL `OP`,
+   WKC `11/11`, DC lock, and zero faults.
+6. ControlledStop to `OP_SAFE`, then EnterConfigurationMode to
+   `SHUTDOWN/EMPTY`.
+7. ReleaseControl and Disconnect with lease owner 0, AL/WKC `0/0`, and
+   faults `0/0`.
+
+Both hardware-gated test processes exited with status 0 and reported three
+Qt test passes with no failure or skip. The retained raw logs are:
+
+- `/private/tmp/embed-labs-productapi-real-scan.5mkn2z/lldb.log`,
+  SHA-256
+  `18191c2db83beba2ecc838b1f46fc5797877b9f7501da62d31b80e53e7fba930`;
+- `/private/tmp/embed-labs-productapi-dc.EleKoG/lldb.log`, SHA-256
+  `7ecdf43340c31402684cbcbf56fa42ad6b0c63111574a4e63f07699bbc1aac19`.
+
+This evidence qualifies the current three-slave scan and the signed cfg813
+DC lifecycle through the production provider. It does not qualify FreeRun:
+cfg813 is the DC package and no FreeRun command was issued. The API-026
+controller deployment is RAM-only and a controller reboot still requires a
+fresh runtime-image qualification before repeating this acceptance.
+
 ## Capability and evidence limits
 
 The following remain intentionally unknown or outside the current control
