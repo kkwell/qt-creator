@@ -113,6 +113,19 @@ static QString projectValidityText(const Data::ProjectSnapshot &project)
                                    : Tr::tr("Invalid: %1").arg(project.error);
 }
 
+static QString masterTimingModeName(Data::MasterTimingMode mode)
+{
+    switch (mode) {
+    case Data::MasterTimingMode::Unassigned:
+        return Tr::tr("Not assigned");
+    case Data::MasterTimingMode::FreeRun:
+        return Tr::tr("FreeRun");
+    case Data::MasterTimingMode::DistributedClocks:
+        return Tr::tr("Distributed Clocks");
+    }
+    return Tr::tr("Unknown");
+}
+
 GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     : QWidget(parent)
     , m_controller(controller)
@@ -127,7 +140,7 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     , m_projectId(new QLineEdit(m_projectForm))
     , m_projectType(new QLineEdit(m_projectForm))
     , m_projectSummaryForm(
-          new QGroupBox(Tr::tr("Offline project summary"), m_projectContent))
+          new QGroupBox(Tr::tr("Project main information"), m_projectContent))
     , m_projectFormatVersion(new QLineEdit(m_projectSummaryForm))
     , m_projectCreatedBy(new QLineEdit(m_projectSummaryForm))
     , m_projectValidity(new QLineEdit(m_projectSummaryForm))
@@ -135,6 +148,8 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     , m_projectModified(new QLineEdit(m_projectSummaryForm))
     , m_projectTarget(new QLineEdit(m_projectSummaryForm))
     , m_projectMaster(new QLineEdit(m_projectSummaryForm))
+    , m_projectTimingMode(new QLineEdit(m_projectSummaryForm))
+    , m_projectCycle(new QLineEdit(m_projectSummaryForm))
     , m_projectSlaveCount(new QLineEdit(m_projectSummaryForm))
     , m_identityForm(new QWidget(this))
     , m_name(new QLineEdit(m_identityForm))
@@ -192,6 +207,8 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     m_projectModified->setObjectName("EtherCATProjectGeneralModified");
     m_projectTarget->setObjectName("EtherCATProjectGeneralTarget");
     m_projectMaster->setObjectName("EtherCATProjectGeneralMaster");
+    m_projectTimingMode->setObjectName("EtherCATProjectGeneralTimingMode");
+    m_projectCycle->setObjectName("EtherCATProjectGeneralCyclePeriod");
     m_projectSlaveCount->setObjectName("EtherCATProjectGeneralSlaveCount");
     m_projectName->setAccessibleName(Tr::tr("EtherCAT project name"));
     m_projectId->setAccessibleName(Tr::tr("EtherCAT project ID"));
@@ -203,6 +220,8 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     m_projectModified->setAccessibleName(Tr::tr("EtherCAT project modified state"));
     m_projectTarget->setAccessibleName(Tr::tr("Offline target name"));
     m_projectMaster->setAccessibleName(Tr::tr("EtherCAT master name"));
+    m_projectTimingMode->setAccessibleName(Tr::tr("Project EtherCAT timing mode"));
+    m_projectCycle->setAccessibleName(Tr::tr("Project EtherCAT cycle period"));
     m_projectSlaveCount->setAccessibleName(Tr::tr("Configured EtherCAT slave count"));
     m_projectId->setToolTip(
         Tr::tr("Stable offline project identifier; this is not an ADS or runtime ID."));
@@ -218,6 +237,8 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
           m_projectModified,
           m_projectTarget,
           m_projectMaster,
+          m_projectTimingMode,
+          m_projectCycle,
           m_projectSlaveCount}) {
         field->setReadOnly(true);
     }
@@ -234,14 +255,16 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     projectSummary->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
     projectSummary->setHorizontalSpacing(Utils::StyleHelper::SpacingTokens::GapHM);
     projectSummary->setVerticalSpacing(Utils::StyleHelper::SpacingTokens::GapVS);
-    projectSummary->addRow(Tr::tr("Format version:"), m_projectFormatVersion);
-    projectSummary->addRow(Tr::tr("Created by:"), m_projectCreatedBy);
     projectSummary->addRow(Tr::tr("Validity:"), m_projectValidity);
-    projectSummary->addRow(Tr::tr("Migration:"), m_projectMigration);
-    projectSummary->addRow(Tr::tr("Modified:"), m_projectModified);
     projectSummary->addRow(Tr::tr("Offline target:"), m_projectTarget);
     projectSummary->addRow(Tr::tr("EtherCAT master:"), m_projectMaster);
+    projectSummary->addRow(Tr::tr("Timing mode:"), m_projectTimingMode);
+    projectSummary->addRow(Tr::tr("Cycle period (ns):"), m_projectCycle);
     projectSummary->addRow(Tr::tr("Configured slaves:"), m_projectSlaveCount);
+    projectSummary->addRow(Tr::tr("Modified:"), m_projectModified);
+    projectSummary->addRow(Tr::tr("Format version:"), m_projectFormatVersion);
+    projectSummary->addRow(Tr::tr("Created by:"), m_projectCreatedBy);
+    projectSummary->addRow(Tr::tr("Migration:"), m_projectMigration);
 
     auto projectContentLayout = new QVBoxLayout(m_projectContent);
     projectContentLayout->setContentsMargins(QMargins());
@@ -624,6 +647,12 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
                 *project, Data::ProjectNodeKind::Target, Tr::tr("Not configured")));
             m_projectMaster->setText(firstNodeName(
                 *project, Data::ProjectNodeKind::Master, Tr::tr("Not configured")));
+            m_projectTimingMode->setText(
+                masterTimingModeName(project->masterConfiguration.timingMode));
+            m_projectCycle->setText(
+                project->masterConfiguration.cyclePeriodNs
+                    ? QString::number(project->masterConfiguration.cyclePeriodNs)
+                    : Tr::tr("Not configured"));
             m_projectSlaveCount->setText(QString::number(project->slaves.size()));
         } else {
             m_projectFormatVersion->setText(unavailable);
@@ -632,6 +661,8 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
             m_projectModified->setText(unavailable);
             m_projectTarget->setText(unavailable);
             m_projectMaster->setText(unavailable);
+            m_projectTimingMode->setText(unavailable);
+            m_projectCycle->setText(unavailable);
             m_projectSlaveCount->setText(unavailable);
         }
         m_projectValidity->setText(project ? projectValidityText(*project) : unavailable);
@@ -799,6 +830,8 @@ void GeneralPage::reset(const QString &summary, QLineEdit *preservedName)
     m_projectModified->clear();
     m_projectTarget->clear();
     m_projectMaster->clear();
+    m_projectTimingMode->clear();
+    m_projectCycle->clear();
     m_projectSlaveCount->clear();
     if (!preserveConfiguredSlaveName)
         m_identityForm->hide();

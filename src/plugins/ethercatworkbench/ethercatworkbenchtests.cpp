@@ -3988,6 +3988,10 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
     QLineEdit *modified = page->findChild<QLineEdit *>("EtherCATProjectGeneralModified");
     QLineEdit *target = page->findChild<QLineEdit *>("EtherCATProjectGeneralTarget");
     QLineEdit *master = page->findChild<QLineEdit *>("EtherCATProjectGeneralMaster");
+    QLineEdit *timingMode
+        = page->findChild<QLineEdit *>("EtherCATProjectGeneralTimingMode");
+    QLineEdit *cyclePeriod
+        = page->findChild<QLineEdit *>("EtherCATProjectGeneralCyclePeriod");
     QLineEdit *slaveCount = page->findChild<QLineEdit *>("EtherCATProjectGeneralSlaveCount");
     QTreeWidget *propertyTree = page->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
     QVERIFY(content);
@@ -4004,6 +4008,8 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
     QVERIFY(modified);
     QVERIFY(target);
     QVERIFY(master);
+    QVERIFY(timingMode);
+    QVERIFY(cyclePeriod);
     QVERIFY(slaveCount);
     QVERIFY(propertyTree);
 
@@ -4017,10 +4023,22 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
     QCOMPARE(modified->text(), Tr::tr("No"));
     QCOMPARE(target->text(), QString("Offline Controller"));
     QCOMPARE(master->text(), QString("EtherCAT Master"));
+    QCOMPARE(timingMode->text(), Tr::tr("Not assigned"));
+    QCOMPARE(cyclePeriod->text(), Tr::tr("Not configured"));
     QCOMPARE(slaveCount->text(), QString("1"));
     QVERIFY(!name->isReadOnly());
     for (QLineEdit *field :
-         {id, type, formatVersion, createdBy, validity, migration, modified, target, master,
+         {id,
+          type,
+          formatVersion,
+          createdBy,
+          validity,
+          migration,
+          modified,
+          target,
+          master,
+          timingMode,
+          cyclePeriod,
           slaveCount}) {
         QVERIFY(field->isReadOnly());
         QVERIFY(!field->accessibleName().isEmpty());
@@ -4031,6 +4049,23 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
     QVERIFY(summaryForm->isVisible());
     QVERIFY(!propertyTree->isVisible());
     QCOMPARE(propertyTree->topLevelItemCount(), 0);
+
+    QVERIFY_RESULT(controller.setMasterConfiguration(
+        file.projectId,
+        file.masterId,
+        {Data::MasterTimingMode::FreeRun, 1000000}));
+    QTRY_COMPARE(timingMode->text(), Tr::tr("FreeRun"));
+    QTRY_COMPARE(cyclePeriod->text(), QString("1000000"));
+    QVERIFY_RESULT(controller.setMasterConfiguration(
+        file.projectId,
+        file.masterId,
+        {Data::MasterTimingMode::DistributedClocks, 125000}));
+    QTRY_COMPARE(timingMode->text(), Tr::tr("Distributed Clocks"));
+    QTRY_COMPARE(cyclePeriod->text(), QString("125000"));
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_COMPARE(timingMode->text(), Tr::tr("Not assigned"));
+    QTRY_COMPARE(cyclePeriod->text(), Tr::tr("Not configured"));
+    QTRY_COMPARE(modified->text(), Tr::tr("No"));
 
     const QString renderPath = qEnvironmentVariable("ETHERCAT_WORKBENCH_RENDER_PATH");
     if (!renderPath.isEmpty()) {
@@ -7812,6 +7847,10 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QLineEdit *modified = page->findChild<QLineEdit *>("EtherCATProjectGeneralModified");
     QLineEdit *target = page->findChild<QLineEdit *>("EtherCATProjectGeneralTarget");
     QLineEdit *master = page->findChild<QLineEdit *>("EtherCATProjectGeneralMaster");
+    QLineEdit *timingMode
+        = page->findChild<QLineEdit *>("EtherCATProjectGeneralTimingMode");
+    QLineEdit *cyclePeriod
+        = page->findChild<QLineEdit *>("EtherCATProjectGeneralCyclePeriod");
     QLineEdit *slaveCount = page->findChild<QLineEdit *>("EtherCATProjectGeneralSlaveCount");
     for (QLineEdit *field :
          {name,
@@ -7824,6 +7863,8 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
           modified,
           target,
           master,
+          timingMode,
+          cyclePeriod,
           slaveCount}) {
         QVERIFY(field);
     }
@@ -7833,7 +7874,16 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QCOMPARE(validity->text(), QString("Invalid: %1").arg(invalid.error));
     const QString unavailable = "Unavailable";
     for (QLineEdit *field :
-         {id, formatVersion, createdBy, migration, modified, target, master, slaveCount}) {
+         {id,
+          formatVersion,
+          createdBy,
+          migration,
+          modified,
+          target,
+          master,
+          timingMode,
+          cyclePeriod,
+          slaveCount}) {
         QCOMPARE(field->text(), unavailable);
     }
 
@@ -7848,9 +7898,13 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     validity = page->findChild<QLineEdit *>("EtherCATProjectGeneralValidity");
     target = page->findChild<QLineEdit *>("EtherCATProjectGeneralTarget");
     master = page->findChild<QLineEdit *>("EtherCATProjectGeneralMaster");
+    timingMode = page->findChild<QLineEdit *>("EtherCATProjectGeneralTimingMode");
+    cyclePeriod = page->findChild<QLineEdit *>("EtherCATProjectGeneralCyclePeriod");
     slaveCount = page->findChild<QLineEdit *>("EtherCATProjectGeneralSlaveCount");
-    for (QLineEdit *field : {name, id, formatVersion, validity, target, master, slaveCount})
+    for (QLineEdit *field :
+         {name, id, formatVersion, validity, target, master, timingMode, cyclePeriod, slaveCount}) {
         QVERIFY(field);
+    }
     QTRY_COMPARE(name->text(), QString("Valid EtherCAT Project"));
     QVERIFY(!name->isReadOnly());
     QCOMPARE(id->text(), valid.projectId.toString());
@@ -7858,6 +7912,8 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QCOMPARE(validity->text(), QString("Valid"));
     QCOMPARE(target->text(), QString("Offline Controller"));
     QCOMPARE(master->text(), QString("EtherCAT Master"));
+    QCOMPARE(timingMode->text(), Tr::tr("Not assigned"));
+    QCOMPARE(cyclePeriod->text(), Tr::tr("Not configured"));
     QCOMPARE(slaveCount->text(), QString("1"));
     QVERIFY(controller.canCopyNodeId(valid.projectId));
 

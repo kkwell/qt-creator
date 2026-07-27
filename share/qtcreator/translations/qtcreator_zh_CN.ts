@@ -50287,8 +50287,8 @@ Discovered slaves: %3</source>
         <translation>无效：%1</translation>
     </message>
     <message>
-        <source>Offline project summary</source>
-        <translation>离线项目摘要</translation>
+        <source>Project main information</source>
+        <translation>项目主要信息</translation>
     </message>
     <message>
         <source>Choose Target...</source>
@@ -50359,6 +50359,14 @@ Discovered slaves: %3</source>
         <translation>EtherCAT 主站名称</translation>
     </message>
     <message>
+        <source>Project EtherCAT timing mode</source>
+        <translation>项目 EtherCAT 运行模式</translation>
+    </message>
+    <message>
+        <source>Project EtherCAT cycle period</source>
+        <translation>项目 EtherCAT 循环周期</translation>
+    </message>
+    <message>
         <source>Configured EtherCAT slave count</source>
         <translation>已配置的 EtherCAT 从站数量</translation>
     </message>
@@ -50409,6 +50417,14 @@ Discovered slaves: %3</source>
     <message>
         <source>EtherCAT master:</source>
         <translation>EtherCAT 主站：</translation>
+    </message>
+    <message>
+        <source>Timing mode:</source>
+        <translation>运行模式：</translation>
+    </message>
+    <message>
+        <source>Cycle period (ns):</source>
+        <translation>循环周期（ns）：</translation>
     </message>
     <message>
         <source>Configured slaves:</source>

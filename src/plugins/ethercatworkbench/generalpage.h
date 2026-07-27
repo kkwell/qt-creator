@@ -69,6 +69,8 @@ private:
     QLineEdit *m_projectModified;
     QLineEdit *m_projectTarget;
     QLineEdit *m_projectMaster;
+    QLineEdit *m_projectTimingMode;
+    QLineEdit *m_projectCycle;
     QLineEdit *m_projectSlaveCount;
     QWidget *m_identityForm;
     QLineEdit *m_name;
