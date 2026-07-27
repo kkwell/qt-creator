@@ -426,7 +426,16 @@ hardware evidence for this contract remain gated on Windows
 - `auto`, `free_run`, or `dc` for the complete package-dependent lifecycle;
   and
 - `scan_only` for an identity-discovery acceptance that never restores or
-  starts a package.
+  starts a package; or
+- `free_run_rejection` for the exact DC-only-package rejection contract.
+
+`free_run_rejection` restores the exact active package, issues
+`StartFreeRun`, and requires a terminal stage-2
+`TIMING_MODE_MISMATCH (-35)`. It also requires the controller to retain the
+same fault-free `OP_SAFE` package state with no active application. The test
+then returns to `SHUTDOWN/EMPTY`, releases the management lease, and
+disconnects. An unexpected FreeRun start, a different rejection, or any
+state/fault drift fails the acceptance.
 
 `scan_only` fails its preflight before lease acquisition unless the
 authoritative controller snapshot is ready `SHUTDOWN`, has no current lease
@@ -534,6 +543,61 @@ DC lifecycle through the production provider. It does not qualify FreeRun:
 cfg813 is the DC package and no FreeRun command was issued. The API-026
 controller deployment is RAM-only and a controller reboot still requires a
 fresh runtime-image qualification before repeating this acceptance.
+
+### 2026-07-27 DC-only topology FreeRun and DC qualification
+
+Controller `ISSUE-API-027`, commit
+`012a41c5a3e160067888048cfe84bc98eba65091`, audited the complete XB6 plus
+two SV630N topology without accessing hardware. Both the V13 and V16 ESI
+declare only `DC-Synchron`, with `AssignActivate 0x0300`. The SV630N object
+dictionary and vendor manual report synchronization type 2 and supported-type
+mask `0x0004` for both `0x1c32` and `0x1c33`. These values advertise DC
+Sync0 only: neither FreeRun bit 0 nor SM-synchronous bit 1 is set.
+
+Changing the cycle from 125 us to 250 us, 500 us, or 1 ms cannot add an
+unsupported synchronization mode. The old cfg812 is therefore a negative
+artifact, not a deployable FreeRun candidate. It has no DC records, has an
+expected process WKC of 9 rather than cfg813's 11, and previously failed the
+station `0x1002` OP request. Current inspection and verification reject it
+with `compile_report_timing_requirement_conflict` and
+`required_dc_positions=[1,2]`. No FreeRun package was generated, signed,
+uploaded, or activated.
+
+The production Qt provider then completed the formal
+`free_run_rejection` acceptance against the physical topology:
+
+1. AcquireControl, enter Configuration, and discover the same three slaves.
+2. Restore signed DC selector `B/12/813` to fault-free `OP_SAFE`, AL `OP`,
+   WKC `11/11`, and a locked DC clock.
+3. Issue the typed `StartFreeRun` command and receive the exact terminal
+   stage-2 `TIMING_MODE_MISMATCH (-35)`.
+4. Confirm that the application did not start and that `OP_SAFE`, WKC
+   `11/11`, DC lock, the active package, and zero faults were preserved.
+5. Return to `SHUTDOWN/EMPTY`, release the lease, and disconnect.
+
+The same final binary then repeated the positive DC lifecycle:
+`StartDc -> RUNNING -> PAUSED -> RUNNING -> ControlledStop`. Every runtime
+gate retained AL `OP`, WKC `11/11`, DC lock, and zero current or latched
+faults. Cleanup again reached `SHUTDOWN/EMPTY`, lease owner 0, AL/WKC `0/0`,
+and disconnected.
+
+Both final hardware-gated processes exited with status 0 and reported three
+Qt test passes with no failure or skip. The retained logs are:
+
+- `/private/tmp/embed-labs-productapi-freerun-rejection.0kdNSR/lldb.log`,
+  SHA-256
+  `13b81eba44d0246becf71ff605fc11c5dfb4be6202316bf0127f1a4d9390acc0`;
+- `/private/tmp/embed-labs-productapi-dc-qualification.PFUip9/lldb.log`,
+  SHA-256
+  `97c724d8da9265d16991f3052732c0fd1c5aaaf093d2e43818625154195d45bd`.
+
+This completes FreeRun capability and guard validation for the current
+physical topology, but it is deliberately not a positive FreeRun `RUNNING`
+claim: the two SV630N slaves are DC-only. A positive FreeRun runtime test
+would require a physically different topology whose complete ESI capability
+set permits FreeRun. The API-026 deployment remains RAM-only, so a controller
+reboot invalidates this runtime qualification until the candidate images are
+qualified again.
 
 ## Capability and evidence limits
 

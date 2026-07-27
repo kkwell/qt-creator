@@ -3490,11 +3490,14 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
 
     const QString timingMode = qEnvironmentVariable(TimingModeVariable).trimmed();
     if (timingMode != QStringLiteral("auto") && timingMode != QStringLiteral("free_run")
-        && timingMode != QStringLiteral("dc") && timingMode != QStringLiteral("scan_only")) {
-        QFAIL("QTC_ETHER_CAT_TIMING_MODE must be set to exactly auto, free_run, dc, or "
-              "scan_only before the hardware test can run.");
+        && timingMode != QStringLiteral("dc") && timingMode != QStringLiteral("scan_only")
+        && timingMode != QStringLiteral("free_run_rejection")) {
+        QFAIL(
+            "QTC_ETHER_CAT_TIMING_MODE must be set to exactly auto, free_run, dc, "
+            "scan_only, or free_run_rejection before the hardware test can run.");
     }
     const bool scanOnly = timingMode == QStringLiteral("scan_only");
+    const bool expectFreeRunRejection = timingMode == QStringLiteral("free_run_rejection");
 
     QString host = qEnvironmentVariable(HostVariable).trimmed();
     if (host.isEmpty())
@@ -3701,14 +3704,15 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
     }
 
     Data::ControllerControlCommand startCommand = Data::ControllerControlCommand::Start;
-    if (timingMode == QStringLiteral("free_run"))
+    if (timingMode == QStringLiteral("free_run") || expectFreeRunRejection)
         startCommand = Data::ControllerControlCommand::StartFreeRun;
     else if (timingMode == QStringLiteral("dc"))
         startCommand = Data::ControllerControlCommand::StartDistributedClocks;
     if (failure.isEmpty()) {
         const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
         const bool explicitTimingMode = timingMode == QStringLiteral("free_run")
-                                        || timingMode == QStringLiteral("dc");
+                                        || timingMode == QStringLiteral("dc")
+                                        || expectFreeRunRejection;
         if (explicitTimingMode
             && (snapshot.protocolVersion.major != 1
                 || snapshot.protocolVersion.minor < Protocol::ExplicitTimingModeMinor)) {
@@ -3949,29 +3953,63 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         control = {};
         control.command = startCommand;
         QString startLabel = QStringLiteral("automatic package-mode start");
-        if (timingMode == QStringLiteral("free_run"))
+        if (expectFreeRunRejection)
+            startLabel = QStringLiteral("expected incompatible FreeRun start");
+        else if (timingMode == QStringLiteral("free_run"))
             startLabel = QStringLiteral("explicit FreeRun start");
         else if (timingMode == QStringLiteral("dc"))
             startLabel = QStringLiteral("explicit DC start");
-        executeMainCommand(control, startLabel);
-        waitForMainGate(QStringLiteral("RUNNING"), strictRunningGate);
+        if (expectFreeRunRejection) {
+            QString rejectionDetail;
+            if (executeCommand(control, startLabel, ControlStepTimeoutMs, &rejectionDetail)) {
+                recordFailure(QStringLiteral(
+                    "StartFreeRun unexpectedly succeeded for the DC-only active package."));
+            } else {
+                const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+                const bool exactRejection
+                    = snapshot.controlProgress.command
+                          == Data::ControllerControlCommand::StartFreeRun
+                      && snapshot.controlProgress.state == Data::ControllerControlState::Failed
+                      && snapshot.controlProgress.stage == 2 && snapshot.controlProgress.final
+                      && snapshot.controlProgress.status
+                      && *snapshot.controlProgress.status == qint32(-35) && snapshot.lastError
+                      && snapshot.lastError->codeName == QStringLiteral("TIMING_MODE_MISMATCH");
+                if (!exactRejection) {
+                    recordFailure(QStringLiteral(
+                                      "StartFreeRun did not return the exact terminal stage-2 "
+                                      "TIMING_MODE_MISMATCH(-35) contract: %1")
+                                      .arg(rejectionDetail));
+                } else if (!strictOperationalSafeGate()) {
+                    recordFailure(QStringLiteral(
+                        "The rejected StartFreeRun request did not preserve the exact "
+                        "fault-free OP_SAFE package state."));
+                } else {
+                    qInfo().noquote()
+                        << "[Product API hardware] FreeRun incompatibility gate confirmed:"
+                        << "TIMING_MODE_MISMATCH(-35), OP_SAFE retained, no application start";
+                }
+            }
+        } else {
+            executeMainCommand(control, startLabel);
+            waitForMainGate(QStringLiteral("RUNNING"), strictRunningGate);
+        }
     }
 
-    if (failure.isEmpty() && !scanOnly) {
+    if (failure.isEmpty() && !scanOnly && !expectFreeRunRejection) {
         control = {};
         control.command = Data::ControllerControlCommand::Pause;
         executeMainCommand(control, QStringLiteral("pause"));
         waitForMainGate(QStringLiteral("PAUSED"), strictPausedGate);
     }
 
-    if (failure.isEmpty() && !scanOnly) {
+    if (failure.isEmpty() && !scanOnly && !expectFreeRunRejection) {
         control = {};
         control.command = Data::ControllerControlCommand::Resume;
         executeMainCommand(control, QStringLiteral("resume"));
         waitForMainGate(QStringLiteral("resumed RUNNING"), strictRunningGate);
     }
 
-    if (failure.isEmpty() && !scanOnly) {
+    if (failure.isEmpty() && !scanOnly && !expectFreeRunRejection) {
         control = {};
         control.command = Data::ControllerControlCommand::ControlledStop;
         executeMainCommand(control, QStringLiteral("controlled stop"));
@@ -4009,11 +4047,14 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
             recordFailure(
                 QStringLiteral("Disconnect did not finish within %1 ms.").arg(ConnectStepTimeoutMs));
         } else {
-            qInfo().noquote() << (scanOnly
-                                      ? "[Product API hardware] scan-only acceptance completed in "
-                                        "SHUTDOWN and disconnected"
-                                      : "[Product API hardware] lifecycle completed in SHUTDOWN "
-                                        "and disconnected");
+            qInfo().noquote()
+                << (scanOnly ? "[Product API hardware] scan-only acceptance completed in "
+                               "SHUTDOWN and disconnected"
+                    : expectFreeRunRejection
+                        ? "[Product API hardware] FreeRun incompatibility acceptance "
+                          "completed in SHUTDOWN and disconnected"
+                        : "[Product API hardware] lifecycle completed in SHUTDOWN "
+                          "and disconnected");
         }
     }
 
