@@ -189,7 +189,7 @@ void EtherCATWorkbenchPlugin::initialize()
                       ? Utils::ErrorMessageFormat
                       : Utils::NormalMessageFormat;
             ProjectExplorer::ProjectExplorerPlugin::postApplicationOutput(
-                channelId, Tr::tr("EtherCAT Controller"), message + QLatin1Char('\n'), format);
+                channelId, Tr::tr("Output"), message + QLatin1Char('\n'), format);
             ProjectExplorer::ProjectExplorerPlugin::showApplicationOutput(channelId);
         });
     m_builtinPages = std::make_unique<BuiltinPropertyPageProvider>(m_controller.get());

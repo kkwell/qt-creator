@@ -48437,6 +48437,10 @@ What do you want to do?</source>
 <context>
     <name>QtC::EtherCATAutomationGateway</name>
     <message>
+        <source>Output</source>
+        <translation>输出</translation>
+    </message>
+    <message>
         <source>Automation Gateway</source>
         <translation>自动化网关</translation>
     </message>
@@ -50282,6 +50286,168 @@ Discovered slaves: %3</source>
 </context>
 <context>
     <name>QtC::EtherCATWorkbench</name>
+    <message>
+        <source>Output</source>
+        <translation>输出</translation>
+    </message>
+    <message>
+        <source>Current project information</source>
+        <translation>当前工程信息</translation>
+    </message>
+    <message>
+        <source>Current project timing mode, cycle period, and configured device count.</source>
+        <translation>当前工程的时序模式、循环周期和已配置设备数量。</translation>
+    </message>
+    <message>
+        <source>Current project name</source>
+        <translation>当前工程名称</translation>
+    </message>
+    <message>
+        <source>Current project timing mode</source>
+        <translation>当前工程时序模式</translation>
+    </message>
+    <message>
+        <source>Current project cycle period</source>
+        <translation>当前工程循环周期</translation>
+    </message>
+    <message>
+        <source>Configured device count</source>
+        <translation>已配置设备数量</translation>
+    </message>
+    <message>
+        <source>Mode:</source>
+        <translation>模式：</translation>
+    </message>
+    <message>
+        <source>Cycle:</source>
+        <translation>周期：</translation>
+    </message>
+    <message>
+        <source>Devices:</source>
+        <translation>设备：</translation>
+    </message>
+    <message>
+        <source>%1 µs</source>
+        <translation>%1 µs</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n configured device(s)</source>
+        <translation>
+            <numerusform>已配置 %n 个设备</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Error</source>
+        <translation>错误</translation>
+    </message>
+    <message numerus="yes">
+        <source>%n device(s)</source>
+        <translation>
+            <numerusform>%n 个设备</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Cleanup canceled: adapter removed.</source>
+        <translation>清理已取消：适配器已移除。</translation>
+    </message>
+    <message>
+        <source>Start canceled: adapter removed.</source>
+        <translation>启动已取消：适配器已移除。</translation>
+    </message>
+    <message>
+        <source>Stop canceled: adapter removed.</source>
+        <translation>停止已取消：适配器已移除。</translation>
+    </message>
+    <message>
+        <source>Bus applied · %1 devices · %2 matched · %3 unknown</source>
+        <translation>总线已应用 · %1 个设备 · %2 个已匹配 · %3 个未知</translation>
+    </message>
+    <message numerus="yes">
+        <source> · %n ambiguous</source>
+        <translation>
+            <numerusform> · %n 个匹配不明确</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source> · %n unsupported</source>
+        <translation>
+            <numerusform> · %n 个不受支持</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>FreeRun unavailable: %1</source>
+        <translation>FreeRun 不可用：%1</translation>
+    </message>
+    <message>
+        <source>FreeRun unverified: %1</source>
+        <translation>FreeRun 未验证：%1</translation>
+    </message>
+    <message numerus="yes">
+        <source>FreeRun available · %n device(s)</source>
+        <translation>
+            <numerusform>FreeRun 可用 · %n 个设备</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Import matching ESI XML.</source>
+        <translation>请导入匹配的 ESI XML。</translation>
+    </message>
+    <message>
+        <source>Use Distributed Clocks.</source>
+        <translation>请使用分布式时钟。</translation>
+    </message>
+    <message>
+        <source>Start canceled: project closed.</source>
+        <translation>启动已取消：工程已关闭。</translation>
+    </message>
+    <message>
+        <source>Stop canceled: project closed.</source>
+        <translation>停止已取消：工程已关闭。</translation>
+    </message>
+    <message>
+        <source>Control acquisition failed: %1</source>
+        <translation>控制权获取失败：%1</translation>
+    </message>
+    <message>
+        <source>Scan failed: %1</source>
+        <translation>扫描失败：%1</translation>
+    </message>
+    <message>
+        <source>Starting · Config → Scan → Restore → Run</source>
+        <translation>正在启动 · 配置 → 扫描 → 恢复 → 运行</translation>
+    </message>
+    <message>
+        <source>Running · WKC %1/%2 · cycle %3</source>
+        <translation>正在运行 · WKC %1/%2 · 周期 %3</translation>
+    </message>
+    <message>
+        <source>Start failed: %1</source>
+        <translation>启动失败：%1</translation>
+    </message>
+    <message>
+        <source>Stopping · Controlled stop → Shutdown</source>
+        <translation>正在停止 · 受控停止 → 关停</translation>
+    </message>
+    <message>
+        <source>Stopping · Shutdown</source>
+        <translation>正在停止 · 关停</translation>
+    </message>
+    <message>
+        <source>Stopped · Shutdown · faults 0x%1/0x%2</source>
+        <translation>已停止 · 关停 · 故障 0x%1/0x%2</translation>
+    </message>
+    <message>
+        <source>Stopped · Shutdown · DC off</source>
+        <translation>已停止 · 关停 · DC 已关闭</translation>
+    </message>
+    <message>
+        <source>Stop unverified: %1 · cyclic traffic may still be active</source>
+        <translation>停止未确认：%1 · 周期通信可能仍在运行</translation>
+    </message>
+    <message>
+        <source>Cleanup failed: %1 · connection unchanged</source>
+        <translation>清理失败：%1 · 连接未变</translation>
+    </message>
     <message>
         <source>Valid</source>
         <translation>有效</translation>

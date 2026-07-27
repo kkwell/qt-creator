@@ -11,8 +11,10 @@
 #include <QWidget>
 
 QT_BEGIN_NAMESPACE
-class QLineEdit;
 class QEvent;
+class QGroupBox;
+class QLabel;
+class QLineEdit;
 class QPushButton;
 class QSortFilterProxyModel;
 class QStackedWidget;
@@ -51,6 +53,7 @@ private:
     void selectSourceIndex(const QModelIndex &sourceIndex);
     void selectNode(const Data::NodeId &nodeId);
     void updateFilterState();
+    void updateProjectSummary();
     void showContextMenu(const QPoint &position, bool mouseTriggered);
     void locateUnsupportedDevice();
     void copyCurrentNodeId();
@@ -64,10 +67,16 @@ private:
     QStackedWidget *m_resultsStack = nullptr;
     QWidget *m_emptyState = nullptr;
     QPushButton *m_clearFilter = nullptr;
+    QGroupBox *m_projectSummary = nullptr;
+    QLabel *m_projectSummaryName = nullptr;
+    QLabel *m_projectSummaryMode = nullptr;
+    QLabel *m_projectSummaryCycle = nullptr;
+    QLabel *m_projectSummaryDevices = nullptr;
     QSet<Data::NodeId> m_expandedNodeIds;
     QSet<Data::NodeId> m_knownNodeIds;
     bool m_filterActive = false;
     bool m_ignoreExpansionChanges = false;
+    int m_proxyModelChangeDepth = 0;
     bool m_sourceModelResetting = false;
 };
 

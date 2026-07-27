@@ -6,8 +6,6 @@
 #include "ethercatworkbenchtr.h"
 #include "workbenchcontroller.h"
 
-#include <coreplugin/minisplitter.h>
-
 #include <ethercatcore/selectionservice.h>
 
 #include <utils/infolabel.h>
@@ -27,6 +25,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QScopedValueRollback>
+#include <QSplitter>
 #include <QStackedWidget>
 #include <QStyledItemDelegate>
 #include <QTableView>
@@ -1336,29 +1335,37 @@ ProcessDataPage::ProcessDataPage(WorkbenchController *controller, QWidget *paren
     headerLayout->addWidget(m_summary, 1);
     headerLayout->addWidget(m_restoreDefaults);
 
-    auto left = new ::Core::MiniSplitter(Qt::Vertical, this);
+    auto left = new QSplitter(Qt::Vertical, this);
     left->setObjectName("EtherCATProcessDataLeftSplitter");
+    left->setHandleWidth(Utils::StyleHelper::SpacingTokens::GapHS);
+    left->setOpaqueResize(true);
     left->addWidget(tableGroup(Tr::tr("Sync Manager"), m_syncManagers));
     left->addWidget(tableGroup(Tr::tr("PDO Assignment"), m_assignments));
     left->setStretchFactor(0, 1);
     left->setStretchFactor(1, 1);
 
-    auto right = new ::Core::MiniSplitter(Qt::Vertical, this);
+    auto right = new QSplitter(Qt::Vertical, this);
     right->setObjectName("EtherCATProcessDataRightSplitter");
+    right->setHandleWidth(Utils::StyleHelper::SpacingTokens::GapHS);
+    right->setOpaqueResize(true);
     right->addWidget(tableGroup(Tr::tr("PDO List"), m_pdoList));
     right->addWidget(tableGroup(Tr::tr("PDO Content"), m_pdoContent));
     right->setStretchFactor(0, 1);
     right->setStretchFactor(1, 1);
 
-    auto configuration = new ::Core::MiniSplitter(Qt::Horizontal, this);
+    auto configuration = new QSplitter(Qt::Horizontal, this);
     configuration->setObjectName("EtherCATProcessDataConfigurationSplitter");
+    configuration->setHandleWidth(Utils::StyleHelper::SpacingTokens::GapHS);
+    configuration->setOpaqueResize(true);
     configuration->addWidget(left);
     configuration->addWidget(right);
     configuration->setStretchFactor(0, 1);
     configuration->setStretchFactor(1, 2);
 
-    auto mainSplitter = new ::Core::MiniSplitter(Qt::Vertical, this);
+    auto mainSplitter = new QSplitter(Qt::Vertical, this);
     mainSplitter->setObjectName("EtherCATProcessDataMainSplitter");
+    mainSplitter->setHandleWidth(Utils::StyleHelper::SpacingTokens::GapHS);
+    mainSplitter->setOpaqueResize(true);
     mainSplitter->addWidget(configuration);
     mainSplitter->addWidget(tableGroup(Tr::tr("Process Image Preview"), m_processImage));
     mainSplitter->setStretchFactor(0, 2);

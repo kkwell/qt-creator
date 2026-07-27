@@ -14,7 +14,6 @@
 #include <coreplugin/actionmanager/command.h>
 #include <coreplugin/coreconstants.h>
 #include <coreplugin/icontext.h>
-#include <coreplugin/minisplitter.h>
 #include <coreplugin/messagemanager.h>
 #include <coreplugin/modemanager.h>
 #include <coreplugin/navigationwidget.h>
@@ -25,6 +24,7 @@
 
 #include <QMenu>
 #include <QPointer>
+#include <QSplitter>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -38,10 +38,14 @@ public:
     {
         setObjectName("EtherCATWorkbenchModeWidget");
 
-        auto mainSplitter = new ::Core::MiniSplitter;
+        auto mainSplitter = new QSplitter;
         mainSplitter->setObjectName("EtherCATWorkbenchMainSplitter");
-        auto centralSplitter = new ::Core::MiniSplitter(Qt::Vertical, mainSplitter);
+        mainSplitter->setHandleWidth(Utils::StyleHelper::SpacingTokens::GapHS);
+        mainSplitter->setOpaqueResize(true);
+        auto centralSplitter = new QSplitter(Qt::Vertical, mainSplitter);
         centralSplitter->setObjectName("EtherCATWorkbenchCentralSplitter");
+        centralSplitter->setHandleWidth(Utils::StyleHelper::SpacingTokens::GapHS);
+        centralSplitter->setOpaqueResize(true);
         centralSplitter->addWidget(new DetailsView(controller, centralSplitter));
         auto outputPane = new ::Core::OutputPanePlaceHolder(Constants::MODE_ID, centralSplitter);
         outputPane->setObjectName("EtherCATWorkbenchOutputPane");

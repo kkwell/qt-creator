@@ -33,7 +33,7 @@ static void writeGatewayEvent(const GatewayRuntimeEvent &event)
                                            : Utils::NormalMessageFormat;
     const QString message = QString("[AI Gateway] %1\n").arg(event.message);
     ProjectExplorer::ProjectExplorerPlugin::postApplicationOutput(
-        channelId, Tr::tr("EtherCAT Controller"), message, format);
+        channelId, Tr::tr("Output"), message, format);
     if (event.kind == GatewayRuntimeEventKind::Failed)
         ProjectExplorer::ProjectExplorerPlugin::showApplicationOutput(channelId);
 }

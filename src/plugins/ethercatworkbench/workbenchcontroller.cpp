@@ -886,78 +886,10 @@ static QString controllerPackageDeploymentStateName(Data::ControllerPackageDeplo
     return Tr::tr("unknown");
 }
 
-static QString controllerOutputFingerprint(const Data::ControllerConnectionSnapshot &snapshot)
+static QString controllerOutputFingerprint(
+    const QString &message, ControllerOutputLevel level)
 {
-    QStringList fields{QString::number(int(snapshot.state))};
-    if (snapshot.state != Data::ControllerConnectionState::Disconnected) {
-        fields.append(QString::number(snapshot.sessionGeneration));
-        fields.append(snapshot.endpointSummary);
-    }
-    for (const Data::ControllerChannelStatus &channel : snapshot.channels) {
-        fields.append(
-            QStringLiteral("%1:%2").arg(channel.id).arg(int(channel.state)));
-    }
-    if (snapshot.session) {
-        fields.append(
-            QStringLiteral("session:%1:%2:%3:%4")
-                .arg(snapshot.session->sessionId)
-                .arg(snapshot.session->bootId)
-                .arg(snapshot.session->controlLeaseOwnerSessionId)
-                .arg(snapshot.session->ownsControlLease));
-    }
-    if (snapshot.controllerState) {
-        fields.append(
-            QStringLiteral("state:%1:%2:%3:%4:%5:%6:%7:%8")
-                .arg(int(snapshot.controllerState->serviceState))
-                .arg(snapshot.controllerState->actualWorkingCounter)
-                .arg(snapshot.controllerState->expectedWorkingCounter)
-                .arg(snapshot.controllerState->busOperational)
-                .arg(snapshot.controllerState->applicationActive)
-                .arg(snapshot.controllerState->safeOutput)
-                .arg(snapshot.controllerState->currentFaults)
-                .arg(snapshot.controllerState->latchedFaults));
-    }
-    const Data::ControllerControlProgress &progress = snapshot.controlProgress;
-    fields.append(
-        QStringLiteral("control:%1:%2:%3:%4:%5:%6")
-            .arg(int(progress.command))
-            .arg(int(progress.state))
-            .arg(progress.stage)
-            .arg(progress.status ? QString::number(*progress.status) : QString())
-            .arg(
-                progress.operationResult ? QString::number(*progress.operationResult)
-                                         : QString())
-            .arg(progress.detail));
-    const Data::ControllerPackageDeploymentProgress &deployment = snapshot.packageDeploymentProgress;
-    fields.append(QStringLiteral("deployment:%1:%2:%3:%4:%5:%6:%7")
-                      .arg(deployment.operationId)
-                      .arg(int(deployment.state))
-                      .arg(deployment.transferredBytes)
-                      .arg(deployment.totalBytes)
-                      .arg(deployment.status ? QString::number(*deployment.status) : QString())
-                      .arg(
-                          deployment.operationResult ? QString::number(*deployment.operationResult)
-                                                     : QString())
-                      .arg(deployment.detail));
-    if (snapshot.topology) {
-        fields.append(
-            QStringLiteral("topology:%1:%2:%3:%4")
-                .arg(snapshot.topology->respondingCount)
-                .arg(snapshot.topology->slaves.size())
-                .arg(snapshot.topology->result)
-                .arg(snapshot.topology->discoveredAt.toMSecsSinceEpoch()));
-    }
-    if (snapshot.lastError) {
-        fields.append(
-            QStringLiteral("error:%1:%2:%3:%4")
-                .arg(
-                    snapshot.lastError->code ? QString::number(*snapshot.lastError->code)
-                                             : QString())
-                .arg(snapshot.lastError->codeName)
-                .arg(snapshot.lastError->summary)
-                .arg(snapshot.lastError->detail));
-    }
-    return fields.join(QLatin1Char('|'));
+    return QStringLiteral("%1:%2").arg(int(level)).arg(message);
 }
 
 static ControllerOutputLevel controllerOutputLevel(
@@ -984,45 +916,20 @@ static ControllerOutputLevel controllerOutputLevel(
     return ControllerOutputLevel::Information;
 }
 
-static QString controllerOutputMessage(
-    Core::ControllerConnectionProvider *provider,
-    const Data::ControllerConnectionSnapshot &snapshot)
+static QString controllerOutputMessage(const Data::ControllerConnectionSnapshot &snapshot)
 {
-    QString providerName = provider ? provider->displayName().trimmed() : QString();
-    if (providerName.isEmpty())
-        providerName = Tr::tr("Controller");
-    QStringList fields{
-        Tr::tr("%1: %2").arg(providerName, controllerConnectionStateName(snapshot.state)),
-    };
-    if (!snapshot.endpointSummary.isEmpty())
-        fields.append(Tr::tr("Endpoint %1").arg(snapshot.endpointSummary));
-    if (snapshot.session) {
-        fields.append(
-            snapshot.session->ownsControlLease
-                ? Tr::tr("Exclusive control acquired")
-                : snapshot.session->controlLeaseOwnerSessionId
-                      ? Tr::tr("Control lease owner %1")
-                            .arg(snapshot.session->controlLeaseOwnerSessionId)
-                      : Tr::tr("Control lease not acquired"));
+    if (snapshot.lastError) {
+        QString error = snapshot.lastError->summary;
+        if (error.isEmpty())
+            error = snapshot.lastError->detail;
+        if (!snapshot.lastError->codeName.isEmpty()) {
+            error = error.isEmpty()
+                        ? snapshot.lastError->codeName
+                        : Tr::tr("%1 (%2)").arg(error, snapshot.lastError->codeName);
+        }
+        return error.isEmpty() ? Tr::tr("Error") : Tr::tr("Error: %1").arg(error);
     }
-    if (snapshot.controllerState) {
-        fields.append(
-            Tr::tr("Service %1")
-                .arg(controllerServiceStateName(snapshot.controllerState->serviceState)));
-        fields.append(
-            Tr::tr("WKC %1/%2")
-                .arg(snapshot.controllerState->actualWorkingCounter)
-                .arg(snapshot.controllerState->expectedWorkingCounter));
-    }
-    if (snapshot.controlProgress.state != Data::ControllerControlState::Idle) {
-        QString progress = Tr::tr("%1 %2")
-                               .arg(
-                                   controllerControlCommandName(snapshot.controlProgress.command),
-                                   controllerControlStateName(snapshot.controlProgress.state));
-        if (!snapshot.controlProgress.detail.isEmpty())
-            progress += Tr::tr(" (%1)").arg(snapshot.controlProgress.detail);
-        fields.append(progress);
-    }
+
     if (snapshot.packageDeploymentProgress.state != Data::ControllerPackageDeploymentState::Idle) {
         const Data::ControllerPackageDeploymentProgress &deployment
             = snapshot.packageDeploymentProgress;
@@ -1037,27 +944,36 @@ static QString controllerOutputMessage(
         }
         if (!deployment.detail.isEmpty())
             progress += Tr::tr(" (%1)").arg(deployment.detail);
-        fields.append(progress);
+        return progress;
+    }
+
+    if (snapshot.controlProgress.state != Data::ControllerControlState::Idle) {
+        QString progress = Tr::tr("%1 %2")
+                               .arg(
+                                   controllerControlCommandName(snapshot.controlProgress.command),
+                                   controllerControlStateName(snapshot.controlProgress.state));
+        if (!snapshot.controlProgress.detail.isEmpty())
+            progress += Tr::tr(" (%1)").arg(snapshot.controlProgress.detail);
+        return progress;
+    }
+
+    QStringList fields{controllerConnectionStateName(snapshot.state)};
+    if (snapshot.controllerState) {
+        fields.append(controllerServiceStateName(snapshot.controllerState->serviceState));
     }
     if (snapshot.topology) {
         fields.append(
-            Tr::tr("Bus scan %1 responding, %2 listed")
-                .arg(snapshot.topology->respondingCount)
-                .arg(snapshot.topology->slaves.size()));
+            Tr::tr("%n device(s)", nullptr, int(snapshot.topology->slaves.size())));
     }
-    if (snapshot.lastError) {
-        QString error = snapshot.lastError->summary;
-        if (error.isEmpty())
-            error = snapshot.lastError->detail;
-        if (!snapshot.lastError->codeName.isEmpty()) {
-            error = error.isEmpty()
-                        ? snapshot.lastError->codeName
-                        : Tr::tr("%1 (%2)").arg(error, snapshot.lastError->codeName);
-        }
-        if (!error.isEmpty())
-            fields.append(Tr::tr("Error: %1").arg(error));
+    if (snapshot.controllerState
+        && (snapshot.controllerState->actualWorkingCounter
+            || snapshot.controllerState->expectedWorkingCounter)) {
+        fields.append(
+            Tr::tr("WKC %1/%2")
+                .arg(snapshot.controllerState->actualWorkingCounter)
+                .arg(snapshot.controllerState->expectedWorkingCounter));
     }
-    return fields.join(QStringLiteral(" — "));
+    return fields.join(QStringLiteral(" · "));
 }
 
 WorkbenchController::WorkbenchController(QObject *parent)
@@ -1153,26 +1069,18 @@ WorkbenchController::WorkbenchController(QObject *parent)
                     const auto cleanup = m_controllerCleanupStates.find(connectionProvider);
                     if (cleanup != m_controllerCleanupStates.end()) {
                         writeControllerOutput(
-                            Tr::tr(
-                                "Automatic controller cleanup stopped safely because the "
-                                "controller "
-                                "adapter was removed. The connection was not reported as "
-                                "disconnected."),
+                            Tr::tr("Cleanup canceled: adapter removed."),
                             ControllerOutputLevel::Error);
                         m_controllerCleanupStates.erase(cleanup);
                     }
                     if (m_controllerStartupStates.remove(connectionProvider)) {
                         writeControllerOutput(
-                            Tr::tr(
-                                "Automatic controller startup stopped because the controller "
-                                "adapter was removed."),
+                            Tr::tr("Start canceled: adapter removed."),
                             ControllerOutputLevel::Error);
                     }
                     if (m_controllerStopStates.remove(connectionProvider)) {
                         writeControllerOutput(
-                            Tr::tr(
-                                "Controller stop verification ended because the controller "
-                                "adapter was removed."),
+                            Tr::tr("Stop canceled: adapter removed."),
                             ControllerOutputLevel::Error);
                     }
                     m_controllerConnectionProviderEpochs.remove(connectionProvider);
@@ -1814,29 +1722,15 @@ Utils::Result<> WorkbenchController::applyCurrentBusToProject()
     if (!applied)
         return applied;
 
-    QString message = Tr::tr(
-                          "Applied the current bus to the offline project: %1 device(s), %2 ESI "
-                          "match(es), %3 unknown device(s), %4 existing configuration(s) "
-                          "preserved, and %5 configuration(s) removed or replaced.")
+    QString message = Tr::tr("Bus applied · %1 devices · %2 matched · %3 unknown")
                           .arg(plan->candidateSlaves.size())
                           .arg(plan->esiMatches)
-                          .arg(plan->unknownDevices)
-                          .arg(plan->preservedConfigurations)
-                          .arg(plan->removedConfigurations);
+                          .arg(plan->unknownDevices);
     if (plan->ambiguousEsiMatches) {
-        message += Tr::tr(" %n device(s) have ambiguous ESI matches.",
-                          nullptr,
-                          plan->ambiguousEsiMatches);
+        message += Tr::tr(" · %n ambiguous", nullptr, plan->ambiguousEsiMatches);
     }
     if (plan->unsupportedEsiMatches) {
-        message += Tr::tr(" %n matching ESI device(s) contain unsupported structures.",
-                          nullptr,
-                          plan->unsupportedEsiMatches);
-    }
-    if (plan->unknownDevices) {
-        message += Tr::tr(
-            " Import matching ESI XML files, then apply the current bus again to enable detailed "
-            "Process Data, Startup, and Distributed Clocks configuration.");
+        message += Tr::tr(" · %n unsupported", nullptr, plan->unsupportedEsiMatches);
     }
     writeControllerOutput(
         message,
@@ -2323,18 +2217,11 @@ bool WorkbenchController::canActivateSelectedProject() const
 
 bool WorkbenchController::canCopyNodeId(const Data::NodeId &nodeId) const
 {
-    if (m_shuttingDown || nodeId.isNull() || !m_projectService)
+    if (m_shuttingDown || nodeId.isNull())
         return false;
     const Core::PropertyPageContext context = m_treeModel.contextForNodeId(nodeId);
-    if (context.nodeKind == Core::WorkbenchNodeKind::None
-        || context.nodeKind == Core::WorkbenchNodeKind::Placeholder) {
-        return false;
-    }
-    if (context.projectId.isNull())
-        return true;
-    const std::optional<Data::ProjectSnapshot> project = m_projectService->project(
-        context.projectId);
-    return project && project->valid;
+    return context.nodeKind != Core::WorkbenchNodeKind::None
+           && context.nodeKind != Core::WorkbenchNodeKind::Placeholder;
 }
 
 std::optional<OfflineMasterTarget> WorkbenchController::activeOfflineMasterTarget() const
@@ -2933,33 +2820,26 @@ void WorkbenchController::writeControllerTopologyCapabilityOutput(
     QStringList warnings;
     if (!report.incompatibleDevices.isEmpty()) {
         warnings.append(
-            Tr::tr("FreeRun is not supported by %1 according to its ESI synchronization capability.")
+            Tr::tr("FreeRun unavailable: %1")
                 .arg(report.incompatibleDevices.join(Tr::tr("; "))));
     }
     if (!report.unknownDevices.isEmpty()) {
         warnings.append(
-            Tr::tr(
-                "FreeRun compatibility cannot be verified for %1 because matching ESI "
-                "synchronization data is unavailable.")
+            Tr::tr("FreeRun unverified: %1")
                 .arg(report.unknownDevices.join(Tr::tr("; "))));
     }
     if (warnings.isEmpty()) {
         writeControllerOutput(
-            Tr::tr(
-                "Bus scan verified FreeRun support for %n device(s).",
-                nullptr,
-                report.compatibleDevices));
+            Tr::tr("FreeRun available · %n device(s)", nullptr, report.compatibleDevices));
         return;
     }
 
     warnings.append(
         report.incompatibleDevices.isEmpty()
-            ? Tr::tr(
-                  "Import matching ESI XML files that declare object 0x1C32/0x1C33 subindex 4 "
-                  "before selecting FreeRun.")
-            : Tr::tr("Select Distributed Clocks for this bus."));
+            ? Tr::tr("Import matching ESI XML.")
+            : Tr::tr("Use Distributed Clocks."));
     writeControllerOutput(
-        Tr::tr("Bus scan timing compatibility: %1").arg(warnings.join(QLatin1Char(' '))),
+        warnings.join(QLatin1Char(' ')),
         ControllerOutputLevel::Warning);
 }
 
@@ -2979,12 +2859,12 @@ void WorkbenchController::handleProjectAboutToBeRemoved(const Data::NodeId &proj
         changed = true;
         if (m_controllerStartupStates.remove(provider)) {
             writeControllerOutput(
-                Tr::tr("Automatic controller startup was canceled because its project closed."),
+                Tr::tr("Start canceled: project closed."),
                 ControllerOutputLevel::Warning);
         }
         if (m_controllerStopStates.remove(provider)) {
             writeControllerOutput(
-                Tr::tr("Controller stop verification was canceled because its project closed."),
+                Tr::tr("Stop canceled: project closed."),
                 ControllerOutputLevel::Warning);
         }
         beginControllerCleanup(provider, snapshot);
@@ -3024,7 +2904,9 @@ void WorkbenchController::handleControllerConnectionChanged()
             continue;
         const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
         writeControllerTopologyCapabilityOutput(provider, snapshot);
-        const QString fingerprint = controllerOutputFingerprint(snapshot);
+        const ControllerOutputLevel level = controllerOutputLevel(snapshot);
+        const QString message = controllerOutputMessage(snapshot);
+        const QString fingerprint = controllerOutputFingerprint(message, level);
         auto previous = m_controllerOutputFingerprints.find(provider);
         if (previous == m_controllerOutputFingerprints.end()) {
             m_controllerOutputFingerprints.insert(provider, fingerprint);
@@ -3038,8 +2920,7 @@ void WorkbenchController::handleControllerConnectionChanged()
                 continue;
             *previous = fingerprint;
         }
-        writeControllerOutput(
-            controllerOutputMessage(provider, snapshot), controllerOutputLevel(snapshot));
+        writeControllerOutput(message, level);
     }
     emit controllerConnectionChanged();
 }
@@ -3189,7 +3070,7 @@ void WorkbenchController::executeControllerAutoAcquire(
     const Utils::Result<> result = executeControllerControl(expectedScope, request);
     if (!result) {
         writeControllerOutput(
-            Tr::tr("Cannot automatically acquire controller control: %1").arg(result.error()),
+            Tr::tr("Control acquisition failed: %1").arg(result.error()),
             ControllerOutputLevel::Error);
         return;
     }
@@ -3239,7 +3120,7 @@ void WorkbenchController::executeControllerAutoDiscovery(
     const Utils::Result<> result = executeControllerControl(expectedScope, request);
     if (!result) {
         writeControllerOutput(
-            Tr::tr("Cannot automatically scan the EtherCAT bus: %1").arg(result.error()),
+            Tr::tr("Scan failed: %1").arg(result.error()),
             ControllerOutputLevel::Error);
     }
 }
@@ -3307,10 +3188,7 @@ Utils::Result<> WorkbenchController::beginControllerStartup(
     state.remainingPolls = controllerStartupMaximumPhasePolls;
     m_controllerStartupStates.insert(provider, state);
 
-    writeControllerOutput(
-        Tr::tr(
-            "Starting controller: enter configuration, scan the bus, restore the active package, "
-            "then start runtime."));
+    writeControllerOutput(Tr::tr("Starting · Config → Scan → Restore → Run"));
 
     Data::ControllerControlRequest request;
     request.command = Data::ControllerControlCommand::EnterConfigurationMode;
@@ -3540,12 +3418,12 @@ void WorkbenchController::finishControllerStartup(Core::ControllerConnectionProv
     const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
     if (snapshot.controllerState) {
         writeControllerOutput(
-            Tr::tr("Controller startup completed: Running, WKC %1/%2, cycle %3.")
+            Tr::tr("Running · WKC %1/%2 · cycle %3")
                 .arg(snapshot.controllerState->actualWorkingCounter)
                 .arg(snapshot.controllerState->expectedWorkingCounter)
                 .arg(snapshot.controllerState->cycleCount));
     } else {
-        writeControllerOutput(Tr::tr("Controller startup completed."));
+        writeControllerOutput(Tr::tr("Running"));
     }
     emit controllerConnectionChanged();
 }
@@ -3556,7 +3434,7 @@ void WorkbenchController::failControllerStartup(
     if (!provider || !m_controllerStartupStates.remove(provider))
         return;
     writeControllerOutput(
-        Tr::tr("Controller startup failed: %1").arg(reason), ControllerOutputLevel::Error);
+        Tr::tr("Start failed: %1").arg(reason), ControllerOutputLevel::Error);
     emit controllerConnectionChanged();
 }
 
@@ -3636,12 +3514,8 @@ Utils::Result<> WorkbenchController::beginControllerStop(
 
     writeControllerOutput(
         requiresControlledStop
-            ? Tr::tr(
-                  "Stopping controller: perform a controlled application stop, then enter "
-                  "configuration to stop cyclic EtherCAT traffic.")
-            : Tr::tr(
-                  "Stopping controller from OP_SAFE: enter configuration to stop cyclic "
-                  "EtherCAT traffic."));
+            ? Tr::tr("Stopping · Controlled stop → Shutdown")
+            : Tr::tr("Stopping · Shutdown"));
 
     Data::ControllerControlRequest request;
     request.command = firstCommand;
@@ -3837,17 +3711,12 @@ void WorkbenchController::finishControllerStop(Core::ControllerConnectionProvide
     if (snapshot.controllerState
         && (snapshot.controllerState->currentFaults || snapshot.controllerState->latchedFaults)) {
         writeControllerOutput(
-            Tr::tr(
-                "Controller stop completed in Shutdown and cyclic EtherCAT traffic is stopped, "
-                "but controller faults remain (current 0x%1, latched 0x%2).")
+            Tr::tr("Stopped · Shutdown · faults 0x%1/0x%2")
                 .arg(snapshot.controllerState->currentFaults, 0, 16)
                 .arg(snapshot.controllerState->latchedFaults, 0, 16),
             ControllerOutputLevel::Warning);
     } else {
-        writeControllerOutput(
-            Tr::tr(
-                "Controller stop completed in Shutdown; cyclic EtherCAT traffic and Distributed "
-                "Clocks runtime are stopped."));
+        writeControllerOutput(Tr::tr("Stopped · Shutdown · DC off"));
     }
     emit controllerConnectionChanged();
 }
@@ -3858,7 +3727,7 @@ void WorkbenchController::failControllerStop(
     if (!provider || !m_controllerStopStates.remove(provider))
         return;
     writeControllerOutput(
-        Tr::tr("Controller stop could not be verified: %1 Cyclic EtherCAT traffic may still be active.")
+        Tr::tr("Stop unverified: %1 · cyclic traffic may still be active")
             .arg(reason),
         ControllerOutputLevel::Error);
     emit controllerConnectionChanged();
@@ -4213,10 +4082,7 @@ void WorkbenchController::failControllerCleanup(
     state->scheduled = false;
     state->failure = reason;
     writeControllerOutput(
-        Tr::tr(
-            "Automatic controller cleanup stopped safely: %1 The connection remains unchanged and "
-            "was not reported as disconnected.")
-            .arg(reason),
+        Tr::tr("Cleanup failed: %1 · connection unchanged").arg(reason),
         ControllerOutputLevel::Error);
     emit controllerConnectionChanged();
 }

@@ -1090,6 +1090,8 @@ void WorkbenchTreeModel::syncDevices(const QList<Data::DeviceSummary> &devices)
         return left.id.toString() < right.id.toString();
     });
     m_devices = desired;
+    if (!m_repositoryNode)
+        return;
 
     const QModelIndex repositoryIndex = indexForNode(m_repositoryNode);
     auto &current = m_repositoryNode->children;
@@ -1287,13 +1289,22 @@ QString WorkbenchTreeModel::visibleCompactStatus(const Node *node) const
 
 QModelIndex WorkbenchTreeModel::firstUnsupportedDevice() const
 {
-    if (!m_repositoryNode)
-        return {};
-    for (const std::unique_ptr<Node> &node : m_repositoryNode->children) {
-        if (node->kind == Core::WorkbenchNodeKind::Device && !node->device.supported)
-            return indexForNode(node.get());
-    }
-    return {};
+    Node *unsupported = nullptr;
+    const auto visit = [&unsupported](const auto &self, Node *parent) -> void {
+        for (const std::unique_ptr<Node> &child : parent->children) {
+            if (unsupported)
+                return;
+            if ((child->kind == Core::WorkbenchNodeKind::ConfiguredSlave
+                 || child->kind == Core::WorkbenchNodeKind::Module)
+                && !child->device.id.isNull() && !child->device.supported) {
+                unsupported = child.get();
+                return;
+            }
+            self(self, child.get());
+        }
+    };
+    visit(visit, m_root.get());
+    return indexForNode(unsupported);
 }
 
 QModelIndex WorkbenchTreeModel::firstTopologyDifference(const Data::NodeId &projectId) const
@@ -1983,16 +1994,6 @@ void WorkbenchTreeModel::rebuild()
     std::sort(projects.begin(), projects.end(), [](const auto &left, const auto &right) {
         return left.name.compare(right.name, Qt::CaseInsensitive) < 0;
     });
-    if (projects.isEmpty()) {
-        m_root->children.push_back(makeNode(
-            m_root.get(),
-            derivedNodeId("projects:empty"),
-            {},
-            Core::WorkbenchNodeKind::Placeholder,
-            Tr::tr("No EtherCAT project is open"),
-            Tr::tr("Create or open an .ecatproject file"),
-            Tr::tr("Open/create project")));
-    }
 
     for (const Data::ProjectSnapshot &project : std::as_const(projects)) {
         if (!project.valid) {
@@ -2081,6 +2082,14 @@ void WorkbenchTreeModel::rebuild()
                     if (offlineSlave != project.slaves.cend()) {
                         node->ownerSlaveId = offlineSlave->id;
                         node->sourceId = offlineSlave->deviceDescriptionId;
+                        const auto device = std::find_if(
+                            m_devices.cbegin(),
+                            m_devices.cend(),
+                            [offlineSlave](const Data::DeviceSummary &candidate) {
+                                return candidate.id == offlineSlave->deviceDescriptionId;
+                            });
+                        if (device != m_devices.cend())
+                            node->device = *device;
                     }
                 }
                 parent->children.push_back(std::move(node));
@@ -2225,6 +2234,11 @@ void WorkbenchTreeModel::rebuild()
             }
         };
         appendChildren(appendChildren, m_root.get(), {});
+    }
+
+    if (projects.isEmpty()) {
+        endResetModel();
+        return;
     }
 
     auto repository = makeNode(

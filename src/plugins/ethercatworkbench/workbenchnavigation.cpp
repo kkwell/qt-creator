@@ -21,7 +21,9 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QContextMenuEvent>
+#include <QGridLayout>
 #include <QHeaderView>
+#include <QGroupBox>
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
@@ -29,6 +31,7 @@
 #include <QPushButton>
 #include <QScopedValueRollback>
 #include <QSignalBlocker>
+#include <QSizePolicy>
 #include <QSortFilterProxyModel>
 #include <QStackedWidget>
 #include <QToolButton>
@@ -100,6 +103,30 @@ static std::optional<Data::NodeId> currentLocateProjectId(
     return context.projectId;
 }
 
+static QString projectTimingModeName(Data::MasterTimingMode mode)
+{
+    switch (mode) {
+    case Data::MasterTimingMode::Unassigned:
+        return Tr::tr("Not configured");
+    case Data::MasterTimingMode::FreeRun:
+        return Tr::tr("FreeRun");
+    case Data::MasterTimingMode::DistributedClocks:
+        return Tr::tr("Distributed Clocks");
+    }
+    return Tr::tr("Unknown");
+}
+
+static QString projectCyclePeriodText(quint32 cyclePeriodNs)
+{
+    if (!cyclePeriodNs)
+        return Tr::tr("Not configured");
+    if (cyclePeriodNs % 1'000'000 == 0)
+        return Tr::tr("%1 ms").arg(cyclePeriodNs / 1'000'000);
+    if (cyclePeriodNs % 1'000 == 0)
+        return Tr::tr("%1 µs").arg(cyclePeriodNs / 1'000);
+    return Tr::tr("%1 ns").arg(cyclePeriodNs);
+}
+
 WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     WorkbenchController *controller, QWidget *parent)
     : QWidget(parent)
@@ -129,6 +156,41 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_proxyModel->setFilterCaseSensitivity(Qt::CaseInsensitive);
     m_proxyModel->setRecursiveFilteringEnabled(true);
     m_proxyModel->setAutoAcceptChildRows(false);
+    const auto beginProxyChange = [this] { ++m_proxyModelChangeDepth; };
+    const auto endProxyChange = [this] {
+        if (m_proxyModelChangeDepth > 0)
+            --m_proxyModelChangeDepth;
+    };
+    connect(
+        m_proxyModel,
+        &QAbstractItemModel::modelAboutToBeReset,
+        this,
+        beginProxyChange);
+    connect(m_proxyModel, &QAbstractItemModel::modelReset, this, endProxyChange);
+    connect(
+        m_proxyModel,
+        &QAbstractItemModel::layoutAboutToBeChanged,
+        this,
+        beginProxyChange);
+    connect(m_proxyModel, &QAbstractItemModel::layoutChanged, this, endProxyChange);
+    connect(
+        m_proxyModel,
+        &QAbstractItemModel::rowsAboutToBeInserted,
+        this,
+        beginProxyChange);
+    connect(m_proxyModel, &QAbstractItemModel::rowsInserted, this, endProxyChange);
+    connect(
+        m_proxyModel,
+        &QAbstractItemModel::rowsAboutToBeRemoved,
+        this,
+        beginProxyChange);
+    connect(m_proxyModel, &QAbstractItemModel::rowsRemoved, this, endProxyChange);
+    connect(
+        m_proxyModel,
+        &QAbstractItemModel::rowsAboutToBeMoved,
+        this,
+        beginProxyChange);
+    connect(m_proxyModel, &QAbstractItemModel::rowsMoved, this, endProxyChange);
 
     m_treeView->setObjectName("EtherCATWorkbenchTree");
     m_treeView->setAccessibleName(Tr::tr("EtherCAT device tree"));
@@ -228,11 +290,54 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_resultsStack->addWidget(m_treeResults);
     m_resultsStack->addWidget(m_emptyState);
 
+    m_projectSummary = new QGroupBox(Tr::tr("Project"), this);
+    m_projectSummary->setObjectName("EtherCATWorkbenchProjectSummary");
+    m_projectSummary->setAccessibleName(Tr::tr("Current project information"));
+    m_projectSummary->setAccessibleDescription(
+        Tr::tr("Current project timing mode, cycle period, and configured device count."));
+    m_projectSummaryName = new QLabel(m_projectSummary);
+    m_projectSummaryName->setObjectName("EtherCATWorkbenchProjectSummaryName");
+    m_projectSummaryMode = new QLabel(m_projectSummary);
+    m_projectSummaryMode->setObjectName("EtherCATWorkbenchProjectSummaryMode");
+    m_projectSummaryCycle = new QLabel(m_projectSummary);
+    m_projectSummaryCycle->setObjectName("EtherCATWorkbenchProjectSummaryCycle");
+    m_projectSummaryDevices = new QLabel(m_projectSummary);
+    m_projectSummaryDevices->setObjectName("EtherCATWorkbenchProjectSummaryDevices");
+    const auto configureSummaryValue = [](QLabel *label, const QString &accessibleName) {
+        label->setAccessibleName(accessibleName);
+        label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    };
+    configureSummaryValue(m_projectSummaryName, Tr::tr("Current project name"));
+    configureSummaryValue(m_projectSummaryMode, Tr::tr("Current project timing mode"));
+    configureSummaryValue(m_projectSummaryCycle, Tr::tr("Current project cycle period"));
+    configureSummaryValue(m_projectSummaryDevices, Tr::tr("Configured device count"));
+
+    auto projectSummaryLayout = new QGridLayout(m_projectSummary);
+    projectSummaryLayout->setContentsMargins(
+        Utils::StyleHelper::SpacingTokens::PaddingHS,
+        Utils::StyleHelper::SpacingTokens::PaddingVS,
+        Utils::StyleHelper::SpacingTokens::PaddingHS,
+        Utils::StyleHelper::SpacingTokens::PaddingVS);
+    projectSummaryLayout->setHorizontalSpacing(Utils::StyleHelper::SpacingTokens::GapHS);
+    projectSummaryLayout->setVerticalSpacing(Utils::StyleHelper::SpacingTokens::GapVXs);
+    projectSummaryLayout->addWidget(new QLabel(Tr::tr("Name:"), m_projectSummary), 0, 0);
+    projectSummaryLayout->addWidget(m_projectSummaryName, 0, 1);
+    projectSummaryLayout->addWidget(new QLabel(Tr::tr("Mode:"), m_projectSummary), 1, 0);
+    projectSummaryLayout->addWidget(m_projectSummaryMode, 1, 1);
+    projectSummaryLayout->addWidget(new QLabel(Tr::tr("Cycle:"), m_projectSummary), 2, 0);
+    projectSummaryLayout->addWidget(m_projectSummaryCycle, 2, 1);
+    projectSummaryLayout->addWidget(new QLabel(Tr::tr("Devices:"), m_projectSummary), 3, 0);
+    projectSummaryLayout->addWidget(m_projectSummaryDevices, 3, 1);
+    projectSummaryLayout->setColumnStretch(1, 1);
+    m_projectSummary->hide();
+
     auto layout = new QVBoxLayout(this);
     layout->setContentsMargins(QMargins());
     layout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVXxs);
     layout->addWidget(m_filterEdit);
-    layout->addWidget(m_resultsStack);
+    layout->addWidget(m_resultsStack, 1);
+    layout->addWidget(m_projectSummary);
 
     connect(
         m_filterEdit,
@@ -263,6 +368,8 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
         this,
         [this](const QModelIndex &current) {
             if (!m_controller || !m_controller->selectionService())
+                return;
+            if (m_sourceModelResetting || m_proxyModelChangeDepth > 0 || !current.isValid())
                 return;
             const QModelIndex sourceIndex = m_proxyModel->mapToSource(current);
             const Core::PropertyPageContext context = m_sourceModel->contextForIndex(sourceIndex);
@@ -325,6 +432,32 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
         &WorkbenchController::copyCurrentNodeIdRequested,
         this,
         &WorkbenchNavigationWidget::copyCurrentNodeId);
+    if (Core::ProjectService *projectService = controller->projectService()) {
+        const auto refreshProjectSummary = [this] { updateProjectSummary(); };
+        connect(
+            projectService,
+            &Core::ProjectService::projectAdded,
+            this,
+            refreshProjectSummary);
+        connect(
+            projectService,
+            &Core::ProjectService::projectChanged,
+            this,
+            refreshProjectSummary);
+        connect(
+            projectService,
+            &Core::ProjectService::activeProjectChanged,
+            this,
+            refreshProjectSummary);
+        connect(
+            projectService,
+            &Core::ProjectService::projectAboutToBeRemoved,
+            this,
+            [this, projectService](const Data::NodeId &projectId) {
+                if (projectId == projectService->activeProjectId())
+                    m_projectSummary->hide();
+            });
+    }
     connect(
         m_treeView,
         &QTreeView::customContextMenuRequested,
@@ -333,6 +466,7 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_knownNodeIds = sourceNodeIds();
     m_treeView->expandToDepth(2);
     updateFilterState();
+    updateProjectSummary();
 }
 
 QTreeView *WorkbenchNavigationWidget::treeView() const
@@ -389,8 +523,11 @@ void WorkbenchNavigationWidget::handleFilterTextChanged(const QString &text)
     m_proxyModel->setFilterFixedString(text);
     if (m_filterActive)
         m_treeView->expandAll();
-    else if (wasFiltering)
+    else if (wasFiltering) {
         restoreExpansionState();
+        if (m_controller && m_controller->selectionService())
+            selectNode(m_controller->selectionService()->currentNodeId());
+    }
     updateFilterState();
 }
 
@@ -473,6 +610,42 @@ void WorkbenchNavigationWidget::updateFilterState()
     m_resultsStack->setCurrentWidget(noMatches ? m_emptyState : m_treeResults);
     setFocusProxy(noMatches ? static_cast<QWidget *>(m_clearFilter)
                             : static_cast<QWidget *>(m_treeView));
+}
+
+void WorkbenchNavigationWidget::updateProjectSummary()
+{
+    Core::ProjectService *projectService
+        = m_controller ? m_controller->projectService() : nullptr;
+    const Data::NodeId projectId
+        = projectService ? projectService->activeProjectId() : Data::NodeId();
+    const std::optional<Data::ProjectSnapshot> project
+        = projectService && !projectId.isNull() ? projectService->project(projectId)
+                                               : std::nullopt;
+    if (!project) {
+        m_projectSummary->hide();
+        return;
+    }
+
+    const QString mode = project->valid
+                             ? projectTimingModeName(project->masterConfiguration.timingMode)
+                             : Tr::tr("Unavailable");
+    const QString cycle = project->valid
+                              ? projectCyclePeriodText(
+                                    project->masterConfiguration.cyclePeriodNs)
+                              : Tr::tr("Unavailable");
+    m_projectSummaryName->setText(project->name);
+    m_projectSummaryName->setToolTip(project->name);
+    m_projectSummaryMode->setText(mode);
+    m_projectSummaryMode->setToolTip(mode);
+    m_projectSummaryCycle->setText(cycle);
+    m_projectSummaryCycle->setToolTip(
+        project->valid && project->masterConfiguration.cyclePeriodNs
+            ? Tr::tr("%1 ns").arg(project->masterConfiguration.cyclePeriodNs)
+            : cycle);
+    m_projectSummaryDevices->setText(QString::number(project->slaves.size()));
+    m_projectSummaryDevices->setToolTip(
+        Tr::tr("%n configured device(s)", nullptr, project->slaves.size()));
+    m_projectSummary->show();
 }
 
 void WorkbenchNavigationWidget::selectNode(const Data::NodeId &nodeId)
