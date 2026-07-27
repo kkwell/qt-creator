@@ -240,8 +240,8 @@ void EtherCATWorkbenchPlugin::setupQuickControllerActions()
     debugCommand->setAttribute(::Core::Command::CA_UpdateText);
     debugCommand->setAttribute(::Core::Command::CA_UpdateIcon);
 
-    m_stopControllerAction = new QAction(
-        Utils::Icons::STOP_SMALL.icon(), Tr::tr("Controlled Stop"), this);
+    m_stopControllerAction
+        = new QAction(Utils::Icons::STOP_SMALL.icon(), Tr::tr("Stop Controller"), this);
     m_stopControllerAction->setObjectName("EtherCATWorkbenchControlledStop");
     ::Core::Command *stopCommand = ::Core::ActionManager::registerAction(
         m_stopControllerAction,
@@ -427,6 +427,8 @@ void EtherCATWorkbenchPlugin::updateQuickControllerActions()
             QString availableDescription;
             const bool startupInProgress = scope && m_controller
                                            && m_controller->controllerStartupInProgress(*scope);
+            const bool stopInProgress = scope && m_controller
+                                        && m_controller->controllerStopInProgress(*scope);
             switch (quickAction) {
             case ControllerQuickControlAction::Run:
                 action->setIcon(ProjectExplorer::Icons::RUN.icon());
@@ -488,10 +490,16 @@ void EtherCATWorkbenchPlugin::updateQuickControllerActions()
                 break;
             case ControllerQuickControlAction::Stop:
                 action->setIcon(Utils::Icons::STOP_SMALL.icon());
-                text = Tr::tr("Controlled Stop");
-                availableDescription = Tr::tr(
-                    "Request a controlled stop of the running or paused controller application. "
-                    "This is not an emergency stop.");
+                if (stopInProgress) {
+                    action->setIcon(Utils::Icons::RELOAD.icon());
+                    text = Tr::tr("Stopping Controller...");
+                } else {
+                    text = Tr::tr("Stop Controller");
+                    availableDescription = Tr::tr(
+                        "Stop the application safely, then enter configuration so cyclic "
+                        "EtherCAT traffic and Distributed Clocks runtime stop. This is not an "
+                        "emergency stop.");
+                }
                 break;
             }
 

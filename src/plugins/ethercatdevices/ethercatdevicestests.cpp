@@ -65,6 +65,21 @@ static QByteArray operationalDevice()
 <Dc><OpMode><Name>DC Sync0</Name><AssignActivate>#x0300</AssignActivate>
  <CycleTimeSync0>125000</CycleTimeSync0><ShiftTimeSync0>1000</ShiftTimeSync0>
 </OpMode></Dc>
+<Profile><Dictionary><DataTypes>
+ <DataType><Name>DT1C32</Name><SubItem><SubIdx>4</SubIdx>
+  <Name>Sync modes supported</Name><Type>UINT</Type></SubItem></DataType>
+ <DataType><Name>DT1C33</Name><SubItem><SubIdx>4</SubIdx>
+  <Name>Sync modes supported</Name><Type>UINT</Type></SubItem></DataType>
+</DataTypes><Objects>
+ <Object><Index>#x1c32</Index><Type>DT1C32</Type><Info>
+  <SubItem><Name>Sync modes supported</Name>
+   <Info><DefaultData>0004</DefaultData></Info></SubItem>
+ </Info></Object>
+ <Object><Index>#x1c33</Index><Type>DT1C33</Type><Info>
+  <SubItem><Name>Sync modes supported</Name>
+   <Info><DefaultValue>4</DefaultValue></Info></SubItem>
+ </Info></Object>
+</Objects></Dictionary></Profile>
 </Device>)";
 }
 
@@ -175,6 +190,14 @@ void EtherCATDevicesTests::testParserReadsOperationalData()
     QCOMPARE(device.dcModes.size(), 1);
     QCOMPARE(device.dcModes.first().assignActivate, quint16(0x0300));
     QCOMPARE(device.dcModes.first().cycleTimeSync0Ns, qint64(125000));
+    QVERIFY(device.synchronizationTypes.outputTypesDeclared);
+    QCOMPARE(device.synchronizationTypes.outputSupportedTypes, quint16(0x0400));
+    QVERIFY(device.synchronizationTypes.inputTypesDeclared);
+    QCOMPARE(device.synchronizationTypes.inputSupportedTypes, quint16(0x0004));
+    QVERIFY(
+        std::any_of(device.warnings.cbegin(), device.warnings.cend(), [](const QString &warning) {
+            return warning.contains("0x0400") && warning.contains("0x0004");
+        }));
     QVERIFY(device.summary.supported);
     QCOMPARE(device.sourceSha256.size(), 32);
 

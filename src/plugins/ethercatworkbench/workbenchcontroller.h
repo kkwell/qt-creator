@@ -148,6 +148,7 @@ public:
         const Data::ControllerConnectionScope &scope,
         ControllerQuickControlAction action) const;
     bool controllerStartupInProgress(const Data::ControllerConnectionScope &scope) const;
+    bool controllerStopInProgress(const Data::ControllerConnectionScope &scope) const;
     Utils::Result<> executeQuickControllerControl(
         const Data::ControllerConnectionScope &scope, ControllerQuickControlAction action);
     Utils::Result<> connectController(const Data::ControllerConnectionScope &scope);
@@ -205,6 +206,10 @@ public:
         const Data::NodeId &projectId,
         const Data::NodeId &masterId,
         const Data::MasterConfiguration &configuration);
+    QString masterTimingModeUnavailableReason(
+        const Data::NodeId &projectId,
+        const Data::NodeId &masterId,
+        Data::MasterTimingMode timingMode) const;
     Utils::Result<> setOfflineSlaveAlias(
         const Data::NodeId &projectId, const Data::NodeId &slaveId, quint16 alias);
 
@@ -238,6 +243,10 @@ private:
     static constexpr int controllerStartupMaximumPhaseWaitMs = 60000;
     static constexpr int controllerStartupMaximumPhasePolls = controllerStartupMaximumPhaseWaitMs
                                                               / controllerStartupPollIntervalMs;
+    static constexpr int controllerStopPollIntervalMs = 100;
+    static constexpr int controllerStopMaximumPhaseWaitMs = 60000;
+    static constexpr int controllerStopMaximumPhasePolls = controllerStopMaximumPhaseWaitMs
+                                                           / controllerStopPollIntervalMs;
 
     struct ControllerAutoAcquireState
     {
@@ -267,6 +276,25 @@ private:
         quint64 sessionId = 0;
         quint64 bootId = 0;
         ControllerStartupPhase phase = ControllerStartupPhase::WaitingForConfiguration;
+        int remainingPolls = 0;
+        int refreshCooldown = 0;
+        bool scheduled = false;
+    };
+
+    enum class ControllerStopPhase {
+        WaitingForControlledStop,
+        WaitingForConfiguration,
+    };
+
+    struct ControllerStopState
+    {
+        quint64 providerEpoch = 0;
+        Data::ControllerConnectionScope scope;
+        Data::NodeId profileId;
+        quint64 sessionGeneration = 0;
+        quint64 sessionId = 0;
+        quint64 bootId = 0;
+        ControllerStopPhase phase = ControllerStopPhase::WaitingForControlledStop;
         int remainingPolls = 0;
         int refreshCooldown = 0;
         bool scheduled = false;
@@ -308,6 +336,9 @@ private:
     void handleProjectAboutToBeRemoved(const Data::NodeId &projectId);
     void handleControllerConnectionChanged();
     void refreshControllerConnectionPresentation();
+    void writeControllerTopologyCapabilityOutput(
+        Core::ControllerConnectionProvider *provider,
+        const Data::ControllerConnectionSnapshot &snapshot);
     void scheduleControllerAutoAcquire();
     void executeControllerAutoAcquire(
         Core::ControllerConnectionProvider *provider,
@@ -336,6 +367,21 @@ private:
         quint64 expectedProviderEpoch);
     void finishControllerStartup(Core::ControllerConnectionProvider *provider);
     void failControllerStartup(Core::ControllerConnectionProvider *provider, const QString &reason);
+    QString controllerStopUnavailableReason(
+        Core::ControllerConnectionProvider *provider,
+        const Data::ControllerConnectionSnapshot &snapshot) const;
+    Utils::Result<> beginControllerStop(
+        Core::ControllerConnectionProvider *provider,
+        const Data::ControllerConnectionSnapshot &snapshot);
+    void scheduleControllerStop(Core::ControllerConnectionProvider *provider, int delayMs = 0);
+    void advanceControllerStop(
+        Core::ControllerConnectionProvider *provider,
+        const Data::ControllerConnectionScope &expectedScope,
+        const Data::NodeId &expectedProfileId,
+        quint64 expectedGeneration,
+        quint64 expectedProviderEpoch);
+    void finishControllerStop(Core::ControllerConnectionProvider *provider);
+    void failControllerStop(Core::ControllerConnectionProvider *provider, const QString &reason);
     void beginControllerCleanup(
         Core::ControllerConnectionProvider *provider,
         const Data::ControllerConnectionSnapshot &snapshot);
@@ -377,8 +423,10 @@ private:
     QHash<Core::ControllerConnectionProvider *, ControllerAutoAcquireState>
         m_controllerAutoAcquireStates;
     QHash<Core::ControllerConnectionProvider *, ControllerStartupState> m_controllerStartupStates;
+    QHash<Core::ControllerConnectionProvider *, ControllerStopState> m_controllerStopStates;
     QHash<Core::ControllerConnectionProvider *, ControllerCleanupState> m_controllerCleanupStates;
     QHash<Core::ControllerConnectionProvider *, QString> m_controllerOutputFingerprints;
+    QHash<Core::ControllerConnectionProvider *, QString> m_topologyCapabilityFingerprints;
     quint64 m_nextControllerConnectionProviderEpoch = 0;
     bool m_suppressControllerConnectionChanges = false;
 };

@@ -574,6 +574,29 @@ static QByteArray deviceEsi()
 </OpMode></Dc></Device></Devices></Descriptions></EtherCATInfo>)";
 }
 
+static QByteArray deviceEsiWithSynchronizationTypes(quint16 supportedTypes)
+{
+    QByteArray esi = deviceEsi();
+    const QByteArray lowByte = QByteArray::number(supportedTypes & 0xff, 16).rightJustified(2, '0');
+    const QByteArray highByte
+        = QByteArray::number((supportedTypes >> 8) & 0xff, 16).rightJustified(2, '0');
+    const QByteArray synchronizationObjects
+        = "<Profile><Dictionary><Objects>"
+          "<Object><Index>#x1C32</Index><Info><SubItem>"
+          "<Name>Synchronization Types supported</Name><Info><DefaultData>"
+          + lowByte + highByte
+          + "</DefaultData></Info></SubItem></Info></Object>"
+            "<Object><Index>#x1C33</Index><Info><SubItem>"
+            "<Name>Synchronization Types supported</Name><Info><DefaultData>"
+          + lowByte + highByte
+          + "</DefaultData></Info></SubItem></Info></Object>"
+            "</Objects></Dictionary></Profile>";
+    QByteArray replacement = synchronizationObjects;
+    replacement.append("</Device>");
+    esi.replace("</Device>", replacement);
+    return esi;
+}
+
 static bool removeFirstXmlElement(
     QByteArray *xml, const QByteArray &openingPrefix, const QByteArray &closingTag)
 {
@@ -4050,10 +4073,8 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
     QVERIFY(!propertyTree->isVisible());
     QCOMPARE(propertyTree->topLevelItemCount(), 0);
 
-    QVERIFY_RESULT(controller.setMasterConfiguration(
-        file.projectId,
-        file.masterId,
-        {Data::MasterTimingMode::FreeRun, 1000000}));
+    QVERIFY_RESULT(projectService->setMasterConfiguration(
+        file.projectId, file.masterId, {Data::MasterTimingMode::FreeRun, 1000000}));
     QTRY_COMPARE(timingMode->text(), Tr::tr("FreeRun"));
     QTRY_COMPARE(cyclePeriod->text(), QString("1000000"));
     QVERIFY_RESULT(controller.setMasterConfiguration(
@@ -19371,8 +19392,10 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     QCOMPARE(*runFromOperationalSafe, Data::ControllerControlCommand::Start);
     QVERIFY(!controller.quickControllerControlCommand(
         scope, ControllerQuickControlAction::Debug));
-    QVERIFY(!controller.quickControllerControlCommand(
-        scope, ControllerQuickControlAction::Stop));
+    const std::optional<Data::ControllerControlCommand> stopFromOperationalSafe
+        = controller.quickControllerControlCommand(scope, ControllerQuickControlAction::Stop);
+    QVERIFY(stopFromOperationalSafe);
+    QCOMPARE(*stopFromOperationalSafe, Data::ControllerControlCommand::EnterConfigurationMode);
     QVERIFY(controller.canExecuteControllerControl(scope, *runFromOperationalSafe));
     QCOMPARE(provider.controlCalls, 4);
     QCOMPARE(
@@ -19812,6 +19835,291 @@ void EtherCATWorkbenchTests::testControllerPackageDeploymentWorkflow()
     QCOMPARE(provider.deploymentCalls, 2);
     QVERIFY(provider.lastDeploymentRequest.operationId != firstOperationId);
     QVERIFY(!provider.lastDeploymentRequest.operationId.isEmpty());
+}
+
+void EtherCATWorkbenchTests::testControllerFreeRunCapabilityWarnings()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    QVERIFY(projectService);
+    QVERIFY(repository);
+    controller.selectionService()->clear();
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QByteArray esi = deviceEsiWithSynchronizationTypes(0x0004);
+    esi.replace("#x00005678", "#xE5A10001");
+    esi.replace("Workbench Servo", "DC-only Servo");
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("dc-only-servo.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(esi));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto device = std::find_if(devices.cbegin(), devices.cend(), [](const auto &candidate) {
+        return candidate.identity.productCode == 0xE5A10001u;
+    });
+    QVERIFY(device != devices.cend());
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        *device,
+        "controller-freerun-capability.ecatproject",
+        "Controller FreeRun Capability");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    ProjectExplorer::ProjectManager::setStartupProject(opened.project());
+
+    ControlledControllerConnectionProvider provider(
+        Utils::Id("EtherCAT.Workbench.TestControllerConnection.FreeRunCapability"),
+        "FreeRun capability controller");
+    provider.setAvailable(true);
+    provider.setSingleProfile(true);
+    bool providerRegistered = false;
+    const QScopeGuard cleanup([&] {
+        controller.selectionService()->clear();
+        if (providerRegistered)
+            ExtensionSystem::PluginManager::removeObject(&provider);
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    ExtensionSystem::PluginManager::addObject(&provider);
+    providerRegistered = true;
+    const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    QVERIFY_RESULT(controller.selectControllerConnectionProvider(scope, provider.id()));
+    QVERIFY_RESULT(controller.selectControllerConnectionProfile(scope, provider.primaryProfileId()));
+
+    QSignalSpy output(&controller, &WorkbenchController::controllerOutputRequested);
+    Data::ControllerTopologySnapshot topology;
+    topology.firstStationAddress = 0x1001;
+    topology.respondingCount = 1;
+    topology.result = 0;
+    topology.discoveredAt = QDateTime::currentDateTimeUtc();
+    topology.slaves = {
+        {0, 0x1001, 0x0008, 0, 0x00000002, 0xE5A10001, 0x00000011, 17},
+    };
+    Data::ControllerConnectionSnapshot snapshot;
+    snapshot.scope = scope;
+    snapshot.profileId = provider.primaryProfileId();
+    snapshot.endpointSummary = "192.0.2.10:15200";
+    snapshot.state = Data::ControllerConnectionState::Connected;
+    snapshot.protocolVersion = {1, 10};
+    snapshot.readOnly = false;
+    snapshot.mock = false;
+    snapshot.topology = topology;
+    provider.publishSnapshot(snapshot);
+
+    QTRY_VERIFY(std::any_of(output.cbegin(), output.cend(), [](const QList<QVariant> &arguments) {
+        const QString message = arguments.constFirst().toString();
+        return message.contains("DC-only Servo") && message.contains("FreeRun")
+               && message.contains("Distributed Clocks");
+    }));
+    const QString unavailable = controller.masterTimingModeUnavailableReason(
+        file.projectId, file.masterId, Data::MasterTimingMode::FreeRun);
+    QVERIFY(unavailable.contains("DC-only Servo"));
+    QVERIFY(unavailable.contains("Distributed Clocks"));
+
+    GeneralPage generalPage(&controller);
+    generalPage.setContext(
+        {file.projectId, file.masterId, Core::WorkbenchNodeKind::Master, "EtherCAT Master"});
+    QComboBox *timingMode = generalPage.findChild<QComboBox *>("EtherCATMasterGeneralTimingMode");
+    QLineEdit *cycle = generalPage.findChild<QLineEdit *>("EtherCATMasterGeneralCycle");
+    QPushButton *apply = generalPage.findChild<QPushButton *>("EtherCATMasterGeneralApply");
+    QVERIFY(timingMode);
+    QVERIFY(cycle);
+    QVERIFY(apply);
+    const int freeRunIndex = timingMode->findData(int(Data::MasterTimingMode::FreeRun));
+    QVERIFY(freeRunIndex >= 0);
+    timingMode->setCurrentIndex(freeRunIndex);
+    cycle->setText("1000000");
+    apply->click();
+    QTRY_VERIFY(std::any_of(output.cbegin(), output.cend(), [](const QList<QVariant> &arguments) {
+        const QString message = arguments.constFirst().toString();
+        return message.contains("Cannot select FreeRun") && message.contains("DC-only Servo");
+    }));
+    QCOMPARE(
+        projectService->project(file.projectId)->masterConfiguration, Data::MasterConfiguration());
+
+    const Utils::Result<> rejected = controller.setMasterConfiguration(
+        file.projectId, file.masterId, {Data::MasterTimingMode::FreeRun, 1000000});
+    QVERIFY(!rejected);
+    QCOMPARE(
+        projectService->project(file.projectId)->masterConfiguration, Data::MasterConfiguration());
+    QVERIFY_RESULT(controller.setMasterConfiguration(
+        file.projectId, file.masterId, {Data::MasterTimingMode::DistributedClocks, 125000}));
+
+    output.clear();
+    topology.slaves.first().revision = 0x00000012;
+    topology.discoveredAt = topology.discoveredAt.addSecs(1);
+    snapshot.topology = topology;
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(std::any_of(output.cbegin(), output.cend(), [](const QList<QVariant> &arguments) {
+        const QString message = arguments.constFirst().toString();
+        return message.contains("FreeRun compatibility cannot be verified")
+               && message.contains("Import matching ESI XML");
+    }));
+}
+
+void EtherCATWorkbenchTests::testControllerQuickStopToShutdown()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+    controller.selectionService()->clear();
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        deviceSummaries(1).constFirst(),
+        "controller-quick-stop.ecatproject",
+        "Controller Quick Stop");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    ProjectExplorer::ProjectManager::setStartupProject(opened.project());
+
+    ControlledControllerConnectionProvider provider(
+        Utils::Id("EtherCAT.Workbench.TestControllerConnection.QuickStop"), "Quick stop controller");
+    provider.setAvailable(true);
+    provider.setSingleProfile(true);
+    provider.setSupportedControlCommands(
+        {Data::ControllerControlCommand::ControlledStop,
+         Data::ControllerControlCommand::EnterConfigurationMode});
+    bool providerRegistered = false;
+    const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
+    const QScopeGuard cleanup([&] {
+        provider.publishState(Data::ControllerConnectionState::Disconnected, scope);
+        controller.selectionService()->clear();
+        if (providerRegistered)
+            ExtensionSystem::PluginManager::removeObject(&provider);
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    ExtensionSystem::PluginManager::addObject(&provider);
+    providerRegistered = true;
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    QVERIFY_RESULT(controller.selectControllerConnectionProvider(scope, provider.id()));
+    QVERIFY_RESULT(controller.selectControllerConnectionProfile(scope, provider.primaryProfileId()));
+
+    Data::ControllerSessionSummary session;
+    session.sessionId = 42;
+    session.bootId = 73;
+    session.controlLeaseOwnerSessionId = session.sessionId;
+    session.defaultControlLeaseDurationMs = 30000;
+    session.ownsControlLease = true;
+
+    Data::ControllerStateSummary state;
+    state.serviceState = Data::ControllerServiceState::Running;
+    state.ready = true;
+    state.applicationActive = true;
+    state.busOperational = true;
+    state.ethercatAlStateBits = 0x08;
+    state.expectedWorkingCounter = 11;
+    state.actualWorkingCounter = 11;
+    state.distributedClocksLocked = true;
+    state.cycleCount = 1000;
+    state.controllerBootId = session.bootId;
+
+    Data::ControllerPackageSummary package;
+    package.activeSlot = Data::ControllerSlot::B;
+    package.activeGeneration = 12;
+    package.activeConfigurationId = 813;
+    package.controllerState = Data::ControllerPackageState::Active;
+    package.controllerBootId = session.bootId;
+
+    Data::ControllerConnectionSnapshot snapshot;
+    snapshot.scope = scope;
+    snapshot.profileId = provider.primaryProfileId();
+    snapshot.endpointSummary = "192.0.2.10:15200";
+    snapshot.state = Data::ControllerConnectionState::Connected;
+    snapshot.protocolVersion = {1, 10};
+    snapshot.sessionGeneration = 1;
+    snapshot.readOnly = false;
+    snapshot.mock = false;
+    snapshot.session = session;
+    snapshot.controllerState = state;
+    snapshot.package = package;
+    provider.publishSnapshot(snapshot);
+
+    QSignalSpy output(&controller, &WorkbenchController::controllerOutputRequested);
+    provider.publishControlPendingOnExecute = true;
+    QVERIFY_RESULT(
+        controller.executeQuickControllerControl(scope, ControllerQuickControlAction::Stop));
+    QVERIFY(controller.controllerStopInProgress(scope));
+    QCOMPARE(provider.controlCalls, 1);
+    QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::ControlledStop);
+    QVERIFY(!controller.canDisconnectSelectedController());
+
+    snapshot = provider.connectionSnapshot();
+    snapshot.controlProgress.command = Data::ControllerControlCommand::ControlledStop;
+    snapshot.controlProgress.state = Data::ControllerControlState::Succeeded;
+    snapshot.controlProgress.stage = 4;
+    snapshot.controlProgress.final = true;
+    snapshot.controllerState->serviceState = Data::ControllerServiceState::OperationalSafe;
+    snapshot.controllerState->applicationActive = false;
+    provider.publishSnapshot(snapshot);
+    QTRY_COMPARE(provider.controlCalls, 2);
+    QCOMPARE(
+        provider.lastControlRequest.command, Data::ControllerControlCommand::EnterConfigurationMode);
+    QVERIFY(controller.controllerStopInProgress(scope));
+
+    snapshot = provider.connectionSnapshot();
+    snapshot.controlProgress.command = Data::ControllerControlCommand::EnterConfigurationMode;
+    snapshot.controlProgress.state = Data::ControllerControlState::Succeeded;
+    snapshot.controlProgress.stage = 4;
+    snapshot.controlProgress.final = true;
+    snapshot.controllerState->serviceState = Data::ControllerServiceState::Shutdown;
+    snapshot.controllerState->applicationActive = false;
+    snapshot.controllerState->busOperational = false;
+    snapshot.controllerState->ethercatAlStateBits = 0;
+    snapshot.controllerState->expectedWorkingCounter = 0;
+    snapshot.controllerState->actualWorkingCounter = 0;
+    snapshot.controllerState->distributedClocksLocked = false;
+    snapshot.package->controllerState = Data::ControllerPackageState::Empty;
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(!controller.controllerStopInProgress(scope));
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    QTRY_VERIFY(controller.canDisconnectSelectedController());
+    QVERIFY(std::any_of(output.cbegin(), output.cend(), [](const QList<QVariant> &arguments) {
+        return arguments.constFirst().toString().contains(
+            "cyclic EtherCAT traffic and Distributed Clocks runtime are stopped");
+    }));
+    QCOMPARE(provider.connectionSnapshot().session, std::optional(session));
+
+    const int successfulSequenceCalls = provider.controlCalls;
+    snapshot.controlProgress = {};
+    snapshot.controllerState = state;
+    snapshot.package = package;
+    provider.publishSnapshot(snapshot);
+    QVERIFY_RESULT(
+        controller.executeQuickControllerControl(scope, ControllerQuickControlAction::Stop));
+    snapshot = provider.connectionSnapshot();
+    snapshot.controlProgress.command = Data::ControllerControlCommand::ControlledStop;
+    snapshot.controlProgress.state = Data::ControllerControlState::Failed;
+    snapshot.controlProgress.final = true;
+    snapshot.controlProgress.detail = "Injected controlled stop failure";
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(!controller.controllerStopInProgress(scope));
+    QCOMPARE(provider.controlCalls, successfulSequenceCalls + 1);
+    QVERIFY(std::any_of(output.cbegin(), output.cend(), [](const QList<QVariant> &arguments) {
+        const QString message = arguments.constFirst().toString();
+        return message.contains("Controller stop could not be verified")
+               && message.contains("Injected controlled stop failure");
+    }));
 }
 
 void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()

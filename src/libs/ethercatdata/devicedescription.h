@@ -116,6 +116,17 @@ struct ETHERCATDATA_EXPORT DcModeDescription
     friend bool operator==(const DcModeDescription &, const DcModeDescription &) = default;
 };
 
+struct ETHERCATDATA_EXPORT SynchronizationTypeCapabilities
+{
+    bool outputTypesDeclared = false;
+    quint16 outputSupportedTypes = 0;
+    bool inputTypesDeclared = false;
+    quint16 inputSupportedTypes = 0;
+
+    friend bool operator==(
+        const SynchronizationTypeCapabilities &, const SynchronizationTypeCapabilities &) = default;
+};
+
 struct ETHERCATDATA_EXPORT DeviceSummary
 {
     NodeId id;
@@ -137,6 +148,7 @@ struct ETHERCATDATA_EXPORT DeviceDescription
     CoeCapabilities coe;
     QList<StartupParameterDescription> startupParameters;
     QList<DcModeDescription> dcModes;
+    SynchronizationTypeCapabilities synchronizationTypes;
     QString sourcePath;
     QByteArray sourceSha256;
     QDateTime importedAt;
@@ -191,6 +203,7 @@ Q_DECLARE_METATYPE(EtherCAT::Data::SyncManagerDescription)
 Q_DECLARE_METATYPE(EtherCAT::Data::CoeCapabilities)
 Q_DECLARE_METATYPE(EtherCAT::Data::StartupParameterDescription)
 Q_DECLARE_METATYPE(EtherCAT::Data::DcModeDescription)
+Q_DECLARE_METATYPE(EtherCAT::Data::SynchronizationTypeCapabilities)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceSummary)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceDescription)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceFilter)

@@ -357,6 +357,85 @@ static Data::DcModeDescription parseDcMode(const XmlElement &element, QStringLis
     return mode;
 }
 
+static std::optional<quint16> synchronizationTypesSupported(
+    const XmlElement &device, quint16 objectIndex, bool *objectDeclared, QStringList *warnings)
+{
+    const auto defaultValue = [](const XmlElement &subItem) -> std::optional<quint16> {
+        const XmlElement *info = child(subItem, "Info");
+        QString value = info ? childText(*info, "DefaultValue") : QString();
+        if (value.isEmpty())
+            value = childText(subItem, "DefaultValue");
+        if (const std::optional<quint64> parsed = parsedUnsigned(value, 0xffff))
+            return quint16(*parsed);
+
+        QString data = info ? childText(*info, "DefaultData") : QString();
+        if (data.isEmpty())
+            data = childText(subItem, "DefaultData");
+        bool validData = false;
+        const QByteArray bytes = parseHexData(data, &validData);
+        if (!validData || bytes.isEmpty() || bytes.size() > 2)
+            return std::nullopt;
+        const quint16 low = quint8(bytes.at(0));
+        const quint16 high = bytes.size() == 2 ? quint16(quint8(bytes.at(1))) << 8 : 0;
+        return low | high;
+    };
+    const auto isSynchronizationTypesItem = [](const XmlElement &subItem) {
+        QString subIndexText = childText(subItem, "SubIdx");
+        if (subIndexText.isEmpty())
+            subIndexText = childText(subItem, "SubIndex");
+        if (const std::optional<quint64> subIndex = parsedUnsigned(subIndexText, 0xff))
+            return *subIndex == 4;
+        return false;
+    };
+
+    *objectDeclared = false;
+    for (const XmlElement *object : descendants(device, "Object")) {
+        const std::optional<quint64> index = parsedUnsigned(childText(*object, "Index"), 0xffff);
+        if (!index || *index != objectIndex)
+            continue;
+
+        *objectDeclared = true;
+        QString synchronizationTypesName;
+        const QString objectType = childText(*object, "Type");
+        for (const XmlElement *type : descendants(device, "DataType")) {
+            if (childText(*type, "Name").compare(objectType, Qt::CaseInsensitive) != 0)
+                continue;
+            for (const XmlElement *subItem : children(*type, "SubItem")) {
+                if (isSynchronizationTypesItem(*subItem)) {
+                    synchronizationTypesName = localizedChildText(*subItem, "Name");
+                    break;
+                }
+            }
+            break;
+        }
+        const XmlElement *info = child(*object, "Info");
+        if (info) {
+            for (const XmlElement *subItem : children(*info, "SubItem")) {
+                const QString name = localizedChildText(*subItem, "Name");
+                const bool matchesDataType
+                    = !synchronizationTypesName.isEmpty()
+                      && name.compare(synchronizationTypesName, Qt::CaseInsensitive) == 0;
+                const bool matchesKnownName
+                    = name.contains("Synchronization Types supported", Qt::CaseInsensitive)
+                      || name.contains("Sync modes supported", Qt::CaseInsensitive);
+                if (!isSynchronizationTypesItem(*subItem) && !matchesDataType && !matchesKnownName)
+                    continue;
+                if (const std::optional<quint16> value = defaultValue(*subItem))
+                    return value;
+                break;
+            }
+        }
+
+        warnings->append(
+            Tr::tr(
+                "Object 0x%1 does not declare a valid synchronization-types-supported value "
+                "at subindex 4.")
+                .arg(objectIndex, 4, 16, QLatin1Char('0')));
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 static Utils::Result<Data::DeviceDescription> parseDevice(
     const XmlElement &element,
     quint32 vendorId,
@@ -415,6 +494,25 @@ static Utils::Result<Data::DeviceDescription> parseDevice(
     if (const XmlElement *dc = child(element, "Dc")) {
         for (const XmlElement *mode : children(*dc, "OpMode"))
             device.dcModes.append(parseDcMode(*mode, &device.warnings));
+    }
+    if (const std::optional<quint16> outputTypes = synchronizationTypesSupported(
+            element, 0x1c32, &device.synchronizationTypes.outputTypesDeclared, &device.warnings)) {
+        device.synchronizationTypes.outputSupportedTypes = *outputTypes;
+    }
+    if (const std::optional<quint16> inputTypes = synchronizationTypesSupported(
+            element, 0x1c33, &device.synchronizationTypes.inputTypesDeclared, &device.warnings)) {
+        device.synchronizationTypes.inputSupportedTypes = *inputTypes;
+    }
+    if (device.synchronizationTypes.outputTypesDeclared
+        && device.synchronizationTypes.inputTypesDeclared
+        && device.synchronizationTypes.outputSupportedTypes
+               != device.synchronizationTypes.inputSupportedTypes) {
+        device.warnings.append(
+            Tr::tr(
+                "Objects 0x1C32 and 0x1C33 declare different synchronization types supported "
+                "(0x%1 and 0x%2); the original ESI values were preserved.")
+                .arg(device.synchronizationTypes.outputSupportedTypes, 4, 16, QLatin1Char('0'))
+                .arg(device.synchronizationTypes.inputSupportedTypes, 4, 16, QLatin1Char('0')));
     }
 
     QSet<QString> unsupported;

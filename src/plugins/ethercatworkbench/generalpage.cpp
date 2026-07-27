@@ -1035,6 +1035,15 @@ void GeneralPage::commitMasterConfiguration()
         return;
     }
 
+    if (const QString reason = m_controller->masterTimingModeUnavailableReason(
+            m_context.projectId, m_context.nodeId, timingMode);
+        !reason.isEmpty()) {
+        m_controller->writeControllerOutput(
+            Tr::tr("Cannot select FreeRun: %1").arg(reason), ControllerOutputLevel::Warning);
+        refreshMasterSummary();
+        return;
+    }
+
     const Utils::Result<> result = m_controller->setMasterConfiguration(
         m_context.projectId,
         m_context.nodeId,

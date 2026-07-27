@@ -48742,6 +48742,14 @@ What do you want to do?</source>
         <source>ESI Devices collection is empty.</source>
         <translation>ESI Devices 集合为空。</translation>
     </message>
+    <message>
+        <source>Object 0x%1 does not declare a valid synchronization-types-supported value at subindex 4.</source>
+        <translation>对象 0x%1 未在子索引 4 声明有效的“支持的同步类型”值。</translation>
+    </message>
+    <message>
+        <source>Objects 0x1C32 and 0x1C33 declare different synchronization types supported (0x%1 and 0x%2); the original ESI values were preserved.</source>
+        <translation>对象 0x1C32 和 0x1C33 声明的支持同步类型不同（0x%1 与 0x%2）；已保留原始 ESI 值。</translation>
+    </message>
 </context>
 <context>
     <name>QtC::EtherCATDiagnostics</name>
@@ -55825,6 +55833,192 @@ AL 状态：%3
     <message>
         <source>Time</source>
         <translation>时间</translation>
+    </message>
+    <message>
+        <source>device 0x%1/0x%2/0x%3</source>
+        <translation>设备 0x%1/0x%2/0x%3</translation>
+    </message>
+    <message>
+        <source>%1 at position %2 (station 0x%3)</source>
+        <translation>%1，位置 %2（站地址 0x%3）</translation>
+    </message>
+    <message>
+        <source>device at position %1</source>
+        <translation>位置 %1 的设备</translation>
+    </message>
+    <message>
+        <source>%1 at position %2</source>
+        <translation>%1，位置 %2</translation>
+    </message>
+    <message>
+        <source>Scan the EtherCAT bus or configure its slaves before selecting FreeRun.</source>
+        <translation>选择 FreeRun 前，请先扫描 EtherCAT 总线或配置从站。</translation>
+    </message>
+    <message>
+        <source>FreeRun is not supported by %1. Select Distributed Clocks for this bus.</source>
+        <translation>%1 不支持 FreeRun。请为此总线选择分布式时钟模式。</translation>
+    </message>
+    <message>
+        <source>; </source>
+        <translation>；</translation>
+    </message>
+    <message>
+        <source>FreeRun compatibility cannot be verified for %1. Import matching ESI XML files that declare object 0x1C32/0x1C33 subindex 4 before selecting FreeRun.</source>
+        <translation>无法验证 %1 的 FreeRun 兼容性。选择 FreeRun 前，请导入匹配且声明对象 0x1C32/0x1C33 子索引 4 的 ESI XML 文件。</translation>
+    </message>
+    <message>
+        <source>Controller stop verification ended because the controller adapter was removed.</source>
+        <translation>控制器适配器已移除，停止验证已结束。</translation>
+    </message>
+    <message>
+        <source>Controller stop verification is in progress.</source>
+        <translation>正在验证控制器停止状态。</translation>
+    </message>
+    <message>
+        <source>Stop is available only while the controller is Running, Paused, or OP_SAFE.</source>
+        <translation>仅当控制器处于运行、暂停或 OP_SAFE 状态时才能停止。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT master is not available.</source>
+        <translation>EtherCAT 主站不可用。</translation>
+    </message>
+    <message>
+        <source>FreeRun is not supported by %1 according to its ESI synchronization capability.</source>
+        <translation>根据 ESI 同步能力，%1 不支持 FreeRun。</translation>
+    </message>
+    <message>
+        <source>FreeRun compatibility cannot be verified for %1 because matching ESI synchronization data is unavailable.</source>
+        <translation>由于缺少匹配的 ESI 同步数据，无法验证 %1 的 FreeRun 兼容性。</translation>
+    </message>
+    <message numerus="yes">
+        <source>Bus scan verified FreeRun support for %n device(s).</source>
+        <translation>
+            <numerusform>总线扫描已验证 %n 个设备支持 FreeRun。</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Import matching ESI XML files that declare object 0x1C32/0x1C33 subindex 4 before selecting FreeRun.</source>
+        <translation>选择 FreeRun 前，请导入匹配且声明对象 0x1C32/0x1C33 子索引 4 的 ESI XML 文件。</translation>
+    </message>
+    <message>
+        <source>Select Distributed Clocks for this bus.</source>
+        <translation>请为此总线选择分布式时钟模式。</translation>
+    </message>
+    <message>
+        <source>Bus scan timing compatibility: %1</source>
+        <translation>总线扫描时序兼容性：%1</translation>
+    </message>
+    <message>
+        <source>Controller stop verification was canceled because its project closed.</source>
+        <translation>工程已关闭，控制器停止验证已取消。</translation>
+    </message>
+    <message>
+        <source>The controller does not support entering configuration after a controlled stop.</source>
+        <translation>控制器不支持在受控停止后进入配置态。</translation>
+    </message>
+    <message>
+        <source>The controller does not support the complete stop sequence.</source>
+        <translation>控制器不支持完整停止流程。</translation>
+    </message>
+    <message>
+        <source>Stopping controller: perform a controlled application stop, then enter configuration to stop cyclic EtherCAT traffic.</source>
+        <translation>正在停止控制器：先受控停止应用程序，再进入配置态以停止 EtherCAT 周期通信。</translation>
+    </message>
+    <message>
+        <source>Stopping controller from OP_SAFE: enter configuration to stop cyclic EtherCAT traffic.</source>
+        <translation>正在从 OP_SAFE 停止控制器：进入配置态以停止 EtherCAT 周期通信。</translation>
+    </message>
+    <message>
+        <source>The controller adapter instance changed during stop verification.</source>
+        <translation>停止验证期间控制器适配器实例发生变化。</translation>
+    </message>
+    <message>
+        <source>The controller session changed during stop verification.</source>
+        <translation>停止验证期间控制器会话发生变化。</translation>
+    </message>
+    <message>
+        <source>The controller disconnected during stop verification.</source>
+        <translation>停止验证期间控制器断开连接。</translation>
+    </message>
+    <message>
+        <source>Exclusive controller control was lost during stop verification.</source>
+        <translation>停止验证期间丢失了控制器独占控制权。</translation>
+    </message>
+    <message>
+        <source>Timed out before cyclic EtherCAT traffic was confirmed stopped.</source>
+        <translation>确认 EtherCAT 周期通信停止前已超时。</translation>
+    </message>
+    <message>
+        <source>A different controller operation replaced the stop sequence.</source>
+        <translation>其他控制器操作替换了当前停止流程。</translation>
+    </message>
+    <message>
+        <source>A controller stop step failed.</source>
+        <translation>控制器停止步骤失败。</translation>
+    </message>
+    <message>
+        <source>Controller stop completed in Shutdown and cyclic EtherCAT traffic is stopped, but controller faults remain (current 0x%1, latched 0x%2).</source>
+        <translation>控制器已在 Shutdown 状态完成停止，EtherCAT 周期通信已停止，但仍有控制器故障（当前 0x%1，锁存 0x%2）。</translation>
+    </message>
+    <message>
+        <source>Controller stop completed in Shutdown; cyclic EtherCAT traffic and Distributed Clocks runtime are stopped.</source>
+        <translation>控制器已在 Shutdown 状态完成停止；EtherCAT 周期通信及分布式时钟运行均已停止。</translation>
+    </message>
+    <message>
+        <source>Controller stop could not be verified: %1 Cyclic EtherCAT traffic may still be active.</source>
+        <translation>无法验证控制器已停止：%1 EtherCAT 周期通信可能仍在运行。</translation>
+    </message>
+    <message>
+        <source>Cycle configuration</source>
+        <translation>周期配置</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>应用</translation>
+    </message>
+    <message>
+        <source>EtherCAT master timing mode</source>
+        <translation>EtherCAT 主站时序模式</translation>
+    </message>
+    <message>
+        <source>EtherCAT master cycle period</source>
+        <translation>EtherCAT 主站循环周期</translation>
+    </message>
+    <message>
+        <source>Apply EtherCAT master cycle configuration</source>
+        <translation>应用 EtherCAT 主站循环周期配置</translation>
+    </message>
+    <message>
+        <source>Master cycle period in nanoseconds; it must match the selected bus configuration.</source>
+        <translation>主站循环周期，单位为纳秒；必须与所选总线配置一致。</translation>
+    </message>
+    <message>
+        <source>Enter a valid EtherCAT master cycle period from 1 through 4294967295 ns.</source>
+        <translation>请输入 1 到 4294967295 纳秒之间的有效 EtherCAT 主站循环周期。</translation>
+    </message>
+    <message>
+        <source>Cannot select FreeRun: %1</source>
+        <translation>无法选择 FreeRun：%1</translation>
+    </message>
+    <message>
+        <source>Cannot update the EtherCAT master cycle configuration: %1</source>
+        <translation>无法更新 EtherCAT 主站循环周期配置：%1</translation>
+    </message>
+    <message>
+        <source>EtherCAT master cycle configuration updated.</source>
+        <translation>EtherCAT 主站循环周期配置已更新。</translation>
+    </message>
+    <message>
+        <source>Stop Controller</source>
+        <translation>停止控制器</translation>
+    </message>
+    <message>
+        <source>Stopping Controller...</source>
+        <translation>正在停止控制器...</translation>
+    </message>
+    <message>
+        <source>Stop the application safely, then enter configuration so cyclic EtherCAT traffic and Distributed Clocks runtime stop. This is not an emergency stop.</source>
+        <translation>安全停止应用程序后进入配置态，使 EtherCAT 周期通信及分布式时钟运行停止。这不是紧急停止。</translation>
     </message>
 </context>
 <context>
