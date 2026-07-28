@@ -535,6 +535,8 @@ void WorkbenchNavigationWidget::handleModelAboutToBeReset()
 {
     m_knownNodeIds = sourceNodeIds();
     m_sourceModelResetting = true;
+    m_treeView->clearSelection();
+    m_treeView->setCurrentIndex({});
 }
 
 void WorkbenchNavigationWidget::handleModelReset()
@@ -559,7 +561,7 @@ void WorkbenchNavigationWidget::handleModelReset()
     m_sourceModelResetting = false;
 
     if (m_controller && m_controller->selectionService())
-        selectNode(m_controller->selectionService()->currentNodeId());
+        selectNode(m_controller->selectionService()->currentNodeId(), false);
 }
 
 void WorkbenchNavigationWidget::restoreExpansionState()
@@ -648,7 +650,7 @@ void WorkbenchNavigationWidget::updateProjectSummary()
     m_projectSummary->show();
 }
 
-void WorkbenchNavigationWidget::selectNode(const Data::NodeId &nodeId)
+void WorkbenchNavigationWidget::selectNode(const Data::NodeId &nodeId, bool selectRow)
 {
     if (nodeId.isNull()) {
         const QSignalBlocker blocker(m_treeView->selectionModel());
@@ -673,7 +675,12 @@ void WorkbenchNavigationWidget::selectNode(const Data::NodeId &nodeId)
         m_treeView->expand(parent);
         parent = parent.parent();
     }
-    m_treeView->setCurrentIndex(proxyIndex);
+    if (selectRow) {
+        m_treeView->setCurrentIndex(proxyIndex);
+    } else {
+        m_treeView->selectionModel()->setCurrentIndex(
+            proxyIndex, QItemSelectionModel::NoUpdate);
+    }
     m_treeView->scrollTo(proxyIndex);
 }
 

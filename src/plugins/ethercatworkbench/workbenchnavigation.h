@@ -51,7 +51,7 @@ private:
     void expandFilteredResults();
     void updateExpansionState(const QModelIndex &proxyIndex, bool expanded);
     void selectSourceIndex(const QModelIndex &sourceIndex);
-    void selectNode(const Data::NodeId &nodeId);
+    void selectNode(const Data::NodeId &nodeId, bool selectRow = true);
     void updateFilterState();
     void updateProjectSummary();
     void showContextMenu(const QPoint &position, bool mouseTriggered);

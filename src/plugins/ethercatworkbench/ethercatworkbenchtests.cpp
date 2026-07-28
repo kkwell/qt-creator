@@ -7199,6 +7199,43 @@ void EtherCATWorkbenchTests::testNavigationSelectionAndFiltering()
     controller.selectionService()->clear();
 }
 
+void EtherCATWorkbenchTests::testNavigationSelectionClearsBeforeModelReset()
+{
+    WorkbenchController controller;
+    const Data::ProjectSnapshot project = projectSnapshot("Accessible navigation reset");
+    controller.treeModel()->setProjects({project});
+    controller.selectionService()->clear();
+
+    WorkbenchNavigationWidget navigation(&controller);
+    QTreeView *tree = navigation.treeView();
+    const Data::NodeId selectedMasterId = masterId(project);
+    controller.selectionService()->setCurrentNodeId(selectedMasterId);
+    QTRY_COMPARE(
+        tree->currentIndex().data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>(),
+        selectedMasterId);
+
+    bool selectionClearedBeforeReset = false;
+    connect(
+        controller.treeModel(),
+        &QAbstractItemModel::modelAboutToBeReset,
+        &navigation,
+        [&] {
+            selectionClearedBeforeReset = tree->selectionModel()->selectedIndexes().isEmpty()
+                                          && !tree->currentIndex().isValid();
+        });
+    Data::ProjectSnapshot renamed = project;
+    renamed.name = "Renamed accessible navigation reset";
+    controller.treeModel()->setProjects({renamed});
+
+    QVERIFY(selectionClearedBeforeReset);
+    QCOMPARE(controller.selectionService()->currentNodeId(), selectedMasterId);
+    QTRY_COMPARE(
+        tree->currentIndex().data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>(),
+        selectedMasterId);
+    QVERIFY(tree->selectionModel()->selectedIndexes().isEmpty());
+    controller.selectionService()->clear();
+}
+
 void EtherCATWorkbenchTests::testNavigationVisibleIdentityFiltering()
 {
     WorkbenchController controller;
