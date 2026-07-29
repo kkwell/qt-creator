@@ -2,10 +2,13 @@
 
 #include "ethercatsemanticruntimetests.h"
 
+#include "ed25519verifier.h"
 #include "semanticruntimeexecutor.h"
 
 #include <extensionsystem/pluginmanager.h>
 
+#include <QCryptographicHash>
+#include <QFile>
 #include <QSignalSpy>
 #include <QTest>
 
@@ -426,6 +429,131 @@ static Data::RuntimeResourceCatalog resourceCatalog(
 static QString detailFor(SemanticRuntimeContextIssue issue)
 {
     return semanticRuntimeContextIssueDetail(issue);
+}
+
+static QByteArray fromHex(const char *hex)
+{
+    return QByteArray::fromHex(QByteArray(hex));
+}
+
+static QByteArray readTestData(const QString &relativePath)
+{
+    QFile file(
+        QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR) + QLatin1Char('/')
+        + relativePath);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    return file.readAll();
+}
+
+void EtherCATSemanticRuntimeTests::testEd25519Rfc8032()
+{
+    const QByteArray publicKey = fromHex(
+        "d75a980182b10ab7d54bfed3c964073a"
+        "0ee172f3daa62325af021a68f707511a");
+    const QByteArray signature = fromHex(
+        "e5564300c360ac729086e2cc806e828a"
+        "84877f1eb8e5d974d873e06522490155"
+        "5fb8821590a33bacc61e39701cf9b46b"
+        "d25bf5f0595bbe24655141438e7a100b");
+
+    QVERIFY(verifyEd25519DetachedSignature(publicKey, signature, QByteArrayView()));
+
+    const QByteArray oneBytePublicKey = fromHex(
+        "3d4017c3e843895a92b70aa74d1b7ebc"
+        "9c982ccf2ec4968cc0cd55f12af4660c");
+    const QByteArray oneByteSignature = fromHex(
+        "92a009a9f0d4cab8720e820b5f642540"
+        "a2b27b5416503f8fb3762223ebdb69da"
+        "085ac1e43e15996e458f3613d0f11d8c"
+        "387b2eaeb4302aeeb00d291612bb0c00");
+    const QByteArray oneByteMessage = fromHex("72");
+
+    QVERIFY(verifyEd25519DetachedSignature(
+        oneBytePublicKey, oneByteSignature, oneByteMessage));
+}
+
+void EtherCATSemanticRuntimeTests::testEd25519RejectsInvalidInputs()
+{
+    const QByteArray publicKey = fromHex(
+        "d75a980182b10ab7d54bfed3c964073a"
+        "0ee172f3daa62325af021a68f707511a");
+    const QByteArray signature = fromHex(
+        "e5564300c360ac729086e2cc806e828a"
+        "84877f1eb8e5d974d873e06522490155"
+        "5fb8821590a33bacc61e39701cf9b46b"
+        "d25bf5f0595bbe24655141438e7a100b");
+
+    QByteArray wrongPublicKey = publicKey;
+    wrongPublicKey[0] ^= 1;
+    QVERIFY(!verifyEd25519DetachedSignature(wrongPublicKey, signature, QByteArrayView()));
+
+    QByteArray wrongSignature = signature;
+    wrongSignature[0] ^= 1;
+    QVERIFY(!verifyEd25519DetachedSignature(publicKey, wrongSignature, QByteArrayView()));
+    QVERIFY(!verifyEd25519DetachedSignature(publicKey, signature, QByteArray("x")));
+
+    QVERIFY(!verifyEd25519DetachedSignature(publicKey.first(31), signature, QByteArrayView()));
+    QByteArray oversizedPublicKey = publicKey;
+    oversizedPublicKey.append('\0');
+    QVERIFY(!verifyEd25519DetachedSignature(oversizedPublicKey, signature, QByteArrayView()));
+    QVERIFY(!verifyEd25519DetachedSignature(publicKey, signature.first(63), QByteArrayView()));
+    QByteArray oversizedSignature = signature;
+    oversizedSignature.append('\0');
+    QVERIFY(!verifyEd25519DetachedSignature(
+        publicKey, oversizedSignature, QByteArrayView()));
+
+    const QByteArray nonCanonicalSignature = fromHex(
+        "e5564300c360ac729086e2cc806e828a"
+        "84877f1eb8e5d974d873e06522490155"
+        "4c8c7872aa064e049dbb3013fbf29380"
+        "d25bf5f0595bbe24655141438e7a101b");
+    QVERIFY(!verifyEd25519DetachedSignature(
+        publicKey, nonCanonicalSignature, QByteArrayView()));
+}
+
+void EtherCATSemanticRuntimeTests::testEd25519TransferredManifests()
+{
+    const QByteArray publicKey = fromHex(
+        "bd51c2d7cb14eeabac5de51ca5feb5f3"
+        "6d3d87986b77f19d056a7da4845f7063");
+    const QByteArray api035Signature = fromHex(
+        "847ec27182b17f0db3b77d8aba662df2"
+        "032e06075fe57e1738490707de63e62e2"
+        "faafd22d696f25e1d078e59033d12844"
+        "27e0a0bf63e6e7be659060ea48bf509");
+    const QByteArray api036Signature = fromHex(
+        "f3e6c1506b144b0ac47e20c0a6d92ad"
+        "bf2eb60a9245d7c851f7abd5d92d72808"
+        "afd7b953fe43680ae0f574b47b14053a"
+        "5020b4e37b1b1d14fcc325f5d021db0b");
+    const QByteArray api035Manifest = readTestData("testdata/api035-manifest.json");
+    const QByteArray api036Manifest = readTestData("testdata/api036-manifest.json");
+
+    QCOMPARE(
+        QCryptographicHash::hash(publicKey, QCryptographicHash::Sha256).toHex(),
+        QByteArray("eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6"));
+    QCOMPARE(
+        QCryptographicHash::hash(api035Signature, QCryptographicHash::Sha256).toHex(),
+        QByteArray("921c5ab1c0dfd1744c99dd84c4717ecb863d4c673059dbd042d9119054e3b708"));
+    QCOMPARE(
+        QCryptographicHash::hash(api036Signature, QCryptographicHash::Sha256).toHex(),
+        QByteArray("dd25d7f2ebdecb7f97b541510f2e0ca29b368715e624408f4affa8698d09fee9"));
+    QCOMPARE(api035Manifest.size(), 4327);
+    QCOMPARE(
+        QCryptographicHash::hash(api035Manifest, QCryptographicHash::Sha256).toHex(),
+        QByteArray("f82dcf1bd1188b1eb4648396f946b8db5828ebf15d0c22fcc50fa2d14a6de4c0"));
+    QVERIFY(verifyEd25519DetachedSignature(publicKey, api035Signature, api035Manifest));
+
+    QCOMPARE(api036Manifest.size(), 4328);
+    QCOMPARE(
+        QCryptographicHash::hash(api036Manifest, QCryptographicHash::Sha256).toHex(),
+        QByteArray("9eb3fcc112dfa5e52d286eb5e257a75f9e81d4fb0ace64ea4efdba9c2c680dcf"));
+    QVERIFY(verifyEd25519DetachedSignature(publicKey, api036Signature, api036Manifest));
+
+    QByteArray alteredManifest = api036Manifest;
+    alteredManifest[0] ^= 1;
+    QVERIFY(!verifyEd25519DetachedSignature(publicKey, api036Signature, alteredManifest));
 }
 
 void EtherCATSemanticRuntimeTests::testPublishesOneProductionService()
