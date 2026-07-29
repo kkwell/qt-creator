@@ -14,6 +14,7 @@ private slots:
     void testBundledResourcesAndManifests();
     void testInvalidPackagesAreRejected();
     void testExactIdentityAndEsiMatching();
+    void testExactPackageSelection();
     void testCandidateHardwareGate();
     void testSv630nProcessImageBinding();
     void testSv630nRejectsInvalidProcessImages();

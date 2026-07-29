@@ -113,7 +113,21 @@
       }
     }
   ],
-  "processDataProfiles": [],
+  "processDataProfiles": [
+    {
+      "id": "solidot.xb6.mdp-rx16ff-tx1aff",
+      "rxPdos": [
+        5887
+      ],
+      "txPdos": [
+        6911
+      ],
+      "requiredSignals": [
+        "org.embedlabs.solidot.xb6.coupler-control.internal-disabled",
+        "org.embedlabs.solidot.xb6.coupler-state.raw"
+      ]
+    }
+  ],
   "moduleProfiles": [
     {
       "id": "org.embedlabs.solidot.xb6-1600b",

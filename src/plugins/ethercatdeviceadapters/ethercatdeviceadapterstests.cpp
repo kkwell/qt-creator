@@ -398,6 +398,76 @@ void EtherCATDeviceAdaptersTests::testExactIdentityAndEsiMatching()
     QVERIFY(!repository.resolveDevice(mismatch).resolved);
 }
 
+void EtherCATDeviceAdaptersTests::testExactPackageSelection()
+{
+    const Utils::FilePath bundledPath = ::Core::ICore::resourcePath(
+        "ethercat/adapters/v1/inovance-sv630n-rev00010000.adapter.json");
+    const Utils::Result<QByteArray> bundledContents = bundledPath.fileContents();
+    QVERIFY_RESULT(bundledContents);
+    const QJsonDocument bundledDocument = QJsonDocument::fromJson(*bundledContents);
+    QVERIFY(bundledDocument.isObject());
+
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QJsonObject oldPackage = bundledDocument.object();
+    oldPackage.insert("version", "0.1.0");
+    oldPackage.insert("matchPriority", 100);
+    QVERIFY(writePackage(temporaryDirectory.path() + "/old.adapter.json", oldPackage));
+    QJsonObject newPackage = oldPackage;
+    newPackage.insert("version", "0.2.0");
+    newPackage.insert("matchPriority", 200);
+    QVERIFY(writePackage(temporaryDirectory.path() + "/new.adapter.json", newPackage));
+
+    AdapterPackageRepository repository(Utils::FilePath::fromString(temporaryDirectory.path()));
+    QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
+    const Data::DeviceAdapterId adapterId{
+        oldPackage.value("id").toString(),
+    };
+    const std::optional<Data::DeviceAdapterManifest> oldManifest
+        = repository.adapterManifest(adapterId, "0.1.0");
+    const std::optional<Data::DeviceAdapterManifest> newManifest
+        = repository.adapterManifest(adapterId, "0.2.0");
+    QVERIFY(oldManifest);
+    QVERIFY(newManifest);
+    QVERIFY(oldManifest->contentSha256 != newManifest->contentSha256);
+
+    Data::DeviceAdapterResolutionRequest automatic = sv630nRequest(*oldManifest);
+    const Data::DeviceAdapterResolutionResult automaticResult = repository.resolveDevice(automatic);
+    QVERIFY2(automaticResult.resolved, qPrintable(automaticResult.error));
+    QCOMPARE(automaticResult.model.adapterVersion, QString("0.2.0"));
+
+    Data::DeviceAdapterResolutionRequest exact = automatic;
+    exact.expectedAdapterId = oldManifest->id;
+    exact.expectedAdapterVersion = oldManifest->version;
+    exact.expectedAdapterContentSha256 = oldManifest->contentSha256;
+    const Data::DeviceAdapterResolutionResult exactResult = repository.resolveDevice(exact);
+    QVERIFY2(exactResult.resolved, qPrintable(exactResult.error));
+    QCOMPARE(exactResult.model.adapterId, oldManifest->id);
+    QCOMPARE(exactResult.model.adapterVersion, QString("0.1.0"));
+    QCOMPARE(exactResult.model.adapterContentSha256, oldManifest->contentSha256);
+
+    Data::DeviceAdapterResolutionRequest contentMismatch = exact;
+    contentMismatch.expectedAdapterContentSha256[0] = char(
+        contentMismatch.expectedAdapterContentSha256.at(0) ^ char(0xff));
+    const Data::DeviceAdapterResolutionResult mismatchResult = repository.resolveDevice(
+        contentMismatch);
+    QVERIFY(!mismatchResult.resolved);
+    QVERIFY(mismatchResult.error.contains("content SHA-256"));
+
+    Data::DeviceAdapterResolutionRequest missingPackage = exact;
+    missingPackage.expectedAdapterVersion = "0.0.1";
+    const Data::DeviceAdapterResolutionResult missingResult = repository.resolveDevice(
+        missingPackage);
+    QVERIFY(!missingResult.resolved);
+    QVERIFY(missingResult.error.contains("was not found"));
+
+    Data::DeviceAdapterResolutionRequest partial = exact;
+    partial.expectedAdapterContentSha256.clear();
+    const Data::DeviceAdapterResolutionResult partialResult = repository.resolveDevice(partial);
+    QVERIFY(!partialResult.resolved);
+    QVERIFY(partialResult.error.contains("either empty or contain"));
+}
+
 void EtherCATDeviceAdaptersTests::testCandidateHardwareGate()
 {
     AdapterPackageRepository repository(::Core::ICore::resourcePath("ethercat/adapters/v1"));
@@ -553,11 +623,32 @@ static Data::DeviceAdapterResolutionRequest xb6Request(
     request.slaveId = Data::NodeId::create();
     request.device = device(xb6Identity, xb6EsiSha256);
     request.allowCandidate = true;
+    request.processDataProfileId = "solidot.xb6.mdp-rx16ff-tx1aff";
     request.moduleAssignments = {
         {firstSlot, firstModuleIdent, quint16(firstSlot * 0x10), quint16(firstSlot)},
         {2, 0x00000629, 0x0020, 0x0002},
     };
 
+    appendProcessEntry(
+        &request.processImage,
+        processEntry(
+            Data::PdoDirection::Rx,
+            0x16ff,
+            0xf200,
+            1,
+            256,
+            16,
+            Data::EtherCATDataType::UnsignedInteger16));
+    appendProcessEntry(
+        &request.processImage,
+        processEntry(
+            Data::PdoDirection::Tx,
+            0x1aff,
+            0xf100,
+            1,
+            256,
+            16,
+            Data::EtherCATDataType::UnsignedInteger16));
     for (int channel = 1; channel <= 16; ++channel) {
         appendProcessEntry(
             &request.processImage,
@@ -595,9 +686,30 @@ static Data::DeviceAdapterResolutionRequest xb6SingleModuleRequest(quint32 modul
     request.slaveId = Data::NodeId::create();
     request.device = device(xb6Identity, xb6EsiSha256);
     request.allowCandidate = true;
+    request.processDataProfileId = "solidot.xb6.mdp-rx16ff-tx1aff";
     request.moduleAssignments = {
         {slot, moduleIdent, quint16(slot * 0x10), quint16(slot)},
     };
+    appendProcessEntry(
+        &request.processImage,
+        processEntry(
+            Data::PdoDirection::Rx,
+            0x16ff,
+            0xf200,
+            1,
+            256,
+            16,
+            Data::EtherCATDataType::UnsignedInteger16));
+    appendProcessEntry(
+        &request.processImage,
+        processEntry(
+            Data::PdoDirection::Tx,
+            0x1aff,
+            0xf100,
+            1,
+            256,
+            16,
+            Data::EtherCATDataType::UnsignedInteger16));
     for (int channel = 1; channel <= 16; ++channel) {
         appendProcessEntry(
             &request.processImage,
@@ -630,9 +742,31 @@ void EtherCATDeviceAdaptersTests::testXb6RequiresDetectedModules()
     request.slaveId = Data::NodeId::create();
     request.device = device(xb6Identity, xb6EsiSha256);
     request.allowCandidate = true;
+    request.processDataProfileId = "solidot.xb6.mdp-rx16ff-tx1aff";
+    appendProcessEntry(
+        &request.processImage,
+        processEntry(
+            Data::PdoDirection::Rx,
+            0x16ff,
+            0xf200,
+            1,
+            0,
+            16,
+            Data::EtherCATDataType::UnsignedInteger16));
+    appendProcessEntry(
+        &request.processImage,
+        processEntry(
+            Data::PdoDirection::Tx,
+            0x1aff,
+            0xf100,
+            1,
+            0,
+            16,
+            Data::EtherCATDataType::UnsignedInteger16));
     const Data::DeviceAdapterResolutionResult result = repository.resolveDevice(request);
     QVERIFY2(result.resolved, qPrintable(result.error));
     QVERIFY(!result.model.complete);
+    QCOMPARE(result.model.processDataProfileId, request.processDataProfileId);
     QCOMPARE(result.model.moduleAssignments.size(), 0);
     QCOMPARE(writableBoundSignalCount(result.model), 0);
 }
@@ -643,6 +777,10 @@ void EtherCATDeviceAdaptersTests::testXb6ExpandsDo16Modules()
     const QList<Data::DeviceAdapterManifest> manifests = repository.adapterManifests();
     const Data::DeviceAdapterManifest *xb6 = manifestForIdentity(manifests, xb6Identity);
     QVERIFY(xb6);
+    QCOMPARE(xb6->processDataProfiles.size(), 1);
+    QCOMPARE(xb6->processDataProfiles.constFirst().id, QString("solidot.xb6.mdp-rx16ff-tx1aff"));
+    QCOMPARE(xb6->processDataProfiles.constFirst().rxPdoIndices, QList<quint16>({0x16ff}));
+    QCOMPARE(xb6->processDataProfiles.constFirst().txPdoIndices, QList<quint16>({0x1aff}));
     QCOMPARE(xb6->moduleProfiles.size(), 4);
     const QList<quint32> expectedModuleIdents{0x00000624, 0x00000625, 0x00000628, 0x00000629};
     for (quint32 moduleIdent : expectedModuleIdents) {
@@ -666,27 +804,35 @@ void EtherCATDeviceAdaptersTests::testXb6ExpandsDo16Modules()
             xb6SingleModuleRequest(moduleIdent));
         QVERIFY2(singleModule.resolved, qPrintable(singleModule.error));
         QVERIFY(singleModule.model.complete);
-        QCOMPARE(singleModule.model.boundSignals.size(), 16);
+        QCOMPARE(singleModule.model.boundSignals.size(), 18);
         QVERIFY(
             std::all_of(
                 singleModule.model.boundSignals.cbegin(),
                 singleModule.model.boundSignals.cend(),
                 [moduleIdent](const Data::BoundSemanticSignal &signal) {
-                    return signal.slot == 1 && signal.moduleIdent == moduleIdent;
+                    return signal.slot < 0 ? signal.moduleIdent == 0
+                                           : signal.slot == 1 && signal.moduleIdent == moduleIdent;
                 }));
     }
 
     const Data::DeviceAdapterResolutionResult result = repository.resolveDevice(xb6Request());
     QVERIFY2(result.resolved, qPrintable(result.error));
     QVERIFY(result.model.complete);
+    QCOMPARE(result.model.processDataProfileId, QString("solidot.xb6.mdp-rx16ff-tx1aff"));
     QCOMPARE(result.model.moduleAssignments.size(), 2);
-    QCOMPARE(result.model.boundSignals.size(), 32);
-    QCOMPARE(writableBoundSignalCount(result.model), 16);
+    QCOMPARE(result.model.boundSignals.size(), 34);
+    QCOMPARE(writableBoundSignalCount(result.model), 17);
+    QVERIFY(boundSignalForObject(result.model, Data::PdoDirection::Rx, 0x16ff, 0xf200));
+    QVERIFY(boundSignalForObject(result.model, Data::PdoDirection::Tx, 0x1aff, 0xf100));
 
     QStringList semanticIds;
     for (const Data::BoundSemanticSignal &signal : result.model.boundSignals) {
-        QVERIFY(signal.slot == 1 || signal.slot == 2);
         semanticIds.append(signal.definition.id.value);
+        if (signal.slot < 0) {
+            QCOMPARE(signal.moduleIdent, quint32(0));
+            continue;
+        }
+        QVERIFY(signal.slot == 1 || signal.slot == 2);
         if (signal.slot == 1) {
             QCOMPARE(signal.moduleIdent, quint32(0x00000625));
             QCOMPARE(signal.binding.pdoDirection, Data::PdoDirection::Rx);

@@ -61,6 +61,12 @@ only the `{slot}` placeholder. The resolver substitutes a validated
 `DeviceModuleAssignment` and applies its object/PDO offsets. It never guesses
 an installed module from the parent coupler identity.
 
+When a project supplies an adapter ID, version, and content SHA-256, the
+resolver accepts only that exact immutable package. These three fields are
+all-or-nothing; a missing package and a content mismatch are separate errors.
+Requests from older projects that omit all three fields retain automatic
+identity and priority matching.
+
 ## Control actions
 
 Actions are finite binder/compiler input, not Provider-side network command
@@ -78,8 +84,9 @@ disabled and have a zero TTL by design.
 ## Bundled scope
 
 - `solidot-xb6-ec0002-rev1.adapter.json` covers the exact XB6 coupler,
-  read-only raw CouplerState, disabled internal CouplerCtrl, and four exact
-  16-channel DI/DO module profiles.
+  its RxPDO 0x16ff / TxPDO 0x1aff coupler profile, read-only raw CouplerState,
+  disabled internal CouplerCtrl, and four exact 16-channel DI/DO module
+  profiles.
 - `inovance-sv630n-rev00010000.adapter.json` covers the exact
   RxPDO 0x1702 / TxPDO 0x1b04 DC profile in raw drive units and disabled,
   finite CiA 402 CSV preparation and stop candidates.

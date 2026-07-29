@@ -1591,6 +1591,7 @@ static DeviceAdapterResolutionResult resolvePackage(
     model.esiSha256 = request.device.sourceSha256;
     model.adapterId = manifest.id;
     model.adapterVersion = manifest.version;
+    model.adapterContentSha256 = manifest.contentSha256;
     model.qualification = manifest.qualification;
     model.capabilities = manifest.capabilities;
     model.processDataProfileId = profile ? profile->id : QString();
@@ -1700,6 +1701,47 @@ DeviceAdapterResolutionResult AdapterPackageRepository::resolveDevice(
 {
     if (!isAvailable())
         return {false, {}, d->loadErrors.join('\n')};
+
+    const bool hasExactSelection = request.hasExpectedAdapterSelection();
+    if (!request.hasValidExpectedAdapterSelection()) {
+        return {
+            false,
+            {},
+            tr("The expected adapter selection must be either empty or contain a canonical "
+               "adapter ID, version, and SHA-256 digest.")};
+    }
+    if (hasExactSelection) {
+        const auto selected = std::find_if(
+            d->packages.cbegin(), d->packages.cend(), [&request](const Package &package) {
+                return package.manifest.id == request.expectedAdapterId
+                       && package.manifest.version == request.expectedAdapterVersion;
+            });
+        if (selected == d->packages.cend()) {
+            return {
+                false,
+                {},
+                tr("The expected adapter package %1 %2 was not found.")
+                    .arg(request.expectedAdapterId.value, request.expectedAdapterVersion)};
+        }
+        if (selected->manifest.contentSha256 != request.expectedAdapterContentSha256) {
+            return {false, {}, tr("The expected adapter package content SHA-256 does not match.")};
+        }
+        if (!identityMatches(selected->manifest, request.device)) {
+            return {
+                false,
+                {},
+                tr("The expected adapter package does not match the exact identity, revision, "
+                   "and ESI hash.")};
+        }
+        DeviceAdapterResolutionResult resolution = resolvePackage(selected->manifest, request);
+        if (resolution.resolved
+            && (resolution.model.adapterId != request.expectedAdapterId
+                || resolution.model.adapterVersion != request.expectedAdapterVersion
+                || resolution.model.adapterContentSha256 != request.expectedAdapterContentSha256)) {
+            return {false, {}, tr("The resolved adapter package does not match the expectation.")};
+        }
+        return resolution;
+    }
 
     struct Match
     {

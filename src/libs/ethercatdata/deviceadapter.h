@@ -285,11 +285,31 @@ struct ETHERCATDATA_EXPORT DeviceAdapterResolutionRequest
     NodeId slaveId;
     DeviceDescription device;
     ProcessImagePreview processImage;
+    DeviceAdapterId expectedAdapterId;
+    QString expectedAdapterVersion;
+    QByteArray expectedAdapterContentSha256;
     QString processDataProfileId;
     QList<DeviceModuleAssignment> moduleAssignments;
     bool allowCandidate = false;
     bool allowMock = false;
     bool requireRealHardwareQualification = false;
+
+    bool hasExpectedAdapterSelection() const
+    {
+        return !expectedAdapterId.value.isEmpty() || !expectedAdapterVersion.isEmpty()
+               || !expectedAdapterContentSha256.isEmpty();
+    }
+
+    bool hasValidExpectedAdapterSelection() const
+    {
+        if (!hasExpectedAdapterSelection())
+            return true;
+        return !expectedAdapterId.value.isEmpty()
+               && expectedAdapterId.value == expectedAdapterId.value.trimmed()
+               && !expectedAdapterVersion.isEmpty()
+               && expectedAdapterVersion == expectedAdapterVersion.trimmed()
+               && expectedAdapterContentSha256.size() == 32;
+    }
 
     friend bool operator==(
         const DeviceAdapterResolutionRequest &, const DeviceAdapterResolutionRequest &)
@@ -316,6 +336,7 @@ struct ETHERCATDATA_EXPORT ResolvedDeviceModel
     QByteArray esiSha256;
     DeviceAdapterId adapterId;
     QString adapterVersion;
+    QByteArray adapterContentSha256;
     DeviceAdapterQualification qualification = DeviceAdapterQualification::Unqualified;
     QList<DeviceCapabilityId> capabilities;
     QString processDataProfileId;

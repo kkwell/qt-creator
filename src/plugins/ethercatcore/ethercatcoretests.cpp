@@ -1926,9 +1926,24 @@ void EtherCATCoreTests::testDeviceAdapterValueSemantics()
     request.device.summary.identity
         = {qualified.match.vendorId, qualified.match.productCode, qualified.match.minimumRevision};
     request.device.sourceSha256 = qualified.match.exactEsiSha256;
+    request.expectedAdapterId = qualified.id;
+    request.expectedAdapterVersion = qualified.version;
+    request.expectedAdapterContentSha256 = qualified.contentSha256;
     request.allowCandidate = true;
     request.allowMock = false;
     request.requireRealHardwareQualification = false;
+    QVERIFY(request.hasExpectedAdapterSelection());
+    QVERIFY(request.hasValidExpectedAdapterSelection());
+    Data::DeviceAdapterResolutionRequest invalidExpectedAdapter = request;
+    invalidExpectedAdapter.expectedAdapterContentSha256.chop(1);
+    QVERIFY(invalidExpectedAdapter.hasExpectedAdapterSelection());
+    QVERIFY(!invalidExpectedAdapter.hasValidExpectedAdapterSelection());
+    Data::DeviceAdapterResolutionRequest automaticAdapter = request;
+    automaticAdapter.expectedAdapterId = {};
+    automaticAdapter.expectedAdapterVersion.clear();
+    automaticAdapter.expectedAdapterContentSha256.clear();
+    QVERIFY(!automaticAdapter.hasExpectedAdapterSelection());
+    QVERIFY(automaticAdapter.hasValidExpectedAdapterSelection());
     const Data::NodeId pdoId = Data::NodeId::create();
     const Data::NodeId entryId = Data::NodeId::create();
     const Data::NodeId syncManagerId = Data::NodeId::create();
@@ -1964,6 +1979,7 @@ void EtherCATCoreTests::testDeviceAdapterValueSemantics()
     model.esiSha256 = request.device.sourceSha256;
     model.adapterId = qualified.id;
     model.adapterVersion = qualified.version;
+    model.adapterContentSha256 = qualified.contentSha256;
     model.qualification = qualified.qualification;
     model.capabilities = qualified.capabilities;
     model.boundSignals = {boundSignal};
@@ -1974,6 +1990,7 @@ void EtherCATCoreTests::testDeviceAdapterValueSemantics()
     QCOMPARE(model.boundSignals.constFirst().processImageBitOffset, qint64(96));
     QCOMPARE(model.identity.revisionNumber, qualified.match.minimumRevision);
     QCOMPARE(model.esiSha256, qualified.match.exactEsiSha256);
+    QCOMPARE(model.adapterContentSha256, qualified.contentSha256);
 
     const Data::DeviceAdapterResolutionResult result{true, model, {}};
     QCOMPARE(Data::DeviceAdapterResolutionResult(result), result);
@@ -2007,6 +2024,9 @@ void EtherCATCoreTests::testDeviceAdapterProviderContract()
     request.device.summary.identity
         = {qualified.match.vendorId, qualified.match.productCode, qualified.match.minimumRevision};
     request.device.sourceSha256 = qualified.match.exactEsiSha256;
+    request.expectedAdapterId = qualified.id;
+    request.expectedAdapterVersion = qualified.version;
+    request.expectedAdapterContentSha256 = qualified.contentSha256;
     request.allowCandidate = false;
     request.allowMock = false;
     request.requireRealHardwareQualification = true;
@@ -2016,6 +2036,7 @@ void EtherCATCoreTests::testDeviceAdapterProviderContract()
     provider.resolutionResult.model.esiSha256 = request.device.sourceSha256;
     provider.resolutionResult.model.adapterId = qualified.id;
     provider.resolutionResult.model.adapterVersion = qualified.version;
+    provider.resolutionResult.model.adapterContentSha256 = qualified.contentSha256;
     provider.resolutionResult.model.qualification = qualified.qualification;
     provider.resolutionResult.model.complete = true;
     const Data::DeviceAdapterResolutionResult resolution = provider.resolveDevice(request);
