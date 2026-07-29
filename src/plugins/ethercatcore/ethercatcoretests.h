@@ -20,6 +20,8 @@ private slots:
     void testProcessDataConfigurationValidation();
     void testStartupAndDcConfigurationValidation();
     void testDeviceDescriptionAndImportJobContract();
+    void testDeviceAdapterValueSemantics();
+    void testDeviceAdapterProviderContract();
     void testPropertyPageProviderContract();
     void testWorkbenchDerivedNodeKinds();
     void testControllerConnectionProviderContract();

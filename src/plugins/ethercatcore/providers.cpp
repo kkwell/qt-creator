@@ -72,6 +72,11 @@ DeviceRepositoryProvider::DeviceRepositoryProvider(
     : Provider(ProviderKind::DeviceRepository, id, displayName, parent)
 {}
 
+DeviceAdapterProvider::DeviceAdapterProvider(
+    Utils::Id id, const QString &displayName, QObject *parent)
+    : Provider(ProviderKind::DeviceAdapter, id, displayName, parent)
+{}
+
 DeviceImportJob::DeviceImportJob(QObject *parent)
     : QObject(parent)
 {}

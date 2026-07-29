@@ -17,6 +17,7 @@
 #include <extensionsystem/pluginspec.h>
 
 #include <ethercatdata/controllerconnection.h>
+#include <ethercatdata/deviceadapter.h>
 #include <ethercatdata/nodeid.h>
 #include <ethercatdata/offlineconfiguration.h>
 #include <ethercatdata/projectsnapshot.h>
@@ -66,6 +67,124 @@ public:
         result.canceled = true;
         finish(result);
     }
+};
+
+static Data::DeviceAdapterManifest testDeviceAdapterManifest(
+    Data::DeviceAdapterQualification qualification = Data::DeviceAdapterQualification::Qualified,
+    const QString &version = "2.1.0")
+{
+    Data::DeviceSignalBinding binding;
+    binding.kind = Data::DeviceSignalBindingKind::ProcessDataObject;
+    binding.pdoDirection = Data::PdoDirection::Rx;
+    binding.pdoIndex = 0x1600;
+    binding.objectIndex = 0x7001;
+    binding.objectSubIndex = 0;
+    binding.physicalType = Data::EtherCATDataType::Integer32;
+    binding.bitWidth = 32;
+    binding.byteOrder = Data::DeviceByteOrder::LittleEndian;
+
+    Data::SemanticSignalDefinition signal;
+    signal.id = {"urn:example.test:signal/custom.axis.target-velocity"};
+    signal.displayName = "Target velocity";
+    signal.description = "Adapter-owned velocity command";
+    signal.capabilities
+        = {{"example.test.capability/axis.velocity"},
+           {"example.test.capability/custom-diagnostics"}};
+    signal.direction = Data::SemanticSignalDirection::Output;
+    signal.access = Data::SemanticSignalAccess::WriteOnly;
+    signal.bindings = {binding};
+    signal.valueMetadata.unit = "rpm";
+    signal.valueMetadata.scale = 0.1;
+    signal.valueMetadata.offset = -1.0;
+    signal.valueMetadata.hasMinimum = true;
+    signal.valueMetadata.minimum = -3000.0;
+    signal.valueMetadata.hasMaximum = true;
+    signal.valueMetadata.maximum = 3000.0;
+    signal.valueMetadata.hasStep = true;
+    signal.valueMetadata.step = 0.1;
+    signal.valueMetadata.enumValues = {{0, "stopped", "Stopped"}};
+    signal.hasSafeValue = true;
+    signal.safeValue = 0;
+    signal.manualControl.policyId = "manual.axis.hold-to-run";
+    signal.manualControl.allowed = true;
+    signal.manualControl.requiresExclusiveControl = true;
+    signal.manualControl.holdToRun = true;
+    signal.manualControl.commandTimeoutMs = 250;
+    signal.manualControl.timeoutAction = Data::ManualControlTimeoutAction::ControlledStop;
+
+    Data::DeviceAdapterManifest manifest;
+    manifest.id = {"org.example.test.adapter/custom-drive"};
+    manifest.version = version;
+    manifest.displayName = "Vendor Example Drive";
+    manifest.description = "Test-only semantic adapter";
+    manifest.qualification = qualification;
+    manifest.matchPriority = 120;
+    manifest.match.vendorId = 0x00a1b2c3;
+    manifest.match.productCode = 0x01020304;
+    manifest.match.minimumRevision = 0x00020003;
+    manifest.match.maximumRevision = 0x00020003;
+    manifest.match.exactEsiSha256 = QByteArray::fromHex(
+        "1111111111111111111111111111111111111111111111111111111111111111");
+    manifest.capabilities = signal.capabilities;
+    manifest.semanticSignals = {signal};
+    manifest.provenance.sourceId = "test.adapter.catalog";
+    manifest.provenance.sourceVersion = "2026.07";
+    manifest.provenance.sourceLocation = "tests/custom-drive.adapter.json";
+    manifest.provenance.sourceSha256 = QByteArray::fromHex(
+        "2222222222222222222222222222222222222222222222222222222222222222");
+    manifest.contentSha256 = QByteArray::fromHex(
+        "3333333333333333333333333333333333333333333333333333333333333333");
+    manifest.evidenceSha256 = QByteArray::fromHex(
+        "4444444444444444444444444444444444444444444444444444444444444444");
+    manifest.signatureVerified = qualification == Data::DeviceAdapterQualification::Qualified;
+    manifest.realHardwareAllowed = qualification == Data::DeviceAdapterQualification::Qualified;
+    return manifest;
+}
+
+class TestDeviceAdapterProvider final : public DeviceAdapterProvider
+{
+public:
+    explicit TestDeviceAdapterProvider(const QList<Data::DeviceAdapterManifest> &manifests)
+        : DeviceAdapterProvider("EtherCAT.DeviceAdapter.Test", "Test device adapters")
+        , m_manifests(manifests)
+    {}
+
+    QList<Data::DeviceAdapterManifest> adapterManifests() const final { return m_manifests; }
+
+    std::optional<Data::DeviceAdapterManifest> adapterManifest(
+        const Data::DeviceAdapterId &adapterId, const QString &version) const final
+    {
+        const auto found = std::find_if(
+            m_manifests.cbegin(),
+            m_manifests.cend(),
+            [&adapterId, &version](const Data::DeviceAdapterManifest &manifest) {
+                return manifest.id == adapterId && manifest.version == version;
+            });
+        if (found == m_manifests.cend())
+            return std::nullopt;
+        return *found;
+    }
+
+    Data::DeviceAdapterResolutionResult resolveDevice(
+        const Data::DeviceAdapterResolutionRequest &request) const final
+    {
+        lastResolutionRequest = request;
+        ++resolutionCount;
+        return resolutionResult;
+    }
+
+    void replaceManifests(const QList<Data::DeviceAdapterManifest> &manifests)
+    {
+        m_manifests = manifests;
+        emit adapterManifestsChanged();
+    }
+
+    mutable Data::DeviceAdapterResolutionRequest lastResolutionRequest;
+    mutable int resolutionCount = 0;
+    Data::DeviceAdapterResolutionResult resolutionResult;
+
+private:
+    QList<Data::DeviceAdapterManifest> m_manifests;
 };
 
 void EtherCATCoreTests::testAutomationServiceValueLookup()
@@ -916,6 +1035,219 @@ void EtherCATCoreTests::testDeviceDescriptionAndImportJobContract()
 
     job.cancel();
     QCOMPARE(finishedSpy.count(), 1);
+}
+
+void EtherCATCoreTests::testDeviceAdapterValueSemantics()
+{
+    const Data::DeviceAdapterManifest qualified = testDeviceAdapterManifest();
+    const Data::DeviceAdapterManifest copy = qualified;
+    QCOMPARE(copy, qualified);
+
+    QCOMPARE(qualified.id.value, QString("org.example.test.adapter/custom-drive"));
+    QCOMPARE(
+        qualified.capabilities.at(1).value,
+        QString("example.test.capability/custom-diagnostics"));
+    QCOMPARE(
+        qualified.semanticSignals.constFirst().id.value,
+        QString("urn:example.test:signal/custom.axis.target-velocity"));
+    QCOMPARE(qualified.qualification, Data::DeviceAdapterQualification::Qualified);
+    QVERIFY(qualified.signatureVerified);
+    QVERIFY(qualified.realHardwareAllowed);
+
+    QCOMPARE(qualified.match.vendorId, quint32(0x00a1b2c3));
+    QCOMPARE(qualified.match.productCode, quint32(0x01020304));
+    QCOMPARE(qualified.match.minimumRevision, quint32(0x00020003));
+    QCOMPARE(qualified.match.maximumRevision, quint32(0x00020003));
+    QCOMPARE(qualified.match.exactEsiSha256.size(), 32);
+    QCOMPARE(
+        qualified.match.exactEsiSha256.toHex(),
+        QByteArray("1111111111111111111111111111111111111111111111111111111111111111"));
+
+    const Data::SemanticSignalDefinition &signal = qualified.semanticSignals.constFirst();
+    QCOMPARE(signal.direction, Data::SemanticSignalDirection::Output);
+    QCOMPARE(signal.access, Data::SemanticSignalAccess::WriteOnly);
+    QCOMPARE(signal.bindings.size(), 1);
+    const Data::DeviceSignalBinding &binding = signal.bindings.constFirst();
+    QCOMPARE(binding.kind, Data::DeviceSignalBindingKind::ProcessDataObject);
+    QCOMPARE(binding.pdoDirection, Data::PdoDirection::Rx);
+    QCOMPARE(binding.pdoIndex, quint16(0x1600));
+    QCOMPARE(binding.objectIndex, quint16(0x7001));
+    QCOMPARE(binding.objectSubIndex, quint8(0));
+    QCOMPARE(binding.physicalType, Data::EtherCATDataType::Integer32);
+    QCOMPARE(binding.bitWidth, 32);
+    QCOMPARE(binding.byteOrder, Data::DeviceByteOrder::LittleEndian);
+    QCOMPARE(signal.valueMetadata.unit, QString("rpm"));
+    QCOMPARE(signal.valueMetadata.scale, 0.1);
+    QCOMPARE(signal.valueMetadata.offset, -1.0);
+    QVERIFY(signal.valueMetadata.hasMinimum);
+    QCOMPARE(signal.valueMetadata.minimum, -3000.0);
+    QVERIFY(signal.valueMetadata.hasMaximum);
+    QCOMPARE(signal.valueMetadata.maximum, 3000.0);
+    QVERIFY(signal.valueMetadata.hasStep);
+    QCOMPARE(signal.valueMetadata.step, 0.1);
+    QCOMPARE(
+        signal.valueMetadata.enumValues,
+        QList<Data::SemanticEnumValue>({{0, "stopped", "Stopped"}}));
+    QVERIFY(signal.hasSafeValue);
+    QCOMPARE(signal.safeValue, QVariant(0));
+    QVERIFY(signal.manualControl.allowed);
+    QVERIFY(signal.manualControl.requiresExclusiveControl);
+    QVERIFY(signal.manualControl.holdToRun);
+    QCOMPARE(signal.manualControl.commandTimeoutMs, quint32(250));
+    QCOMPARE(signal.manualControl.timeoutAction, Data::ManualControlTimeoutAction::ControlledStop);
+
+    Data::DeviceAdapterManifest changedRevision = qualified;
+    changedRevision.match.minimumRevision = 0x00020004;
+    QVERIFY(changedRevision != qualified);
+    Data::DeviceAdapterManifest changedEsi = qualified;
+    changedEsi.match.exactEsiSha256[0] = char(changedEsi.match.exactEsiSha256.at(0) ^ char(0xff));
+    QVERIFY(changedEsi != qualified);
+
+    Data::DeviceAdapterManifest candidate
+        = testDeviceAdapterManifest(Data::DeviceAdapterQualification::Candidate, "2.2.0-rc1");
+    QVERIFY(candidate != qualified);
+    QVERIFY(!candidate.signatureVerified);
+    QVERIFY(!candidate.realHardwareAllowed);
+    QCOMPARE(candidate.qualification, Data::DeviceAdapterQualification::Candidate);
+    Data::DeviceAdapterManifest mock
+        = testDeviceAdapterManifest(Data::DeviceAdapterQualification::MockOnly, "mock-1");
+    QCOMPARE(mock.qualification, Data::DeviceAdapterQualification::MockOnly);
+    QVERIFY(!mock.realHardwareAllowed);
+    QVERIFY(Data::DeviceAdapterQualification::Unqualified != candidate.qualification);
+    QVERIFY(candidate.qualification != qualified.qualification);
+    QVERIFY(qualified.qualification != mock.qualification);
+
+    Data::DeviceAdapterResolutionRequest request;
+    request.slaveId = Data::NodeId::create();
+    request.device.summary.identity
+        = {qualified.match.vendorId, qualified.match.productCode, qualified.match.minimumRevision};
+    request.device.sourceSha256 = qualified.match.exactEsiSha256;
+    request.allowCandidate = true;
+    request.allowMock = false;
+    request.requireRealHardwareQualification = false;
+    const Data::NodeId pdoId = Data::NodeId::create();
+    const Data::NodeId entryId = Data::NodeId::create();
+    const Data::NodeId syncManagerId = Data::NodeId::create();
+    request.processImage.outputs.bitSize = 32;
+    request.processImage.outputs.byteSize = 4;
+    request.processImage.outputs.entries = {
+        {pdoId,
+         entryId,
+         syncManagerId,
+         binding.pdoIndex,
+         binding.objectIndex,
+         binding.objectSubIndex,
+         "Target velocity",
+         binding.pdoDirection,
+         2,
+         96,
+         binding.bitWidth,
+         12,
+         0,
+         binding.physicalType}};
+    QCOMPARE(Data::DeviceAdapterResolutionRequest(request), request);
+
+    Data::BoundSemanticSignal boundSignal;
+    boundSignal.definition = signal;
+    boundSignal.binding = binding;
+    boundSignal.processImageEntryId = entryId;
+    boundSignal.processImageBitOffset = 96;
+    boundSignal.processImageBitLength = 32;
+
+    Data::ResolvedDeviceModel model;
+    model.slaveId = request.slaveId;
+    model.identity = request.device.summary.identity;
+    model.esiSha256 = request.device.sourceSha256;
+    model.adapterId = qualified.id;
+    model.adapterVersion = qualified.version;
+    model.qualification = qualified.qualification;
+    model.capabilities = qualified.capabilities;
+    model.boundSignals = {boundSignal};
+    model.warnings = {"Test-only resolved model"};
+    model.complete = true;
+    QCOMPARE(Data::ResolvedDeviceModel(model), model);
+    QCOMPARE(model.boundSignals.constFirst().processImageEntryId, entryId);
+    QCOMPARE(model.boundSignals.constFirst().processImageBitOffset, qint64(96));
+    QCOMPARE(model.identity.revisionNumber, qualified.match.minimumRevision);
+    QCOMPARE(model.esiSha256, qualified.match.exactEsiSha256);
+
+    const Data::DeviceAdapterResolutionResult result{true, model, {}};
+    QCOMPARE(Data::DeviceAdapterResolutionResult(result), result);
+    QVERIFY(result.resolved);
+    QVERIFY(result.error.isEmpty());
+}
+
+void EtherCATCoreTests::testDeviceAdapterProviderContract()
+{
+    const Data::DeviceAdapterManifest qualified = testDeviceAdapterManifest();
+    const Data::DeviceAdapterManifest candidate
+        = testDeviceAdapterManifest(Data::DeviceAdapterQualification::Candidate, "2.2.0-rc1");
+    TestDeviceAdapterProvider provider({qualified, candidate});
+
+    QCOMPARE(int(ProviderKind::DeviceAdapter), 6);
+    QCOMPARE(provider.kind(), ProviderKind::DeviceAdapter);
+    QCOMPARE(provider.adapterManifests(), QList<Data::DeviceAdapterManifest>({qualified, candidate}));
+    const std::optional<Data::DeviceAdapterManifest> exact
+        = provider.adapterManifest(qualified.id, qualified.version);
+    QVERIFY(exact);
+    QCOMPARE(*exact, qualified);
+    const std::optional<Data::DeviceAdapterManifest> candidateVersion
+        = provider.adapterManifest(candidate.id, candidate.version);
+    QVERIFY(candidateVersion);
+    QCOMPARE(*candidateVersion, candidate);
+    QVERIFY(!provider.adapterManifest(qualified.id, "missing-version"));
+    QVERIFY(!provider.adapterManifest({"org.example.test.adapter/missing"}, qualified.version));
+
+    Data::DeviceAdapterResolutionRequest request;
+    request.slaveId = Data::NodeId::create();
+    request.device.summary.identity
+        = {qualified.match.vendorId, qualified.match.productCode, qualified.match.minimumRevision};
+    request.device.sourceSha256 = qualified.match.exactEsiSha256;
+    request.allowCandidate = false;
+    request.allowMock = false;
+    request.requireRealHardwareQualification = true;
+    provider.resolutionResult.resolved = true;
+    provider.resolutionResult.model.slaveId = request.slaveId;
+    provider.resolutionResult.model.identity = request.device.summary.identity;
+    provider.resolutionResult.model.esiSha256 = request.device.sourceSha256;
+    provider.resolutionResult.model.adapterId = qualified.id;
+    provider.resolutionResult.model.adapterVersion = qualified.version;
+    provider.resolutionResult.model.qualification = qualified.qualification;
+    provider.resolutionResult.model.complete = true;
+    const Data::DeviceAdapterResolutionResult resolution = provider.resolveDevice(request);
+    QVERIFY(resolution.resolved);
+    QCOMPARE(resolution, provider.resolutionResult);
+    QCOMPARE(provider.lastResolutionRequest, request);
+    QCOMPARE(provider.resolutionCount, 1);
+
+    QSignalSpy manifestsSpy(&provider, &DeviceAdapterProvider::adapterManifestsChanged);
+    provider.replaceManifests({qualified});
+    QCOMPARE(manifestsSpy.count(), 1);
+    QCOMPARE(provider.adapterManifests(), QList<Data::DeviceAdapterManifest>({qualified}));
+    QVERIFY(!provider.adapterManifest(candidate.id, candidate.version));
+
+    QSignalSpy availabilitySpy(&provider, &Provider::availabilityChanged);
+    QVERIFY(!provider.isAvailable());
+    provider.setAvailable(true);
+    QVERIFY(provider.isAvailable());
+    QCOMPARE(availabilitySpy.count(), 1);
+
+    ProviderRegistry *registry = ExtensionSystem::PluginManager::getObject<ProviderRegistry>();
+    QVERIFY(registry);
+    QSignalSpy addedSpy(registry, &ProviderRegistry::providerAdded);
+    QSignalSpy removedSpy(registry, &ProviderRegistry::providerAboutToBeRemoved);
+    ExtensionSystem::PluginManager::addObject(&provider);
+    QScopeGuard removeProvider(
+        [&provider] { ExtensionSystem::PluginManager::removeObject(&provider); });
+    QCOMPARE(registry->provider(provider.id()), &provider);
+    QCOMPARE(registry->providers(ProviderKind::DeviceAdapter), QList<Provider *>({&provider}));
+    QCOMPARE(addedSpy.count(), 1);
+
+    ExtensionSystem::PluginManager::removeObject(&provider);
+    removeProvider.dismiss();
+    QVERIFY(!registry->provider(provider.id()));
+    QVERIFY(registry->providers(ProviderKind::DeviceAdapter).isEmpty());
+    QCOMPARE(removedSpy.count(), 1);
 }
 
 void EtherCATCoreTests::testPropertyPageProviderContract()

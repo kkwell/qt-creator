@@ -63,6 +63,12 @@ transport, or generic node-mutation surface. The virtual method is appended
 after the existing Project service methods so their established vtable slots
 do not move.
 
+The device-adapter revision adds a separate upper-layer contract for mapping an
+exact ESI-described slave to namespaced capabilities and semantic signals. It
+does not extend the controller transport. The controller adapter remains
+responsible for its Product API or other management protocol; a device adapter
+describes how one slave model maps into the engineering project.
+
 ## Stable identity
 
 `EtherCAT::Data::NodeId` is the only stage-1 cross-plugin node identity.
@@ -124,6 +130,7 @@ unique `Utils::Id`, user-visible name, type, and availability flag.
 |---|---|
 | `ProjectService` | EtherCATProject |
 | `DeviceRepositoryProvider` | EtherCATDevices |
+| `DeviceAdapterProvider` | Independent ESI/device-model adapter plugins |
 | `PropertyPageProvider` | EtherCATWorkbench and optional page contributors |
 | `ControllerConnectionProvider` | Independent vendor/protocol adapter plugins |
 | `ScanProvider` | EtherCATScan or a future real-controller provider |
@@ -133,6 +140,59 @@ Stage 1 froze discovery and lifecycle only. The Project API revision adds typed
 project methods before the Project implementation. It deliberately does not
 expose generic `QVariant`, byte arrays, network messages, or placeholder methods
 for later feature data.
+
+## Device adapter provider contract
+
+`DeviceAdapterProvider` is a read-only, in-process engineering extension point.
+It is intentionally different from `ControllerConnectionProvider`:
+
+- a controller adapter owns one controller-management transport and never
+  defines a slave manufacturer's PDO meaning;
+- a device adapter matches an exact VendorId/ProductCode/revision range and ESI
+  SHA-256, then maps that device into namespaced capabilities and semantic
+  signals; and
+- the future binder/compiler resolves those semantic signals to the selected
+  Project's process image and emits an immutable generic runtime package.
+
+Adapter, capability, and semantic-signal identifiers retain their complete
+namespaced strings. Core has no closed DI, DO, analog, drive, or vendor enum.
+Adding a manufacturer therefore adds or updates adapter data or an independent
+adapter plugin; it does not add a branch to Core, Workbench, ProductApi, or the
+controller real-time loop.
+
+An immutable `DeviceAdapterManifest` records:
+
+- adapter identity/version, deterministic match priority, exact identity and
+  ESI hash;
+- qualification, content/evidence hashes, signature result, and an explicit
+  real-hardware permission;
+- open capability and signal identifiers;
+- typed PDO or Object Dictionary bindings, bit width and byte order;
+- engineering unit, scale, offset, range, step, and enum presentation; and
+- safe-value and manual-control policy metadata.
+
+`adapterManifests()` returns the provider's complete immutable values.
+`adapterManifest(id, version)` is an exact lookup; display text or a newer
+version is never substituted. `resolveDevice(request)` accepts an exact device
+description and process-image preview and returns either one bound model or an
+explicit error. A concrete provider must fail closed for a hash mismatch,
+revision mismatch, ambiguous or incomplete binding, and must not grant
+real-hardware use unless the manifest is qualified, signature-verified, and
+explicitly hardware-enabled. Candidate and Mock-only manifests remain
+test/engineering inputs.
+
+PDO direction, object name, Boolean type, or a familiar object index is not
+enough to infer that a signal is safe to write. An unmatched device retains its
+normal ESI identity and raw offline description, but no writable semantic
+binding is fabricated. Process-image offsets appear only in the resolved upper
+model and later generated artifacts; user flows refer to stable semantic IDs,
+not offsets or vendor objects.
+
+This first contract issue registers no concrete adapter and changes no Project
+format, Workbench page, Automation Gateway mutation, Product API message, or
+controller runtime. Those remain separate issues so the IDE stays the single
+engineering source of truth and the 125 us runtime remains independent of UI,
+MCP, and network timing.
 
 ## Controller connection provider contract
 
@@ -588,6 +648,14 @@ The focused plugin test covers:
 - Startup order/raw-value validation and nanosecond DC cycle/shift validation;
 - frozen Workbench node-kind values and derived PDO/module selection contexts;
 - settings-page registration.
+
+For `ISSUE-IDE-DEVICE-ADAPTER-CORE-001`, the focused adapter value/provider
+run passed 4 events and the complete Qt 6.11.0 Release EtherCATCore suite passed
+22 events with zero failures or skips. The production EtherCATCore target also
+compiled and linked. Both runs used the offscreen platform with crash reporting
+disabled; no visible application, controller socket, lease, scan, PDO/SDO
+request, state transition, or hardware action was started. CMake and qbs source
+lists remain synchronized.
 
 For `ISSUE-WB-DETAILS-FOCUS-CONTINUITY-001`, based on
 `0637955df9ab009bb0ee1fcb892dc74e5ede27e7`, the focused EtherCATCore suite

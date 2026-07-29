@@ -5,6 +5,7 @@
 #include "ethercatcore_global.h"
 
 #include <ethercatdata/controllerconnection.h>
+#include <ethercatdata/deviceadapter.h>
 #include <ethercatdata/devicedescription.h>
 #include <ethercatdata/diagnosticssnapshot.h>
 #include <ethercatdata/projectsnapshot.h>
@@ -31,6 +32,7 @@ enum class ProviderKind {
     Scan,
     Diagnostics,
     ControllerConnection,
+    DeviceAdapter,
 };
 enum class DeviceImportState { Pending, Running, Canceling, Finished };
 enum class WorkbenchNodeKind {
@@ -173,6 +175,23 @@ signals:
     void devicesReset();
     void devicesChanged(const QList<EtherCAT::Data::NodeId> &deviceIds);
     void indexingChanged(bool indexing);
+};
+
+class ETHERCATCORE_EXPORT DeviceAdapterProvider : public Provider
+{
+    Q_OBJECT
+
+public:
+    DeviceAdapterProvider(Utils::Id id, const QString &displayName, QObject *parent = nullptr);
+
+    virtual QList<Data::DeviceAdapterManifest> adapterManifests() const = 0;
+    virtual std::optional<Data::DeviceAdapterManifest> adapterManifest(
+        const Data::DeviceAdapterId &adapterId, const QString &version) const = 0;
+    virtual Data::DeviceAdapterResolutionResult resolveDevice(
+        const Data::DeviceAdapterResolutionRequest &request) const = 0;
+
+signals:
+    void adapterManifestsChanged();
 };
 
 class ETHERCATCORE_EXPORT DeviceImportJob : public QObject

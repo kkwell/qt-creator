@@ -3648,3 +3648,27 @@ session. It does not authorize a real-controller package mutation.
 | Product build | Qt 6.11 `WITH_TESTS=OFF` EtherCATCore, EtherCATProductApi, and EtherCATWorkbench targets passed |
 | Hardware claim | None; this issue opened no controller socket and sent no lease, Bulk, package, state-transition, or runtime request |
 | Publication | Local `embed-labs` only; no fetch, pull, merge, rebase, branch switch, push, PR, or remote publication |
+
+## Provider-neutral device adapter Core contract
+
+`ISSUE-IDE-DEVICE-ADAPTER-CORE-001` establishes the upper engineering boundary
+needed before runtime I/O, manual control, or flow programming can be connected
+to a controller.
+
+| Gate | Result |
+|---|---|
+| Layer ownership | ESI/device adapters own manufacturer identity, object meaning, units, scaling, safe values, and semantic capabilities; controller adapters and CPU1 do not |
+| Open extension | Adapter, capability, and signal IDs are namespaced strings rather than a closed manufacturer or device-class enum |
+| Exact match | Manifest values retain VendorId, ProductCode, revision range, exact ESI SHA-256, priority, version, and provenance |
+| Hardware gate | Qualification, content/evidence hashes, signature verification, and explicit `realHardwareAllowed` remain separate evidence; Candidate and Mock-only values do not imply hardware support |
+| Signal model | Typed PDO/Object bindings, byte order, engineering transform/range/enum, safe value, and manual timeout policy are immutable upper-layer data |
+| Resolution boundary | A Provider receives an exact DeviceDescription plus process-image preview and returns one bound model or an error; the public contract provides no raw controller command |
+| Unknown devices | Identity and raw offline ESI data may remain visible, but no writable semantic signal is inferred |
+| Explicit exclusions | No concrete adapter registry, Project persistence, UI, Gateway mutation, Product API wire, runtime task, SDO/PDO write, or hardware operation in this issue |
+| Focused Qt test | 4 passed, 0 failed, 0 skipped |
+| Complete EtherCATCore | 22 passed, 0 failed, 0 skipped |
+| Build | Qt 6.11.0 Release EtherCATCore target compiled and linked |
+| Invisible execution | Tests used `QT_QPA_PLATFORM=offscreen`, isolated settings, disabled crash reporting, and `-no-crashcheck`; no visible IDE was launched |
+| Hardware claim | None; no network/controller session, lease, scan, package, state transition, or process-data operation was performed |
+| Build-system sync | EtherCATData CMake and qbs source lists both include `deviceadapter.h` |
+| Publication | Local `embed-labs` only; no remote publication is authorized |
