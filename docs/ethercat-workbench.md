@@ -19,6 +19,15 @@ The layout follows the information hierarchy of common EtherCAT engineering
 tools without copying Beckhoff assets, TwinCAT project formats, or proprietary
 behavior.
 
+Opening or restoring a single valid EtherCAT project selects its Master by
+default. The left device tree and right property tabs therefore appear
+together immediately instead of presenting a tree-only workspace that requires
+an extra click. The initial horizontal splitter limits navigation to the
+smaller share and gives the property area the majority of the width; both
+areas remain user-resizable. The property area and its upper details pane are
+non-collapsible, so a restored layout cannot hide configuration behind a
+full-width tree or output pane.
+
 ## Dependencies and ownership
 
 The plugin has hard metadata dependencies on `Core`, `EtherCATCore`,
@@ -1469,6 +1478,11 @@ area distinguish two previously conflated states:
   descriptions;
 - with an open project but no current tree selection, it asks the user to
   select an EtherCAT node to inspect its offline details.
+
+The second state remains valid after an explicit selection clear or while
+multiple projects are ambiguous. Normal single-project startup now selects the
+only Master automatically, so its configuration pages replace that guidance
+without requiring a tree click.
 
 The first state intentionally points to Qt Creator's existing project
 workflow. [Qt Creator documents `File > New Project` as the project-wizard

@@ -2245,3 +2245,22 @@ Devices suite with exact vendor-file assertions, and six focused Workbench
 tests covering fast restart, no automatic discovery, functional/state icons,
 and live telemetry. No Product API, lease, scan, state, package, JTAG, CPU0,
 CPU1, FPGA, or other controller request was made during this delta.
+
+## Startup presentation and failed-connection reset delta
+
+Opening or restoring a single valid EtherCAT project now preserves a bounded
+navigation width, selects its Master, and displays the property tabs at the
+same time. Splitters remain user-resizable, while the configuration area and
+upper details pane cannot collapse behind the tree or Application Output.
+
+A terminal Product API connection, handshake, timeout, or protocol failure now
+closes all three channels, clears live controller identity and online evidence,
+and publishes `Disconnected`. The structured `lastError` remains available to
+Application Output, but the UI no longer retains a connected-looking failed
+session.
+
+Offline qualification passed the focused Workbench startup-presentation and
+communication-page tests with 3 passes each, plus the complete ProductApi
+suite with 79 passes, 0 failures, and 1 real-hardware test skipped. No Product
+API, lease, scan, state, package, JTAG, CPU0, CPU1, FPGA, or other controller
+request was made during this delta.

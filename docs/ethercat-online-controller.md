@@ -80,6 +80,14 @@ from `ControllerState`. Push `PerformanceSnapshot` data supplies exchange
 timing, cyclic error counters, and the optional process-input sample window;
 its sample capture cycle is not treated as the controller's current cycle.
 
+A terminal connection, handshake, or protocol failure closes every channel
+and publishes `Disconnected`; it does not leave a residual Product API
+`Failed` session for the UI to treat as connected. Negotiated protocol,
+session, controller state, performance, package, firmware, and online topology
+evidence are cleared together. The structured failure remains only as
+`lastError`, so Application Output can explain the failure while Connect is
+immediately available again and Disconnect is disabled.
+
 ## Multi-vendor adapter boundary
 
 `EtherCATProductApi` is the first headless adapter and owns only the Embed Labs

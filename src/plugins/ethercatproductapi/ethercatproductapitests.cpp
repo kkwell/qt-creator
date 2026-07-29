@@ -2680,7 +2680,17 @@ void EtherCATProductApiTests::testConnectionProfileEndpointReconfigurationGuards
     const Data::ControllerConnectionRequest failedRequest = requestFor(failedProvider);
     QVERIFY(failedProvider.connectToController(failedRequest));
     QTRY_COMPARE_WITH_TIMEOUT(
-        failedProvider.connectionSnapshot().state, Data::ControllerConnectionState::Failed, 1000);
+        failedProvider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        1000);
+    QVERIFY(failedProvider.connectionSnapshot().lastError);
+    QVERIFY(!failedProvider.connectionSnapshot().session);
+    QVERIFY(!failedProvider.connectionSnapshot().controllerState);
+    QVERIFY(!failedProvider.connectionSnapshot().topology);
+    for (const Data::ControllerChannelStatus &channel :
+         failedProvider.connectionSnapshot().channels) {
+        QCOMPARE(channel.state, Data::ControllerChannelState::Disconnected);
+    }
     const auto failedConfiguration = failedProvider.connectionProfileConfiguration(
         failedRequest.scope, failedRequest.profileId);
     QVERIFY(failedConfiguration);
@@ -5003,7 +5013,7 @@ void EtherCATProductApiTests::testControllerErrorAttribution_data()
         << int(LoopbackController::Behavior::CommandError)
         << int(Data::ControllerOperation::QueryState)
         << int(Protocol::MessageType::GetState) << -16 << -5 << QString("control") << true
-        << qulonglong(CommandStatusDetail) << int(Data::ControllerConnectionState::Failed);
+        << qulonglong(CommandStatusDetail) << int(Data::ControllerConnectionState::Disconnected);
     QTest::newRow("bulk-status")
         << int(LoopbackController::Behavior::BulkError)
         << int(Data::ControllerOperation::QueryCapability)
@@ -5124,7 +5134,7 @@ void EtherCATProductApiTests::testMalformedControllerStatus()
     QVERIFY(provider.connectToController(request));
 
     QTRY_COMPARE_WITH_TIMEOUT(provider.connectionSnapshot().state,
-                              Data::ControllerConnectionState::Failed,
+                              Data::ControllerConnectionState::Disconnected,
                               2000);
     const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
     QVERIFY(snapshot.lastError);
@@ -5199,7 +5209,7 @@ void EtherCATProductApiTests::testMalformedSessionCapacity()
     QVERIFY(provider.connectToController(request));
 
     QTRY_COMPARE_WITH_TIMEOUT(provider.connectionSnapshot().state,
-                              Data::ControllerConnectionState::Failed,
+                              Data::ControllerConnectionState::Disconnected,
                               1000);
     const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
     QVERIFY(snapshot.lastError);
@@ -5229,7 +5239,7 @@ void EtherCATProductApiTests::testSessionTimeoutAndShutdown()
     const Data::ControllerConnectionRequest request = requestFor(provider);
     QVERIFY(provider.connectToController(request));
     QTRY_COMPARE_WITH_TIMEOUT(provider.connectionSnapshot().state,
-                              Data::ControllerConnectionState::Failed,
+                              Data::ControllerConnectionState::Disconnected,
                               1000);
     const Data::ControllerConnectionSnapshot failed = provider.connectionSnapshot();
     QVERIFY(failed.lastError);

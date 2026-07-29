@@ -25,6 +25,7 @@
 #include <QMenu>
 #include <QPointer>
 #include <QSplitter>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -52,12 +53,15 @@ public:
         centralSplitter->addWidget(outputPane);
         centralSplitter->setStretchFactor(0, 1);
         centralSplitter->setStretchFactor(1, 0);
+        centralSplitter->setCollapsible(0, false);
 
-        mainSplitter->addWidget(new ::Core::NavigationWidgetPlaceHolder(
-            Constants::MODE_ID, ::Core::Side::Left, mainSplitter));
+        auto navigation = new ::Core::NavigationWidgetPlaceHolder(
+            Constants::MODE_ID, ::Core::Side::Left, mainSplitter);
+        mainSplitter->addWidget(navigation);
         mainSplitter->addWidget(centralSplitter);
         mainSplitter->setStretchFactor(0, 0);
         mainSplitter->setStretchFactor(1, 1);
+        mainSplitter->setChildrenCollapsible(false);
 
         ::Core::ActionContainer *menuContainer
             = ::Core::ActionManager::actionContainer(Constants::MENU_ID);
@@ -74,6 +78,18 @@ public:
         layout->addWidget(commandStrip);
         layout->addWidget(mainSplitter, 1);
         ::Core::IContext::attach(this, ::Core::Context(Constants::CONTEXT_ID));
+
+        QTimer::singleShot(0, mainSplitter, [mainSplitter, navigation] {
+            const int availableWidth = mainSplitter->contentsRect().width();
+            if (availableWidth <= 0)
+                return;
+            int navigationWidth = navigation->sizeHint().width();
+            if (navigationWidth <= 0)
+                navigationWidth = availableWidth / 4;
+            navigationWidth = std::clamp(
+                navigationWidth, availableWidth / 5, availableWidth / 3);
+            mainSplitter->setSizes({navigationWidth, availableWidth - navigationWidth});
+        });
 
         connect(controller, &WorkbenchController::insertDeviceRequested, this, [this, controller] {
             if (m_insertDeviceDialog) {

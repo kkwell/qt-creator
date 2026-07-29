@@ -1381,6 +1381,65 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
     QTRY_VERIFY(controlledStopCommand->action()->isVisible());
 }
 
+void EtherCATWorkbenchTests::testProjectOpenShowsMasterDetails()
+{
+    Core::ProjectService *projectService
+        = ExtensionSystem::PluginManager::getObject<Core::ProjectService>();
+    Core::SelectionService *selectionService
+        = ExtensionSystem::PluginManager::getObject<Core::SelectionService>();
+    QVERIFY(projectService);
+    QVERIFY(selectionService);
+    selectionService->clear();
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QPointer<ProjectExplorer::Project> project;
+    const QScopeGuard cleanup([&] {
+        if (project && ProjectExplorer::ProjectManager::hasProject(project.data()))
+            ProjectExplorer::ProjectManager::removeProject(project.data());
+        selectionService->clear();
+        ::Core::ModeManager::activateMode(::Core::Constants::MODE_EDIT);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        deviceSummaries(1).constFirst(),
+        "startup-details.ecatproject",
+        "Startup Details");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    project = opened.project();
+
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_COMPARE(::Core::ModeManager::currentModeId(), Utils::Id(Constants::MODE_ID));
+    QTRY_COMPARE(selectionService->currentNodeId(), file.masterId);
+    QVERIFY(::Core::ModeManager::currentMode());
+    QTRY_VERIFY(::Core::ModeManager::currentMode()->widget());
+    QWidget *modeWidget = ::Core::ModeManager::currentMode()->widget();
+    QTRY_VERIFY(modeWidget->isVisible());
+
+    QSplitter *mainSplitter
+        = modeWidget->findChild<QSplitter *>("EtherCATWorkbenchMainSplitter");
+    QSplitter *centralSplitter
+        = modeWidget->findChild<QSplitter *>("EtherCATWorkbenchCentralSplitter");
+    auto details = modeWidget->findChild<DetailsView *>("EtherCATWorkbenchDetails");
+    QVERIFY(mainSplitter);
+    QVERIFY(centralSplitter);
+    QVERIFY(details);
+    QVERIFY(!mainSplitter->childrenCollapsible());
+    QVERIFY(!centralSplitter->isCollapsible(0));
+    QTRY_COMPARE(mainSplitter->sizes().size(), 2);
+    QTRY_VERIFY(mainSplitter->sizes().at(0) > 0);
+    QTRY_VERIFY(mainSplitter->sizes().at(1) > mainSplitter->sizes().at(0));
+    QTRY_VERIFY(details->tabWidget()->count() > 0);
+    QCOMPARE(details->currentContext().nodeKind, Core::WorkbenchNodeKind::Master);
+    QCOMPARE(details->currentContext().nodeId, file.masterId);
+}
+
 void EtherCATWorkbenchTests::testQuickControllerScopeResolution()
 {
     WorkbenchController controller;
@@ -19300,7 +19359,7 @@ void EtherCATWorkbenchTests::testControllerCommunicationPagePresentation()
     QVERIFY(!disconnectAction->toolTip().contains("read-only", Qt::CaseInsensitive));
 
     Data::ControllerConnectionSnapshot foreignSnapshot = controlledSnapshot;
-    foreignSnapshot.scope = {Data::NodeId::create(), Data::NodeId::create()};
+    foreignSnapshot.scope = {scope.projectId, Data::NodeId::create()};
     provider.publishSnapshot(foreignSnapshot);
     QVERIFY(!controller.canDisconnectSelectedController());
 

@@ -157,6 +157,7 @@ private:
     QPointer<QAction> m_debugControllerAction;
     QPointer<QAction> m_stopControllerAction;
     bool m_controllerControlContextActive = false;
+    bool m_projectPresentationPending = false;
     bool m_projectPresentationScheduled = false;
     bool m_providerRegistered = false;
     bool m_automationServiceRegistered = false;
@@ -199,8 +200,10 @@ void EtherCATWorkbenchPlugin::initialize()
     m_navigationFactory = std::make_unique<WorkbenchNavigationFactory>(m_controller.get());
     m_mode = std::make_unique<WorkbenchMode>(m_controller.get());
     setupActions();
-    if (!m_controller->projectService()->projects().isEmpty())
+    if (!m_controller->projectService()->projects().isEmpty()) {
+        m_projectPresentationPending = true;
         scheduleProjectPresentation();
+    }
     m_statusWidget = new WorkbenchStatusWidget(stateService, m_controller.get());
     ::Core::StatusBarManager::addStatusBarWidget(
         m_statusWidget,
@@ -279,13 +282,28 @@ void EtherCATWorkbenchPlugin::setupQuickControllerActions()
         this,
         [this] {
             updateQuickControllerActions();
+            m_projectPresentationPending = true;
             scheduleProjectPresentation();
         });
     connect(
         m_controller->projectService(),
         &Core::ProjectService::projectChanged,
         this,
-        [this] { updateQuickControllerActions(); });
+        [this] {
+            updateQuickControllerActions();
+            if (m_projectPresentationPending)
+                scheduleProjectPresentation();
+        });
+    connect(
+        m_controller->projectService(),
+        &Core::ProjectService::activeProjectChanged,
+        this,
+        [this](const Data::NodeId &, const Data::NodeId &currentProjectId) {
+            if (!currentProjectId.isNull()) {
+                m_projectPresentationPending = true;
+                scheduleProjectPresentation();
+            }
+        });
     connect(
         m_controller->projectService(),
         &Core::ProjectService::projectAboutToBeRemoved,
@@ -336,7 +354,42 @@ void EtherCATWorkbenchPlugin::activateProjectPresentation()
         return;
     }
 
+    Core::ProjectService *projectService = m_controller->projectService();
+    Core::SelectionService *selectionService = m_controller->selectionService();
+    const QList<Data::ProjectSnapshot> projects = projectService->projects();
+    Data::NodeId projectId = projectService->activeProjectId();
+    if (projectId.isNull() && projects.size() == 1)
+        projectId = projects.constFirst().id;
+    const auto project = std::find_if(
+        projects.cbegin(), projects.cend(), [&projectId](const Data::ProjectSnapshot &candidate) {
+            return candidate.valid && candidate.id == projectId;
+        });
+    if (project == projects.cend())
+        return;
+
+    const Core::PropertyPageContext currentContext
+        = selectionService
+              ? m_controller->treeModel()->contextForNodeId(selectionService->currentNodeId())
+              : Core::PropertyPageContext();
+    Data::NodeId presentationNodeId
+        = currentContext.projectId == projectId ? currentContext.nodeId : Data::NodeId();
+    if (selectionService && currentContext.projectId != projectId) {
+        const auto master = std::find_if(
+            project->nodes.cbegin(),
+            project->nodes.cend(),
+            [](const Data::ProjectNodeSnapshot &node) {
+                return node.kind == Data::ProjectNodeKind::Master;
+            });
+        if (master != project->nodes.cend())
+            presentationNodeId = master->id;
+    }
+    m_projectPresentationPending = false;
+
     ::Core::ModeManager::activateMode(Constants::MODE_ID);
+    if (selectionService && !presentationNodeId.isNull()
+        && selectionService->currentNodeId() != presentationNodeId) {
+        selectionService->setCurrentNodeId(presentationNodeId);
+    }
 
     const auto hideMode = [](const Utils::Id &modeId) {
         const Utils::Id visibilityActionId

@@ -12,6 +12,7 @@ class EtherCATWorkbenchTests final : public QObject
 
 private slots:
     void testMetadataModeActionsAndProvider();
+    void testProjectOpenShowsMasterDetails();
     void testQuickControllerScopeResolution();
     void testModeCommandStripMirrorsRegisteredActions();
     void testNavigationCommandsUseActionManager();

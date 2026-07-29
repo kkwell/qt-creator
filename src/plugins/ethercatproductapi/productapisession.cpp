@@ -752,7 +752,14 @@ public:
         liveStatePollingDegraded = false;
         snapshot.readOnly = false;
         snapshot.session.reset();
+        snapshot.protocolVersion = {};
+        snapshot.connectedAt = {};
+        snapshot.controllerState.reset();
         snapshot.performance.reset();
+        snapshot.capability.reset();
+        snapshot.package.reset();
+        snapshot.firmware.reset();
+        snapshot.topology.reset();
         snapshot.lastHeartbeatAt = {};
         sessionId = 0;
         bootId = 0;
@@ -1006,9 +1013,9 @@ public:
         teardownChannels();
         clearLiveIdentity();
         clearAlarmCheckpoint();
+        clearResumeCandidate();
         markChannelsDisconnected();
-        setChannelState(role, Data::ControllerChannelState::Failed, summary);
-        snapshot.state = Data::ControllerConnectionState::Failed;
+        snapshot.state = Data::ControllerConnectionState::Disconnected;
         setError(
             source,
             role,
@@ -1220,7 +1227,8 @@ public:
 
         ++reconnectAttempt;
         if (reconnectAttempt > options.reconnectAttempts) {
-            snapshot.state = Data::ControllerConnectionState::Failed;
+            clearResumeCandidate();
+            snapshot.state = Data::ControllerConnectionState::Disconnected;
             publish();
             return;
         }
