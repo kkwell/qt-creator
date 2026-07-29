@@ -21,6 +21,8 @@ QtcPlugin {
         "ethercatsemanticruntimeplugin.cpp",
         "semanticruntimeexecutor.cpp",
         "semanticruntimeexecutor.h",
+        "signedecpkgmanifest_p.cpp",
+        "signedecpkgmanifest_p.h",
     ]
 
     QtcTestFiles {

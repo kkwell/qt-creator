@@ -21,6 +21,7 @@ private slots:
     void testEd25519Rfc8032();
     void testEd25519RejectsInvalidInputs();
     void testEd25519TransferredManifests();
+    void testSignedEcpkgTransferredPackages();
     void testPublishesOneProductionService();
     void testProjectAndProviderLifecycle();
     void testStrictProviderCardinality();

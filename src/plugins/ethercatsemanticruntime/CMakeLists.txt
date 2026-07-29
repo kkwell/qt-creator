@@ -14,6 +14,8 @@ add_qtc_plugin(EtherCATSemanticRuntime
     ethercatsemanticruntimeplugin.cpp
     semanticruntimeexecutor.cpp
     semanticruntimeexecutor.h
+    signedecpkgmanifest_p.cpp
+    signedecpkgmanifest_p.h
 )
 
 extend_qtc_plugin(EtherCATSemanticRuntime

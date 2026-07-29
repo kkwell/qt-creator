@@ -6,6 +6,7 @@
 #include "ecpkgcontainer.h"
 #include "ed25519verifier.h"
 #include "semanticruntimeexecutor.h"
+#include "signedecpkgmanifest_p.h"
 
 #include <extensionsystem/pluginmanager.h>
 
@@ -1100,6 +1101,119 @@ void EtherCATSemanticRuntimeTests::testEd25519TransferredManifests()
     QByteArray alteredManifest = api036Manifest;
     alteredManifest[0] ^= 1;
     QVERIFY(!verifyEd25519DetachedSignature(publicKey, api036Signature, alteredManifest));
+}
+
+void EtherCATSemanticRuntimeTests::testSignedEcpkgTransferredPackages()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureRoot(
+        repositoryRoot.absoluteFilePath("build/vendor_api_036_handoff"));
+    const QByteArray publicKey = fromHex(
+        "bd51c2d7cb14eeabac5de51ca5feb5f3"
+        "6d3d87986b77f19d056a7da4845f7063");
+    const QList<EcpkgTrustedPublicKey> productionTrust{
+        {publicKey, EcpkgTrustClass::Production},
+    };
+
+    struct Fixture
+    {
+        QString directory;
+        QString packageName;
+        QByteArray packageSha256;
+        QByteArray manifestSha256;
+        QByteArray mappingSha256;
+        QByteArray projectSha256;
+        quint64 catalogRevision = 0;
+        quint64 topologyIdentity = 0;
+    };
+    const std::array<Fixture, 2> fixtures{
+        Fixture{
+            "api035",
+            "three-slave-xb6-sv630n-semantic-binding-cfg3501.ecpkg",
+            fromHex("b41d1fe06960c94df6730ca36a5c7505c30f905f155c47f00228c5f5eaf13dee"),
+            fromHex("f82dcf1bd1188b1eb4648396f946b8db5828ebf15d0c22fcc50fa2d14a6de4c0"),
+            fromHex("1b9b8d93222fb199a2b0f767e22a4ed53dd8898c09cc2260a1c1e929f551c64f"),
+            fromHex("3f649afb59281629bea3729d6ac9a23086d612537b73327ad04d3131e69fb8ea"),
+            0x0dea3816a0a0d7afULL,
+            0x2ee7c79bc774840cULL,
+        },
+        Fixture{
+            "api036",
+            "three-slave-output-transaction-cfg3501.ecpkg",
+            fromHex("40222de1f5156556117ade48922ea2e2ed246ba0a51a3caa871131803987980b"),
+            fromHex("9eb3fcc112dfa5e52d286eb5e257a75f9e81d4fb0ace64ea4efdba9c2c680dcf"),
+            fromHex("d4143cbbae9ac312181b12210d107db46957fb3b84a2d7d8082e929e96c26f2e"),
+            fromHex("71aca9908f319acafb31fbf46b60c2e7c5e66e34dbeaf2804ab125d363384ac0"),
+            0xc84fe35be276b2a8ULL,
+            0x2ee7c79bc774840cULL,
+        },
+    };
+
+    bool foundFixture = false;
+    for (const Fixture &fixture : fixtures) {
+        const QDir directory(fixtureRoot.absoluteFilePath(fixture.directory));
+        const QString packagePath = directory.absoluteFilePath(fixture.packageName);
+        if (!QFileInfo::exists(packagePath))
+            continue;
+        foundFixture = true;
+
+        const QByteArray packageBytes = readFile(packagePath);
+        const Utils::Result<EcpkgContainer> container
+            = parseCanonicalEcpkgContainer(packageBytes);
+        QVERIFY_RESULT(container);
+        const Utils::Result<VerifiedSignedEcpkgManifest> verified
+            = verifySignedEcpkgManifest(*container, productionTrust);
+        QVERIFY_RESULT(verified);
+        QCOMPARE(verified->trust, EcpkgTrustClass::Production);
+        QCOMPARE(verified->configurationId, quint64(3501));
+        QCOMPARE(verified->packageSha256, fixture.packageSha256);
+        QCOMPARE(verified->manifestSha256, fixture.manifestSha256);
+        QCOMPARE(
+            verified->signingKeyIdSha256,
+            fromHex("eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6"));
+        QCOMPARE(verified->compiledProjectSource.sha256, fixture.projectSha256);
+        QVERIFY(verified->semanticBinding.has_value());
+        QCOMPARE(verified->semanticBinding->formatVersion, quint16(1));
+        QCOMPARE(verified->semanticBinding->bindingCount, quint32(56));
+        QCOMPARE(verified->semanticBinding->catalogRevision, fixture.catalogRevision);
+        QCOMPARE(verified->semanticBinding->topologyIdentity, fixture.topologyIdentity);
+        QCOMPARE(verified->semanticBinding->mappingSha256, fixture.mappingSha256);
+
+        const QByteArray projectBytes
+            = readFile(directory.absoluteFilePath("project.json"));
+        QVERIFY_RESULT(verifyEcpkgCompiledProjectSource(*verified, projectBytes));
+        QByteArray alteredProject = projectBytes;
+        alteredProject[0] ^= 1;
+        QVERIFY(!verifyEcpkgCompiledProjectSource(*verified, alteredProject));
+
+        const QList<EcpkgTrustedPublicKey> wrongTrust{
+            {publicKey, EcpkgTrustClass::Engineering},
+        };
+        QVERIFY(!verifySignedEcpkgManifest(*container, wrongTrust));
+
+        QByteArray wrongKey = publicKey;
+        wrongKey[0] ^= 1;
+        QVERIFY(!verifySignedEcpkgManifest(
+            *container, {{wrongKey, EcpkgTrustClass::Production}}));
+
+        EcpkgContainer alteredSignature = *container;
+        alteredSignature.manifestSignature[0] ^= 1;
+        QVERIFY(!verifySignedEcpkgManifest(alteredSignature, productionTrust));
+
+        EcpkgContainer alteredPayload = *container;
+        alteredPayload.compileReportJson[0] ^= 1;
+        QVERIFY(!verifySignedEcpkgManifest(alteredPayload, productionTrust));
+
+        EcpkgContainer unknownField = *container;
+        unknownField.manifestJson.replace(
+            QByteArray("{\"compiler\":"),
+            QByteArray("{\"additional\":0,\"compiler\":"));
+        QVERIFY(!verifySignedEcpkgManifest(unknownField, productionTrust));
+    }
+
+    if (!foundFixture)
+        QSKIP("Transferred API-035/API-036 ECPKG fixtures are not present");
 }
 
 void EtherCATSemanticRuntimeTests::testPublishesOneProductionService()
