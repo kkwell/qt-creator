@@ -1,0 +1,702 @@
+// Copyright (C) 2026 Kvell
+
+#include "semanticruntimeservice.h"
+
+#include <QCryptographicHash>
+#include <QDataStream>
+#include <QIODevice>
+
+#include <algorithm>
+#include <cmath>
+
+namespace EtherCAT::Core {
+namespace {
+
+SemanticRuntimeValidation rejection(
+    SemanticRuntimeValidationError error, const QString &detail)
+{
+    return {error, detail};
+}
+
+bool digestsMatch(
+    const Data::SemanticRuntimeDigest &left, const Data::SemanticRuntimeDigest &right)
+{
+    if (!isCanonicalSha256Digest(left) || !isCanonicalSha256Digest(right)
+        || left.algorithm != right.algorithm
+        || left.value.size() != right.value.size()) {
+        return false;
+    }
+
+    uchar difference = 0;
+    for (qsizetype index = 0; index < left.value.size(); ++index) {
+        difference |= static_cast<uchar>(left.value.at(index))
+                      ^ static_cast<uchar>(right.value.at(index));
+    }
+    return difference == 0;
+}
+
+bool sha256BytesAreValid(const QByteArray &bytes)
+{
+    return bytes.size() == 32;
+}
+
+bool descriptorMatchesBinding(
+    const Data::RuntimeResourceDescriptor &descriptor,
+    const Data::SemanticRuntimeBinding &binding)
+{
+    return descriptor.id == binding.resourceId
+           && descriptor.componentInstanceId == binding.componentInstanceId
+           && descriptor.consistencyGroupId == binding.consistencyGroupId
+           && descriptor.primitiveType == binding.primitiveType
+           && descriptor.valueTypeIdentity == binding.valueTypeIdentity
+           && descriptor.bitWidth == binding.bitWidth
+           && descriptor.direction == binding.direction && descriptor.access == binding.access;
+}
+
+bool sampleMatchesBinding(
+    const Data::RuntimeResourceSample &sample, const Data::SemanticRuntimeBinding &binding)
+{
+    return sample.resourceId == binding.resourceId
+           && sample.consistencyGroupId == binding.consistencyGroupId
+           && sample.value.primitiveType == binding.primitiveType
+           && sample.value.typeIdentity == binding.valueTypeIdentity;
+}
+
+void writeDigest(QDataStream &stream, const Data::SemanticRuntimeDigest &digest)
+{
+    stream << digest.algorithm << digest.value;
+}
+
+void writeTarget(QDataStream &stream, const Data::SemanticRuntimeTarget &target)
+{
+    stream << target.controllerId << target.scope.projectId.toString()
+           << target.scope.masterId.toString() << target.deviceId.toString()
+           << quint32(target.kind) << target.signalId.value << target.actionId.value;
+}
+
+void writeEpoch(QDataStream &stream, const Data::RuntimeResourceCatalogEpoch &epoch)
+{
+    stream << epoch.controllerBootId << quint32(epoch.activePackageSlot)
+           << epoch.activePackageGeneration << epoch.configurationId
+           << epoch.topologyGeneration << epoch.runtimeGeneration << epoch.catalogRevision
+           << epoch.topologyIdentity;
+}
+
+Data::SemanticOperationRecord rejectedRecord(
+    const Data::SemanticOperationRequest &request,
+    const Data::SemanticRuntimeActor &actor,
+    const QString &detail)
+{
+    Data::SemanticOperationRecord record;
+    record.request = request;
+    record.actor = actor;
+    record.state = Data::SemanticOperationState::Rejected;
+    const QByteArray canonical = canonicalSemanticOperationRequest(request);
+    if (!canonical.isEmpty()) {
+        record.canonicalRequestDigest
+            = QCryptographicHash::hash(canonical, QCryptographicHash::Sha256);
+    }
+    record.createdAt = QDateTime::currentDateTimeUtc();
+    record.updatedAt = record.createdAt;
+    record.resultCode = QStringLiteral("semantic-runtime-unavailable");
+    record.detail = detail;
+    record.executionAttempted = false;
+    return record;
+}
+
+} // namespace
+
+bool isValidSemanticRuntimeTarget(const Data::SemanticRuntimeTarget &target)
+{
+    if (target.controllerId.isEmpty() || target.scope.projectId.isNull()
+        || target.scope.masterId.isNull() || target.deviceId.isNull()) {
+        return false;
+    }
+
+    switch (target.kind) {
+    case Data::SemanticRuntimeTargetKind::Signal:
+        return !target.signalId.value.isEmpty() && target.actionId.value.isEmpty();
+    case Data::SemanticRuntimeTargetKind::Action:
+        return target.signalId.value.isEmpty() && !target.actionId.value.isEmpty();
+    }
+    return false;
+}
+
+bool isCompleteRuntimeResourceCatalogEpoch(const Data::RuntimeResourceCatalogEpoch &epoch)
+{
+    return epoch.controllerBootId != 0
+           && (epoch.activePackageSlot == Data::ControllerSlot::A
+               || epoch.activePackageSlot == Data::ControllerSlot::B)
+           && epoch.activePackageGeneration != 0 && epoch.configurationId != 0
+           && epoch.topologyGeneration != 0 && epoch.runtimeGeneration != 0
+           && epoch.catalogRevision != 0 && !epoch.topologyIdentity.isEmpty();
+}
+
+bool isCanonicalSha256Digest(const Data::SemanticRuntimeDigest &digest)
+{
+    return digest.algorithm == QStringLiteral("sha256") && sha256BytesAreValid(digest.value);
+}
+
+bool isCanonicalSemanticOperationId(const Data::SemanticOperationId &operationId)
+{
+    if (operationId.value.isEmpty() || operationId.value.size() > 128)
+        return false;
+    return std::none_of(
+        operationId.value.cbegin(),
+        operationId.value.cend(),
+        [](QChar character) { return character.category() == QChar::Other_Control; });
+}
+
+bool isAllowedSemanticRuntimeValue(const QVariant &value)
+{
+    if (!value.isValid())
+        return false;
+
+    switch (value.metaType().id()) {
+    case QMetaType::Bool:
+    case QMetaType::Int:
+    case QMetaType::UInt:
+    case QMetaType::LongLong:
+    case QMetaType::ULongLong:
+    case QMetaType::QString:
+    case QMetaType::QByteArray:
+        return true;
+    case QMetaType::Float:
+    case QMetaType::Double:
+        return std::isfinite(value.toDouble());
+    default:
+        return false;
+    }
+}
+
+bool isSemanticRuntimeValueCompatible(
+    const QVariant &value, const Data::SemanticRuntimeBinding &binding)
+{
+    if (!isAllowedSemanticRuntimeValue(value) || binding.bitWidth == 0)
+        return false;
+
+    switch (binding.primitiveType) {
+    case Data::RuntimeResourcePrimitiveType::Boolean:
+        return binding.bitWidth == 1 && value.metaType().id() == QMetaType::Bool;
+    case Data::RuntimeResourcePrimitiveType::SignedInteger: {
+        if (binding.bitWidth > 64 || value.metaType().id() != QMetaType::LongLong)
+            return false;
+        if (binding.bitWidth == 64)
+            return true;
+        const qint64 magnitude = qint64(1) << (binding.bitWidth - 1);
+        const qint64 number = value.toLongLong();
+        return number >= -magnitude && number < magnitude;
+    }
+    case Data::RuntimeResourcePrimitiveType::UnsignedInteger: {
+        if (binding.bitWidth > 64 || value.metaType().id() != QMetaType::ULongLong)
+            return false;
+        if (binding.bitWidth == 64)
+            return true;
+        const quint64 maximum = (quint64(1) << binding.bitWidth) - 1;
+        return value.toULongLong() <= maximum;
+    }
+    case Data::RuntimeResourcePrimitiveType::FloatingPoint:
+        return (binding.bitWidth == 32 || binding.bitWidth == 64)
+               && value.metaType().id() == QMetaType::Double
+               && std::isfinite(value.toDouble());
+    case Data::RuntimeResourcePrimitiveType::Text:
+        return value.metaType().id() == QMetaType::QString;
+    case Data::RuntimeResourcePrimitiveType::ByteArray:
+        return binding.bitWidth <= 128 && value.metaType().id() == QMetaType::QByteArray
+               && value.toByteArray().size() == qsizetype((binding.bitWidth + 7) / 8);
+    case Data::RuntimeResourcePrimitiveType::Opaque:
+        return false;
+    }
+    return false;
+}
+
+QByteArray canonicalSemanticOperationRequest(const Data::SemanticOperationRequest &request)
+{
+    if (!isCanonicalSemanticOperationId(request.operationId)
+        || !isValidSemanticRuntimeTarget(request.target)
+        || (request.value.isValid() && !isAllowedSemanticRuntimeValue(request.value))
+        || !std::all_of(
+            request.parameters.cbegin(),
+            request.parameters.cend(),
+            [](const QVariant &value) { return isAllowedSemanticRuntimeValue(value); })) {
+        return {};
+    }
+
+    QByteArray canonical;
+    QDataStream stream(&canonical, QIODevice::WriteOnly);
+    stream.setByteOrder(QDataStream::BigEndian);
+    stream.setVersion(QDataStream::Qt_6_0);
+    // This is a local IDE journal encoding, not a transport or persistent file format. The
+    // OperationId is deliberately excluded, matching the Gateway request-fingerprint contract.
+    stream << QByteArrayLiteral("embed-labs-semantic-operation-v1");
+    stream << quint32(request.kind);
+    writeTarget(stream, request.target);
+    writeEpoch(stream, request.expectedEpoch);
+    writeDigest(stream, request.expectedMappingDigest);
+    writeDigest(stream, request.expectedControllerMappingDigest);
+    stream << request.expectedContextHash << request.value << request.parameters << request.ttlMs
+           << request.reason;
+    if (stream.status() != QDataStream::Ok)
+        return {};
+    return canonical;
+}
+
+bool semanticOperationRequestsCanonicallyEqual(
+    const Data::SemanticOperationRequest &left, const Data::SemanticOperationRequest &right)
+{
+    const QByteArray leftCanonical = canonicalSemanticOperationRequest(left);
+    return !leftCanonical.isEmpty()
+           && leftCanonical == canonicalSemanticOperationRequest(right);
+}
+
+SemanticRuntimeValidation validateSemanticRuntimeEpoch(
+    const Data::RuntimeResourceCatalogEpoch &expected,
+    const Data::RuntimeResourceCatalogEpoch &actual)
+{
+    if (!isCompleteRuntimeResourceCatalogEpoch(expected)
+        || !isCompleteRuntimeResourceCatalogEpoch(actual)) {
+        return rejection(
+            SemanticRuntimeValidationError::InvalidEpoch,
+            QStringLiteral("Runtime resource epoch is incomplete."));
+    }
+    if (expected != actual) {
+        return rejection(
+            SemanticRuntimeValidationError::EpochMismatch,
+            QStringLiteral("Runtime resource epoch changed."));
+    }
+    return {};
+}
+
+SemanticRuntimeValidation validateSemanticRuntimeBinding(
+    const Data::SemanticRuntimeBinding &binding)
+{
+    if (!isValidSemanticRuntimeTarget(binding.target)
+        || binding.target.kind != Data::SemanticRuntimeTargetKind::Signal
+        || binding.semanticBindingId.isEmpty() || binding.componentBindingId.isEmpty()
+        || binding.adapterId.value.isEmpty() || binding.adapterVersion.isEmpty()
+        || !sha256BytesAreValid(binding.adapterContentSha256)
+        || !sha256BytesAreValid(binding.esiSha256)
+        || !sha256BytesAreValid(binding.bindingArtifactSha256)
+        || binding.sessionGeneration == 0 || !binding.resourceId.isValid()
+        || !binding.componentInstanceId.isValid() || !binding.consistencyGroupId.isValid()
+        || binding.valueTypeIdentity.isEmpty() || binding.bitWidth == 0
+        || binding.direction == Data::RuntimeResourceDirection::Unknown
+        || binding.access == Data::RuntimeResourceAccess::Unknown) {
+        return rejection(
+            SemanticRuntimeValidationError::InvalidBinding,
+            QStringLiteral("Semantic runtime binding is incomplete."));
+    }
+
+    const SemanticRuntimeValidation epochValidation
+        = validateSemanticRuntimeEpoch(binding.epoch, binding.epoch);
+    if (!epochValidation.accepted())
+        return epochValidation;
+
+    if (binding.verification.state != Data::SemanticBindingVerificationState::Verified
+        || binding.verification.verifierId.isEmpty()
+        || !isCanonicalSha256Digest(binding.verification.signedManifestDigest)) {
+        return rejection(
+            SemanticRuntimeValidationError::BindingUnverified,
+            QStringLiteral("Semantic runtime binding is not verified."));
+    }
+    if (!isCanonicalSha256Digest(binding.mappingDigest)
+        || !isCanonicalSha256Digest(binding.controllerMappingDigest)) {
+        return rejection(
+            SemanticRuntimeValidationError::MappingDigestMissing,
+            QStringLiteral("Semantic mapping proof is incomplete."));
+    }
+    if (!digestsMatch(binding.mappingDigest, binding.controllerMappingDigest)) {
+        return rejection(
+            SemanticRuntimeValidationError::MappingDigestMismatch,
+            QStringLiteral("IDE and controller semantic mapping digests differ."));
+    }
+    return {};
+}
+
+SemanticRuntimeValidation validateSemanticOperationRequest(
+    const Data::SemanticOperationRequest &request,
+    const Data::SemanticRuntimeContext &context)
+{
+    if (!isCanonicalSemanticOperationId(request.operationId)) {
+        return rejection(
+            SemanticRuntimeValidationError::InvalidOperationId,
+            QStringLiteral(
+                "OperationId must contain 1 to 128 characters and no control characters."));
+    }
+    if (!isValidSemanticRuntimeTarget(request.target)) {
+        return rejection(
+            SemanticRuntimeValidationError::InvalidTarget,
+            QStringLiteral("Semantic operation target is invalid."));
+    }
+    const bool operationKindKnown
+        = request.kind == Data::SemanticOperationKind::SetSignalValue
+          || request.kind == Data::SemanticOperationKind::InvokeAction
+          || request.kind == Data::SemanticOperationKind::ReleaseHold;
+    const bool parametersValid = std::all_of(
+        request.parameters.cbegin(),
+        request.parameters.cend(),
+        [](const QVariant &value) { return isAllowedSemanticRuntimeValue(value); });
+    if (!operationKindKnown || request.ttlMs == 0
+        || !sha256BytesAreValid(request.expectedContextHash) || !parametersValid
+        || (request.kind == Data::SemanticOperationKind::SetSignalValue
+            && (request.target.kind != Data::SemanticRuntimeTargetKind::Signal
+                || !isAllowedSemanticRuntimeValue(request.value)))
+        || (request.kind == Data::SemanticOperationKind::InvokeAction
+            && (request.target.kind != Data::SemanticRuntimeTargetKind::Action
+                || request.value.isValid()))
+        || (request.kind == Data::SemanticOperationKind::ReleaseHold
+            && (request.value.isValid() || !request.parameters.isEmpty()))) {
+        return rejection(
+            SemanticRuntimeValidationError::InvalidRequest,
+            QStringLiteral("Semantic operation request is incomplete."));
+    }
+    if (!context.complete || context.controllerId.isEmpty()
+        || context.sessionGeneration == 0
+        || !sha256BytesAreValid(context.contextHash)
+        || context.bindingVerification.state
+               != Data::SemanticBindingVerificationState::Verified
+        || !isCanonicalSha256Digest(context.bindingVerification.signedManifestDigest)) {
+        return rejection(
+            SemanticRuntimeValidationError::BindingUnverified,
+            QStringLiteral("Semantic runtime context is not verified and complete."));
+    }
+    if (request.target.controllerId != context.controllerId
+        || request.target.scope != context.scope) {
+        return rejection(
+            SemanticRuntimeValidationError::ScopeMismatch,
+            QStringLiteral("Semantic operation target is outside the runtime context."));
+    }
+
+    const SemanticRuntimeValidation epochValidation
+        = validateSemanticRuntimeEpoch(request.expectedEpoch, context.epoch);
+    if (!epochValidation.accepted())
+        return epochValidation;
+
+    if (!isCanonicalSha256Digest(request.expectedMappingDigest)
+        || !isCanonicalSha256Digest(request.expectedControllerMappingDigest)
+        || !isCanonicalSha256Digest(context.mappingDigest)
+        || !isCanonicalSha256Digest(context.controllerMappingDigest)) {
+        return rejection(
+            SemanticRuntimeValidationError::MappingDigestMissing,
+            QStringLiteral("Semantic operation mapping proof is incomplete."));
+    }
+    if (!digestsMatch(context.mappingDigest, context.controllerMappingDigest)
+        || !digestsMatch(request.expectedMappingDigest, context.mappingDigest)
+        || !digestsMatch(
+            request.expectedControllerMappingDigest, context.controllerMappingDigest)) {
+        return rejection(
+            SemanticRuntimeValidationError::MappingDigestMismatch,
+            QStringLiteral("Semantic operation mapping proof changed."));
+    }
+    if (request.expectedContextHash != context.contextHash) {
+        return rejection(
+            SemanticRuntimeValidationError::InvalidRequest,
+            QStringLiteral("Semantic runtime context changed."));
+    }
+
+    if (request.target.kind == Data::SemanticRuntimeTargetKind::Signal) {
+        QList<Data::SemanticSignalRuntimeState> matches;
+        std::copy_if(
+            context.signalStates.cbegin(),
+            context.signalStates.cend(),
+            std::back_inserter(matches),
+            [&request](const Data::SemanticSignalRuntimeState &state) {
+                return state.target == request.target;
+            });
+        if (matches.size() != 1
+            || matches.constFirst().availability != Data::SemanticSignalAvailability::Ready
+            || !matches.constFirst().binding) {
+            return rejection(
+                SemanticRuntimeValidationError::InvalidTarget,
+                QStringLiteral("Semantic signal is not uniquely bound and ready."));
+        }
+        const Data::SemanticRuntimeBinding &binding = *matches.constFirst().binding;
+        const SemanticRuntimeValidation bindingValidation
+            = validateSemanticRuntimeBinding(binding);
+        if (!bindingValidation.accepted())
+            return bindingValidation;
+        if (binding.sessionGeneration != context.sessionGeneration
+            || binding.epoch != context.epoch
+            || !digestsMatch(binding.mappingDigest, context.mappingDigest)
+            || !digestsMatch(
+                binding.controllerMappingDigest, context.controllerMappingDigest)) {
+            return rejection(
+                SemanticRuntimeValidationError::EpochMismatch,
+                QStringLiteral("Semantic signal binding differs from the runtime context."));
+        }
+        if (request.kind == Data::SemanticOperationKind::SetSignalValue
+            && ((binding.direction != Data::RuntimeResourceDirection::Output
+                 && binding.direction != Data::RuntimeResourceDirection::Bidirectional)
+                || (binding.access != Data::RuntimeResourceAccess::WriteOnly
+                    && binding.access != Data::RuntimeResourceAccess::ReadWrite)
+                || !isSemanticRuntimeValueCompatible(request.value, binding)
+                || !matches.constFirst().definition.manualControl.allowed
+                || matches.constFirst().definition.manualControl.commandTimeoutMs == 0
+                || request.ttlMs
+                       > matches.constFirst().definition.manualControl.commandTimeoutMs)) {
+            return rejection(
+                SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic signal is not approved for manual writes."));
+        }
+        if (request.kind == Data::SemanticOperationKind::ReleaseHold
+            && !matches.constFirst().definition.manualControl.holdToRun) {
+            return rejection(
+                SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic signal has no hold-to-run operation."));
+        }
+    } else {
+        QList<Data::SemanticActionRuntimeState> matches;
+        std::copy_if(
+            context.actionStates.cbegin(),
+            context.actionStates.cend(),
+            std::back_inserter(matches),
+            [&request](const Data::SemanticActionRuntimeState &state) {
+                return state.target == request.target;
+            });
+        if (matches.size() != 1
+            || matches.constFirst().availability != Data::SemanticActionAvailability::Ready
+            || !matches.constFirst().definition.enabled
+            || matches.constFirst().bindings.isEmpty()
+            || matches.constFirst().maximumTtlMs == 0
+            || request.ttlMs > matches.constFirst().maximumTtlMs) {
+            return rejection(
+                SemanticRuntimeValidationError::InvalidTarget,
+                QStringLiteral("Semantic action is not uniquely bound and ready."));
+        }
+        if (request.kind == Data::SemanticOperationKind::ReleaseHold
+            && !matches.constFirst().holdToRun) {
+            return rejection(
+                SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic action has no hold-to-run operation."));
+        }
+        for (const Data::SemanticRuntimeBinding &binding : matches.constFirst().bindings) {
+            const SemanticRuntimeValidation bindingValidation
+                = validateSemanticRuntimeBinding(binding);
+            if (!bindingValidation.accepted())
+                return bindingValidation;
+            if (binding.sessionGeneration != context.sessionGeneration
+                || binding.epoch != context.epoch
+                || !digestsMatch(binding.mappingDigest, context.mappingDigest)
+                || !digestsMatch(
+                    binding.controllerMappingDigest, context.controllerMappingDigest)) {
+                return rejection(
+                    SemanticRuntimeValidationError::EpochMismatch,
+                    QStringLiteral("Semantic action binding differs from the runtime context."));
+            }
+        }
+    }
+    return {};
+}
+
+SemanticRuntimeValidation validateSemanticOperationApproval(
+    const Data::SemanticOperationApprovalRequest &approval,
+    const Data::SemanticRuntimeActor &actor,
+    const Data::SemanticOperationRecord &operation,
+    const Data::SemanticRuntimeContext &context)
+{
+    if (operation.state != Data::SemanticOperationState::ApprovalRequired) {
+        return rejection(
+            SemanticRuntimeValidationError::ApprovalNotRequired,
+            QStringLiteral("Semantic operation is not waiting for approval."));
+    }
+    if (!isCanonicalSemanticOperationId(approval.operationId)
+        || approval.operationId != operation.request.operationId
+        || (approval.decision != Data::SemanticApprovalDecision::Approved
+            && approval.decision != Data::SemanticApprovalDecision::Denied)) {
+        return rejection(
+            SemanticRuntimeValidationError::InvalidRequest,
+            QStringLiteral("Semantic operation approval is invalid."));
+    }
+    if (actor.kind != Data::SemanticRuntimeActorKind::User || actor.id.isEmpty()
+        || !sha256BytesAreValid(actor.authenticationDigest)) {
+        return rejection(
+            SemanticRuntimeValidationError::ApprovalActorInvalid,
+            QStringLiteral("A verified human user must approve the semantic operation."));
+    }
+    if (!sha256BytesAreValid(operation.approvalChallenge)
+        || !sha256BytesAreValid(approval.challenge)
+        || operation.approvalChallenge != approval.challenge
+        || !sha256BytesAreValid(approval.expectedContextHash)
+        || approval.expectedContextHash != operation.request.expectedContextHash
+        || approval.expectedContextHash != context.contextHash) {
+        return rejection(
+            SemanticRuntimeValidationError::ApprovalChallengeMismatch,
+            QStringLiteral("Semantic operation approval challenge or context changed."));
+    }
+    return validateSemanticOperationRequest(operation.request, context);
+}
+
+SemanticRuntimeReadValidation validateSemanticRuntimeRead(
+    const Data::SemanticRuntimeBinding &binding,
+    const Data::RuntimeResourceCatalog &catalog,
+    const Data::RuntimeResourceSnapshot &snapshot)
+{
+    const SemanticRuntimeValidation bindingValidation = validateSemanticRuntimeBinding(binding);
+    if (!bindingValidation.accepted())
+        return {bindingValidation, std::nullopt};
+
+    if (catalog.scope != binding.target.scope || snapshot.scope != binding.target.scope) {
+        return {
+            rejection(
+                SemanticRuntimeValidationError::ScopeMismatch,
+                QStringLiteral("Runtime resource scope changed.")),
+            std::nullopt,
+        };
+    }
+    if (catalog.sessionGeneration != binding.sessionGeneration
+        || snapshot.sessionGeneration != binding.sessionGeneration) {
+        return {
+            rejection(
+                SemanticRuntimeValidationError::SessionMismatch,
+                QStringLiteral("Runtime resource session changed.")),
+            std::nullopt,
+        };
+    }
+
+    const SemanticRuntimeValidation catalogEpoch
+        = validateSemanticRuntimeEpoch(binding.epoch, catalog.epoch);
+    if (!catalogEpoch.accepted())
+        return {catalogEpoch, std::nullopt};
+    const SemanticRuntimeValidation snapshotEpoch
+        = validateSemanticRuntimeEpoch(binding.epoch, snapshot.epoch);
+    if (!snapshotEpoch.accepted())
+        return {snapshotEpoch, std::nullopt};
+
+    QList<Data::RuntimeResourceDescriptor> descriptors;
+    std::copy_if(
+        catalog.resources.cbegin(),
+        catalog.resources.cend(),
+        std::back_inserter(descriptors),
+        [&binding](const Data::RuntimeResourceDescriptor &descriptor) {
+            return descriptor.id == binding.resourceId;
+        });
+    if (descriptors.isEmpty()) {
+        return {
+            rejection(
+                SemanticRuntimeValidationError::ResourceNotFound,
+                QStringLiteral("Verified runtime resource is absent from the catalog.")),
+            std::nullopt,
+        };
+    }
+    if (descriptors.size() != 1 || !descriptorMatchesBinding(descriptors.constFirst(), binding)) {
+        return {
+            rejection(
+                SemanticRuntimeValidationError::DescriptorMismatch,
+                QStringLiteral("Runtime resource descriptor differs from the verified binding.")),
+            std::nullopt,
+        };
+    }
+    if (!snapshot.complete) {
+        return {
+            rejection(
+                SemanticRuntimeValidationError::SnapshotIncomplete,
+                QStringLiteral("Runtime resource snapshot is incomplete.")),
+            std::nullopt,
+        };
+    }
+    if ((binding.direction != Data::RuntimeResourceDirection::Input
+         && binding.direction != Data::RuntimeResourceDirection::Bidirectional)
+        || (binding.access != Data::RuntimeResourceAccess::ReadOnly
+            && binding.access != Data::RuntimeResourceAccess::ReadWrite)) {
+        return {
+            rejection(
+                SemanticRuntimeValidationError::InvalidBinding,
+                QStringLiteral("Semantic runtime binding is not readable.")),
+            std::nullopt,
+        };
+    }
+
+    QList<Data::RuntimeResourceSample> samples;
+    std::copy_if(
+        snapshot.samples.cbegin(),
+        snapshot.samples.cend(),
+        std::back_inserter(samples),
+        [&binding](const Data::RuntimeResourceSample &sample) {
+            return sample.resourceId == binding.resourceId;
+        });
+    if (samples.isEmpty()) {
+        return {
+            rejection(
+                SemanticRuntimeValidationError::SampleNotFound,
+                QStringLiteral("Verified runtime resource has no sample.")),
+            std::nullopt,
+        };
+    }
+    if (samples.size() != 1) {
+        return {
+            rejection(
+                SemanticRuntimeValidationError::SampleAmbiguous,
+                QStringLiteral("Runtime resource snapshot contains duplicate samples.")),
+            std::nullopt,
+        };
+    }
+
+    const Data::RuntimeResourceSample &sample = samples.constFirst();
+    if (!sampleMatchesBinding(sample, binding)) {
+        return {
+            rejection(
+                SemanticRuntimeValidationError::SampleValueMismatch,
+                QStringLiteral("Runtime resource sample differs from the verified binding.")),
+            std::nullopt,
+        };
+    }
+    if (sample.quality.state != Data::RuntimeResourceQualityState::Good) {
+        return {
+            rejection(
+                SemanticRuntimeValidationError::SampleQualityNotGood,
+                QStringLiteral("Runtime resource sample quality is not good.")),
+            std::nullopt,
+        };
+    }
+    return {{}, sample};
+}
+
+std::optional<Data::SemanticRuntimeContext> SemanticRuntimeService::context(
+    const QString &controllerId) const
+{
+    const QList<Data::SemanticRuntimeContext> current = contexts();
+    const auto found = std::find_if(
+        current.cbegin(),
+        current.cend(),
+        [&controllerId](const Data::SemanticRuntimeContext &candidate) {
+            return candidate.controllerId == controllerId;
+        });
+    if (found == current.cend())
+        return std::nullopt;
+    return *found;
+}
+
+Data::SemanticOperationRecord SemanticRuntimeService::submit(
+    const Data::SemanticOperationRequest &request, const Data::SemanticRuntimeActor &actor)
+{
+    return rejectedRecord(
+        request, actor, QStringLiteral("No semantic runtime executor is registered."));
+}
+
+Data::SemanticOperationRecord SemanticRuntimeService::approve(
+    const Data::SemanticOperationApprovalRequest &approval,
+    const Data::SemanticRuntimeActor &actor)
+{
+    Data::SemanticOperationRequest request;
+    request.operationId = approval.operationId;
+    Data::SemanticOperationRecord record = rejectedRecord(
+        request,
+        actor,
+        QStringLiteral("No semantic runtime approval executor is registered."));
+    record.approvals = {{approval, actor, QDateTime::currentDateTimeUtc()}};
+    return record;
+}
+
+std::optional<Data::SemanticOperationRecord> SemanticRuntimeService::operation(
+    const Data::SemanticOperationId &) const
+{
+    return std::nullopt;
+}
+
+QList<Data::SemanticRuntimeAuditEvent> SemanticRuntimeService::audit(
+    const QString &, quint64) const
+{
+    return {};
+}
+
+} // namespace EtherCAT::Core

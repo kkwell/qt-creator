@@ -9,6 +9,7 @@
 #include "providerregistry.h"
 #include "providers.h"
 #include "selectionservice.h"
+#include "semanticruntimeservice.h"
 #include "stateservice.h"
 
 #include <coreplugin/dialogs/ioptionspage.h>
@@ -22,6 +23,7 @@
 #include <ethercatdata/offlineconfiguration.h>
 #include <ethercatdata/projectsnapshot.h>
 #include <ethercatdata/runtimeresource.h>
+#include <ethercatdata/semanticruntime.h>
 
 #include <QSignalSpy>
 #include <QScopeGuard>
@@ -30,6 +32,7 @@
 #include <QWidget>
 
 #include <algorithm>
+#include <limits>
 #include <type_traits>
 
 namespace EtherCAT::Core::Internal {
@@ -47,6 +50,168 @@ public:
 
     mutable int readCount = 0;
     QList<AutomationContextSnapshot> snapshots;
+};
+
+class TestSemanticRuntimeService final : public SemanticRuntimeService
+{
+public:
+    using SemanticRuntimeService::SemanticRuntimeService;
+
+    QList<Data::SemanticRuntimeContext> contexts() const final
+    {
+        ++readCount;
+        return snapshots;
+    }
+
+    mutable int readCount = 0;
+    QList<Data::SemanticRuntimeContext> snapshots;
+};
+
+struct SemanticRuntimeFixture
+{
+    Data::ControllerConnectionScope scope{Data::NodeId::create(), Data::NodeId::create()};
+    Data::NodeId deviceId = Data::NodeId::create();
+    Data::RuntimeResourceCatalogEpoch epoch;
+    Data::SemanticRuntimeDigest digest;
+    Data::SemanticRuntimeTarget target;
+    Data::SemanticRuntimeBinding binding;
+    Data::RuntimeResourceCatalog catalog;
+    Data::RuntimeResourceSnapshot snapshot;
+    Data::SemanticRuntimeContext context;
+    Data::SemanticRuntimeActor actor;
+    Data::SemanticOperationRequest request;
+
+    SemanticRuntimeFixture()
+    {
+        epoch.controllerBootId = 11;
+        epoch.activePackageSlot = Data::ControllerSlot::B;
+        epoch.activePackageGeneration = 12;
+        epoch.configurationId = 13;
+        epoch.topologyGeneration = 14;
+        epoch.runtimeGeneration = 15;
+        epoch.catalogRevision = 16;
+        epoch.topologyIdentity = QByteArray::fromHex("0102030405060708");
+
+        digest.algorithm = "sha256";
+        digest.value = QByteArray(32, '\x5a');
+
+        target.controllerId = "ide:test-controller";
+        target.scope = scope;
+        target.deviceId = deviceId;
+        target.kind = Data::SemanticRuntimeTargetKind::Signal;
+        target.signalId = {"urn:example.test:signal/input.1"};
+
+        binding.target = target;
+        binding.semanticBindingId = "binding:test:input.1";
+        binding.componentBindingId = "component:test:device.1";
+        binding.adapterId = {"org.example.test.adapter/runtime"};
+        binding.adapterVersion = "1.0.0";
+        binding.adapterContentSha256 = QByteArray(32, '\x21');
+        binding.esiSha256 = QByteArray(32, '\x32');
+        binding.bindingArtifactSha256 = QByteArray(32, '\x43');
+        binding.sessionGeneration = 7;
+        binding.epoch = epoch;
+        binding.mappingDigest = digest;
+        binding.controllerMappingDigest = digest;
+        binding.verification.state = Data::SemanticBindingVerificationState::Verified;
+        binding.verification.verifierId = "test-verifier";
+        binding.verification.signedManifestDigest = {"sha256", QByteArray(32, '\x6b')};
+        binding.verification.verifiedAt = QDateTime::currentDateTimeUtc();
+        binding.resourceId = {QByteArray::fromHex("1000000000000001")};
+        binding.componentInstanceId = {QByteArray::fromHex("2000000000000001")};
+        binding.consistencyGroupId = {QByteArray::fromHex("3000000000000001")};
+        binding.primitiveType = Data::RuntimeResourcePrimitiveType::Boolean;
+        binding.valueTypeIdentity = "ethercat.runtime.value/primitive-1/bits-1";
+        binding.bitWidth = 1;
+        binding.direction = Data::RuntimeResourceDirection::Bidirectional;
+        binding.access = Data::RuntimeResourceAccess::ReadWrite;
+
+        Data::RuntimeResourceDescriptor descriptor;
+        descriptor.id = binding.resourceId;
+        descriptor.componentInstanceId = binding.componentInstanceId;
+        descriptor.consistencyGroupId = binding.consistencyGroupId;
+        descriptor.displayName = "Input 1";
+        descriptor.primitiveType = binding.primitiveType;
+        descriptor.valueTypeIdentity = binding.valueTypeIdentity;
+        descriptor.bitWidth = binding.bitWidth;
+        descriptor.direction = binding.direction;
+        descriptor.access = binding.access;
+        descriptor.processImageBitOffset = 23;
+        descriptor.processImageBitLength = 1;
+
+        catalog.scope = scope;
+        catalog.sessionGeneration = binding.sessionGeneration;
+        catalog.epoch = epoch;
+        catalog.receivedAt = QDateTime::currentDateTimeUtc();
+        catalog.resources = {descriptor};
+
+        Data::RuntimeResourceSample sample;
+        sample.resourceId = binding.resourceId;
+        sample.consistencyGroupId = binding.consistencyGroupId;
+        sample.value.primitiveType = binding.primitiveType;
+        sample.value.typeIdentity = binding.valueTypeIdentity;
+        sample.value.value = true;
+        sample.quality.state = Data::RuntimeResourceQualityState::Good;
+        sample.valueSequence = 9;
+        sample.controllerTimestampNs = 123456;
+
+        snapshot.scope = scope;
+        snapshot.sessionGeneration = binding.sessionGeneration;
+        snapshot.epoch = epoch;
+        snapshot.snapshotSequence = 10;
+        snapshot.captureCycle = 101;
+        snapshot.controllerTimestampNs = sample.controllerTimestampNs;
+        snapshot.receivedAt = catalog.receivedAt;
+        snapshot.complete = true;
+        snapshot.samples = {sample};
+
+        Data::SemanticSignalRuntimeState signal;
+        signal.target = target;
+        signal.definition.id = target.signalId;
+        signal.definition.displayName = "Input 1";
+        signal.definition.direction = Data::SemanticSignalDirection::Bidirectional;
+        signal.definition.access = Data::SemanticSignalAccess::ReadWrite;
+        signal.definition.manualControl.allowed = true;
+        signal.definition.manualControl.holdToRun = true;
+        signal.definition.manualControl.commandTimeoutMs = 250;
+        signal.availability = Data::SemanticSignalAvailability::Ready;
+        signal.binding = binding;
+        signal.value = sample.value;
+        signal.quality = sample.quality;
+        signal.snapshotComplete = true;
+        signal.captureCycle = snapshot.captureCycle;
+        signal.controllerTimestampNs = snapshot.controllerTimestampNs;
+
+        context.controllerId = target.controllerId;
+        context.scope = scope;
+        context.sessionGeneration = binding.sessionGeneration;
+        context.epoch = epoch;
+        context.mappingDigest = digest;
+        context.controllerMappingDigest = digest;
+        context.bindingVerification = binding.verification;
+        context.contextHash = QByteArray(32, '\x7d');
+        context.signalStates = {signal};
+        context.complete = true;
+        context.mock = false;
+
+        actor.id = "user:test";
+        actor.displayName = "Test User";
+        actor.kind = Data::SemanticRuntimeActorKind::User;
+        actor.origin = "qt-test";
+        actor.authenticationDigest = QByteArray(32, '\x19');
+
+        request.operationId = {"gateway-operation-001"};
+        request.kind = Data::SemanticOperationKind::SetSignalValue;
+        request.target = target;
+        request.expectedEpoch = epoch;
+        request.expectedMappingDigest = digest;
+        request.expectedControllerMappingDigest = digest;
+        request.expectedContextHash = context.contextHash;
+        request.value = true;
+        request.parameters.insert("mode", "manual");
+        request.ttlMs = 250;
+        request.reason = "test";
+    }
 };
 
 class TestDeviceImportJob final : public DeviceImportJob
@@ -915,6 +1080,420 @@ void EtherCATCoreTests::testRuntimeResourceValueSemantics()
 
     QVERIFY(QMetaType::fromType<Data::RuntimeResourceCatalog>().isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimeResourceSnapshot>().isValid());
+}
+
+void EtherCATCoreTests::testSemanticRuntimeValueSemantics()
+{
+    SemanticRuntimeFixture fixture;
+
+    const Data::SemanticRuntimeContext contextCopy = fixture.context;
+    QCOMPARE(contextCopy, fixture.context);
+    QCOMPARE(contextCopy.signalStates.constFirst().binding, fixture.binding);
+    QCOMPARE(
+        contextCopy.signalStates.constFirst().binding->mappingDigest,
+        contextCopy.signalStates.constFirst().binding->controllerMappingDigest);
+    QCOMPARE(contextCopy.signalStates.constFirst().definition.id, fixture.target.signalId);
+    QVERIFY(!contextCopy.mock);
+
+    fixture.context.signalStates.first().value->value = false;
+    QVERIFY(fixture.context != contextCopy);
+
+    Data::SemanticActionRuntimeState action;
+    action.target = fixture.target;
+    action.target.kind = Data::SemanticRuntimeTargetKind::Action;
+    action.target.signalId = {};
+    action.target.actionId = {"urn:example.test:action/controlled-stop"};
+    action.definition.id = action.target.actionId;
+    action.definition.displayName = "Controlled stop";
+    action.availability = Data::SemanticActionAvailability::AwaitingApproval;
+    action.bindings = {fixture.binding};
+    action.requiresApproval = true;
+    action.requiresExclusiveControl = true;
+    action.holdToRun = true;
+    action.maximumTtlMs = 250;
+    QCOMPARE(action.definition.id, action.target.actionId);
+
+    Data::SemanticOperationApproval approval;
+    approval.request.operationId = fixture.request.operationId;
+    approval.request.decision = Data::SemanticApprovalDecision::Approved;
+    approval.request.challenge = QByteArray(32, '\x4d');
+    approval.request.expectedContextHash = fixture.context.contextHash;
+    approval.actor = fixture.actor;
+    approval.decidedAt = QDateTime::currentDateTimeUtc();
+
+    Data::SemanticOperationRecord record;
+    record.request = fixture.request;
+    record.actor = fixture.actor;
+    record.state = Data::SemanticOperationState::ApprovalRequired;
+    record.approvals = {approval};
+    record.canonicalRequestDigest = QByteArray(32, '\x7c');
+    record.approvalChallenge = approval.request.challenge;
+    record.createdAt = approval.decidedAt;
+    record.updatedAt = approval.decidedAt;
+    const Data::SemanticOperationRecord recordCopy = record;
+    QCOMPARE(recordCopy, record);
+    QVERIFY(
+        Data::SemanticOperationState::TimedOut
+        != Data::SemanticOperationState::OutcomeUnknown);
+
+    Data::SemanticRuntimeAuditEvent auditEvent;
+    auditEvent.sequence = 1;
+    auditEvent.controllerId = fixture.target.controllerId;
+    auditEvent.operationId = fixture.request.operationId;
+    auditEvent.kind = Data::SemanticAuditEventKind::ApprovalRecorded;
+    auditEvent.state = record.state;
+    auditEvent.actor = approval.actor;
+    auditEvent.canonicalRequestDigest = record.canonicalRequestDigest;
+    auditEvent.occurredAt = approval.decidedAt;
+    QVERIFY(auditEvent == Data::SemanticRuntimeAuditEvent(auditEvent));
+
+    QVERIFY(QMetaType::fromType<Data::SemanticRuntimeTarget>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticRuntimeBinding>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticSignalRuntimeState>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticActionRuntimeState>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticRuntimeContext>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticOperationRequest>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticOperationApprovalRequest>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticOperationRecord>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticRuntimeAuditEvent>().isValid());
+}
+
+void EtherCATCoreTests::testSemanticRuntimeEpochValidation()
+{
+    const SemanticRuntimeFixture fixture;
+    QVERIFY(isCompleteRuntimeResourceCatalogEpoch(fixture.epoch));
+    QVERIFY(validateSemanticRuntimeEpoch(fixture.epoch, fixture.epoch).accepted());
+
+    Data::RuntimeResourceCatalogEpoch incomplete = fixture.epoch;
+    incomplete.catalogRevision = 0;
+    QCOMPARE(
+        validateSemanticRuntimeEpoch(fixture.epoch, incomplete).error,
+        SemanticRuntimeValidationError::InvalidEpoch);
+
+    QList<Data::RuntimeResourceCatalogEpoch> changedEpochs;
+    Data::RuntimeResourceCatalogEpoch changed = fixture.epoch;
+    ++changed.controllerBootId;
+    changedEpochs.append(changed);
+    changed = fixture.epoch;
+    changed.activePackageSlot = Data::ControllerSlot::A;
+    changedEpochs.append(changed);
+    changed = fixture.epoch;
+    ++changed.activePackageGeneration;
+    changedEpochs.append(changed);
+    changed = fixture.epoch;
+    ++changed.configurationId;
+    changedEpochs.append(changed);
+    changed = fixture.epoch;
+    ++changed.topologyGeneration;
+    changedEpochs.append(changed);
+    changed = fixture.epoch;
+    ++changed.runtimeGeneration;
+    changedEpochs.append(changed);
+    changed = fixture.epoch;
+    ++changed.catalogRevision;
+    changedEpochs.append(changed);
+    changed = fixture.epoch;
+    changed.topologyIdentity.append('\x09');
+    changedEpochs.append(changed);
+
+    QCOMPARE(changedEpochs.size(), 8);
+    for (const Data::RuntimeResourceCatalogEpoch &candidate : changedEpochs) {
+        QCOMPARE(
+            validateSemanticRuntimeEpoch(fixture.epoch, candidate).error,
+            SemanticRuntimeValidationError::EpochMismatch);
+    }
+
+    QVERIFY(validateSemanticRuntimeBinding(fixture.binding).accepted());
+    QVERIFY(isCanonicalSha256Digest(fixture.binding.mappingDigest));
+    Data::SemanticRuntimeBinding shortAdapterHash = fixture.binding;
+    shortAdapterHash.adapterContentSha256.chop(1);
+    QCOMPARE(
+        validateSemanticRuntimeBinding(shortAdapterHash).error,
+        SemanticRuntimeValidationError::InvalidBinding);
+
+    Data::SemanticRuntimeBinding unverified = fixture.binding;
+    unverified.verification.state = Data::SemanticBindingVerificationState::Unverified;
+    QCOMPARE(
+        validateSemanticRuntimeBinding(unverified).error,
+        SemanticRuntimeValidationError::BindingUnverified);
+
+    Data::SemanticRuntimeBinding mismatchedDigest = fixture.binding;
+    mismatchedDigest.controllerMappingDigest.value[0] ^= '\x01';
+    QCOMPARE(
+        validateSemanticRuntimeBinding(mismatchedDigest).error,
+        SemanticRuntimeValidationError::MappingDigestMismatch);
+}
+
+void EtherCATCoreTests::testSemanticRuntimeReadValidation()
+{
+    const SemanticRuntimeFixture fixture;
+
+    const SemanticRuntimeReadValidation good = validateSemanticRuntimeRead(
+        fixture.binding, fixture.catalog, fixture.snapshot);
+    QVERIFY(good.validation.accepted());
+    QVERIFY(good.sample);
+    QCOMPARE(good.sample->value.value.toBool(), true);
+
+    Data::RuntimeResourceSnapshot incomplete = fixture.snapshot;
+    incomplete.complete = false;
+    QCOMPARE(
+        validateSemanticRuntimeRead(fixture.binding, fixture.catalog, incomplete).validation.error,
+        SemanticRuntimeValidationError::SnapshotIncomplete);
+
+    Data::RuntimeResourceSnapshot stale = fixture.snapshot;
+    stale.samples.first().quality.state = Data::RuntimeResourceQualityState::Stale;
+    QCOMPARE(
+        validateSemanticRuntimeRead(fixture.binding, fixture.catalog, stale).validation.error,
+        SemanticRuntimeValidationError::SampleQualityNotGood);
+
+    Data::RuntimeResourceSnapshot changedEpoch = fixture.snapshot;
+    ++changedEpoch.epoch.runtimeGeneration;
+    QCOMPARE(
+        validateSemanticRuntimeRead(fixture.binding, fixture.catalog, changedEpoch)
+            .validation.error,
+        SemanticRuntimeValidationError::EpochMismatch);
+
+    // A descriptor with the same presentation and PI coordinates is never a fallback for the
+    // exact verified ResourceId.
+    Data::RuntimeResourceCatalog lookalikeCatalog = fixture.catalog;
+    lookalikeCatalog.resources.first().id = {QByteArray::fromHex("1000000000000002")};
+    QCOMPARE(
+        validateSemanticRuntimeRead(
+            fixture.binding, lookalikeCatalog, fixture.snapshot)
+            .validation.error,
+        SemanticRuntimeValidationError::ResourceNotFound);
+
+    Data::RuntimeResourceSnapshot duplicate = fixture.snapshot;
+    duplicate.samples.append(duplicate.samples.constFirst());
+    QCOMPARE(
+        validateSemanticRuntimeRead(fixture.binding, fixture.catalog, duplicate).validation.error,
+        SemanticRuntimeValidationError::SampleAmbiguous);
+
+    Data::RuntimeResourceCatalog mismatchedDescriptor = fixture.catalog;
+    mismatchedDescriptor.resources.first().consistencyGroupId
+        = {QByteArray::fromHex("3000000000000002")};
+    QCOMPARE(
+        validateSemanticRuntimeRead(
+            fixture.binding, mismatchedDescriptor, fixture.snapshot)
+            .validation.error,
+        SemanticRuntimeValidationError::DescriptorMismatch);
+}
+
+void EtherCATCoreTests::testSemanticRuntimeOperationContract()
+{
+    using SubmitMethod = Data::SemanticOperationRecord (SemanticRuntimeService::*)(
+        const Data::SemanticOperationRequest &, const Data::SemanticRuntimeActor &);
+    using ApproveMethod = Data::SemanticOperationRecord (SemanticRuntimeService::*)(
+        const Data::SemanticOperationApprovalRequest &, const Data::SemanticRuntimeActor &);
+    static_assert(std::is_same_v<decltype(&SemanticRuntimeService::submit), SubmitMethod>);
+    static_assert(std::is_same_v<decltype(&SemanticRuntimeService::approve), ApproveMethod>);
+
+    const SemanticRuntimeFixture fixture;
+
+    QVERIFY(isCanonicalSemanticOperationId(fixture.request.operationId));
+    QVERIFY(!canonicalSemanticOperationRequest(fixture.request).isEmpty());
+    QVERIFY(validateSemanticOperationRequest(fixture.request, fixture.context).accepted());
+
+    const Data::SemanticOperationRequest requestCopy = fixture.request;
+    QVERIFY(semanticOperationRequestsCanonicallyEqual(fixture.request, requestCopy));
+    QCOMPARE(
+        canonicalSemanticOperationRequest(fixture.request),
+        canonicalSemanticOperationRequest(requestCopy));
+
+    Data::SemanticOperationRequest differentId = fixture.request;
+    differentId.operationId.value = "gateway-operation-002";
+    QVERIFY(semanticOperationRequestsCanonicallyEqual(fixture.request, differentId));
+
+    Data::SemanticOperationRequest changed = fixture.request;
+    changed.value = false;
+    QVERIFY(!semanticOperationRequestsCanonicallyEqual(fixture.request, changed));
+
+    Data::SemanticOperationRequest gatewayStyleId = fixture.request;
+    gatewayStyleId.operationId.value = "read:controller/device-17";
+    QVERIFY(isCanonicalSemanticOperationId(gatewayStyleId.operationId));
+    QVERIFY(!canonicalSemanticOperationRequest(gatewayStyleId).isEmpty());
+
+    Data::SemanticOperationRequest invalidId = fixture.request;
+    invalidId.operationId.value = "line-one\nline-two";
+    QVERIFY(!isCanonicalSemanticOperationId(invalidId.operationId));
+    QVERIFY(canonicalSemanticOperationRequest(invalidId).isEmpty());
+    QCOMPARE(
+        validateSemanticOperationRequest(invalidId, fixture.context).error,
+        SemanticRuntimeValidationError::InvalidOperationId);
+
+    invalidId.operationId.value = QString(129, 'x');
+    QVERIFY(!isCanonicalSemanticOperationId(invalidId.operationId));
+
+    Data::SemanticOperationRequest staleEpoch = fixture.request;
+    ++staleEpoch.expectedEpoch.catalogRevision;
+    QCOMPARE(
+        validateSemanticOperationRequest(staleEpoch, fixture.context).error,
+        SemanticRuntimeValidationError::EpochMismatch);
+
+    Data::SemanticOperationRequest staleDigest = fixture.request;
+    staleDigest.expectedMappingDigest.value[0] ^= '\x01';
+    QCOMPARE(
+        validateSemanticOperationRequest(staleDigest, fixture.context).error,
+        SemanticRuntimeValidationError::MappingDigestMismatch);
+
+    Data::SemanticOperationRequest staleContext = fixture.request;
+    staleContext.expectedContextHash[0] ^= '\x01';
+    QCOMPARE(
+        validateSemanticOperationRequest(staleContext, fixture.context).error,
+        SemanticRuntimeValidationError::InvalidRequest);
+
+    Data::SemanticOperationRequest invalidKind = fixture.request;
+    invalidKind.kind = Data::SemanticOperationKind::InvokeAction;
+    QCOMPARE(
+        validateSemanticOperationRequest(invalidKind, fixture.context).error,
+        SemanticRuntimeValidationError::InvalidRequest);
+
+    Data::SemanticOperationRequest releaseHold = fixture.request;
+    releaseHold.kind = Data::SemanticOperationKind::ReleaseHold;
+    releaseHold.value = {};
+    releaseHold.parameters.clear();
+    QVERIFY(validateSemanticOperationRequest(releaseHold, fixture.context).accepted());
+
+    Data::SemanticOperationRequest resourceInjection = fixture.request;
+    resourceInjection.value = QVariant::fromValue(fixture.binding.resourceId);
+    QVERIFY(!isAllowedSemanticRuntimeValue(resourceInjection.value));
+    QVERIFY(canonicalSemanticOperationRequest(resourceInjection).isEmpty());
+    QCOMPARE(
+        validateSemanticOperationRequest(resourceInjection, fixture.context).error,
+        SemanticRuntimeValidationError::InvalidRequest);
+
+    Data::SemanticOperationRequest wrongBooleanType = fixture.request;
+    wrongBooleanType.value = QVariant::fromValue<qulonglong>(1);
+    QVERIFY(!isSemanticRuntimeValueCompatible(
+        wrongBooleanType.value, fixture.binding));
+    QCOMPARE(
+        validateSemanticOperationRequest(wrongBooleanType, fixture.context).error,
+        SemanticRuntimeValidationError::InvalidRequest);
+
+    Data::SemanticRuntimeBinding signedEight = fixture.binding;
+    signedEight.primitiveType = Data::RuntimeResourcePrimitiveType::SignedInteger;
+    signedEight.bitWidth = 8;
+    QVERIFY(isSemanticRuntimeValueCompatible(
+        QVariant::fromValue<qlonglong>(-128), signedEight));
+    QVERIFY(isSemanticRuntimeValueCompatible(
+        QVariant::fromValue<qlonglong>(127), signedEight));
+    QVERIFY(!isSemanticRuntimeValueCompatible(
+        QVariant::fromValue<qlonglong>(128), signedEight));
+
+    Data::SemanticRuntimeBinding unsignedEight = fixture.binding;
+    unsignedEight.primitiveType = Data::RuntimeResourcePrimitiveType::UnsignedInteger;
+    unsignedEight.bitWidth = 8;
+    QVERIFY(isSemanticRuntimeValueCompatible(
+        QVariant::fromValue<qulonglong>(255), unsignedEight));
+    QVERIFY(!isSemanticRuntimeValueCompatible(
+        QVariant::fromValue<qulonglong>(256), unsignedEight));
+
+    Data::SemanticRuntimeBinding fixedPoint = fixture.binding;
+    fixedPoint.primitiveType = Data::RuntimeResourcePrimitiveType::FloatingPoint;
+    fixedPoint.bitWidth = 64;
+    QVERIFY(isSemanticRuntimeValueCompatible(QVariant(1.25), fixedPoint));
+    QVERIFY(!isAllowedSemanticRuntimeValue(
+        QVariant(std::numeric_limits<double>::quiet_NaN())));
+    QVERIFY(!isSemanticRuntimeValueCompatible(
+        QVariant(std::numeric_limits<double>::infinity()), fixedPoint));
+
+    Data::SemanticRuntimeBinding rawBits = fixture.binding;
+    rawBits.primitiveType = Data::RuntimeResourcePrimitiveType::ByteArray;
+    rawBits.bitWidth = 9;
+    QVERIFY(isSemanticRuntimeValueCompatible(QByteArray(2, '\0'), rawBits));
+    QVERIFY(!isSemanticRuntimeValueCompatible(QByteArray(1, '\0'), rawBits));
+
+    Data::SemanticRuntimeContext incomplete = fixture.context;
+    incomplete.complete = false;
+    QCOMPARE(
+        validateSemanticOperationRequest(fixture.request, incomplete).error,
+        SemanticRuntimeValidationError::BindingUnverified);
+
+    Data::SemanticOperationRecord approvalOperation;
+    approvalOperation.request = fixture.request;
+    approvalOperation.actor = fixture.actor;
+    approvalOperation.state = Data::SemanticOperationState::ApprovalRequired;
+    approvalOperation.approvalChallenge = QByteArray(32, '\x2a');
+
+    Data::SemanticOperationApprovalRequest approval;
+    approval.operationId = fixture.request.operationId;
+    approval.decision = Data::SemanticApprovalDecision::Approved;
+    approval.challenge = approvalOperation.approvalChallenge;
+    approval.expectedContextHash = fixture.context.contextHash;
+    QVERIFY(
+        validateSemanticOperationApproval(
+            approval, fixture.actor, approvalOperation, fixture.context)
+            .accepted());
+
+    Data::SemanticRuntimeActor automation = fixture.actor;
+    automation.kind = Data::SemanticRuntimeActorKind::Automation;
+    QCOMPARE(
+        validateSemanticOperationApproval(
+            approval, automation, approvalOperation, fixture.context)
+            .error,
+        SemanticRuntimeValidationError::ApprovalActorInvalid);
+
+    Data::SemanticOperationApprovalRequest wrongChallenge = approval;
+    wrongChallenge.challenge[0] ^= '\x01';
+    QCOMPARE(
+        validateSemanticOperationApproval(
+            wrongChallenge, fixture.actor, approvalOperation, fixture.context)
+            .error,
+        SemanticRuntimeValidationError::ApprovalChallengeMismatch);
+
+    Data::SemanticOperationApprovalRequest pending = approval;
+    pending.decision = Data::SemanticApprovalDecision::Pending;
+    QCOMPARE(
+        validateSemanticOperationApproval(
+            pending, fixture.actor, approvalOperation, fixture.context)
+            .error,
+        SemanticRuntimeValidationError::InvalidRequest);
+}
+
+void EtherCATCoreTests::testSemanticRuntimeServiceFailsClosed()
+{
+    SemanticRuntimeFixture fixture;
+    TestSemanticRuntimeService service;
+    service.snapshots = {fixture.context};
+
+    const std::optional<Data::SemanticRuntimeContext> context
+        = service.context(fixture.context.controllerId);
+    QVERIFY(context);
+    QCOMPARE(*context, fixture.context);
+    QCOMPARE(service.readCount, 1);
+    QVERIFY(!service.context("missing"));
+    QCOMPARE(service.readCount, 2);
+
+    QSignalSpy operationSpy(&service, &SemanticRuntimeService::operationChanged);
+    QSignalSpy auditSpy(&service, &SemanticRuntimeService::auditChanged);
+
+    const Data::SemanticOperationRecord submission = service.submit(fixture.request, fixture.actor);
+    QCOMPARE(submission.state, Data::SemanticOperationState::Rejected);
+    QCOMPARE(submission.resultCode, "semantic-runtime-unavailable");
+    QCOMPARE(submission.actor, fixture.actor);
+    QVERIFY(!submission.canonicalRequestDigest.isEmpty());
+    QVERIFY(!submission.executionAttempted);
+    QCOMPARE(submission.appliedCycle, quint64(0));
+    QCOMPARE(submission.appliedRuntimeGeneration, quint64(0));
+    QVERIFY(!service.operation(fixture.request.operationId));
+    QVERIFY(service.audit(fixture.context.controllerId).isEmpty());
+
+    Data::SemanticOperationApprovalRequest approval;
+    approval.operationId = fixture.request.operationId;
+    approval.decision = Data::SemanticApprovalDecision::Approved;
+    approval.challenge = QByteArray(32, '\x2a');
+    approval.expectedContextHash = fixture.context.contextHash;
+    const Data::SemanticOperationRecord approvalResult = service.approve(approval, fixture.actor);
+    QCOMPARE(approvalResult.state, Data::SemanticOperationState::Rejected);
+    QCOMPARE(approvalResult.resultCode, "semantic-runtime-unavailable");
+    QVERIFY(!approvalResult.executionAttempted);
+    QCOMPARE(approvalResult.actor, fixture.actor);
+    QCOMPARE(approvalResult.approvals.size(), 1);
+    QCOMPARE(approvalResult.approvals.constFirst().request, approval);
+    QCOMPARE(approvalResult.approvals.constFirst().actor, fixture.actor);
+
+    QCOMPARE(operationSpy.count(), 0);
+    QCOMPARE(auditSpy.count(), 0);
 }
 
 void EtherCATCoreTests::testProcessDataConfigurationPreview()

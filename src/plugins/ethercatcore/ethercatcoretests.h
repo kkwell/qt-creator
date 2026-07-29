@@ -17,6 +17,11 @@ private slots:
     void testNodeIdRoundTrip();
     void testProjectSnapshotValueSemantics();
     void testRuntimeResourceValueSemantics();
+    void testSemanticRuntimeValueSemantics();
+    void testSemanticRuntimeEpochValidation();
+    void testSemanticRuntimeReadValidation();
+    void testSemanticRuntimeOperationContract();
+    void testSemanticRuntimeServiceFailsClosed();
     void testProcessDataConfigurationPreview();
     void testProcessDataConfigurationValidation();
     void testStartupAndDcConfigurationValidation();

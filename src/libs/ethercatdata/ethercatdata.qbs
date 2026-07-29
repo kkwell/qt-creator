@@ -20,5 +20,6 @@ QtcLibrary {
         "projectsnapshot.h",
         "runtimeresource.h",
         "scansnapshot.h",
+        "semanticruntime.h",
     ]
 }

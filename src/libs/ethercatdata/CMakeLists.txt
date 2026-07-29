@@ -13,4 +13,5 @@ add_qtc_library(EtherCATData
     projectsnapshot.h
     runtimeresource.h
     scansnapshot.h
+    semanticruntime.h
 )
