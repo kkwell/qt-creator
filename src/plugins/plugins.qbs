@@ -47,6 +47,7 @@ Project {
         "ethercatdevices/ethercatdevices.qbs",
         "ethercatproductapi/ethercatproductapi.qbs",
         "ethercatproject/ethercatproject.qbs",
+        "ethercatsemanticruntime/ethercatsemanticruntime.qbs",
         "debugger/debugger.qbs",
         "debugger/ptracepreload.qbs",
         "ethercatworkbench/ethercatworkbench.qbs",
