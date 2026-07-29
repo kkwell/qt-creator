@@ -364,33 +364,57 @@ void SemanticControlPage::refresh()
         return;
     }
 
+    if (!selection->signalIds.isEmpty()) {
+        m_status->setText(Tr::tr("Runtime signal binding is not verified."));
+        return;
+    }
+
     QList<Data::SemanticSignalRuntimeState> states;
-    states.reserve(selection->signalIds.size());
-    for (const Data::SemanticSignalId &signalId : selection->signalIds) {
-        QList<Data::SemanticSignalRuntimeState> matches;
-        std::copy_if(
-            runtimeContext.signalStates.cbegin(),
-            runtimeContext.signalStates.cend(),
-            std::back_inserter(matches),
-            [&runtimeContext, &selection, &signalId](
-                const Data::SemanticSignalRuntimeState &state) {
-                return state.target.controllerId == runtimeContext.controllerId
-                       && state.target.scope == selection->scope
-                       && state.target.deviceId == selection->deviceId
-                       && state.target.kind == Data::SemanticRuntimeTargetKind::Signal
-                       && state.target.signalId == signalId
-                       && state.target.actionId.value.isEmpty();
-            });
-        if (matches.size() != 1) {
-            m_status->setText(Tr::tr("Runtime signal set is incomplete."));
-            return;
-        }
-        if (matches.constFirst().availability == Data::SemanticSignalAvailability::Ready
-            && !signalBindingMatchesContext(matches.constFirst(), runtimeContext)) {
+    std::copy_if(
+        runtimeContext.signalStates.cbegin(),
+        runtimeContext.signalStates.cend(),
+        std::back_inserter(states),
+        [&runtimeContext, &selection](const Data::SemanticSignalRuntimeState &state) {
+            return state.target.controllerId == runtimeContext.controllerId
+                   && state.target.scope == selection->scope
+                   && state.target.deviceId == selection->deviceId
+                   && state.target.kind == Data::SemanticRuntimeTargetKind::Signal
+                   && state.target.actionId.value.isEmpty();
+        });
+    std::sort(
+        states.begin(),
+        states.end(),
+        [](const Data::SemanticSignalRuntimeState &left,
+           const Data::SemanticSignalRuntimeState &right) {
+            return left.target.signalId.value < right.target.signalId.value;
+        });
+    const bool invalidSignalSet
+        = states.isEmpty()
+          || std::any_of(
+              states.cbegin(),
+              states.cend(),
+              [](const Data::SemanticSignalRuntimeState &state) {
+                  return state.target.signalId.value.isEmpty()
+                         || state.target.signalId.value != state.target.signalId.value.trimmed();
+              })
+          || std::adjacent_find(
+                 states.cbegin(),
+                 states.cend(),
+                 [](const Data::SemanticSignalRuntimeState &left,
+                    const Data::SemanticSignalRuntimeState &right) {
+                     return left.target.signalId == right.target.signalId;
+                 })
+                 != states.cend();
+    if (invalidSignalSet) {
+        m_status->setText(Tr::tr("Runtime signal set is incomplete."));
+        return;
+    }
+
+    for (const Data::SemanticSignalRuntimeState &state : std::as_const(states)) {
+        if (!signalBindingMatchesContext(state, runtimeContext)) {
             m_status->setText(Tr::tr("Runtime signal binding is not verified."));
             return;
         }
-        states.append(matches.constFirst());
     }
 
     bool allReady = true;

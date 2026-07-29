@@ -136,10 +136,25 @@ QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
         return result;
     }
     case Kind::Device:
-    case Kind::ConfiguredSlave:
     {
         QList<Core::PropertyPageDescriptor> result
             = {{Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100},
+               {Utils::Id(Constants::ETHERCAT_PAGE_ID), Tr::tr("EtherCAT"), 200},
+               {Utils::Id(Constants::PROCESS_DATA_PAGE_ID), Tr::tr("Process Data"), 300},
+               {Utils::Id(Constants::COE_ONLINE_PAGE_ID), Tr::tr("CoE Online"), 350},
+               {Utils::Id(Constants::STARTUP_PAGE_ID), Tr::tr("Startup"), 400},
+               {Utils::Id(Constants::DC_PAGE_ID), Tr::tr("DC"), 500}};
+        if ((!m_controller || !m_controller->diagnosticsAvailable())
+            && shouldExposeDiagnosticsFallback(m_controller)) {
+            result.append({Utils::Id(Constants::ONLINE_PAGE_ID), Tr::tr("Online"), 800});
+        }
+        return result;
+    }
+    case Kind::ConfiguredSlave:
+    {
+        QList<Core::PropertyPageDescriptor> result
+            = {{Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID), Tr::tr("Control"), 50},
+               {Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100},
                {Utils::Id(Constants::ETHERCAT_PAGE_ID), Tr::tr("EtherCAT"), 200},
                {Utils::Id(Constants::PROCESS_DATA_PAGE_ID), Tr::tr("Process Data"), 300},
                {Utils::Id(Constants::COE_ONLINE_PAGE_ID), Tr::tr("CoE Online"), 350},
@@ -159,13 +174,9 @@ QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
     case Kind::PdoEntry:
         return {{Utils::Id(Constants::PROCESS_DATA_PAGE_ID), Tr::tr("Process Data"), 300}};
     case Kind::Modules:
-        return {{Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100}};
     case Kind::Module:
     case Kind::Channel:
-        return {
-            {Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID), Tr::tr("Control"), 50},
-            {Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100},
-        };
+        return {{Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100}};
     case Kind::Diagnostics:
         if (m_controller && m_controller->diagnosticsAvailable())
             return {};

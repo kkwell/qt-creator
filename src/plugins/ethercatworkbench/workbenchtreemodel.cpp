@@ -1916,32 +1916,11 @@ std::optional<SemanticControlSelection> WorkbenchTreeModel::semanticControlSelec
     const Data::NodeId &nodeId) const
 {
     const Node *node = findNode(nodeId);
-    if (!node
-        || (node->kind != Core::WorkbenchNodeKind::Channel
-            && node->kind != Core::WorkbenchNodeKind::Module)
-        || node->projectId.isNull() || node->ownerSlaveId.isNull()) {
+    if (!node || node->kind != Core::WorkbenchNodeKind::ConfiguredSlave
+        || node->projectId.isNull() || node->ownerSlaveId.isNull()
+        || node->id != node->ownerSlaveId) {
         return std::nullopt;
     }
-
-    QList<Data::SemanticSignalId> signalIds = node->semanticSignalIds;
-    if ((node->kind == Core::WorkbenchNodeKind::Channel && signalIds.size() != 1)
-        || (node->kind == Core::WorkbenchNodeKind::Module && signalIds.isEmpty())) {
-        return std::nullopt;
-    }
-    QSet<QString> uniqueSignalIds;
-    for (const Data::SemanticSignalId &signalId : std::as_const(signalIds)) {
-        if (signalId.value.isEmpty() || signalId.value != signalId.value.trimmed()
-            || uniqueSignalIds.contains(signalId.value)) {
-            return std::nullopt;
-        }
-        uniqueSignalIds.insert(signalId.value);
-    }
-    std::sort(
-        signalIds.begin(),
-        signalIds.end(),
-        [](const Data::SemanticSignalId &left, const Data::SemanticSignalId &right) {
-            return left.value < right.value;
-        });
 
     const auto project = std::find_if(
         m_projects.cbegin(),
@@ -1972,7 +1951,7 @@ std::optional<SemanticControlSelection> WorkbenchTreeModel::semanticControlSelec
     return SemanticControlSelection{
         {project->id, slave->masterId},
         slave->id,
-        signalIds,
+        {},
     };
 }
 
