@@ -4,6 +4,7 @@ add_subdirectory(libvterm)
 add_subdirectory(libptyqt)
 add_subdirectory(qtkeychain)
 add_subdirectory(lua)
+add_subdirectory(monocypher)
 add_subdirectory(sol2)
 
 if(WIN32)

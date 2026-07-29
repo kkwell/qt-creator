@@ -617,6 +617,24 @@
         "Version": "5.4.6"
     },
     {
+        "Id": "monocypher",
+        "Name": "Monocypher",
+        "QDocModule": "qtcreator",
+        "QtParts": ["tools"],
+        "QtUsage": "Used to verify detached Ed25519 signatures on EtherCAT controller packages.",
+        "Path": "@SOURCE_DIR@/src/libs/3rdparty/monocypher",
+        "Description": "Monocypher is a small, portable, dependency-free cryptographic library.",
+        "Homepage": "https://monocypher.org/",
+        "PURL": "pkg:github/LoupVaillant/Monocypher@$<VERSION>",
+        "Version": "4.0.3",
+        "DownloadLocation": "https://github.com/LoupVaillant/Monocypher/tree/4.0.3",
+        "LicenseId": "BSD-2-Clause",
+        "License": "BSD 2-Clause \"Simplified\" License",
+        "LicenseFile": "@SOURCE_DIR@/src/libs/3rdparty/monocypher/LICENCE.md",
+        "Copyright": "Copyright (c) 2017-2023 Loup Vaillant, Copyright (c) 2017-2019 Michael Savage, Copyright (c) 2017-2023 Fabio Scotoni",
+        "SecurityCritical": true
+    },
+    {
         "Id": "sol2",
         "Name": "sol2",
         "QDocModule": "qtcreator",
