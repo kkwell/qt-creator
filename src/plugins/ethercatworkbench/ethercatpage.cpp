@@ -562,9 +562,17 @@ void EtherCATPage::updateMasterPresentation()
     m_masterTopology->setEnabled(true);
     m_masterFrameState->show();
     m_tree->setAccessibleName(Tr::tr("Live EtherCAT cyclic telemetry"));
-    const QString telemetryDescription = Tr::tr(
-        "Live aggregate cyclic telemetry from controller protocol v1.10. The protocol does not "
-        "expose individual cyclic frame descriptors.");
+    const QString protocolVersion
+        = snapshot.protocolVersion.major
+              ? QStringLiteral("%1.%2")
+                    .arg(snapshot.protocolVersion.major)
+                    .arg(snapshot.protocolVersion.minor)
+              : Tr::tr("unknown");
+    const QString telemetryDescription
+        = Tr::tr(
+              "Live aggregate cyclic telemetry from controller protocol v%1. The protocol does "
+              "not expose individual cyclic frame descriptors.")
+              .arg(protocolVersion);
     m_tree->setAccessibleDescription(telemetryDescription);
     m_tree->setToolTip(telemetryDescription);
 
@@ -586,11 +594,12 @@ void EtherCATPage::updateMasterPresentation()
     if (state.serviceState == Data::ControllerServiceState::Running) {
         m_masterFrameState->setText(
             Tr::tr(
-                "Live cyclic transfer is running. Cycle counter %1, WKC %2/%3. Protocol v1.10 "
+                "Live cyclic transfer is running. Cycle counter %1, WKC %2/%3. Protocol v%4 "
                 "provides aggregate cyclic evidence but not individual frame descriptors.")
                 .arg(liveCycleCount)
                 .arg(state.actualWorkingCounter)
-                .arg(state.expectedWorkingCounter));
+                .arg(state.expectedWorkingCounter)
+                .arg(protocolVersion));
     } else if (state.busOperational && state.expectedWorkingCounter) {
         m_masterFrameState->setText(
             Tr::tr(

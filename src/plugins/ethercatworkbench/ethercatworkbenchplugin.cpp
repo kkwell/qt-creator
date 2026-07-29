@@ -726,6 +726,45 @@ void EtherCATWorkbenchPlugin::setupActions()
     menu->addAction(::Core::ActionManager::command(ProjectExplorer::Constants::RUN));
     menu->addAction(::Core::ActionManager::command(Constants::DEBUG_ACTION_ID));
     menu->addAction(::Core::ActionManager::command(Constants::CONTROLLED_STOP_ACTION_ID));
+
+    auto resetFaultAction = new QAction(
+        Utils::Icons::WARNING_TOOLBAR.icon(), Tr::tr("Confirm / Reset Fault"), this);
+    const QString resetFaultDescription = Tr::tr(
+        "Confirm and clear a latched controller fault only after its current cause has cleared. "
+        "This does not restart the controller, rescan the bus, or change the active package.");
+    resetFaultAction->setToolTip(resetFaultDescription);
+    resetFaultAction->setStatusTip(resetFaultDescription);
+    ::Core::Command *resetFaultCommand = ::Core::ActionManager::registerAction(
+        resetFaultAction,
+        Constants::RESET_FAULT_ACTION_ID,
+        ::Core::Context(Constants::CONTEXT_ID));
+    resetFaultCommand->setDescription(resetFaultAction->text());
+    menu->addAction(resetFaultCommand);
+    connect(resetFaultAction, &QAction::triggered, m_controller.get(), [this] {
+        const std::optional<Data::ControllerConnectionScope> scope
+            = m_controller->selectedControllerConnectionScope();
+        if (!scope) {
+            m_controller->writeControllerOutput(
+                Tr::tr("Fault reset unavailable: Select the connected EtherCAT Master first."),
+                ControllerOutputLevel::Error);
+            return;
+        }
+        const Data::ControllerConnectionSnapshot snapshot
+            = m_controller->controllerConnectionSnapshot(*scope);
+        Data::ControllerControlRequest request;
+        request.command = Data::ControllerControlCommand::ResetFault;
+        if (snapshot.controllerState) {
+            request.expectedLatchedFaults = snapshot.controllerState->latchedFaults;
+            request.expectedAlarmSequence = snapshot.controllerState->latestAlarmSequence;
+        }
+        if (const Utils::Result<> result
+            = m_controller->executeControllerControl(*scope, request);
+            !result) {
+            m_controller->writeControllerOutput(
+                Tr::tr("Fault reset unavailable: %1").arg(result.error()),
+                ControllerOutputLevel::Error);
+        }
+    });
     menu->addSeparator();
 
     auto refreshControllerAction
@@ -1042,6 +1081,8 @@ void EtherCATWorkbenchPlugin::setupActions()
          connectControllerAction,
          scanControllerAction,
          applyCurrentBusAction,
+         resetFaultAction,
+         resetFaultDescription,
          refreshControllerAction,
          disconnectControllerAction,
          locateDifferenceAction,
@@ -1060,6 +1101,7 @@ void EtherCATWorkbenchPlugin::setupActions()
                 connectControllerAction->setEnabled(false);
                 scanControllerAction->setEnabled(false);
                 applyCurrentBusAction->setEnabled(false);
+                resetFaultAction->setEnabled(false);
                 refreshControllerAction->setEnabled(false);
                 disconnectControllerAction->setEnabled(false);
                 locateDifferenceAction->setEnabled(false);
@@ -1080,6 +1122,20 @@ void EtherCATWorkbenchPlugin::setupActions()
                 m_controller->canExecuteSelectedControllerControl(
                     Data::ControllerControlCommand::DiscoverTopology));
             applyCurrentBusAction->setEnabled(m_controller->canApplyCurrentBusToProject());
+            resetFaultAction->setEnabled(
+                m_controller->canExecuteSelectedControllerControl(
+                    Data::ControllerControlCommand::ResetFault));
+            QString resetFaultToolTip = resetFaultDescription;
+            if (const auto scope = m_controller->selectedControllerConnectionScope()) {
+                const QString reason = m_controller->controllerControlUnavailableReason(
+                    *scope, Data::ControllerControlCommand::ResetFault);
+                if (!reason.isEmpty())
+                    resetFaultToolTip += Tr::tr(" Unavailable: %1").arg(reason);
+            } else {
+                resetFaultToolTip += Tr::tr(" Unavailable: Select the connected EtherCAT Master.");
+            }
+            resetFaultAction->setToolTip(resetFaultToolTip);
+            resetFaultAction->setStatusTip(resetFaultToolTip);
             refreshControllerAction->setEnabled(m_controller->canRefreshSelectedController());
             disconnectControllerAction->setEnabled(m_controller->canDisconnectSelectedController());
             Core::SelectionService *selectionService = m_controller->selectionService();

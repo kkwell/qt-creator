@@ -19,7 +19,8 @@ inline constexpr quint16 CurrentMajor = 1;
 inline constexpr quint16 MinimumMinor = 1;
 inline constexpr quint16 FirmwareMinor = 9;
 inline constexpr quint16 ExplicitTimingModeMinor = 10;
-inline constexpr quint16 CurrentMinor = ExplicitTimingModeMinor;
+inline constexpr quint16 ControlledFaultResetMinor = 11;
+inline constexpr quint16 CurrentMinor = ControlledFaultResetMinor;
 inline constexpr quint32 ControlMaximumPayloadBytes = 4096;
 inline constexpr quint32 PushMaximumPayloadBytes = 65536;
 inline constexpr quint32 BulkMaximumPayloadBytes = 65536;
@@ -45,6 +46,7 @@ enum class MessageType : quint16 {
     Pause = 0x0103,
     Resume = 0x0104,
     ControlledStop = 0x0105,
+    ResetFault = 0x0107,
     GetState = 0x0108,
     Heartbeat = 0x0109,
     EnterConfigurationMode = 0x010b,

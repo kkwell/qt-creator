@@ -196,10 +196,17 @@ QByteArray performanceSnapshotPayload()
     return payload;
 }
 
-QByteArray lifecycleControllerStatePayload(quint32 serviceState, quint64 cycleCount = 202)
+QByteArray lifecycleControllerStatePayload(
+    quint32 serviceState,
+    quint64 cycleCount = 202,
+    quint64 currentFaults = 0,
+    quint64 latchedFaults = 0,
+    quint32 latestAlarmSequence = 19,
+    bool safeCyclicRuntime = false)
 {
     QByteArray payload(80, '\0');
     quint32 status = 0x1; // READY
+    quint32 severity = 0;
     quint32 alState = 0;
     quint32 workingCounter = 0;
     if (serviceState == 3) { // OP_SAFE
@@ -214,9 +221,20 @@ QByteArray lifecycleControllerStatePayload(quint32 serviceState, quint64 cycleCo
         status |= 0x2 | 0x40 | 0x100; // BUS_OP | DC_LOCKED | PAUSED
         alState = 0x08;
         workingCounter = 6;
+    } else if (serviceState == 6) { // FAULT
+        status |= 0x10;
+        severity = 4;
+        if (safeCyclicRuntime) {
+            status |= 0x2 | 0x8 | 0x40; // BUS_OP | SAFE_OUTPUT | DC_LOCKED
+            alState = 0x08;
+            workingCounter = 6;
+        }
     }
     putU32(payload, 0, serviceState);
     putU32(payload, 4, status);
+    putU32(payload, 8, severity);
+    putU64(payload, 16, currentFaults);
+    putU64(payload, 24, latchedFaults);
     putU64(payload, 32, 101);
     putU64(payload, 40, cycleCount);
     putU64(payload, 48, TestBootId);
@@ -224,7 +242,7 @@ QByteArray lifecycleControllerStatePayload(quint32 serviceState, quint64 cycleCo
     putU32(payload, 60, workingCounter);
     putU32(payload, 64, workingCounter);
     putU32(payload, 68, status & 0x40 ? 73 : 0);
-    putU32(payload, 76, 19);
+    putU32(payload, 76, latestAlarmSequence);
     return payload;
 }
 
@@ -277,7 +295,11 @@ QByteArray packageStatePayload(
 }
 
 QByteArray successfulCommandStatusPayload(
-    Protocol::MessageType originalType, quint16 stage, quint32 serviceState, bool final)
+    Protocol::MessageType originalType,
+    quint16 stage,
+    quint32 serviceState,
+    bool final,
+    quint64 detail = 0)
 {
     QByteArray payload(40, '\0');
     putU16(payload, 0, quint16(originalType));
@@ -285,6 +307,7 @@ QByteArray successfulCommandStatusPayload(
     putU32(payload, 12, serviceState);
     putU32(payload, 16, 1);
     putU64(payload, 20, 5000000000);
+    putU64(payload, 28, detail);
     putU32(payload, 36, final ? 1 : 0);
     return payload;
 }
@@ -294,13 +317,14 @@ QByteArray rejectedCommandStatusPayload(
     quint16 stage,
     quint32 serviceState,
     qint32 status = InternalStatus,
-    quint64 detail = 0)
+    quint64 detail = 0,
+    qint32 operationResult = -1)
 {
     QByteArray payload(40, '\0');
     putU16(payload, 0, quint16(originalType));
     putU16(payload, 2, stage);
     putI32(payload, 4, status);
-    putI32(payload, 8, -1);
+    putI32(payload, 8, operationResult);
     putU32(payload, 12, serviceState);
     putU64(payload, 28, detail);
     putU32(payload, 36, 1);
@@ -530,12 +554,20 @@ public:
         MalformedCapacity,
         HoldCapability,
         ControlLifecycle,
+        FaultReset,
         PackageDeployment,
     };
 
     explicit LoopbackController(Behavior behavior = Behavior::Normal)
         : m_behavior(behavior)
-    {}
+    {
+        if (m_behavior == Behavior::FaultReset) {
+            m_serviceState = 6;
+            m_controllerPackageActive = true;
+            m_latchedFaults = quint64(1) << 15;
+            m_lastAlarmSequence = TestAlarmSequence;
+        }
+    }
 
     bool start()
     {
@@ -609,12 +641,37 @@ public:
         m_helloLeaseOwnerSessionId = sessionId;
     }
     void setProtocolMinor(quint16 minor) { m_protocolMinor = minor; }
+    void setFeatureBits(quint32 featureBits) { m_featureBits = featureBits; }
+    void setFaultResetSafeCyclicRuntime(bool active)
+    {
+        m_faultResetSafeCyclicRuntime = active;
+        m_controllerPackageActive = active;
+        m_faultResetTerminalServiceState = active ? 3 : 8;
+    }
+    void setFaultResetTerminalServiceState(quint32 state)
+    {
+        m_faultResetTerminalServiceState = state;
+    }
+    void setFaultResetControllerPackageActive(bool active)
+    {
+        m_controllerPackageActive = active;
+    }
 
-    void rejectNextControl(Protocol::MessageType type, qint32 status)
+    void rejectNextControl(
+        Protocol::MessageType type,
+        qint32 status,
+        qint32 operationResult = -1,
+        quint64 detail = 0,
+        quint16 stage = 0)
     {
         m_rejectedControlType = type;
         m_nextControlStatus = status;
+        m_nextControlOperationResult = operationResult;
+        m_nextControlDetail = detail;
+        m_nextControlFailureStage = stage;
     }
+
+    void omitFaultClearedEventOnce() { m_omitFaultClearedEventOnce = true; }
 
     void rejectNextDeployment(
         Protocol::MessageType type,
@@ -893,6 +950,7 @@ private:
         case Protocol::MessageType::Pause:
         case Protocol::MessageType::Resume:
         case Protocol::MessageType::ControlledStop:
+        case Protocol::MessageType::ResetFault:
         case Protocol::MessageType::Heartbeat:
         case Protocol::MessageType::EnterConfigurationMode:
         case Protocol::MessageType::DiscoverTopology:
@@ -939,14 +997,31 @@ private:
         case Behavior::CommandWrongFinal:
             putU32(payload, 36, 0);
             break;
-        default:
-            sendResponse(peer,
-                         Protocol::MessageType::ControllerState,
-                         request.header.requestId,
-                         m_behavior == Behavior::ControlLifecycle || m_behavior == Behavior::PackageDeployment
-                             ? lifecycleControllerStatePayload(m_serviceState, cycleCount())
-                             : controllerStatePayload());
+        default: {
+            QByteArray statePayload
+                = m_behavior == Behavior::ControlLifecycle
+                          || m_behavior == Behavior::FaultReset
+                          || m_behavior == Behavior::PackageDeployment
+                      ? lifecycleControllerStatePayload(
+                            m_serviceState,
+                            cycleCount(),
+                            m_currentFaults,
+                            m_latchedFaults,
+                            m_lastAlarmSequence,
+                            m_behavior == Behavior::FaultReset
+                                && m_faultResetSafeCyclicRuntime)
+                      : controllerStatePayload();
+            if (m_behavior == Behavior::FaultReset && m_serviceState == 6
+                && !m_faultResetSafeCyclicRuntime) {
+                putU32(statePayload, 4, 0x19); // READY | SAFE_OUTPUT | FAULT
+            }
+            sendResponse(
+                peer,
+                Protocol::MessageType::ControllerState,
+                request.header.requestId,
+                statePayload);
             return;
+        }
         }
         sendResponse(
             peer, Protocol::MessageType::CommandStatus, request.header.requestId, payload, flags);
@@ -1009,7 +1084,9 @@ private:
                 m_candidateSlot,
                 m_candidateGeneration,
                 m_deploymentConfigurationId);
-        } else if (m_behavior == Behavior::ControlLifecycle || m_behavior == Behavior::PackageDeployment) {
+        } else if (
+            m_behavior == Behavior::ControlLifecycle || m_behavior == Behavior::FaultReset
+            || m_behavior == Behavior::PackageDeployment) {
             payload = packageStatePayload(
                 Protocol::MessageType::GetPackageState, m_controllerPackageActive);
         } else {
@@ -1224,7 +1301,8 @@ private:
 
     void handleControlRequest(Peer &peer, const Protocol::Frame &request)
     {
-        if (m_behavior != Behavior::ControlLifecycle && m_behavior != Behavior::PackageDeployment) {
+        if (m_behavior != Behavior::ControlLifecycle && m_behavior != Behavior::FaultReset
+            && m_behavior != Behavior::PackageDeployment) {
             m_violations.append(
                 QStringLiteral("A control request was emitted outside the lifecycle test."));
             return;
@@ -1234,6 +1312,7 @@ private:
             Protocol::Role::Control,
             request,
             request.header.messageType == Protocol::MessageType::AcquireControl ? 4
+            : request.header.messageType == Protocol::MessageType::ResetFault  ? 16
             : request.header.messageType == Protocol::MessageType::DiscoverTopology
                 ? 8
             : request.header.messageType == Protocol::MessageType::RestoreActivePackage
@@ -1242,19 +1321,42 @@ private:
 
         if (m_nextControlStatus && request.header.messageType == m_rejectedControlType) {
             const qint32 status = m_nextControlStatus;
+            const qint32 operationResult = m_nextControlOperationResult;
+            const quint64 detail = m_nextControlDetail;
             m_nextControlStatus = 0;
+            m_nextControlOperationResult = -1;
+            m_nextControlDetail = 0;
             m_rejectedControlType = Protocol::MessageType::Error;
             const quint16 stage
-                = request.header.messageType == Protocol::MessageType::AcquireControl
+                = m_nextControlFailureStage
+                      ? m_nextControlFailureStage
+                  : request.header.messageType == Protocol::MessageType::AcquireControl
                           || request.header.messageType == Protocol::MessageType::ReleaseControl
                       ? 4
                       : 1;
+            m_nextControlFailureStage = 0;
+            for (quint16 completedStage = 1; completedStage < stage; ++completedStage) {
+                sendResponse(
+                    peer,
+                    Protocol::MessageType::CommandStatus,
+                    request.header.requestId,
+                    successfulCommandStatusPayload(
+                        request.header.messageType,
+                        completedStage,
+                        m_serviceState,
+                        false));
+            }
             sendResponse(
                 peer,
                 Protocol::MessageType::CommandStatus,
                 request.header.requestId,
                 rejectedCommandStatusPayload(
-                    request.header.messageType, stage, m_serviceState, status),
+                    request.header.messageType,
+                    stage,
+                    m_serviceState,
+                    status,
+                    detail,
+                    operationResult),
                 Protocol::Flag::Response | Protocol::Flag::Error);
             return;
         }
@@ -1289,6 +1391,40 @@ private:
             }
             sendLeaseCommandStatus(peer, request);
             return;
+        case Protocol::MessageType::ResetFault: {
+            if (!m_leaseOwned || m_serviceState != 6 || m_currentFaults
+                || !m_latchedFaults || readU64(request.payload, 0) != m_latchedFaults
+                || readU32(request.payload, 8) != m_lastAlarmSequence
+                || readU32(request.payload, 12)) {
+                m_violations.append(QStringLiteral("ResetFault confirmation was not exact."));
+            }
+            const quint64 confirmedFaults = m_latchedFaults;
+            const quint32 clearedSequence
+                = m_lastAlarmSequence == std::numeric_limits<quint32>::max()
+                      ? 1
+                      : m_lastAlarmSequence + 1;
+            m_currentFaults = 0;
+            m_latchedFaults = 0;
+            m_lastAlarmSequence = clearedSequence;
+            m_serviceState = m_faultResetTerminalServiceState;
+            m_faultClearedMask = confirmedFaults;
+            m_faultClearedEventSequence = clearedSequence;
+            m_faultClearedEventAvailable = !m_omitFaultClearedEventOnce;
+            m_omitFaultClearedEventOnce = false;
+            for (quint16 stage = 1; stage <= 4; ++stage) {
+                sendResponse(
+                    peer,
+                    Protocol::MessageType::CommandStatus,
+                    request.header.requestId,
+                    successfulCommandStatusPayload(
+                        request.header.messageType,
+                        stage,
+                        m_serviceState,
+                        stage == 4,
+                        stage == 4 ? clearedSequence : 0));
+            }
+            return;
+        }
         case Protocol::MessageType::EnterConfigurationMode:
             if (!m_leaseOwned)
                 m_violations.append(QStringLiteral("Configuration mode requires the lease."));
@@ -1456,7 +1592,11 @@ private:
             m_helloLeaseOwnerSessionId
                 ? m_helloLeaseOwnerSessionId
                 : (m_leaseOwned ? TestSessionId : 0));
-        putU32(payload, 32, m_protocolMinor >= Protocol::ExplicitTimingModeMinor ? 0xfff : 0x7ff);
+        const quint32 defaultFeatureBits
+            = m_protocolMinor >= Protocol::ControlledFaultResetMinor
+                  ? 0x1fff
+                  : m_protocolMinor >= Protocol::ExplicitTimingModeMinor ? 0x0fff : 0x07ff;
+        putU32(payload, 32, m_featureBits.value_or(defaultFeatureBits));
         putU32(payload, 36, m_defaultLeaseDurationMs);
         peer.handshaken = true;
         Protocol::Frame frame
@@ -1540,6 +1680,10 @@ private:
         m_resumeAfterSequences.append(requestedAfterSequence);
         const qint32 resumeStatus = m_nextResumeStatus;
         m_nextResumeStatus = 0;
+        const bool replayFaultCleared
+            = !resumeStatus && m_behavior == Behavior::FaultReset && requestedAfterSequence
+              && m_faultClearedEventAvailable
+              && requestedAfterSequence != m_faultClearedEventSequence;
 
         Protocol::Frame progress = response(
             peer,
@@ -1558,6 +1702,10 @@ private:
             putU32(resumePayload, 8, TestAlarmSequence);
             putU32(resumePayload, 12, TestAlarmSequence);
             putU32(resumePayload, 16, 1);
+        } else if (replayFaultCleared) {
+            putU32(resumePayload, 8, TestAlarmSequence);
+            putU32(resumePayload, 12, m_faultClearedEventSequence);
+            putU32(resumePayload, 16, 1);
         } else if (!resumeStatus && requestedAfterSequence) {
             putU32(resumePayload, 8, requestedAfterSequence);
             putU32(resumePayload, 12, requestedAfterSequence);
@@ -1571,6 +1719,7 @@ private:
                                                     ? Protocol::Flag::Response
                                                           | Protocol::Flag::Error
                                                     : !requestedAfterSequence
+                                                              || replayFaultCleared
                                                           ? Protocol::Flag::Response
                                                                 | Protocol::Flag::More
                                                           : Protocol::flagValue(
@@ -1594,6 +1743,23 @@ private:
                 request.header.requestId,
                 alarmEventPayload(TestAlarmSequence),
                 Protocol::Flag::Response | Protocol::Flag::Important));
+        } else if (replayFaultCleared) {
+            coalesced += wireFor(response(
+                peer,
+                Protocol::MessageType::AlarmCleared,
+                request.header.requestId,
+                alarmEventPayload(
+                    m_faultClearedEventSequence,
+                    5,
+                    1,
+                    1,
+                    2,
+                    0,
+                    0,
+                    0,
+                    m_faultClearedMask),
+                Protocol::Flag::Response | Protocol::Flag::Important));
+            m_faultClearedEventAvailable = false;
         }
         if (!coalesced.isEmpty())
             peer.socket->write(coalesced);
@@ -1629,6 +1795,9 @@ private:
     qint32 m_nextResumeStatus = 0;
     qint32 m_nextStateStatus = 0;
     qint32 m_nextControlStatus = 0;
+    qint32 m_nextControlOperationResult = -1;
+    quint64 m_nextControlDetail = 0;
+    quint16 m_nextControlFailureStage = 0;
     qint32 m_nextDeploymentStatus = 0;
     qint32 m_nextDeploymentPackageStateStatus = 0;
     quint16 m_nextDeploymentFailureStage = 1;
@@ -1636,14 +1805,24 @@ private:
     quint32 m_defaultLeaseDurationMs = 5000;
     quint64 m_helloLeaseOwnerSessionId = 0;
     quint16 m_protocolMinor = Protocol::CurrentMinor;
+    std::optional<quint32> m_featureBits;
     Protocol::MessageType m_rejectedControlType = Protocol::MessageType::Error;
     Protocol::MessageType m_rejectedDeploymentType = Protocol::MessageType::Error;
     Protocol::MessageType m_rejectedDeploymentPackageStateType = Protocol::MessageType::Error;
     Behavior m_behavior = Behavior::Normal;
     quint32 m_serviceState = 8;
+    quint64 m_currentFaults = 0;
+    quint64 m_latchedFaults = 0;
+    quint32 m_lastAlarmSequence = 19;
+    quint64 m_faultClearedMask = 0;
+    quint32 m_faultClearedEventSequence = 0;
+    quint32 m_faultResetTerminalServiceState = 3;
+    bool m_faultResetSafeCyclicRuntime = true;
     bool m_controllerPackageActive = false;
     bool m_leaseOwned = false;
     bool m_deploymentActivated = false;
+    bool m_faultClearedEventAvailable = false;
+    bool m_omitFaultClearedEventOnce = false;
     Data::ControllerSlot m_candidateSlot = Data::ControllerSlot::A;
     quint64 m_candidateGeneration = 55;
     quint64 m_deploymentConfigurationId = 0;
@@ -1748,6 +1927,8 @@ QString hardwareCommandName(Data::ControllerControlCommand command)
         return QStringLiteral("Resume");
     case Command::ControlledStop:
         return QStringLiteral("ControlledStop");
+    case Command::ResetFault:
+        return QStringLiteral("ResetFault");
     }
     return QStringLiteral("Invalid");
 }
@@ -2039,7 +2220,7 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
     const QByteArray descriptor("opaque-vendor-capability-v1");
     Protocol::Error error;
     const auto capability = Protocol::decodeCapability(
-        responseFrame(Protocol::MessageType::Capability, descriptor), 0xfff, &error);
+        responseFrame(Protocol::MessageType::Capability, descriptor), 0x1fff, &error);
     QVERIFY(capability);
     QVERIFY(!error);
     QCOMPARE(capability->descriptorSha256,
@@ -2052,6 +2233,7 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
     QVERIFY(capability->structuredHandshakeError);
     QVERIFY(capability->firmwareUpdate);
     QVERIFY(capability->explicitTimingModeStart);
+    QVERIFY(capability->faultReset);
 
     error = {};
     const auto package = Protocol::decodePackageState(
@@ -2163,6 +2345,40 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
     QVERIFY(clearedAlarm);
     QCOMPARE(clearedAlarm->state, Data::ControllerAlarmState::Cleared);
     QVERIFY(!clearedAlarm->latched);
+
+    const auto faultClearedAlarm = Protocol::decodeAlarmEvent(
+        responseFrame(
+            Protocol::MessageType::AlarmCleared,
+            alarmEventPayload(10, 5, 1, 1, 2, 0, 0, 0),
+            5,
+            Protocol::Flag::Response | Protocol::Flag::Important),
+        &error);
+    QVERIFY(faultClearedAlarm);
+    QCOMPARE(faultClearedAlarm->codeName, Tr::tr("Fault cleared"));
+    QCOMPARE(faultClearedAlarm->severity, Data::ControllerSeverity::Information);
+    QCOMPARE(faultClearedAlarm->source, Data::ControllerAlarmSource::Service);
+
+    error = {};
+    QVERIFY(!Protocol::decodeAlarmEvent(
+        responseFrame(
+            Protocol::MessageType::AlarmCleared,
+            alarmEventPayload(10, 5, 2, 1, 2, 0, 0, 0),
+            5,
+            Protocol::Flag::Response | Protocol::Flag::Important),
+        &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    const auto wrappedCountersAlarm = Protocol::decodeAlarmEvent(
+        responseFrame(
+            Protocol::MessageType::AlarmRaised,
+            alarmEventPayload(10, 11, 4, 2, 1, 3, 4, 4),
+            5,
+            Protocol::Flag::Response | Protocol::Flag::Important),
+        &error);
+    QVERIFY(wrappedCountersAlarm);
+    QCOMPARE(
+        wrappedCountersAlarm->detail,
+        Tr::tr("TX %1, RX %2, pending unavailable, last frame %3").arg(3).arg(4).arg(4));
 
     error = {};
     QVERIFY(!Protocol::decodeAlarmEvent(
@@ -2324,6 +2540,97 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
         QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
     }
 
+    for (quint16 stage = 1; stage <= 4; ++stage) {
+        Protocol::Frame frame = responseFrame(
+            Protocol::MessageType::CommandStatus,
+            successfulCommandStatusPayload(
+                Protocol::MessageType::ResetFault,
+                stage,
+                3,
+                stage == 4,
+                stage == 4 ? 20 : 0));
+        error = {};
+        const auto resetStatus = Protocol::decodeCommandStatus(frame, &error);
+        QVERIFY(resetStatus);
+        QVERIFY(!error);
+        QCOMPARE(resetStatus->originalType, quint16(Protocol::MessageType::ResetFault));
+    }
+    QByteArray invalidResetSuccess = successfulCommandStatusPayload(
+        Protocol::MessageType::ResetFault, 4, 3, true, 0);
+    error = {};
+    QVERIFY(!Protocol::decodeCommandStatus(
+        responseFrame(Protocol::MessageType::CommandStatus, invalidResetSuccess), &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+    QByteArray invalidResetIntermediateDetail = successfulCommandStatusPayload(
+        Protocol::MessageType::ResetFault, 2, 3, false, 1);
+    error = {};
+    QVERIFY(!Protocol::decodeCommandStatus(
+        responseFrame(
+            Protocol::MessageType::CommandStatus,
+            invalidResetIntermediateDetail),
+        &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    for (const auto &[operationResult, detail] :
+         QList<QPair<qint32, quint64>>{{-3, 0}, {-6, quint64(1) << 15}, {-9, 20}}) {
+        const QByteArray payload = rejectedCommandStatusPayload(
+            Protocol::MessageType::ResetFault,
+            3,
+            6,
+            -15,
+            detail,
+            operationResult);
+        error = {};
+        const auto rejection = Protocol::decodeCommandStatus(
+            responseFrame(
+                Protocol::MessageType::CommandStatus,
+                payload,
+                1,
+                Protocol::Flag::Response | Protocol::Flag::Error),
+            &error);
+        QVERIFY(rejection);
+        QVERIFY(!error);
+        QCOMPARE(rejection->operationResult, operationResult);
+    }
+    QByteArray invalidFaultActive = rejectedCommandStatusPayload(
+        Protocol::MessageType::ResetFault,
+        3,
+        6,
+        -15,
+        quint64(1) << 17,
+        -6);
+    error = {};
+    QVERIFY(!Protocol::decodeCommandStatus(
+        responseFrame(
+            Protocol::MessageType::CommandStatus,
+            invalidFaultActive,
+            1,
+            Protocol::Flag::Response | Protocol::Flag::Error),
+        &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+    const QByteArray invalidStaleConfirmation = rejectedCommandStatusPayload(
+        Protocol::MessageType::ResetFault, 3, 6, -15, 0, -9);
+    error = {};
+    QVERIFY(!Protocol::decodeCommandStatus(
+        responseFrame(
+            Protocol::MessageType::CommandStatus,
+            invalidStaleConfirmation,
+            1,
+            Protocol::Flag::Response | Protocol::Flag::Error),
+        &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    Protocol::Frame legacyReset = responseFrame(
+        Protocol::MessageType::CommandStatus,
+        rejectedCommandStatusPayload(
+            Protocol::MessageType::ResetFault, 2, 6, -14, 0, -7),
+        1,
+        Protocol::Flag::Response | Protocol::Flag::Error);
+    legacyReset.header.protocolMinor = Protocol::ExplicitTimingModeMinor;
+    error = {};
+    QVERIFY(Protocol::decodeCommandStatus(legacyReset, &error));
+    QVERIFY(!error);
+
     const QList<qint32> packageStatuses{-6, -7, -8, -12, -16};
     for (const qint32 status : packageStatuses) {
         QByteArray payload = packageStateErrorPayload();
@@ -2413,6 +2720,9 @@ void EtherCATProductApiTests::testSupportedRequestPolicy()
     putU32(selector, 0, 'A');
     putU64(selector, 8, 11);
     putU64(selector, 16, 22);
+    QByteArray faultReset(16, '\0');
+    putU64(faultReset, 0, quint64(1) << 15);
+    putU32(faultReset, 8, 19);
     const QList<QPair<Protocol::MessageType, QByteArray>> controls{
         {Protocol::MessageType::AcquireControl, lease},
         {Protocol::MessageType::ReleaseControl, {}},
@@ -2420,6 +2730,7 @@ void EtherCATProductApiTests::testSupportedRequestPolicy()
         {Protocol::MessageType::StartFreeRun, {}},
         {Protocol::MessageType::StartDc, {}},
         {Protocol::MessageType::ControlledStop, {}},
+        {Protocol::MessageType::ResetFault, faultReset},
         {Protocol::MessageType::Heartbeat, {}},
         {Protocol::MessageType::EnterConfigurationMode, {}},
         {Protocol::MessageType::DiscoverTopology, topology},
@@ -2456,6 +2767,48 @@ void EtherCATProductApiTests::testSupportedRequestPolicy()
                     .isEmpty());
         QCOMPARE(error.category, Protocol::ErrorCategory::IncompatibleVersion);
     }
+    {
+        Protocol::Error error;
+        QVERIFY(Protocol::encodeRequest(
+                    Protocol::MessageType::ResetFault,
+                    faultReset,
+                    TestSessionId,
+                    1,
+                    1,
+                    TestBootId,
+                    Protocol::ControlledFaultResetMinor - 1,
+                    &error)
+                    .isEmpty());
+        QCOMPARE(error.category, Protocol::ErrorCategory::IncompatibleVersion);
+        QCOMPARE(error.status, std::optional<qint32>(-14));
+    }
+    const auto rejectsFaultResetPayload = [](const QByteArray &payload) {
+        Protocol::Error error;
+        QVERIFY(Protocol::encodeRequest(
+                    Protocol::MessageType::ResetFault,
+                    payload,
+                    TestSessionId,
+                    1,
+                    1,
+                    TestBootId,
+                    Protocol::CurrentMinor,
+                    &error)
+                    .isEmpty());
+        QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+    };
+    rejectsFaultResetPayload({});
+    QByteArray invalidFaultReset = faultReset;
+    putU64(invalidFaultReset, 0, 0);
+    rejectsFaultResetPayload(invalidFaultReset);
+    invalidFaultReset = faultReset;
+    putU64(invalidFaultReset, 0, quint64(1) << 17);
+    rejectsFaultResetPayload(invalidFaultReset);
+    invalidFaultReset = faultReset;
+    putU32(invalidFaultReset, 8, 0);
+    rejectsFaultResetPayload(invalidFaultReset);
+    invalidFaultReset = faultReset;
+    putU32(invalidFaultReset, 12, 1);
+    rejectsFaultResetPayload(invalidFaultReset);
 
     const QList<Protocol::MessageType> forbidden{
         static_cast<Protocol::MessageType>(0x0500), // BeginFirmwareUpload
@@ -3264,6 +3617,595 @@ void EtherCATProductApiTests::testControlLifecycle()
     QVERIFY(controller.violations().isEmpty());
 }
 
+void EtherCATProductApiTests::testFaultResetLifecycle()
+{
+    {
+        LoopbackController controller(LoopbackController::Behavior::FaultReset);
+        controller.setProtocolMinor(Protocol::ExplicitTimingModeMinor);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+        const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+        QCOMPARE(snapshot.protocolVersion.minor, Protocol::ExplicitTimingModeMinor);
+        QVERIFY(snapshot.capability);
+        QVERIFY(!snapshot.capability->faultReset);
+        QVERIFY(!provider.supportsControlCommand(Data::ControllerControlCommand::ResetFault));
+
+        Data::ControllerControlRequest reset;
+        reset.command = Data::ControllerControlCommand::ResetFault;
+        reset.expectedLatchedFaults = quint64(1) << 15;
+        reset.expectedAlarmSequence = TestAlarmSequence;
+        const Utils::Result<> result = provider.executeControlCommand(reset);
+        QVERIFY(!result);
+        QCOMPARE(
+            result.error(),
+            Tr::tr(
+                "UNSUPPORTED (-14): controlled fault reset requires negotiated Product API "
+                "v1.11 and feature bit 12; no controller request was sent."));
+        QCOMPARE(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Failed);
+        QCOMPARE(provider.connectionSnapshot().controlProgress.stage, quint16(0));
+        QVERIFY(provider.connectionSnapshot().controlProgress.final);
+        QCOMPARE(
+            provider.connectionSnapshot().controlProgress.status,
+            std::optional<qint32>(-14));
+        QVERIFY(!provider.connectionSnapshot().controlProgress.operationResult);
+        QVERIFY(provider.connectionSnapshot().lastError);
+        QCOMPARE(
+            provider.connectionSnapshot().lastError->operation,
+            Data::ControllerOperation::ResetFault);
+        QCOMPARE(provider.connectionSnapshot().lastError->codeName, QStringLiteral("UNSUPPORTED"));
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ResetFault), 0);
+        QVERIFY(controller.violations().isEmpty());
+
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::FaultReset);
+        controller.setFeatureBits(0x0fff);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+        QCOMPARE(
+            provider.connectionSnapshot().protocolVersion.minor,
+            Protocol::ControlledFaultResetMinor);
+        QVERIFY(provider.connectionSnapshot().capability);
+        QVERIFY(!provider.connectionSnapshot().capability->faultReset);
+        QVERIFY(!provider.supportsControlCommand(Data::ControllerControlCommand::ResetFault));
+
+        Data::ControllerControlRequest reset;
+        reset.command = Data::ControllerControlCommand::ResetFault;
+        reset.expectedLatchedFaults = quint64(1) << 15;
+        reset.expectedAlarmSequence = TestAlarmSequence;
+        const Utils::Result<> result = provider.executeControlCommand(reset);
+        QVERIFY(!result);
+        QVERIFY(result.error().contains(QStringLiteral("UNSUPPORTED (-14)")));
+        QCOMPARE(
+            provider.connectionSnapshot().controlProgress.status,
+            std::optional<qint32>(-14));
+        QVERIFY(provider.connectionSnapshot().lastError);
+        QCOMPARE(provider.connectionSnapshot().lastError->codeName, QStringLiteral("UNSUPPORTED"));
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ResetFault), 0);
+        QVERIFY(controller.violations().isEmpty());
+
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::FaultReset);
+        controller.setFaultResetSafeCyclicRuntime(false);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+        Data::ControllerControlRequest control;
+        control.command = Data::ControllerControlCommand::AcquireControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        const Data::ControllerConnectionSnapshot before = provider.connectionSnapshot();
+        QVERIFY(before.controllerState);
+        QVERIFY(before.package);
+        QCOMPARE(
+            before.controllerState->serviceState, Data::ControllerServiceState::Fault);
+        QVERIFY(!before.controllerState->applicationActive);
+        QVERIFY(!before.controllerState->busOperational);
+        QVERIFY(before.controllerState->safeOutput);
+        QVERIFY(before.package->controllerState != Data::ControllerPackageState::Active);
+
+        control.command = Data::ControllerControlCommand::ResetFault;
+        control.expectedLatchedFaults = before.controllerState->latchedFaults;
+        control.expectedAlarmSequence = before.controllerState->latestAlarmSequence;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        const Data::ControllerConnectionSnapshot after = provider.connectionSnapshot();
+        QVERIFY(after.controllerState);
+        QCOMPARE(
+            after.controllerState->serviceState, Data::ControllerServiceState::Shutdown);
+        QVERIFY(!after.controllerState->currentFaults);
+        QVERIFY(!after.controllerState->latchedFaults);
+        QVERIFY(!after.controllerState->applicationActive);
+        QVERIFY(!after.controllerState->busOperational);
+        QVERIFY(!after.controllerState->safeOutput);
+        QCOMPARE(after.package, before.package);
+        QVERIFY(std::any_of(
+            after.recentAlarms.cbegin(),
+            after.recentAlarms.cend(),
+            [](const Data::ControllerAlarmSummary &alarm) {
+                return alarm.sequence == TestAlarmSequence + 1 && alarm.code == 5
+                       && alarm.state == Data::ControllerAlarmState::Cleared
+                       && alarm.faultMask == (quint64(1) << 15);
+            }));
+
+        control.command = Data::ControllerControlCommand::ReleaseControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(controller.violations().isEmpty());
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::FaultReset);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+        QVERIFY(provider.supportsControlCommand(Data::ControllerControlCommand::ResetFault));
+        QVERIFY(provider.connectionSnapshot().capability);
+        QVERIFY(provider.connectionSnapshot().capability->faultReset);
+
+        Data::ControllerControlRequest control;
+        control.command = Data::ControllerControlCommand::AcquireControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+
+        const Data::ControllerConnectionSnapshot before = provider.connectionSnapshot();
+        QVERIFY(before.session);
+        QVERIFY(before.session->ownsControlLease);
+        QVERIFY(before.controllerState);
+        QVERIFY(before.package);
+        QCOMPARE(
+            before.controllerState->serviceState, Data::ControllerServiceState::Fault);
+        QCOMPARE(before.controllerState->currentFaults, quint64(0));
+        QCOMPARE(before.controllerState->latchedFaults, quint64(1) << 15);
+        QCOMPARE(before.controllerState->latestAlarmSequence, TestAlarmSequence);
+        QVERIFY(before.controllerState->busOperational);
+        QVERIFY(before.controllerState->safeOutput);
+        QVERIFY(!before.controllerState->applicationActive);
+
+        QList<quint16> resetStages;
+        connect(
+            &provider,
+            &Core::ControllerConnectionProvider::connectionSnapshotChanged,
+            &provider,
+            [&provider, &resetStages] {
+                const Data::ControllerControlProgress progress
+                    = provider.connectionSnapshot().controlProgress;
+                if (progress.command != Data::ControllerControlCommand::ResetFault
+                    || progress.state != Data::ControllerControlState::Pending
+                    || !progress.stage) {
+                    return;
+                }
+                if (resetStages.isEmpty() || resetStages.constLast() != progress.stage)
+                    resetStages.append(progress.stage);
+            });
+
+        control.command = Data::ControllerControlCommand::ResetFault;
+        control.expectedLatchedFaults = before.controllerState->latchedFaults;
+        control.expectedAlarmSequence = before.controllerState->latestAlarmSequence;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state
+                != Data::ControllerControlState::Pending,
+            1000);
+        const Data::ControllerConnectionSnapshot resetResult = provider.connectionSnapshot();
+        QStringList resetStageNames;
+        for (const quint16 stage : std::as_const(resetStages))
+            resetStageNames.append(QString::number(stage));
+        const QString resetDiagnosticBase
+            = QStringLiteral("%1 | stages=%2 | requests=%3 | violations=%4")
+                  .arg(
+                      resetResult.controlProgress.detail,
+                      resetStageNames.join(QLatin1Char(',')),
+                      QString::number(
+                          controller.requestCount(Protocol::MessageType::ResetFault)),
+                      controller.violations().join(QStringLiteral("; ")));
+        const QString resetDiagnostic
+            = resetResult.lastError
+                  ? QStringLiteral("%1 | %2 | %3")
+                        .arg(
+                            resetDiagnosticBase,
+                            resetResult.lastError->summary,
+                            resetResult.lastError->detail)
+                  : resetDiagnosticBase;
+        QVERIFY2(
+            resetResult.controlProgress.state == Data::ControllerControlState::Succeeded,
+            qPrintable(resetDiagnostic));
+        QCOMPARE(resetStages, QList<quint16>({1, 2, 3, 4}));
+        QCOMPARE(provider.connectionSnapshot().controlProgress.stage, quint16(4));
+        QVERIFY(provider.connectionSnapshot().controlProgress.final);
+        QCOMPARE(
+            provider.connectionSnapshot().controlProgress.status,
+            std::optional<qint32>(0));
+        QCOMPARE(
+            provider.connectionSnapshot().controlProgress.operationResult,
+            std::optional<qint32>(0));
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ResetFault), 1);
+
+        const Data::ControllerConnectionSnapshot after = provider.connectionSnapshot();
+        QVERIFY(after.controllerState);
+        QCOMPARE(
+            after.controllerState->serviceState,
+            Data::ControllerServiceState::OperationalSafe);
+        QCOMPARE(after.controllerState->currentFaults, quint64(0));
+        QCOMPARE(after.controllerState->latchedFaults, quint64(0));
+        QCOMPARE(after.controllerState->latestAlarmSequence, TestAlarmSequence + 1);
+        QCOMPARE(after.package, before.package);
+        QCOMPARE(
+            after.controllerState->applicationActive,
+            before.controllerState->applicationActive);
+        QCOMPARE(
+            after.controllerState->busOperational,
+            before.controllerState->busOperational);
+        QCOMPARE(after.controllerState->safeOutput, before.controllerState->safeOutput);
+
+        const auto cleared = std::find_if(
+            after.recentAlarms.crbegin(),
+            after.recentAlarms.crend(),
+            [](const Data::ControllerAlarmSummary &alarm) {
+                return alarm.sequence == TestAlarmSequence + 1 && alarm.code == 5;
+            });
+        QVERIFY(cleared != after.recentAlarms.crend());
+        QCOMPARE(cleared->codeName, Tr::tr("Fault cleared"));
+        QCOMPARE(cleared->state, Data::ControllerAlarmState::Cleared);
+        QCOMPARE(cleared->severity, Data::ControllerSeverity::Information);
+        QCOMPARE(cleared->source, Data::ControllerAlarmSource::Service);
+        QVERIFY(!cleared->latched);
+        QCOMPARE(cleared->detail0, quint32(0));
+        QCOMPARE(cleared->detail1, quint32(0));
+        QCOMPARE(cleared->detail2, quint32(0));
+        QCOMPARE(cleared->faultMask, quint64(1) << 15);
+
+        control.expectedLatchedFaults = 0;
+        control.expectedAlarmSequence = 0;
+        QVERIFY(provider.executeControlCommand(control));
+        QCOMPARE(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded);
+        QCOMPARE(provider.connectionSnapshot().controlProgress.stage, quint16(0));
+        QVERIFY(provider.connectionSnapshot().controlProgress.final);
+        QVERIFY(
+            provider.connectionSnapshot().controlProgress.detail.contains(
+                QStringLiteral("no controller request was sent"),
+                Qt::CaseInsensitive));
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ResetFault), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::EnterConfigurationMode), 0);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::DiscoverTopology), 0);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::Start), 0);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ControlledStop), 0);
+
+        control.command = Data::ControllerControlCommand::ReleaseControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(controller.violations().isEmpty());
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::FaultReset);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+        Data::ControllerControlRequest control;
+        control.command = Data::ControllerControlCommand::AcquireControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(provider.connectionSnapshot().controllerState);
+
+        const quint32 latestSequence = TestAlarmSequence + 1;
+        controller.rejectNextControl(
+            Protocol::MessageType::ResetFault,
+            -15,
+            -9,
+            latestSequence,
+            3);
+        control.command = Data::ControllerControlCommand::ResetFault;
+        control.expectedLatchedFaults
+            = provider.connectionSnapshot().controllerState->latchedFaults;
+        control.expectedAlarmSequence
+            = provider.connectionSnapshot().controllerState->latestAlarmSequence;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Failed,
+            1000);
+
+        const Data::ControllerConnectionSnapshot rejected = provider.connectionSnapshot();
+        QCOMPARE(rejected.controlProgress.stage, quint16(3));
+        QVERIFY(rejected.controlProgress.final);
+        QCOMPARE(rejected.controlProgress.status, std::optional<qint32>(-15));
+        QCOMPARE(rejected.controlProgress.operationResult, std::optional<qint32>(-9));
+        QVERIFY(
+            rejected.controlProgress.detail.contains(
+                QStringLiteral("ERR_STALE_CONFIRMATION (-9)")));
+        QVERIFY(rejected.controlProgress.detail.contains(QString::number(latestSequence)));
+        QVERIFY(rejected.lastError);
+        QCOMPARE(rejected.lastError->codeName, QStringLiteral("CPU1_REJECTED"));
+        QCOMPARE(rejected.lastError->operationResult, std::optional<qint32>(-9));
+        QCOMPARE(rejected.lastError->sourceDetail, std::optional<quint64>(latestSequence));
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ResetFault), 1);
+
+        control.command = Data::ControllerControlCommand::ReleaseControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(controller.violations().isEmpty());
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::FaultReset);
+        controller.setFaultResetSafeCyclicRuntime(false);
+        controller.setFaultResetControllerPackageActive(true);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+        Data::ControllerControlRequest control;
+        control.command = Data::ControllerControlCommand::AcquireControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(provider.connectionSnapshot().controllerState);
+        QVERIFY(!provider.connectionSnapshot().controllerState->busOperational);
+        QVERIFY(provider.connectionSnapshot().package);
+        QCOMPARE(
+            provider.connectionSnapshot().package->controllerState,
+            Data::ControllerPackageState::Active);
+
+        control.command = Data::ControllerControlCommand::ResetFault;
+        control.expectedLatchedFaults
+            = provider.connectionSnapshot().controllerState->latchedFaults;
+        control.expectedAlarmSequence
+            = provider.connectionSnapshot().controllerState->latestAlarmSequence;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Failed,
+            1000);
+        QCOMPARE(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Degraded);
+        QVERIFY(
+            provider.connectionSnapshot().controlProgress.detail.contains(
+                QStringLiteral("active package without a safe cyclic runtime")));
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ResetFault), 1);
+
+        control.command = Data::ControllerControlCommand::ReleaseControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(controller.violations().isEmpty());
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::FaultReset);
+        controller.setFaultResetSafeCyclicRuntime(false);
+        controller.setFaultResetTerminalServiceState(3);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+        Data::ControllerControlRequest control;
+        control.command = Data::ControllerControlCommand::AcquireControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(provider.connectionSnapshot().controllerState);
+        QVERIFY(!provider.connectionSnapshot().controllerState->busOperational);
+        QVERIFY(provider.connectionSnapshot().controllerState->safeOutput);
+        QVERIFY(provider.connectionSnapshot().package);
+        QVERIFY(
+            provider.connectionSnapshot().package->controllerState
+            != Data::ControllerPackageState::Active);
+
+        control.command = Data::ControllerControlCommand::ResetFault;
+        control.expectedLatchedFaults
+            = provider.connectionSnapshot().controllerState->latchedFaults;
+        control.expectedAlarmSequence
+            = provider.connectionSnapshot().controllerState->latestAlarmSequence;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Failed,
+            1000);
+        QCOMPARE(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Degraded);
+        QVERIFY(
+            provider.connectionSnapshot().controlProgress.detail.contains(
+                QStringLiteral("expected SHUTDOWN state")));
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ResetFault), 1);
+
+        control.command = Data::ControllerControlCommand::ReleaseControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(controller.violations().isEmpty());
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::FaultReset);
+        controller.omitFaultClearedEventOnce();
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+        Data::ControllerControlRequest control;
+        control.command = Data::ControllerControlCommand::AcquireControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(provider.connectionSnapshot().controllerState);
+
+        control.command = Data::ControllerControlCommand::ResetFault;
+        control.expectedLatchedFaults
+            = provider.connectionSnapshot().controllerState->latchedFaults;
+        control.expectedAlarmSequence
+            = provider.connectionSnapshot().controllerState->latestAlarmSequence;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Failed,
+            1000);
+        QCOMPARE(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Degraded);
+        QCOMPARE(provider.connectionSnapshot().controlProgress.stage, quint16(4));
+        QVERIFY(provider.connectionSnapshot().controlProgress.final);
+        QCOMPARE(
+            provider.connectionSnapshot().controlProgress.status,
+            std::optional<qint32>(0));
+        QCOMPARE(
+            provider.connectionSnapshot().controlProgress.expectedLatchedFaults,
+            control.expectedLatchedFaults);
+        QCOMPARE(
+            provider.connectionSnapshot().controlProgress.expectedAlarmSequence,
+            control.expectedAlarmSequence);
+        QVERIFY(
+            provider.connectionSnapshot().controlProgress.detail.contains(
+                QStringLiteral("matching AlarmCleared event was not confirmed")));
+        QVERIFY(provider.connectionSnapshot().lastError);
+        QCOMPARE(
+            provider.connectionSnapshot().lastError->operation,
+            Data::ControllerOperation::ResetFault);
+        QCOMPARE(provider.connectionSnapshot().lastError->codeName, QStringLiteral("OK"));
+        QCOMPARE(provider.connectionSnapshot().lastError->code, std::optional<qint32>(0));
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ResetFault), 1);
+
+        control.command = Data::ControllerControlCommand::ReleaseControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(controller.violations().isEmpty());
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::FaultReset);
+        controller.setFaultResetTerminalServiceState(8);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+        Data::ControllerControlRequest control;
+        control.command = Data::ControllerControlCommand::AcquireControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(provider.connectionSnapshot().controllerState);
+        QVERIFY(provider.connectionSnapshot().controllerState->busOperational);
+        QVERIFY(provider.connectionSnapshot().controllerState->safeOutput);
+        QVERIFY(!provider.connectionSnapshot().controllerState->applicationActive);
+
+        control.command = Data::ControllerControlCommand::ResetFault;
+        control.expectedLatchedFaults
+            = provider.connectionSnapshot().controllerState->latchedFaults;
+        control.expectedAlarmSequence
+            = provider.connectionSnapshot().controllerState->latestAlarmSequence;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Failed,
+            1000);
+        QCOMPARE(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Degraded);
+        QVERIFY(provider.connectionSnapshot().controllerState);
+        QCOMPARE(
+            provider.connectionSnapshot().controllerState->serviceState,
+            Data::ControllerServiceState::Shutdown);
+        QVERIFY(
+            provider.connectionSnapshot().controlProgress.detail.contains(
+                QStringLiteral("expected OP_SAFE state")));
+        QCOMPARE(controller.requestCount(Protocol::MessageType::ResetFault), 1);
+
+        control.command = Data::ControllerControlCommand::ReleaseControl;
+        QVERIFY(provider.executeControlCommand(control));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+        QVERIFY(controller.violations().isEmpty());
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+}
+
 void EtherCATProductApiTests::testPackageDeploymentLifecycle()
 {
     LoopbackController controller(LoopbackController::Behavior::PackageDeployment);
@@ -3744,14 +4686,17 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
     if (timingMode != QStringLiteral("auto") && timingMode != QStringLiteral("free_run")
         && timingMode != QStringLiteral("dc") && timingMode != QStringLiteral("snapshot_only")
         && timingMode != QStringLiteral("scan_only")
-        && timingMode != QStringLiteral("free_run_rejection")) {
+        && timingMode != QStringLiteral("free_run_rejection")
+        && timingMode != QStringLiteral("fault_reset")) {
         QFAIL(
             "QTC_ETHER_CAT_TIMING_MODE must be set to exactly auto, free_run, dc, "
-            "snapshot_only, scan_only, or free_run_rejection before the hardware test can run.");
+            "snapshot_only, scan_only, free_run_rejection, or fault_reset before the hardware "
+            "test can run.");
     }
     const bool snapshotOnly = timingMode == QStringLiteral("snapshot_only");
     const bool scanOnly = timingMode == QStringLiteral("scan_only");
     const bool expectFreeRunRejection = timingMode == QStringLiteral("free_run_rejection");
+    const bool faultResetOnly = timingMode == QStringLiteral("fault_reset");
 
     QString host = qEnvironmentVariable(HostVariable).trimmed();
     if (host.isEmpty())
@@ -3796,6 +4741,13 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
     Data::ControllerSlot initialActiveSlot = Data::ControllerSlot::None;
     quint64 initialActiveGeneration = 0;
     quint64 initialActiveConfigurationId = 0;
+    std::optional<Data::ControllerPackageSummary> initialPackage;
+    bool initialApplicationActive = false;
+    bool initialBusOperational = false;
+    quint64 expectedLatchedFaults = 0;
+    quint32 expectedAlarmSequence = 0;
+    Data::ControllerServiceState expectedResetServiceState
+        = Data::ControllerServiceState::Unknown;
 
     const auto recordFailure = [&failure](const QString &detail) {
         if (failure.isEmpty())
@@ -4022,6 +4974,21 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
                 QStringLiteral("The controller did not advertise explicitTimingModeStart before "
                                "lease acquisition."));
         } else if (
+            faultResetOnly
+            && (snapshot.protocolVersion.major != 1
+                || snapshot.protocolVersion.minor < Protocol::ControlledFaultResetMinor)) {
+            recordFailure(
+                QStringLiteral("The controller negotiated Product API %1.%2; controlled fault "
+                               "reset requires at least 1.%3.")
+                    .arg(snapshot.protocolVersion.major)
+                    .arg(snapshot.protocolVersion.minor)
+                    .arg(Protocol::ControlledFaultResetMinor));
+        } else if (
+            faultResetOnly && (!snapshot.capability || !snapshot.capability->faultReset)) {
+            recordFailure(QStringLiteral(
+                "The controller did not advertise controlled fault reset before lease "
+                "acquisition."));
+        } else if (
             scanOnly
             && (!provider.supportsControlCommand(
                     Data::ControllerControlCommand::AcquireControl)
@@ -4033,7 +5000,13 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
                     Data::ControllerControlCommand::ReleaseControl))) {
             recordFailure(QStringLiteral(
                 "The production session does not expose the scan-only command set."));
-        } else if (!scanOnly && !provider.supportsControlCommand(startCommand)) {
+        } else if (
+            faultResetOnly
+            && !provider.supportsControlCommand(Data::ControllerControlCommand::ResetFault)) {
+            recordFailure(
+                QStringLiteral("The production session does not expose controlled fault reset."));
+        } else if (!scanOnly && !faultResetOnly
+                   && !provider.supportsControlCommand(startCommand)) {
             recordFailure(
                 QStringLiteral("The production session does not expose the requested %1 command.")
                     .arg(hardwareCommandName(startCommand)));
@@ -4068,7 +5041,29 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
             recordFailure(QStringLiteral(
                 "Scan-only acceptance requires fault-free SHUTDOWN with no active bus or runtime "
                 "package."));
-        } else if (!scanOnly
+        } else if (
+            faultResetOnly
+            && (snapshot.controllerState->serviceState != Data::ControllerServiceState::Fault
+                || snapshot.controllerState->currentFaults
+                || !snapshot.controllerState->latchedFaults
+                || !snapshot.controllerState->latestAlarmSequence)) {
+            recordFailure(QStringLiteral(
+                "Fault-reset acceptance requires FAULT with current_faults=0, a nonzero full "
+                "latched mask, and a nonzero alarm checkpoint."));
+        } else if (
+            faultResetOnly
+            && !((snapshot.package->controllerState == Data::ControllerPackageState::Active
+                 && !snapshot.controllerState->applicationActive
+                  && snapshot.controllerState->busOperational
+                  && snapshot.controllerState->safeOutput)
+                 || (snapshot.package->controllerState
+                         != Data::ControllerPackageState::Active
+                     && !snapshot.controllerState->applicationActive
+                     && !snapshot.controllerState->busOperational))) {
+            recordFailure(QStringLiteral(
+                "Fault-reset preflight cannot classify the controller as a safe cyclic runtime "
+                "or a stopped management runtime."));
+        } else if (!scanOnly && !faultResetOnly
                    && (snapshot.package->activeSlot == Data::ControllerSlot::None
                        || !snapshot.package->activeGeneration
                        || !snapshot.package->activeConfigurationId)) {
@@ -4078,7 +5073,9 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
             using ServiceState = Data::ControllerServiceState;
             const ServiceState state = snapshot.controllerState->serviceState;
             const bool canEnterConfiguration
-                = scanOnly
+                = faultResetOnly
+                      ? state == ServiceState::Fault
+                  : scanOnly
                       ? state == ServiceState::Shutdown
                       : state == ServiceState::OperationalSafe || state == ServiceState::Running
                             || state == ServiceState::Paused || state == ServiceState::Fault
@@ -4089,7 +5086,27 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
                         .arg(hardwareServiceStateName(state)));
             } else {
                 initialBootId = snapshot.session->bootId;
-                if (!scanOnly) {
+                initialPackage = snapshot.package;
+                if (faultResetOnly) {
+                    initialApplicationActive = snapshot.controllerState->applicationActive;
+                    initialBusOperational = snapshot.controllerState->busOperational;
+                    expectedLatchedFaults = snapshot.controllerState->latchedFaults;
+                    expectedAlarmSequence = snapshot.controllerState->latestAlarmSequence;
+                    expectedResetServiceState
+                        = initialBusOperational && snapshot.controllerState->safeOutput
+                                  && !initialApplicationActive
+                                  && snapshot.package->controllerState
+                                         == Data::ControllerPackageState::Active
+                              ? ServiceState::OperationalSafe
+                              : ServiceState::Shutdown;
+                    qInfo().noquote()
+                        << "[Product API hardware] fault-reset preflight mask="
+                        << QStringLiteral("0x%1")
+                               .arg(expectedLatchedFaults, 5, 16, QLatin1Char('0'))
+                        << "alarm=" << expectedAlarmSequence << "expectedService="
+                        << hardwareServiceStateName(expectedResetServiceState)
+                        << "boot=" << QString::number(initialBootId);
+                } else if (!scanOnly) {
                     initialActiveSlot = snapshot.package->activeSlot;
                     initialActiveGeneration = snapshot.package->activeGeneration;
                     initialActiveConfigurationId = snapshot.package->activeConfigurationId;
@@ -4177,6 +5194,50 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
                && !snapshot.controllerState->applicationActive && snapshot.package
                && snapshot.package->controllerState != Data::ControllerPackageState::Active;
     };
+    const auto strictFaultResetGate =
+        [&provider,
+         &ownsLease,
+         &sameSessionEpoch,
+         initialBootId,
+         &initialPackage,
+         initialApplicationActive,
+         initialBusOperational,
+         expectedLatchedFaults,
+         expectedAlarmSequence,
+         expectedResetServiceState] {
+            const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+            if (!ownsLease() || !sameSessionEpoch() || !snapshot.controllerState
+                || snapshot.package != initialPackage) {
+                return false;
+            }
+            const Data::ControllerStateSummary &state = *snapshot.controllerState;
+            quint32 expectedClearedSequence = expectedAlarmSequence + 1;
+            if (!expectedClearedSequence)
+                expectedClearedSequence = 1;
+            if (!state.ready || state.controllerBootId != initialBootId
+                || state.serviceState != expectedResetServiceState || state.fault
+                || state.currentFaults || state.latchedFaults
+                || state.latestAlarmSequence != expectedClearedSequence
+                || state.applicationActive != initialApplicationActive
+                || state.busOperational != initialBusOperational
+                || state.safeOutput
+                       != (expectedResetServiceState
+                           == Data::ControllerServiceState::OperationalSafe)) {
+                return false;
+            }
+            return std::any_of(
+                snapshot.recentAlarms.cbegin(),
+                snapshot.recentAlarms.cend(),
+                [expectedClearedSequence, expectedLatchedFaults](
+                    const Data::ControllerAlarmSummary &alarm) {
+                    return alarm.sequence == expectedClearedSequence && alarm.code == 5
+                           && alarm.state == Data::ControllerAlarmState::Cleared
+                           && alarm.severity == Data::ControllerSeverity::Information
+                           && alarm.source == Data::ControllerAlarmSource::Service
+                           && !alarm.latched && !alarm.detail0 && !alarm.detail1 && !alarm.detail2
+                           && alarm.faultMask == expectedLatchedFaults;
+                });
+        };
 
     Data::ControllerControlRequest control;
     if (failure.isEmpty() && !snapshotOnly) {
@@ -4186,14 +5247,36 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         waitForMainGate(QStringLiteral("lease ownership"), ownsLease);
     }
 
-    if (failure.isEmpty() && !snapshotOnly) {
+    if (failure.isEmpty() && faultResetOnly) {
+        control = {};
+        control.command = Data::ControllerControlCommand::ResetFault;
+        control.expectedLatchedFaults = expectedLatchedFaults;
+        control.expectedAlarmSequence = expectedAlarmSequence;
+        executeMainCommand(control, QStringLiteral("confirmed fault reset"));
+        if (failure.isEmpty()) {
+            const Data::ControllerControlProgress progress
+                = provider.connectionSnapshot().controlProgress;
+            if (progress.command != Data::ControllerControlCommand::ResetFault
+                || progress.state != Data::ControllerControlState::Succeeded
+                || progress.stage != 4 || !progress.final || progress.status != 0
+                || progress.operationResult != 0) {
+                recordFailure(QStringLiteral(
+                    "ResetFault did not preserve the exact successful terminal stage-4 "
+                    "CommandStatus."));
+            }
+        }
+        waitForMainGate(QStringLiteral("strict AlarmCleared fault-reset outcome"),
+                        strictFaultResetGate);
+    }
+
+    if (failure.isEmpty() && !snapshotOnly && !faultResetOnly) {
         control = {};
         control.command = Data::ControllerControlCommand::EnterConfigurationMode;
         executeMainCommand(control, QStringLiteral("enter configuration"));
         waitForMainGate(QStringLiteral("initial SHUTDOWN"), strictShutdownGate);
     }
 
-    if (failure.isEmpty() && !snapshotOnly) {
+    if (failure.isEmpty() && !snapshotOnly && !faultResetOnly) {
         control = {};
         control.command = Data::ControllerControlCommand::DiscoverTopology;
         control.firstStationAddress = 0x1001;
@@ -4234,14 +5317,14 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         }
     }
 
-    if (failure.isEmpty() && !snapshotOnly && !scanOnly) {
+    if (failure.isEmpty() && !snapshotOnly && !scanOnly && !faultResetOnly) {
         control = {};
         control.command = Data::ControllerControlCommand::RestoreActivePackage;
         executeMainCommand(control, QStringLiteral("restore exact active package"));
         waitForMainGate(QStringLiteral("restored OP_SAFE"), strictOperationalSafeGate);
     }
 
-    if (failure.isEmpty() && !snapshotOnly && !scanOnly) {
+    if (failure.isEmpty() && !snapshotOnly && !scanOnly && !faultResetOnly) {
         runtimeStartAttempted = true;
         control = {};
         control.command = startCommand;
@@ -4288,28 +5371,31 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         }
     }
 
-    if (failure.isEmpty() && !snapshotOnly && !scanOnly && !expectFreeRunRejection) {
+    if (failure.isEmpty() && !snapshotOnly && !scanOnly && !faultResetOnly
+        && !expectFreeRunRejection) {
         control = {};
         control.command = Data::ControllerControlCommand::Pause;
         executeMainCommand(control, QStringLiteral("pause"));
         waitForMainGate(QStringLiteral("PAUSED"), strictPausedGate);
     }
 
-    if (failure.isEmpty() && !snapshotOnly && !scanOnly && !expectFreeRunRejection) {
+    if (failure.isEmpty() && !snapshotOnly && !scanOnly && !faultResetOnly
+        && !expectFreeRunRejection) {
         control = {};
         control.command = Data::ControllerControlCommand::Resume;
         executeMainCommand(control, QStringLiteral("resume"));
         waitForMainGate(QStringLiteral("resumed RUNNING"), strictRunningGate);
     }
 
-    if (failure.isEmpty() && !snapshotOnly && !scanOnly && !expectFreeRunRejection) {
+    if (failure.isEmpty() && !snapshotOnly && !scanOnly && !faultResetOnly
+        && !expectFreeRunRejection) {
         control = {};
         control.command = Data::ControllerControlCommand::ControlledStop;
         executeMainCommand(control, QStringLiteral("controlled stop"));
         waitForMainGate(QStringLiteral("stopped OP_SAFE"), strictOperationalSafeGate);
     }
 
-    if (failure.isEmpty() && !snapshotOnly && !scanOnly) {
+    if (failure.isEmpty() && !snapshotOnly && !scanOnly && !faultResetOnly) {
         control = {};
         control.command = Data::ControllerControlCommand::EnterConfigurationMode;
         executeMainCommand(control, QStringLiteral("final enter configuration"));
@@ -4343,6 +5429,9 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
             qInfo().noquote()
                 << (scanOnly ? "[Product API hardware] scan-only acceptance completed in "
                                "SHUTDOWN and disconnected"
+                    : faultResetOnly
+                        ? "[Product API hardware] controlled fault-reset acceptance "
+                          "completed with the runtime state preserved and disconnected"
                     : expectFreeRunRejection
                         ? "[Product API hardware] FreeRun incompatibility acceptance "
                           "completed in SHUTDOWN and disconnected"
@@ -4436,7 +5525,7 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         }
 
         cleanupSnapshot = provider.connectionSnapshot();
-        if (cleanupOwnsLease && cleanupSnapshot.controllerState
+        if (!faultResetOnly && cleanupOwnsLease && cleanupSnapshot.controllerState
             && (cleanupSnapshot.controllerState->serviceState
                     == Data::ControllerServiceState::Running
                 || cleanupSnapshot.controllerState->serviceState
@@ -4458,7 +5547,7 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         }
 
         cleanupSnapshot = provider.connectionSnapshot();
-        if (cleanupOwnsLease && cleanupSnapshot.controllerState
+        if (!faultResetOnly && cleanupOwnsLease && cleanupSnapshot.controllerState
             && (cleanupSnapshot.controllerState->serviceState
                     == Data::ControllerServiceState::OperationalSafe
                 || cleanupSnapshot.controllerState->serviceState
@@ -4484,19 +5573,22 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
 
         cleanupSnapshot = provider.connectionSnapshot();
         cleanupOwnsLease = cleanupSnapshot.session && cleanupSnapshot.session->ownsControlLease;
-        const bool canRelease = cleanupOwnsLease && cleanupSnapshot.controllerState
-                                && cleanupSnapshot.controllerState->ready
-                                && (cleanupSnapshot.controllerState->serviceState
-                                        == Data::ControllerServiceState::Shutdown
-                                    || cleanupSnapshot.controllerState->serviceState
-                                           == Data::ControllerServiceState::OperationalSafe);
+        const bool canRelease
+            = faultResetOnly
+                  ? cleanupOwnsLease
+                  : cleanupOwnsLease && cleanupSnapshot.controllerState
+                        && cleanupSnapshot.controllerState->ready
+                        && (cleanupSnapshot.controllerState->serviceState
+                                == Data::ControllerServiceState::Shutdown
+                            || cleanupSnapshot.controllerState->serviceState
+                                   == Data::ControllerServiceState::OperationalSafe);
         if (canRelease) {
             Data::ControllerControlRequest release;
             release.command = Data::ControllerControlCommand::ReleaseControl;
             cleanupCommand(release, QStringLiteral("cleanup release control"));
         } else if (cleanupOwnsLease) {
             appendCleanupFailure(QStringLiteral(
-                "Cleanup retained the lease because SHUTDOWN or OP_SAFE was not confirmed."));
+                "Cleanup retained the lease because no releasable terminal state was confirmed."));
         } else if (runtimeStartAttempted && cleanupRuntimeState) {
             appendCleanupFailure(QStringLiteral(
                 "The controller was still RUNNING or PAUSED without a recoverable lease."));

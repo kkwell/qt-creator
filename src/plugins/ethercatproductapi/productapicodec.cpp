@@ -30,6 +30,7 @@ constexpr quint32 ProcessInputSampleFeature = 1U << 8;
 constexpr quint32 StructuredHelloErrorFeature = 1U << 9;
 constexpr quint32 FirmwareUpdateFeature = 1U << 10;
 constexpr quint32 ExplicitTimingModeStartFeature = 1U << 11;
+constexpr quint32 ControlledFaultResetFeature = 1U << 12;
 constexpr quint32 ControllerStatusKnownMask = 0x000001ff;
 constexpr quint64 ControllerFaultKnownMask = Data::ControllerFaultKnownMask;
 static_assert(ControllerFaultKnownMask == 0x000000000001ffff);
@@ -102,6 +103,17 @@ bool validPackageSelector(QByteArrayView payload)
            && readBigEndian<quint64>(payload, 16);
 }
 
+bool validResetFaultPayload(QByteArrayView payload)
+{
+    if (payload.size() != 16)
+        return false;
+    const quint64 expectedLatchedFaults = readBigEndian<quint64>(payload, 0);
+    return expectedLatchedFaults
+           && !(expectedLatchedFaults & ~ControllerFaultKnownMask)
+           && readBigEndian<quint32>(payload, 8)
+           && readBigEndian<quint32>(payload, 12) == 0;
+}
+
 bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type)
 {
     if (direction == FrameDirection::ClientRequest) {
@@ -112,7 +124,8 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
                    || type == MessageType::ReleaseControl || type == MessageType::Start
                    || type == MessageType::StartFreeRun || type == MessageType::StartDc
                    || type == MessageType::Pause || type == MessageType::Resume
-                   || type == MessageType::ControlledStop || type == MessageType::GetState
+                   || type == MessageType::ControlledStop || type == MessageType::ResetFault
+                   || type == MessageType::GetState
                    || type == MessageType::Heartbeat
                    || type == MessageType::EnterConfigurationMode
                    || type == MessageType::GetCapability
@@ -435,8 +448,31 @@ bool firmwareStatusAllowed(qint32 status)
 
 bool commandStatusOriginalAllowed(quint16 originalType)
 {
-    return (originalType >= 0x0100 && originalType <= 0x010d) || originalType == 0x0210
-           || (originalType >= 0x0400 && originalType <= 0x040a);
+    switch (static_cast<MessageType>(originalType)) {
+    case MessageType::AcquireControl:
+    case MessageType::ReleaseControl:
+    case MessageType::Start:
+    case MessageType::Pause:
+    case MessageType::Resume:
+    case MessageType::ControlledStop:
+    case MessageType::ResetFault:
+    case MessageType::GetState:
+    case MessageType::Heartbeat:
+    case MessageType::EnterConfigurationMode:
+    case MessageType::StartFreeRun:
+    case MessageType::StartDc:
+    case MessageType::ResumeEvents:
+    case MessageType::GetCapability:
+    case MessageType::DiscoverTopology:
+    case MessageType::GetPackageState:
+    case MessageType::ValidatePackage:
+    case MessageType::ActivatePackage:
+    case MessageType::RollbackPackage:
+    case MessageType::RestoreActivePackage:
+        return true;
+    default:
+        return false;
+    }
 }
 
 bool bulkStatusOriginalAllowed(quint16 originalType)
@@ -661,7 +697,7 @@ bool isSupportedRequest(MessageType type)
            || type == MessageType::Start || type == MessageType::StartFreeRun
            || type == MessageType::StartDc || type == MessageType::Pause
            || type == MessageType::Resume || type == MessageType::ControlledStop
-           || type == MessageType::Heartbeat
+           || type == MessageType::ResetFault || type == MessageType::Heartbeat
            || type == MessageType::EnterConfigurationMode
            || type == MessageType::DiscoverTopology
            || isPackageDeploymentRequest(type);
@@ -740,6 +776,14 @@ QByteArray encodeRequest(
             Tr::tr("The request message type is not supported."));
         return {};
     }
+    if (type == MessageType::ResetFault && protocolMinor < ControlledFaultResetMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            Tr::tr("Controlled fault reset requires protocol v1.11."),
+            -14);
+        return {};
+    }
     bool payloadValid = false;
     if (type == MessageType::Hello) {
         payloadValid = payload.size() == 24;
@@ -750,6 +794,8 @@ QByteArray encodeRequest(
                        || (payload.size() == 4
                            && readBigEndian<quint32>(payload, 0) >= 1
                            && readBigEndian<quint32>(payload, 0) <= MaximumLeaseDurationMs);
+    } else if (type == MessageType::ResetFault) {
+        payloadValid = validResetFaultPayload(payload);
     } else if (type == MessageType::DiscoverTopology) {
         payloadValid = payload.size() == 8 && readBigEndian<quint16>(payload, 0)
                        && readBigEndian<quint16>(payload, 2) >= 1
@@ -1072,6 +1118,58 @@ std::optional<CommandStatus> decodeCommandStatus(const Frame &frame, Error *erro
                 ErrorCategory::InvalidPayload,
                 Tr::tr("TIMING_MODE_MISMATCH fields violate the v1.10 contract."));
             return {};
+        }
+    }
+    if (originalType == quint16(MessageType::ResetFault)) {
+        if (frame.header.protocolMinor < ControlledFaultResetMinor) {
+            if (frame.header.protocolMinor != ExplicitTimingModeMinor
+                || status != -14 || operationResult != -7 || stage != 2 || !finalValue) {
+                setError(
+                    error,
+                    ErrorCategory::InvalidPayload,
+                    QStringLiteral(
+                        "Legacy ResetFault CommandStatus violates the v1.10 contract."));
+                return {};
+            }
+        } else if (!status) {
+            const bool expectedFinal = stage == 4;
+            if (bool(finalValue) != expectedFinal
+                || (expectedFinal
+                        ? !detail || detail > std::numeric_limits<quint32>::max()
+                        : detail != 0)) {
+                setError(
+                    error,
+                    ErrorCategory::InvalidPayload,
+                    QStringLiteral(
+                        "ResetFault success stages violate the v1.11 contract."));
+                return {};
+            }
+        } else if (status == -6) {
+            if (operationResult != -4 || stage != 2 || !finalValue) {
+                setError(
+                    error,
+                    ErrorCategory::InvalidPayload,
+                    QStringLiteral(
+                        "ResetFault BAD_MESSAGE fields violate the v1.11 contract."));
+                return {};
+            }
+        } else if (status == -15) {
+            const bool stateRejected = operationResult == -3;
+            const bool activeFaultRejected
+                = operationResult == -6 && detail
+                  && !(detail & ~ControllerFaultKnownMask);
+            const bool staleConfirmationRejected
+                = operationResult == -9 && detail
+                  && detail <= std::numeric_limits<quint32>::max();
+            if (stage != 3 || !finalValue
+                || (!stateRejected && !activeFaultRejected && !staleConfirmationRejected)) {
+                setError(
+                    error,
+                    ErrorCategory::InvalidPayload,
+                    QStringLiteral(
+                        "ResetFault CPU1 rejection fields violate the v1.11 contract."));
+                return {};
+            }
         }
     }
 
@@ -1407,6 +1505,15 @@ std::optional<Data::ControllerAlarmSummary> decodeAlarmEvent(
     const quint32 detail0 = readBigEndian<quint32>(payload, 20);
     const quint32 detail1 = readBigEndian<quint32>(payload, 24);
     const quint32 detail2 = readBigEndian<quint32>(payload, 28);
+    if (code == 5
+        && (raised || severityValue != 1 || sourceValue != 1 || eventFlags != 0x2
+            || detail0 || detail1 || detail2 || !faultMask)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("FaultCleared AlarmEvent violates the v1.11 contract."));
+        return {};
+    }
     if (code == 3 && detail2) {
         setError(
             error,
@@ -1416,7 +1523,9 @@ std::optional<Data::ControllerAlarmSummary> decodeAlarmEvent(
     }
     QString codeName = Tr::tr("Alarm code %1").arg(code);
     QString detail;
-    if (code == 3) {
+    if (code == 5) {
+        codeName = Tr::tr("Fault cleared");
+    } else if (code == 3) {
         codeName = Tr::tr("Runtime error");
         const qint32 signedResult = qint32(detail0);
         detail = signedResult == -2 && detail1 == 255
@@ -1426,12 +1535,16 @@ std::optional<Data::ControllerAlarmSummary> decodeAlarmEvent(
                      : Tr::tr("result %1, phase %2").arg(signedResult).arg(detail1);
     } else if (code == 11) {
         codeName = Tr::tr("RX timeout");
-        const quint32 pendingFrames = detail0 - detail1;
-        detail = Tr::tr("TX %1, RX %2, pending %3, last frame %4")
-                     .arg(detail0)
-                     .arg(detail1)
-                     .arg(pendingFrames)
-                     .arg(detail2);
+        detail = detail0 >= detail1
+                     ? Tr::tr("TX %1, RX %2, pending %3, last frame %4")
+                           .arg(detail0)
+                           .arg(detail1)
+                           .arg(detail0 - detail1)
+                           .arg(detail2)
+                     : Tr::tr("TX %1, RX %2, pending unavailable, last frame %3")
+                           .arg(detail0)
+                           .arg(detail1)
+                           .arg(detail2);
     }
 
     return Data::ControllerAlarmSummary{
@@ -1653,6 +1766,7 @@ std::optional<Data::ControllerCapabilitySummary> decodeCapability(
     result.structuredHandshakeError = featureBits & StructuredHelloErrorFeature;
     result.firmwareUpdate = featureBits & FirmwareUpdateFeature;
     result.explicitTimingModeStart = featureBits & ExplicitTimingModeStartFeature;
+    result.faultReset = featureBits & ControlledFaultResetFeature;
     return result;
 }
 

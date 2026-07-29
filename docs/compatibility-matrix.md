@@ -3572,16 +3572,16 @@ historical results of those earlier issues.
 |---|---|
 | Provider neutrality | `ControllerConnectionProvider` exposes typed command support and execution; the default implementation rejects control, so another vendor opts in per command |
 | Semantic snapshot | Control request/progress and linear actual-topology values contain no Product API frame, numeric message type, socket, host, or port |
-| Protocol negotiation | Current local client contract is Product API v1.10; explicit timing-mode start requires feature bit 11 and the complete `0xfff` feature mask. Negotiated v1.9/`0x7ff` remains bounded compatibility |
-| Product API requests | The private adapter adds Acquire, Release, lease Heartbeat, Configuration, DiscoverTopology, RestoreActivePackage, Start, Pause, Resume, ControlledStop, and v1.10 StartFreeRun/StartDc protocol capabilities. Workbench uses generic Start and does not expose explicit timing-mode buttons |
-| Communication page | Provider/profile, Connect/Refresh/Disconnect, automatic/manual Acquire, Configuration, Scan Bus, Restore Package, Release, progress, Actual Bus, and authoritative information; no FreeRun, DC Run, Pause, Resume, or Stop buttons |
+| Protocol negotiation | Current local client contract is Product API v1.11; feature bit 11 retains explicit timing-mode start, while feature bit 12 `CONTROLLED_FAULT_RESET (0x00001000)` makes the cumulative mask `0x00001fff`. Negotiated v1.10/`0xfff` and v1.9/`0x7ff` remain bounded compatibility without ResetFault |
+| Product API requests | The private adapter adds Acquire, Release, lease Heartbeat, Configuration, DiscoverTopology, RestoreActivePackage, Start, Pause, Resume, ControlledStop, v1.10 StartFreeRun/StartDc, and capability-gated v1.11 ResetFault. Workbench receives only provider-neutral commands and uses generic Start |
+| Communication page | Provider/profile, Connect/Refresh/Disconnect, automatic/manual Acquire, Configuration, Scan Bus, Restore Package, Confirm / Reset Fault, Release, progress, Actual Bus, and authoritative information; no FreeRun, DC Run, Pause, Resume, or Stop buttons |
 | Automatic Acquire | After the authoritative connected snapshot identifies the exact Provider/profile/scope/session generation, Workbench queues one Acquire attempt; the page button is manual recovery |
 | Lease arbitration | Exactly one session owns control. Other API sessions retain read-only access, while their writes are rejected with `LEASE_BUSY (-10)` |
 | Native quick controls | Run maps `OP_SAFE` to Start and `PAUSED` to Resume; Debug maps `RUNNING` to Pause and `PAUSED` to Resume; Controlled Stop is beside them and applies in `RUNNING` or `PAUSED` |
-| Full workflow | Connect, automatic/manual Acquire, Configuration, Scan, Restore, native Run, optional Debug Pause/Resume, Controlled Stop, Configuration, Release, Disconnect |
+| Full workflow | Connect, automatic/manual Acquire, optional confirmed fault reset when the cause is gone, Configuration, Scan, Restore, native Run, optional Debug Pause/Resume, Controlled Stop, Configuration, Release, Disconnect |
 | Discovery safety | Requires owned lease, ready `SHUTDOWN`, package summary present, and package not Active; Actual Bus remains separate from the offline Project |
 | Startup safety | Generic Run requires ready `OP_SAFE`, current-Boot active package, operational OP bus, nonzero matching WKC, and zero current/latched faults |
-| Recovery | Controlled Stop confirms `OP_SAFE`; the second Configuration confirms `SHUTDOWN` and inactive package before Release |
+| Recovery | Controlled Stop confirms `OP_SAFE`; the second Configuration confirms `SHUTDOWN` and inactive package before Release. Confirm / Reset Fault is a compare-and-clear latch confirmation only, never a reboot or runtime recovery |
 | Disconnect | Running/Paused Disconnect is rejected; a non-running owned lease is released before channel teardown |
 | FreeRun/DC | Workbench Start runs the active package, whose validated ECFG/DC content determines FreeRun or DC. Explicit StartFreeRun/StartDc remain adapter protocol capabilities, not UI buttons; DC lock remains observation |
 | Mode mismatch | An external explicit-mode request may receive terminal stage-2 `TIMING_MODE_MISMATCH (-35)` with `(requested_mode << 32) \| actual_mode`; this is not a Workbench timing-mode selection |
@@ -3598,6 +3598,31 @@ historical results of those earlier issues.
 | Historical hardware evidence | On 2026-07-24 RAM-only v1.10 passed Connect, Acquire, Configuration, three-slave Scan, Release, and safe cleanup; Restore returned typed `CAPABILITY_MISMATCH (-20)` |
 | Historical runtime observation | The 2026-07-24 RAM service negotiated v1.10/`0xfff`; the recorded reboot behavior returned to persistent release24/v1.9 |
 | Publication | Current work remains local on `embed-labs`; no remote publication is authorized |
+
+## Product API v1.11 controlled fault reset qualification
+
+This table records the frozen contract and current offline integration
+boundary. It does not modify any dated v1.9/v1.10 hardware evidence above.
+
+| Gate | Current result |
+|---|---|
+| Windows authority | `ISSUE-API-030` froze the contract after complete localhost Product API and OS-less regression; implementation archive/ARM artifact hashes are tracked by the Windows controller task |
+| Version/capability | Negotiated minor 11 plus feature bit 12 `0x00001000`; cumulative current mask `0x00001fff`. Minor below 11 or missing bit 12 is rejected locally as `UNSUPPORTED (-14)` and sends nothing |
+| Wire request | Control `ResetFault (0x0107)`, nonzero RequestId and current BootId; exact 16-byte big-endian payload is `u64 expected_latched_faults`, `u32 expected_last_alarm_sequence`, `u32 reserved=0` |
+| Confirmation source | The complete nonzero latched mask and nonzero last alarm sequence come from the same displayed ControllerState snapshot; known fault bits are limited to 0 through 16 |
+| Dispatch gate | Exact Provider/profile/scope/session, real writable snapshot, exclusive lease owned, service exactly `FAULT`, `current_faults == 0`, unchanged full latched mask/sequence, and no competing operation |
+| Rejected states | `RUNNING`, `PAUSED`, transitional or other service states, active current fault, missing confirmation, stale confirmation, missing lease/session/BootId, and unsupported peer are never treated as a reset success |
+| Atomicity | CPU1 compares current-zero plus the exact full mask and sequence, clears only that latch, and commits one strict AlarmCleared event before publishing the terminal response snapshot |
+| Terminal sequence | CommandStatus stages 1 `NETWORK_RECEIVED`, 2 `CPU0_VALIDATED`, 3 `CPU1_ACCEPTED`, and 4 `STATE_COMPLETED`; only stage 4 is final and its detail is the AlarmCleared sequence |
+| Wire success evidence | A ResetFault request reaching stage 4 requires current and latched masks both zero plus strict `AlarmCleared (0x0208)`: code 5, severity 1, source 1, flags exactly `0x2`, confirmed mask, zero details/reserved. State is `OP_SAFE` only for an already-running safe cyclic runtime, otherwise `SHUTDOWN` with no active runtime |
+| Failure fidelity | Active cause is `CPU1_REJECTED (-15)` / `ERR_FAULT_ACTIVE (-6)` with current mask detail; stale confirmation is `CPU1_REJECTED (-15)` / `ERR_STALE_CONFIRMATION (-9)` with latest alarm sequence; disallowed state is `ERR_STATE (-3)` |
+| Idempotency | Existing terminal response cache handles the same RequestId; a new RequestId with old confirmation is stale; a fresh zero-latch snapshot completes as an explicit stage-0 local no-op without sending and therefore has no AlarmCleared requirement |
+| Product boundary | No reboot, CPU/NIC/PHY recovery, scan, selector/package change, application start/stop, safety bypass, or management-loop real-time task |
+| UI entry points | One provider-neutral **Confirm / Reset Fault** action is reused by the Communication page, top engineering command strip, and selected EtherCAT Master context menu |
+| Application Output | Failure retains status name/number, signed operation result, channel, detail, stage/final or outcome-unconfirmed state, current/latched named masks and exact hex, the latest matching AlarmEvent when retained, or otherwise the pre-reset mask/checkpoint, plus corrective action; stage-4 wire success additionally requires AlarmCleared evidence, while the zero-latch stage-0 local no-op explicitly reports that no request was sent |
+| Qt test boundary | Provider-neutral action/gate/output behavior passed offscreen loopback tests; no visible GUI was launched. A separate production-adapter headless run verified the real connection and normal DC control lifecycle |
+| Hardware claim | On 2026-07-29 the Qt adapter confirmed Product API v1.11/feature mask `0x00001fff` on BootId `0x4f535dcbef09ea55`, restored `B/12/813`, passed DC start/pause/resume/controlled-stop, and ended in `SHUTDOWN` with lease owner zero and the session disconnected. The healthy snapshot had faults `0/0`, so no ResetFault or AlarmCleared hardware recovery is claimed |
+| Publication | Local `embed-labs` only; no remote publication is authorized |
 
 ## Headless ECPKG deployment session qualification
 

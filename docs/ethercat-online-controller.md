@@ -91,13 +91,15 @@ immediately available again and Disconnect is disabled.
 ## Multi-vendor adapter boundary
 
 `EtherCATProductApi` is the first headless adapter and owns only the Embed Labs
-Product API v1 implementation. The current local client contract is v1.10,
-with bounded v1.9 compatibility for the persistent release24 runtime. The
-2026-07-24 hardware record observed a RAM-only v1.10 CPU0 service and a reboot
-return to release24/v1.9; this documentation update did not refresh that
-observation. ECAP framing, the three sockets, numeric message types, CRC32C,
-SessionId/BootId, request correlation, and Product API error codes remain
-private to that plugin.
+Product API v1 implementation. The current local client contract is v1.11,
+with bounded v1.10 and v1.9 compatibility for older runtimes. Controlled fault
+confirmation is available only after minor-11 negotiation and its feature
+gate; older peers retain their prior capabilities and never receive that
+request. The 2026-07-24 hardware record observed a RAM-only v1.10 CPU0 service
+and a reboot return to release24/v1.9; this documentation update does not
+rewrite or refresh that historical observation. ECAP framing, the three
+sockets, numeric message types, CRC32C, SessionId/BootId, request correlation,
+and Product API error codes remain private to that plugin.
 
 Future controller protocols use independent plugins that register their own
 `ControllerConnectionProvider`. Workbench consumes only provider/profile IDs
@@ -153,9 +155,13 @@ across Control, Push, and Bulk. The implementation validates channel role,
 negotiated version, payload limit, SessionId, BootId, RequestId, Sequence,
 message length, and CRC before publishing a semantic snapshot. A v1.10
 session additionally requires explicit timing-mode start feature bit 11, so
-the complete required feature mask is `0xfff`. The 2026-07-24 record observed
-`0xfff` on the RAM-deployed v1.10 service and `0x7ff` on persistent release24
-after a reboot; this documentation update did not re-query either runtime.
+its complete feature mask is `0xfff`. Product API v1.11 adds
+`CONTROLLED_FAULT_RESET` at feature bit 12 (`0x00001000`) and the cumulative
+mask becomes `0x00001fff`. HELLO negotiates the lower client/server minor; a
+client below minor 11 or without bit 12 refuses ResetFault locally as
+`UNSUPPORTED (-14)` and sends nothing. The 2026-07-24 record observed `0xfff`
+on the RAM-deployed v1.10 service and `0x7ff` on persistent release24 after a
+reboot; this documentation update did not re-query either runtime.
 
 The protocol defines these operations as read-only and requiring no control
 lease:
@@ -188,16 +194,18 @@ current adapter. The typed control extension additionally allows only:
 | Control | `EnterConfigurationMode` |
 | Control | `DiscoverTopology` |
 | Control | `RestoreActivePackage` |
+| Control | v1.11 `ResetFault (0x0107)` with feature bit 12 and exact displayed-snapshot confirmation |
 | Control | v1.10 `StartFreeRun (0x010c)` and `StartDc (0x010d)` |
 | Control | backward-compatible automatic `Start (0x0102)`, plus `Pause`, `Resume`, and `ControlledStop` |
 | Bulk | ECPKG `BulkBegin`, `BulkChunk`, `BulkCommit`, and safe `BulkAbort` |
 | Control | exact-selector `ValidatePackage`, `ActivatePackage`, and recovery `RollbackPackage` |
 
 Neither a generic Provider consumer nor the Workbench Deployment page may add
-an arbitrary numeric message outside these lists. Reset, DiscoverModules,
-SDO/PDO, firmware writes, and other bulk or controller commands remain
-excluded. Workbench supplies one immutable artifact and semantic options to
-the Provider; only the vendor adapter emits the listed requests.
+an arbitrary numeric message outside these lists. Unconditional controller or
+CPU reset, DiscoverModules, SDO/PDO, firmware writes, and other bulk or
+controller commands remain excluded. Workbench supplies one immutable artifact
+and semantic options to the Provider; only the vendor adapter emits the listed
+requests.
 
 The control lease is controller-authoritative and exclusive. After an
 authoritative connected snapshot is available, Workbench normally submits one
@@ -270,6 +278,60 @@ may acquire control and manage the same running instance. Real-controller
 qualification of this rule waits for the CPU0-only `ISSUE-API-021` deployment;
 the IDE-side state machine and offline tests do not constitute hardware
 evidence.
+
+### Controlled fault confirmation
+
+**Confirm / Reset Fault** is a narrow recovery command for a cause that is no
+longer active but whose evidence remains latched. It does not reboot the
+controller, restart a task, recover NIC/PHY/CPU state, rescan the bus, change a
+package, or bypass an active fault.
+
+The UI enables it only for a real writable snapshot that owns the exclusive
+lease and reports exactly `FAULT`, `current_faults == 0`,
+`latched_faults != 0`, and a nonzero `last_alarm_sequence`. The complete
+latched mask and alarm sequence are captured together from the displayed
+ControllerState. Before dispatch, Workbench rejects an incomplete or stale
+pair. The ProductApi adapter then performs the same local gate and, for a fresh
+snapshot that already has no latch, completes as an idempotent no-op without
+sending a request.
+
+For Product API v1.11, `ResetFault (0x0107)` carries exactly 16 network-order
+bytes: the expected `u64` full latched mask, expected `u32` last alarm
+sequence, and a zero `u32` reserved field. It additionally requires a nonzero
+RequestId, current BootId, and the owning Session. CPU1 atomically compares
+`current_faults == 0`, the exact mask, and the exact sequence before clearing
+the latch. A changed cause or sequence is not silently accepted.
+
+A ResetFault request that reaches the wire succeeds only with ordered
+CommandStatus stages 1 through 4, terminal stage 4, a refreshed state with
+both fault masks zero, and the strict AlarmCleared event whose sequence is
+carried in stage-4 detail. That event is
+`AlarmCleared (0x0208)`, code `FAULT_CLEARED (5)`, severity `INFO (1)`,
+source `SERVICE (1)`, flags exactly `CLEARED (0x2)`, and the confirmed mask;
+all three detail fields and the reserved field are zero. The controller
+remains `OP_SAFE` only when its safe cyclic runtime was already executing;
+otherwise it remains `SHUTDOWN` with no active runtime.
+
+The three equivalent UI entry points use the same provider-neutral action and
+gate: the embedded Communication page, the top engineering command strip, and
+the selected EtherCAT Master context menu. Failures are emitted to Application
+Output with the symbolic and numeric API status, operation result, channel,
+controller detail, stage/final or outcome-unconfirmed state, current and
+latched named masks with hexadecimal values, the latest matching AlarmEvent
+when retained, or otherwise the pre-reset confirmation mask and checkpoint,
+and the shortest safe corrective action. A stage-4 wire success line is not
+accepted without the terminal snapshot and AlarmCleared evidence. The
+zero-latch stage-0 local no-op described above is the explicit exception: it
+sends no request and reports that no controller request was sent.
+
+Windows `ISSUE-API-030` froze and localhost-qualified the v1.11 server
+contract. On 2026-07-29 the Qt adapter headlessly confirmed Product API
+v1.11/feature mask `0x00001fff` on BootId `0x4f535dcbef09ea55`, then passed the
+real DC lifecycle through restore `B/12/813`, start, pause, resume, controlled
+stop, final `SHUTDOWN`, lease release, and disconnect with fault masks `0/0`.
+The healthy snapshot had no latch, so no real-controller ResetFault request or
+AlarmCleared event was generated; this remains compatibility evidence, not a
+hardware recovery claim.
 
 ### Package-determined FreeRun and Distributed Clocks
 
@@ -564,10 +626,12 @@ another node, switching property pages, opening a Project, or starting the
 application never connects or disconnects automatically.
 
 The Communication page presents Acquire, Configuration, Scan Bus, Restore
-Package, and Release, together with connection actions, an inline base-endpoint
-editor, Actual Bus, and authoritative information. Acquire is normally
-automatic and remains visible for necessary manual recovery. The page has no
-FreeRun, DC Run, Pause, Resume, or Stop button.
+Package, **Confirm / Reset Fault**, and Release, together with connection
+actions, an inline base-endpoint editor, Actual Bus, and authoritative
+information. Acquire is normally automatic and remains visible for necessary
+manual recovery. Fault confirmation is shown only when the shared semantic
+gate permits it. The page has no FreeRun, DC Run, Pause, Resume, or Stop
+button.
 Run/Pause/Resume/Controlled Stop are routed through Qt Creator's native
 lower-left quick-control area. The page and quick controls cannot submit an
 arbitrary numeric Product API message.
@@ -596,8 +660,14 @@ Workbench reports those categories by name, separates `current_faults` from
 `latched_faults`, and includes at most the two latest raised events matching
 the fault mask, the nonzero command result, and a short corrective action.
 `current_faults == 0` with nonzero `latched_faults` is reported as a cleared
-cause awaiting a confirmed reset. AL `OP` and matching WKC are current bus
-evidence only and do not suppress a current or historical controller fault.
+cause awaiting a confirmed reset. A ResetFault failure additionally preserves
+the symbolic and numeric API status, operation result, channel, detail,
+stage/final or outcome-unconfirmed marker, both named masks with hexadecimal
+values, and the latest matching AlarmEvent when still retained. If channel
+teardown invalidates event history, it preserves the pre-reset confirmation
+mask and alarm checkpoint instead. AL `OP` and matching WKC are current
+bus evidence only and do not suppress a current or historical controller
+fault.
 
 Closing a Project is the sole automatic connection cleanup. Workbench clears every
 in-memory controller selection belonging to that Project and requests
@@ -714,6 +784,12 @@ internal directory directly.
     undoable local-project action; an embedded Overlay view remains pending
 12. Embedded Project/Actual/Overlay topology
 13. Real diagnostics Provider
+14. Product API v1.11 controlled fault confirmation — Windows
+    `ISSUE-API-030` froze and localhost-qualified the compare-and-clear
+    contract; the provider-neutral Qt command, three UI projections, strict
+    postcondition, and Application Output path are integrated offline.
+    Exclusive real-controller ResetFault/AlarmCleared acceptance remains
+    pending
 
 Completed issues remain local on `embed-labs`. Test and hardware claims above
 are limited to commands actually observed. The current English regression

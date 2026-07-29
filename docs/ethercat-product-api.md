@@ -5,12 +5,14 @@
 `EtherCATProductApi` is the first concrete controller-adapter plugin for the
 product-owned, multi-vendor `ControllerConnectionProvider` contract. It owns
 only the Embed Labs Product API v1 transport. The current client contract is
-v1.10, with bounded v1.9 compatibility for the persistent release24
-controller runtime. The 2026-07-24 hardware record observed a RAM-only v1.10
-CPU0 service and a reboot return to release24/v1.9; this documentation update
-did not refresh that observation. A future controller family uses a separate plugin
-and Provider instead of adding vendor switches to this plugin, EtherCATCore,
-or EtherCATWorkbench.
+v1.11, with bounded v1.10 and v1.9 compatibility for older controller
+runtimes. Product API v1.11 adds capability-gated, compare-and-clear fault
+confirmation; it does not turn fault reset into an unconditional controller
+reset. The 2026-07-24 hardware record observed a RAM-only v1.10 CPU0 service
+and a reboot return to release24/v1.9; this documentation update does not
+rewrite or refresh that historical observation. A future controller family
+uses a separate plugin and Provider instead of adding vendor switches to this
+plugin, EtherCATCore, or EtherCATWorkbench.
 
 The plugin is headless. It registers one connection Provider in the Qt Creator
 object pool and publishes immutable semantic snapshots. It does not create a
@@ -90,6 +92,7 @@ After an explicit typed control request, the adapter can additionally emit:
 | Control | `Pause (0x0103)` |
 | Control | `Resume (0x0104)` |
 | Control | `ControlledStop (0x0105)` |
+| Control | `ResetFault (0x0107)`, only for negotiated v1.11 with feature bit 12 |
 | Control | lease `Heartbeat (0x0109)` |
 | Control | `EnterConfigurationMode (0x010b)` |
 | Control | `StartFreeRun (0x010c)`, only for negotiated v1.10 with feature bit 11 |
@@ -111,10 +114,10 @@ All three tables are closed at the private codec boundary. A consumer cannot
 expand them through a profile, endpoint string, Workbench action, generic
 Provider field, or arbitrary numeric message type. The generic Provider accepts
 only one immutable, already-built ECPKG plus a nonzero ConfigurationId and
-client OperationId. Reset, SDO/PDO access, firmware write, arbitrary bulk
-objects, package construction, and signing remain excluded. Workbench's
-Deployment page calls only this semantic Provider request and never sees a
-numeric Product API message.
+client OperationId. Unconditional controller reset, CPU/NIC/PHY recovery,
+SDO/PDO access, firmware write, arbitrary bulk objects, package construction,
+and signing remain excluded. Workbench's Deployment page calls only this
+semantic Provider request and never sees a numeric Product API message.
 
 Connect is not Scan. The adapter's Connect request establishes the transport
 and authoritative read-only snapshot; it does not itself enter configuration
@@ -143,6 +146,14 @@ cannot receive `StartFreeRun` or `StartDc`. The parser accepts arbitrary TCP
 fragmentation and multiple coalesced frames without allocating the declared
 payload before the fixed header passes validation.
 
+Product API v1.11 adds `CONTROLLED_FAULT_RESET` at feature bit 12
+(`0x00001000`), making the cumulative current feature mask `0x00001fff`.
+HELLO negotiates the lower of the client and server minor versions. A client
+negotiated below minor 11, or a minor-11 peer that does not advertise bit 12,
+must reject ResetFault locally as `UNSUPPORTED (-14)` and send no request.
+The historical v1.10 and v1.9 feature-mask observations above remain dated
+evidence and are not upgraded by this contract.
+
 Control creates the session. Push and Bulk join its nonzero SessionId. All
 three handshakes must agree on SessionId, BootId, negotiated minor, role, and
 role-specific maximum payload. RequestId is one monotonically allocated,
@@ -169,6 +180,71 @@ Controlled Stop must progress through the ordered command stages. Discovery
 ends with a typed TopologyResult, while Restore ends with the exact typed
 PackageState response. An unrelated, repeated, skipped, malformed, or
 wrong-response-form frame is a protocol failure rather than command success.
+
+## Controlled fault confirmation
+
+The provider-neutral `ResetFault` command confirms and clears a fault latch;
+it is not a device reboot, CPU reset, runtime restart, topology scan, package
+change, NIC/PHY recovery, or safety-rated reset. The caller must capture these
+two confirmation values from the same displayed ControllerState snapshot:
+
+- the complete nonzero `latched_faults` mask, containing only known fault bits
+  0 through 16; and
+- the nonzero `last_alarm_sequence`.
+
+The Product API v1.11 Control request is `ResetFault (0x0107)` with a nonzero
+RequestId, the current BootId, and this exact 16-byte network-order payload:
+
+| Offset | Size | Field |
+|---:|---:|---|
+| 0 | 8 | `expected_latched_faults` (`u64`) |
+| 8 | 4 | `expected_last_alarm_sequence` (`u32`) |
+| 12 | 4 | reserved, must be zero |
+
+The adapter sends it only when the same live Session owns the exclusive lease,
+the authoritative service state is exactly `FAULT`, `current_faults == 0`,
+the full latched mask is still nonzero, and no other operation is pending.
+`RUNNING`, `PAUSED`, transitional states, an active current fault, an
+incomplete confirmation, or a changed snapshot are rejected before dispatch.
+If a fresh snapshot already has `latched_faults == 0`, the adapter treats the
+request as an idempotent local no-op and sends nothing.
+
+CPU1 owns the atomic compare-and-clear. The request succeeds only if
+`current_faults` remains zero and both the complete latched mask and alarm
+sequence still match. Its CommandStatus sequence is stages
+`1 NETWORK_RECEIVED`, `2 CPU0_VALIDATED`, `3 CPU1_ACCEPTED`, and
+`4 STATE_COMPLETED`; only stage 4 has `final=1`. Successful stage-4 detail is
+the sequence of the committed AlarmCleared event.
+
+The strict success evidence is one 64-byte `AlarmCleared (0x0208)` event
+committed before the response snapshot:
+
+- code `FAULT_CLEARED (5)`, severity `INFO (1)`, source `SERVICE (1)`;
+- flags exactly `CLEARED (0x2)`;
+- `fault_mask` equal to the confirmed complete mask;
+- `detail0`, `detail1`, `detail2`, and `reserved0` all zero; and
+- the next nonzero sequence after the confirmed alarm sequence.
+
+The terminal snapshot must have both fault masks zero. It is `OP_SAFE` only
+when the safe cyclic runtime was already executing; otherwise it is
+`SHUTDOWN` with no active runtime. ResetFault never starts a management-loop
+real-time task or changes the application, package, selectors, or topology.
+
+A v1.10 legacy empty ResetFault receives terminal `UNSUPPORTED (-14)` with
+`ERR_UNSUPPORTED (-7)`. A malformed v1.11 payload receives
+`BAD_MESSAGE (-6)` with `ERR_ARGUMENT (-4)`. A still-active cause receives
+stage-3 `CPU1_REJECTED (-15)` with `ERR_FAULT_ACTIVE (-6)` and the current
+fault mask in detail. A changed confirmation receives the same API status
+with `ERR_STALE_CONFIRMATION (-9)` and the latest alarm sequence in detail.
+A disallowed service state receives `CPU1_REJECTED (-15)` with
+`ERR_STATE (-3)`. The existing terminal-response cache makes a repeated
+RequestId idempotent; a new RequestId with old confirmation values is stale.
+
+Windows `ISSUE-API-030` froze this contract after localhost Product API and
+OS-less regression. The Qt-side work described here is offline protocol and
+UI integration evidence only at this point: no real controller ResetFault
+request, AlarmCleared event, or post-reset hardware state has yet been
+observed.
 
 ## Transactional package deployment
 
@@ -429,7 +505,21 @@ hardware evidence for this contract remain gated on Windows
   control lease or issuing a controller command;
 - `scan_only` for an identity-discovery acceptance that never restores or
   starts a package; or
-- `free_run_rejection` for the exact DC-only-package rejection contract.
+- `free_run_rejection` for the exact DC-only-package rejection contract; or
+- `fault_reset` for one already-diagnosed, cause-cleared `FAULT` snapshot.
+
+`fault_reset` refuses before lease acquisition unless the negotiated session
+is v1.11 with feature bit 12 and the authoritative snapshot is exactly
+`FAULT`, `current_faults == 0`, with a nonzero full latched mask and alarm
+checkpoint. It captures the complete pre-reset package/runtime state, acquires
+the lease only when it can classify either an Active safe cyclic runtime or a
+stopped management runtime with no Active package, sends only the confirmed
+ResetFault, and requires stages 1 through 4, the strict AlarmCleared event,
+zero terminal masks, and the unique expected `OP_SAFE` or `SHUTDOWN` outcome.
+It then releases and disconnects. Failure
+cleanup never scans, changes packages, enters Configuration, stops a runtime,
+or attempts another reset; it only releases an owned management lease and
+disconnects.
 
 `free_run_rejection` restores the exact active package, issues
 `StartFreeRun`, and requires a terminal stage-2

@@ -29,6 +29,7 @@ private slots:
     void testLeaseOwnershipRequiresAcquireOrResume();
     void testProtocolMinorDowngrade();
     void testControlLifecycle();
+    void testFaultResetLifecycle();
     void testPackageDeploymentLifecycle();
     void testPackageDeploymentGuardsAndIdempotency();
     void testPackageDeploymentCancellationAndAbort();

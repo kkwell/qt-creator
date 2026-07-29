@@ -2287,3 +2287,67 @@ pending control/deployment stages, full error preservation, current/latched
 fault decoding, heartbeat deduplication, and terminal control results. This
 delta used no Product API, lease, scan, state, package, JTAG, CPU0, CPU1,
 FPGA, or other controller request.
+
+## Product API v1.11 controlled fault confirmation delta
+
+This local delta extends the existing provider-neutral control vocabulary with
+`ResetFault`. Shared `EtherCATData` carries only the semantic command and the
+two displayed-snapshot confirmation values: the complete expected latched
+fault mask and expected last alarm sequence. No Product API message number,
+feature bit, byte layout, channel, or vendor status crosses into Workbench or
+the generic Provider contract. Providers that do not opt in continue to reject
+the command.
+
+`EtherCATProductApi` privately implements the Windows `ISSUE-API-030` frozen
+Product API v1.11 contract:
+
+- HELLO negotiates minor 11; ResetFault capability requires feature bit 12
+  `CONTROLLED_FAULT_RESET (0x00001000)`, while a complete v1.11
+  implementation advertises the cumulative feature mask `0x00001fff`;
+- a peer below minor 11 or missing bit 12 is rejected locally as
+  `UNSUPPORTED (-14)` and receives no ResetFault request;
+- Control message `ResetFault (0x0107)` has exactly 16 network-order bytes:
+  `u64 expected_latched_faults`, `u32 expected_last_alarm_sequence`, and a
+  zero `u32` reserved field;
+- dispatch requires the current BootId, a nonzero RequestId, the Session that
+  owns the exclusive lease, service state exactly `FAULT`,
+  `current_faults == 0`, and an unchanged nonzero full latched mask plus
+  nonzero alarm sequence from one displayed ControllerState snapshot; and
+- CPU1 atomically compares and clears the latch. Ordered CommandStatus stages
+  1 through 4 end only at final stage 4, whose detail identifies the strict
+  AlarmCleared event committed before the response snapshot.
+
+A ResetFault request that reaches stage 4 succeeds only with zero current and
+latched masks plus `AlarmCleared (0x0208)`, code `FAULT_CLEARED (5)`, severity
+`INFO (1)`, source `SERVICE (1)`, flags exactly `CLEARED (0x2)`, the confirmed
+mask, and zero detail/reserved fields. A changed mask or alarm sequence is
+stale, an active cause is rejected, and a disallowed runtime state is rejected.
+ResetFault does not reboot or recover the controller, rescan, alter
+selectors/packages, start/stop the application, or perform NIC/PHY/CPU
+recovery. If a refreshed snapshot already has no latch, the adapter completes
+locally without sending.
+
+Workbench registers one **Confirm / Reset Fault** ActionManager command and
+reuses it in the embedded Communication page, the top engineering command
+strip, and the selected EtherCAT Master context menu. The shared gate prevents
+use in `RUNNING`, `PAUSED`, transitional states, without the lease, while a
+cause is active, or after the displayed confirmation becomes stale.
+
+The specialized Application Output failure record takes precedence over the
+generic fault summary. It retains symbolic and numeric API status, signed
+operation result, channel, detail, stage/final or outcome-unconfirmed state,
+current and latched fault names and hexadecimal masks, the latest matching
+AlarmEvent when retained, or otherwise the pre-reset confirmation mask and
+alarm checkpoint, and corrective action. A stage-4 wire success is not reported
+without the zero-mask postcondition and matching AlarmCleared evidence. The
+fresh zero-latch stage-0 local no-op is the explicit exception: it sends
+nothing and reports that no controller request was sent.
+
+Windows froze this contract after complete localhost Product API and OS-less
+regression. On 2026-07-29 the production Qt adapter headlessly confirmed
+Product API v1.11/feature mask `0x00001fff` on BootId
+`0x4f535dcbef09ea55` and passed the real DC lifecycle through final
+`SHUTDOWN`, lease release, and disconnect. No visible product was launched.
+The healthy real snapshot had fault masks `0/0`, so no real-controller
+ResetFault request, AlarmCleared response, or recovered hardware state is
+claimed.

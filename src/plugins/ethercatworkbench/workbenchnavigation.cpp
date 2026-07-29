@@ -828,6 +828,11 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position, bool mou
         contextMatchesSelection && m_controller
             && m_controller->canApplyCurrentBusToProject());
     setCommandEnabled(
+        Constants::RESET_FAULT_ACTION_ID,
+        contextMatchesSelection && m_controller
+            && m_controller->canExecuteSelectedControllerControl(
+                Data::ControllerControlCommand::ResetFault));
+    setCommandEnabled(
         Constants::REFRESH_CONTROLLER_ACTION_ID,
         contextMatchesSelection && m_controller
             && m_controller->canRefreshSelectedController());
@@ -885,6 +890,7 @@ void WorkbenchNavigationWidget::showContextMenu(const QPoint &position, bool mou
         addCommand(ProjectExplorer::Constants::RUN);
         addCommand(Constants::DEBUG_ACTION_ID);
         addCommand(Constants::CONTROLLED_STOP_ACTION_ID);
+        addCommand(Constants::RESET_FAULT_ACTION_ID);
         addCommand(Constants::REFRESH_CONTROLLER_ACTION_ID);
         addCommand(Constants::DISCONNECT_CONTROLLER_ACTION_ID);
     }

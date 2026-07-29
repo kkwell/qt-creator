@@ -221,6 +221,7 @@ CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *p
     , m_enterConfiguration(new QToolButton(this))
     , m_scanBus(new QToolButton(this))
     , m_restorePackage(new QToolButton(this))
+    , m_resetFault(new QToolButton(this))
     , m_releaseControl(new QToolButton(this))
     , m_summary(new QTreeWidget(this))
     , m_channels(new QTreeWidget(this))
@@ -350,6 +351,15 @@ CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *p
         Tr::tr("Restore the controller's exact persistent active package."),
         Data::ControllerControlCommand::RestoreActivePackage);
     configureControlButton(
+        m_resetFault,
+        "EtherCATCommunicationResetFault",
+        Tr::tr("Confirm / Reset Fault"),
+        Tr::tr(
+            "Confirm and clear a latched controller fault only after its current cause has "
+            "cleared. This does not restart the controller, rescan the bus, or change the active "
+            "package."),
+        Data::ControllerControlCommand::ResetFault);
+    configureControlButton(
         m_releaseControl,
         "EtherCATCommunicationReleaseControl",
         Tr::tr("Release"),
@@ -360,8 +370,9 @@ CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *p
     controlLayout->addWidget(m_enterConfiguration, 0, 1);
     controlLayout->addWidget(m_scanBus, 0, 2);
     controlLayout->addWidget(m_restorePackage, 0, 3);
-    controlLayout->addWidget(m_releaseControl, 0, 4);
-    controlLayout->setColumnStretch(5, 1);
+    controlLayout->addWidget(m_resetFault, 0, 4);
+    controlLayout->addWidget(m_releaseControl, 0, 5);
+    controlLayout->setColumnStretch(6, 1);
 
     m_summary->setObjectName("EtherCATCommunicationSummary");
     m_summary->setAccessibleName(Tr::tr("Controller connection summary"));
@@ -836,11 +847,26 @@ void CommunicationPage::updateControllerControl(
         {m_enterConfiguration, Data::ControllerControlCommand::EnterConfigurationMode},
         {m_scanBus, Data::ControllerControlCommand::DiscoverTopology},
         {m_restorePackage, Data::ControllerControlCommand::RestoreActivePackage},
+        {m_resetFault, Data::ControllerControlCommand::ResetFault},
         {m_releaseControl, Data::ControllerControlCommand::ReleaseControl},
     };
     for (const auto &[button, command] : buttons) {
-        button->setEnabled(matchingMasterContext && m_controller
-                           && m_controller->canExecuteControllerControl(contextScope, command));
+        const bool contextReady = matchingMasterContext && m_controller;
+        const QString unavailableReason
+            = contextReady
+                  ? m_controller->controllerControlUnavailableReason(contextScope, command)
+                  : QString();
+        button->setEnabled(contextReady && unavailableReason.isEmpty());
+        if (command == Data::ControllerControlCommand::ResetFault) {
+            const QString baseToolTip = Tr::tr(
+                "Confirm and clear a latched controller fault only after its current cause has "
+                "cleared. This does not restart the controller, rescan the bus, or change the "
+                "active package.");
+            button->setToolTip(
+                unavailableReason.isEmpty()
+                    ? baseToolTip
+                    : Tr::tr("%1 Unavailable: %2").arg(baseToolTip, unavailableReason));
+        }
     }
 }
 
@@ -890,11 +916,21 @@ void CommunicationPage::executeControllerControl(Data::ControllerControlCommand 
     const Data::ControllerConnectionScope contextScope{m_context.projectId, m_context.nodeId};
     Data::ControllerControlRequest request;
     request.command = command;
+    if (command == Data::ControllerControlCommand::ResetFault) {
+        const Data::ControllerConnectionSnapshot snapshot
+            = m_controller->controllerConnectionSnapshot(contextScope);
+        if (snapshot.controllerState) {
+            request.expectedLatchedFaults = snapshot.controllerState->latchedFaults;
+            request.expectedAlarmSequence = snapshot.controllerState->latestAlarmSequence;
+        }
+    }
     const Utils::Result<> result = m_controller->executeControllerControl(contextScope, request);
     if (result)
         return;
     m_controller->writeControllerOutput(
-        Tr::tr("Cannot control the controller: %1").arg(result.error()),
+        command == Data::ControllerControlCommand::ResetFault
+            ? Tr::tr("Fault reset unavailable: %1").arg(result.error())
+            : Tr::tr("Cannot control the controller: %1").arg(result.error()),
         ControllerOutputLevel::Error);
 }
 

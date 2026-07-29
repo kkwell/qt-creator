@@ -16,6 +16,7 @@ const char REFRESH_ACTION_ID[] = "EtherCAT.Workbench.Refresh";
 const char CONNECT_CONTROLLER_ACTION_ID[] = "EtherCAT.Workbench.ConnectController";
 const char SCAN_CONTROLLER_ACTION_ID[] = "EtherCAT.Workbench.ScanController";
 const char APPLY_CURRENT_BUS_ACTION_ID[] = "EtherCAT.Workbench.ApplyCurrentBus";
+const char RESET_FAULT_ACTION_ID[] = "EtherCAT.Workbench.ResetFault";
 const char REFRESH_CONTROLLER_ACTION_ID[] = "EtherCAT.Workbench.RefreshController";
 const char DISCONNECT_CONTROLLER_ACTION_ID[] = "EtherCAT.Workbench.DisconnectController";
 const char DEBUG_ACTION_ID[] = "Debugger.Debug";

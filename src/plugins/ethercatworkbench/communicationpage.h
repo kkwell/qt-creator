@@ -59,6 +59,7 @@ private:
     QToolButton *m_enterConfiguration = nullptr;
     QToolButton *m_scanBus = nullptr;
     QToolButton *m_restorePackage = nullptr;
+    QToolButton *m_resetFault = nullptr;
     QToolButton *m_releaseControl = nullptr;
     QTreeWidget *m_summary = nullptr;
     QTreeWidget *m_channels = nullptr;

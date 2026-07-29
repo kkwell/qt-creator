@@ -140,6 +140,9 @@ public:
     bool canExecuteControllerControl(
         const Data::ControllerConnectionScope &scope,
         Data::ControllerControlCommand command) const;
+    QString controllerControlUnavailableReason(
+        const Data::ControllerConnectionScope &scope,
+        Data::ControllerControlCommand command) const;
     bool canExecuteSelectedControllerControl(Data::ControllerControlCommand command) const;
     std::optional<Data::ControllerControlCommand> quickControllerControlCommand(
         const Data::ControllerConnectionScope &scope,
@@ -393,8 +396,6 @@ private:
         const Data::ControllerConnectionScope &scope,
         Data::ControllerControlCommand command,
         Data::ControllerConnectionSnapshot *snapshot) const;
-    QString controllerControlUnavailableReason(
-        const Data::ControllerConnectionScope &scope, Data::ControllerControlCommand command) const;
     ControllerConnectionSelection *mutableControllerConnectionSelection(
         const Data::ControllerConnectionScope &scope);
 

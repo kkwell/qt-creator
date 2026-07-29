@@ -6975,7 +6975,7 @@ The Communication page contains:
 - Acquire, primarily as manual recovery for automatic acquisition;
 - Configuration;
 - Rescan Bus;
-- Restore Package and Release;
+- Restore Package, **Confirm / Reset Fault**, and Release;
 - command progress, authoritative controller/session/package information; and
 - the read-only Actual Bus result.
 
@@ -7041,6 +7041,7 @@ command-specific state gate:
 | Pause | Lease owned, ready `RUNNING`, and active package |
 | Resume | Lease owned, ready `PAUSED`, active package, operational bus, matching WKC, and no faults |
 | Controlled Stop | Lease owned, ready `RUNNING` or `PAUSED`, and active package |
+| Confirm / Reset Fault | Lease owned, ready service state exactly `FAULT`, `current_faults == 0`, complete `latched_faults != 0`, nonzero latest alarm sequence, and unchanged displayed confirmation |
 | Release | Lease owned and no state-changing operation pending; ControllerState readiness and runtime state do not gate management-lease release |
 
 Lease loss is not a cyclic-runtime watchdog. Clean Release, Disconnect,
@@ -7049,6 +7050,66 @@ invalidate stale writes without changing the active package or healthy
 `RUNNING` task. A new session may acquire control and operate the same runtime.
 Hardware, bus, WKC, DC, CPU1, watchdog, and safety faults remain
 controller-authoritative and may still stop it.
+
+### Confirmed fault reset
+
+Workbench exposes **Confirm / Reset Fault** through three views of the same
+ActionManager command:
+
+- the embedded Communication page;
+- the top engineering command strip; and
+- the selected EtherCAT Master device-tree context menu.
+
+There is no fourth vendor-specific callback or arbitrary Product API entry
+point. The command builds one provider-neutral ResetFault request from the
+complete `latched_faults` mask and `last_alarm_sequence` in the same currently
+displayed ControllerState snapshot. It is disabled when the cause is still
+active, the service is not exactly `FAULT`, the lease is not owned, either
+confirmation value is missing, the displayed snapshot changed, or another
+operation is pending. `RUNNING`, `PAUSED`, and transitional states therefore
+cannot use this command.
+
+The selected Provider remains responsible for its wire protocol. For Embed
+Labs Product API v1.11, the adapter requires negotiated minor 11 and
+`CONTROLLED_FAULT_RESET` feature bit 12 before it may send
+`ResetFault (0x0107)`. The exact 16-byte compare-and-clear payload contains
+the full expected latched mask, expected alarm sequence, and a zero reserved
+word. A fresh snapshot with no latch is a local idempotent success and sends
+nothing. This operation never scans, restarts, changes package selectors,
+starts or stops the application, or performs controller/CPU/NIC/PHY recovery.
+
+A ResetFault request that reaches final stage 4 requires more than that command
+stage for successful presentation: the authoritative refreshed snapshot must
+have `current_faults == 0` and `latched_faults == 0`, and the corresponding
+strict AlarmCleared event must identify the confirmed mask. Otherwise the
+result remains failed or outcome-unconfirmed rather than being reported as
+recovered. A fresh zero-latch snapshot instead completes as a stage-0 local
+no-op, explicitly reports that no controller request was sent, and therefore
+does not require an AlarmCleared event.
+
+ResetFault failures are deliberately formatted before the generic fault
+summary so the rejection cannot be hidden. The **Application Output** record
+contains:
+
+- symbolic and numeric API status;
+- signed operation result;
+- channel and controller detail;
+- command stage plus final state, or an outcome-unconfirmed marker;
+- current and latched fault names with exact hexadecimal masks;
+- the latest matching AlarmEvent when retained, or otherwise the pre-reset
+  confirmation mask and alarm checkpoint; and
+- the shortest safe corrective action, such as resolving an active cause or
+  refreshing state/events before confirming a stale snapshot again.
+
+Windows `ISSUE-API-030` froze this compare-and-clear contract after localhost
+Product API and OS-less regression. On 2026-07-29 the production Qt adapter
+headlessly confirmed Product API v1.11/feature mask `0x00001fff` on the real
+controller and passed the normal DC restore/start/pause/resume/controlled-stop
+lifecycle, ending in `SHUTDOWN` with the lease released and the session
+disconnected. The real snapshot had `current_faults == 0` and
+`latched_faults == 0`, so no ResetFault request or AlarmCleared response was
+generated. Reset recovery remains qualified by strict loopback evidence until
+a naturally occurring, safely cleared latch is available.
 
 ### Actual Bus presentation
 
@@ -7222,7 +7283,7 @@ preserve the error summary, symbolic and numeric code, and distinct provider
 detail instead of replacing one with another.
 
 `EtherCATData` defines 17 provider-neutral controller-fault categories. The
-ProductApi adapter validates and maps the complete v1.10 wire mask, while
+ProductApi adapter validates and maps the complete v1.11 wire mask, while
 Workbench only presents the shared semantics. Output lists the names and exact
 hexadecimal values of `current_faults` and `latched_faults` separately,
 followed by the latest alarm sequence, a nonzero last-command result, and the
@@ -7230,6 +7291,15 @@ shortest applicable recovery action. A zero current mask with a nonzero
 latched mask is described as a cleared cause awaiting confirmed reset.
 Matching WKC and AL `OP` do not erase latched evidence and therefore cannot,
 on their own, identify or clear a controller fault.
+
+For a ResetFault rejection, the specialized record is emitted before that
+generic summary and retains the status name/number, operation result, channel,
+detail, stage/final or outcome-unconfirmed state, both named masks with exact
+hexadecimal values, the latest matching AlarmEvent when retained, or otherwise
+the pre-reset mask/checkpoint, and the recovery action.
+For a ResetFault request that reaches stage 4, Workbench requires the zero-mask
+postcondition and the AlarmCleared evidence described above. The fresh
+zero-latch stage-0 local no-op remains the explicit no-request exception.
 
 When the selected Master is connected but has no currently valid Run/Resume
 command, the native lower-left Run action visibly changes to
@@ -7267,3 +7337,6 @@ The earlier single-instance product observation showed Workbench, Simplified
 Chinese, hidden production Mock UI, and the compact tree. This output-
 consolidation round used widget-level Communication-page tests and the passive
 Application Output lifecycle test; it did not connect to or control hardware.
+The subsequent provider-neutral ResetFault action/gate/output tests were also
+run offscreen without launching the visible product or opening a real
+controller session; real-hardware fault recovery remains unqualified.

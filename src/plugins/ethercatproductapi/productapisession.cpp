@@ -36,9 +36,11 @@ constexpr quint32 FeatureProcessInputSample = 1U << 8;
 constexpr quint32 FeatureStructuredHelloError = 1U << 9;
 constexpr quint32 FeatureFirmwareUpdate = 1U << 10;
 constexpr quint32 FeatureExplicitTimingModeStart = 1U << 11;
+constexpr quint32 FeatureControlledFaultReset = 1U << 12;
 constexpr int SessionCapacityStatus = -26;
 constexpr int EventGapStatus = -25;
 constexpr qsizetype AlarmHistoryCapacity = 32;
+constexpr quint64 ControllerFaultKnownMask = (quint64(1) << 17) - 1;
 
 QString channelId(Protocol::Role role)
 {
@@ -205,6 +207,8 @@ Data::ControllerOperation operationForCommand(Data::ControllerControlCommand com
         return Data::ControllerOperation::Resume;
     case Command::ControlledStop:
         return Data::ControllerOperation::ControlledStop;
+    case Command::ResetFault:
+        return Data::ControllerOperation::ResetFault;
     case Command::None:
         return Data::ControllerOperation::None;
     }
@@ -237,6 +241,8 @@ Protocol::MessageType messageTypeForCommand(Data::ControllerControlCommand comma
         return Protocol::MessageType::Resume;
     case Command::ControlledStop:
         return Protocol::MessageType::ControlledStop;
+    case Command::ResetFault:
+        return Protocol::MessageType::ResetFault;
     case Command::None:
         return Protocol::MessageType::Error;
     }
@@ -269,6 +275,8 @@ QString commandDisplayName(Data::ControllerControlCommand command)
         return Tr::tr("Resume");
     case Command::ControlledStop:
         return Tr::tr("Controlled stop");
+    case Command::ResetFault:
+        return Tr::tr("Fault reset");
     case Command::None:
         return Tr::tr("No operation");
     }
@@ -417,6 +425,18 @@ public:
         quint64 generation = 0;
         quint64 configurationId = 0;
         quint64 bootId = 0;
+    };
+
+    struct FaultResetConfirmation
+    {
+        quint64 expectedLatchedFaults = 0;
+        quint32 expectedAlarmSequence = 0;
+        quint32 clearedAlarmSequence = 0;
+        std::optional<Data::ControllerPackageSummary> package;
+        Data::ControllerServiceState expectedServiceState
+            = Data::ControllerServiceState::Unknown;
+        bool applicationActive = false;
+        bool busOperational = false;
     };
 
     struct DeploymentJournalEntry
@@ -696,6 +716,8 @@ public:
 
     void beginControlProgress(Data::ControllerControlCommand command)
     {
+        if (command != Data::ControllerControlCommand::ResetFault)
+            faultResetConfirmation.reset();
         snapshot.controlProgress = {};
         snapshot.controlProgress.command = command;
         snapshot.controlProgress.state = Data::ControllerControlState::Pending;
@@ -762,6 +784,7 @@ public:
         bootId = 0;
         negotiatedMinor = 0;
         featureBits = 0;
+        faultResetConfirmation.reset();
     }
 
     void clearAlarmCheckpoint()
@@ -1950,6 +1973,37 @@ public:
             rejectionDetail = Tr::tr(
                 "The package capability descriptor does not match this controller. Rebuild the "
                 "package from the current Capability descriptor.");
+        } else if (
+            request.controlCommand == Data::ControllerControlCommand::ResetFault
+            && status == -15 && operationResult == -6 && sourceDetail) {
+            rejectionDetail
+                = Tr::tr(
+                      "ERR_FAULT_ACTIVE (-6): current fault mask 0x%1 is still active. Resolve "
+                      "the cause before confirming the latch.")
+                      .arg(*sourceDetail, 5, 16, QLatin1Char('0'));
+        } else if (
+            request.controlCommand == Data::ControllerControlCommand::ResetFault
+            && status == -15 && operationResult == -9 && sourceDetail) {
+            rejectionDetail
+                = Tr::tr(
+                      "ERR_STALE_CONFIRMATION (-9): the latest alarm sequence is %1. Refresh "
+                      "diagnostics and confirm the new snapshot.")
+                      .arg(*sourceDetail);
+        } else if (
+            request.controlCommand == Data::ControllerControlCommand::ResetFault
+            && status == -15 && operationResult == -3) {
+            rejectionDetail = Tr::tr(
+                "ERR_STATE (-3): fault reset requires the controller to remain in Fault state.");
+        } else if (
+            request.controlCommand == Data::ControllerControlCommand::ResetFault
+            && status == -6 && operationResult == -4) {
+            rejectionDetail = Tr::tr(
+                "ERR_ARGUMENT (-4): the controller rejected the fault confirmation payload.");
+        } else if (
+            request.controlCommand == Data::ControllerControlCommand::ResetFault
+            && status == -14 && operationResult == -7) {
+            rejectionDetail = Tr::tr(
+                "ERR_UNSUPPORTED (-7): the controller does not support controlled fault reset.");
         }
         const bool controlRequest = request.kind == PendingKind::ControlCommand
                                     || request.kind == PendingKind::Topology
@@ -2080,6 +2134,10 @@ public:
                 snapshot.session->controlLeaseOwnerSessionId = 0;
                 snapshot.session->ownsControlLease = false;
             }
+        } else if (
+            command == Data::ControllerControlCommand::ResetFault
+            && faultResetConfirmation) {
+            faultResetConfirmation->clearedAlarmSequence = quint32(status.detail);
         }
         removePending(requestId);
         if (command != Data::ControllerControlCommand::ReleaseControl) {
@@ -3372,6 +3430,91 @@ public:
             expected = Tr::tr(
                 "OP_SAFE with an active package, OP bus, and matching working counters");
             break;
+        case Command::ResetFault: {
+            if (!faultResetConfirmation) {
+                return Tr::tr(
+                    "Fault reset was accepted, but its confirmation snapshot is unavailable.");
+            }
+            const FaultResetConfirmation &confirmation = *faultResetConfirmation;
+            if (!ownsLease)
+                return Tr::tr("Fault reset completed, but this session no longer owns the lease.");
+            if (!state) {
+                return Tr::tr(
+                    "Fault reset was accepted, but the refreshed controller state is unavailable.");
+            }
+            if (state->currentFaults || state->latchedFaults || state->fault) {
+                return Tr::tr(
+                           "Fault reset was accepted, but the refreshed fault state is current "
+                           "0x%1, latched 0x%2.")
+                    .arg(state->currentFaults, 0, 16)
+                    .arg(state->latchedFaults, 0, 16);
+            }
+            if (confirmation.expectedServiceState == ServiceState::Shutdown
+                && confirmation.package
+                && confirmation.package->controllerState
+                       == Data::ControllerPackageState::Active) {
+                return Tr::tr(
+                    "Fault reset was accepted for an active package without a safe cyclic "
+                    "runtime.");
+            }
+            if (!state->ready
+                || state->serviceState != confirmation.expectedServiceState) {
+                const QString expectedState
+                    = confirmation.expectedServiceState == ServiceState::OperationalSafe
+                          ? Tr::tr("OP_SAFE")
+                          : Tr::tr("SHUTDOWN");
+                return Tr::tr(
+                           "Fault reset was accepted, but the controller did not reach the "
+                           "expected %1 state.")
+                    .arg(expectedState);
+            }
+            const quint32 expectedClearedSequence
+                = nextAlarmSequence(confirmation.expectedAlarmSequence);
+            if (!confirmation.clearedAlarmSequence
+                || confirmation.clearedAlarmSequence != expectedClearedSequence
+                || state->latestAlarmSequence != expectedClearedSequence) {
+                return Tr::tr(
+                           "Fault reset was accepted, but AlarmCleared sequence %1 was expected "
+                           "and sequence %2 was confirmed.")
+                    .arg(expectedClearedSequence)
+                    .arg(confirmation.clearedAlarmSequence);
+            }
+            const auto cleared = std::find_if(
+                snapshot.recentAlarms.crbegin(),
+                snapshot.recentAlarms.crend(),
+                [&confirmation, expectedClearedSequence](
+                    const Data::ControllerAlarmSummary &alarm) {
+                    return alarm.sequence == expectedClearedSequence && alarm.code == 5
+                           && alarm.state == Data::ControllerAlarmState::Cleared
+                           && alarm.severity == Data::ControllerSeverity::Information
+                           && alarm.source == Data::ControllerAlarmSource::Service
+                           && !alarm.latched && !alarm.detail0 && !alarm.detail1 && !alarm.detail2
+                           && alarm.faultMask == confirmation.expectedLatchedFaults;
+                });
+            if (cleared == snapshot.recentAlarms.crend()) {
+                return Tr::tr(
+                    "Fault reset was accepted, but the matching AlarmCleared event was not "
+                    "confirmed.");
+            }
+            if (confirmation.package != snapshot.package) {
+                return Tr::tr(
+                    "Fault reset cleared the latch, but the controller package state changed.");
+            }
+            if (state->applicationActive != confirmation.applicationActive
+                || state->busOperational != confirmation.busOperational
+                || state->safeOutput
+                       != (confirmation.expectedServiceState
+                           == ServiceState::OperationalSafe)) {
+                return Tr::tr(
+                    "Fault reset cleared the latch, but the controller runtime state changed.");
+            }
+            if (confirmation.expectedServiceState == ServiceState::Shutdown
+                && (state->applicationActive || state->busOperational || state->safeOutput)) {
+                return Tr::tr(
+                    "Fault reset reported SHUTDOWN while a controller runtime remained active.");
+            }
+            return {};
+        }
         case Command::ReleaseControl:
         case Command::None:
             return {};
@@ -3515,23 +3658,43 @@ public:
                         : QStringLiteral("%1\n%2").arg(rejectionDetail, refreshDetail));
                 return;
             }
+            const Data::ControllerControlCommand command = snapshot.controlProgress.command;
+            const auto recordResetVerificationError = [this, command](const QString &detail) {
+                if (command != Data::ControllerControlCommand::ResetFault)
+                    return;
+                setError(
+                    Data::ControllerErrorSource::Protocol,
+                    Protocol::Role::Control,
+                    Data::ControllerOperation::ResetFault,
+                    Tr::tr("Fault reset outcome could not be verified."),
+                    detail,
+                    snapshot.controlProgress.status,
+                    {},
+                    Data::ControllerRetryDisposition::NotRetryable);
+                if (snapshot.lastError) {
+                    snapshot.lastError->operationResult
+                        = snapshot.controlProgress.operationResult;
+                }
+            };
             if (refreshRejected) {
                 snapshot.controllerState.reset();
                 snapshot.package.reset();
+                const QString detail = Tr::tr(
+                    "The controller accepted the command, but its resulting state could not "
+                    "be confirmed.");
+                recordResetVerificationError(detail);
                 finishControlProgress(
                     Data::ControllerControlState::Failed,
                     snapshot.controlProgress.stage,
                     false,
                     snapshot.controlProgress.status,
                     snapshot.controlProgress.operationResult,
-                    Tr::tr(
-                        "The controller accepted the command, but its resulting state could not "
-                        "be confirmed."));
+                    detail);
                 return;
             }
-            const Data::ControllerControlCommand command = snapshot.controlProgress.command;
             if (const std::optional<QString> postconditionError = controlPostconditionError()) {
                 snapshot.state = Data::ControllerConnectionState::Degraded;
+                recordResetVerificationError(*postconditionError);
                 finishControlProgress(
                     Data::ControllerControlState::Failed,
                     snapshot.controlProgress.stage,
@@ -3569,6 +3732,7 @@ public:
     QTimer *liveStateTimer = nullptr;
     Data::ControllerConnectionRequest currentRequest;
     std::optional<PersistentPackageSelector> persistentPackageSelector;
+    std::optional<FaultResetConfirmation> faultResetConfirmation;
     quint64 generation = 0;
     quint64 nextRequestId = 0;
     quint64 sessionId = 0;
@@ -3834,6 +3998,9 @@ bool ProductApiSession::supportsControlCommand(Data::ControllerControlCommand co
     case Command::StartDistributedClocks:
         return d->negotiatedMinor >= Protocol::ExplicitTimingModeMinor
                && (d->featureBits & FeatureExplicitTimingModeStart);
+    case Command::ResetFault:
+        return d->negotiatedMinor >= Protocol::ControlledFaultResetMinor
+               && (d->featureBits & FeatureControlledFaultReset);
     case Command::None:
         return false;
     }
@@ -3846,13 +4013,37 @@ Utils::Result<> ProductApiSession::executeControlCommand(
     using Command = Data::ControllerControlCommand;
     using ServiceState = Data::ControllerServiceState;
 
-    if (!supportsControlCommand(request.command))
-        return Utils::ResultError(Tr::tr("The requested controller command is not supported."));
     if (d->shuttingDown)
         return Utils::ResultError(Tr::tr("The controller session is shutting down."));
     if (d->snapshot.state != Data::ControllerConnectionState::Connected
         && d->snapshot.state != Data::ControllerConnectionState::Degraded) {
         return Utils::ResultError(Tr::tr("Connect to the controller before sending commands."));
+    }
+    if (!supportsControlCommand(request.command)) {
+        if (request.command == Command::ResetFault) {
+            const QString detail = Tr::tr(
+                "UNSUPPORTED (-14): controlled fault reset requires negotiated Product API "
+                "v1.11 and feature bit 12; no controller request was sent.");
+            d->faultResetConfirmation.reset();
+            d->beginControlProgress(request.command);
+            d->snapshot.controlProgress.expectedLatchedFaults
+                = request.expectedLatchedFaults;
+            d->snapshot.controlProgress.expectedAlarmSequence
+                = request.expectedAlarmSequence;
+            d->setError(
+                Data::ControllerErrorSource::ClientConfiguration,
+                Protocol::Role::Control,
+                Data::ControllerOperation::ResetFault,
+                Tr::tr("Fault reset is not supported by this controller connection."),
+                detail,
+                -14,
+                {},
+                Data::ControllerRetryDisposition::NotRetryable);
+            d->finishControlProgress(
+                Data::ControllerControlState::Failed, 0, true, -14, {}, detail);
+            return Utils::ResultError(detail);
+        }
+        return Utils::ResultError(Tr::tr("The requested controller command is not supported."));
     }
     if (!d->sessionId || !d->bootId || !d->snapshot.session)
         return Utils::ResultError(Tr::tr("The controller session identity is not available."));
@@ -3880,6 +4071,24 @@ Utils::Result<> ProductApiSession::executeControlCommand(
           && d->persistentPackageSelector->slot != Data::ControllerSlot::None
           && d->persistentPackageSelector->generation
           && d->persistentPackageSelector->configurationId;
+    if (request.command == Command::ResetFault && d->snapshot.controllerState
+        && !d->snapshot.controllerState->currentFaults
+        && !d->snapshot.controllerState->latchedFaults) {
+        d->faultResetConfirmation.reset();
+        d->beginControlProgress(request.command);
+        d->snapshot.controlProgress.expectedLatchedFaults
+            = request.expectedLatchedFaults;
+        d->snapshot.controlProgress.expectedAlarmSequence
+            = request.expectedAlarmSequence;
+        d->finishControlProgress(
+            Data::ControllerControlState::Succeeded,
+            0,
+            true,
+            0,
+            0,
+            Tr::tr("No latched fault remains; no controller request was sent."));
+        return {};
+    }
     if (request.command == Command::AcquireControl) {
         if (ownsLease)
             return Utils::ResultError(Tr::tr("This session already owns the control lease."));
@@ -3896,6 +4105,7 @@ Utils::Result<> ProductApiSession::executeControlCommand(
     }
     if (request.command != Command::AcquireControl
         && request.command != Command::ReleaseControl
+        && request.command != Command::ResetFault
         && (!d->snapshot.controllerState || !d->snapshot.controllerState->ready)) {
         return Utils::ResultError(
             Tr::tr("The controller is not ready for the selected control operation."));
@@ -3987,6 +4197,38 @@ Utils::Result<> ProductApiSession::executeControlCommand(
                     "package."));
         }
         break;
+    case Command::ResetFault: {
+        QTC_ASSERT(
+            d->snapshot.controllerState,
+            return Utils::ResultError(Tr::tr("The controller state is unavailable.")));
+        const Data::ControllerStateSummary &controllerState = *d->snapshot.controllerState;
+        if (controllerState.serviceState != ServiceState::Fault) {
+            return Utils::ResultError(
+                Tr::tr("Fault reset is available only while the controller is in Fault state."));
+        }
+        if (controllerState.currentFaults) {
+            return Utils::ResultError(
+                Tr::tr("The current fault is still active (0x%1). Resolve its cause first.")
+                    .arg(controllerState.currentFaults, 0, 16));
+        }
+        if (!controllerState.latchedFaults || !controllerState.latestAlarmSequence) {
+            return Utils::ResultError(
+                Tr::tr("Refresh the controller before confirming the latched fault."));
+        }
+        if (!request.expectedLatchedFaults || !request.expectedAlarmSequence
+            || (request.expectedLatchedFaults & ~ControllerFaultKnownMask)) {
+            return Utils::ResultError(
+                Tr::tr("The fault confirmation snapshot is invalid."));
+        }
+        if (request.expectedLatchedFaults != controllerState.latchedFaults
+            || request.expectedAlarmSequence != controllerState.latestAlarmSequence) {
+            return Utils::ResultError(
+                Tr::tr(
+                    "The controller fault changed before confirmation. Refresh diagnostics and "
+                    "review the latest alarm."));
+        }
+        break;
+    }
     case Command::AcquireControl:
     case Command::None:
     case Command::ReleaseControl:
@@ -4023,6 +4265,10 @@ Utils::Result<> ProductApiSession::executeControlCommand(
         appendU32(0);
         appendU64(selector.generation);
         appendU64(selector.configurationId);
+    } else if (request.command == Command::ResetFault) {
+        appendU64(request.expectedLatchedFaults);
+        appendU32(request.expectedAlarmSequence);
+        appendU32(0);
     }
 
     ProductApiSessionPrivate::PendingKind kind
@@ -4041,6 +4287,27 @@ Utils::Result<> ProductApiSession::executeControlCommand(
               ? 4
               : 1;
     d->beginControlProgress(request.command);
+    if (request.command == Command::ResetFault) {
+        const Data::ControllerStateSummary &controllerState = *d->snapshot.controllerState;
+        d->snapshot.controlProgress.expectedLatchedFaults
+            = request.expectedLatchedFaults;
+        d->snapshot.controlProgress.expectedAlarmSequence
+            = request.expectedAlarmSequence;
+        const bool safeCyclicRuntime
+            = !controllerState.applicationActive && controllerState.busOperational
+              && controllerState.safeOutput && d->snapshot.package
+              && d->snapshot.package->controllerState == Data::ControllerPackageState::Active;
+        d->faultResetConfirmation = ProductApiSessionPrivate::FaultResetConfirmation{
+            request.expectedLatchedFaults,
+            request.expectedAlarmSequence,
+            0,
+            d->snapshot.package,
+            safeCyclicRuntime ? Data::ControllerServiceState::OperationalSafe
+                              : Data::ControllerServiceState::Shutdown,
+            controllerState.applicationActive,
+            controllerState.busOperational,
+        };
+    }
     const quint64 requestId = d->sendControlRequest(
         request.command,
         kind,

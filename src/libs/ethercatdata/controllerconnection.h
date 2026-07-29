@@ -143,6 +143,7 @@ enum class ControllerOperation {
     Pause,
     Resume,
     ControlledStop,
+    ResetFault,
     UploadPackage,
     AbortPackageUpload,
     ValidatePackage,
@@ -163,6 +164,7 @@ enum class ControllerControlCommand {
     Pause,
     Resume,
     ControlledStop,
+    ResetFault,
 };
 
 enum class ControllerControlState {
@@ -194,6 +196,8 @@ struct ETHERCATDATA_EXPORT ControllerControlRequest
     int leaseDurationMs = 30000;
     quint16 firstStationAddress = 0x1001;
     quint16 topologyCapacity = 64;
+    quint64 expectedLatchedFaults = 0;
+    quint32 expectedAlarmSequence = 0;
 
     friend bool operator==(const ControllerControlRequest &,
                            const ControllerControlRequest &)
@@ -208,6 +212,8 @@ struct ETHERCATDATA_EXPORT ControllerControlProgress
     bool final = false;
     std::optional<qint32> status;
     std::optional<qint32> operationResult;
+    quint64 expectedLatchedFaults = 0;
+    quint32 expectedAlarmSequence = 0;
     QString detail;
     QDateTime startedAt;
     QDateTime completedAt;
@@ -494,6 +500,7 @@ struct ETHERCATDATA_EXPORT ControllerCapabilitySummary
     bool structuredHandshakeError = false;
     bool firmwareUpdate = false;
     bool explicitTimingModeStart = false;
+    bool faultReset = false;
     bool coe = false;
     bool distributedClocks = false;
     bool multiSlaveDistributedClocks = false;

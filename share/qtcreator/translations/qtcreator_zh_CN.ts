@@ -55553,12 +55553,12 @@ AL 状态：%3
         <translation>实时 EtherCAT 周期遥测</translation>
     </message>
     <message>
-        <source>Live aggregate cyclic telemetry from controller protocol v1.10. The protocol does not expose individual cyclic frame descriptors.</source>
-        <translation>来自控制器 v1.10 协议的实时周期汇总遥测。当前协议不提供单帧周期描述。</translation>
+        <source>Live aggregate cyclic telemetry from controller protocol v%1. The protocol does not expose individual cyclic frame descriptors.</source>
+        <translation>来自控制器 v%1 协议的实时周期汇总遥测。当前协议不提供单帧周期描述。</translation>
     </message>
     <message>
-        <source>Live cyclic transfer is running. Cycle counter %1, WKC %2/%3. Protocol v1.10 provides aggregate cyclic evidence but not individual frame descriptors.</source>
-        <translation>实时周期传输正在运行。周期计数 %1，WKC %2/%3。v1.10 协议提供周期汇总证据，但不提供单帧描述。</translation>
+        <source>Live cyclic transfer is running. Cycle counter %1, WKC %2/%3. Protocol v%4 provides aggregate cyclic evidence but not individual frame descriptors.</source>
+        <translation>实时周期传输正在运行。周期计数 %1，WKC %2/%3。v%4 协议提供周期汇总证据，但不提供单帧描述。</translation>
     </message>
     <message>
         <source>Live metric</source>
@@ -56421,6 +56421,110 @@ AL 状态：%3
     <message>
         <source>alarm #%1: %2</source>
         <translation>告警 #%1：%2</translation>
+    </message>
+    <message>
+        <source>Confirm / Reset Fault</source>
+        <translation>确认并复位故障</translation>
+    </message>
+    <message>
+        <source>Confirm and clear a latched controller fault only after its current cause has cleared. This does not restart the controller, rescan the bus, or change the active package.</source>
+        <translation>仅在当前故障原因已消失后确认并清除锁存故障。此操作不会重启控制器、重新扫描总线或更改活动软件包。</translation>
+    </message>
+    <message>
+        <source>%1 Unavailable: %2</source>
+        <translation>%1 不可用：%2</translation>
+    </message>
+    <message>
+        <source>Fault reset unavailable: %1</source>
+        <translation>故障复位不可用：%1</translation>
+    </message>
+    <message>
+        <source>UNSUPPORTED (-14): controlled fault reset requires Product API v1.11 and feature bit 12.</source>
+        <translation>UNSUPPORTED (-14)：受控故障复位需要 Product API v1.11 和功能位 12。</translation>
+    </message>
+    <message>
+        <source>Fault reset is available only while the controller is in Fault state.</source>
+        <translation>仅当控制器处于故障状态时才可复位故障。</translation>
+    </message>
+    <message>
+        <source>The current fault is still active. Resolve its cause before confirming it.</source>
+        <translation>当前故障仍处于活动状态。请先排除原因，再进行确认。</translation>
+    </message>
+    <message>
+        <source>There is no latched controller fault to confirm.</source>
+        <translation>没有可确认的控制器锁存故障。</translation>
+    </message>
+    <message>
+        <source>Refresh the controller because the latched fault has no alarm checkpoint.</source>
+        <translation>锁存故障没有告警检查点，请刷新控制器。</translation>
+    </message>
+    <message>
+        <source>Fault reset</source>
+        <translation>故障复位</translation>
+    </message>
+    <message>
+        <source> · </source>
+        <translation> · </translation>
+    </message>
+    <message>
+        <source>Fault reset failed</source>
+        <translation>故障复位失败</translation>
+    </message>
+    <message>
+        <source>latched before reset: %1</source>
+        <translation>复位前锁存：%1</translation>
+    </message>
+    <message>
+        <source>alarm checkpoint #%1</source>
+        <translation>告警检查点 #%1</translation>
+    </message>
+    <message>
+        <source>Action: Refresh state and alarms before attempting another fault reset.</source>
+        <translation>处理：请刷新状态和告警后再尝试故障复位。</translation>
+    </message>
+    <message>
+        <source>channel %1</source>
+        <translation>通道 %1</translation>
+    </message>
+    <message>
+        <source>stage %1 · %2</source>
+        <translation>阶段 %1 · %2</translation>
+    </message>
+    <message>
+        <source>final</source>
+        <translation>最终</translation>
+    </message>
+    <message>
+        <source>outcome unconfirmed</source>
+        <translation>结果未确认</translation>
+    </message>
+    <message>
+        <source> · status %1</source>
+        <translation> · 状态 %1</translation>
+    </message>
+    <message>
+        <source> · result %1</source>
+        <translation> · 结果 %1</translation>
+    </message>
+    <message>
+        <source>Refresh the controller and confirm the current latched fault first.</source>
+        <translation>请刷新控制器，并先确认当前锁存故障。</translation>
+    </message>
+    <message>
+        <source>The controller fault changed before confirmation. Refresh diagnostics and review the latest alarm.</source>
+        <translation>确认前控制器故障已发生变化。请刷新诊断并查看最新告警。</translation>
+    </message>
+    <message>
+        <source>Fault reset unavailable: Select the connected EtherCAT Master first.</source>
+        <translation>故障复位不可用：请先选择已连接的 EtherCAT 主站。</translation>
+    </message>
+    <message>
+        <source> Unavailable: %1</source>
+        <translation> 不可用：%1</translation>
+    </message>
+    <message>
+        <source> Unavailable: Select the connected EtherCAT Master.</source>
+        <translation> 不可用：请选择已连接的 EtherCAT 主站。</translation>
     </message>
 </context>
 <context>
@@ -57320,6 +57424,134 @@ AL 状态：%3
     <message>
         <source>The package upload cancellation could not be sent.</source>
         <translation>无法发送软件包上传取消请求。</translation>
+    </message>
+    <message>
+        <source>Controlled fault reset requires protocol v1.11.</source>
+        <translation>受控故障复位需要 Product API 协议 v1.11。</translation>
+    </message>
+    <message>
+        <source>Fault cleared</source>
+        <translation>故障已清除</translation>
+    </message>
+    <message>
+        <source>TX %1, RX %2, pending unavailable, last frame %3</source>
+        <translation>TX %1，RX %2，待处理数量不可用，最后一帧 %3</translation>
+    </message>
+    <message>
+        <source>Fault reset</source>
+        <translation>故障复位</translation>
+    </message>
+    <message>
+        <source>ERR_FAULT_ACTIVE (-6): current fault mask 0x%1 is still active. Resolve the cause before confirming the latch.</source>
+        <translation>ERR_FAULT_ACTIVE (-6)：当前故障掩码 0x%1 仍处于活动状态。请先排除原因，再确认清除锁存。</translation>
+    </message>
+    <message>
+        <source>ERR_STALE_CONFIRMATION (-9): the latest alarm sequence is %1. Refresh diagnostics and confirm the new snapshot.</source>
+        <translation>ERR_STALE_CONFIRMATION (-9)：最新告警序列为 %1。请刷新诊断并确认新快照。</translation>
+    </message>
+    <message>
+        <source>ERR_STATE (-3): fault reset requires the controller to remain in Fault state.</source>
+        <translation>ERR_STATE (-3)：故障复位要求控制器保持故障状态。</translation>
+    </message>
+    <message>
+        <source>ERR_ARGUMENT (-4): the controller rejected the fault confirmation payload.</source>
+        <translation>ERR_ARGUMENT (-4)：控制器拒绝了故障确认负载。</translation>
+    </message>
+    <message>
+        <source>ERR_UNSUPPORTED (-7): the controller does not support controlled fault reset.</source>
+        <translation>ERR_UNSUPPORTED (-7)：控制器不支持受控故障复位。</translation>
+    </message>
+    <message>
+        <source>Fault reset was accepted, but its confirmation snapshot is unavailable.</source>
+        <translation>故障复位已被接受，但确认快照不可用。</translation>
+    </message>
+    <message>
+        <source>Fault reset completed, but this session no longer owns the lease.</source>
+        <translation>故障复位已完成，但当前会话已不再持有控制租约。</translation>
+    </message>
+    <message>
+        <source>Fault reset was accepted, but the refreshed controller state is unavailable.</source>
+        <translation>故障复位已被接受，但刷新后的控制器状态不可用。</translation>
+    </message>
+    <message>
+        <source>Fault reset was accepted, but the refreshed fault state is current 0x%1, latched 0x%2.</source>
+        <translation>故障复位已被接受，但刷新后的故障状态为当前故障 0x%1、锁存故障 0x%2。</translation>
+    </message>
+    <message>
+        <source>Fault reset was accepted for an active package without a safe cyclic runtime.</source>
+        <translation>故障复位已被接受，但软件包仍处于活动状态，且安全周期运行时并未运行。</translation>
+    </message>
+    <message>
+        <source>OP_SAFE</source>
+        <translation>OP_SAFE</translation>
+    </message>
+    <message>
+        <source>SHUTDOWN</source>
+        <translation>SHUTDOWN</translation>
+    </message>
+    <message>
+        <source>Fault reset was accepted, but the controller did not reach the expected %1 state.</source>
+        <translation>故障复位已被接受，但控制器未进入预期的 %1 状态。</translation>
+    </message>
+    <message>
+        <source>Fault reset reported SHUTDOWN while a controller runtime remained active.</source>
+        <translation>故障复位报告 SHUTDOWN，但控制器运行时仍处于活动状态。</translation>
+    </message>
+    <message>
+        <source>Fault reset was accepted, but AlarmCleared sequence %1 was expected and sequence %2 was confirmed.</source>
+        <translation>故障复位已被接受，但预期 AlarmCleared 序列 %1，实际确认序列为 %2。</translation>
+    </message>
+    <message>
+        <source>Fault reset was accepted, but the matching AlarmCleared event was not confirmed.</source>
+        <translation>故障复位已被接受，但未确认匹配的 AlarmCleared 事件。</translation>
+    </message>
+    <message>
+        <source>Fault reset cleared the latch, but the controller package state changed.</source>
+        <translation>故障复位已清除锁存，但控制器软件包状态发生了变化。</translation>
+    </message>
+    <message>
+        <source>Fault reset cleared the latch, but the controller runtime state changed.</source>
+        <translation>故障复位已清除锁存，但控制器运行状态发生了变化。</translation>
+    </message>
+    <message>
+        <source>No latched fault remains; no controller request was sent.</source>
+        <translation>已无锁存故障；未向控制器发送请求。</translation>
+    </message>
+    <message>
+        <source>The controller state is unavailable.</source>
+        <translation>控制器状态不可用。</translation>
+    </message>
+    <message>
+        <source>Fault reset is available only while the controller is in Fault state.</source>
+        <translation>仅当控制器处于故障状态时才可复位故障。</translation>
+    </message>
+    <message>
+        <source>The current fault is still active (0x%1). Resolve its cause first.</source>
+        <translation>当前故障仍处于活动状态（0x%1）。请先排除原因。</translation>
+    </message>
+    <message>
+        <source>Refresh the controller before confirming the latched fault.</source>
+        <translation>确认锁存故障前请先刷新控制器。</translation>
+    </message>
+    <message>
+        <source>The fault confirmation snapshot is invalid.</source>
+        <translation>故障确认快照无效。</translation>
+    </message>
+    <message>
+        <source>The controller fault changed before confirmation. Refresh diagnostics and review the latest alarm.</source>
+        <translation>确认前控制器故障已发生变化。请刷新诊断并查看最新告警。</translation>
+    </message>
+    <message>
+        <source>UNSUPPORTED (-14): controlled fault reset requires negotiated Product API v1.11 and feature bit 12; no controller request was sent.</source>
+        <translation>UNSUPPORTED (-14)：受控故障复位需要协商使用 Product API v1.11 且具备功能位 12；未向控制器发送请求。</translation>
+    </message>
+    <message>
+        <source>Fault reset is not supported by this controller connection.</source>
+        <translation>当前控制器连接不支持故障复位。</translation>
+    </message>
+    <message>
+        <source>Fault reset outcome could not be verified.</source>
+        <translation>无法验证故障复位结果。</translation>
     </message>
 </context>
 </TS>

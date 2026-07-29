@@ -1162,6 +1162,7 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
     QVERIFY(::Core::ActionManager::command(Constants::CONNECT_CONTROLLER_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::SCAN_CONTROLLER_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::APPLY_CURRENT_BUS_ACTION_ID));
+    QVERIFY(::Core::ActionManager::command(Constants::RESET_FAULT_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::REFRESH_CONTROLLER_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::DISCONNECT_CONTROLLER_ACTION_ID));
     QVERIFY(::Core::ActionManager::command(Constants::LOCATE_DIFFERENCE_ACTION_ID));
@@ -1646,6 +1647,7 @@ void EtherCATWorkbenchTests::testModeCommandStripMirrorsRegisteredActions()
           Utils::Id(Constants::CONNECT_CONTROLLER_ACTION_ID),
           Utils::Id(Constants::SCAN_CONTROLLER_ACTION_ID),
           Utils::Id(Constants::APPLY_CURRENT_BUS_ACTION_ID),
+          Utils::Id(Constants::RESET_FAULT_ACTION_ID),
           Utils::Id(Constants::REFRESH_CONTROLLER_ACTION_ID),
           Utils::Id(Constants::DISCONNECT_CONTROLLER_ACTION_ID),
           Utils::Id(Constants::EXPAND_ACTION_ID),
@@ -19531,7 +19533,8 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
          Data::ControllerControlCommand::StartDistributedClocks,
          Data::ControllerControlCommand::Pause,
          Data::ControllerControlCommand::Resume,
-         Data::ControllerControlCommand::ControlledStop});
+         Data::ControllerControlCommand::ControlledStop,
+         Data::ControllerControlCommand::ResetFault});
     bool providerRegistered = false;
     const QScopeGuard cleanup([&] {
         controller.selectionService()->clear();
@@ -19571,6 +19574,8 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     QToolButton *scan = page.findChild<QToolButton *>("EtherCATCommunicationScanBus");
     QToolButton *restore
         = page.findChild<QToolButton *>("EtherCATCommunicationRestorePackage");
+    QToolButton *resetFault
+        = page.findChild<QToolButton *>("EtherCATCommunicationResetFault");
     QToolButton *release
         = page.findChild<QToolButton *>("EtherCATCommunicationReleaseControl");
     QTreeWidget *actualBus
@@ -19582,6 +19587,7 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     QVERIFY(configuration);
     QVERIFY(scan);
     QVERIFY(restore);
+    QVERIFY(resetFault);
     QVERIFY(release);
     QVERIFY(!page.findChild<QToolButton *>("EtherCATCommunicationStartFreeRun"));
     QVERIFY(!page.findChild<QToolButton *>("EtherCATCommunicationStartDistributedClocks"));
@@ -19593,7 +19599,7 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     QVERIFY(actualBusSummary);
     QVERIFY(controllerOutput.isValid());
     const QList<QToolButton *> controlButtons{
-        acquire, configuration, scan, restore, release};
+        acquire, configuration, scan, restore, resetFault, release};
     const auto verifyAllControlsDisabled = [&controlButtons] {
         for (QToolButton *button : controlButtons)
             QVERIFY(!button->isEnabled());
@@ -20008,8 +20014,239 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     QVERIFY(provider.connectionSnapshot().session);
     QVERIFY(provider.connectionSnapshot().session->ownsControlLease);
     QVERIFY(controller.canDisconnectSelectedController());
-    release->click();
+
+    controllerOutput.clear();
+    controllerState.currentFaults = 0;
+    controllerState.latchedFaults = quint64(1) << 15;
+    controllerState.latestAlarmSequence = 321;
+    snapshot.controllerState = controllerState;
+    snapshot.controlProgress = {};
+    snapshot.lastError.reset();
+    snapshot.recentAlarms = {
+        {
+            321,
+            3,
+            Tr::tr("Runtime error"),
+            Data::ControllerAlarmState::Raised,
+            Data::ControllerSeverity::Fatal,
+            Data::ControllerAlarmSource::Service,
+            true,
+            quint32(-2),
+            255,
+            0,
+            1097337958076,
+            8698496,
+            quint64(1) << 15,
+            Tr::tr("OSL_ERR_TIMEOUT (-2), phase FAILED (255)"),
+        },
+    };
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(!resetFault->isEnabled());
+    QCOMPARE(
+        controller.controllerControlUnavailableReason(
+            scope, Data::ControllerControlCommand::ResetFault),
+        Tr::tr("Fault reset is available only while the controller is in Fault state."));
+
+    controllerState.serviceState = Data::ControllerServiceState::Fault;
+    controllerState.currentFaults = quint64(1) << 15;
+    snapshot.controllerState = controllerState;
+    provider.publishSnapshot(snapshot);
+    QCOMPARE(
+        controller.controllerControlUnavailableReason(
+            scope, Data::ControllerControlCommand::ResetFault),
+        Tr::tr("The current fault is still active. Resolve its cause before confirming it."));
+
+    controllerState.currentFaults = 0;
+    snapshot.controllerState = controllerState;
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(resetFault->isEnabled());
+    QVERIFY(resetFault->toolTip().contains(Tr::tr("does not restart the controller")));
+
+    Data::ControllerControlRequest incompleteReset;
+    incompleteReset.command = Data::ControllerControlCommand::ResetFault;
+    const Utils::Result<> incompleteResetResult
+        = controller.executeControllerControl(scope, incompleteReset);
+    QVERIFY(!incompleteResetResult);
+    QCOMPARE(
+        incompleteResetResult.error(),
+        Tr::tr("Refresh the controller and confirm the current latched fault first."));
+    QCOMPARE(provider.controlCalls, 9);
+
+    Data::ControllerControlRequest staleReset = incompleteReset;
+    staleReset.expectedLatchedFaults = quint64(1) << 14;
+    staleReset.expectedAlarmSequence = controllerState.latestAlarmSequence;
+    const Utils::Result<> staleResetResult
+        = controller.executeControllerControl(scope, staleReset);
+    QVERIFY(!staleResetResult);
+    QCOMPARE(
+        staleResetResult.error(),
+        Tr::tr(
+            "The controller fault changed before confirmation. Refresh diagnostics and review "
+            "the latest alarm."));
+    QCOMPARE(provider.controlCalls, 9);
+
+    resetFault->click();
     QCOMPARE(provider.controlCalls, 10);
+    QCOMPARE(
+        provider.lastControlRequest.command, Data::ControllerControlCommand::ResetFault);
+    QCOMPARE(
+        provider.lastControlRequest.expectedLatchedFaults, controllerState.latchedFaults);
+    QCOMPARE(
+        provider.lastControlRequest.expectedAlarmSequence,
+        controllerState.latestAlarmSequence);
+
+    Data::ControllerConnectionSnapshot failedResetSnapshot = snapshot;
+    failedResetSnapshot.controlProgress.command = Data::ControllerControlCommand::ResetFault;
+    failedResetSnapshot.controlProgress.state = Data::ControllerControlState::Failed;
+    failedResetSnapshot.controlProgress.stage = 3;
+    failedResetSnapshot.controlProgress.final = true;
+    failedResetSnapshot.controlProgress.status = -15;
+    failedResetSnapshot.controlProgress.operationResult = -6;
+    failedResetSnapshot.controlProgress.expectedLatchedFaults
+        = controllerState.latchedFaults;
+    failedResetSnapshot.controlProgress.expectedAlarmSequence
+        = controllerState.latestAlarmSequence;
+    failedResetSnapshot.controlProgress.detail = "Final controller state is unconfirmed";
+    Data::ControllerOperationError resetError;
+    resetError.operation = Data::ControllerOperation::ResetFault;
+    resetError.channelId = "control";
+    resetError.code = -15;
+    resetError.codeName = "CPU1_REJECTED";
+    resetError.operationResult = -6;
+    resetError.summary = "Controller response timed out";
+    resetError.detail
+        = "ERR_FAULT_ACTIVE (-6): current fault mask 0x08000 is still active";
+    failedResetSnapshot.lastError = resetError;
+    provider.publishSnapshot(failedResetSnapshot);
+    QTRY_VERIFY(!controllerOutput.isEmpty());
+    const QString failedResetOutput = controllerOutput.constLast().at(0).toString();
+    QVERIFY(failedResetOutput.contains(Tr::tr("Fault reset failed")));
+    QVERIFY(failedResetOutput.contains("CPU1_REJECTED (-15)"));
+    QVERIFY(failedResetOutput.contains(Tr::tr("result %1").arg(-6)));
+    QVERIFY(failedResetOutput.contains(Tr::tr("stage %1").arg(3)));
+    QVERIFY(failedResetOutput.contains(Tr::tr("final")));
+    QVERIFY(failedResetOutput.contains(Tr::tr("channel %1").arg("control")));
+    QVERIFY(failedResetOutput.contains("Controller response timed out"));
+    QVERIFY(failedResetOutput.contains(
+        "ERR_FAULT_ACTIVE (-6): current fault mask 0x08000 is still active"));
+    QVERIFY(failedResetOutput.contains("Final controller state is unconfirmed"));
+    QVERIFY(failedResetOutput.contains("0x08000"));
+    QVERIFY(failedResetOutput.contains(
+        Tr::tr("alarm #%1: %2").arg(321).arg(Tr::tr("Runtime error"))));
+    QCOMPARE(
+        controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
+        ControllerOutputLevel::Error);
+
+    Data::ControllerConnectionSnapshot unconfirmedResetSnapshot = failedResetSnapshot;
+    unconfirmedResetSnapshot.controllerState->currentFaults = 0;
+    unconfirmedResetSnapshot.controllerState->latchedFaults = 0;
+    provider.publishSnapshot(unconfirmedResetSnapshot);
+    QTRY_VERIFY(controllerOutput.constLast().at(0).toString().contains(
+        "Final controller state is unconfirmed"));
+    QVERIFY(controllerOutput.constLast().at(0).toString().contains(
+        Tr::tr("alarm #%1").arg(321)));
+
+    Data::ControllerConnectionSnapshot verificationFailedSnapshot = unconfirmedResetSnapshot;
+    verificationFailedSnapshot.controlProgress.stage = 4;
+    verificationFailedSnapshot.controlProgress.final = true;
+    verificationFailedSnapshot.controlProgress.status = 0;
+    verificationFailedSnapshot.controlProgress.operationResult = 0;
+    verificationFailedSnapshot.controlProgress.detail
+        = "Fault reset was accepted, but the matching AlarmCleared event was not confirmed.";
+    Data::ControllerOperationError verificationError;
+    verificationError.source = Data::ControllerErrorSource::Protocol;
+    verificationError.channelId = "control";
+    verificationError.operation = Data::ControllerOperation::ResetFault;
+    verificationError.code = 0;
+    verificationError.codeName = "OK";
+    verificationError.operationResult = 0;
+    verificationError.summary = "Fault reset outcome could not be verified.";
+    verificationError.detail = verificationFailedSnapshot.controlProgress.detail;
+    verificationFailedSnapshot.lastError = verificationError;
+    provider.publishSnapshot(verificationFailedSnapshot);
+    QTRY_VERIFY(controllerOutput.constLast().at(0).toString().contains("OK (0)"));
+    const QString verificationFailedOutput = controllerOutput.constLast().at(0).toString();
+    QVERIFY(verificationFailedOutput.contains(Tr::tr("result %1").arg(0)));
+    QVERIFY(verificationFailedOutput.contains(Tr::tr("outcome unconfirmed")));
+    QVERIFY(verificationFailedOutput.contains(Tr::tr("alarm #%1").arg(321)));
+
+    Data::ControllerConnectionSnapshot missingAlarmResetSnapshot = verificationFailedSnapshot;
+    missingAlarmResetSnapshot.recentAlarms.clear();
+    provider.publishSnapshot(missingAlarmResetSnapshot);
+    QTRY_VERIFY(controllerOutput.constLast().at(0).toString().contains(
+        Tr::tr("alarm checkpoint #%1").arg(321)));
+    const QString missingAlarmOutput = controllerOutput.constLast().at(0).toString();
+    QVERIFY(missingAlarmOutput.contains("0x08000"));
+    const QString noFaultMask = Tr::tr("none (%1)").arg("0x00000");
+    QVERIFY(missingAlarmOutput.contains(Tr::tr("current: %1").arg(noFaultMask)));
+    QVERIFY(missingAlarmOutput.contains(Tr::tr("latched: %1").arg(noFaultMask)));
+
+    Data::ControllerConnectionSnapshot missingStateResetSnapshot = verificationFailedSnapshot;
+    missingStateResetSnapshot.controllerState.reset();
+    provider.publishSnapshot(missingStateResetSnapshot);
+    QString latchedBeforeResetLabel
+        = Tr::tr("latched before reset: %1").arg(QStringLiteral("__mask__"));
+    latchedBeforeResetLabel.remove(QStringLiteral("__mask__"));
+    QTRY_VERIFY(
+        controllerOutput.constLast().at(0).toString().contains(latchedBeforeResetLabel));
+    const QString missingStateOutput = controllerOutput.constLast().at(0).toString();
+    QVERIFY(missingStateOutput.contains("0x08000"));
+    QVERIFY(missingStateOutput.contains(Tr::tr("current: %1").arg(Tr::tr("Not available"))));
+    QVERIFY(missingStateOutput.contains(Tr::tr("alarm checkpoint #%1").arg(321)));
+    QVERIFY(missingStateOutput.contains(Tr::tr("alarm #%1").arg(321)));
+    QVERIFY(missingStateOutput.contains(
+        Tr::tr("Action: Refresh state and alarms before attempting another fault reset.")));
+
+    Data::ControllerConnectionSnapshot resetSucceededSnapshot = snapshot;
+    resetSucceededSnapshot.controllerState->serviceState
+        = Data::ControllerServiceState::Shutdown;
+    resetSucceededSnapshot.controllerState->currentFaults = 0;
+    resetSucceededSnapshot.controllerState->latchedFaults = 0;
+    resetSucceededSnapshot.controllerState->latestAlarmSequence = 322;
+    resetSucceededSnapshot.recentAlarms.append(
+        {
+            322,
+            5,
+            Tr::tr("Fault cleared"),
+            Data::ControllerAlarmState::Cleared,
+            Data::ControllerSeverity::Information,
+            Data::ControllerAlarmSource::Service,
+            false,
+            0,
+            0,
+            0,
+            1097337959000,
+            8698496,
+            quint64(1) << 15,
+            {},
+        });
+    resetSucceededSnapshot.controlProgress.command = Data::ControllerControlCommand::ResetFault;
+    resetSucceededSnapshot.controlProgress.state = Data::ControllerControlState::Succeeded;
+    resetSucceededSnapshot.controlProgress.stage = 4;
+    resetSucceededSnapshot.controlProgress.final = true;
+    resetSucceededSnapshot.controlProgress.status = 0;
+    resetSucceededSnapshot.controlProgress.operationResult = 0;
+    resetSucceededSnapshot.controlProgress.expectedLatchedFaults = quint64(1) << 15;
+    resetSucceededSnapshot.controlProgress.expectedAlarmSequence = 321;
+    resetSucceededSnapshot.lastError.reset();
+    provider.publishSnapshot(resetSucceededSnapshot);
+    QTRY_VERIFY(!resetFault->isEnabled());
+    QVERIFY(controllerOutput.constLast().at(0).toString().contains(
+        Tr::tr("%1 %2").arg(Tr::tr("Fault reset"), Tr::tr("succeeded"))));
+
+    Data::ControllerConnectionSnapshot noOpResetSnapshot = resetSucceededSnapshot;
+    noOpResetSnapshot.controlProgress.stage = 0;
+    noOpResetSnapshot.controlProgress.expectedLatchedFaults = 0;
+    noOpResetSnapshot.controlProgress.expectedAlarmSequence = 0;
+    noOpResetSnapshot.controlProgress.detail
+        = Tr::tr("No latched fault remains; no controller request was sent.");
+    provider.publishSnapshot(noOpResetSnapshot);
+    QTRY_VERIFY(controllerOutput.constLast().at(0).toString().contains(
+        Tr::tr("No latched fault remains; no controller request was sent.")));
+    QVERIFY(!controllerOutput.constLast().at(0).toString().contains(Tr::tr("succeeded")));
+
+    release->click();
+    QCOMPARE(provider.controlCalls, 11);
     QCOMPARE(
         provider.lastControlRequest.command, Data::ControllerControlCommand::ReleaseControl);
 }

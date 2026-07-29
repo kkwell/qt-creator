@@ -748,6 +748,24 @@ static QString controllerControlStateUnavailableReason(
             return Tr::tr("Controlled Stop is available only while Running or Paused.");
         }
         return {};
+    case Command::ResetFault:
+        if (const QString reason = requireOwnedLease(); !reason.isEmpty())
+            return reason;
+        if (!controllerState)
+            return Tr::tr("The controller state is unavailable.");
+        if (controllerState->serviceState != ServiceState::Fault)
+            return Tr::tr("Fault reset is available only while the controller is in Fault state.");
+        if (controllerState->currentFaults) {
+            return Tr::tr(
+                "The current fault is still active. Resolve its cause before confirming it.");
+        }
+        if (!controllerState->latchedFaults)
+            return Tr::tr("There is no latched controller fault to confirm.");
+        if (!controllerState->latestAlarmSequence) {
+            return Tr::tr(
+                "Refresh the controller because the latched fault has no alarm checkpoint.");
+        }
+        return {};
     }
     return Tr::tr("The controller service state does not allow this operation.");
 }
@@ -836,6 +854,8 @@ static QString controllerControlCommandName(Data::ControllerControlCommand comma
         return Tr::tr("Resume");
     case Command::ControlledStop:
         return Tr::tr("Controlled stop");
+    case Command::ResetFault:
+        return Tr::tr("Fault reset");
     }
     return Tr::tr("Controller control");
 }
@@ -1074,6 +1094,106 @@ static QString controllerOperationErrorMessage(
                              : Tr::tr("Controller error: %1").arg(details.join(Tr::tr(" · ")));
 }
 
+static QString controllerFaultResetFailureMessage(
+    const Data::ControllerConnectionSnapshot &snapshot)
+{
+    const Data::ControllerControlProgress &progress = snapshot.controlProgress;
+    QStringList fields{Tr::tr("Fault reset failed")};
+    const auto appendUnique = [&fields](const QString &value) {
+        const QString trimmed = value.trimmed();
+        if (!trimmed.isEmpty() && !fields.contains(trimmed))
+            fields.append(trimmed);
+    };
+
+    if (snapshot.lastError
+        && snapshot.lastError->operation == Data::ControllerOperation::ResetFault) {
+        const Data::ControllerOperationError &error = *snapshot.lastError;
+        appendUnique(error.summary);
+        if (!error.codeName.isEmpty() && error.code) {
+            appendUnique(Tr::tr("%1 (%2)").arg(error.codeName).arg(*error.code));
+        } else if (!error.codeName.isEmpty()) {
+            appendUnique(error.codeName);
+        } else if (error.code) {
+            appendUnique(Tr::tr("status %1").arg(*error.code));
+        }
+        if (error.operationResult)
+            appendUnique(Tr::tr("result %1").arg(*error.operationResult));
+        if (!error.channelId.isEmpty())
+            appendUnique(Tr::tr("channel %1").arg(error.channelId));
+        appendUnique(error.detail);
+    } else {
+        if (progress.status)
+            appendUnique(Tr::tr("status %1").arg(*progress.status));
+        if (progress.operationResult) {
+            appendUnique(Tr::tr("result %1").arg(*progress.operationResult));
+        }
+        appendUnique(progress.detail);
+    }
+    appendUnique(progress.detail);
+
+    const bool verificationUnconfirmed
+        = progress.status && *progress.status == 0 && snapshot.lastError
+          && snapshot.lastError->operation == Data::ControllerOperation::ResetFault
+          && snapshot.lastError->source == Data::ControllerErrorSource::Protocol;
+    QString stageEvidence
+        = progress.stage
+              ? Tr::tr("stage %1 · %2")
+                    .arg(progress.stage)
+                    .arg(progress.final ? Tr::tr("final") : Tr::tr("outcome unconfirmed"))
+              : progress.final ? Tr::tr("final") : Tr::tr("outcome unconfirmed");
+    if (verificationUnconfirmed && progress.final)
+        stageEvidence += QStringLiteral(" · ") + Tr::tr("outcome unconfirmed");
+    fields.append(stageEvidence);
+
+    quint64 relevantFaults = progress.expectedLatchedFaults;
+    if (snapshot.controllerState) {
+        const Data::ControllerStateSummary &state = *snapshot.controllerState;
+        fields.append(
+            Tr::tr("current: %1").arg(controllerFaultMaskSummary(state.currentFaults)));
+        fields.append(
+            Tr::tr("latched: %1").arg(controllerFaultMaskSummary(state.latchedFaults)));
+        relevantFaults |= state.currentFaults | state.latchedFaults;
+    } else {
+        fields.append(Tr::tr("current: %1").arg(Tr::tr("Not available")));
+    }
+    bool matchingAlarmRetained = false;
+    for (qsizetype index = snapshot.recentAlarms.size(); index > 0; --index) {
+        const Data::ControllerAlarmSummary &alarm = snapshot.recentAlarms.at(index - 1);
+        if (alarm.state != Data::ControllerAlarmState::Raised
+            || !relevantFaults || !(alarm.faultMask & relevantFaults)) {
+            continue;
+        }
+        QString alarmText
+            = Tr::tr("alarm #%1: %2").arg(alarm.sequence).arg(alarm.codeName);
+        if (!alarm.detail.isEmpty())
+            alarmText += Tr::tr(" (%1)").arg(alarm.detail);
+        fields.append(alarmText);
+        matchingAlarmRetained = true;
+        break;
+    }
+    if ((!snapshot.controllerState || !matchingAlarmRetained)
+        && progress.expectedLatchedFaults) {
+        fields.append(
+            Tr::tr("latched before reset: %1")
+                .arg(controllerFaultMaskSummary(progress.expectedLatchedFaults)));
+        if (progress.expectedAlarmSequence) {
+            fields.append(
+                Tr::tr("alarm checkpoint #%1").arg(progress.expectedAlarmSequence));
+        }
+    }
+    if (snapshot.controllerState) {
+        fields.append(
+            Tr::tr("Action: %1")
+                .arg(controllerFaultAction(
+                    snapshot.controllerState->currentFaults,
+                    snapshot.controllerState->latchedFaults)));
+    } else {
+        fields.append(
+            Tr::tr("Action: Refresh state and alarms before attempting another fault reset."));
+    }
+    return fields.join(QStringLiteral(" · "));
+}
+
 static QString controllerOutputFingerprint(
     const QString &message, ControllerOutputLevel level)
 {
@@ -1106,6 +1226,19 @@ static ControllerOutputLevel controllerOutputLevel(
 
 static QString controllerOutputMessage(const Data::ControllerConnectionSnapshot &snapshot)
 {
+    if (snapshot.controlProgress.command == Data::ControllerControlCommand::ResetFault
+        && snapshot.controlProgress.state == Data::ControllerControlState::Failed) {
+        return controllerFaultResetFailureMessage(snapshot);
+    }
+    if (snapshot.controlProgress.command == Data::ControllerControlCommand::ResetFault
+        && snapshot.controlProgress.state == Data::ControllerControlState::Succeeded
+        && snapshot.controlProgress.stage == 0
+        && !snapshot.controlProgress.detail.isEmpty()) {
+        return Tr::tr("%1: %2")
+            .arg(controllerControlCommandName(snapshot.controlProgress.command),
+                 snapshot.controlProgress.detail);
+    }
+
     if (snapshot.controllerState
         && (snapshot.controllerState->serviceState == Data::ControllerServiceState::Fault
             || snapshot.controllerState->currentFaults
@@ -1969,10 +2102,6 @@ QString WorkbenchController::controllerControlCommonUnavailableReason(
         return Tr::tr("Controller stop verification is in progress.");
     if (!selection.profileExplicitlySelected || selection.profileId.isNull())
         return Tr::tr("Select a controller connection profile for the active EtherCAT Master.");
-    if (command != Data::ControllerControlCommand::None
-        && !provider->supportsControlCommand(command)) {
-        return Tr::tr("The connected controller does not support this control operation.");
-    }
 
     const Data::ControllerConnectionSnapshot current = provider->connectionSnapshot();
     if (snapshot)
@@ -1989,6 +2118,15 @@ QString WorkbenchController::controllerControlCommonUnavailableReason(
         return Tr::tr("Controller run controls are unavailable for a Mock connection.");
     if (current.readOnly)
         return Tr::tr("The controller connection is read-only.");
+    if (command != Data::ControllerControlCommand::None
+        && !provider->supportsControlCommand(command)) {
+        if (command == Data::ControllerControlCommand::ResetFault) {
+            return Tr::tr(
+                "UNSUPPORTED (-14): controlled fault reset requires Product API v1.11 and "
+                "feature bit 12.");
+        }
+        return Tr::tr("The connected controller does not support this control operation.");
+    }
     if (current.controlProgress.state == Data::ControllerControlState::Pending)
         return Tr::tr("Wait for the current controller control operation to finish.");
     return {};
@@ -2218,6 +2356,24 @@ Utils::Result<> WorkbenchController::executeControllerControl(
     if (!unavailableReason.isEmpty())
         return Utils::ResultError(unavailableReason);
     QTC_ASSERT(provider, return Utils::ResultError(Tr::tr("The controller adapter is unavailable.")));
+    if (request.command == Data::ControllerControlCommand::ResetFault) {
+        const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+        QTC_ASSERT(
+            snapshot.controllerState,
+            return Utils::ResultError(Tr::tr("The controller state is unavailable.")));
+        if (!request.expectedLatchedFaults || !request.expectedAlarmSequence) {
+            return Utils::ResultError(
+                Tr::tr("Refresh the controller and confirm the current latched fault first."));
+        }
+        if (request.expectedLatchedFaults != snapshot.controllerState->latchedFaults
+            || request.expectedAlarmSequence
+                   != snapshot.controllerState->latestAlarmSequence) {
+            return Utils::ResultError(
+                Tr::tr(
+                    "The controller fault changed before confirmation. Refresh diagnostics and "
+                    "review the latest alarm."));
+        }
+    }
     return provider->executeControlCommand(request);
 }
 
