@@ -20,7 +20,9 @@ inline constexpr quint16 MinimumMinor = 1;
 inline constexpr quint16 FirmwareMinor = 9;
 inline constexpr quint16 ExplicitTimingModeMinor = 10;
 inline constexpr quint16 ControlledFaultResetMinor = 11;
-inline constexpr quint16 CurrentMinor = ControlledFaultResetMinor;
+inline constexpr quint16 RuntimeResourceMinor = 12;
+inline constexpr quint16 CurrentMinor = RuntimeResourceMinor;
+inline constexpr quint32 RuntimeResourceFeature = 1U << 13;
 inline constexpr quint32 ControlMaximumPayloadBytes = 4096;
 inline constexpr quint32 PushMaximumPayloadBytes = 65536;
 inline constexpr quint32 BulkMaximumPayloadBytes = 65536;
@@ -73,9 +75,13 @@ enum class MessageType : quint16 {
     ActivatePackage = 0x0405,
     RollbackPackage = 0x0406,
     RestoreActivePackage = 0x0407,
+    QueryResourceTable = 0x040b,
+    GetResourceSnapshot = 0x040c,
     Capability = 0x0480,
     TopologyResult = 0x0481,
     PackageState = 0x0483,
+    ResourceTablePage = 0x0487,
+    ResourceSnapshot = 0x0488,
     GetFirmwareState = 0x0504,
     FirmwareStatus = 0x0580,
     FirmwareState = 0x0581,
@@ -283,6 +289,112 @@ struct TopologyResult
     QList<TopologySlave> slaves;
 };
 
+enum class RuntimeResourcePrimitive : quint8 {
+    Boolean = 1,
+    Unsigned8 = 2,
+    Signed8 = 3,
+    Unsigned16 = 4,
+    Signed16 = 5,
+    Unsigned32 = 6,
+    Signed32 = 7,
+    Unsigned64 = 8,
+    Signed64 = 9,
+    FixedQ32_32 = 10,
+    RawBits = 11,
+};
+
+enum class RuntimeResourceDirection : quint8 {
+    Input = 1,
+    Output = 2,
+};
+
+enum class RuntimeResourceAccess : quint8 {
+    Read = 1,
+    ReadWrite = 3,
+};
+
+enum class RuntimeResourceQuality : quint32 {
+    Good = 0x03,
+    Unavailable = 0x08,
+};
+
+struct RuntimeResourceBinding
+{
+    quint64 bootId = 0;
+    quint32 activeSlot = 0;
+    quint64 packageGeneration = 0;
+    quint64 configurationId = 0;
+    quint64 topologyGeneration = 0;
+    quint64 runtimeGeneration = 0;
+    quint64 catalogRevision = 0;
+    quint64 topologyIdentity = 0;
+};
+
+struct RuntimeResourceTableQuery
+{
+    RuntimeResourceBinding binding;
+    quint16 limit = 64;
+    quint16 flags = 1;
+    quint32 cursor = 0;
+};
+
+struct RuntimeResourceDescriptor
+{
+    quint64 resourceId = 0;
+    quint64 componentId = 0;
+    quint64 parentId = 0;
+    quint32 ordinal = 0;
+    quint32 processImageBitOffset = 0;
+    quint16 processImageBitLength = 0;
+    quint16 valueBitWidth = 0;
+    RuntimeResourcePrimitive primitive = RuntimeResourcePrimitive::Boolean;
+    RuntimeResourceDirection direction = RuntimeResourceDirection::Input;
+    RuntimeResourceAccess access = RuntimeResourceAccess::Read;
+    quint8 valueBytes = 0;
+    quint16 qualityMask = 0;
+    quint32 groupId = 0;
+    QByteArray safeValue;
+};
+
+struct RuntimeResourceTablePage
+{
+    qint32 status = 0;
+    RuntimeResourceBinding binding;
+    quint16 recordCount = 0;
+    quint32 totalCount = 0;
+    quint32 nextCursor = 0;
+    quint32 pageFlags = 0;
+    bool more = false;
+    QList<RuntimeResourceDescriptor> resources;
+};
+
+struct RuntimeResourceSnapshotQuery
+{
+    RuntimeResourceBinding binding;
+    QList<quint64> resourceIds;
+};
+
+struct RuntimeResourceSample
+{
+    quint64 resourceId = 0;
+    RuntimeResourcePrimitive primitive = RuntimeResourcePrimitive::Boolean;
+    RuntimeResourceDirection direction = RuntimeResourceDirection::Input;
+    quint16 bitWidth = 0;
+    RuntimeResourceQuality quality = RuntimeResourceQuality::Unavailable;
+    QByteArray value;
+};
+
+struct RuntimeResourceSnapshot
+{
+    qint32 status = 0;
+    RuntimeResourceBinding binding;
+    quint64 snapshotSequence = 0;
+    quint64 captureCycle = 0;
+    quint64 controllerTimestampNs = 0;
+    bool complete = false;
+    QList<RuntimeResourceSample> samples;
+};
+
 quint32 maximumPayloadBytes(Role role);
 bool isReadOnlyRequest(MessageType type);
 bool isPackageDeploymentRequest(MessageType type);
@@ -315,6 +427,20 @@ QByteArray encodeResumeEvents(
     quint64 bootId,
     quint16 protocolMinor = CurrentMinor,
     Error *error = nullptr);
+QByteArray encodeQueryResourceTable(
+    const RuntimeResourceTableQuery &query,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint16 protocolMinor = CurrentMinor,
+    Error *error = nullptr);
+QByteArray encodeGetResourceSnapshot(
+    const RuntimeResourceSnapshotQuery &query,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint16 protocolMinor = CurrentMinor,
+    Error *error = nullptr);
 
 std::optional<HelloAck> decodeHelloAck(
     const Frame &frame,
@@ -340,6 +466,10 @@ std::optional<Data::ControllerPackageSummary> decodePackageState(
     const Frame &frame, Error *error = nullptr);
 std::optional<TopologyResult> decodeTopologyResult(
     const Frame &frame, Error *error = nullptr);
+std::optional<RuntimeResourceTablePage> decodeResourceTablePage(
+    const Frame &frame, const RuntimeResourceTableQuery &query, Error *error = nullptr);
+std::optional<RuntimeResourceSnapshot> decodeResourceSnapshot(
+    const Frame &frame, const RuntimeResourceSnapshotQuery &query, Error *error = nullptr);
 std::optional<Data::ControllerFirmwareSummary> decodeFirmwareState(
     const Frame &frame, Error *error = nullptr);
 std::optional<ResumeEventsResult> decodeResumeEventsResult(

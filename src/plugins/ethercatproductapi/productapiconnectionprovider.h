@@ -35,6 +35,10 @@ public:
     Utils::Result<> connectToController(const Data::ControllerConnectionRequest &request) override;
     Utils::Result<> disconnectFromController() override;
     Utils::Result<> refreshController() override;
+    bool supportsRuntimeResources() const override;
+    std::optional<Data::RuntimeResourceCatalog> runtimeResourceCatalog() const override;
+    std::optional<Data::RuntimeResourceSnapshot> runtimeResourceSnapshot() const override;
+    Utils::Result<> refreshRuntimeResources() override;
     bool supportsControlCommand(Data::ControllerControlCommand command) const override;
     Utils::Result<> executeControlCommand(
         const Data::ControllerControlRequest &request) override;

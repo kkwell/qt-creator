@@ -376,10 +376,27 @@ The generic contract deliberately has no output transaction. A consumer may
 compare opaque IDs only inside the matching scope, session generation, and
 complete catalog epoch. Names, ordinals, vendor identities, object indexes,
 and process-image offsets are not semantic binding keys. Providers that do not
-opt in return no catalog or snapshot and reject refresh explicitly. A later
-vendor adapter may implement the wire query, but it must use the same
-connection/session state and publish a complete consistent value only after
-all provider-specific validation succeeds.
+opt in return no catalog or snapshot and reject refresh explicitly.
+
+The ProductApi Provider is the first opt-in implementation. Product API v1.12
+feature bit 13 is optional rather than a connection requirement: unsupported
+peers stay connected and reject only the resource refresh. The Provider pages
+one epoch-bound catalog over its existing Bulk session without a control
+lease, then publishes one at-most-64-resource cycle-boundary snapshot. If a
+catalog contains more than 64 resources, its current snapshot is explicitly
+`complete=false`; the Provider never merges captures from different cycles.
+Typed handler failures and the server's current pre-dispatch `BulkStatus`
+fallback both fail the resource refresh and clear its cache without converting
+the failure into a successful snapshot. Canonical reconnect statuses still use
+the adapter's existing whole-session recovery.
+
+Product API v1.12 does not expose a SemanticBindingId or authenticated mapping
+from ResourceId to an upper-layer `SemanticSignalId`. Core therefore cannot
+join the runtime catalog to a device adapter by name, identity, ordinal,
+station/module position, object index, or process-image offset. That join
+remains unavailable until a separately verified binding artifact exists.
+Current validation is headless loopback only; there is no Runtime Resource
+hardware or output-write claim.
 
 Workbench, not Core, performs one automatic Acquire attempt after an
 authoritative connected snapshot identifies the exact

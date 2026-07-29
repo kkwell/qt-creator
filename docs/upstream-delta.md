@@ -2403,3 +2403,34 @@ identity are explicitly not valid semantic binding keys.
 The Qt 6.11 offscreen Core suite passed 23 tests with no failures. CMake and
 qbs source lists remain synchronized. No visible GUI or controller connection
 was used.
+
+## Product API v1.12 Runtime Resource adapter delta
+
+`EtherCATProductApi` now opts into the generic read-only Runtime Resource
+surface when HELLO negotiates minor 12 and optional feature bit 13
+(`0x00002000`, cumulative mask `0x00003fff`). Missing bit 13 does not reject
+the session: refresh is rejected locally and sends nothing. A supported
+refresh uses the existing joined Bulk channel without acquiring a lease,
+pages `QueryResourceTable (0x040b)` to one frozen full epoch, and requests
+`GetResourceSnapshot (0x040c)` for at most 64 strictly ordered IDs from one
+capture cycle.
+
+All provider-owned IDs stay opaque and are retained with BootId, package
+selector/generation, ConfigurationId, topology/runtime generations, catalog
+revision, and topology identity. A catalog larger than 64 is retained while
+the current value snapshot is marked `complete=false`; captures from different
+cycles are never combined. Typed resource failures are decoded, and the
+API-034 server's current pre-dispatch `BulkStatus` response is accepted only
+as matching failure evidence.
+
+The wire contract exposes no SemanticBindingId or authenticated
+`SemanticSignalId` mapping. No join is inferred from names, vendor identity,
+ordinal, station/module position, object indexes, or process-image offsets.
+This delta adds no Workbench page, output transaction, manual control, or
+hardware claim. Validation is limited to the headless codec/session loopback;
+the existing v1.11 real-controller results are unchanged.
+
+The Qt 6.11 offscreen ProductApi suite passed 105 tests with no failures and
+one hardware-only skip. The Core suite passed 23 tests with no failures, and
+the non-test ProductApi target built successfully. No visible GUI or controller
+connection was used.

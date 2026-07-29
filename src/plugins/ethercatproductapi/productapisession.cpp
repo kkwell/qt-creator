@@ -8,8 +8,10 @@
 
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QRandomGenerator>
+#include <QSet>
 #include <QTcpSocket>
 #include <QTimer>
 
@@ -375,6 +377,273 @@ std::optional<Data::ControllerPackageSelector> activePackageSelector(
     return selector.isValid() ? std::optional(selector) : std::nullopt;
 }
 
+template<typename T>
+QByteArray opaqueBigEndian(T value)
+{
+    QByteArray bytes(qsizetype(sizeof(T)), '\0');
+    qToBigEndian<T>(value, reinterpret_cast<uchar *>(bytes.data()));
+    return bytes;
+}
+
+std::optional<Data::ControllerSlot> runtimeResourceSlot(quint32 slot)
+{
+    if (slot == quint32('A'))
+        return Data::ControllerSlot::A;
+    if (slot == quint32('B'))
+        return Data::ControllerSlot::B;
+    return {};
+}
+
+quint32 runtimeResourceSlot(Data::ControllerSlot slot)
+{
+    if (slot == Data::ControllerSlot::A)
+        return quint32('A');
+    if (slot == Data::ControllerSlot::B)
+        return quint32('B');
+    return 0;
+}
+
+Data::RuntimeResourceCatalogEpoch runtimeResourceEpoch(
+    const Protocol::RuntimeResourceBinding &binding)
+{
+    Data::RuntimeResourceCatalogEpoch epoch;
+    epoch.controllerBootId = binding.bootId;
+    epoch.activePackageSlot
+        = runtimeResourceSlot(binding.activeSlot).value_or(Data::ControllerSlot::None);
+    epoch.activePackageGeneration = binding.packageGeneration;
+    epoch.configurationId = binding.configurationId;
+    epoch.topologyGeneration = binding.topologyGeneration;
+    epoch.runtimeGeneration = binding.runtimeGeneration;
+    epoch.catalogRevision = binding.catalogRevision;
+    epoch.topologyIdentity = opaqueBigEndian(binding.topologyIdentity);
+    return epoch;
+}
+
+std::optional<Data::RuntimeResourcePrimitiveType> runtimeResourcePrimitiveType(
+    Protocol::RuntimeResourcePrimitive primitive)
+{
+    using DataType = Data::RuntimeResourcePrimitiveType;
+    using ProtocolType = Protocol::RuntimeResourcePrimitive;
+    switch (primitive) {
+    case ProtocolType::Boolean:
+        return DataType::Boolean;
+    case ProtocolType::Unsigned8:
+    case ProtocolType::Unsigned16:
+    case ProtocolType::Unsigned32:
+    case ProtocolType::Unsigned64:
+        return DataType::UnsignedInteger;
+    case ProtocolType::Signed8:
+    case ProtocolType::Signed16:
+    case ProtocolType::Signed32:
+    case ProtocolType::Signed64:
+        return DataType::SignedInteger;
+    case ProtocolType::FixedQ32_32:
+        return DataType::FloatingPoint;
+    case ProtocolType::RawBits:
+        return DataType::ByteArray;
+    }
+    return {};
+}
+
+std::optional<Data::RuntimeResourceDirection> runtimeResourceDirection(
+    Protocol::RuntimeResourceDirection direction)
+{
+    if (direction == Protocol::RuntimeResourceDirection::Input)
+        return Data::RuntimeResourceDirection::Input;
+    if (direction == Protocol::RuntimeResourceDirection::Output)
+        return Data::RuntimeResourceDirection::Output;
+    return {};
+}
+
+std::optional<Data::RuntimeResourceAccess> runtimeResourceAccess(
+    Protocol::RuntimeResourceAccess access)
+{
+    if (access == Protocol::RuntimeResourceAccess::Read)
+        return Data::RuntimeResourceAccess::ReadOnly;
+    if (access == Protocol::RuntimeResourceAccess::ReadWrite)
+        return Data::RuntimeResourceAccess::ReadWrite;
+    return {};
+}
+
+template<typename T>
+std::optional<T> decodeExactBigEndian(QByteArrayView bytes)
+{
+    if (bytes.size() != qsizetype(sizeof(T)))
+        return {};
+    return qFromBigEndian<T>(reinterpret_cast<const uchar *>(bytes.data()));
+}
+
+QByteArray runtimeResourceValueTypeIdentity(
+    Protocol::RuntimeResourcePrimitive primitive, quint16 bitWidth)
+{
+    return QByteArray("ethercat.runtime.value/primitive-") + QByteArray::number(quint8(primitive))
+           + "/bits-" + QByteArray::number(bitWidth);
+}
+
+std::optional<Data::RuntimeResourceTypedValue> runtimeResourceTypedValue(
+    Protocol::RuntimeResourcePrimitive primitive, quint16 bitWidth, QByteArrayView bytes)
+{
+    Data::RuntimeResourceTypedValue result;
+    const auto primitiveType = runtimeResourcePrimitiveType(primitive);
+    if (!primitiveType)
+        return {};
+    result.primitiveType = *primitiveType;
+    result.typeIdentity = runtimeResourceValueTypeIdentity(primitive, bitWidth);
+
+    using ProtocolType = Protocol::RuntimeResourcePrimitive;
+    switch (primitive) {
+    case ProtocolType::Boolean:
+        if (bytes.size() != 1 || (quint8(bytes.front()) != 0 && quint8(bytes.front()) != 1))
+            return {};
+        result.value = bool(quint8(bytes.front()));
+        break;
+    case ProtocolType::Unsigned8:
+        if (bytes.size() != 1)
+            return {};
+        result.value = QVariant::fromValue<qulonglong>(quint8(bytes.front()));
+        break;
+    case ProtocolType::Signed8:
+        if (bytes.size() != 1)
+            return {};
+        result.value = QVariant::fromValue<qlonglong>(qint8(bytes.front()));
+        break;
+    case ProtocolType::Unsigned16: {
+        const auto value = decodeExactBigEndian<quint16>(bytes);
+        if (!value)
+            return {};
+        result.value = QVariant::fromValue<qulonglong>(*value);
+        break;
+    }
+    case ProtocolType::Signed16: {
+        const auto value = decodeExactBigEndian<qint16>(bytes);
+        if (!value)
+            return {};
+        result.value = QVariant::fromValue<qlonglong>(*value);
+        break;
+    }
+    case ProtocolType::Unsigned32: {
+        const auto value = decodeExactBigEndian<quint32>(bytes);
+        if (!value)
+            return {};
+        result.value = QVariant::fromValue<qulonglong>(*value);
+        break;
+    }
+    case ProtocolType::Signed32: {
+        const auto value = decodeExactBigEndian<qint32>(bytes);
+        if (!value)
+            return {};
+        result.value = QVariant::fromValue<qlonglong>(*value);
+        break;
+    }
+    case ProtocolType::Unsigned64: {
+        const auto value = decodeExactBigEndian<quint64>(bytes);
+        if (!value)
+            return {};
+        result.value = QVariant::fromValue<qulonglong>(*value);
+        break;
+    }
+    case ProtocolType::Signed64: {
+        const auto value = decodeExactBigEndian<qint64>(bytes);
+        if (!value)
+            return {};
+        result.value = QVariant::fromValue<qlonglong>(*value);
+        break;
+    }
+    case ProtocolType::FixedQ32_32: {
+        const auto value = decodeExactBigEndian<qint64>(bytes);
+        if (!value)
+            return {};
+        result.value = double(*value) / 4294967296.0;
+        result.opaqueRepresentation = QByteArray(bytes.data(), bytes.size());
+        break;
+    }
+    case ProtocolType::RawBits:
+        if (bytes.isEmpty() || bytes.size() > 16)
+            return {};
+        result.value = QByteArray(bytes.data(), bytes.size());
+        break;
+    }
+    return result;
+}
+
+std::optional<Data::RuntimeResourceQuality> runtimeResourceQuality(
+    Protocol::RuntimeResourceQuality quality)
+{
+    Data::RuntimeResourceQuality result;
+    switch (quality) {
+    case Protocol::RuntimeResourceQuality::Good:
+        result.state = Data::RuntimeResourceQualityState::Good;
+        break;
+    case Protocol::RuntimeResourceQuality::Unavailable:
+        result.state = Data::RuntimeResourceQualityState::Unavailable;
+        break;
+    default:
+        return {};
+    }
+    result.flags = quint32(quality);
+    result.opaqueCode = opaqueBigEndian(quint32(quality));
+    return result;
+}
+
+bool sameRuntimeResourceBinding(
+    const Protocol::RuntimeResourceBinding &left, const Protocol::RuntimeResourceBinding &right)
+{
+    return left.bootId == right.bootId && left.activeSlot == right.activeSlot
+           && left.packageGeneration == right.packageGeneration
+           && left.configurationId == right.configurationId
+           && left.topologyGeneration == right.topologyGeneration
+           && left.runtimeGeneration == right.runtimeGeneration
+           && left.catalogRevision == right.catalogRevision
+           && left.topologyIdentity == right.topologyIdentity;
+}
+
+bool runtimeResourceBindingMatchesBase(
+    const Protocol::RuntimeResourceBinding &binding,
+    quint64 bootId,
+    const std::optional<Data::ControllerPackageSummary> &package)
+{
+    if (!package || binding.bootId != bootId)
+        return false;
+    return binding.activeSlot == runtimeResourceSlot(package->activeSlot)
+           && binding.packageGeneration == package->activeGeneration
+           && binding.configurationId == package->activeConfigurationId;
+}
+
+std::optional<Data::RuntimeResourceDescriptor> runtimeResourceDescriptor(
+    const Protocol::RuntimeResourceDescriptor &descriptor)
+{
+    const auto primitiveType = runtimeResourcePrimitiveType(descriptor.primitive);
+    const auto direction = runtimeResourceDirection(descriptor.direction);
+    const auto access = runtimeResourceAccess(descriptor.access);
+    if (!primitiveType || !direction || !access)
+        return {};
+
+    Data::RuntimeResourceDescriptor result;
+    result.id = {opaqueBigEndian(descriptor.resourceId)};
+    result.componentInstanceId = {opaqueBigEndian(descriptor.componentId)};
+    if (descriptor.parentId)
+        result.parentInstanceId = {opaqueBigEndian(descriptor.parentId)};
+    result.instanceOrdinal = descriptor.ordinal;
+    result.consistencyGroupId = {opaqueBigEndian(descriptor.groupId)};
+    result.primitiveType = *primitiveType;
+    result.valueTypeIdentity
+        = runtimeResourceValueTypeIdentity(descriptor.primitive, descriptor.valueBitWidth);
+    result.bitWidth = descriptor.valueBitWidth;
+    result.direction = *direction;
+    result.access = *access;
+    result.processImageBitOffset = descriptor.processImageBitOffset;
+    result.processImageBitLength = descriptor.processImageBitLength;
+    result.qualityMask = descriptor.qualityMask;
+    if (!descriptor.safeValue.isEmpty()) {
+        const auto safeValue = runtimeResourceTypedValue(
+            descriptor.primitive, descriptor.valueBitWidth, descriptor.safeValue);
+        if (!safeValue)
+            return {};
+        result.safeValue = *safeValue;
+    }
+    return result;
+}
+
 } // namespace
 
 class ProductApiSessionPrivate
@@ -387,6 +656,8 @@ public:
         Capability,
         Package,
         Firmware,
+        RuntimeResourceCatalog,
+        RuntimeResourceSnapshot,
         ResumeEvents,
         ResumeReplay,
         ControlCommand,
@@ -416,8 +687,16 @@ public:
         quint32 deploymentChunkBytes = 0;
         int responseTimeoutMs = 0;
         bool terminalCommandStatus = false;
+        std::optional<Protocol::RuntimeResourceTableQuery> runtimeResourceTableQuery;
+        std::optional<Protocol::RuntimeResourceSnapshotQuery> runtimeResourceSnapshotQuery;
         QTimer *timer = nullptr;
     };
+
+    static bool isRuntimeResourceRequest(PendingKind kind)
+    {
+        return kind == PendingKind::RuntimeResourceCatalog
+               || kind == PendingKind::RuntimeResourceSnapshot;
+    }
 
     struct PersistentPackageSelector
     {
@@ -569,6 +848,104 @@ public:
     {
         snapshot.updatedAt = QDateTime::currentDateTimeUtc();
         emit q->snapshotChanged();
+    }
+
+    void notifyRuntimeResourceCatalogChanged()
+    {
+        QMetaObject::invokeMethod(
+            q, [this] { emit q->runtimeResourceCatalogChanged(); }, Qt::QueuedConnection);
+    }
+
+    void notifyRuntimeResourceSnapshotChanged()
+    {
+        QMetaObject::invokeMethod(
+            q, [this] { emit q->runtimeResourceSnapshotChanged(); }, Qt::QueuedConnection);
+    }
+
+    void clearRuntimeResourceCache()
+    {
+        const bool hadCatalog = runtimeCatalog.has_value();
+        const bool hadSnapshot = runtimeSnapshot.has_value();
+        runtimeCatalog.reset();
+        runtimeSnapshot.reset();
+        if (hadCatalog)
+            notifyRuntimeResourceCatalogChanged();
+        if (hadSnapshot)
+            notifyRuntimeResourceSnapshotChanged();
+    }
+
+    void resetRuntimeResourceRefresh()
+    {
+        runtimeRefreshInProgress = false;
+        runtimeResourceRefreshTimer.invalidate();
+        runtimeCatalogResources.clear();
+        runtimeCatalogIds.clear();
+        runtimeCatalogBinding.reset();
+        runtimeCatalogTotalCount = 0;
+    }
+
+    void invalidateRuntimeResources()
+    {
+        resetRuntimeResourceRefresh();
+        clearRuntimeResourceCache();
+    }
+
+    void invalidateRuntimeResourcesIfBaseChanged()
+    {
+        if (!runtimeCatalog && !runtimeSnapshot)
+            return;
+        const Data::RuntimeResourceCatalogEpoch *epoch = nullptr;
+        Data::ControllerConnectionScope scope;
+        quint64 cacheGeneration = 0;
+        if (runtimeCatalog) {
+            epoch = &runtimeCatalog->epoch;
+            scope = runtimeCatalog->scope;
+            cacheGeneration = runtimeCatalog->sessionGeneration;
+        } else {
+            epoch = &runtimeSnapshot->epoch;
+            scope = runtimeSnapshot->scope;
+            cacheGeneration = runtimeSnapshot->sessionGeneration;
+        }
+        const auto activePackage = snapshot.package ? activePackageSelector(*snapshot.package)
+                                                    : std::nullopt;
+        if (!epoch || scope != snapshot.scope || cacheGeneration != generation
+            || epoch->controllerBootId != bootId || !activePackage
+            || epoch->activePackageSlot != activePackage->slot
+            || epoch->activePackageGeneration != activePackage->generation
+            || epoch->configurationId != activePackage->configurationId) {
+            invalidateRuntimeResources();
+        }
+    }
+
+    void failRuntimeResourceQuery(
+        Data::ControllerErrorSource source,
+        Protocol::Role role,
+        Data::ControllerOperation operation,
+        const QString &summary,
+        const QString &detail = {},
+        std::optional<qint32> code = {},
+        std::optional<qint32> operationResult = {},
+        std::optional<quint64> requestId = {})
+    {
+        if (requestId)
+            removePending(*requestId);
+        invalidateRuntimeResources();
+        setError(
+            source,
+            role,
+            operation,
+            summary,
+            detail,
+            code,
+            requestId,
+            code ? retryDisposition(*code) : Data::ControllerRetryDisposition::NotRetryable);
+        if (snapshot.lastError)
+            snapshot.lastError->operationResult = operationResult;
+        if (code && isReconnectStatus(*code)) {
+            scheduleReconnect();
+            return;
+        }
+        publish();
     }
 
     static Data::ControllerOperation deploymentOperation(Protocol::MessageType type)
@@ -765,6 +1142,7 @@ public:
     {
         heartbeatTimer->stop();
         liveStateTimer->stop();
+        invalidateRuntimeResources();
         heartbeatRequestId = 0;
         liveStatePollingDegraded = false;
         snapshot.readOnly = false;
@@ -784,6 +1162,7 @@ public:
         bootId = 0;
         negotiatedMinor = 0;
         featureBits = 0;
+        bulkFeatureBits = 0;
         faultResetConfirmation.reset();
     }
 
@@ -818,6 +1197,7 @@ public:
         stateBeforeDisconnectRelease.reset();
         refreshInProgress = false;
         refreshRejected = false;
+        resetRuntimeResourceRefresh();
     }
 
     void rememberPersistentPackageSelector(const Data::ControllerPackageSummary &package)
@@ -1256,8 +1636,8 @@ public:
         }
 
         snapshot.state = Data::ControllerConnectionState::Connecting;
-        publish();
         reconnectTimer->start(std::max(reconnectDelayMs(), minimumDelayMs));
+        publish();
     }
 
     void openChannel(Channel &value)
@@ -1397,6 +1777,18 @@ public:
                     || found->channelEpoch != expectedEpoch || generation != expectedGeneration) {
                     return;
                 }
+                if (isRuntimeResourceRequest(kind)) {
+                    failRuntimeResourceQuery(
+                        Data::ControllerErrorSource::Network,
+                        role,
+                        operation,
+                        Tr::tr("The runtime resource query timed out."),
+                        {},
+                        {},
+                        {},
+                        requestId);
+                    return;
+                }
                 if (kind == PendingKind::ControlCommand || kind == PendingKind::Topology
                     || kind == PendingKind::RestorePackage) {
                     finishControlProgress(
@@ -1521,6 +1913,167 @@ public:
             return 0;
         }
         return requestId;
+    }
+
+    bool sendRuntimeResourceTableQuery(const Protocol::RuntimeResourceTableQuery &query)
+    {
+        Channel &bulk = channel(Protocol::Role::Bulk);
+        if (!bulk.handshaken || !bulk.socket) {
+            failRuntimeResourceQuery(
+                Data::ControllerErrorSource::Network,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeResourceCatalog,
+                Tr::tr("The controller Bulk channel is not connected."));
+            return false;
+        }
+        const qint64 remainingMs
+            = runtimeResourceRefreshTimer.isValid()
+                  ? qint64(options.runtimeResourceRefreshTimeoutMs)
+                        - runtimeResourceRefreshTimer.elapsed()
+                  : 0;
+        if (remainingMs <= 0) {
+            failRuntimeResourceQuery(
+                Data::ControllerErrorSource::Network,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeResourceCatalog,
+                Tr::tr("The runtime resource refresh exceeded its total time limit."));
+            return false;
+        }
+        Protocol::Error codecError;
+        const quint64 requestId = allocateRequestId();
+        const QByteArray wire = Protocol::encodeQueryResourceTable(
+            query, sessionId, requestId, ++bulk.sendSequence, negotiatedMinor, &codecError);
+        if (wire.isEmpty()) {
+            failRuntimeResourceQuery(
+                Data::ControllerErrorSource::ClientConfiguration,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeResourceCatalog,
+                Tr::tr("The runtime resource catalog request could not be encoded."),
+                codecError.text,
+                {},
+                {},
+                requestId);
+            return false;
+        }
+
+        PendingRequest request;
+        request.kind = PendingKind::RuntimeResourceCatalog;
+        request.role = Protocol::Role::Bulk;
+        request.operation = Data::ControllerOperation::QueryRuntimeResourceCatalog;
+        request.generation = generation;
+        request.channelEpoch = bulk.epoch;
+        request.requestType = Protocol::MessageType::QueryResourceTable;
+        request.runtimeResourceTableQuery = query;
+        addPending(
+            requestId,
+            request,
+            int(std::min<qint64>(options.requestTimeoutMs, remainingMs)));
+        if (!writeFrame(
+                bulk,
+                wire,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeResourceCatalog)) {
+            return false;
+        }
+        return true;
+    }
+
+    bool sendRuntimeResourceSnapshotQuery(const Protocol::RuntimeResourceSnapshotQuery &query)
+    {
+        Channel &bulk = channel(Protocol::Role::Bulk);
+        if (!bulk.handshaken || !bulk.socket) {
+            failRuntimeResourceQuery(
+                Data::ControllerErrorSource::Network,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeResourceSnapshot,
+                Tr::tr("The controller Bulk channel is not connected."));
+            return false;
+        }
+        const qint64 remainingMs
+            = runtimeResourceRefreshTimer.isValid()
+                  ? qint64(options.runtimeResourceRefreshTimeoutMs)
+                        - runtimeResourceRefreshTimer.elapsed()
+                  : 0;
+        if (remainingMs <= 0) {
+            failRuntimeResourceQuery(
+                Data::ControllerErrorSource::Network,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeResourceSnapshot,
+                Tr::tr("The runtime resource refresh exceeded its total time limit."));
+            return false;
+        }
+        Protocol::Error codecError;
+        const quint64 requestId = allocateRequestId();
+        const QByteArray wire = Protocol::encodeGetResourceSnapshot(
+            query, sessionId, requestId, ++bulk.sendSequence, negotiatedMinor, &codecError);
+        if (wire.isEmpty()) {
+            failRuntimeResourceQuery(
+                Data::ControllerErrorSource::ClientConfiguration,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeResourceSnapshot,
+                Tr::tr("The runtime resource snapshot request could not be encoded."),
+                codecError.text,
+                {},
+                {},
+                requestId);
+            return false;
+        }
+
+        PendingRequest request;
+        request.kind = PendingKind::RuntimeResourceSnapshot;
+        request.role = Protocol::Role::Bulk;
+        request.operation = Data::ControllerOperation::QueryRuntimeResourceSnapshot;
+        request.generation = generation;
+        request.channelEpoch = bulk.epoch;
+        request.requestType = Protocol::MessageType::GetResourceSnapshot;
+        request.runtimeResourceSnapshotQuery = query;
+        addPending(
+            requestId,
+            request,
+            int(std::min<qint64>(options.requestTimeoutMs, remainingMs)));
+        if (!writeFrame(
+                bulk,
+                wire,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeResourceSnapshot)) {
+            return false;
+        }
+        return true;
+    }
+
+    bool beginRuntimeResourceRefresh()
+    {
+        if (runtimeRefreshInProgress || !snapshot.package || !sessionId || !bootId)
+            return false;
+        const auto activePackage = activePackageSelector(*snapshot.package);
+        if (!activePackage)
+            return false;
+
+        runtimeRefreshInProgress = true;
+        runtimeResourceRefreshTimer.start();
+        runtimeCatalogResources.clear();
+        runtimeCatalogIds.clear();
+        runtimeCatalogBinding.reset();
+        runtimeCatalogTotalCount = 0;
+        const bool clearedError
+            = snapshot.lastError
+              && (snapshot.lastError->operation
+                      == Data::ControllerOperation::QueryRuntimeResourceCatalog
+                  || snapshot.lastError->operation
+                         == Data::ControllerOperation::QueryRuntimeResourceSnapshot);
+        if (clearedError)
+            snapshot.lastError.reset();
+
+        Protocol::RuntimeResourceTableQuery query;
+        query.binding.bootId = bootId;
+        query.binding.activeSlot = runtimeResourceSlot(activePackage->slot);
+        query.limit = 64;
+        query.flags = 1;
+        query.cursor = 0;
+        const bool sent = sendRuntimeResourceTableQuery(query);
+        if (sent && clearedError)
+            publish();
+        return sent;
     }
 
     quint64 sendDeploymentRequest(
@@ -1929,6 +2482,8 @@ public:
                     requestId);
                 return;
             }
+            if (value.role == Protocol::Role::Bulk)
+                bulkFeatureBits = ack->featureBits;
             value.handshaken = true;
             setChannelState(value.role, Data::ControllerChannelState::Connected);
             if (channel(Protocol::Role::Push).handshaken
@@ -2042,6 +2597,7 @@ public:
                     : rejectionDetail);
         } else if (!heartbeat && refreshInProgress) {
             refreshRejected = true;
+            invalidateRuntimeResources();
             snapshot.controllerState.reset();
             snapshot.package.reset();
             switch (request.kind) {
@@ -2106,6 +2662,7 @@ public:
             if (refreshInProgress)
                 finishRefreshIfReady();
             else {
+                invalidateRuntimeResources();
                 snapshot.controllerState.reset();
                 snapshot.package.reset();
                 snapshot.state = Data::ControllerConnectionState::Degraded;
@@ -2138,6 +2695,10 @@ public:
             command == Data::ControllerControlCommand::ResetFault
             && faultResetConfirmation) {
             faultResetConfirmation->clearedAlarmSequence = quint32(status.detail);
+        }
+        if (command != Data::ControllerControlCommand::AcquireControl
+            && command != Data::ControllerControlCommand::ReleaseControl) {
+            invalidateRuntimeResources();
         }
         removePending(requestId);
         if (command != Data::ControllerControlCommand::ReleaseControl) {
@@ -2513,6 +3074,7 @@ public:
         }
 
         snapshot.package = *package;
+        invalidateRuntimeResourcesIfBaseChanged();
         rememberPersistentPackageSelector(*package);
         removePending(requestId);
         activeDeploymentRequestId = 0;
@@ -2626,6 +3188,7 @@ public:
             return false;
         }
         snapshot.package = *package;
+        invalidateRuntimeResourcesIfBaseChanged();
         rememberPersistentPackageSelector(*package);
         removePending(requestId);
         activeDeploymentRequestId = 0;
@@ -2764,6 +3327,333 @@ public:
         return false;
     }
 
+    void handleRuntimeResourceStatus(
+        const Protocol::Frame &frame, const PendingRequest &request, quint64 requestId)
+    {
+        Protocol::Error decodeError;
+        const auto status = Protocol::decodeBulkStatus(frame, &decodeError);
+        if (!status || !status->status || status->originalType != quint16(request.requestType)
+            || request.role != Protocol::Role::Bulk) {
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The controller returned a malformed runtime resource status."),
+                decodeError.text,
+                requestId);
+            return;
+        }
+        failRuntimeResourceQuery(
+            Data::ControllerErrorSource::Controller,
+            request.role,
+            request.operation,
+            Tr::tr("The controller rejected the runtime resource query."),
+            {},
+            status->status,
+            status->operationResult,
+            requestId);
+    }
+
+    void handleRuntimeResourceCatalog(
+        const Protocol::Frame &frame, const PendingRequest &request, quint64 requestId)
+    {
+        if (!runtimeRefreshInProgress || !request.runtimeResourceTableQuery) {
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The runtime resource catalog request context is missing."),
+                {},
+                requestId);
+            return;
+        }
+
+        Protocol::Error decodeError;
+        const auto page = Protocol::decodeResourceTablePage(
+            frame, *request.runtimeResourceTableQuery, &decodeError);
+        if (!page) {
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The controller returned an invalid runtime resource catalog page."),
+                decodeError.text,
+                requestId);
+            return;
+        }
+        if (page->status) {
+            failRuntimeResourceQuery(
+                Data::ControllerErrorSource::Controller,
+                request.role,
+                request.operation,
+                Tr::tr("The controller rejected the runtime resource catalog query."),
+                {},
+                page->status,
+                {},
+                requestId);
+            return;
+        }
+        if (!runtimeResourceRefreshTimer.isValid()
+            || runtimeResourceRefreshTimer.hasExpired(
+                options.runtimeResourceRefreshTimeoutMs)) {
+            failRuntimeResourceQuery(
+                Data::ControllerErrorSource::Network,
+                request.role,
+                request.operation,
+                Tr::tr("The runtime resource refresh exceeded its total time limit."),
+                {},
+                {},
+                {},
+                requestId);
+            return;
+        }
+        if (page->totalCount > options.maximumRuntimeResourceCount) {
+            failRuntimeResourceQuery(
+                Data::ControllerErrorSource::ClientConfiguration,
+                request.role,
+                request.operation,
+                Tr::tr("The runtime resource catalog exceeds the client resource limit."),
+                {},
+                {},
+                {},
+                requestId);
+            return;
+        }
+        if (!runtimeResourceBindingMatchesBase(page->binding, bootId, snapshot.package)) {
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The runtime resource catalog no longer matches the active package."),
+                {},
+                requestId);
+            return;
+        }
+
+        const Protocol::RuntimeResourceTableQuery query = *request.runtimeResourceTableQuery;
+        if ((!runtimeCatalogBinding && query.cursor)
+            || (runtimeCatalogBinding
+                && !sameRuntimeResourceBinding(*runtimeCatalogBinding, page->binding))
+            || (runtimeCatalogTotalCount && runtimeCatalogTotalCount != page->totalCount)
+            || quint32(runtimeCatalogResources.size()) != query.cursor) {
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The runtime resource catalog changed during pagination."),
+                {},
+                requestId);
+            return;
+        }
+
+        if (!runtimeCatalogBinding) {
+            const Data::RuntimeResourceCatalogEpoch epoch = runtimeResourceEpoch(page->binding);
+            const bool publishedBindingChanged = runtimeCatalog
+                                                 && (runtimeCatalog->scope != snapshot.scope
+                                                     || runtimeCatalog->sessionGeneration
+                                                            != generation
+                                                     || runtimeCatalog->epoch != epoch);
+            if (publishedBindingChanged)
+                clearRuntimeResourceCache();
+            runtimeCatalogBinding = page->binding;
+            runtimeCatalogTotalCount = page->totalCount;
+        }
+
+        quint64 previousResourceId = 0;
+        if (!runtimeCatalogResources.isEmpty()) {
+            previousResourceId = qFromBigEndian<quint64>(reinterpret_cast<const uchar *>(
+                runtimeCatalogResources.constLast().id.value.constData()));
+        }
+        for (const Protocol::RuntimeResourceDescriptor &protocolDescriptor : page->resources) {
+            const auto descriptor = runtimeResourceDescriptor(protocolDescriptor);
+            const QByteArray id = opaqueBigEndian(protocolDescriptor.resourceId);
+            if (!descriptor || protocolDescriptor.resourceId <= previousResourceId
+                || runtimeCatalogIds.contains(id)) {
+                failProtocol(
+                    request.role,
+                    request.operation,
+                    Tr::tr("The runtime resource catalog contains inconsistent descriptors."),
+                    {},
+                    requestId);
+                return;
+            }
+            runtimeCatalogResources.append(*descriptor);
+            runtimeCatalogIds.insert(id);
+            previousResourceId = protocolDescriptor.resourceId;
+        }
+
+        removePending(requestId);
+        if (page->more) {
+            Protocol::RuntimeResourceTableQuery nextQuery;
+            nextQuery.binding = page->binding;
+            nextQuery.limit = 64;
+            nextQuery.flags = 0;
+            nextQuery.cursor = page->nextCursor;
+            sendRuntimeResourceTableQuery(nextQuery);
+            return;
+        }
+
+        if (quint32(runtimeCatalogResources.size()) != runtimeCatalogTotalCount
+            || !runtimeCatalogBinding) {
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The runtime resource catalog is incomplete."),
+                {},
+                requestId);
+            return;
+        }
+
+        Data::RuntimeResourceCatalog catalog;
+        catalog.scope = snapshot.scope;
+        catalog.sessionGeneration = generation;
+        catalog.epoch = runtimeResourceEpoch(*runtimeCatalogBinding);
+        catalog.receivedAt = QDateTime::currentDateTimeUtc();
+        catalog.resources = runtimeCatalogResources;
+
+        const bool hadSnapshot = runtimeSnapshot.has_value();
+        runtimeCatalog = std::move(catalog);
+        runtimeSnapshot.reset();
+        notifyRuntimeResourceCatalogChanged();
+        if (hadSnapshot)
+            notifyRuntimeResourceSnapshotChanged();
+
+        Protocol::RuntimeResourceSnapshotQuery snapshotQuery;
+        snapshotQuery.binding = *runtimeCatalogBinding;
+        const qsizetype requestedCount = std::min<qsizetype>(64, runtimeCatalog->resources.size());
+        snapshotQuery.resourceIds.reserve(requestedCount);
+        for (qsizetype index = 0; index < requestedCount; ++index) {
+            const QByteArray &id = runtimeCatalog->resources.at(index).id.value;
+            if (id.size() != qsizetype(sizeof(quint64))) {
+                failProtocol(
+                    request.role,
+                    Data::ControllerOperation::QueryRuntimeResourceSnapshot,
+                    Tr::tr("The runtime resource catalog contains an invalid resource ID."),
+                    {},
+                    requestId);
+                return;
+            }
+            snapshotQuery.resourceIds.append(
+                qFromBigEndian<quint64>(reinterpret_cast<const uchar *>(id.constData())));
+        }
+        sendRuntimeResourceSnapshotQuery(snapshotQuery);
+    }
+
+    void handleRuntimeResourceSnapshot(
+        const Protocol::Frame &frame, const PendingRequest &request, quint64 requestId)
+    {
+        if (!runtimeRefreshInProgress || !request.runtimeResourceSnapshotQuery || !runtimeCatalog
+            || !runtimeCatalogBinding) {
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The runtime resource snapshot request context is missing."),
+                {},
+                requestId);
+            return;
+        }
+
+        Protocol::Error decodeError;
+        const auto protocolSnapshot = Protocol::decodeResourceSnapshot(
+            frame, *request.runtimeResourceSnapshotQuery, &decodeError);
+        if (!protocolSnapshot) {
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The controller returned an invalid runtime resource snapshot."),
+                decodeError.text,
+                requestId);
+            return;
+        }
+        if (protocolSnapshot->status) {
+            failRuntimeResourceQuery(
+                Data::ControllerErrorSource::Controller,
+                request.role,
+                request.operation,
+                Tr::tr("The controller rejected the runtime resource snapshot query."),
+                {},
+                protocolSnapshot->status,
+                {},
+                requestId);
+            return;
+        }
+        if (!runtimeResourceRefreshTimer.isValid()
+            || runtimeResourceRefreshTimer.hasExpired(
+                options.runtimeResourceRefreshTimeoutMs)) {
+            failRuntimeResourceQuery(
+                Data::ControllerErrorSource::Network,
+                request.role,
+                request.operation,
+                Tr::tr("The runtime resource refresh exceeded its total time limit."),
+                {},
+                {},
+                {},
+                requestId);
+            return;
+        }
+        if (!sameRuntimeResourceBinding(protocolSnapshot->binding, *runtimeCatalogBinding)
+            || !runtimeResourceBindingMatchesBase(protocolSnapshot->binding, bootId, snapshot.package)
+            || runtimeCatalog->scope != snapshot.scope
+            || runtimeCatalog->sessionGeneration != generation
+            || runtimeCatalog->epoch != runtimeResourceEpoch(protocolSnapshot->binding)) {
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The runtime resource snapshot binding changed before publication."),
+                {},
+                requestId);
+            return;
+        }
+
+        Data::RuntimeResourceSnapshot result;
+        result.scope = runtimeCatalog->scope;
+        result.sessionGeneration = runtimeCatalog->sessionGeneration;
+        result.epoch = runtimeCatalog->epoch;
+        result.snapshotSequence = protocolSnapshot->snapshotSequence;
+        result.captureCycle = protocolSnapshot->captureCycle;
+        result.controllerTimestampNs = protocolSnapshot->controllerTimestampNs;
+        result.receivedAt = QDateTime::currentDateTimeUtc();
+        result.complete = protocolSnapshot->complete && runtimeCatalog->resources.size() <= 64
+                          && protocolSnapshot->samples.size() == runtimeCatalog->resources.size();
+        result.samples.reserve(protocolSnapshot->samples.size());
+
+        for (const Protocol::RuntimeResourceSample &protocolSample : protocolSnapshot->samples) {
+            const QByteArray id = opaqueBigEndian(protocolSample.resourceId);
+            const auto descriptor = std::find_if(
+                runtimeCatalog->resources.cbegin(),
+                runtimeCatalog->resources.cend(),
+                [&id](const Data::RuntimeResourceDescriptor &candidate) {
+                    return candidate.id.value == id;
+                });
+            const auto primitiveType = runtimeResourcePrimitiveType(protocolSample.primitive);
+            const auto direction = runtimeResourceDirection(protocolSample.direction);
+            const auto value = runtimeResourceTypedValue(
+                protocolSample.primitive, protocolSample.bitWidth, protocolSample.value);
+            const auto quality = runtimeResourceQuality(protocolSample.quality);
+            if (descriptor == runtimeCatalog->resources.cend() || !primitiveType || !direction
+                || !value || !quality || descriptor->primitiveType != *primitiveType
+                || descriptor->direction != *direction
+                || descriptor->bitWidth != protocolSample.bitWidth) {
+                failProtocol(
+                    request.role,
+                    request.operation,
+                    Tr::tr("The runtime resource sample does not match its catalog descriptor."),
+                    {},
+                    requestId);
+                return;
+            }
+
+            Data::RuntimeResourceSample sample;
+            sample.resourceId = descriptor->id;
+            sample.consistencyGroupId = descriptor->consistencyGroupId;
+            sample.value = *value;
+            sample.quality = *quality;
+            sample.valueSequence = protocolSnapshot->snapshotSequence;
+            sample.controllerTimestampNs = protocolSnapshot->controllerTimestampNs;
+            result.samples.append(std::move(sample));
+        }
+
+        removePending(requestId);
+        runtimeSnapshot = std::move(result);
+        resetRuntimeResourceRefresh();
+        notifyRuntimeResourceSnapshotChanged();
+    }
+
     void dispatchFrame(Channel &value, const Protocol::Frame &frame)
     {
         const quint64 requestId = frame.header.requestId;
@@ -2840,6 +3730,22 @@ public:
             }
             return;
         }
+        if (isRuntimeResourceRequest(request.kind)
+            && (frame.header.messageType == Protocol::MessageType::CommandStatus
+                || frame.header.messageType == Protocol::MessageType::BulkStatus
+                || frame.header.messageType == Protocol::MessageType::FirmwareStatus)) {
+            if (frame.header.messageType == Protocol::MessageType::BulkStatus) {
+                handleRuntimeResourceStatus(frame, request, requestId);
+            } else {
+                failProtocol(
+                    request.role,
+                    request.operation,
+                    Tr::tr("The controller returned an invalid runtime resource status."),
+                    {},
+                    requestId);
+            }
+            return;
+        }
         const bool statefulRequest = request.kind == PendingKind::ControlCommand
                                      || request.kind == PendingKind::Topology
                                      || request.kind == PendingKind::RestorePackage
@@ -2878,6 +3784,7 @@ public:
             if (!state)
                 break;
             snapshot.controllerState = *state;
+            invalidateRuntimeResourcesIfBaseChanged();
             stateReceived = true;
             removePending(requestId);
             finishRefreshIfReady();
@@ -2888,6 +3795,7 @@ public:
             if (!state)
                 break;
             snapshot.controllerState = *state;
+            invalidateRuntimeResourcesIfBaseChanged();
             removePending(requestId);
             if (liveStatePollingDegraded) {
                 liveStatePollingDegraded = false;
@@ -2904,9 +3812,13 @@ public:
             return;
         }
         case PendingKind::Capability: {
-            const auto capability = Protocol::decodeCapability(frame, featureBits, &decodeError);
+            auto capability = Protocol::decodeCapability(frame, featureBits, &decodeError);
             if (!capability)
                 break;
+            capability->runtimeResources
+                = negotiatedMinor >= Protocol::RuntimeResourceMinor
+                  && (featureBits & Protocol::RuntimeResourceFeature)
+                  && (bulkFeatureBits & Protocol::RuntimeResourceFeature);
             snapshot.capability = *capability;
             capabilityReceived = true;
             removePending(requestId);
@@ -2930,6 +3842,7 @@ public:
             if (!package)
                 break;
             snapshot.package = *package;
+            invalidateRuntimeResourcesIfBaseChanged();
             rememberPersistentPackageSelector(*package);
             packageReceived = true;
             removePending(requestId);
@@ -2946,6 +3859,12 @@ public:
             finishRefreshIfReady();
             return;
         }
+        case PendingKind::RuntimeResourceCatalog:
+            handleRuntimeResourceCatalog(frame, request, requestId);
+            return;
+        case PendingKind::RuntimeResourceSnapshot:
+            handleRuntimeResourceSnapshot(frame, request, requestId);
+            return;
         case PendingKind::ResumeEvents:
             handleResumeResult(value, frame, requestId, &decodeError);
             return;
@@ -2982,6 +3901,7 @@ public:
                      slave.revision,
                      slave.serial});
             }
+            invalidateRuntimeResources();
             snapshot.topology = result;
             removePending(requestId);
             controlRefreshPending = true;
@@ -3022,6 +3942,7 @@ public:
             if (!package)
                 break;
             snapshot.package = *package;
+            invalidateRuntimeResources();
             rememberPersistentPackageSelector(*package);
             removePending(requestId);
             controlRefreshPending = true;
@@ -3222,6 +4143,7 @@ public:
             if (!state)
                 break;
             snapshot.controllerState = *state;
+            invalidateRuntimeResourcesIfBaseChanged();
             publish();
             return true;
         }
@@ -3632,6 +4554,7 @@ public:
             if (!completesCommand) {
                 const Data::ControllerControlCommand command = snapshot.controlProgress.command;
                 if (refreshRejected) {
+                    invalidateRuntimeResources();
                     snapshot.controllerState.reset();
                     snapshot.package.reset();
                 }
@@ -3677,6 +4600,7 @@ public:
                 }
             };
             if (refreshRejected) {
+                invalidateRuntimeResources();
                 snapshot.controllerState.reset();
                 snapshot.package.reset();
                 const QString detail = Tr::tr(
@@ -3715,6 +4639,7 @@ public:
             return;
         }
         if (refreshRejected) {
+            invalidateRuntimeResources();
             snapshot.controllerState.reset();
             snapshot.package.reset();
         }
@@ -3731,6 +4656,11 @@ public:
     QTimer *heartbeatTimer = nullptr;
     QTimer *liveStateTimer = nullptr;
     Data::ControllerConnectionRequest currentRequest;
+    std::optional<Data::RuntimeResourceCatalog> runtimeCatalog;
+    std::optional<Data::RuntimeResourceSnapshot> runtimeSnapshot;
+    QList<Data::RuntimeResourceDescriptor> runtimeCatalogResources;
+    QSet<QByteArray> runtimeCatalogIds;
+    std::optional<Protocol::RuntimeResourceBinding> runtimeCatalogBinding;
     std::optional<PersistentPackageSelector> persistentPackageSelector;
     std::optional<FaultResetConfirmation> faultResetConfirmation;
     quint64 generation = 0;
@@ -3740,6 +4670,7 @@ public:
     quint64 resumeSessionId = 0;
     quint64 resumeBootId = 0;
     quint32 featureBits = 0;
+    quint32 bulkFeatureBits = 0;
     quint64 heartbeatRequestId = 0;
     quint32 lastAlarmSequence = 0;
     quint16 negotiatedMinor = 0;
@@ -3755,6 +4686,9 @@ public:
     bool firmwareReceived = false;
     bool subscriptionReceived = false;
     bool subscriptionDegraded = false;
+    bool runtimeRefreshInProgress = false;
+    quint32 runtimeCatalogTotalCount = 0;
+    QElapsedTimer runtimeResourceRefreshTimer;
     bool alarmCheckpointEstablished = false;
     bool disconnectAfterRelease = false;
     quint64 disconnectReleaseRequestId = 0;
@@ -3803,7 +4737,8 @@ bool ProductApiSession::Options::isValid() const
     return connectTimeoutMs > 0 && handshakeTimeoutMs > 0 && requestTimeoutMs > 0
            && reconnectInitialDelayMs > 0
            && reconnectMaximumDelayMs >= reconnectInitialDelayMs && reconnectAttempts >= 0
-           && (liveStatePollIntervalMs == 0 || liveStatePollIntervalMs >= 50);
+           && (liveStatePollIntervalMs == 0 || liveStatePollIntervalMs >= 50)
+           && runtimeResourceRefreshTimeoutMs > 0 && maximumRuntimeResourceCount > 0;
 }
 
 ProductApiSession::ProductApiSession(QObject *parent)
@@ -3972,11 +4907,66 @@ Utils::Result<> ProductApiSession::refreshController()
         && d->snapshot.state != Data::ControllerConnectionState::Degraded) {
         return Utils::ResultError(Tr::tr("Connect to the controller before refreshing."));
     }
+    if (d->runtimeRefreshInProgress)
+        return Utils::ResultError(Tr::tr("Wait for the runtime resource refresh to finish."));
     if (d->refreshInProgress || !d->pendingRequests.isEmpty())
         return Utils::ResultError(Tr::tr("A controller refresh is already active."));
     if (d->hasActiveDeployment())
         return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
     d->beginRefresh();
+    return {};
+}
+
+bool ProductApiSession::supportsRuntimeResources() const
+{
+    return d->negotiatedMinor >= Protocol::RuntimeResourceMinor
+           && (d->featureBits & Protocol::RuntimeResourceFeature)
+           && (d->bulkFeatureBits & Protocol::RuntimeResourceFeature);
+}
+
+std::optional<Data::RuntimeResourceCatalog> ProductApiSession::runtimeResourceCatalog() const
+{
+    return d->runtimeCatalog;
+}
+
+std::optional<Data::RuntimeResourceSnapshot> ProductApiSession::runtimeResourceSnapshot() const
+{
+    return d->runtimeSnapshot;
+}
+
+Utils::Result<> ProductApiSession::refreshRuntimeResources()
+{
+    if (d->shuttingDown)
+        return Utils::ResultError(Tr::tr("The controller session is shutting down."));
+    if (d->snapshot.state != Data::ControllerConnectionState::Connected
+        && d->snapshot.state != Data::ControllerConnectionState::Degraded) {
+        return Utils::ResultError(
+            Tr::tr("Connect to the controller before refreshing runtime resources."));
+    }
+    if (!supportsRuntimeResources()) {
+        return Utils::ResultError(
+            Tr::tr(
+                "Runtime resources require Product API v1.12 and feature bit 13; no controller "
+                "request was sent."));
+    }
+    if (d->runtimeRefreshInProgress)
+        return Utils::ResultError(Tr::tr("A runtime resource refresh is already active."));
+    if (d->refreshInProgress)
+        return Utils::ResultError(Tr::tr("Wait for the controller refresh to finish."));
+    if (d->hasActiveControlOperation())
+        return Utils::ResultError(Tr::tr("Wait for the controller operation to finish."));
+    if (d->hasActiveDeployment())
+        return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
+    if (!d->channel(Protocol::Role::Bulk).handshaken || !d->channel(Protocol::Role::Bulk).socket) {
+        return Utils::ResultError(Tr::tr("The controller Bulk channel is not connected."));
+    }
+    if (!d->snapshot.package || !activePackageSelector(*d->snapshot.package)) {
+        d->invalidateRuntimeResources();
+        return Utils::ResultError(
+            Tr::tr("No active controller package is available for runtime resources."));
+    }
+    if (!d->beginRuntimeResourceRefresh())
+        return Utils::ResultError(Tr::tr("The runtime resource query could not be sent."));
     return {};
 }
 
@@ -4047,6 +5037,9 @@ Utils::Result<> ProductApiSession::executeControlCommand(
     }
     if (!d->sessionId || !d->bootId || !d->snapshot.session)
         return Utils::ResultError(Tr::tr("The controller session identity is not available."));
+    if (d->runtimeRefreshInProgress && request.command != Command::ReleaseControl) {
+        return Utils::ResultError(Tr::tr("Wait for the runtime resource refresh to finish."));
+    }
     if (d->refreshInProgress)
         return Utils::ResultError(Tr::tr("Wait for the controller refresh to finish."));
     if (d->hasActiveControlOperation())
@@ -4394,6 +5387,8 @@ Utils::Result<> ProductApiSession::deployPackage(
     }
     if (d->refreshInProgress)
         return Utils::ResultError(Tr::tr("Wait for the controller refresh to finish."));
+    if (d->runtimeRefreshInProgress)
+        return Utils::ResultError(Tr::tr("Wait for the runtime resource refresh to finish."));
     if (d->hasActiveControlOperation())
         return Utils::ResultError(Tr::tr("Another controller operation is already active."));
     if (d->hasActiveDeployment())
@@ -4470,7 +5465,8 @@ ProductApiSession::EndpointSet ProductApiSession::endpointsForTests() const
 bool ProductApiSession::isIdleForTests() const
 {
     return activeSocketCountForTests() == 0 && pendingRequestCountForTests() == 0
-           && !d->reconnectTimer->isActive() && !d->refreshInProgress;
+           && !d->reconnectTimer->isActive() && !d->refreshInProgress
+           && !d->runtimeRefreshInProgress;
 }
 
 bool ProductApiSession::refreshInProgressForTests() const

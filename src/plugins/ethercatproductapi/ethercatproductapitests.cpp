@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -86,6 +87,11 @@ void putU64(QByteArray &bytes, qsizetype offset, quint64 value)
 void putI32(QByteArray &bytes, qsizetype offset, qint32 value)
 {
     putU32(bytes, offset, quint32(value));
+}
+
+quint16 readU16(QByteArrayView bytes, qsizetype offset)
+{
+    return (quint16(quint8(bytes[offset])) << 8) | quint16(quint8(bytes[offset + 1]));
 }
 
 quint32 readU32(QByteArrayView bytes, qsizetype offset)
@@ -529,9 +535,213 @@ QByteArray encodedResponse(Protocol::MessageType type,
     return wire;
 }
 
+QByteArray runtimeResourceTableQueryGoldenWire()
+{
+    return QByteArray::fromHex(
+        "454341500001000c0040040b00000000000000400102030405060708"
+        "1112131415161718000000000000000221222324252627280000000000000000"
+        "09165ece00000041000200010000000000000000000000000000000000000000"
+        "0000000000000000000000000000000000000000000000000000000000000000"
+        "00000000");
+}
+
+QByteArray runtimeResourceTablePageGoldenWire()
+{
+    return QByteArray::fromHex(
+        "454341500001000c0040048700000005000000b0010203040506070811121314"
+        "151617180000000000000005212223242526272831323334353637385acfcbd1"
+        "040b007000000000000000410001004000000000000000010000000000000100"
+        "0000000000000002000000000000000311112222333344440000000200000001"
+        "0000000100000000212223242526272855556666777788880000000000000000"
+        "0000000000000000000000000000000010000000000000012000000000000001"
+        "0000000000000000000000000000000000100010040101020000000f00000001"
+        "00000000000000000000000000000000");
+}
+
+QByteArray runtimeResourceSnapshotQueryGoldenWire()
+{
+    return QByteArray::fromHex(
+        "454341500001000c0040040c0000000000000048010203040506070841424344"
+        "45464748000000000000000321222324252627280000000000000000279d92a3"
+        "0000004100010000000000000000000100000000000001000000000000000002"
+        "0000000000000003111122223333444455556666777788880000000000000000"
+        "1000000000000001");
+}
+
+QByteArray runtimeResourceSnapshotGoldenWire()
+{
+    return QByteArray::fromHex(
+        "454341500001000c004004880000000100000090010203040506070841424344"
+        "45464748000000000000000621222324252627286162636465666768cd329e8a"
+        "040c007000000000000000410001002000000000000000010000000000000100"
+        "0000000000000002000000000000000311112222333344440000000000001000"
+        "6162636465666768212223242526272855556666777788880000000000000000"
+        "0000000000000000000000000000000010000000000000010401001000000003"
+        "00000000000000000000000000001234");
+}
+
+QByteArray runtimeResourceSnapshotFailureGoldenWire()
+{
+    return QByteArray::fromHex(
+        "454341500001000c004004880000000300000070010203040506070841424344"
+        "4546474800000000000000072122232425262728616263646566677075b06256"
+        "040c0070ffffffef000000000000002000000000000000000000000000000000"
+        "0000000000000000000000000000000000000000000000000000000000000000"
+        "0000000000000000000000000000000000000000000000000000000000000000"
+        "00000000000000000000000000000000");
+}
+
+Protocol::RuntimeResourceBinding runtimeResourceBinding()
+{
+    Protocol::RuntimeResourceBinding binding;
+    binding.bootId = 0x2122232425262728;
+    binding.activeSlot = quint32('A');
+    binding.packageGeneration = 1;
+    binding.configurationId = 0x100;
+    binding.topologyGeneration = 2;
+    binding.runtimeGeneration = 3;
+    binding.catalogRevision = 0x1111222233334444;
+    binding.topologyIdentity = 0x5555666677778888;
+    return binding;
+}
+
+Protocol::RuntimeResourceBinding loopbackRuntimeResourceBinding(
+    quint64 bootId, quint64 packageGeneration, quint64 configurationId)
+{
+    Protocol::RuntimeResourceBinding binding;
+    binding.bootId = bootId;
+    binding.activeSlot = quint32('B');
+    binding.packageGeneration = packageGeneration;
+    binding.configurationId = configurationId;
+    binding.topologyGeneration = 7;
+    binding.runtimeGeneration = 8;
+    binding.catalogRevision = 9;
+    binding.topologyIdentity = 0x3132333435363738;
+    return binding;
+}
+
+void putRuntimeResourceBinding(
+    QByteArray &payload, const Protocol::RuntimeResourceBinding &binding)
+{
+    putU32(payload, 8, binding.activeSlot);
+    putU64(payload, 16, binding.packageGeneration);
+    putU64(payload, 24, binding.configurationId);
+    putU64(payload, 32, binding.topologyGeneration);
+    putU64(payload, 40, binding.runtimeGeneration);
+    putU64(payload, 48, binding.catalogRevision);
+    putU64(payload, 72, binding.bootId);
+    putU64(payload, 80, binding.topologyIdentity);
+}
+
+QByteArray runtimeResourceTablePagePayload(
+    const Protocol::RuntimeResourceBinding &binding,
+    quint32 cursor,
+    quint32 totalCount,
+    quint32 pageSize)
+{
+    const quint16 count = quint16(std::min(pageSize, totalCount - cursor));
+    const bool more = cursor + count < totalCount;
+    QByteArray payload(112 + qsizetype(count) * 64, '\0');
+    putU16(payload, 0, quint16(Protocol::MessageType::QueryResourceTable));
+    putU16(payload, 2, 112);
+    putU32(payload, 4, 0);
+    putRuntimeResourceBinding(payload, binding);
+    putU16(payload, 12, count);
+    putU16(payload, 14, 64);
+    putU32(payload, 56, totalCount);
+    putU32(
+        payload,
+        60,
+        more ? cursor + count : std::numeric_limits<quint32>::max());
+    putU32(payload, 64, more ? 1 : 0);
+
+    for (quint16 record = 0; record < count; ++record) {
+        const quint32 index = cursor + record;
+        const qsizetype offset = 112 + qsizetype(record) * 64;
+        const bool output = index == 1;
+        const quint16 bitWidth = output ? 1 : 16;
+        putU64(payload, offset, 0x1000000000000001 + index);
+        putU64(payload, offset + 8, 0x2000000000000001 + index);
+        putU32(payload, offset + 24, index);
+        putU32(payload, offset + 28, index * 16);
+        putU16(payload, offset + 32, bitWidth);
+        putU16(payload, offset + 34, bitWidth);
+        payload[offset + 36] = char(
+            output ? Protocol::RuntimeResourcePrimitive::Boolean
+                   : Protocol::RuntimeResourcePrimitive::Unsigned16);
+        payload[offset + 37] = char(
+            output ? Protocol::RuntimeResourceDirection::Output
+                   : Protocol::RuntimeResourceDirection::Input);
+        payload[offset + 38] = char(
+            output ? Protocol::RuntimeResourceAccess::ReadWrite
+                   : Protocol::RuntimeResourceAccess::Read);
+        payload[offset + 39] = char(output ? 1 : 2);
+        payload[offset + 40] = char(output ? 1 : 0);
+        putU16(payload, offset + 42, 0x000f);
+        putU32(payload, offset + 44, index + 1);
+    }
+    return payload;
+}
+
+QByteArray runtimeResourceSnapshotPayload(
+    const Protocol::RuntimeResourceBinding &binding, const QList<quint64> &resourceIds)
+{
+    QByteArray payload(112 + resourceIds.size() * 32, '\0');
+    putU16(payload, 0, quint16(Protocol::MessageType::GetResourceSnapshot));
+    putU16(payload, 2, 112);
+    putU32(payload, 4, 0);
+    putRuntimeResourceBinding(payload, binding);
+    putU16(payload, 12, quint16(resourceIds.size()));
+    putU16(payload, 14, 32);
+    putU64(payload, 56, 0x1234);
+    putU64(payload, 64, 0x5152535455565758);
+
+    for (qsizetype record = 0; record < resourceIds.size(); ++record) {
+        const quint64 resourceId = resourceIds.at(record);
+        const qsizetype offset = 112 + record * 32;
+        const bool output = resourceId == 0x1000000000000002;
+        putU64(payload, offset, resourceId);
+        payload[offset + 8] = char(
+            output ? Protocol::RuntimeResourcePrimitive::Boolean
+                   : Protocol::RuntimeResourcePrimitive::Unsigned16);
+        payload[offset + 9] = char(
+            output ? Protocol::RuntimeResourceDirection::Output
+                   : Protocol::RuntimeResourceDirection::Input);
+        putU16(payload, offset + 10, output ? 1 : 16);
+        putU32(payload, offset + 12, quint32(Protocol::RuntimeResourceQuality::Good));
+        if (output) {
+            payload[offset + 31] = char(1);
+        } else {
+            payload[offset + 30] = char(0x12);
+            payload[offset + 31] = char(0x34 + record);
+        }
+    }
+    return payload;
+}
+
+QByteArray runtimeResourceSnapshotFailurePayload(qint32 status)
+{
+    QByteArray payload(112, '\0');
+    putU16(payload, 0, quint16(Protocol::MessageType::GetResourceSnapshot));
+    putU16(payload, 2, 112);
+    putI32(payload, 4, status);
+    putU16(payload, 14, 32);
+    return payload;
+}
+
 class LoopbackController final : public QObject
 {
     struct Peer;
+    enum class RuntimeResourceFailure {
+        None,
+        Typed,
+        BulkStatus,
+        WrongSession,
+        WrongBoot,
+        MalformedPayload,
+        WrongResponse,
+        BulkStatusNonzeroOperationResult,
+    };
 
 public:
     enum class Behavior {
@@ -556,6 +766,7 @@ public:
         ControlLifecycle,
         FaultReset,
         PackageDeployment,
+        RuntimeResources,
     };
 
     explicit LoopbackController(Behavior behavior = Behavior::Normal)
@@ -566,6 +777,9 @@ public:
             m_controllerPackageActive = true;
             m_latchedFaults = quint64(1) << 15;
             m_lastAlarmSequence = TestAlarmSequence;
+        } else if (m_behavior == Behavior::RuntimeResources) {
+            m_serviceState = 3;
+            m_controllerPackageActive = true;
         }
     }
 
@@ -642,6 +856,51 @@ public:
     }
     void setProtocolMinor(quint16 minor) { m_protocolMinor = minor; }
     void setFeatureBits(quint32 featureBits) { m_featureBits = featureBits; }
+    void setRoleFeatureBits(Protocol::Role role, quint32 featureBits)
+    {
+        m_roleFeatureBits.at(size_t(quint32(role) - 1)) = featureBits;
+    }
+    void setBootId(quint64 bootId) { m_bootId = bootId; }
+    void setRuntimeResourceCount(quint32 count) { m_runtimeResourceCount = count; }
+    void setRuntimeResourcePageSize(quint32 count) { m_runtimeResourcePageSize = count; }
+    void setRuntimeSnapshotDelayMs(int delayMs) { m_runtimeSnapshotDelayMs = delayMs; }
+    void holdNextRuntimeSnapshot() { m_holdNextRuntimeSnapshot = true; }
+    void setRuntimeActivePackage(quint64 generation, quint64 configurationId)
+    {
+        m_runtimePackageGeneration = generation;
+        m_runtimeConfigurationId = configurationId;
+    }
+    void rejectNextRuntimeSnapshotTyped(qint32 status = -17)
+    {
+        m_nextRuntimeResourceFailure = RuntimeResourceFailure::Typed;
+        m_nextRuntimeTypedStatus = status;
+    }
+    void rejectNextRuntimeSnapshotWithBulkStatus(qint32 status = -6)
+    {
+        m_nextRuntimeResourceFailure = RuntimeResourceFailure::BulkStatus;
+        m_nextRuntimeBulkStatus = status;
+    }
+    void corruptNextRuntimeSnapshotSessionId()
+    {
+        m_nextRuntimeResourceFailure = RuntimeResourceFailure::WrongSession;
+    }
+    void corruptNextRuntimeSnapshotBootId()
+    {
+        m_nextRuntimeResourceFailure = RuntimeResourceFailure::WrongBoot;
+    }
+    void corruptNextRuntimeSnapshotPayload()
+    {
+        m_nextRuntimeResourceFailure = RuntimeResourceFailure::MalformedPayload;
+    }
+    void sendWrongNextRuntimeSnapshotResponse()
+    {
+        m_nextRuntimeResourceFailure = RuntimeResourceFailure::WrongResponse;
+    }
+    void sendNextRuntimeBulkStatusWithOperationResult()
+    {
+        m_nextRuntimeResourceFailure
+            = RuntimeResourceFailure::BulkStatusNonzeroOperationResult;
+    }
     void setFaultResetSafeCyclicRuntime(bool active)
     {
         m_faultResetSafeCyclicRuntime = active;
@@ -901,7 +1160,7 @@ private:
         }
 
         if (frame.header.flags || frame.header.sessionId != TestSessionId
-            || frame.header.bootId != TestBootId || frame.header.controllerTimestampNs) {
+            || frame.header.bootId != m_bootId || frame.header.controllerTimestampNs) {
             m_violations.append(QStringLiteral("A request used a non-canonical envelope."));
             return;
         }
@@ -937,6 +1196,10 @@ private:
         case Protocol::MessageType::BulkAbort:
             handlePackageBulkRequest(peer, frame);
             return;
+        case Protocol::MessageType::QueryResourceTable:
+        case Protocol::MessageType::GetResourceSnapshot:
+            handleRuntimeResourceRequest(peer, frame);
+            return;
         case Protocol::MessageType::ValidatePackage:
         case Protocol::MessageType::ActivatePackage:
         case Protocol::MessageType::RollbackPackage:
@@ -961,6 +1224,204 @@ private:
             m_violations.append(QStringLiteral("An unknown client request was emitted."));
             return;
         }
+    }
+
+    Protocol::RuntimeResourceBinding currentRuntimeResourceBinding() const
+    {
+        return loopbackRuntimeResourceBinding(
+            m_bootId, m_runtimePackageGeneration, m_runtimeConfigurationId);
+    }
+
+    void handleRuntimeResourceRequest(Peer &peer, const Protocol::Frame &request)
+    {
+        if (m_behavior != Behavior::RuntimeResources) {
+            m_violations.append(
+                QStringLiteral("A runtime resource request was emitted outside its test."));
+            return;
+        }
+        if (peer.role != Protocol::Role::Bulk)
+            m_violations.append(QStringLiteral("A runtime resource request used the wrong channel."));
+        if (m_leaseOwned)
+            m_violations.append(QStringLiteral("A runtime resource query acquired a lease."));
+
+        const Protocol::RuntimeResourceBinding binding = currentRuntimeResourceBinding();
+        if (request.header.messageType == Protocol::MessageType::QueryResourceTable) {
+            if (request.payload.size() != 64
+                || readU32(request.payload, 0) != binding.activeSlot
+                || readU16(request.payload, 4) != 64) {
+                m_violations.append(
+                    QStringLiteral("A runtime resource table request was malformed."));
+                return;
+            }
+            const quint16 flags = readU16(request.payload, 6);
+            const quint32 cursor = readU32(request.payload, 48);
+            if ((flags == 1
+                 && (cursor || !std::all_of(
+                                   request.payload.cbegin() + 8,
+                                   request.payload.cbegin() + 48,
+                                   [](char value) { return value == 0; })
+                     || readU64(request.payload, 56)))
+                || (flags == 0
+                    && (cursor == 0
+                        || readU64(request.payload, 8) != binding.packageGeneration
+                        || readU64(request.payload, 16) != binding.configurationId
+                        || readU64(request.payload, 24) != binding.topologyGeneration
+                        || readU64(request.payload, 32) != binding.runtimeGeneration
+                        || readU64(request.payload, 40) != binding.catalogRevision
+                        || readU64(request.payload, 56) != binding.topologyIdentity))
+                || flags > 1 || cursor >= m_runtimeResourceCount) {
+                m_violations.append(
+                    QStringLiteral("A runtime resource table cursor was malformed."));
+                return;
+            }
+
+            const QByteArray payload
+                = runtimeResourceTablePagePayload(
+                    binding, cursor, m_runtimeResourceCount, m_runtimeResourcePageSize);
+            const quint32 endCursor
+                = cursor
+                  + std::min(m_runtimeResourcePageSize, m_runtimeResourceCount - cursor);
+            const bool more = endCursor < m_runtimeResourceCount;
+            sendResponse(
+                peer,
+                Protocol::MessageType::ResourceTablePage,
+                request.header.requestId,
+                payload,
+                Protocol::flagValue(Protocol::Flag::Response)
+                    | (more ? Protocol::flagValue(Protocol::Flag::More) : 0));
+            return;
+        }
+
+        if (request.payload.size() < 72
+            || readU32(request.payload, 0) != binding.activeSlot
+            || readU64(request.payload, 8) != binding.packageGeneration
+            || readU64(request.payload, 16) != binding.configurationId
+            || readU64(request.payload, 24) != binding.topologyGeneration
+            || readU64(request.payload, 32) != binding.runtimeGeneration
+            || readU64(request.payload, 40) != binding.catalogRevision
+            || readU64(request.payload, 48) != binding.topologyIdentity
+            || readU64(request.payload, 56)) {
+            m_violations.append(
+                QStringLiteral("A runtime resource snapshot request was malformed."));
+            return;
+        }
+        const quint16 count = readU16(request.payload, 4);
+        if (!count || count > 64 || request.payload.size() != 64 + qsizetype(count) * 8
+            || readU16(request.payload, 6)) {
+            m_violations.append(
+                QStringLiteral("A runtime resource snapshot request count was malformed."));
+            return;
+        }
+        QList<quint64> resourceIds;
+        resourceIds.reserve(count);
+        quint64 previous = 0;
+        for (quint16 index = 0; index < count; ++index) {
+            const quint64 resourceId = readU64(request.payload, 64 + qsizetype(index) * 8);
+            if (!resourceId || resourceId <= previous) {
+                m_violations.append(
+                    QStringLiteral("Runtime resource snapshot IDs were not ordered."));
+                return;
+            }
+            resourceIds.append(resourceId);
+            previous = resourceId;
+        }
+
+        if (m_holdNextRuntimeSnapshot) {
+            m_holdNextRuntimeSnapshot = false;
+            return;
+        }
+
+        const RuntimeResourceFailure failure = m_nextRuntimeResourceFailure;
+        m_nextRuntimeResourceFailure = RuntimeResourceFailure::None;
+        if (failure == RuntimeResourceFailure::Typed) {
+            const qint32 status = m_nextRuntimeTypedStatus;
+            m_nextRuntimeTypedStatus = -17;
+            sendResponse(
+                peer,
+                Protocol::MessageType::ResourceSnapshot,
+                request.header.requestId,
+                runtimeResourceSnapshotFailurePayload(status),
+                Protocol::Flag::Response | Protocol::Flag::Error);
+            return;
+        }
+        if (failure == RuntimeResourceFailure::BulkStatus) {
+            QByteArray payload
+                = bulkStatusPayload(
+                    quint16(Protocol::MessageType::GetResourceSnapshot));
+            putI32(payload, 0, m_nextRuntimeBulkStatus);
+            putI32(payload, 4, 0);
+            m_nextRuntimeBulkStatus = -6;
+            sendResponse(
+                peer,
+                Protocol::MessageType::BulkStatus,
+                request.header.requestId,
+                payload,
+                Protocol::Flag::Response | Protocol::Flag::Error);
+            return;
+        }
+        if (failure == RuntimeResourceFailure::BulkStatusNonzeroOperationResult) {
+            QByteArray payload
+                = bulkStatusPayload(
+                    quint16(Protocol::MessageType::GetResourceSnapshot));
+            putI32(payload, 0, -6);
+            putI32(payload, 4, -1);
+            sendResponse(
+                peer,
+                Protocol::MessageType::BulkStatus,
+                request.header.requestId,
+                payload,
+                Protocol::Flag::Response | Protocol::Flag::Error);
+            return;
+        }
+        if (failure == RuntimeResourceFailure::WrongResponse) {
+            sendResponse(
+                peer,
+                Protocol::MessageType::ResourceTablePage,
+                request.header.requestId,
+                {});
+            return;
+        }
+        QByteArray snapshotPayload = runtimeResourceSnapshotPayload(binding, resourceIds);
+        if (failure == RuntimeResourceFailure::MalformedPayload)
+            putU32(snapshotPayload, 112 + 12, 1);
+        if (failure == RuntimeResourceFailure::WrongSession
+            || failure == RuntimeResourceFailure::WrongBoot) {
+            Protocol::Frame frame = response(
+                peer,
+                Protocol::MessageType::ResourceSnapshot,
+                request.header.requestId,
+                snapshotPayload);
+            if (failure == RuntimeResourceFailure::WrongSession)
+                frame.header.sessionId = TestSessionId + 1;
+            else
+                frame.header.bootId = m_bootId + 1;
+            const QByteArray wire = wireFor(frame);
+            if (!wire.isEmpty())
+                peer.socket->write(wire);
+            return;
+        }
+        if (m_runtimeSnapshotDelayMs > 0) {
+            Peer *peerPointer = &peer;
+            const quint64 requestId = request.header.requestId;
+            QTimer::singleShot(
+                m_runtimeSnapshotDelayMs,
+                this,
+                [this, peerPointer, requestId, snapshotPayload] {
+                    if (peerPointer->socket->state() == QAbstractSocket::ConnectedState) {
+                        sendResponse(
+                            *peerPointer,
+                            Protocol::MessageType::ResourceSnapshot,
+                            requestId,
+                            snapshotPayload);
+                    }
+                });
+            return;
+        }
+        sendResponse(
+            peer,
+            Protocol::MessageType::ResourceSnapshot,
+            request.header.requestId,
+            snapshotPayload);
     }
 
     void sendStateResponse(Peer &peer, const Protocol::Frame &request)
@@ -1002,6 +1463,7 @@ private:
                 = m_behavior == Behavior::ControlLifecycle
                           || m_behavior == Behavior::FaultReset
                           || m_behavior == Behavior::PackageDeployment
+                          || m_behavior == Behavior::RuntimeResources
                       ? lifecycleControllerStatePayload(
                             m_serviceState,
                             cycleCount(),
@@ -1015,6 +1477,7 @@ private:
                 && !m_faultResetSafeCyclicRuntime) {
                 putU32(statePayload, 4, 0x19); // READY | SAFE_OUTPUT | FAULT
             }
+            putU64(statePayload, 48, m_bootId);
             sendResponse(
                 peer,
                 Protocol::MessageType::ControllerState,
@@ -1074,7 +1537,12 @@ private:
             return;
         }
         QByteArray payload;
-        if (m_behavior == Behavior::PackageDeployment && m_deploymentActivated) {
+        if (m_behavior == Behavior::RuntimeResources) {
+            payload = packageStatePayload();
+            putU64(payload, 40, m_runtimePackageGeneration);
+            putU64(payload, 48, m_runtimeConfigurationId);
+            putU64(payload, 64, m_bootId);
+        } else if (m_behavior == Behavior::PackageDeployment && m_deploymentActivated) {
             payload = deploymentPackageStatePayload(
                 Protocol::MessageType::GetPackageState,
                 Data::ControllerPackageState::Active,
@@ -1302,7 +1770,8 @@ private:
     void handleControlRequest(Peer &peer, const Protocol::Frame &request)
     {
         if (m_behavior != Behavior::ControlLifecycle && m_behavior != Behavior::FaultReset
-            && m_behavior != Behavior::PackageDeployment) {
+            && m_behavior != Behavior::PackageDeployment
+            && m_behavior != Behavior::RuntimeResources) {
             m_violations.append(
                 QStringLiteral("A control request was emitted outside the lifecycle test."));
             return;
@@ -1335,7 +1804,12 @@ private:
                       ? 4
                       : 1;
             m_nextControlFailureStage = 0;
-            for (quint16 completedStage = 1; completedStage < stage; ++completedStage) {
+            const quint16 firstStage
+                = request.header.messageType == Protocol::MessageType::AcquireControl
+                          || request.header.messageType == Protocol::MessageType::ReleaseControl
+                      ? 4
+                      : 1;
+            for (quint16 completedStage = firstStage; completedStage < stage; ++completedStage) {
                 sendResponse(
                     peer,
                     Protocol::MessageType::CommandStatus,
@@ -1585,7 +2059,7 @@ private:
         putU32(payload, 0, quint32(peer.role));
         putU32(payload, 4, Protocol::maximumPayloadBytes(peer.role));
         putU64(payload, 8, TestSessionId);
-        putU64(payload, 16, TestBootId);
+        putU64(payload, 16, m_bootId);
         putU64(
             payload,
             24,
@@ -1593,10 +2067,17 @@ private:
                 ? m_helloLeaseOwnerSessionId
                 : (m_leaseOwned ? TestSessionId : 0));
         const quint32 defaultFeatureBits
-            = m_protocolMinor >= Protocol::ControlledFaultResetMinor
+            = m_protocolMinor >= Protocol::RuntimeResourceMinor
+                  ? 0x3fff
+              : m_protocolMinor >= Protocol::ControlledFaultResetMinor
                   ? 0x1fff
                   : m_protocolMinor >= Protocol::ExplicitTimingModeMinor ? 0x0fff : 0x07ff;
-        putU32(payload, 32, m_featureBits.value_or(defaultFeatureBits));
+        const std::optional<quint32> roleFeatureBits
+            = m_roleFeatureBits.at(size_t(quint32(peer.role) - 1));
+        putU32(
+            payload,
+            32,
+            roleFeatureBits.value_or(m_featureBits.value_or(defaultFeatureBits)));
         putU32(payload, 36, m_defaultLeaseDurationMs);
         peer.handshaken = true;
         Protocol::Frame frame
@@ -1648,7 +2129,7 @@ private:
         frame.header.sessionId = TestSessionId;
         frame.header.requestId = requestId;
         frame.header.sequence = ++peer.responseSequence;
-        frame.header.bootId = TestBootId;
+        frame.header.bootId = m_bootId;
         frame.header.controllerTimestampNs = 900000 + peer.responseSequence;
         frame.payload = payload;
         return frame;
@@ -1727,7 +2208,7 @@ private:
 
         QByteArray heartbeatPayload(16, '\0');
         putU64(heartbeatPayload, 0, 77);
-        putU64(heartbeatPayload, 8, TestBootId);
+        putU64(heartbeatPayload, 8, m_bootId);
         const Protocol::Frame heartbeat = response(
             peer,
             Protocol::MessageType::PushHeartbeat,
@@ -1804,8 +2285,19 @@ private:
     bool m_nextDeploymentFailureFinal = true;
     quint32 m_defaultLeaseDurationMs = 5000;
     quint64 m_helloLeaseOwnerSessionId = 0;
+    quint64 m_bootId = TestBootId;
     quint16 m_protocolMinor = Protocol::CurrentMinor;
     std::optional<quint32> m_featureBits;
+    std::array<std::optional<quint32>, 3> m_roleFeatureBits;
+    RuntimeResourceFailure m_nextRuntimeResourceFailure = RuntimeResourceFailure::None;
+    qint32 m_nextRuntimeTypedStatus = -17;
+    qint32 m_nextRuntimeBulkStatus = -6;
+    quint32 m_runtimeResourceCount = 2;
+    quint32 m_runtimeResourcePageSize = 64;
+    int m_runtimeSnapshotDelayMs = 0;
+    bool m_holdNextRuntimeSnapshot = false;
+    quint64 m_runtimePackageGeneration = 33;
+    quint64 m_runtimeConfigurationId = 44;
     Protocol::MessageType m_rejectedControlType = Protocol::MessageType::Error;
     Protocol::MessageType m_rejectedDeploymentType = Protocol::MessageType::Error;
     Protocol::MessageType m_rejectedDeploymentPackageStateType = Protocol::MessageType::Error;
@@ -2018,7 +2510,7 @@ void EtherCATProductApiTests::testCrcAndGoldenFrame()
         0x1122334455667788,
         0x0102030405060708,
         1,
-        Protocol::CurrentMinor,
+        Protocol::ExplicitTimingModeMinor,
         &error);
     QVERIFY(!error);
     QCOMPARE(
@@ -2027,6 +2519,274 @@ void EtherCATProductApiTests::testCrcAndGoldenFrame()
             "454341500001000a0040000100000000000000180000000000000000"
             "0102030405060708000000000000000100000000000000000000000000000000"
             "909715de000000010000000000000000000000001122334455667788"));
+}
+
+void EtherCATProductApiTests::testRuntimeResourceGoldenFrames()
+{
+    constexpr quint64 sessionId = 0x0102030405060708;
+    constexpr quint64 bootId = 0x2122232425262728;
+
+    const QByteArray tableQueryGolden = runtimeResourceTableQueryGoldenWire();
+    QCOMPARE(tableQueryGolden.size(), Protocol::HeaderBytes + 64);
+    QCOMPARE(readU32(tableQueryGolden, 60), quint32(0x09165ece));
+
+    Protocol::RuntimeResourceTableQuery tableQuery;
+    tableQuery.binding.bootId = bootId;
+    tableQuery.binding.activeSlot = quint32('A');
+    tableQuery.limit = 2;
+    tableQuery.flags = 1;
+    Protocol::Error error;
+    const QByteArray tableQueryWire = Protocol::encodeQueryResourceTable(
+        tableQuery,
+        sessionId,
+        0x1112131415161718,
+        2,
+        Protocol::RuntimeResourceMinor,
+        &error);
+    QVERIFY(!error);
+    QCOMPARE(tableQueryWire, tableQueryGolden);
+
+    const QByteArray tablePageGolden = runtimeResourceTablePageGoldenWire();
+    QCOMPARE(tablePageGolden.size(), Protocol::HeaderBytes + 176);
+    QCOMPARE(readU32(tablePageGolden, 60), quint32(0x5acfcbd1));
+    Protocol::FrameParser tableParser(Protocol::Role::Bulk);
+    const Protocol::ParseResult tableParse = tableParser.append(tablePageGolden);
+    QVERIFY(!tableParse.error);
+    QCOMPARE(tableParse.frames.size(), 1);
+    const auto page
+        = Protocol::decodeResourceTablePage(tableParse.frames.constFirst(), tableQuery, &error);
+    QVERIFY(page);
+    QVERIFY(!error);
+    QCOMPARE(page->status, 0);
+    QCOMPARE(page->recordCount, quint16(1));
+    QCOMPARE(page->totalCount, quint32(2));
+    QCOMPARE(page->nextCursor, quint32(1));
+    QVERIFY(page->more);
+    QCOMPARE(page->binding.bootId, bootId);
+    QCOMPARE(page->binding.activeSlot, quint32('A'));
+    QCOMPARE(page->binding.packageGeneration, quint64(1));
+    QCOMPARE(page->binding.configurationId, quint64(0x100));
+    QCOMPARE(page->binding.topologyGeneration, quint64(2));
+    QCOMPARE(page->binding.runtimeGeneration, quint64(3));
+    QCOMPARE(page->binding.catalogRevision, quint64(0x1111222233334444));
+    QCOMPARE(page->binding.topologyIdentity, quint64(0x5555666677778888));
+    QCOMPARE(page->resources.size(), 1);
+    const Protocol::RuntimeResourceDescriptor &descriptor = page->resources.constFirst();
+    QCOMPARE(descriptor.resourceId, quint64(0x1000000000000001));
+    QCOMPARE(descriptor.componentId, quint64(0x2000000000000001));
+    QCOMPARE(descriptor.parentId, quint64(0));
+    QCOMPARE(descriptor.processImageBitOffset, quint32(0));
+    QCOMPARE(descriptor.processImageBitLength, quint16(16));
+    QCOMPARE(descriptor.valueBitWidth, quint16(16));
+    QCOMPARE(descriptor.primitive, Protocol::RuntimeResourcePrimitive::Unsigned16);
+    QCOMPARE(descriptor.direction, Protocol::RuntimeResourceDirection::Input);
+    QCOMPARE(descriptor.access, Protocol::RuntimeResourceAccess::Read);
+    QCOMPARE(descriptor.valueBytes, quint8(2));
+    QCOMPARE(descriptor.qualityMask, quint16(0x000f));
+    QCOMPARE(descriptor.groupId, quint32(1));
+    QVERIFY(descriptor.safeValue.isEmpty());
+
+    Protocol::RuntimeResourceSnapshotQuery snapshotQuery;
+    snapshotQuery.binding = runtimeResourceBinding();
+    snapshotQuery.resourceIds = {0x1000000000000001};
+    const QByteArray snapshotQueryGolden = runtimeResourceSnapshotQueryGoldenWire();
+    QCOMPARE(snapshotQueryGolden.size(), Protocol::HeaderBytes + 72);
+    QCOMPARE(readU32(snapshotQueryGolden, 60), quint32(0x279d92a3));
+    error = {};
+    const QByteArray snapshotQueryWire = Protocol::encodeGetResourceSnapshot(
+        snapshotQuery,
+        sessionId,
+        0x4142434445464748,
+        3,
+        Protocol::RuntimeResourceMinor,
+        &error);
+    QVERIFY(!error);
+    QCOMPARE(snapshotQueryWire, snapshotQueryGolden);
+
+    const QByteArray snapshotGolden = runtimeResourceSnapshotGoldenWire();
+    QCOMPARE(snapshotGolden.size(), Protocol::HeaderBytes + 144);
+    QCOMPARE(readU32(snapshotGolden, 60), quint32(0xcd329e8a));
+    Protocol::FrameParser snapshotParser(Protocol::Role::Bulk);
+    const Protocol::ParseResult snapshotParse = snapshotParser.append(snapshotGolden);
+    QVERIFY(!snapshotParse.error);
+    QCOMPARE(snapshotParse.frames.size(), 1);
+    const auto snapshot = Protocol::decodeResourceSnapshot(
+        snapshotParse.frames.constFirst(), snapshotQuery, &error);
+    QVERIFY(snapshot);
+    QVERIFY(!error);
+    QCOMPARE(snapshot->status, 0);
+    QVERIFY(snapshot->complete);
+    QCOMPARE(snapshot->snapshotSequence, quint64(6));
+    QCOMPARE(snapshot->captureCycle, quint64(0x1000));
+    QCOMPARE(snapshot->controllerTimestampNs, quint64(0x6162636465666768));
+    QCOMPARE(snapshot->samples.size(), 1);
+    const Protocol::RuntimeResourceSample &sample = snapshot->samples.constFirst();
+    QCOMPARE(sample.resourceId, quint64(0x1000000000000001));
+    QCOMPARE(sample.primitive, Protocol::RuntimeResourcePrimitive::Unsigned16);
+    QCOMPARE(sample.direction, Protocol::RuntimeResourceDirection::Input);
+    QCOMPARE(sample.bitWidth, quint16(16));
+    QCOMPARE(sample.quality, Protocol::RuntimeResourceQuality::Good);
+    QCOMPARE(sample.value, QByteArray::fromHex("1234"));
+
+    const QByteArray failureGolden = runtimeResourceSnapshotFailureGoldenWire();
+    QCOMPARE(failureGolden.size(), Protocol::HeaderBytes + 112);
+    QCOMPARE(readU32(failureGolden, 60), quint32(0x75b06256));
+    Protocol::FrameParser failureParser(Protocol::Role::Bulk);
+    const Protocol::ParseResult failureParse = failureParser.append(failureGolden);
+    QVERIFY(!failureParse.error);
+    QCOMPARE(failureParse.frames.size(), 1);
+    error = {};
+    const auto failure = Protocol::decodeResourceSnapshot(
+        failureParse.frames.constFirst(), snapshotQuery, &error);
+    QVERIFY(failure);
+    QVERIFY(!error);
+    QCOMPARE(failure->status, qint32(-17));
+    QVERIFY(!failure->complete);
+    QVERIFY(failure->samples.isEmpty());
+}
+
+void EtherCATProductApiTests::testRuntimeResourceCodecRejectsMalformed_data()
+{
+    QTest::addColumn<int>("kind");
+    QTest::addColumn<QByteArray>("payload");
+    QTest::addColumn<quint32>("flags");
+
+    const QByteArray validTablePayload
+        = runtimeResourceTablePageGoldenWire().mid(Protocol::HeaderBytes);
+    const QByteArray validSnapshotPayload
+        = runtimeResourceSnapshotGoldenWire().mid(Protocol::HeaderBytes);
+
+    QByteArray tableLength = validTablePayload;
+    tableLength.chop(1);
+    QTest::newRow("table-length")
+        << 0 << tableLength << quint32(Protocol::Flag::Response | Protocol::Flag::More);
+
+    QByteArray tableReserved = validTablePayload;
+    putU32(tableReserved, 68, 1);
+    QTest::newRow("table-reserved")
+        << 0 << tableReserved << quint32(Protocol::Flag::Response | Protocol::Flag::More);
+
+    QByteArray tableCount = validTablePayload;
+    putU16(tableCount, 12, 0);
+    QTest::newRow("table-count")
+        << 0 << tableCount << quint32(Protocol::Flag::Response | Protocol::Flag::More);
+
+    QTest::newRow("table-flags")
+        << 0 << validTablePayload << Protocol::flagValue(Protocol::Flag::Response);
+
+    QByteArray tableOrder = validTablePayload;
+    tableOrder.append(validTablePayload.mid(112, 64));
+    putU16(tableOrder, 12, 2);
+    putU32(tableOrder, 56, 3);
+    putU32(tableOrder, 60, 2);
+    QTest::newRow("table-resource-order")
+        << 0 << tableOrder << quint32(Protocol::Flag::Response | Protocol::Flag::More);
+
+    QByteArray tablePrimitive = validTablePayload;
+    tablePrimitive[112 + 36] = char(0xff);
+    QTest::newRow("table-primitive")
+        << 0 << tablePrimitive << quint32(Protocol::Flag::Response | Protocol::Flag::More);
+
+    QByteArray tableDirection = validTablePayload;
+    tableDirection[112 + 37] = char(3);
+    QTest::newRow("table-direction")
+        << 0 << tableDirection << quint32(Protocol::Flag::Response | Protocol::Flag::More);
+
+    QByteArray tableAccess = validTablePayload;
+    tableAccess[112 + 38] = char(2);
+    QTest::newRow("table-access")
+        << 0 << tableAccess << quint32(Protocol::Flag::Response | Protocol::Flag::More);
+
+    QByteArray snapshotQuality = validSnapshotPayload;
+    putU32(snapshotQuality, 112 + 12, 1);
+    QTest::newRow("snapshot-quality")
+        << 1 << snapshotQuality << Protocol::flagValue(Protocol::Flag::Response);
+}
+
+void EtherCATProductApiTests::testRuntimeResourceCodecRejectsMalformed()
+{
+    Protocol::FrameParser wrongRoleParser(Protocol::Role::Control);
+    const Protocol::ParseResult wrongRole
+        = wrongRoleParser.append(runtimeResourceTablePageGoldenWire());
+    QVERIFY(wrongRole.error);
+    QCOMPARE(wrongRole.error->category, Protocol::ErrorCategory::UnsupportedMessage);
+
+    QByteArray wrongDirection = runtimeResourceTableQueryGoldenWire();
+    putU32(wrongDirection, 12, Protocol::flagValue(Protocol::Flag::Response));
+    rewriteCrc(wrongDirection);
+    Protocol::FrameParser requestParser(
+        Protocol::Role::Bulk, Protocol::FrameDirection::ClientRequest);
+    const Protocol::ParseResult wrongFlags = requestParser.append(wrongDirection);
+    QVERIFY(wrongFlags.error);
+    QCOMPARE(wrongFlags.error->category, Protocol::ErrorCategory::InvalidFlags);
+
+    Protocol::RuntimeResourceSnapshotQuery unorderedQuery;
+    unorderedQuery.binding = runtimeResourceBinding();
+    unorderedQuery.resourceIds = {2, 1};
+    Protocol::Error error;
+    QVERIFY(Protocol::encodeGetResourceSnapshot(
+                unorderedQuery, TestSessionId, 1, 1, Protocol::CurrentMinor, &error)
+                .isEmpty());
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    QByteArray reservedQuery
+        = runtimeResourceTableQueryGoldenWire().mid(Protocol::HeaderBytes);
+    putU32(reservedQuery, 52, 1);
+    error = {};
+    QVERIFY(Protocol::encodeRequest(
+                Protocol::MessageType::QueryResourceTable,
+                reservedQuery,
+                TestSessionId,
+                1,
+                1,
+                0x2122232425262728,
+                Protocol::CurrentMinor,
+                &error)
+                .isEmpty());
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    QByteArray invalidRuntimeStatus
+        = bulkStatusPayload(quint16(Protocol::MessageType::GetResourceSnapshot));
+    putI32(invalidRuntimeStatus, 0, -6);
+    putI32(invalidRuntimeStatus, 4, -1);
+    error = {};
+    QVERIFY(!Protocol::decodeBulkStatus(
+        responseFrame(
+            Protocol::MessageType::BulkStatus,
+            invalidRuntimeStatus,
+            1,
+            Protocol::Flag::Response | Protocol::Flag::Error),
+        &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    QFETCH(int, kind);
+    QFETCH(QByteArray, payload);
+    QFETCH(quint32, flags);
+
+    Protocol::Frame frame = responseFrame(
+        kind ? Protocol::MessageType::ResourceSnapshot
+             : Protocol::MessageType::ResourceTablePage,
+        payload,
+        1,
+        flags);
+    frame.header.protocolMinor = Protocol::RuntimeResourceMinor;
+    frame.header.bootId = 0x2122232425262728;
+
+    error = {};
+    if (kind) {
+        Protocol::RuntimeResourceSnapshotQuery query;
+        query.binding = runtimeResourceBinding();
+        query.resourceIds = {0x1000000000000001};
+        QVERIFY(!Protocol::decodeResourceSnapshot(frame, query, &error));
+    } else {
+        Protocol::RuntimeResourceTableQuery query;
+        query.binding.bootId = 0x2122232425262728;
+        query.binding.activeSlot = quint32('A');
+        query.limit = 2;
+        query.flags = 1;
+        QVERIFY(!Protocol::decodeResourceTablePage(frame, query, &error));
+    }
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
 }
 
 void EtherCATProductApiTests::testFrameStreamFragmentationAndCoalescing()
@@ -3668,6 +4428,7 @@ void EtherCATProductApiTests::testFaultResetLifecycle()
 
     {
         LoopbackController controller(LoopbackController::Behavior::FaultReset);
+        controller.setProtocolMinor(Protocol::ControlledFaultResetMinor);
         controller.setFeatureBits(0x0fff);
         QVERIFY(controller.start());
         ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
@@ -6078,8 +6839,9 @@ void EtherCATProductApiTests::testDisconnectRejectedReleasePreservesSession()
         Data::ControllerControlState::Failed,
         1000);
 
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 1000);
     const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
-    QCOMPARE(snapshot.state, Data::ControllerConnectionState::Connected);
     QVERIFY(snapshot.session);
     QVERIFY(snapshot.session->ownsControlLease);
     QCOMPARE(snapshot.session->controlLeaseOwnerSessionId, snapshot.session->sessionId);
@@ -6663,6 +7425,586 @@ void EtherCATProductApiTests::testInvalidAlarmCheckpointRefresh()
                               Data::ControllerConnectionState::Connected,
                               2000);
     QCOMPARE(provider.connectionSnapshot().recentAlarms.size(), 1);
+    QVERIFY(controller.violations().isEmpty());
+
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testRuntimeResourceRefreshCapabilityGuards_data()
+{
+    QTest::addColumn<int>("protocolMinor");
+    QTest::addColumn<quint32>("featureBits");
+    QTest::addColumn<bool>("bulkFeatureMissing");
+
+    QTest::newRow("minor-11")
+        << int(Protocol::ControlledFaultResetMinor) << quint32(0x1fff) << false;
+    QTest::newRow("minor-12-without-feature-13")
+        << int(Protocol::RuntimeResourceMinor) << quint32(0x1fff) << false;
+    QTest::newRow("minor-12-bulk-without-feature-13")
+        << int(Protocol::RuntimeResourceMinor) << quint32(0x3fff) << true;
+}
+
+void EtherCATProductApiTests::testRuntimeResourceRefreshCapabilityGuards()
+{
+    QFETCH(int, protocolMinor);
+    QFETCH(quint32, featureBits);
+    QFETCH(bool, bulkFeatureMissing);
+
+    LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+    controller.setProtocolMinor(quint16(protocolMinor));
+    controller.setFeatureBits(featureBits);
+    if (bulkFeatureMissing)
+        controller.setRoleFeatureBits(Protocol::Role::Bulk, 0x1fff);
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(!provider.supportsRuntimeResources());
+    QVERIFY(provider.connectionSnapshot().capability);
+    QVERIFY(!provider.connectionSnapshot().capability->runtimeResources);
+    QVERIFY(!provider.runtimeResourceCatalog());
+    QVERIFY(!provider.runtimeResourceSnapshot());
+
+    const Utils::Result<> result = provider.refreshRuntimeResources();
+    QVERIFY(!result);
+    QCOMPARE(
+        result.error(),
+        Tr::tr(
+            "Runtime resources require Product API v1.12 and feature bit 13; no controller "
+            "request was sent."));
+    QCOMPARE(controller.requestCount(Protocol::MessageType::QueryResourceTable), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::GetResourceSnapshot), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::AcquireControl), 0);
+    QVERIFY(!controller.leaseOwned());
+    QVERIFY(controller.violations().isEmpty());
+
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testRuntimeResourceLoopbackLifecycle()
+{
+    LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+    controller.setRuntimeResourcePageSize(1);
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QSignalSpy catalogChanges(
+        &provider, &Core::ControllerConnectionProvider::runtimeResourceCatalogChanged);
+    QSignalSpy snapshotChanges(
+        &provider, &Core::ControllerConnectionProvider::runtimeResourceSnapshotChanged);
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.supportsRuntimeResources());
+    QVERIFY(provider.connectionSnapshot().capability);
+    QVERIFY(provider.connectionSnapshot().capability->runtimeResources);
+
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+    QVERIFY(provider.runtimeResourceCatalog());
+    QTRY_VERIFY_WITH_TIMEOUT(catalogChanges.count() >= 1, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(snapshotChanges.count() >= 1, 1000);
+
+    const Data::RuntimeResourceCatalog catalog = *provider.runtimeResourceCatalog();
+    QCOMPARE(catalog.scope, provider.connectionSnapshot().scope);
+    QCOMPARE(catalog.sessionGeneration, provider.connectionSnapshot().sessionGeneration);
+    QCOMPARE(catalog.epoch.controllerBootId, TestBootId);
+    QCOMPARE(catalog.epoch.activePackageSlot, Data::ControllerSlot::B);
+    QCOMPARE(catalog.epoch.activePackageGeneration, quint64(33));
+    QCOMPARE(catalog.epoch.configurationId, quint64(44));
+    QCOMPARE(catalog.epoch.topologyGeneration, quint64(7));
+    QCOMPARE(catalog.epoch.runtimeGeneration, quint64(8));
+    QCOMPARE(catalog.epoch.catalogRevision, quint64(9));
+    QCOMPARE(
+        catalog.epoch.topologyIdentity, QByteArray::fromHex("3132333435363738"));
+    QCOMPARE(catalog.resources.size(), 2);
+
+    const Data::RuntimeResourceDescriptor &input = catalog.resources.at(0);
+    QCOMPARE(input.id.value, QByteArray::fromHex("1000000000000001"));
+    QCOMPARE(
+        input.componentInstanceId.value, QByteArray::fromHex("2000000000000001"));
+    QCOMPARE(input.consistencyGroupId.value, QByteArray::fromHex("00000001"));
+    QCOMPARE(input.primitiveType, Data::RuntimeResourcePrimitiveType::UnsignedInteger);
+    QCOMPARE(input.direction, Data::RuntimeResourceDirection::Input);
+    QCOMPARE(input.access, Data::RuntimeResourceAccess::ReadOnly);
+    QCOMPARE(input.bitWidth, quint32(16));
+    QVERIFY(!input.safeValue);
+
+    const Data::RuntimeResourceDescriptor &output = catalog.resources.at(1);
+    QCOMPARE(output.id.value, QByteArray::fromHex("1000000000000002"));
+    QCOMPARE(output.primitiveType, Data::RuntimeResourcePrimitiveType::Boolean);
+    QCOMPARE(output.direction, Data::RuntimeResourceDirection::Output);
+    QCOMPARE(output.access, Data::RuntimeResourceAccess::ReadWrite);
+    QCOMPARE(output.bitWidth, quint32(1));
+    QVERIFY(output.safeValue);
+    QCOMPARE(output.safeValue->primitiveType, Data::RuntimeResourcePrimitiveType::Boolean);
+    QCOMPARE(output.safeValue->value, QVariant(false));
+
+    const Data::RuntimeResourceSnapshot snapshot = *provider.runtimeResourceSnapshot();
+    QCOMPARE(snapshot.scope, catalog.scope);
+    QCOMPARE(snapshot.sessionGeneration, catalog.sessionGeneration);
+    QCOMPARE(snapshot.epoch, catalog.epoch);
+    QVERIFY(snapshot.complete);
+    QCOMPARE(snapshot.captureCycle, quint64(0x1234));
+    QCOMPARE(snapshot.controllerTimestampNs, quint64(0x5152535455565758));
+    QCOMPARE(snapshot.samples.size(), 2);
+    QCOMPARE(snapshot.samples.at(0).resourceId, input.id);
+    QCOMPARE(snapshot.samples.at(0).value.primitiveType,
+             Data::RuntimeResourcePrimitiveType::UnsignedInteger);
+    QCOMPARE(snapshot.samples.at(0).value.value.toULongLong(), qulonglong(0x1234));
+    QCOMPARE(snapshot.samples.at(0).quality.state, Data::RuntimeResourceQualityState::Good);
+    QCOMPARE(snapshot.samples.at(1).resourceId, output.id);
+    QCOMPARE(snapshot.samples.at(1).value.value, QVariant(true));
+
+    QCOMPARE(controller.requestCount(Protocol::MessageType::QueryResourceTable), 2);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::GetResourceSnapshot), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::AcquireControl), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::Heartbeat), 0);
+    QVERIFY(!controller.leaseOwned());
+    QVERIFY(controller.violations().isEmpty());
+
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testRuntimeResourceFailureAndInvalidation()
+{
+    LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+
+    controller.rejectNextRuntimeSnapshotTyped();
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !provider.runtimeResourceCatalog() && !provider.runtimeResourceSnapshot(), 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().lastError.has_value(), 1000);
+    QCOMPARE(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected);
+    QCOMPARE(
+        provider.connectionSnapshot().lastError->operation,
+        Data::ControllerOperation::QueryRuntimeResourceSnapshot);
+    QCOMPARE(provider.connectionSnapshot().lastError->code, std::optional<qint32>(-17));
+
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+
+    controller.rejectNextRuntimeSnapshotWithBulkStatus();
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !provider.runtimeResourceCatalog() && !provider.runtimeResourceSnapshot(), 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().lastError.has_value(), 1000);
+    QCOMPARE(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected);
+    QCOMPARE(provider.connectionSnapshot().lastError->code, std::optional<qint32>(-6));
+    QCOMPARE(
+        provider.connectionSnapshot().lastError->operationResult,
+        std::optional<qint32>(0));
+
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+    controller.setRuntimeActivePackage(34, 45);
+    QVERIFY(provider.refreshController());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.sessionForTests()->pendingRequestCountForTests(), 0, 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !provider.runtimeResourceCatalog() && !provider.runtimeResourceSnapshot(), 2000);
+    QCOMPARE(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected);
+
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+    QCOMPARE(
+        provider.runtimeResourceCatalog()->epoch.activePackageGeneration, quint64(34));
+    QCOMPARE(provider.runtimeResourceCatalog()->epoch.configurationId, quint64(45));
+
+    for (const qint32 reconnectStatus : {-7, -8, -12}) {
+        const quint64 generation = provider.connectionSnapshot().sessionGeneration;
+        controller.rejectNextRuntimeSnapshotWithBulkStatus(reconnectStatus);
+        QVERIFY(provider.refreshRuntimeResources());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            provider.connectionSnapshot().sessionGeneration > generation, 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !provider.runtimeResourceCatalog() && !provider.runtimeResourceSnapshot(), 2000);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Connected,
+            3000);
+        QVERIFY(provider.connectionSnapshot().session);
+        QCOMPARE(provider.connectionSnapshot().session->bootId, TestBootId);
+
+        QVERIFY(provider.refreshRuntimeResources());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+    }
+
+    const quint64 generation = provider.connectionSnapshot().sessionGeneration;
+    controller.rejectNextRuntimeSnapshotTyped(-16);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        provider.connectionSnapshot().sessionGeneration > generation, 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !provider.runtimeResourceCatalog() && !provider.runtimeResourceSnapshot(), 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Connected,
+        3000);
+    QVERIFY(controller.violations().isEmpty());
+
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    QVERIFY(!provider.runtimeResourceCatalog());
+    QVERIFY(!provider.runtimeResourceSnapshot());
+}
+
+void EtherCATProductApiTests::testRuntimeResourceProtocolFailures_data()
+{
+    QTest::addColumn<int>("failure");
+
+    QTest::newRow("wrong-session-id") << 0;
+    QTest::newRow("wrong-boot-id") << 1;
+    QTest::newRow("malformed-payload") << 2;
+    QTest::newRow("wrong-response-type") << 3;
+    QTest::newRow("bulk-status-nonzero-store-result") << 4;
+}
+
+void EtherCATProductApiTests::testRuntimeResourceProtocolFailures()
+{
+    QFETCH(int, failure);
+
+    LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+    switch (failure) {
+    case 0:
+        controller.corruptNextRuntimeSnapshotSessionId();
+        break;
+    case 1:
+        controller.corruptNextRuntimeSnapshotBootId();
+        break;
+    case 2:
+        controller.corruptNextRuntimeSnapshotPayload();
+        break;
+    case 3:
+        controller.sendWrongNextRuntimeSnapshotResponse();
+        break;
+    case 4:
+        controller.sendNextRuntimeBulkStatusWithOperationResult();
+        break;
+    default:
+        QFAIL("Unknown runtime resource protocol failure.");
+    }
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        3000);
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    QVERIFY(!provider.runtimeResourceCatalog());
+    QVERIFY(!provider.runtimeResourceSnapshot());
+    QCOMPARE(provider.sessionForTests()->activeSocketCountForTests(), 0);
+    QCOMPARE(provider.sessionForTests()->pendingRequestCountForTests(), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::QueryResourceTable), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::GetResourceSnapshot), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::AcquireControl), 0);
+    QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testRuntimeResourceSignalDisconnectReentrancy()
+{
+    LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+    bool disconnectAttempted = false;
+    bool disconnectAccepted = false;
+    connect(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeResourceCatalogChanged,
+        &provider,
+        [&] {
+            if (disconnectAttempted || !provider.runtimeResourceCatalog())
+                return;
+            disconnectAttempted = true;
+            disconnectAccepted = bool(provider.disconnectFromController());
+        },
+        Qt::DirectConnection);
+
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(disconnectAttempted, 2000);
+    QVERIFY(disconnectAccepted);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        2000);
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    QVERIFY(!provider.runtimeResourceCatalog());
+    QVERIFY(!provider.runtimeResourceSnapshot());
+    QCOMPARE(provider.sessionForTests()->activeSocketCountForTests(), 0);
+    QCOMPARE(provider.sessionForTests()->pendingRequestCountForTests(), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::AcquireControl), 0);
+    QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testRuntimeResourceReconnectSignalDisconnectReentrancy()
+{
+    LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+    bool disconnectAttempted = false;
+    bool disconnectAccepted = false;
+    connect(
+        &provider,
+        &Core::ControllerConnectionProvider::connectionSnapshotChanged,
+        &provider,
+        [&] {
+            const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+            if (disconnectAttempted || !snapshot.lastError
+                || snapshot.lastError->code != std::optional<qint32>(-16)) {
+                return;
+            }
+            disconnectAttempted = true;
+            disconnectAccepted = bool(provider.disconnectFromController());
+        },
+        Qt::DirectConnection);
+
+    controller.rejectNextRuntimeSnapshotTyped(-16);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(disconnectAttempted, 1000);
+    QVERIFY(disconnectAccepted);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        2000);
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    QTest::qWait(100);
+    QVERIFY(!provider.runtimeResourceCatalog());
+    QVERIFY(!provider.runtimeResourceSnapshot());
+    QCOMPARE(provider.sessionForTests()->activeSocketCountForTests(), 0);
+    QCOMPARE(provider.sessionForTests()->pendingRequestCountForTests(), 0);
+    QCOMPARE(controller.acceptCount(Protocol::Role::Control), 1);
+    QCOMPARE(controller.acceptCount(Protocol::Role::Push), 1);
+    QCOMPARE(controller.acceptCount(Protocol::Role::Bulk), 1);
+    QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testRuntimeResourceBounds()
+{
+    {
+        LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+        controller.setRuntimeResourcePageSize(1);
+        QVERIFY(controller.start());
+
+        ProductApiSession::Options options = testOptions();
+        options.maximumRuntimeResourceCount = 1;
+        ProductApiConnectionProvider provider(controller.endpoints(), options);
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Connected,
+            2000);
+        QVERIFY(provider.refreshRuntimeResources());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().lastError.has_value(), 2000);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.sessionForTests()->pendingRequestCountForTests(), 0, 1000);
+        QCOMPARE(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Connected);
+        QCOMPARE(
+            provider.connectionSnapshot().lastError->operation,
+            Data::ControllerOperation::QueryRuntimeResourceCatalog);
+        QVERIFY(!provider.runtimeResourceCatalog());
+        QVERIFY(!provider.runtimeResourceSnapshot());
+        QCOMPARE(controller.requestCount(Protocol::MessageType::QueryResourceTable), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::GetResourceSnapshot), 0);
+        QVERIFY(controller.violations().isEmpty());
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+        controller.setRuntimeSnapshotDelayMs(150);
+        QVERIFY(controller.start());
+
+        ProductApiSession::Options options = testOptions();
+        options.runtimeResourceRefreshTimeoutMs = 100;
+        ProductApiConnectionProvider provider(controller.endpoints(), options);
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Connected,
+            2000);
+        QVERIFY(provider.refreshRuntimeResources());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().lastError.has_value(), 2000);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.sessionForTests()->pendingRequestCountForTests(), 0, 1000);
+        QCOMPARE(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Connected);
+        QCOMPARE(
+            provider.connectionSnapshot().lastError->operation,
+            Data::ControllerOperation::QueryRuntimeResourceSnapshot);
+        QVERIFY(!provider.runtimeResourceCatalog());
+        QVERIFY(!provider.runtimeResourceSnapshot());
+        QCOMPARE(controller.requestCount(Protocol::MessageType::QueryResourceTable), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::GetResourceSnapshot), 1);
+        QVERIFY(controller.violations().isEmpty());
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+        controller.holdNextRuntimeSnapshot();
+        QVERIFY(controller.start());
+
+        ProductApiSession::Options options = testOptions();
+        options.requestTimeoutMs = 800;
+        options.runtimeResourceRefreshTimeoutMs = 50;
+        ProductApiConnectionProvider provider(controller.endpoints(), options);
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Connected,
+            2000);
+
+        QElapsedTimer elapsed;
+        elapsed.start();
+        QVERIFY(provider.refreshRuntimeResources());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().lastError.has_value(), 400);
+        QVERIFY(elapsed.elapsed() < options.requestTimeoutMs);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.sessionForTests()->pendingRequestCountForTests(), 0, 1000);
+        QCOMPARE(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Connected);
+        QCOMPARE(
+            provider.connectionSnapshot().lastError->operation,
+            Data::ControllerOperation::QueryRuntimeResourceSnapshot);
+        QVERIFY(!provider.runtimeResourceCatalog());
+        QVERIFY(!provider.runtimeResourceSnapshot());
+        QCOMPARE(controller.requestCount(Protocol::MessageType::QueryResourceTable), 1);
+        QCOMPARE(controller.requestCount(Protocol::MessageType::GetResourceSnapshot), 1);
+        QVERIFY(controller.violations().isEmpty());
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+}
+
+void EtherCATProductApiTests::testRuntimeResourceControlInvalidation()
+{
+    LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        provider.connectionSnapshot().controllerState
+            && provider.connectionSnapshot().controllerState->serviceState
+                   == Data::ControllerServiceState::OperationalSafe,
+        2000);
+
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceCatalog().has_value(), 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+
+    const auto execute = [&provider](Data::ControllerControlCommand command) {
+        Data::ControllerControlRequest request;
+        request.command = command;
+        if (!provider.executeControlCommand(request))
+            return false;
+        return waitForHardwareCondition(
+            [&provider, command] {
+                const Data::ControllerControlProgress progress
+                    = provider.connectionSnapshot().controlProgress;
+                return progress.command == command
+                       && progress.state == Data::ControllerControlState::Succeeded;
+            },
+            2000);
+    };
+
+    QVERIFY(execute(Data::ControllerControlCommand::AcquireControl));
+    QVERIFY(provider.runtimeResourceCatalog());
+    QVERIFY(provider.runtimeResourceSnapshot());
+
+    QVERIFY(execute(Data::ControllerControlCommand::ReleaseControl));
+    QVERIFY(provider.runtimeResourceCatalog());
+    QVERIFY(provider.runtimeResourceSnapshot());
+
+    QVERIFY(execute(Data::ControllerControlCommand::AcquireControl));
+    QVERIFY(provider.runtimeResourceCatalog());
+    QVERIFY(provider.runtimeResourceSnapshot());
+
+    QVERIFY(execute(Data::ControllerControlCommand::Start));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !provider.runtimeResourceCatalog() && !provider.runtimeResourceSnapshot(), 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        provider.connectionSnapshot().controllerState
+            && provider.connectionSnapshot().controllerState->serviceState
+                   == Data::ControllerServiceState::Running,
+        2000);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::QueryResourceTable), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::GetResourceSnapshot), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::AcquireControl), 2);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ReleaseControl), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::Start), 1);
+    QVERIFY(controller.leaseOwned());
+    QVERIFY(controller.violations().isEmpty());
+
+    QVERIFY(execute(Data::ControllerControlCommand::ReleaseControl));
+    QVERIFY(!provider.runtimeResourceCatalog());
+    QVERIFY(!provider.runtimeResourceSnapshot());
+    QVERIFY(!controller.leaseOwned());
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testRuntimeResourceIncompleteSnapshot()
+{
+    LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+    controller.setRuntimeResourceCount(65);
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 3000);
+
+    QVERIFY(provider.runtimeResourceCatalog());
+    QCOMPARE(provider.runtimeResourceCatalog()->resources.size(), 65);
+    QCOMPARE(provider.runtimeResourceSnapshot()->samples.size(), 64);
+    QVERIFY(!provider.runtimeResourceSnapshot()->complete);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::QueryResourceTable), 2);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::GetResourceSnapshot), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::AcquireControl), 0);
+    QVERIFY(!controller.leaseOwned());
     QVERIFY(controller.violations().isEmpty());
 
     QVERIFY(provider.disconnectFromController());

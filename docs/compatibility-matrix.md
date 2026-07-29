@@ -3572,8 +3572,8 @@ historical results of those earlier issues.
 |---|---|
 | Provider neutrality | `ControllerConnectionProvider` exposes typed command support and execution; the default implementation rejects control, so another vendor opts in per command |
 | Semantic snapshot | Control request/progress and linear actual-topology values contain no Product API frame, numeric message type, socket, host, or port |
-| Protocol negotiation | Current local client contract is Product API v1.11; feature bit 11 retains explicit timing-mode start, while feature bit 12 `CONTROLLED_FAULT_RESET (0x00001000)` makes the cumulative mask `0x00001fff`. Negotiated v1.10/`0xfff` and v1.9/`0x7ff` remain bounded compatibility without ResetFault |
-| Product API requests | The private adapter adds Acquire, Release, lease Heartbeat, Configuration, DiscoverTopology, RestoreActivePackage, Start, Pause, Resume, ControlledStop, v1.10 StartFreeRun/StartDc, and capability-gated v1.11 ResetFault. Workbench receives only provider-neutral commands and uses generic Start |
+| Protocol negotiation | Current local client contract is Product API v1.12. Feature bit 11 retains explicit timing-mode start; bit 12 adds v1.11 `CONTROLLED_FAULT_RESET`; optional bit 13 adds read-only Runtime Resources and makes the v1.12 cumulative mask `0x00003fff`. Missing bit 13 disables only resource refresh. Negotiated v1.11/`0x00001fff`, v1.10/`0xfff`, and v1.9/`0x7ff` remain bounded compatibility |
+| Product API requests | The private adapter adds Acquire, Release, lease Heartbeat, Configuration, DiscoverTopology, RestoreActivePackage, Start, Pause, Resume, ControlledStop, v1.10 StartFreeRun/StartDc, capability-gated v1.11 ResetFault, and lease-free v1.12 QueryResourceTable/GetResourceSnapshot. Workbench receives only provider-neutral commands and uses generic Start; no Runtime Resource page or write exists |
 | Communication page | Provider/profile, Connect/Refresh/Disconnect, automatic/manual Acquire, Configuration, Scan Bus, Restore Package, Confirm / Reset Fault, Release, progress, Actual Bus, and authoritative information; no FreeRun, DC Run, Pause, Resume, or Stop buttons |
 | Automatic Acquire | After the authoritative connected snapshot identifies the exact Provider/profile/scope/session generation, Workbench queues one Acquire attempt; the page button is manual recovery |
 | Lease arbitration | Exactly one session owns control. Other API sessions retain read-only access, while their writes are rejected with `LEASE_BUSY (-10)` |
@@ -3695,3 +3695,22 @@ real-hardware control.
 | Build-system sync | The new plugin is present in both CMake and qbs; the shared `ethercat` resource tree carries both packages in both build systems |
 | Explicit exclusions | No Project persistence, Workbench page, runtime resource catalog, process-data mutation, action execution, controller connection, or hardware operation |
 | Publication | Local `embed-labs` only; no fetch, pull, merge, rebase, branch switch, push, PR, or remote publication |
+
+## Product API v1.12 Runtime Resource loopback boundary
+
+This table records the API-034 Qt read-only integration boundary. It does not
+modify or extend the verified v1.11 hardware lifecycle above.
+
+| Gate | Current result |
+|---|---|
+| Version/capability | Minor 12 plus optional feature bit 13 `0x00002000`; cumulative v1.12 mask `0x00003fff`. Older or bit-13-missing peers remain connected, reject only Runtime Resource refresh locally, and send no `0x040b`/`0x040c` request |
+| Channel/authority | `QueryResourceTable (0x040b)` and `GetResourceSnapshot (0x040c)` use only the joined Bulk channel and require no control lease |
+| Catalog coherence | Pagination binds every page to the same BootId, active package slot/generation, ConfigurationId, topology/runtime generations, catalog revision, and opaque topology identity |
+| Snapshot coherence | One request contains 1 through 64 unique increasing ResourceIds and returns the exact ordered values from one capture cycle; catalogs larger than 64 produce a truthful `complete=false` snapshot rather than a cross-cycle merge |
+| Identifier boundary | Resource/component/parent/consistency-group IDs are opaque and meaningful only with scope, session generation, and full epoch |
+| Semantic binding | Product API v1.12 has no SemanticBindingId or authenticated `SemanticSignalId` mapping. Name, vendor identity, station/module position, ordinal, object index, and process-image offset inference is prohibited |
+| Failure fidelity | Typed resource responses carry handler errors; the API-034 implementation can return 40-byte `BulkStatus` for pre-dispatch session/Boot/Sequence/envelope errors. Qt accepts that only as failure, never successful query completion |
+| Mutation boundary | No OutputTransaction, process-data write, manual-control action, scan, package mutation, state transition, or lease change |
+| Validation boundary | Qt 6.11 offscreen ProductApi suite: 105 passed, 0 failed, 1 hardware-only skip; Core suite: 23 passed, 0 failed. No visible GUI and no real-controller Runtime Resource request |
+| Existing hardware evidence | Unchanged: the separately recorded v1.11 DC lifecycle remains the latest verified hardware result and does not qualify v1.12 Runtime Resources |
+| Publication | Local `embed-labs` only; no remote publication is authorized |

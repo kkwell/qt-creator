@@ -114,6 +114,226 @@ bool validResetFaultPayload(QByteArrayView payload)
            && readBigEndian<quint32>(payload, 12) == 0;
 }
 
+bool validRuntimeResourceSlot(quint32 slot)
+{
+    return slot == quint32('A') || slot == quint32('B');
+}
+
+bool bytesAreZero(QByteArrayView bytes, qsizetype offset, qsizetype count)
+{
+    for (qsizetype index = offset; index < offset + count; ++index) {
+        if (bytes.at(index))
+            return false;
+    }
+    return true;
+}
+
+bool validRuntimeResourceBinding(const RuntimeResourceBinding &binding)
+{
+    return binding.bootId && validRuntimeResourceSlot(binding.activeSlot)
+           && binding.packageGeneration && binding.configurationId
+           && binding.topologyGeneration && binding.runtimeGeneration && binding.catalogRevision
+           && binding.topologyIdentity;
+}
+
+bool runtimeResourceBindingsEqual(
+    const RuntimeResourceBinding &left, const RuntimeResourceBinding &right)
+{
+    return left.bootId == right.bootId && left.activeSlot == right.activeSlot
+           && left.packageGeneration == right.packageGeneration
+           && left.configurationId == right.configurationId
+           && left.topologyGeneration == right.topologyGeneration
+           && left.runtimeGeneration == right.runtimeGeneration
+           && left.catalogRevision == right.catalogRevision
+           && left.topologyIdentity == right.topologyIdentity;
+}
+
+bool validResourceTableQuery(const RuntimeResourceTableQuery &query)
+{
+    if (!query.binding.bootId || !validRuntimeResourceSlot(query.binding.activeSlot)
+        || query.limit < 1 || query.limit > 64 || query.flags > 1) {
+        return false;
+    }
+    if (query.flags == 1) {
+        return query.cursor == 0 && !query.binding.packageGeneration
+               && !query.binding.configurationId && !query.binding.topologyGeneration
+               && !query.binding.runtimeGeneration && !query.binding.catalogRevision
+               && !query.binding.topologyIdentity;
+    }
+    return query.cursor && validRuntimeResourceBinding(query.binding);
+}
+
+bool validResourceTableQueryPayload(QByteArrayView payload)
+{
+    if (payload.size() != 64)
+        return false;
+
+    const quint16 flags = readBigEndian<quint16>(payload, 6);
+    if (!validRuntimeResourceSlot(readBigEndian<quint32>(payload, 0))
+        || readBigEndian<quint16>(payload, 4) < 1
+        || readBigEndian<quint16>(payload, 4) > 64 || flags > 1
+        || readBigEndian<quint32>(payload, 52)) {
+        return false;
+    }
+
+    const quint32 cursor = readBigEndian<quint32>(payload, 48);
+    const bool bindingIsZero = bytesAreZero(payload, 8, 40)
+                               && !readBigEndian<quint64>(payload, 56);
+    if (flags == 1)
+        return cursor == 0 && bindingIsZero;
+    return cursor && !bindingIsZero && readBigEndian<quint64>(payload, 8)
+           && readBigEndian<quint64>(payload, 16) && readBigEndian<quint64>(payload, 24)
+           && readBigEndian<quint64>(payload, 32) && readBigEndian<quint64>(payload, 40)
+           && readBigEndian<quint64>(payload, 56);
+}
+
+bool validResourceSnapshotQuery(const RuntimeResourceSnapshotQuery &query)
+{
+    if (!validRuntimeResourceBinding(query.binding) || query.resourceIds.isEmpty()
+        || query.resourceIds.size() > 64) {
+        return false;
+    }
+    quint64 previous = 0;
+    for (quint64 resourceId : query.resourceIds) {
+        if (!resourceId || resourceId <= previous)
+            return false;
+        previous = resourceId;
+    }
+    return true;
+}
+
+bool validResourceSnapshotQueryPayload(QByteArrayView payload)
+{
+    if (payload.size() < 72)
+        return false;
+    const quint16 count = readBigEndian<quint16>(payload, 4);
+    if (!validRuntimeResourceSlot(readBigEndian<quint32>(payload, 0)) || count < 1
+        || count > 64 || readBigEndian<quint16>(payload, 6)
+        || payload.size() != 64 + qsizetype(count) * 8
+        || !readBigEndian<quint64>(payload, 8) || !readBigEndian<quint64>(payload, 16)
+        || !readBigEndian<quint64>(payload, 24) || !readBigEndian<quint64>(payload, 32)
+        || !readBigEndian<quint64>(payload, 40) || !readBigEndian<quint64>(payload, 48)
+        || readBigEndian<quint64>(payload, 56)) {
+        return false;
+    }
+    quint64 previous = 0;
+    for (quint16 index = 0; index < count; ++index) {
+        const quint64 resourceId = readBigEndian<quint64>(payload, 64 + qsizetype(index) * 8);
+        if (!resourceId || resourceId <= previous)
+            return false;
+        previous = resourceId;
+    }
+    return true;
+}
+
+bool runtimeResourceStatusAllowed(qint32 status)
+{
+    switch (status) {
+    case 0:
+    case -6:
+    case -14:
+    case -16:
+    case -17:
+    case -18:
+    case -21:
+        return true;
+    default:
+        return false;
+    }
+}
+
+std::optional<RuntimeResourcePrimitive> decodeRuntimeResourcePrimitive(
+    quint8 value, quint16 bitWidth)
+{
+    const auto primitive = static_cast<RuntimeResourcePrimitive>(value);
+    quint16 expectedWidth = 0;
+    switch (primitive) {
+    case RuntimeResourcePrimitive::Boolean:
+        expectedWidth = 1;
+        break;
+    case RuntimeResourcePrimitive::Unsigned8:
+    case RuntimeResourcePrimitive::Signed8:
+        expectedWidth = 8;
+        break;
+    case RuntimeResourcePrimitive::Unsigned16:
+    case RuntimeResourcePrimitive::Signed16:
+        expectedWidth = 16;
+        break;
+    case RuntimeResourcePrimitive::Unsigned32:
+    case RuntimeResourcePrimitive::Signed32:
+        expectedWidth = 32;
+        break;
+    case RuntimeResourcePrimitive::Unsigned64:
+    case RuntimeResourcePrimitive::Signed64:
+    case RuntimeResourcePrimitive::FixedQ32_32:
+        expectedWidth = 64;
+        break;
+    case RuntimeResourcePrimitive::RawBits:
+        return bitWidth >= 1 && bitWidth <= 128
+                   ? std::optional<RuntimeResourcePrimitive>(primitive)
+                   : std::nullopt;
+    }
+    return bitWidth == expectedWidth ? std::optional<RuntimeResourcePrimitive>(primitive)
+                                     : std::nullopt;
+}
+
+std::optional<RuntimeResourceDirection> decodeRuntimeResourceDirection(quint8 value)
+{
+    if (value == quint8(RuntimeResourceDirection::Input)
+        || value == quint8(RuntimeResourceDirection::Output)) {
+        return static_cast<RuntimeResourceDirection>(value);
+    }
+    return {};
+}
+
+std::optional<RuntimeResourceAccess> decodeRuntimeResourceAccess(quint8 value)
+{
+    if (value == quint8(RuntimeResourceAccess::Read)
+        || value == quint8(RuntimeResourceAccess::ReadWrite)) {
+        return static_cast<RuntimeResourceAccess>(value);
+    }
+    return {};
+}
+
+std::optional<RuntimeResourceQuality> decodeRuntimeResourceQuality(quint32 value)
+{
+    if (value == quint32(RuntimeResourceQuality::Good)
+        || value == quint32(RuntimeResourceQuality::Unavailable)) {
+        return static_cast<RuntimeResourceQuality>(value);
+    }
+    return {};
+}
+
+bool validRightAlignedValue(
+    QByteArrayView payload, qsizetype valueOffset, quint8 valueBytes, quint16 bitWidth)
+{
+    if (!valueBytes || valueBytes > 16 || bitWidth < 1 || bitWidth > 128
+        || valueBytes != (bitWidth + 7) / 8
+        || !bytesAreZero(payload, valueOffset, 16 - valueBytes)) {
+        return false;
+    }
+    const quint8 unusedBits = quint8(valueBytes * 8 - bitWidth);
+    if (!unusedBits)
+        return true;
+    const quint8 firstValueByte = quint8(payload.at(valueOffset + 16 - valueBytes));
+    const quint8 allowedMask = quint8((1U << (8 - unusedBits)) - 1U);
+    return !(firstValueByte & ~allowedMask);
+}
+
+RuntimeResourceBinding decodeRuntimeResourceBinding(QByteArrayView payload)
+{
+    return RuntimeResourceBinding{
+        readBigEndian<quint64>(payload, 72),
+        readBigEndian<quint32>(payload, 8),
+        readBigEndian<quint64>(payload, 16),
+        readBigEndian<quint64>(payload, 24),
+        readBigEndian<quint64>(payload, 32),
+        readBigEndian<quint64>(payload, 40),
+        readBigEndian<quint64>(payload, 48),
+        readBigEndian<quint64>(payload, 80),
+    };
+}
+
 bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type)
 {
     if (direction == FrameDirection::ClientRequest) {
@@ -142,7 +362,9 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
         return role == Role::Bulk
                && (type == MessageType::GetCapability || type == MessageType::BulkBegin
                    || type == MessageType::BulkChunk || type == MessageType::BulkCommit
-                   || type == MessageType::BulkAbort);
+                   || type == MessageType::BulkAbort
+                   || type == MessageType::QueryResourceTable
+                   || type == MessageType::GetResourceSnapshot);
     }
 
     if (type == MessageType::HelloAck || type == MessageType::Error)
@@ -160,7 +382,9 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
     }
     return role == Role::Bulk
            && (type == MessageType::BulkStatus || type == MessageType::Capability
-               || type == MessageType::FirmwareStatus);
+               || type == MessageType::FirmwareStatus
+               || type == MessageType::ResourceTablePage
+               || type == MessageType::ResourceSnapshot);
 }
 
 quint32 requiredFeatureMask(quint16 minor)
@@ -477,7 +701,9 @@ bool commandStatusOriginalAllowed(quint16 originalType)
 
 bool bulkStatusOriginalAllowed(quint16 originalType)
 {
-    return (originalType >= 0x0300 && originalType <= 0x0303) || originalType == 0x0400;
+    return (originalType >= 0x0300 && originalType <= 0x0303) || originalType == 0x0400
+           || originalType == quint16(MessageType::QueryResourceTable)
+           || originalType == quint16(MessageType::GetResourceSnapshot);
 }
 
 bool firmwareStatusOriginalAllowed(quint16 originalType)
@@ -678,7 +904,8 @@ bool isReadOnlyRequest(MessageType type)
 {
     return type == MessageType::GetState || type == MessageType::GetCapability
            || type == MessageType::GetPackageState || type == MessageType::GetFirmwareState
-           || type == MessageType::ResumeEvents;
+           || type == MessageType::ResumeEvents || type == MessageType::QueryResourceTable
+           || type == MessageType::GetResourceSnapshot;
 }
 
 bool isPackageDeploymentRequest(MessageType type)
@@ -784,6 +1011,15 @@ QByteArray encodeRequest(
             -14);
         return {};
     }
+    if ((type == MessageType::QueryResourceTable || type == MessageType::GetResourceSnapshot)
+        && protocolMinor < RuntimeResourceMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            Tr::tr("Runtime resource queries require protocol v1.12."),
+            -14);
+        return {};
+    }
     bool payloadValid = false;
     if (type == MessageType::Hello) {
         payloadValid = payload.size() == 24;
@@ -811,6 +1047,10 @@ QByteArray encodeRequest(
         payloadValid = payload.size() > BulkChunkHeaderBytes
                        && payload.size() <= BulkMaximumPayloadBytes
                        && readBigEndian<quint32>(payload, 0) == PackageObjectKind;
+    } else if (type == MessageType::QueryResourceTable) {
+        payloadValid = validResourceTableQueryPayload(payload);
+    } else if (type == MessageType::GetResourceSnapshot) {
+        payloadValid = validResourceSnapshotQueryPayload(payload);
     } else if (
         type == MessageType::ValidatePackage || type == MessageType::ActivatePackage
         || type == MessageType::RollbackPackage
@@ -924,6 +1164,84 @@ QByteArray encodeResumeEvents(
         requestId,
         sequence,
         bootId,
+        protocolMinor,
+        error);
+}
+
+QByteArray encodeQueryResourceTable(
+    const RuntimeResourceTableQuery &query,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint16 protocolMinor,
+    Error *error)
+{
+    clearError(error);
+    if (!validResourceTableQuery(query)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Runtime resource table query is invalid."));
+        return {};
+    }
+
+    QByteArray payload(64, '\0');
+    writeBigEndian(payload, 0, query.binding.activeSlot);
+    writeBigEndian(payload, 4, query.limit);
+    writeBigEndian(payload, 6, query.flags);
+    writeBigEndian(payload, 8, query.binding.packageGeneration);
+    writeBigEndian(payload, 16, query.binding.configurationId);
+    writeBigEndian(payload, 24, query.binding.topologyGeneration);
+    writeBigEndian(payload, 32, query.binding.runtimeGeneration);
+    writeBigEndian(payload, 40, query.binding.catalogRevision);
+    writeBigEndian(payload, 48, query.cursor);
+    writeBigEndian(payload, 56, query.binding.topologyIdentity);
+    return encodeRequest(
+        MessageType::QueryResourceTable,
+        payload,
+        sessionId,
+        requestId,
+        sequence,
+        query.binding.bootId,
+        protocolMinor,
+        error);
+}
+
+QByteArray encodeGetResourceSnapshot(
+    const RuntimeResourceSnapshotQuery &query,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint16 protocolMinor,
+    Error *error)
+{
+    clearError(error);
+    if (!validResourceSnapshotQuery(query)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Runtime resource snapshot query is invalid."));
+        return {};
+    }
+
+    QByteArray payload(64 + query.resourceIds.size() * 8, '\0');
+    writeBigEndian(payload, 0, query.binding.activeSlot);
+    writeBigEndian(payload, 4, quint16(query.resourceIds.size()));
+    writeBigEndian(payload, 8, query.binding.packageGeneration);
+    writeBigEndian(payload, 16, query.binding.configurationId);
+    writeBigEndian(payload, 24, query.binding.topologyGeneration);
+    writeBigEndian(payload, 32, query.binding.runtimeGeneration);
+    writeBigEndian(payload, 40, query.binding.catalogRevision);
+    writeBigEndian(payload, 48, query.binding.topologyIdentity);
+    for (qsizetype index = 0; index < query.resourceIds.size(); ++index)
+        writeBigEndian(payload, 64 + index * 8, query.resourceIds.at(index));
+    return encodeRequest(
+        MessageType::GetResourceSnapshot,
+        payload,
+        sessionId,
+        requestId,
+        sequence,
+        query.binding.bootId,
         protocolMinor,
         error);
 }
@@ -1214,6 +1532,11 @@ std::optional<BulkStatus> decodeBulkStatus(const Frame &frame, Error *error)
     const quint32 minimumCyclePeriodNs = readBigEndian<quint32>(payload, 32);
     const quint16 reserved = readBigEndian<quint16>(payload, 36);
     const quint16 originalType = readBigEndian<quint16>(payload, 38);
+    const bool runtimeResourcePreDispatch
+        = originalType == quint16(MessageType::QueryResourceTable)
+          || originalType == quint16(MessageType::GetResourceSnapshot);
+    const bool runtimeResourcePreDispatchStatus
+        = status == -6 || status == -7 || status == -8 || status == -12;
     if (!validateStatusFlags(frame, status, error))
         return {};
     if (!bulkStatusAllowed(status)) {
@@ -1223,7 +1546,9 @@ std::optional<BulkStatus> decodeBulkStatus(const Frame &frame, Error *error)
             QStringLiteral("BulkStatus carries a status not delivered by this response form."));
         return {};
     }
-    if (reserved || !bulkStatusOriginalAllowed(originalType) || (!status && operationResult)) {
+    if (reserved || !bulkStatusOriginalAllowed(originalType) || (!status && operationResult)
+        || (runtimeResourcePreDispatch
+            && (!runtimeResourcePreDispatchStatus || operationResult))) {
         setError(
             error,
             ErrorCategory::InvalidPayload,
@@ -1767,6 +2092,7 @@ std::optional<Data::ControllerCapabilitySummary> decodeCapability(
     result.firmwareUpdate = featureBits & FirmwareUpdateFeature;
     result.explicitTimingModeStart = featureBits & ExplicitTimingModeStartFeature;
     result.faultReset = featureBits & ControlledFaultResetFeature;
+    result.runtimeResources = featureBits & RuntimeResourceFeature;
     return result;
 }
 
@@ -1935,6 +2261,293 @@ std::optional<TopologyResult> decodeTopologyResult(const Frame &frame, Error *er
         topology.slaves.append(slave);
     }
     return topology;
+}
+
+std::optional<RuntimeResourceTablePage> decodeResourceTablePage(
+    const Frame &frame, const RuntimeResourceTableQuery &query, Error *error)
+{
+    clearError(error);
+    if (frame.header.protocolMajor != CurrentMajor
+        || frame.header.protocolMinor < RuntimeResourceMinor
+        || frame.header.protocolMinor > CurrentMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            QStringLiteral("ResourceTablePage requires Product API v1.12."));
+        return {};
+    }
+    if (!validResourceTableQuery(query)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("ResourceTablePage expected query is invalid."));
+        return {};
+    }
+    if (frame.header.messageType != MessageType::ResourceTablePage || frame.payload.size() < 112) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Expected a complete ResourceTablePage."));
+        return {};
+    }
+    if (!frame.header.requestId || frame.header.bootId != query.binding.bootId) {
+        setError(
+            error,
+            ErrorCategory::IdentityMismatch,
+            QStringLiteral("ResourceTablePage response identity is invalid."));
+        return {};
+    }
+
+    const QByteArrayView payload(frame.payload);
+    const quint16 originalType = readBigEndian<quint16>(payload, 0);
+    const quint16 headerBytes = readBigEndian<quint16>(payload, 2);
+    const qint32 status = readBigEndian<qint32>(payload, 4);
+    const quint16 count = readBigEndian<quint16>(payload, 12);
+    const quint16 recordBytes = readBigEndian<quint16>(payload, 14);
+    const quint32 totalCount = readBigEndian<quint32>(payload, 56);
+    const quint32 nextCursor = readBigEndian<quint32>(payload, 60);
+    const quint32 pageFlags = readBigEndian<quint32>(payload, 64);
+    const qsizetype expectedBytes = 112 + qsizetype(count) * 64;
+    if (originalType != quint16(MessageType::QueryResourceTable) || headerBytes != 112
+        || recordBytes != 64 || !runtimeResourceStatusAllowed(status) || count > 64
+        || frame.payload.size() != expectedBytes || readBigEndian<quint32>(payload, 68)
+        || !bytesAreZero(payload, 88, 24)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("ResourceTablePage header violates the v1.12 contract."));
+        return {};
+    }
+
+    RuntimeResourceTablePage page;
+    page.status = status;
+    page.recordCount = count;
+    page.totalCount = totalCount;
+    page.nextCursor = nextCursor;
+    page.pageFlags = pageFlags;
+    if (status) {
+        if (frame.header.flags != (Flag::Response | Flag::Error) || count || totalCount
+            || nextCursor || pageFlags || !bytesAreZero(payload, 8, 4)
+            || !bytesAreZero(payload, 16, 40) || !bytesAreZero(payload, 72, 16)) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                QStringLiteral("ResourceTablePage failure fields must be zero."));
+            return {};
+        }
+        return page;
+    }
+
+    page.binding = decodeRuntimeResourceBinding(payload);
+    if (!validRuntimeResourceBinding(page.binding)
+        || page.binding.bootId != frame.header.bootId
+        || page.binding.activeSlot != query.binding.activeSlot
+        || (query.flags == 0 && !runtimeResourceBindingsEqual(page.binding, query.binding))
+        || count < 1 || count > query.limit || !totalCount) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("ResourceTablePage binding or record count is invalid."));
+        return {};
+    }
+
+    const quint64 endCursor = quint64(query.cursor) + count;
+    if (endCursor > std::numeric_limits<quint32>::max()) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("ResourceTablePage cursor overflowed."));
+        return {};
+    }
+    const bool more = pageFlags == 1;
+    const quint32 expectedFrameFlags = flagValue(Flag::Response)
+                                       | (more ? flagValue(Flag::More) : 0);
+    if (pageFlags > 1 || frame.header.flags != expectedFrameFlags
+        || (more && (nextCursor != endCursor || endCursor >= totalCount))
+        || (!more && (nextCursor != std::numeric_limits<quint32>::max()
+                      || endCursor != totalCount))) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("ResourceTablePage pagination state is inconsistent."));
+        return {};
+    }
+    page.more = more;
+
+    page.resources.reserve(count);
+    quint64 previousResourceId = 0;
+    for (quint16 index = 0; index < count; ++index) {
+        const qsizetype offset = 112 + qsizetype(index) * 64;
+        const quint64 resourceId = readBigEndian<quint64>(payload, offset);
+        const quint64 componentId = readBigEndian<quint64>(payload, offset + 8);
+        const quint64 parentId = readBigEndian<quint64>(payload, offset + 16);
+        const quint16 processImageBitLength = readBigEndian<quint16>(payload, offset + 32);
+        const quint16 valueBitWidth = readBigEndian<quint16>(payload, offset + 34);
+        const auto primitive = decodeRuntimeResourcePrimitive(
+            quint8(payload.at(offset + 36)), valueBitWidth);
+        const auto direction = decodeRuntimeResourceDirection(quint8(payload.at(offset + 37)));
+        const auto access = decodeRuntimeResourceAccess(quint8(payload.at(offset + 38)));
+        const quint8 valueBytes = quint8(payload.at(offset + 39));
+        const quint8 safeBytes = quint8(payload.at(offset + 40));
+        const quint16 qualityMask = readBigEndian<quint16>(payload, offset + 42);
+        const quint32 groupId = readBigEndian<quint32>(payload, offset + 44);
+        if (!resourceId || resourceId <= previousResourceId || !componentId
+            || parentId == componentId || !processImageBitLength
+            || processImageBitLength != valueBitWidth || !primitive || !direction || !access
+            || valueBytes != (valueBitWidth + 7) / 8
+            || (safeBytes && safeBytes != valueBytes) || payload.at(offset + 41)
+            || qualityMask != 0x000f || !groupId
+            || (!safeBytes && !bytesAreZero(payload, offset + 48, 16))
+            || (safeBytes
+                && !validRightAlignedValue(
+                    payload, offset + 48, safeBytes, valueBitWidth))
+            || (*access == RuntimeResourceAccess::ReadWrite
+                && (*direction != RuntimeResourceDirection::Output || !safeBytes))) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                QStringLiteral("ResourceTablePage contains an invalid descriptor."));
+            return {};
+        }
+
+        RuntimeResourceDescriptor descriptor;
+        descriptor.resourceId = resourceId;
+        descriptor.componentId = componentId;
+        descriptor.parentId = parentId;
+        descriptor.ordinal = readBigEndian<quint32>(payload, offset + 24);
+        descriptor.processImageBitOffset = readBigEndian<quint32>(payload, offset + 28);
+        descriptor.processImageBitLength = processImageBitLength;
+        descriptor.valueBitWidth = valueBitWidth;
+        descriptor.primitive = *primitive;
+        descriptor.direction = *direction;
+        descriptor.access = *access;
+        descriptor.valueBytes = valueBytes;
+        descriptor.qualityMask = qualityMask;
+        descriptor.groupId = groupId;
+        if (safeBytes) {
+            descriptor.safeValue = QByteArray(
+                payload.data() + offset + 64 - safeBytes, safeBytes);
+        }
+        page.resources.append(std::move(descriptor));
+        previousResourceId = resourceId;
+    }
+    return page;
+}
+
+std::optional<RuntimeResourceSnapshot> decodeResourceSnapshot(
+    const Frame &frame, const RuntimeResourceSnapshotQuery &query, Error *error)
+{
+    clearError(error);
+    if (frame.header.protocolMajor != CurrentMajor
+        || frame.header.protocolMinor < RuntimeResourceMinor
+        || frame.header.protocolMinor > CurrentMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            QStringLiteral("ResourceSnapshot requires Product API v1.12."));
+        return {};
+    }
+    if (!validResourceSnapshotQuery(query)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("ResourceSnapshot expected query is invalid."));
+        return {};
+    }
+    if (frame.header.messageType != MessageType::ResourceSnapshot || frame.payload.size() < 112) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Expected a complete ResourceSnapshot."));
+        return {};
+    }
+    if (!frame.header.requestId || frame.header.bootId != query.binding.bootId) {
+        setError(
+            error,
+            ErrorCategory::IdentityMismatch,
+            QStringLiteral("ResourceSnapshot response identity is invalid."));
+        return {};
+    }
+
+    const QByteArrayView payload(frame.payload);
+    const quint16 originalType = readBigEndian<quint16>(payload, 0);
+    const quint16 headerBytes = readBigEndian<quint16>(payload, 2);
+    const qint32 status = readBigEndian<qint32>(payload, 4);
+    const quint16 count = readBigEndian<quint16>(payload, 12);
+    const quint16 recordBytes = readBigEndian<quint16>(payload, 14);
+    const qsizetype expectedBytes = 112 + qsizetype(count) * 32;
+    if (originalType != quint16(MessageType::GetResourceSnapshot) || headerBytes != 112
+        || recordBytes != 32 || !runtimeResourceStatusAllowed(status) || count > 64
+        || frame.payload.size() != expectedBytes || readBigEndian<quint32>(payload, 88)
+        || !bytesAreZero(payload, 92, 20)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("ResourceSnapshot header violates the v1.12 contract."));
+        return {};
+    }
+
+    RuntimeResourceSnapshot snapshot;
+    snapshot.status = status;
+    snapshot.snapshotSequence = frame.header.sequence;
+    if (status) {
+        if (frame.header.flags != (Flag::Response | Flag::Error) || count
+            || !bytesAreZero(payload, 8, 4) || !bytesAreZero(payload, 16, 72)) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                QStringLiteral("ResourceSnapshot failure fields must be zero."));
+            return {};
+        }
+        return snapshot;
+    }
+
+    snapshot.binding = decodeRuntimeResourceBinding(payload);
+    snapshot.captureCycle = readBigEndian<quint64>(payload, 56);
+    snapshot.controllerTimestampNs = readBigEndian<quint64>(payload, 64);
+    if (frame.header.flags != flagValue(Flag::Response)
+        || !validRuntimeResourceBinding(snapshot.binding)
+        || !runtimeResourceBindingsEqual(snapshot.binding, query.binding)
+        || snapshot.binding.bootId != frame.header.bootId
+        || count != query.resourceIds.size()) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("ResourceSnapshot binding or record count is invalid."));
+        return {};
+    }
+
+    snapshot.samples.reserve(count);
+    for (quint16 index = 0; index < count; ++index) {
+        const qsizetype offset = 112 + qsizetype(index) * 32;
+        const quint64 resourceId = readBigEndian<quint64>(payload, offset);
+        const quint16 bitWidth = readBigEndian<quint16>(payload, offset + 10);
+        const auto primitive = decodeRuntimeResourcePrimitive(
+            quint8(payload.at(offset + 8)), bitWidth);
+        const auto direction = decodeRuntimeResourceDirection(quint8(payload.at(offset + 9)));
+        const auto quality = decodeRuntimeResourceQuality(
+            readBigEndian<quint32>(payload, offset + 12));
+        const quint8 valueBytes = quint8((bitWidth + 7) / 8);
+        if (resourceId != query.resourceIds.at(index) || !primitive || !direction || !quality
+            || !validRightAlignedValue(payload, offset + 16, valueBytes, bitWidth)) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                QStringLiteral("ResourceSnapshot contains an invalid sample."));
+            return {};
+        }
+
+        RuntimeResourceSample sample;
+        sample.resourceId = resourceId;
+        sample.primitive = *primitive;
+        sample.direction = *direction;
+        sample.bitWidth = bitWidth;
+        sample.quality = *quality;
+        sample.value = QByteArray(payload.data() + offset + 32 - valueBytes, valueBytes);
+        snapshot.samples.append(std::move(sample));
+    }
+    snapshot.complete = true;
+    return snapshot;
 }
 
 std::optional<Data::ControllerFirmwareSummary> decodeFirmwareState(const Frame &frame, Error *error)

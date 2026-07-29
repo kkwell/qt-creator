@@ -128,6 +128,8 @@ enum class ControllerOperation {
     QueryCapability,
     QueryPackageState,
     QueryFirmwareState,
+    QueryRuntimeResourceCatalog,
+    QueryRuntimeResourceSnapshot,
     SubscribeEvents,
     Refresh,
     Disconnect,
@@ -501,6 +503,7 @@ struct ETHERCATDATA_EXPORT ControllerCapabilitySummary
     bool firmwareUpdate = false;
     bool explicitTimingModeStart = false;
     bool faultReset = false;
+    bool runtimeResources = false;
     bool coe = false;
     bool distributedClocks = false;
     bool multiSlaveDistributedClocks = false;

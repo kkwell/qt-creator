@@ -96,6 +96,16 @@ ProductApiConnectionProvider::ProductApiConnectionProvider(
     connect(m_session, &ProductApiSession::snapshotChanged, this, [this] {
         emit connectionSnapshotChanged();
     });
+    connect(
+        m_session,
+        &ProductApiSession::runtimeResourceCatalogChanged,
+        this,
+        &ProductApiConnectionProvider::runtimeResourceCatalogChanged);
+    connect(
+        m_session,
+        &ProductApiSession::runtimeResourceSnapshotChanged,
+        this,
+        &ProductApiConnectionProvider::runtimeResourceSnapshotChanged);
     setAvailable(endpoints.isValid() && options.isValid());
 }
 
@@ -112,7 +122,7 @@ QList<Data::ControllerConnectionProfile> ProductApiConnectionProvider::connectio
 
     Data::ControllerConnectionProfile profile;
     profile.id = defaultProfileId();
-    profile.displayName = Tr::tr("Embed Labs Product API v1.10");
+    profile.displayName = Tr::tr("Embed Labs Product API");
     profile.endpointSummary = m_session->snapshot().endpointSummary;
     profile.configured = !profile.endpointSummary.isEmpty();
     profile.supported = isAvailable();
@@ -204,6 +214,30 @@ Utils::Result<> ProductApiConnectionProvider::refreshController()
     if (!isAvailable())
         return Utils::ResultError(Tr::tr("The Embed Labs controller provider is unavailable."));
     return m_session->refreshController();
+}
+
+bool ProductApiConnectionProvider::supportsRuntimeResources() const
+{
+    return isAvailable() && m_session->supportsRuntimeResources();
+}
+
+std::optional<Data::RuntimeResourceCatalog> ProductApiConnectionProvider::runtimeResourceCatalog()
+    const
+{
+    return m_session->runtimeResourceCatalog();
+}
+
+std::optional<Data::RuntimeResourceSnapshot> ProductApiConnectionProvider::runtimeResourceSnapshot()
+    const
+{
+    return m_session->runtimeResourceSnapshot();
+}
+
+Utils::Result<> ProductApiConnectionProvider::refreshRuntimeResources()
+{
+    if (!isAvailable())
+        return Utils::ResultError(Tr::tr("The Embed Labs controller provider is unavailable."));
+    return m_session->refreshRuntimeResources();
 }
 
 bool ProductApiConnectionProvider::supportsControlCommand(

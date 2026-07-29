@@ -18,6 +18,9 @@ private slots:
     void testSemanticControllerState();
     void testSemanticPerformanceSnapshot();
     void testSemanticAuxiliaryRecords();
+    void testRuntimeResourceGoldenFrames();
+    void testRuntimeResourceCodecRejectsMalformed_data();
+    void testRuntimeResourceCodecRejectsMalformed();
     void testSupportedRequestPolicy();
     void testPackageDeploymentRequestPolicy();
     void testConnectionProfileEndpointConfiguration_data();
@@ -57,6 +60,17 @@ private slots:
     void testSessionReconnectAndGeneration();
     void testInvalidAlarmCheckpointRefresh_data();
     void testInvalidAlarmCheckpointRefresh();
+    void testRuntimeResourceRefreshCapabilityGuards_data();
+    void testRuntimeResourceRefreshCapabilityGuards();
+    void testRuntimeResourceLoopbackLifecycle();
+    void testRuntimeResourceFailureAndInvalidation();
+    void testRuntimeResourceProtocolFailures_data();
+    void testRuntimeResourceProtocolFailures();
+    void testRuntimeResourceSignalDisconnectReentrancy();
+    void testRuntimeResourceReconnectSignalDisconnectReentrancy();
+    void testRuntimeResourceBounds();
+    void testRuntimeResourceControlInvalidation();
+    void testRuntimeResourceIncompleteSnapshot();
 };
 
 } // namespace EtherCAT::ProductApi::Internal

@@ -5,14 +5,15 @@
 `EtherCATProductApi` is the first concrete controller-adapter plugin for the
 product-owned, multi-vendor `ControllerConnectionProvider` contract. It owns
 only the Embed Labs Product API v1 transport. The current client contract is
-v1.11, with bounded v1.10 and v1.9 compatibility for older controller
+v1.12, with bounded v1.11, v1.10, and v1.9 compatibility for older controller
 runtimes. Product API v1.11 adds capability-gated, compare-and-clear fault
-confirmation; it does not turn fault reset into an unconditional controller
-reset. The 2026-07-24 hardware record observed a RAM-only v1.10 CPU0 service
-and a reboot return to release24/v1.9; this documentation update does not
-rewrite or refresh that historical observation. A future controller family
-uses a separate plugin and Provider instead of adding vendor switches to this
-plugin, EtherCATCore, or EtherCATWorkbench.
+confirmation; v1.12 adds an optional, read-only Runtime Resource catalog and
+snapshot. Neither addition turns fault reset into an unconditional controller
+reset or adds output writes. The 2026-07-24 hardware record observed a RAM-only
+v1.10 CPU0 service and a reboot return to release24/v1.9; this documentation
+update does not rewrite or refresh that historical observation. A future
+controller family uses a separate plugin and Provider instead of adding vendor
+switches to this plugin, EtherCATCore, or EtherCATWorkbench.
 
 The plugin is headless. It registers one connection Provider in the Qt Creator
 object pool and publishes immutable semantic snapshots. It does not create a
@@ -35,8 +36,8 @@ Project.
 - staged command, topology-result, and restored-package response handling;
 - Product API status-name and retry mapping; and
 - decoding into the public controller, capability, package, firmware, channel,
-  session, heartbeat, control-progress, topology, and structured-error
-  summaries.
+  session, heartbeat, control-progress, topology, Runtime Resource, and
+  structured-error summaries.
 
 No socket, byte frame, numeric protocol field, host, port, or controller ABI is
 exported through EtherCATData or EtherCATCore. Workbench, Project, Devices,
@@ -82,6 +83,15 @@ Connect and Refresh use this explicit read-only allow-list:
 | Control | `GetFirmwareState (0x0504)`, only for negotiated v1.9 or later with the firmware feature |
 | Push | `ResumeEvents (0x0210)`, only when exact replay is negotiated |
 
+An explicit Runtime Resource refresh may additionally send these lease-free
+Bulk requests only after minor 12 and feature bit 13 have both been
+negotiated:
+
+| Channel | Runtime Resource request |
+|---|---|
+| Bulk | paged `QueryResourceTable (0x040b)` |
+| Bulk | one-cycle `GetResourceSnapshot (0x040c)` for at most 64 resource IDs |
+
 After an explicit typed control request, the adapter can additionally emit:
 
 | Channel | Controlled request |
@@ -110,7 +120,7 @@ vocabulary:
 | Bulk | `BulkCommit (0x0302)` or `BulkAbort (0x0303)` with an empty payload |
 | Control | `ValidatePackage (0x0404)`, `ActivatePackage (0x0405)`, or `RollbackPackage (0x0406)` with an exact 24-byte slot/generation/configuration selector |
 
-All three tables are closed at the private codec boundary. A consumer cannot
+All four tables are closed at the private codec boundary. A consumer cannot
 expand them through a profile, endpoint string, Workbench action, generic
 Provider field, or arbitrary numeric message type. The generic Provider accepts
 only one immutable, already-built ECPKG plus a nonzero ConfigurationId and
@@ -147,12 +157,18 @@ fragmentation and multiple coalesced frames without allocating the declared
 payload before the fixed header passes validation.
 
 Product API v1.11 adds `CONTROLLED_FAULT_RESET` at feature bit 12
-(`0x00001000`), making the cumulative current feature mask `0x00001fff`.
+(`0x00001000`), making the cumulative v1.11 feature mask `0x00001fff`.
 HELLO negotiates the lower of the client and server minor versions. A client
 negotiated below minor 11, or a minor-11 peer that does not advertise bit 12,
 must reject ResetFault locally as `UNSUPPORTED (-14)` and send no request.
-The historical v1.10 and v1.9 feature-mask observations above remain dated
-evidence and are not upgraded by this contract.
+
+Product API v1.12 adds Runtime Resource support at feature bit 13
+(`0x00002000`), making the cumulative v1.12 feature mask `0x00003fff`. This
+bit is optional for connection: a peer negotiated below minor 12 or without
+bit 13 remains usable through its older capabilities, while a Runtime Resource
+refresh is rejected locally and sends neither `0x040b` nor `0x040c`. The
+historical v1.10 and v1.9 feature-mask observations above remain dated evidence
+and are not upgraded by this contract.
 
 Control creates the session. Push and Bulk join its nonzero SessionId. All
 three handshakes must agree on SessionId, BootId, negotiated minor, role, and
@@ -180,6 +196,87 @@ Controlled Stop must progress through the ordered command stages. Discovery
 ends with a typed TopologyResult, while Restore ends with the exact typed
 PackageState response. An unrelated, repeated, skipped, malformed, or
 wrong-response-form frame is a protocol failure rather than command success.
+
+## Product API v1.12 Runtime Resource queries
+
+The Runtime Resource path is read-only and uses the joined Bulk session on
+TCP port 15202. It requires no control lease and does not acquire, renew, or
+release one. Both requests use the normal nonzero RequestId, current SessionId
+and BootId, and increasing Bulk Sequence. The adapter sends no Runtime Resource
+request during compatibility operation below minor 12 or when feature bit 13
+is absent.
+
+The fixed payload forms are:
+
+| Frame form | Payload |
+|---|---:|
+| `QueryResourceTable` request | 64 bytes |
+| successful `ResourceTablePage` | `112 + 64 * count` bytes |
+| failed `ResourceTablePage` | 112 bytes, count zero |
+| `GetResourceSnapshot` request | `64 + 8 * count` bytes |
+| successful `ResourceSnapshot` | `112 + 32 * count` bytes |
+| failed `ResourceSnapshot` | 112 bytes, count zero |
+
+`QueryResourceTable (0x040b)` starts with an exact 64-byte payload. The first
+page uses `BIND_CURRENT`, cursor zero, the active slot, and zero binding fields.
+The resulting `ResourceTablePage (0x0487)` freezes the full binding:
+BootId, active slot, package generation, ConfigurationId, topology generation,
+runtime generation, catalog revision, and opaque topology identity. Every
+later page removes `BIND_CURRENT`, supplies that exact binding, and uses only
+the preceding `nextCursor`. Pages contain at most 64 fixed 64-byte descriptors;
+the adapter follows `MORE` until terminal `nextCursor == 0xffffffff`. Across
+the completed catalog, nonzero ResourceIds are globally increasing and unique.
+A changed binding, count, cursor, flag, descriptor invariant, or reserved field
+rejects the refresh instead of publishing a partial catalog.
+
+Each descriptor preserves these controller-owned values without inventing
+device semantics:
+
+- opaque ResourceId, ComponentInstanceId, optional ParentInstanceId, and
+  ConsistencyGroupId;
+- instance ordinal, primitive, bit width, direction, access, quality mask, and
+  optional safe value; and
+- internal process-image bit offset and length.
+
+The wire descriptor deliberately carries no name, path, unit, vendor, adapter,
+station, or module-slot text. The Qt transport does not synthesize those
+fields.
+
+`GetResourceSnapshot (0x040c)` sends one strictly increasing, unique list of
+1 through 64 ResourceIds with the exact frozen binding. A successful
+`ResourceSnapshot (0x0488)` must return the same IDs in the requested order,
+the same primitive/direction/bit-width contract, the same epoch, and one
+immutable capture-cycle timestamp. Quality is currently accepted only as
+`VALID|FRESH (0x03)` or `UNAVAILABLE (0x08)`. The Qt snapshot is `complete`
+only when every catalog resource fits in that one request. If the catalog has
+more than 64 resources, the current client queries the first 64 and explicitly
+publishes `complete=false`; it does not combine samples captured in different
+cycles and call them one coherent snapshot.
+
+Handler-level failures use a typed `ResourceTablePage` or `ResourceSnapshot`
+with status `BAD_MESSAGE (-6)`, `UNSUPPORTED (-14)`, `INTERNAL (-16)`,
+`STALE_PACKAGE (-17)`, `PACKAGE_NOT_READY (-18)`, or
+`ECPKG_INVALID (-21)`. The API-034 server implementation also uses
+the existing 40-byte `BulkStatus (0x0380)` for pre-dispatch envelope failures,
+including `BAD_SESSION (-7)`, `STALE_BOOT (-8)`, `BAD_SEQUENCE (-12)`, and
+canonical-envelope `BAD_MESSAGE (-6)`. The Qt adapter accepts that form only
+as a failed matching read-only request; a successful `BulkStatus` can never
+complete either Runtime Resource query. This records the implementation versus
+protocol-document conformance difference instead of silently claiming the
+typed-only matrix.
+
+ResourceIds are package/catalog scoped. Product API v1.12 exposes no
+SemanticBindingId, ComponentBindingId, canonical signal name, or authenticated
+mapping digest that joins a ResourceId to an IDE `SemanticSignalId`.
+Consequently UI, automation, and device adapters must not infer that mapping
+from a name, vendor/product identity, ordinal, station address, module slot,
+object index, or process-image offset. A usable semantic join requires a
+separate verified binding artifact and the full catalog epoch above.
+
+This integration currently ends at codec/session loopback validation. It has
+not queried a real controller, does not add a Workbench page, and defines no
+OutputTransaction or other output write. Existing v1.11 negotiation and DC
+lifecycle hardware evidence remains separate and unchanged.
 
 ## Controlled fault confirmation
 

@@ -3,6 +3,7 @@
 #pragma once
 
 #include <ethercatdata/controllerconnection.h>
+#include <ethercatdata/runtimeresource.h>
 
 #include <utils/result.h>
 
@@ -43,6 +44,8 @@ public:
         int reconnectMaximumDelayMs = 5000;
         int reconnectAttempts = 5;
         int liveStatePollIntervalMs = 500;
+        int runtimeResourceRefreshTimeoutMs = 30000;
+        quint32 maximumRuntimeResourceCount = 65536;
 
         bool isValid() const;
 
@@ -60,6 +63,10 @@ public:
     Utils::Result<> connectToController(const Data::ControllerConnectionRequest &request);
     Utils::Result<> disconnectFromController();
     Utils::Result<> refreshController();
+    bool supportsRuntimeResources() const;
+    std::optional<Data::RuntimeResourceCatalog> runtimeResourceCatalog() const;
+    std::optional<Data::RuntimeResourceSnapshot> runtimeResourceSnapshot() const;
+    Utils::Result<> refreshRuntimeResources();
     bool supportsControlCommand(Data::ControllerControlCommand command) const;
     Utils::Result<> executeControlCommand(const Data::ControllerControlRequest &request);
     bool supportsPackageDeployment() const;
@@ -78,6 +85,8 @@ public:
 
 signals:
     void snapshotChanged();
+    void runtimeResourceCatalogChanged();
+    void runtimeResourceSnapshotChanged();
 
 private:
     std::unique_ptr<ProductApiSessionPrivate> d;

@@ -157,11 +157,15 @@ message length, and CRC before publishing a semantic snapshot. A v1.10
 session additionally requires explicit timing-mode start feature bit 11, so
 its complete feature mask is `0xfff`. Product API v1.11 adds
 `CONTROLLED_FAULT_RESET` at feature bit 12 (`0x00001000`) and the cumulative
-mask becomes `0x00001fff`. HELLO negotiates the lower client/server minor; a
-client below minor 11 or without bit 12 refuses ResetFault locally as
-`UNSUPPORTED (-14)` and sends nothing. The 2026-07-24 record observed `0xfff`
-on the RAM-deployed v1.10 service and `0x7ff` on persistent release24 after a
-reboot; this documentation update did not re-query either runtime.
+mask becomes `0x00001fff`. Product API v1.12 adds optional read-only Runtime
+Resources at bit 13 (`0x00002000`) and has cumulative mask `0x00003fff`.
+HELLO negotiates the lower client/server minor. A client below minor 11 or
+without bit 12 refuses ResetFault locally; a client below minor 12 or without
+bit 13 refuses only Runtime Resource refresh locally. Each refusal is
+`UNSUPPORTED (-14)` and sends no corresponding request; missing bit 13 does
+not reject an otherwise valid connection. The 2026-07-24 record observed
+`0xfff` on the RAM-deployed v1.10 service and `0x7ff` on persistent release24
+after a reboot; this documentation update did not re-query either runtime.
 
 The protocol defines these operations as read-only and requiring no control
 lease:
@@ -173,6 +177,11 @@ lease:
 - `GetTimeCorrelation`;
 - `GetFirmwareState`; and
 - event subscription/recovery.
+
+Minor 12 plus feature bit 13 additionally allows the lease-free Bulk
+`QueryResourceTable (0x040b)` and `GetResourceSnapshot (0x040c)` requests.
+They are explicit Runtime Resource refreshes, not connection, scan, or control
+steps.
 
 Connect and Refresh use this closed outbound read-only allow-list:
 
@@ -206,6 +215,25 @@ CPU reset, DiscoverModules, SDO/PDO, firmware writes, and other bulk or
 controller commands remain excluded. Workbench supplies one immutable artifact
 and semantic options to the Provider; only the vendor adapter emits the listed
 requests.
+
+The Product API v1.12 client pages the complete resource catalog against one
+frozen Boot/package/configuration/topology/runtime/catalog epoch, then requests
+at most 64 IDs in one immutable cycle-boundary snapshot. Catalogs larger than
+64 remain visible, but the current value snapshot is deliberately marked
+`complete=false` because snapshots from different cycles are not combined.
+Resource, component, parent, and consistency-group IDs remain opaque.
+
+No v1.12 record carries a SemanticBindingId or authenticated
+`SemanticSignalId` mapping. Names, vendor identity, station/module position,
+ordinal, object index, and process-image offsets must not be used to invent
+one. Handler failures use typed resource responses, while API-034 currently
+returns legacy `BulkStatus` for pre-dispatch session/Boot/Sequence/envelope
+failures; the Qt client treats that only as failure evidence.
+
+This v1.12 path has only headless codec/session loopback coverage in this
+revision. No visible GUI or real-controller Runtime Resource query was run, and
+there is no output-write protocol. The verified v1.11 hardware record below is
+not a v1.12 Runtime Resource hardware claim.
 
 The control lease is controller-authoritative and exclusive. After an
 authoritative connected snapshot is available, Workbench normally submits one
