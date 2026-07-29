@@ -3,6 +3,7 @@
 #pragma once
 
 #include <ethercatcore/automationservice.h>
+#include <ethercatcore/semanticruntimeservice.h>
 
 #include <QHash>
 #include <QJsonObject>
@@ -22,7 +23,9 @@ struct AutomationActor
 class AutomationDispatcher final
 {
 public:
-    explicit AutomationDispatcher(Core::AutomationService *service);
+    explicit AutomationDispatcher(
+        Core::AutomationService *service,
+        Core::SemanticRuntimeService *semanticRuntimeService = nullptr);
 
     QJsonObject dispatch(
         const QString &tool, const QJsonObject &arguments, const AutomationActor &actor);
@@ -54,7 +57,8 @@ private:
         const QString &requestHash,
         const QString &beforeStateHash,
         const QString &afterStateHash,
-        const AutomationActor &actor) const;
+        const AutomationActor &actor,
+        const QString &auditDecision = QStringLiteral("allow-read-only")) const;
     QJsonObject makeError(
         const QString &operationId,
         const QString &code,
@@ -66,10 +70,12 @@ private:
         const AutomationActor &actor) const;
     std::optional<Core::AutomationContextSnapshot> currentContext(const QString &controllerId) const;
     QList<Core::AutomationContextSnapshot> mockContexts() const;
+    std::optional<Data::SemanticRuntimeContext> semanticContext(const QString &controllerId) const;
     void remember(
         const QString &operationId, const QString &requestHash, const QJsonObject &response);
 
     QPointer<Core::AutomationService> m_service;
+    QPointer<Core::SemanticRuntimeService> m_semanticRuntimeService;
     QHash<QString, JournalEntry> m_journal;
     QStringList m_journalOrder;
 };

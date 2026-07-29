@@ -17,12 +17,16 @@ using namespace EtherCAT::AutomationGateway::Constants;
 
 GatewayRuntimeController::GatewayRuntimeController(
     Core::AutomationService *service,
+    Core::SemanticRuntimeService *semanticRuntimeService,
     Utils::QtcSettings *settings,
     bool publishToMcpManager,
     QObject *parent)
     : QObject(parent)
     , m_settings(settings)
-    , m_server(service ? std::make_unique<GatewayServer>(service, publishToMcpManager) : nullptr)
+    , m_server(
+          service
+              ? std::make_unique<GatewayServer>(service, semanticRuntimeService, publishToMcpManager)
+              : nullptr)
     , m_configuration{false, DEFAULT_MCP_PORT, DEFAULT_REST_PORT}
     , m_state(service ? GatewayRuntimeState::Stopped : GatewayRuntimeState::Unavailable)
 {}
@@ -50,20 +54,16 @@ GatewayRuntimeSnapshot GatewayRuntimeController::snapshot() const
     return result;
 }
 
-Utils::Result<> GatewayRuntimeController::validateConfiguration(
-    const GatewayConfiguration &candidate)
+Utils::Result<> GatewayRuntimeController::validateConfiguration(const GatewayConfiguration &candidate)
 {
     if (candidate.mcpPort < 0 || candidate.mcpPort > 65535) {
-        return Utils::ResultError(
-            Tr::tr("The MCP port must be between 0 and 65535."));
+        return Utils::ResultError(Tr::tr("The MCP port must be between 0 and 65535."));
     }
     if (candidate.restPort < 0 || candidate.restPort > 65535) {
-        return Utils::ResultError(
-            Tr::tr("The REST port must be between 0 and 65535."));
+        return Utils::ResultError(Tr::tr("The REST port must be between 0 and 65535."));
     }
     if (candidate.mcpPort != 0 && candidate.mcpPort == candidate.restPort) {
-        return Utils::ResultError(
-            Tr::tr("MCP and REST ports must differ when both are non-zero."));
+        return Utils::ResultError(Tr::tr("MCP and REST ports must differ when both are non-zero."));
     }
     return Utils::ResultOk;
 }
@@ -82,8 +82,7 @@ Utils::Result<GatewayConfiguration> GatewayRuntimeController::readStoredConfigur
     m_settings->endGroup();
 
     if (!mcpOk || !restOk) {
-        return Utils::ResultError(
-            Tr::tr("The stored Gateway port settings are invalid."));
+        return Utils::ResultError(Tr::tr("The stored Gateway port settings are invalid."));
     }
 
     const GatewayConfiguration configuration{enabled, mcpPort, restPort};
@@ -106,8 +105,7 @@ Utils::Result<> GatewayRuntimeController::persistConfiguration(
     m_settings->endGroup();
     m_settings->sync();
     if (m_settings->status() != QSettings::NoError) {
-        return Utils::ResultError(
-            Tr::tr("The Gateway settings could not be saved."));
+        return Utils::ResultError(Tr::tr("The Gateway settings could not be saved."));
     }
     return Utils::ResultOk;
 }
@@ -122,8 +120,7 @@ Utils::Result<> GatewayRuntimeController::startFromStoredConfiguration()
         QString message = stored.error();
         if (!persisted)
             message += QLatin1Char(' ')
-                       + Tr::tr("Safe settings could not be persisted: %1")
-                             .arg(persisted.error());
+                       + Tr::tr("Safe settings could not be persisted: %1").arg(persisted.error());
         setState(GatewayRuntimeState::Failed, message);
         emitEvent(GatewayRuntimeEventKind::Failed, message);
         return Utils::ResultError(message);
@@ -134,8 +131,7 @@ Utils::Result<> GatewayRuntimeController::startFromStoredConfiguration()
             setState(GatewayRuntimeState::Running);
             return Utils::ResultOk;
         }
-        return Utils::ResultError(
-            Tr::tr("Disable the running Gateway before changing its ports."));
+        return Utils::ResultError(Tr::tr("Disable the running Gateway before changing its ports."));
     }
 
     m_configuration = *stored;
@@ -148,8 +144,7 @@ Utils::Result<> GatewayRuntimeController::startFromStoredConfiguration()
     return startAndPersist(*stored, false);
 }
 
-Utils::Result<> GatewayRuntimeController::applyConfiguration(
-    const GatewayConfiguration &candidate)
+Utils::Result<> GatewayRuntimeController::applyConfiguration(const GatewayConfiguration &candidate)
 {
     const Utils::Result<> valid = validateConfiguration(candidate);
     if (!valid) {
@@ -158,8 +153,9 @@ Utils::Result<> GatewayRuntimeController::applyConfiguration(
             safe.enabled = false;
             m_configuration = safe;
             persistConfiguration(safe);
-            setState(m_server ? GatewayRuntimeState::Failed : GatewayRuntimeState::Unavailable,
-                     valid.error());
+            setState(
+                m_server ? GatewayRuntimeState::Failed : GatewayRuntimeState::Unavailable,
+                valid.error());
         } else {
             m_lastError = valid.error();
             emit snapshotChanged(snapshot());
@@ -208,8 +204,7 @@ Utils::Result<> GatewayRuntimeController::applyConfiguration(
             emit snapshotChanged(snapshot());
             return Utils::ResultOk;
         }
-        const QString message
-            = Tr::tr("Disable the running Gateway before changing its ports.");
+        const QString message = Tr::tr("Disable the running Gateway before changing its ports.");
         m_lastError = message;
         emit snapshotChanged(snapshot());
         emitEvent(GatewayRuntimeEventKind::Failed, message);
@@ -223,8 +218,7 @@ Utils::Result<> GatewayRuntimeController::startAndPersist(
     const GatewayConfiguration &candidate, bool persist)
 {
     if (!m_server) {
-        return failStart(
-            candidate, Tr::tr("The IDE AutomationService is unavailable."), true);
+        return failStart(candidate, Tr::tr("The IDE AutomationService is unavailable."), true);
     }
 
     setState(GatewayRuntimeState::Starting);
@@ -255,7 +249,8 @@ Utils::Result<> GatewayRuntimeController::startAndPersist(
     setState(GatewayRuntimeState::Running);
     emitEvent(
         GatewayRuntimeEventKind::Started,
-        Tr::tr("Listening on MCP %1 and REST %2 (Mock-only, read-only).")
+        Tr::tr("Listening on MCP %1 and REST %2 (controller views are Mock-only/read-only; "
+               "semantic intents require approval).")
             .arg(m_server->mcpEndpoint().toString(), m_server->restEndpoint().toString()));
     return Utils::ResultOk;
 }
@@ -272,9 +267,9 @@ Utils::Result<> GatewayRuntimeController::failStart(
     if (persistDisabled) {
         const Utils::Result<> persisted = persistConfiguration(safe);
         if (!persisted) {
-            reported += QLatin1Char(' ')
-                        + Tr::tr("Safe disabled state could not be persisted: %1")
-                              .arg(persisted.error());
+            reported
+                += QLatin1Char(' ')
+                   + Tr::tr("Safe disabled state could not be persisted: %1").arg(persisted.error());
         }
     }
     setState(m_server ? GatewayRuntimeState::Failed : GatewayRuntimeState::Unavailable, reported);
@@ -290,8 +285,7 @@ void GatewayRuntimeController::shutdown()
     m_server->stop();
     setState(GatewayRuntimeState::Stopped);
     emitEvent(
-        GatewayRuntimeEventKind::Stopped,
-        Tr::tr("Stopped; both loopback listeners were released."));
+        GatewayRuntimeEventKind::Stopped, Tr::tr("Stopped; both loopback listeners were released."));
 }
 
 void GatewayRuntimeController::setState(GatewayRuntimeState state, const QString &lastError)
@@ -301,8 +295,7 @@ void GatewayRuntimeController::setState(GatewayRuntimeState state, const QString
     emit snapshotChanged(snapshot());
 }
 
-void GatewayRuntimeController::emitEvent(
-    GatewayRuntimeEventKind kind, const QString &message)
+void GatewayRuntimeController::emitEvent(GatewayRuntimeEventKind kind, const QString &message)
 {
     emit eventOccurred({kind, message});
 }

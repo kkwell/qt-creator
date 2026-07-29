@@ -12,6 +12,7 @@
 #include <coreplugin/icore.h>
 
 #include <ethercatcore/automationservice.h>
+#include <ethercatcore/semanticruntimeservice.h>
 
 #include <extensionsystem/iplugin.h>
 #include <extensionsystem/pluginmanager.h>
@@ -48,13 +49,11 @@ public:
     {
         Core::AutomationService *automation
             = ExtensionSystem::PluginManager::getObject<Core::AutomationService>();
+        Core::SemanticRuntimeService *semanticRuntime
+            = ExtensionSystem::PluginManager::getObject<Core::SemanticRuntimeService>();
         m_runtime = std::make_unique<GatewayRuntimeController>(
-            automation, ::Core::ICore::settings(), true);
-        connect(
-            m_runtime.get(),
-            &GatewayRuntimeController::eventOccurred,
-            this,
-            &writeGatewayEvent);
+            automation, semanticRuntime, ::Core::ICore::settings(), true);
+        connect(m_runtime.get(), &GatewayRuntimeController::eventOccurred, this, &writeGatewayEvent);
         m_settingsPage = createGatewaySettingsPage(m_runtime.get());
         m_runtime->startFromStoredConfiguration();
 

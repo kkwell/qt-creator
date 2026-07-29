@@ -77,8 +77,13 @@ class ContractTests(unittest.TestCase):
             and operation["operationId"] != "gateway.get-openapi"
         }
         self.assertEqual(operations, {tool["name"] for tool in catalog["tools"]})
-        self.assertTrue(openapi["x-safety-boundary"]["mockOnly"])
-        self.assertFalse(openapi["x-safety-boundary"]["motion"])
+        boundary = openapi["x-safety-boundary"]
+        self.assertTrue(boundary["controllerViews"]["mockOnly"])
+        self.assertTrue(boundary["controllerViews"]["readOnly"])
+        self.assertTrue(boundary["semanticRuntime"]["approvalRequired"])
+        self.assertFalse(boundary["semanticRuntime"]["automationCanApprove"])
+        self.assertFalse(boundary["semanticRuntime"]["directProviderCalls"])
+        self.assertFalse(boundary["motion"])
 
     def test_versions_are_explicit_and_independent(self) -> None:
         protocol = self.repository.protocol_document()

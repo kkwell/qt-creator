@@ -620,6 +620,226 @@
         "idempotentHint": true,
         "openWorldHint": false
       }
+    },
+    {
+      "name": "runtime.get-context",
+      "title": "Get verified semantic runtime context",
+      "description": "Return the IDE-verified semantic signals and actions without exposing runtime resource IDs, PDOs, or process-image coordinates.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "controllerId"
+        ],
+        "properties": {
+          "controllerId": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "runtime.read",
+      "title": "Read one verified semantic signal",
+      "description": "Read one value from the current verified semantic context. The response contains semantic IDs, quality, and capture cycle only.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "controllerId",
+          "deviceId",
+          "signalId",
+          "contextHash"
+        ],
+        "properties": {
+          "controllerId": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128
+          },
+          "deviceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "signalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "contextHash": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{64}$"
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "runtime.operation.request",
+      "title": "Request a semantic runtime operation",
+      "description": "Submit one semantic signal or action intent to the shared IDE service. Automation cannot approve it and the Gateway never calls a Provider directly.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "controllerId",
+          "deviceId",
+          "contextHash",
+          "ttlMs"
+        ],
+        "properties": {
+          "controllerId": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128
+          },
+          "deviceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "signalId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "actionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "value": {},
+          "parameters": {
+            "type": "object"
+          },
+          "ttlMs": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4294967295
+          },
+          "contextHash": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{64}$"
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "signalId",
+              "value"
+            ],
+            "not": {
+              "required": [
+                "actionId"
+              ]
+            }
+          },
+          {
+            "required": [
+              "actionId"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "signalId"
+                  ]
+                },
+                {
+                  "required": [
+                    "value"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "runtime.operation.get",
+      "title": "Get one semantic runtime operation",
+      "description": "Return the shared IDE semantic operation record by targetOperationId without executing or approving it.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "targetOperationId"
+        ],
+        "properties": {
+          "targetOperationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
     }
   ]
 }

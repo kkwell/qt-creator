@@ -16,7 +16,8 @@ class QtcSettings;
 
 namespace EtherCAT::Core {
 class AutomationService;
-}
+class SemanticRuntimeService;
+} // namespace EtherCAT::Core
 
 namespace EtherCAT::AutomationGateway::Internal {
 
@@ -70,6 +71,7 @@ class GatewayRuntimeController final : public QObject
 public:
     GatewayRuntimeController(
         Core::AutomationService *service,
+        Core::SemanticRuntimeService *semanticRuntimeService,
         Utils::QtcSettings *settings,
         bool publishToMcpManager,
         QObject *parent = nullptr);

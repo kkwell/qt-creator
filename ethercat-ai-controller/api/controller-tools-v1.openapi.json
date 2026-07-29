@@ -4,7 +4,7 @@
   "info": {
     "title": "EtherCAT Controller Tools",
     "version": "1.0.0",
-    "description": "Mock-only, read-only controller-tools-v1 facade. No endpoint acquires a lease, scans a bus, changes PDO/SDO, deploys ECPKG, starts a task, or commands motion."
+    "description": "Loopback controller-tools-v1 facade. Controller views remain Mock-only/read-only; semantic operation tools submit approval-required intent to the shared IDE service and never call a Provider directly."
   },
   "servers": [
     {
@@ -268,6 +268,203 @@
         "x-read-only": true
       }
     },
+    "/api/controller-tools/v1/runtime/{controllerId}/context": {
+      "get": {
+        "tags": [
+          "Semantic Runtime"
+        ],
+        "operationId": "runtime.get-context",
+        "summary": "Get one verified semantic runtime context",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          },
+          {
+            "$ref": "#/components/parameters/OperationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true,
+        "x-direct-provider-calls": false
+      }
+    },
+    "/api/controller-tools/v1/runtime/{controllerId}/read": {
+      "post": {
+        "tags": [
+          "Semantic Runtime"
+        ],
+        "operationId": "runtime.read",
+        "summary": "Read one verified semantic signal",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "deviceId",
+                  "signalId",
+                  "contextHash"
+                ],
+                "properties": {
+                  "deviceId": {
+                    "type": "string"
+                  },
+                  "signalId": {
+                    "type": "string"
+                  },
+                  "contextHash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{64}$"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true,
+        "x-direct-provider-calls": false
+      }
+    },
+    "/api/controller-tools/v1/runtime/{controllerId}/operations": {
+      "post": {
+        "tags": [
+          "Semantic Runtime"
+        ],
+        "operationId": "runtime.operation.request",
+        "summary": "Submit one approval-required semantic operation intent",
+        "description": "The Gateway fills the runtime epoch and mapping proof from the current IDE context, forces an Automation actor, and calls only SemanticRuntimeService.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ControllerId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "deviceId",
+                  "contextHash",
+                  "ttlMs"
+                ],
+                "properties": {
+                  "deviceId": {
+                    "type": "string"
+                  },
+                  "signalId": {
+                    "type": "string"
+                  },
+                  "actionId": {
+                    "type": "string"
+                  },
+                  "value": {},
+                  "parameters": {
+                    "type": "object"
+                  },
+                  "ttlMs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 4294967295
+                  },
+                  "contextHash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{64}$"
+                  },
+                  "operationId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": false,
+        "x-idempotent": true,
+        "x-approval-required": true,
+        "x-automation-can-approve": false,
+        "x-direct-provider-calls": false
+      }
+    },
+    "/api/controller-tools/v1/runtime/operations/{targetOperationId}": {
+      "get": {
+        "tags": [
+          "Semantic Runtime"
+        ],
+        "operationId": "runtime.operation.get",
+        "summary": "Get one shared IDE semantic operation record",
+        "parameters": [
+          {
+            "name": "targetOperationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "$ref": "#/components/parameters/OperationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          },
+          "404": {
+            "$ref": "#/components/responses/ToolEnvelope"
+          }
+        },
+        "x-read-only": true,
+        "x-direct-provider-calls": false
+      }
+    },
     "/mcp": {
       "get": {
         "tags": [
@@ -364,7 +561,9 @@
             "description": "Origin rejected"
           }
         },
-        "x-read-only": true
+        "x-read-only": false,
+        "x-approval-required-for-semantic-operations": true,
+        "x-direct-provider-calls": false
       },
       "delete": {
         "tags": [
@@ -402,6 +601,16 @@
         "schema": {
           "type": "string",
           "minLength": 3,
+          "maxLength": 128
+        }
+      },
+      "OperationId": {
+        "name": "operationId",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
           "maxLength": 128
         }
       }
@@ -490,7 +699,7 @@
     },
     "responses": {
       "ToolEnvelope": {
-        "description": "Versioned result envelope with mock-only audit evidence",
+        "description": "Versioned result envelope with loopback audit evidence",
         "content": {
           "application/json": {
             "schema": {
@@ -503,8 +712,17 @@
   },
   "x-controller-tools-version": "controller-tools/v1",
   "x-safety-boundary": {
-    "mockOnly": true,
-    "readOnly": true,
+    "controllerViews": {
+      "mockOnly": true,
+      "readOnly": true
+    },
+    "semanticRuntime": {
+      "verifiedContextRead": true,
+      "operationIntentSubmission": true,
+      "approvalRequired": true,
+      "automationCanApprove": false,
+      "directProviderCalls": false
+    },
     "lease": false,
     "scan": false,
     "deployment": false,

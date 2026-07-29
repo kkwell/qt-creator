@@ -20,6 +20,8 @@ private slots:
     void testOperationJournalAcrossTransports();
     void testMutationsAreRejectedWithoutProviderCalls();
     void testVendorDetailsAreNotProjected();
+    void testSemanticRuntimeFailsClosedAndRedactsBindings();
+    void testSemanticRuntimeOperationIntentAndJournal();
     void testListenerLifecycleAndAtomicRollback();
     void testMcpRestIntegrationAndOriginBoundary();
     void testExternalProcessProbe();

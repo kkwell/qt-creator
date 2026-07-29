@@ -24,7 +24,10 @@ namespace EtherCAT::AutomationGateway::Internal {
 class GatewayServer final
 {
 public:
-    explicit GatewayServer(Core::AutomationService *service, bool publishToMcpManager = false);
+    explicit GatewayServer(
+        Core::AutomationService *service,
+        Core::SemanticRuntimeService *semanticRuntimeService = nullptr,
+        bool publishToMcpManager = false);
     ~GatewayServer();
 
     Utils::Result<> start(const QHostAddress &address, quint16 mcpPort, quint16 restPort);

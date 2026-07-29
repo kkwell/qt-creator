@@ -30,7 +30,7 @@ static Mcp::Schema::Implementation serverImplementation()
         .name("ethercat-automation-gateway")
         .title("EtherCAT Automation Gateway")
         .version("1.0.0")
-        .description("IDE-owned, loopback-only, mock-only controller-tools-v1 server");
+        .description("IDE-owned loopback controller views and approval-gated semantic intents");
 }
 
 static QHttpServerResponse jsonResponse(
@@ -109,8 +109,11 @@ static QJsonObject bodyObject(const QHttpServerRequest &request)
     return document.object();
 }
 
-GatewayServer::GatewayServer(Core::AutomationService *service, bool publishToMcpManager)
-    : m_dispatcher(service)
+GatewayServer::GatewayServer(
+    Core::AutomationService *service,
+    Core::SemanticRuntimeService *semanticRuntimeService,
+    bool publishToMcpManager)
+    : m_dispatcher(service, semanticRuntimeService)
     , m_mcpServer(serverImplementation())
     , m_publishToMcpManager(publishToMcpManager)
 {
@@ -253,6 +256,38 @@ void GatewayServer::configureRestRoutes()
             arguments.insert("controllerId", controllerId);
             arguments.insert("position", position);
             return restDispatch("controller.get-device", arguments, request);
+        });
+    m_restServer.route(
+        "/api/controller-tools/v1/runtime/<arg>/context",
+        QHttpServerRequest::Method::Get,
+        [this](const QString &controllerId, const QHttpServerRequest &request) {
+            QJsonObject arguments = argumentsFromQuery(request);
+            arguments.insert("controllerId", controllerId);
+            return restDispatch("runtime.get-context", arguments, request);
+        });
+    m_restServer.route(
+        "/api/controller-tools/v1/runtime/<arg>/read",
+        QHttpServerRequest::Method::Post,
+        [this](const QString &controllerId, const QHttpServerRequest &request) {
+            QJsonObject arguments = bodyObject(request);
+            arguments.insert("controllerId", controllerId);
+            return restDispatch("runtime.read", arguments, request);
+        });
+    m_restServer.route(
+        "/api/controller-tools/v1/runtime/<arg>/operations",
+        QHttpServerRequest::Method::Post,
+        [this](const QString &controllerId, const QHttpServerRequest &request) {
+            QJsonObject arguments = bodyObject(request);
+            arguments.insert("controllerId", controllerId);
+            return restDispatch("runtime.operation.request", arguments, request);
+        });
+    m_restServer.route(
+        "/api/controller-tools/v1/runtime/operations/<arg>",
+        QHttpServerRequest::Method::Get,
+        [this](const QString &targetOperationId, const QHttpServerRequest &request) {
+            QJsonObject arguments = argumentsFromQuery(request);
+            arguments.insert("targetOperationId", targetOperationId);
+            return restDispatch("runtime.operation.get", arguments, request);
         });
 
     const auto mutation = [this](
@@ -397,8 +432,7 @@ Utils::Result<> GatewayServer::start(const QHostAddress &address, quint16 mcpPor
     if (!mcpTcp->listen(address, mcpPort)) {
         const QString error = mcpTcp->errorString();
         delete mcpTcp;
-        return Utils::ResultError(
-            QString("Cannot bind the MCP loopback listener: %1").arg(error));
+        return Utils::ResultError(QString("Cannot bind the MCP loopback listener: %1").arg(error));
     }
     if (!m_mcpServer.bind(mcpTcp)) {
         delete mcpTcp;
@@ -410,8 +444,7 @@ Utils::Result<> GatewayServer::start(const QHostAddress &address, quint16 mcpPor
         const QString error = restTcp->errorString();
         delete restTcp;
         stop();
-        return Utils::ResultError(
-            QString("Cannot bind the REST loopback listener: %1").arg(error));
+        return Utils::ResultError(QString("Cannot bind the REST loopback listener: %1").arg(error));
     }
     if (!m_restServer.bind(restTcp)) {
         delete restTcp;
@@ -476,14 +509,12 @@ quint16 GatewayServer::restPort() const
 
 QUrl GatewayServer::mcpEndpoint() const
 {
-    return mcpPort() == 0 ? QUrl{}
-                          : QUrl(QString("http://127.0.0.1:%1/").arg(mcpPort()));
+    return mcpPort() == 0 ? QUrl{} : QUrl(QString("http://127.0.0.1:%1/").arg(mcpPort()));
 }
 
 QUrl GatewayServer::restEndpoint() const
 {
-    return restPort() == 0 ? QUrl{}
-                            : QUrl(QString("http://127.0.0.1:%1").arg(restPort()));
+    return restPort() == 0 ? QUrl{} : QUrl(QString("http://127.0.0.1:%1").arg(restPort()));
 }
 
 QStringList GatewayServer::registeredToolNames() const

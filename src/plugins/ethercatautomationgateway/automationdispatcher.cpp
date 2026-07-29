@@ -9,9 +9,12 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
+#include <QRegularExpression>
 #include <QUuid>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 namespace EtherCAT::AutomationGateway::Internal {
 
@@ -381,8 +384,383 @@ static QJsonValue canonicalized(const QJsonValue &value)
     return result;
 }
 
-AutomationDispatcher::AutomationDispatcher(Core::AutomationService *service)
+static QString semanticSignalAvailabilityName(Data::SemanticSignalAvailability availability)
+{
+    using Availability = Data::SemanticSignalAvailability;
+    switch (availability) {
+    case Availability::Unavailable:
+        return "unavailable";
+    case Availability::Unverified:
+        return "unverified";
+    case Availability::Stale:
+        return "stale";
+    case Availability::Ready:
+        return "ready";
+    case Availability::Rejected:
+        return "rejected";
+    }
+    return "unavailable";
+}
+
+static QString semanticActionAvailabilityName(Data::SemanticActionAvailability availability)
+{
+    using Availability = Data::SemanticActionAvailability;
+    switch (availability) {
+    case Availability::Unavailable:
+        return "unavailable";
+    case Availability::Unverified:
+        return "unverified";
+    case Availability::Stale:
+        return "stale";
+    case Availability::Ready:
+        return "ready";
+    case Availability::AwaitingApproval:
+        return "awaiting-approval";
+    case Availability::Rejected:
+        return "rejected";
+    }
+    return "unavailable";
+}
+
+static QString semanticOperationStateName(Data::SemanticOperationState state)
+{
+    using State = Data::SemanticOperationState;
+    switch (state) {
+    case State::Rejected:
+        return "rejected";
+    case State::Submitted:
+        return "submitted";
+    case State::ApprovalRequired:
+        return "approval-required";
+    case State::Approved:
+        return "approved";
+    case State::Executing:
+        return "executing";
+    case State::Succeeded:
+        return "succeeded";
+    case State::Failed:
+        return "failed";
+    case State::TimedOut:
+        return "timed-out";
+    case State::OutcomeUnknown:
+        return "outcome-unknown";
+    case State::Canceled:
+        return "canceled";
+    case State::Expired:
+        return "expired";
+    }
+    return "rejected";
+}
+
+static QString runtimeQualityName(Data::RuntimeResourceQualityState state)
+{
+    using State = Data::RuntimeResourceQualityState;
+    switch (state) {
+    case State::Unknown:
+        return "unknown";
+    case State::Good:
+        return "good";
+    case State::Uncertain:
+        return "uncertain";
+    case State::Bad:
+        return "bad";
+    case State::Stale:
+        return "stale";
+    case State::Unavailable:
+        return "unavailable";
+    }
+    return "unknown";
+}
+
+static QString runtimeValueTypeName(Data::RuntimeResourcePrimitiveType type)
+{
+    using Type = Data::RuntimeResourcePrimitiveType;
+    switch (type) {
+    case Type::Opaque:
+        return "unavailable";
+    case Type::Boolean:
+        return "boolean";
+    case Type::SignedInteger:
+        return "signed-integer";
+    case Type::UnsignedInteger:
+        return "unsigned-integer";
+    case Type::FloatingPoint:
+        return "floating-point";
+    case Type::Text:
+        return "text";
+    case Type::ByteArray:
+        return "bytes";
+    }
+    return "unavailable";
+}
+
+static QJsonObject semanticValueObject(const Data::RuntimeResourceTypedValue &typed)
+{
+    QJsonObject result{{"type", runtimeValueTypeName(typed.primitiveType)}};
+    if (!typed.value.isValid())
+        return result;
+
+    using Type = Data::RuntimeResourcePrimitiveType;
+    switch (typed.primitiveType) {
+    case Type::Boolean:
+        result.insert("value", typed.value.toBool());
+        break;
+    case Type::SignedInteger:
+        result.insert("value", QString::number(typed.value.toLongLong()));
+        break;
+    case Type::UnsignedInteger:
+        result.insert("value", QString::number(typed.value.toULongLong()));
+        break;
+    case Type::FloatingPoint: {
+        const double value = typed.value.toDouble();
+        if (std::isfinite(value))
+            result.insert("value", value);
+        break;
+    }
+    case Type::Text:
+        result.insert("value", typed.value.toString());
+        break;
+    case Type::ByteArray:
+        result.insert(
+            "value",
+            QString::fromLatin1(typed.value.toByteArray().toBase64(
+                QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals)));
+        result.insert("encoding", "base64url");
+        break;
+    case Type::Opaque:
+        break;
+    }
+    return result;
+}
+
+static bool semanticDigestsMatch(
+    const Data::SemanticRuntimeDigest &left, const Data::SemanticRuntimeDigest &right)
+{
+    return Core::isCanonicalSha256Digest(left) && Core::isCanonicalSha256Digest(right)
+           && left == right;
+}
+
+static bool semanticContextIsVerified(const Data::SemanticRuntimeContext &context)
+{
+    return context.complete && !context.controllerId.isEmpty() && context.sessionGeneration != 0
+           && context.contextHash.size() == 32
+           && context.bindingVerification.state == Data::SemanticBindingVerificationState::Verified
+           && Core::isCanonicalSha256Digest(context.bindingVerification.signedManifestDigest)
+           && semanticDigestsMatch(context.mappingDigest, context.controllerMappingDigest)
+           && Core::isCompleteRuntimeResourceCatalogEpoch(context.epoch);
+}
+
+static QString semanticContextHash(const Data::SemanticRuntimeContext &context)
+{
+    return QString::fromLatin1(context.contextHash.toHex());
+}
+
+static std::optional<QByteArray> semanticContextHashFrom(const QJsonValue &value)
+{
+    static const QRegularExpression expression(QStringLiteral("^[0-9a-fA-F]{64}$"));
+    if (!value.isString() || !expression.match(value.toString()).hasMatch())
+        return std::nullopt;
+    return QByteArray::fromHex(value.toString().toLatin1());
+}
+
+static QJsonObject semanticSignalObject(const Data::SemanticSignalRuntimeState &signal)
+{
+    QJsonObject result{
+        {"deviceId", signal.target.deviceId.toString()},
+        {"signalId", signal.target.signalId.value},
+        {"availability", semanticSignalAvailabilityName(signal.availability)},
+        {"quality", runtimeQualityName(signal.quality.state)},
+        {"snapshotComplete", signal.snapshotComplete},
+        {"captureCycle", QString::number(signal.captureCycle)},
+        {"disabledReason",
+         signal.availability == Data::SemanticSignalAvailability::Ready
+             ? QString{}
+             : QStringLiteral("semantic-signal-")
+                   + semanticSignalAvailabilityName(signal.availability)},
+    };
+    if (signal.value)
+        result.insert("value", semanticValueObject(*signal.value));
+    return result;
+}
+
+static QJsonObject semanticActionObject(const Data::SemanticActionRuntimeState &action)
+{
+    return {
+        {"deviceId", action.target.deviceId.toString()},
+        {"actionId", action.target.actionId.value},
+        {"availability", semanticActionAvailabilityName(action.availability)},
+        {"approvalRequired", action.requiresApproval},
+        {"holdToRun", action.holdToRun},
+        {"maximumTtlMs", int(action.maximumTtlMs)},
+        {"disabledReason",
+         action.availability == Data::SemanticActionAvailability::Ready
+             ? QString{}
+             : QStringLiteral("semantic-action-")
+                   + semanticActionAvailabilityName(action.availability)},
+    };
+}
+
+static QJsonObject semanticContextObject(const Data::SemanticRuntimeContext &context)
+{
+    QList<QJsonObject> signalObjects;
+    signalObjects.reserve(context.signalStates.size());
+    for (const Data::SemanticSignalRuntimeState &signal : context.signalStates)
+        signalObjects.append(semanticSignalObject(signal));
+    std::sort(
+        signalObjects.begin(),
+        signalObjects.end(),
+        [](const QJsonObject &left, const QJsonObject &right) {
+            const QString leftKey = left.value("deviceId").toString() + QLatin1Char('\n')
+                                    + left.value("signalId").toString();
+            const QString rightKey = right.value("deviceId").toString() + QLatin1Char('\n')
+                                     + right.value("signalId").toString();
+            return leftKey < rightKey;
+        });
+    QJsonArray signalArray;
+    for (const QJsonObject &signal : std::as_const(signalObjects))
+        signalArray.append(signal);
+
+    QList<QJsonObject> actionObjects;
+    actionObjects.reserve(context.actionStates.size());
+    for (const Data::SemanticActionRuntimeState &action : context.actionStates)
+        actionObjects.append(semanticActionObject(action));
+    std::sort(
+        actionObjects.begin(),
+        actionObjects.end(),
+        [](const QJsonObject &left, const QJsonObject &right) {
+            const QString leftKey = left.value("deviceId").toString() + QLatin1Char('\n')
+                                    + left.value("actionId").toString();
+            const QString rightKey = right.value("deviceId").toString() + QLatin1Char('\n')
+                                     + right.value("actionId").toString();
+            return leftKey < rightKey;
+        });
+    QJsonArray actions;
+    for (const QJsonObject &action : std::as_const(actionObjects))
+        actions.append(action);
+
+    return {
+        {"controllerId", context.controllerId},
+        {"contextHash", semanticContextHash(context)},
+        {"complete", context.complete},
+        {"bindingVerified", semanticContextIsVerified(context)},
+        {"mock", context.mock},
+        {"signals", signalArray},
+        {"actions", actions},
+    };
+}
+
+static QJsonObject semanticOperationObject(const Data::SemanticOperationRecord &record)
+{
+    QJsonObject result{
+        {"operationId", record.request.operationId.value},
+        {"state", semanticOperationStateName(record.state)},
+    };
+    if (!record.approvalChallenge.isEmpty())
+        result.insert("approvalChallenge", QString::fromLatin1(record.approvalChallenge.toHex()));
+    return result;
+}
+
+static Data::SemanticRuntimeActor semanticAutomationActor(const AutomationActor &actor)
+{
+    const QJsonObject identity{
+        {"transport", actor.transport},
+        {"sessionId", actor.sessionId},
+        {"clientName", actor.clientName},
+        {"clientVersion", actor.clientVersion},
+    };
+    const QByteArray digest = QCryptographicHash::hash(
+        AutomationDispatcher::canonicalJson(identity), QCryptographicHash::Sha256);
+    Data::SemanticRuntimeActor result;
+    result.id = "gateway-automation:" + QString::fromLatin1(digest.toHex().left(24));
+    result.displayName = actor.clientName.isEmpty() ? QStringLiteral("Loopback automation client")
+                                                    : actor.clientName;
+    result.kind = Data::SemanticRuntimeActorKind::Automation;
+    result.origin = "ethercat-automation-gateway/" + actor.transport;
+    result.authenticationDigest = digest;
+    return result;
+}
+
+static QVariant scalarVariant(const QJsonValue &value)
+{
+    if (value.isBool())
+        return value.toBool();
+    if (value.isString())
+        return value.toString();
+    if (value.isDouble() && std::isfinite(value.toDouble()))
+        return value.toDouble();
+    return {};
+}
+
+static std::optional<QVariant> semanticSignalValue(
+    const QJsonValue &value, const Data::SemanticRuntimeBinding &binding)
+{
+    static constexpr double maximumExactJsonInteger = 9007199254740991.0;
+    using Type = Data::RuntimeResourcePrimitiveType;
+    switch (binding.primitiveType) {
+    case Type::Boolean:
+        if (value.isBool())
+            return QVariant(value.toBool());
+        break;
+    case Type::SignedInteger: {
+        bool ok = false;
+        qlonglong converted = 0;
+        if (value.isString())
+            converted = value.toString().toLongLong(&ok);
+        else if (
+            value.isDouble() && std::isfinite(value.toDouble())
+            && std::trunc(value.toDouble()) == value.toDouble()
+            && value.toDouble() >= -maximumExactJsonInteger
+            && value.toDouble() <= maximumExactJsonInteger) {
+            converted = qlonglong(value.toDouble());
+            ok = true;
+        }
+        if (ok)
+            return QVariant::fromValue(converted);
+        break;
+    }
+    case Type::UnsignedInteger: {
+        bool ok = false;
+        qulonglong converted = 0;
+        if (value.isString())
+            converted = value.toString().toULongLong(&ok);
+        else if (
+            value.isDouble() && std::isfinite(value.toDouble())
+            && std::trunc(value.toDouble()) == value.toDouble() && value.toDouble() >= 0
+            && value.toDouble() <= maximumExactJsonInteger) {
+            converted = qulonglong(value.toDouble());
+            ok = true;
+        }
+        if (ok)
+            return QVariant::fromValue(converted);
+        break;
+    }
+    case Type::FloatingPoint:
+        if (value.isDouble() && std::isfinite(value.toDouble()))
+            return QVariant(value.toDouble());
+        break;
+    case Type::Text:
+        if (value.isString())
+            return QVariant(value.toString());
+        break;
+    case Type::ByteArray:
+        if (value.isString()) {
+            const QByteArray encoded = value.toString().toLatin1();
+            const QByteArray decoded = QByteArray::fromBase64(
+                encoded, QByteArray::Base64UrlEncoding | QByteArray::AbortOnBase64DecodingErrors);
+            if (!decoded.isNull())
+                return QVariant(decoded);
+        }
+        break;
+    case Type::Opaque:
+        break;
+    }
+    return std::nullopt;
+}
+
+AutomationDispatcher::AutomationDispatcher(
+    Core::AutomationService *service, Core::SemanticRuntimeService *semanticRuntimeService)
     : m_service(service)
+    , m_semanticRuntimeService(semanticRuntimeService)
 {}
 
 QStringList AutomationDispatcher::toolNames()
@@ -397,6 +775,10 @@ QStringList AutomationDispatcher::toolNames()
         "controller.get-topology",
         "controller.list",
         "gateway.get-protocol",
+        "runtime.get-context",
+        "runtime.operation.get",
+        "runtime.operation.request",
+        "runtime.read",
     };
 }
 
@@ -492,6 +874,14 @@ std::optional<Core::AutomationContextSnapshot> AutomationDispatcher::currentCont
     return m_service->context(controllerId);
 }
 
+std::optional<Data::SemanticRuntimeContext> AutomationDispatcher::semanticContext(
+    const QString &controllerId) const
+{
+    if (!m_semanticRuntimeService)
+        return std::nullopt;
+    return m_semanticRuntimeService->context(controllerId);
+}
+
 static QString operationIdFrom(const QJsonObject &arguments)
 {
     const QString supplied = arguments.value("operationId").toString();
@@ -503,7 +893,14 @@ static bool operationIdIsInvalid(const QJsonObject &arguments)
     if (!arguments.contains("operationId"))
         return false;
     const QJsonValue supplied = arguments.value("operationId");
-    return !supplied.isString() || supplied.toString().isEmpty() || supplied.toString().size() > 128;
+    if (!supplied.isString())
+        return true;
+    const QString operationId = supplied.toString();
+    if (operationId.isEmpty() || operationId.size() > 128)
+        return true;
+    return std::any_of(operationId.cbegin(), operationId.cend(), [](QChar character) {
+        return character.category() == QChar::Other_Control;
+    });
 }
 
 static QString requestHashFor(const QString &tool, const QJsonObject &arguments)
@@ -611,6 +1008,26 @@ static QStringList allowedArguments(const QString &tool)
     if (tool == "controller.list" || tool == "adapter.list" || tool == "gateway.get-protocol") {
         return {"operationId"};
     }
+    if (tool == "runtime.get-context")
+        return {"controllerId", "operationId"};
+    if (tool == "runtime.read") {
+        return {"contextHash", "controllerId", "deviceId", "operationId", "signalId"};
+    }
+    if (tool == "runtime.operation.request") {
+        return {
+            "actionId",
+            "contextHash",
+            "controllerId",
+            "deviceId",
+            "operationId",
+            "parameters",
+            "signalId",
+            "ttlMs",
+            "value",
+        };
+    }
+    if (tool == "runtime.operation.get")
+        return {"operationId", "targetOperationId"};
     if (tool == "controller.get-device")
         return {"controllerId", "operationId", "position"};
     if (tool == "artifact.validate")
@@ -641,7 +1058,7 @@ QJsonObject AutomationDispatcher::dispatchUnjournaled(
             "CT011_PROTOCOL_UNSUPPORTED",
             "The requested tool is not in controller-tools-v1.",
             "$.tool",
-            "Use gateway.get-protocol to negotiate the closed read-only tool catalog.",
+            "Use gateway.get-protocol to negotiate the closed tool catalog.",
             {{"tool", tool}},
             requestHash,
             actor);
@@ -689,12 +1106,26 @@ QJsonObject AutomationDispatcher::dispatchUnjournaled(
                 {"restOpenApi", "3.1.1"},
                 {"loopbackOnly", true},
                 {"defaultEnabled", false},
-                {"mockOnly", true},
-                {"readOnly", true},
+                {"controllerViews",
+                 QJsonObject{
+                     {"mockOnly", true},
+                     {"readOnly", true},
+                     {"directProviderCalls", false},
+                 }},
+                {"semanticRuntime",
+                 QJsonObject{
+                     {"available", bool(m_semanticRuntimeService)},
+                     {"verifiedContextRead", bool(m_semanticRuntimeService)},
+                     {"operationIntentSubmission", bool(m_semanticRuntimeService)},
+                     {"approvalRequired", true},
+                     {"automationCanApprove", false},
+                     {"directProviderCalls", false},
+                 }},
                 {"toolCatalog", tools},
                 {"mutations", mutations},
                 {"realTimeBoundary",
-                 "Gateway produces read-only intent views and never enters the 125 us cycle."},
+                 "Gateway submits semantic intents to the IDE service and never enters the "
+                 "125 us cycle."},
             },
             {},
             requestHash,
@@ -776,6 +1207,493 @@ QJsonObject AutomationDispatcher::dispatchUnjournaled(
             {},
             {},
             actor);
+    }
+
+    if (tool.startsWith("runtime.")) {
+        if (!m_semanticRuntimeService) {
+            return makeError(
+                operationId,
+                "CT020_SEMANTIC_RUNTIME_UNAVAILABLE",
+                "The IDE semantic runtime service is unavailable.",
+                "$.tool",
+                "Open a project with a registered SemanticRuntimeService and retry.",
+                {
+                    {"reason", "semantic-runtime-service-unavailable"},
+                    {"providerCalls", 0},
+                },
+                requestHash,
+                actor);
+        }
+
+        if (tool == "runtime.operation.get") {
+            const QJsonValue targetIdValue = arguments.value("targetOperationId");
+            const Data::SemanticOperationId targetOperationId{targetIdValue.toString()};
+            if (!targetIdValue.isString()
+                || !Core::isCanonicalSemanticOperationId(targetOperationId)) {
+                return makeError(
+                    operationId,
+                    "CT010_BAD_REQUEST",
+                    "targetOperationId must contain 1 to 128 characters and no controls.",
+                    "$.targetOperationId",
+                    "Use the semantic OperationId returned by runtime.operation.request.",
+                    {{"providerCalls", 0}},
+                    requestHash,
+                    actor);
+            }
+
+            const std::optional<Data::SemanticOperationRecord> record
+                = m_semanticRuntimeService->operation(targetOperationId);
+            if (!record) {
+                return makeError(
+                    operationId,
+                    "CT009_NOT_FOUND",
+                    "The semantic operation is not present in the IDE operation journal.",
+                    "$.targetOperationId",
+                    "Refresh the operation using a current semantic OperationId.",
+                    {
+                        {"reason", "semantic-operation-unavailable"},
+                        {"providerCalls", 0},
+                    },
+                    requestHash,
+                    actor);
+            }
+            if (record->request.operationId != targetOperationId) {
+                return makeError(
+                    operationId,
+                    "CT020_SEMANTIC_RUNTIME_UNAVAILABLE",
+                    "The semantic runtime service returned an invalid operation record.",
+                    "$.targetOperationId",
+                    "Retry after the IDE semantic runtime service is repaired.",
+                    {
+                        {"reason", "semantic-operation-invalid"},
+                        {"providerCalls", 0},
+                    },
+                    requestHash,
+                    actor);
+            }
+            const QString contextHash = QString::fromLatin1(
+                record->request.expectedContextHash.toHex());
+            return makeSuccess(
+                operationId,
+                {{"operation", semanticOperationObject(*record)}},
+                {},
+                requestHash,
+                contextHash,
+                contextHash,
+                actor);
+        }
+
+        const QJsonValue controllerIdValue = arguments.value("controllerId");
+        const QString controllerId = controllerIdValue.toString();
+        if (!controllerIdValue.isString() || controllerId.size() < 3 || controllerId.size() > 128) {
+            return makeError(
+                operationId,
+                "CT010_BAD_REQUEST",
+                "controllerId must contain between 3 and 128 characters.",
+                "$.controllerId",
+                "Use a controllerId returned by the IDE semantic runtime context.",
+                {{"providerCalls", 0}},
+                requestHash,
+                actor);
+        }
+
+        const std::optional<Data::SemanticRuntimeContext> context = semanticContext(controllerId);
+        if (!context) {
+            return makeError(
+                operationId,
+                "CT009_NOT_FOUND",
+                "The semantic runtime context is not present in the IDE.",
+                "$.controllerId",
+                "Open the matching project and refresh its verified runtime binding.",
+                {
+                    {"reason", "semantic-context-unavailable"},
+                    {"providerCalls", 0},
+                },
+                requestHash,
+                actor);
+        }
+        if (!semanticContextIsVerified(*context)) {
+            return makeError(
+                operationId,
+                "CT021_SEMANTIC_BINDING_UNVERIFIED",
+                "The semantic runtime context is not verified and complete.",
+                "$.controllerId",
+                "Verify the signed semantic binding and refresh the runtime context.",
+                {
+                    {"reason", "semantic-binding-unverified"},
+                    {"providerCalls", 0},
+                },
+                requestHash,
+                actor);
+        }
+        const QString contextHash = semanticContextHash(*context);
+
+        if (tool == "runtime.get-context") {
+            return makeSuccess(
+                operationId,
+                {{"context", semanticContextObject(*context)}},
+                {},
+                requestHash,
+                contextHash,
+                contextHash,
+                actor);
+        }
+
+        const std::optional<QByteArray> requestedContextHash = semanticContextHashFrom(
+            arguments.value("contextHash"));
+        if (!requestedContextHash) {
+            return makeError(
+                operationId,
+                "CT010_BAD_REQUEST",
+                "contextHash must be a 64-character SHA-256 hexadecimal string.",
+                "$.contextHash",
+                "Use contextHash from runtime.get-context.",
+                {{"providerCalls", 0}},
+                requestHash,
+                actor);
+        }
+        if (*requestedContextHash != context->contextHash) {
+            return makeError(
+                operationId,
+                "CT022_CONTEXT_STALE",
+                "The semantic runtime context changed.",
+                "$.contextHash",
+                "Refresh runtime.get-context and require a new approval decision.",
+                {
+                    {"reason", "context-stale"},
+                    {"currentContextHash", contextHash},
+                    {"providerCalls", 0},
+                },
+                requestHash,
+                actor);
+        }
+
+        const QJsonValue deviceIdValue = arguments.value("deviceId");
+        const Data::NodeId deviceId = Data::NodeId::fromString(deviceIdValue.toString());
+        if (!deviceIdValue.isString() || deviceId.isNull()) {
+            return makeError(
+                operationId,
+                "CT010_BAD_REQUEST",
+                "deviceId must be one semantic device identifier from the current context.",
+                "$.deviceId",
+                "Use a deviceId returned by runtime.get-context.",
+                {{"providerCalls", 0}},
+                requestHash,
+                actor);
+        }
+
+        if (tool == "runtime.read") {
+            const QJsonValue signalIdValue = arguments.value("signalId");
+            const QString signalId = signalIdValue.toString();
+            if (!signalIdValue.isString() || signalId.isEmpty() || signalId.size() > 256) {
+                return makeError(
+                    operationId,
+                    "CT010_BAD_REQUEST",
+                    "signalId must contain between 1 and 256 characters.",
+                    "$.signalId",
+                    "Use a signalId returned by runtime.get-context.",
+                    {{"providerCalls", 0}},
+                    requestHash,
+                    actor);
+            }
+            QList<Data::SemanticSignalRuntimeState> matches;
+            std::copy_if(
+                context->signalStates.cbegin(),
+                context->signalStates.cend(),
+                std::back_inserter(matches),
+                [&deviceId, &signalId](const Data::SemanticSignalRuntimeState &candidate) {
+                    return candidate.target.deviceId == deviceId
+                           && candidate.target.signalId.value == signalId;
+                });
+            if (matches.size() != 1) {
+                return makeError(
+                    operationId,
+                    "CT023_SEMANTIC_TARGET_UNAVAILABLE",
+                    "The semantic signal is not uniquely present in the runtime context.",
+                    "$.signalId",
+                    "Refresh runtime.get-context and choose one available semantic signal.",
+                    {
+                        {"reason", "semantic-target-unavailable"},
+                        {"providerCalls", 0},
+                    },
+                    requestHash,
+                    actor);
+            }
+
+            const Data::SemanticSignalRuntimeState &signal = matches.constFirst();
+            const bool bindingValid
+                = signal.binding && signal.binding->target == signal.target
+                  && signal.binding->sessionGeneration == context->sessionGeneration
+                  && signal.binding->epoch == context->epoch
+                  && semanticDigestsMatch(signal.binding->mappingDigest, context->mappingDigest)
+                  && semanticDigestsMatch(
+                      signal.binding->controllerMappingDigest, context->controllerMappingDigest)
+                  && Core::validateSemanticRuntimeBinding(*signal.binding).accepted();
+            if (!bindingValid) {
+                return makeError(
+                    operationId,
+                    "CT021_SEMANTIC_BINDING_UNVERIFIED",
+                    "The semantic signal binding is not verified for this runtime context.",
+                    "$.signalId",
+                    "Refresh the signed semantic binding before reading the signal.",
+                    {
+                        {"reason", "semantic-binding-unverified"},
+                        {"providerCalls", 0},
+                    },
+                    requestHash,
+                    actor);
+            }
+            if (signal.availability != Data::SemanticSignalAvailability::Ready
+                || !signal.snapshotComplete || !signal.value) {
+                return makeError(
+                    operationId,
+                    "CT023_SEMANTIC_TARGET_UNAVAILABLE",
+                    "The semantic signal has no complete runtime value.",
+                    "$.signalId",
+                    "Refresh the runtime context and inspect the signal disabled reason.",
+                    {
+                        {"reason", "semantic-target-unavailable"},
+                        {"disabledReason",
+                         QString(
+                             QStringLiteral("semantic-signal-")
+                             + semanticSignalAvailabilityName(signal.availability))},
+                        {"providerCalls", 0},
+                    },
+                    requestHash,
+                    actor);
+            }
+            return makeSuccess(
+                operationId,
+                {
+                    {"controllerId", controllerId},
+                    {"contextHash", contextHash},
+                    {"signal", semanticSignalObject(signal)},
+                },
+                {},
+                requestHash,
+                contextHash,
+                contextHash,
+                actor);
+        }
+
+        const QJsonValue signalIdValue = arguments.value("signalId");
+        const QJsonValue actionIdValue = arguments.value("actionId");
+        const bool hasSignal = signalIdValue.isString() && !signalIdValue.toString().isEmpty();
+        const bool hasAction = actionIdValue.isString() && !actionIdValue.toString().isEmpty();
+        if (hasSignal == hasAction || (hasSignal && signalIdValue.toString().size() > 256)
+            || (hasAction && actionIdValue.toString().size() > 256)) {
+            return makeError(
+                operationId,
+                "CT010_BAD_REQUEST",
+                "Exactly one signalId or actionId semantic target is required.",
+                "$",
+                "Choose one target returned by runtime.get-context.",
+                {{"providerCalls", 0}},
+                requestHash,
+                actor);
+        }
+        const QJsonValue ttlValue = arguments.value("ttlMs");
+        if (!ttlValue.isDouble() || !std::isfinite(ttlValue.toDouble())
+            || std::trunc(ttlValue.toDouble()) != ttlValue.toDouble() || ttlValue.toDouble() < 1
+            || ttlValue.toDouble() > double(std::numeric_limits<quint32>::max())) {
+            return makeError(
+                operationId,
+                "CT010_BAD_REQUEST",
+                "ttlMs must be an integer from 1 through 4294967295.",
+                "$.ttlMs",
+                "Use a bounded TTL allowed by the selected semantic target.",
+                {{"providerCalls", 0}},
+                requestHash,
+                actor);
+        }
+        QMap<QString, QVariant> parameters;
+        if (arguments.contains("parameters")) {
+            if (!arguments.value("parameters").isObject()) {
+                return makeError(
+                    operationId,
+                    "CT010_BAD_REQUEST",
+                    "parameters must be an object of scalar semantic values.",
+                    "$.parameters",
+                    "Remove structured, null, or opaque parameter values.",
+                    {{"providerCalls", 0}},
+                    requestHash,
+                    actor);
+            }
+            const QJsonObject parameterObject = arguments.value("parameters").toObject();
+            for (auto it = parameterObject.begin(); it != parameterObject.end(); ++it) {
+                const QVariant converted = scalarVariant(it.value());
+                if (it.key().isEmpty() || !converted.isValid()) {
+                    return makeError(
+                        operationId,
+                        "CT010_BAD_REQUEST",
+                        "parameters must contain named scalar semantic values.",
+                        "$.parameters",
+                        "Remove structured, null, non-finite, or unnamed parameters.",
+                        {{"providerCalls", 0}},
+                        requestHash,
+                        actor);
+                }
+                parameters.insert(it.key(), converted);
+            }
+        }
+
+        Data::SemanticOperationRequest semanticRequest;
+        semanticRequest.operationId = {operationId};
+        semanticRequest.expectedEpoch = context->epoch;
+        semanticRequest.expectedMappingDigest = context->mappingDigest;
+        semanticRequest.expectedControllerMappingDigest = context->controllerMappingDigest;
+        semanticRequest.expectedContextHash = context->contextHash;
+        semanticRequest.parameters = parameters;
+        semanticRequest.ttlMs = quint32(ttlValue.toDouble());
+
+        if (hasSignal) {
+            QList<Data::SemanticSignalRuntimeState> matches;
+            std::copy_if(
+                context->signalStates.cbegin(),
+                context->signalStates.cend(),
+                std::back_inserter(matches),
+                [&deviceId, &signalIdValue](const Data::SemanticSignalRuntimeState &candidate) {
+                    return candidate.target.deviceId == deviceId
+                           && candidate.target.signalId.value == signalIdValue.toString();
+                });
+            if (matches.size() != 1 || !matches.constFirst().binding) {
+                return makeError(
+                    operationId,
+                    "CT023_SEMANTIC_TARGET_UNAVAILABLE",
+                    "The semantic signal is not uniquely bound for operation submission.",
+                    "$.signalId",
+                    "Refresh runtime.get-context and choose one ready semantic signal.",
+                    {
+                        {"reason", "semantic-target-unavailable"},
+                        {"providerCalls", 0},
+                    },
+                    requestHash,
+                    actor);
+            }
+            if (!arguments.contains("value")) {
+                return makeError(
+                    operationId,
+                    "CT010_BAD_REQUEST",
+                    "value is required for a semantic signal operation.",
+                    "$.value",
+                    "Supply a scalar value compatible with the semantic signal.",
+                    {{"providerCalls", 0}},
+                    requestHash,
+                    actor);
+            }
+            const std::optional<QVariant> value
+                = semanticSignalValue(arguments.value("value"), *matches.constFirst().binding);
+            if (!value) {
+                return makeError(
+                    operationId,
+                    "CT010_BAD_REQUEST",
+                    "value is incompatible with the semantic signal type.",
+                    "$.value",
+                    "Use the semantic value type returned by runtime.read.",
+                    {{"providerCalls", 0}},
+                    requestHash,
+                    actor);
+            }
+            semanticRequest.kind = Data::SemanticOperationKind::SetSignalValue;
+            semanticRequest.target = matches.constFirst().target;
+            semanticRequest.value = *value;
+        } else {
+            if (arguments.contains("value")) {
+                return makeError(
+                    operationId,
+                    "CT010_BAD_REQUEST",
+                    "value is not accepted for a semantic action operation.",
+                    "$.value",
+                    "Pass named action parameters instead.",
+                    {{"providerCalls", 0}},
+                    requestHash,
+                    actor);
+            }
+            QList<Data::SemanticActionRuntimeState> matches;
+            std::copy_if(
+                context->actionStates.cbegin(),
+                context->actionStates.cend(),
+                std::back_inserter(matches),
+                [&deviceId, &actionIdValue](const Data::SemanticActionRuntimeState &candidate) {
+                    return candidate.target.deviceId == deviceId
+                           && candidate.target.actionId.value == actionIdValue.toString();
+                });
+            if (matches.size() != 1) {
+                return makeError(
+                    operationId,
+                    "CT023_SEMANTIC_TARGET_UNAVAILABLE",
+                    "The semantic action is not uniquely bound for operation submission.",
+                    "$.actionId",
+                    "Refresh runtime.get-context and choose one ready semantic action.",
+                    {
+                        {"reason", "semantic-target-unavailable"},
+                        {"providerCalls", 0},
+                    },
+                    requestHash,
+                    actor);
+            }
+            semanticRequest.kind = Data::SemanticOperationKind::InvokeAction;
+            semanticRequest.target = matches.constFirst().target;
+        }
+
+        const Core::SemanticRuntimeValidation validation
+            = Core::validateSemanticOperationRequest(semanticRequest, *context);
+        if (!validation.accepted()) {
+            const bool bindingFailure
+                = validation.error == Core::SemanticRuntimeValidationError::BindingUnverified
+                  || validation.error == Core::SemanticRuntimeValidationError::MappingDigestMissing
+                  || validation.error == Core::SemanticRuntimeValidationError::MappingDigestMismatch
+                  || validation.error == Core::SemanticRuntimeValidationError::InvalidBinding;
+            return makeError(
+                operationId,
+                bindingFailure ? "CT021_SEMANTIC_BINDING_UNVERIFIED"
+                               : "CT023_SEMANTIC_TARGET_UNAVAILABLE",
+                bindingFailure
+                    ? QStringLiteral(
+                          "The semantic target binding is not verified for this operation.")
+                    : QStringLiteral("The semantic target is not available for this operation."),
+                hasSignal ? "$.signalId" : "$.actionId",
+                "Refresh runtime.get-context and satisfy the target's approval policy.",
+                {
+                    {"reason",
+                     bindingFailure ? "semantic-binding-unverified" : "semantic-target-unavailable"},
+                    {"disabledReason",
+                     bindingFailure ? "semantic-binding-unverified" : "semantic-target-unavailable"},
+                    {"providerCalls", 0},
+                },
+                requestHash,
+                actor);
+        }
+
+        const Data::SemanticRuntimeActor semanticActor = semanticAutomationActor(actor);
+        const Data::SemanticOperationRecord record
+            = m_semanticRuntimeService->submit(semanticRequest, semanticActor);
+        if (record.request.operationId != semanticRequest.operationId
+            || record.request.target != semanticRequest.target || record.actor != semanticActor) {
+            return makeError(
+                operationId,
+                "CT020_SEMANTIC_RUNTIME_UNAVAILABLE",
+                "The semantic runtime service returned an invalid operation record.",
+                "$",
+                "Retry after the IDE semantic runtime service is repaired.",
+                {
+                    {"reason", "semantic-operation-invalid"},
+                    {"providerCalls", 0},
+                },
+                requestHash,
+                actor);
+        }
+        return makeSuccess(
+            operationId,
+            {{"operation", semanticOperationObject(record)}},
+            {},
+            requestHash,
+            contextHash,
+            contextHash,
+            actor,
+            record.state == Data::SemanticOperationState::Rejected
+                ? QStringLiteral("semantic-intent-rejected")
+                : QStringLiteral("semantic-intent-submitted"));
     }
 
     if (tool == "controller.list") {
@@ -963,7 +1881,8 @@ QJsonObject AutomationDispatcher::makeSuccess(
     const QString &requestHash,
     const QString &beforeStateHash,
     const QString &afterStateHash,
-    const AutomationActor &actor) const
+    const AutomationActor &actor,
+    const QString &auditDecision) const
 {
     QJsonArray warningArray;
     for (const QString &warning : warnings)
@@ -986,7 +1905,7 @@ QJsonObject AutomationDispatcher::makeSuccess(
              {"requestHash", requestHash},
              {"beforeStateHash", beforeStateHash},
              {"afterStateHash", afterStateHash},
-             {"decision", "allow-read-only"},
+             {"decision", auditDecision},
              {"recordedAt", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
          }},
     };

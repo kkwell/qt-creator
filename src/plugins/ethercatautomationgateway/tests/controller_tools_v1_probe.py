@@ -25,6 +25,10 @@ EXPECTED_TOOLS = sorted(
         "controller.get-topology",
         "controller.list",
         "gateway.get-protocol",
+        "runtime.get-context",
+        "runtime.operation.get",
+        "runtime.operation.request",
+        "runtime.read",
     ]
 )
 
@@ -182,6 +186,29 @@ def rest_get(
     return result.body
 
 
+def rest_post(
+    rest_base: str,
+    path: str,
+    payload: dict[str, Any],
+    timeout: float,
+) -> dict[str, Any]:
+    result = http_json(
+        f"{rest_base}{path}",
+        "POST",
+        payload,
+        {
+            "Content-Type": "application/json",
+            "Origin": "http://localhost",
+            "User-Agent": "controller-tools-v1-probe/1.0",
+            "x-session-id": "probe-rest-session",
+        },
+        timeout,
+    )
+    if result.status != 200:
+        raise ProbeFailure(f"REST POST {path} returned {result.status}: {result.body}")
+    return result.body
+
+
 def compare_read(
     mcp: McpClient,
     rest_base: str,
@@ -192,6 +219,27 @@ def compare_read(
     timeout: float,
 ) -> dict[str, Any]:
     rest = rest_get(rest_base, path, operation_id, timeout)
+    mcp_arguments = dict(arguments)
+    mcp_arguments["operationId"] = operation_id
+    replay = mcp.call(tool, mcp_arguments)
+    if replay != rest:
+        raise ProbeFailure(f"{tool} differs across REST and MCP replay")
+    return expect_ok(rest, tool)
+
+
+def compare_post(
+    mcp: McpClient,
+    rest_base: str,
+    tool: str,
+    path: str,
+    arguments: dict[str, Any],
+    operation_id: str,
+    timeout: float,
+) -> dict[str, Any]:
+    rest_arguments = dict(arguments)
+    rest_arguments.pop("controllerId", None)
+    rest_arguments["operationId"] = operation_id
+    rest = rest_post(rest_base, path, rest_arguments, timeout)
     mcp_arguments = dict(arguments)
     mcp_arguments["operationId"] = operation_id
     replay = mcp.call(tool, mcp_arguments)
@@ -255,8 +303,15 @@ def run_probe(mcp_url: str, rest_url: str, timeout: float) -> dict[str, Any]:
     if (
         protocol_data.get("apiVersion") != "controller-tools/v1"
         or protocol_data.get("mcpProtocolVersion") != MCP_PROTOCOL_VERSION
-        or not protocol_data.get("mockOnly")
-        or not protocol_data.get("readOnly")
+        or not protocol_data.get("controllerViews", {}).get("mockOnly")
+        or not protocol_data.get("controllerViews", {}).get("readOnly")
+        or not protocol_data.get("semanticRuntime", {}).get("available")
+        or not protocol_data.get("semanticRuntime", {}).get(
+            "operationIntentSubmission"
+        )
+        or not protocol_data.get("semanticRuntime", {}).get("approvalRequired")
+        or protocol_data.get("semanticRuntime", {}).get("automationCanApprove")
+        or protocol_data.get("semanticRuntime", {}).get("directProviderCalls")
     ):
         raise ProbeFailure("protocol boundary changed")
     protocol_audit = protocol.get("audit", {})
@@ -339,6 +394,105 @@ def run_probe(mcp_url: str, rest_url: str, timeout: float) -> dict[str, Any]:
         timeout,
     )
 
+    semantic_context_data = compare_read(
+        mcp,
+        rest_url,
+        "runtime.get-context",
+        f"/api/controller-tools/v1/runtime/{encoded}/context",
+        {"controllerId": controller_id},
+        "probe-cross-runtime-context",
+        timeout,
+    )
+    semantic_context = semantic_context_data.get("context", {})
+    if (
+        not semantic_context.get("complete")
+        or not semantic_context.get("bindingVerified")
+        or not semantic_context.get("contextHash")
+    ):
+        raise ProbeFailure("semantic runtime context is not verified")
+    signals = semantic_context.get("signals", [])
+    if not signals:
+        raise ProbeFailure("semantic runtime context contains no signal")
+    signal = signals[0]
+    device_id = signal.get("deviceId", "")
+    signal_id = signal.get("signalId", "")
+    context_hash = semantic_context.get("contextHash", "")
+    if not device_id or not signal_id:
+        raise ProbeFailure("semantic signal identity is incomplete")
+    semantic_encoded = json.dumps(
+        semantic_context_data, sort_keys=True, separators=(",", ":")
+    )
+    forbidden_semantic_tokens = [
+        "resourceId",
+        "componentInstanceId",
+        "consistencyGroupId",
+        "processImage",
+        "pdo",
+        "127.0.0.1",
+    ]
+    if any(token in semantic_encoded for token in forbidden_semantic_tokens):
+        raise ProbeFailure("semantic projection exposed a private runtime binding")
+
+    semantic_read = compare_post(
+        mcp,
+        rest_url,
+        "runtime.read",
+        f"/api/controller-tools/v1/runtime/{encoded}/read",
+        {
+            "controllerId": controller_id,
+            "deviceId": device_id,
+            "signalId": signal_id,
+            "contextHash": context_hash,
+        },
+        "probe-cross-runtime-read",
+        timeout,
+    )
+    semantic_signal = semantic_read.get("signal", {})
+    if (
+        semantic_signal.get("quality") != "good"
+        or semantic_signal.get("captureCycle") != "101"
+    ):
+        raise ProbeFailure("semantic runtime read lost quality or capture cycle")
+
+    semantic_operation = compare_post(
+        mcp,
+        rest_url,
+        "runtime.operation.request",
+        f"/api/controller-tools/v1/runtime/{encoded}/operations",
+        {
+            "controllerId": controller_id,
+            "deviceId": device_id,
+            "signalId": signal_id,
+            "value": False,
+            "parameters": {},
+            "ttlMs": 200,
+            "contextHash": context_hash,
+        },
+        "probe-cross-runtime-operation",
+        timeout,
+    ).get("operation", {})
+    if (
+        semantic_operation.get("state") != "approval-required"
+        or not semantic_operation.get("approvalChallenge")
+        or set(semantic_operation)
+        != {"operationId", "state", "approvalChallenge"}
+    ):
+        raise ProbeFailure("semantic operation bypassed approval")
+
+    target_operation_id = semantic_operation.get("operationId", "")
+    semantic_operation_read = compare_read(
+        mcp,
+        rest_url,
+        "runtime.operation.get",
+        "/api/controller-tools/v1/runtime/operations/"
+        + urllib.parse.quote(target_operation_id, safe=""),
+        {"targetOperationId": target_operation_id},
+        "probe-cross-runtime-operation-get",
+        timeout,
+    ).get("operation", {})
+    if semantic_operation_read != semantic_operation:
+        raise ProbeFailure("semantic operation record differs across the shared service")
+
     conflict = mcp.call(
         "controller.get-state",
         {
@@ -369,6 +523,9 @@ def run_probe(mcp_url: str, rest_url: str, timeout: float) -> dict[str, Any]:
         "diagnosticsAvailable": diagnostics.get("diagnostics", {}).get("available"),
         "capabilitiesAvailable": capabilities.get("controller", {}).get("available"),
         "deviceAvailable": bool(device.get("device")),
+        "semanticContextVerified": semantic_context.get("bindingVerified"),
+        "semanticQuality": semantic_signal.get("quality"),
+        "semanticOperationState": semantic_operation.get("state"),
         "mutationsRejected": 7,
     }
 

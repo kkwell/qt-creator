@@ -95,9 +95,9 @@ public:
         m_error->setWordWrap(true);
 
         m_safety = new QLabel(
-            Tr::tr(
-                "Safety boundary: this service is loopback-only, Mock-only, and read-only. "
-                "It cannot connect, acquire a lease, scan, configure, deploy, or command motion."),
+            Tr::tr("Safety boundary: controller views are loopback-only, Mock-only, and read-only. "
+                   "Semantic operation tools submit approval-required intents to the IDE service; "
+                   "they never call a Provider or controller directly."),
             this);
         m_safety->setObjectName(SETTINGS_SAFETY_OBJECT_NAME);
         m_safety->setAccessibleName(Tr::tr("Gateway safety boundary"));
@@ -185,8 +185,7 @@ private:
         m_restEndpoint->setText(
             snapshot.restEndpoint.isEmpty() ? Tr::tr("Not listening")
                                             : snapshot.restEndpoint.toString());
-        m_error->setText(
-            snapshot.lastError.isEmpty() ? Tr::tr("None") : snapshot.lastError);
+        m_error->setText(snapshot.lastError.isEmpty() ? Tr::tr("None") : snapshot.lastError);
         m_enabled->setEnabled(snapshot.state != GatewayRuntimeState::Unavailable);
         m_refreshing = false;
         updatePortEditability();
@@ -196,8 +195,8 @@ private:
     {
         if (m_refreshing)
             return;
-        const GatewayRuntimeState state
-            = m_runtime ? m_runtime->snapshot().state : GatewayRuntimeState::Unavailable;
+        const GatewayRuntimeState state = m_runtime ? m_runtime->snapshot().state
+                                                    : GatewayRuntimeState::Unavailable;
         const bool editable = state == GatewayRuntimeState::Stopped
                               || state == GatewayRuntimeState::Failed;
         m_mcpPort->setEnabled(editable);
@@ -236,8 +235,7 @@ public:
     }
 };
 
-std::unique_ptr<::Core::IOptionsPage> createGatewaySettingsPage(
-    GatewayRuntimeController *runtime)
+std::unique_ptr<::Core::IOptionsPage> createGatewaySettingsPage(GatewayRuntimeController *runtime)
 {
     return std::make_unique<GatewaySettingsPage>(runtime);
 }

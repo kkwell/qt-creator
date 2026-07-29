@@ -37,7 +37,14 @@ class ReadOnlyGateway:
             self.repository.root / "api" / "controller-tools-v1.mcp-tools.json"
         )
         self.catalog = load_json(catalog_path)
-        self._tools = {tool["name"]: tool for tool in self.catalog["tools"]}
+        # The standalone reference remains the original nine-tool Mock/read-only
+        # implementation. The IDE-only runtime.* extension requires the shared
+        # SemanticRuntimeService and is deliberately not emulated here.
+        self._tools = {
+            tool["name"]: tool
+            for tool in self.catalog["tools"]
+            if not tool["name"].startswith("runtime.")
+        }
         self._audit_events: deque[dict[str, Any]] = deque(maxlen=1024)
         self._audit_lock = threading.Lock()
         self._implementations: dict[
@@ -66,7 +73,7 @@ class ReadOnlyGateway:
 
     @property
     def tool_definitions(self) -> list[dict[str, Any]]:
-        return copy.deepcopy(self.catalog["tools"])
+        return copy.deepcopy(list(self._tools.values()))
 
     @property
     def audit_events(self) -> list[dict[str, Any]]:
