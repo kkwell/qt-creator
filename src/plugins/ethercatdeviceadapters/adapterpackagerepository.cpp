@@ -2,6 +2,8 @@
 
 #include "adapterpackagerepository.h"
 
+#include <ethercatcore/manualcontrolcontract.h>
+
 #include <utils/id.h>
 
 #include <QCryptographicHash>
@@ -15,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <tuple>
 
 namespace EtherCAT::DeviceAdapters::Internal {
 
@@ -22,7 +25,11 @@ using namespace Data;
 
 namespace {
 
-constexpr char schemaVersion[] = "embed-labs.device-adapter/v1";
+constexpr char schemaVersionV1[] = "embed-labs.device-adapter/v1";
+constexpr char schemaVersionV2[] = "embed-labs.device-adapter/v2";
+constexpr char canonicalJsonDomainV2[] = "embed-labs.device-adapter/v2";
+
+enum class PackageSchema { V1, V2 };
 
 struct Package
 {
@@ -34,6 +41,184 @@ static bool fail(QString *error, const QString &message)
 {
     *error = message;
     return false;
+}
+
+static bool canonicalIdentifier(const QString &value)
+{
+    if (value.isEmpty() || value != value.trimmed() || value.size() > 256)
+        return false;
+    return std::none_of(value.cbegin(), value.cend(), [](QChar character) {
+        return character.category() == QChar::Other_Control;
+    });
+}
+
+static bool parseCanonicalSignedDecimal(
+    const QJsonValue &value, const QString &context, qint64 *result, QString *error)
+{
+    if (!value.isString())
+        return fail(error, QString("%1 must be a canonical signed decimal string").arg(context));
+    const QString text = value.toString();
+    qsizetype digitIndex = 0;
+    if (text.startsWith('-')) {
+        if (text.size() < 2 || text.at(1) == '0')
+            return fail(error, QString("%1 is not a canonical signed decimal").arg(context));
+        digitIndex = 1;
+    } else if (text.size() > 1 && text.startsWith('0')) {
+        return fail(error, QString("%1 is not a canonical signed decimal").arg(context));
+    }
+    if (text.isEmpty() || std::any_of(text.cbegin() + digitIndex, text.cend(), [](QChar character) {
+            return character < '0' || character > '9';
+        })) {
+        return fail(error, QString("%1 is not a canonical signed decimal").arg(context));
+    }
+    bool ok = false;
+    const qint64 parsed = text.toLongLong(&ok, 10);
+    if (!ok)
+        return fail(error, QString("%1 exceeds the signed 64-bit range").arg(context));
+    *result = parsed;
+    return true;
+}
+
+static bool parseCanonicalUnsignedDecimal(
+    const QJsonValue &value, const QString &context, quint64 *result, QString *error)
+{
+    if (!value.isString())
+        return fail(error, QString("%1 must be a canonical unsigned decimal string").arg(context));
+    const QString text = value.toString();
+    if (text.isEmpty() || (text.size() > 1 && text.startsWith('0'))
+        || std::any_of(text.cbegin(), text.cend(), [](QChar character) {
+               return character < '0' || character > '9';
+           })) {
+        return fail(error, QString("%1 is not a canonical unsigned decimal").arg(context));
+    }
+    bool ok = false;
+    const quint64 parsed = text.toULongLong(&ok, 10);
+    if (!ok)
+        return fail(error, QString("%1 exceeds the unsigned 64-bit range").arg(context));
+    *result = parsed;
+    return true;
+}
+
+static void appendCanonicalJsonString(const QString &value, QByteArray *result)
+{
+    constexpr char hex[] = "0123456789abcdef";
+    result->append('"');
+    const QList<uint> codePoints = value.toUcs4();
+    for (uint codePoint : codePoints) {
+        switch (codePoint) {
+        case '"':
+            result->append("\\\"");
+            continue;
+        case '\\':
+            result->append("\\\\");
+            continue;
+        case '\b':
+            result->append("\\b");
+            continue;
+        case '\f':
+            result->append("\\f");
+            continue;
+        case '\n':
+            result->append("\\n");
+            continue;
+        case '\r':
+            result->append("\\r");
+            continue;
+        case '\t':
+            result->append("\\t");
+            continue;
+        default:
+            break;
+        }
+        if (codePoint < 0x20) {
+            result->append("\\u00");
+            result->append(hex[(codePoint >> 4) & 0xf]);
+            result->append(hex[codePoint & 0xf]);
+            continue;
+        }
+        const char32_t utf32 = char32_t(codePoint);
+        result->append(QString::fromUcs4(&utf32, 1).toUtf8());
+    }
+    result->append('"');
+}
+
+static bool appendCanonicalJson(
+    const QJsonValue &value, const QString &context, QByteArray *result, QString *error)
+{
+    if (value.isNull() || value.isUndefined()) {
+        result->append("null");
+        return true;
+    }
+    if (value.isBool()) {
+        result->append(value.toBool() ? "true" : "false");
+        return true;
+    }
+    if (value.isString()) {
+        appendCanonicalJsonString(value.toString(), result);
+        return true;
+    }
+    if (value.isDouble()) {
+        const double number = value.toDouble();
+        constexpr double largestExactlyRepresentableInteger = 9007199254740991.0;
+        if (!std::isfinite(number) || std::trunc(number) != number
+            || std::abs(number) > largestExactlyRepresentableInteger) {
+            return fail(
+                error,
+                QString("%1 contains a non-canonical JSON number; v2 numbers must be exact "
+                        "integers")
+                    .arg(context));
+        }
+        result->append(QByteArray::number(qint64(number)));
+        return true;
+    }
+    if (value.isArray()) {
+        result->append('[');
+        const QJsonArray array = value.toArray();
+        for (qsizetype index = 0; index < array.size(); ++index) {
+            if (index != 0)
+                result->append(',');
+            if (!appendCanonicalJson(
+                    array.at(index), QString("%1[%2]").arg(context).arg(index), result, error)) {
+                return false;
+            }
+        }
+        result->append(']');
+        return true;
+    }
+    if (value.isObject()) {
+        result->append('{');
+        const QJsonObject object = value.toObject();
+        QStringList keys = object.keys();
+        std::sort(keys.begin(), keys.end(), [](const QString &left, const QString &right) {
+            return left.toUtf8() < right.toUtf8();
+        });
+        for (qsizetype index = 0; index < keys.size(); ++index) {
+            if (index != 0)
+                result->append(',');
+            const QString &key = keys.at(index);
+            appendCanonicalJsonString(key, result);
+            result->append(':');
+            if (!appendCanonicalJson(
+                    object.value(key), QString("%1.%2").arg(context, key), result, error)) {
+                return false;
+            }
+        }
+        result->append('}');
+        return true;
+    }
+    return fail(error, QString("%1 contains an unsupported JSON value").arg(context));
+}
+
+static QByteArray canonicalContentSha256V2(
+    const QJsonObject &object, const QString &context, QString *error)
+{
+    QByteArray canonical;
+    if (!appendCanonicalJson(object, context, &canonical, error))
+        return {};
+    QByteArray digestInput(canonicalJsonDomainV2);
+    digestInput.append('\0');
+    digestInput.append(canonical);
+    return QCryptographicHash::hash(digestInput, QCryptographicHash::Sha256);
 }
 
 static bool checkKeys(
@@ -212,7 +397,8 @@ static bool parseStringList(
     const QString &key,
     const QString &context,
     QStringList *result,
-    QString *error)
+    QString *error,
+    bool requireCanonicalOrder = false)
 {
     const QJsonValue value = object.value(key);
     if (!value.isArray())
@@ -229,6 +415,17 @@ static bool parseStringList(
     QSet<QString> unique(result->cbegin(), result->cend());
     if (unique.size() != result->size())
         return fail(error, QString("%1.%2 contains duplicate values").arg(context, key));
+    if (requireCanonicalOrder
+        && !std::is_sorted(result->cbegin(), result->cend(), std::less<QString>())) {
+        return fail(
+            error, QString("%1.%2 must be sorted in strict canonical order").arg(context, key));
+    }
+    if (requireCanonicalOrder
+        && std::any_of(result->cbegin(), result->cend(), [](const QString &item) {
+               return !canonicalIdentifier(item);
+           })) {
+        return fail(error, QString("%1.%2 contains a non-canonical identifier").arg(context, key));
+    }
     return true;
 }
 
@@ -237,10 +434,11 @@ static bool parseCapabilityList(
     const QString &key,
     const QString &context,
     QList<DeviceCapabilityId> *result,
-    QString *error)
+    QString *error,
+    bool requireCanonicalOrder = false)
 {
     QStringList values;
-    if (!parseStringList(object, key, context, &values, error))
+    if (!parseStringList(object, key, context, &values, error, requireCanonicalOrder))
         return false;
     result->clear();
     for (const QString &value : std::as_const(values))
@@ -285,6 +483,17 @@ static std::optional<SemanticSignalAccess> signalAccessFromString(const QString 
     return std::nullopt;
 }
 
+static std::optional<SemanticSignalExposure> signalExposureFromString(const QString &value)
+{
+    if (value == "public")
+        return SemanticSignalExposure::Public;
+    if (value == "action-only")
+        return SemanticSignalExposure::ActionOnly;
+    if (value == "internal")
+        return SemanticSignalExposure::Internal;
+    return std::nullopt;
+}
+
 static std::optional<EtherCATDataType> dataTypeFromString(const QString &value)
 {
     if (value == "boolean")
@@ -314,6 +523,235 @@ static std::optional<EtherCATDataType> dataTypeFromString(const QString &value)
     if (value == "octet-string")
         return EtherCATDataType::OctetString;
     return std::nullopt;
+}
+
+static std::optional<EngineeringRounding> roundingFromString(const QString &value)
+{
+    if (value == "reject-inexact")
+        return EngineeringRounding::RejectInexact;
+    if (value == "toward-zero")
+        return EngineeringRounding::TowardZero;
+    if (value == "toward-negative-infinity")
+        return EngineeringRounding::TowardNegativeInfinity;
+    if (value == "toward-positive-infinity")
+        return EngineeringRounding::TowardPositiveInfinity;
+    if (value == "nearest-ties-to-even")
+        return EngineeringRounding::NearestTiesToEven;
+    return std::nullopt;
+}
+
+static bool parseExactRational(
+    const QJsonValue &value, const QString &context, ExactRational *result, QString *error)
+{
+    if (!value.isObject())
+        return fail(error, QString("%1 must be an exact rational object").arg(context));
+    const QJsonObject object = value.toObject();
+    if (!checkKeys(object, {"numerator", "denominator"}, context, error))
+        return false;
+    qint64 numerator = 0;
+    quint64 denominator = 0;
+    if (!parseCanonicalSignedDecimal(
+            object.value("numerator"), context + ".numerator", &numerator, error)
+        || !parseCanonicalUnsignedDecimal(
+            object.value("denominator"), context + ".denominator", &denominator, error)) {
+        return false;
+    }
+    if (denominator == 0 || denominator > quint64(std::numeric_limits<qint64>::max())) {
+        return fail(
+            error,
+            QString("%1.denominator must be in the signed positive 64-bit range").arg(context));
+    }
+    *result = {numerator, qint64(denominator)};
+    const Core::EngineeringContractValidation validation = Core::validateExactRational(*result);
+    if (!validation.accepted())
+        return fail(error, QString("%1: %2").arg(context, validation.detail));
+    return true;
+}
+
+static bool parseOptionalExactRational(
+    const QJsonObject &object,
+    const QString &key,
+    const QString &context,
+    std::optional<ExactRational> *result,
+    QString *error)
+{
+    const QJsonValue value = object.value(key);
+    if (value.isNull()) {
+        result->reset();
+        return true;
+    }
+    ExactRational parsed;
+    if (!parseExactRational(value, QString("%1.%2").arg(context, key), &parsed, error))
+        return false;
+    *result = parsed;
+    return true;
+}
+
+static bool parseEngineeringConstraint(
+    const QJsonValue &value, const QString &context, EngineeringConstraint *result, QString *error)
+{
+    if (!value.isObject())
+        return fail(error, QString("%1 must be an engineering constraint object").arg(context));
+    const QJsonObject object = value.toObject();
+    if (!checkKeys(
+            object, {"minimum", "maximum", "step", "stepOrigin", "enumeration"}, context, error)) {
+        return false;
+    }
+    if (!parseOptionalExactRational(object, "minimum", context, &result->minimum, error)
+        || !parseOptionalExactRational(object, "maximum", context, &result->maximum, error)
+        || !parseOptionalExactRational(object, "step", context, &result->step, error)
+        || !parseOptionalExactRational(object, "stepOrigin", context, &result->stepOrigin, error)) {
+        return false;
+    }
+
+    const QJsonValue enumeration = object.value("enumeration");
+    if (!enumeration.isArray())
+        return fail(error, QString("%1.enumeration must be an array").arg(context));
+    result->enumeration.clear();
+    QString previousId;
+    for (qsizetype index = 0; index < enumeration.toArray().size(); ++index) {
+        const QString itemContext = QString("%1.enumeration[%2]").arg(context).arg(index);
+        const QJsonValue itemValue = enumeration.toArray().at(index);
+        if (!itemValue.isObject())
+            return fail(error, QString("%1 must be an object").arg(itemContext));
+        const QJsonObject item = itemValue.toObject();
+        if (!checkKeys(item, {"id", "displayName", "value"}, itemContext, error))
+            return false;
+        EngineeringEnumerationValue entry;
+        if (!parseString(item, "id", itemContext, &entry.id, error)
+            || !parseString(item, "displayName", itemContext, &entry.displayName, error)
+            || !parseExactRational(item.value("value"), itemContext + ".value", &entry.value, error)) {
+            return false;
+        }
+        if (!canonicalIdentifier(entry.id) || (!previousId.isEmpty() && entry.id <= previousId)) {
+            return fail(
+                error,
+                QString("%1.enumeration must use canonical IDs in strict sorted order").arg(context));
+        }
+        previousId = entry.id;
+        result->enumeration.append(entry);
+    }
+    const Core::EngineeringContractValidation validation = Core::validateEngineeringConstraint(
+        *result);
+    if (!validation.accepted())
+        return fail(error, QString("%1: %2").arg(context, validation.detail));
+    return true;
+}
+
+static bool parseEngineeringTransform(
+    const QJsonValue &value, const QString &context, EngineeringTransform *result, QString *error)
+{
+    if (!value.isObject())
+        return fail(error, QString("%1 must be an engineering transform object").arg(context));
+    const QJsonObject object = value.toObject();
+    if (!checkKeys(object, {"scale", "offset", "unit", "rounding", "constraint"}, context, error))
+        return false;
+    QString rounding;
+    if (!parseExactRational(object.value("scale"), context + ".scale", &result->scale, error)
+        || !parseExactRational(object.value("offset"), context + ".offset", &result->offset, error)
+        || !parseString(object, "unit", context, &result->unit, error, true)
+        || !parseString(object, "rounding", context, &rounding, error)
+        || !parseEngineeringConstraint(
+            object.value("constraint"), context + ".constraint", &result->constraint, error)) {
+        return false;
+    }
+    const std::optional<EngineeringRounding> parsedRounding = roundingFromString(rounding);
+    if (!parsedRounding)
+        return fail(error, QString("%1.rounding is not supported").arg(context));
+    result->rounding = parsedRounding;
+    const Core::EngineeringContractValidation validation = Core::validateEngineeringTransform(
+        *result);
+    if (!validation.accepted())
+        return fail(error, QString("%1: %2").arg(context, validation.detail));
+    return true;
+}
+
+static bool parseEngineeringValue(
+    const QJsonValue &value, const QString &context, EngineeringValue *result, QString *error)
+{
+    if (!value.isObject())
+        return fail(error, QString("%1 must be an exact engineering value object").arg(context));
+    const QJsonObject object = value.toObject();
+    if (!checkKeys(object, {"kind", "value"}, context, error))
+        return false;
+    QString kind;
+    if (!parseString(object, "kind", context, &kind, error))
+        return false;
+    const QJsonValue encodedValue = object.value("value");
+    if (kind == "boolean") {
+        if (!encodedValue.isBool())
+            return fail(error, QString("%1.value must be a Boolean").arg(context));
+        *result = EngineeringValue::fromBoolean(encodedValue.toBool());
+    } else if (kind == "signed-integer") {
+        qint64 parsed = 0;
+        if (!parseCanonicalSignedDecimal(encodedValue, context + ".value", &parsed, error))
+            return false;
+        *result = EngineeringValue::fromSignedInteger(parsed);
+    } else if (kind == "unsigned-integer") {
+        quint64 parsed = 0;
+        if (!parseCanonicalUnsignedDecimal(encodedValue, context + ".value", &parsed, error))
+            return false;
+        *result = EngineeringValue::fromUnsignedInteger(parsed);
+    } else if (kind == "exact-rational") {
+        ExactRational parsed;
+        if (!parseExactRational(encodedValue, context + ".value", &parsed, error))
+            return false;
+        *result = EngineeringValue::fromExactRational(parsed);
+    } else if (kind == "enumeration") {
+        if (!encodedValue.isString() || !canonicalIdentifier(encodedValue.toString()))
+            return fail(error, QString("%1.value must be a canonical enumeration ID").arg(context));
+        *result = EngineeringValue::fromEnumeration(encodedValue.toString());
+    } else {
+        return fail(error, QString("%1.kind is not supported").arg(context));
+    }
+    const Core::EngineeringContractValidation validation = Core::validateEngineeringValue(*result);
+    if (!validation.accepted())
+        return fail(error, QString("%1: %2").arg(context, validation.detail));
+    return true;
+}
+
+static bool parseOptionalEngineeringValue(
+    const QJsonValue &value,
+    const QString &context,
+    std::optional<EngineeringValue> *result,
+    QString *error)
+{
+    if (value.isNull()) {
+        result->reset();
+        return true;
+    }
+    EngineeringValue parsed;
+    if (!parseEngineeringValue(value, context, &parsed, error))
+        return false;
+    *result = parsed;
+    return true;
+}
+
+static double rationalAsDisplayDouble(const ExactRational &value)
+{
+    return double(value.numerator) / double(value.denominator);
+}
+
+static void deriveLegacyValueMetadata(
+    const EngineeringTransform &transform, SemanticValueMetadata *result)
+{
+    result->unit = transform.unit;
+    result->scale = rationalAsDisplayDouble(transform.scale);
+    result->offset = rationalAsDisplayDouble(transform.offset);
+    result->hasMinimum = transform.constraint.minimum.has_value();
+    result->minimum = result->hasMinimum ? rationalAsDisplayDouble(*transform.constraint.minimum)
+                                         : 0.0;
+    result->hasMaximum = transform.constraint.maximum.has_value();
+    result->maximum = result->hasMaximum ? rationalAsDisplayDouble(*transform.constraint.maximum)
+                                         : 0.0;
+    result->hasStep = transform.constraint.step.has_value();
+    result->step = result->hasStep ? rationalAsDisplayDouble(*transform.constraint.step) : 0.0;
+    result->enumValues.clear();
+    for (const EngineeringEnumerationValue &entry : transform.constraint.enumeration) {
+        if (entry.value.denominator != 1)
+            continue;
+        result->enumValues.append({entry.value.numerator, entry.id, entry.displayName});
+    }
 }
 
 static std::optional<ManualControlTimeoutAction> timeoutActionFromString(const QString &value)
@@ -520,39 +958,70 @@ static bool parseBinding(
     return true;
 }
 
+static auto bindingCanonicalKey(const DeviceSignalBinding &binding)
+{
+    return std::tuple{
+        int(binding.kind),
+        int(binding.pdoDirection),
+        binding.pdoIndex,
+        binding.objectIndex,
+        binding.objectSubIndex,
+        int(binding.physicalType),
+        binding.bitWidth,
+        int(binding.byteOrder),
+        binding.slotRelative,
+    };
+}
+
 static bool parseSignal(
     const QJsonValue &value,
     const QString &context,
+    PackageSchema schema,
     SemanticSignalDefinition *result,
     QString *error)
 {
     if (!value.isObject())
         return fail(error, QString("%1 must be an object").arg(context));
     const QJsonObject object = value.toObject();
-    if (!checkKeys(
-            object,
-            {"id",
-             "displayName",
-             "description",
-             "capabilities",
-             "direction",
-             "access",
-             "required",
-             "bindings",
-             "value",
-             "safeValue",
-             "manualControl"},
-            context,
-            error)) {
+    const QStringList keys = schema == PackageSchema::V1
+                                 ? QStringList{
+                                       "id",
+                                       "displayName",
+                                       "description",
+                                       "capabilities",
+                                       "direction",
+                                       "access",
+                                       "required",
+                                       "bindings",
+                                       "value",
+                                       "safeValue",
+                                       "manualControl",
+                                   }
+                                 : QStringList{
+                                       "id",
+                                       "displayName",
+                                       "description",
+                                       "capabilities",
+                                       "direction",
+                                       "access",
+                                       "exposure",
+                                       "required",
+                                       "bindings",
+                                       "engineeringTransform",
+                                   };
+    if (!checkKeys(object, keys, context, error)) {
         return false;
     }
     if (!parseString(object, "id", context, &result->id.value, error)
         || !parseString(object, "displayName", context, &result->displayName, error)
         || !parseString(object, "description", context, &result->description, error, true)
-        || !parseCapabilityList(object, "capabilities", context, &result->capabilities, error)
+        || !parseCapabilityList(
+            object, "capabilities", context, &result->capabilities, error, schema == PackageSchema::V2)
         || !parseBool(object, "required", context, &result->requiredForComplete, error)) {
         return false;
     }
+    if (schema == PackageSchema::V2 && !canonicalIdentifier(result->id.value))
+        return fail(error, QString("%1.id must be a canonical identifier").arg(context));
     QString direction;
     QString access;
     if (!parseString(object, "direction", context, &direction, error)
@@ -567,6 +1036,16 @@ static bool parseSignal(
         return fail(error, QString("%1.access is not supported").arg(context));
     result->direction = *parsedDirection;
     result->access = *parsedAccess;
+    if (schema == PackageSchema::V2) {
+        QString exposure;
+        if (!parseString(object, "exposure", context, &exposure, error))
+            return false;
+        const std::optional<SemanticSignalExposure> parsedExposure = signalExposureFromString(
+            exposure);
+        if (!parsedExposure)
+            return fail(error, QString("%1.exposure is not supported").arg(context));
+        result->exposure = *parsedExposure;
+    }
 
     const QJsonValue bindings = object.value("bindings");
     if (!bindings.isArray() || bindings.toArray().isEmpty())
@@ -581,33 +1060,60 @@ static bool parseSignal(
                 error)) {
             return false;
         }
+        if (schema == PackageSchema::V2 && !result->bindings.isEmpty()
+            && bindingCanonicalKey(binding) <= bindingCanonicalKey(result->bindings.constLast())) {
+            return fail(
+                error,
+                QString("%1.bindings must be unique and in strict canonical order").arg(context));
+        }
         result->bindings.append(binding);
     }
-    if (!parseValueMetadata(object.value("value"), context + ".value", &result->valueMetadata, error)
-        || !parseManualControl(
-            object.value("manualControl"),
-            context + ".manualControl",
-            &result->manualControl,
-            error)) {
-        return false;
+    if (schema == PackageSchema::V1) {
+        if (!parseValueMetadata(
+                object.value("value"), context + ".value", &result->valueMetadata, error)
+            || !parseManualControl(
+                object.value("manualControl"),
+                context + ".manualControl",
+                &result->manualControl,
+                error)
+            || !parseScalar(
+                object.value("safeValue"), context + ".safeValue", true, &result->safeValue, error)) {
+            return false;
+        }
+        result->hasSafeValue = !object.value("safeValue").isNull();
+    } else {
+        EngineeringTransform transform;
+        if (!parseEngineeringTransform(
+                object.value("engineeringTransform"),
+                context + ".engineeringTransform",
+                &transform,
+                error)) {
+            return false;
+        }
+        result->engineeringTransform = transform;
+        deriveLegacyValueMetadata(transform, &result->valueMetadata);
+        result->hasSafeValue = false;
+        result->safeValue = {};
+        result->manualControl = {};
     }
-    if (!parseScalar(
-            object.value("safeValue"), context + ".safeValue", true, &result->safeValue, error)) {
-        return false;
-    }
-    result->hasSafeValue = !object.value("safeValue").isNull();
     if (result->direction == SemanticSignalDirection::Input
         && result->access != SemanticSignalAccess::ReadOnly) {
         return fail(error, QString("%1 input signal must be read-only").arg(context));
     }
     if (result->access == SemanticSignalAccess::ReadOnly && result->manualControl.allowed)
         return fail(error, QString("%1 read-only signal cannot allow manual writes").arg(context));
+    if (schema == PackageSchema::V2 && result->exposure == SemanticSignalExposure::ActionOnly
+        && (result->direction == SemanticSignalDirection::Input
+            || result->access == SemanticSignalAccess::ReadOnly)) {
+        return fail(error, QString("%1 action-only signal must be writable").arg(context));
+    }
     return true;
 }
 
 static bool parseSignals(
     const QJsonValue &value,
     const QString &context,
+    PackageSchema schema,
     QList<SemanticSignalDefinition> *result,
     QString *error)
 {
@@ -620,6 +1126,7 @@ static bool parseSignals(
         if (!parseSignal(
                 value.toArray().at(index),
                 QString("%1[%2]").arg(context).arg(index),
+                schema,
                 &signal,
                 error)) {
             return false;
@@ -629,6 +1136,10 @@ static bool parseSignals(
                 error,
                 QString("%1 contains duplicate signal id \"%2\"").arg(context, signal.id.value));
         ids.insert(signal.id.value);
+        if (schema == PackageSchema::V2 && !result->isEmpty()
+            && signal.id.value <= result->constLast().id.value) {
+            return fail(error, QString("%1 must be in strict semantic ID order").arg(context));
+        }
         result->append(signal);
     }
     return true;
@@ -639,7 +1150,8 @@ static bool parseIndexList(
     const QString &key,
     const QString &context,
     QList<quint16> *result,
-    QString *error)
+    QString *error,
+    bool requireCanonicalOrder = false)
 {
     const QJsonValue value = object.value(key);
     if (!value.isArray())
@@ -658,6 +1170,9 @@ static bool parseIndexList(
         }
         if (parsed == 0 || seen.contains(quint16(parsed)))
             return fail(error, QString("%1.%2 contains zero or a duplicate index").arg(context, key));
+        if (requireCanonicalOrder && !result->isEmpty() && parsed <= result->constLast()) {
+            return fail(error, QString("%1.%2 must be in strict numeric order").arg(context, key));
+        }
         seen.insert(quint16(parsed));
         result->append(quint16(parsed));
     }
@@ -667,6 +1182,7 @@ static bool parseIndexList(
 static bool parseProfiles(
     const QJsonValue &value,
     const QString &context,
+    PackageSchema schema,
     QList<ProcessDataProfile> *result,
     QString *error)
 {
@@ -686,17 +1202,41 @@ static bool parseProfiles(
         ProcessDataProfile profile;
         QStringList requiredSignals;
         if (!parseString(object, "id", itemContext, &profile.id, error)
-            || !parseIndexList(object, "rxPdos", itemContext, &profile.rxPdoIndices, error)
-            || !parseIndexList(object, "txPdos", itemContext, &profile.txPdoIndices, error)
-            || !parseStringList(object, "requiredSignals", itemContext, &requiredSignals, error)) {
+            || !parseIndexList(
+                object,
+                "rxPdos",
+                itemContext,
+                &profile.rxPdoIndices,
+                error,
+                schema == PackageSchema::V2)
+            || !parseIndexList(
+                object,
+                "txPdos",
+                itemContext,
+                &profile.txPdoIndices,
+                error,
+                schema == PackageSchema::V2)
+            || !parseStringList(
+                object,
+                "requiredSignals",
+                itemContext,
+                &requiredSignals,
+                error,
+                schema == PackageSchema::V2)) {
             return false;
         }
+        if (schema == PackageSchema::V2 && !canonicalIdentifier(profile.id))
+            return fail(error, QString("%1.id must be canonical").arg(itemContext));
         if (profile.rxPdoIndices.isEmpty() && profile.txPdoIndices.isEmpty())
             return fail(error, QString("%1 must select at least one PDO").arg(itemContext));
         if (ids.contains(profile.id))
             return fail(
                 error, QString("%1 contains duplicate profile id \"%2\"").arg(context, profile.id));
         ids.insert(profile.id);
+        if (schema == PackageSchema::V2 && !result->isEmpty()
+            && profile.id <= result->constLast().id) {
+            return fail(error, QString("%1 must be in strict profile ID order").arg(context));
+        }
         for (const QString &signal : std::as_const(requiredSignals))
             profile.requiredSignals.append({signal});
         result->append(profile);
@@ -707,6 +1247,7 @@ static bool parseProfiles(
 static bool parseModules(
     const QJsonValue &value,
     const QString &context,
+    PackageSchema schema,
     QList<DeviceModuleProfile> *result,
     QString *error)
 {
@@ -740,14 +1281,23 @@ static bool parseModules(
                 error)
             || !parseString(object, "typeName", itemContext, &profile.typeName, error)
             || !parseString(object, "moduleClass", itemContext, &profile.moduleClass, error)
-            || !parseCapabilityList(object, "capabilities", itemContext, &profile.capabilities, error)
+            || !parseCapabilityList(
+                object,
+                "capabilities",
+                itemContext,
+                &profile.capabilities,
+                error,
+                schema == PackageSchema::V2)
             || !parseSignals(
                 object.value("signals"),
                 itemContext + ".signals",
+                schema,
                 &profile.slotRelativeSignals,
                 error)) {
             return false;
         }
+        if (schema == PackageSchema::V2 && !canonicalIdentifier(profile.id))
+            return fail(error, QString("%1.id must be canonical").arg(itemContext));
         if (moduleIdent == 0)
             return fail(error, QString("%1.moduleIdent must be non-zero").arg(itemContext));
         profile.moduleIdent = quint32(moduleIdent);
@@ -757,6 +1307,14 @@ static bool parseModules(
         }
         ids.insert(profile.id);
         moduleIdents.insert(profile.moduleIdent);
+        if (schema == PackageSchema::V2 && !result->isEmpty()) {
+            const DeviceModuleProfile &previous = result->constLast();
+            if (std::tie(profile.moduleIdent, profile.id)
+                <= std::tie(previous.moduleIdent, previous.id)) {
+                return fail(
+                    error, QString("%1 must be ordered by ModuleIdent and module ID").arg(context));
+            }
+        }
         for (const SemanticSignalDefinition &signal : std::as_const(profile.slotRelativeSignals)) {
             if (!signal.id.value.contains("{slot}")) {
                 return fail(
@@ -780,19 +1338,42 @@ static bool parseModules(
 }
 
 static bool parseControlValue(
-    const QJsonValue &value, const QString &context, DeviceControlValue *result, QString *error)
+    const QJsonValue &value,
+    const QString &context,
+    PackageSchema schema,
+    DeviceControlValue *result,
+    QString *error)
 {
     if (!value.isObject())
         return fail(error, QString("%1 must be an object").arg(context));
     const QJsonObject object = value.toObject();
-    if (!checkKeys(object, {"source", "literal", "parameterId"}, context, error))
+    const QStringList keys = schema == PackageSchema::V1
+                                 ? QStringList{"source", "literal", "parameterId"}
+                                 : QStringList{"source", "engineeringLiteralValue", "parameterId"};
+    if (!checkKeys(object, keys, context, error))
         return false;
     QString source;
     if (!parseString(object, "source", context, &source, error)
-        || !parseNullableString(object, "parameterId", context, &result->parameterId, error)
-        || !parseScalar(
-            object.value("literal"), context + ".literal", true, &result->literalValue, error)) {
+        || !parseNullableString(object, "parameterId", context, &result->parameterId, error)) {
         return false;
+    }
+    if (schema == PackageSchema::V1) {
+        if (!parseScalar(
+                object.value("literal"), context + ".literal", true, &result->literalValue, error)) {
+            return false;
+        }
+    } else {
+        if (!parseOptionalEngineeringValue(
+                object.value("engineeringLiteralValue"),
+                context + ".engineeringLiteralValue",
+                &result->engineeringLiteralValue,
+                error)) {
+            return false;
+        }
+        result->literalValue = {};
+        if (!result->parameterId.isEmpty() && !canonicalIdentifier(result->parameterId)) {
+            return fail(error, QString("%1.parameterId must be canonical").arg(context));
+        }
     }
     if (source == "invalid")
         result->source = DeviceControlValueSource::Invalid;
@@ -802,8 +1383,15 @@ static bool parseControlValue(
         result->source = DeviceControlValueSource::Parameter;
     else
         return fail(error, QString("%1.source is not supported").arg(context));
-    if (result->source == DeviceControlValueSource::Literal && object.value("literal").isNull())
-        return fail(error, QString("%1.literal must be set for literal source").arg(context));
+    const bool hasLiteral = schema == PackageSchema::V1
+                                ? !object.value("literal").isNull()
+                                : result->engineeringLiteralValue.has_value();
+    if (result->source == DeviceControlValueSource::Literal && !hasLiteral)
+        return fail(error, QString("%1 requires an exact literal value").arg(context));
+    if (schema == PackageSchema::V2 && result->source != DeviceControlValueSource::Literal
+        && hasLiteral) {
+        return fail(error, QString("%1 literal is only valid for literal source").arg(context));
+    }
     if (result->source == DeviceControlValueSource::Parameter && result->parameterId.isEmpty())
         return fail(error, QString("%1.parameterId must be set for parameter source").arg(context));
     if (result->source != DeviceControlValueSource::Parameter && !result->parameterId.isEmpty())
@@ -814,17 +1402,34 @@ static bool parseControlValue(
 static bool parseActionParameter(
     const QJsonValue &value,
     const QString &context,
+    PackageSchema schema,
     DeviceControlActionParameter *result,
     QString *error)
 {
     if (!value.isObject())
         return fail(error, QString("%1 must be an object").arg(context));
     const QJsonObject object = value.toObject();
-    if (!checkKeys(
-            object,
-            {"id", "displayName", "description", "dataType", "value", "required", "defaultValue"},
-            context,
-            error)) {
+    const QStringList keys = schema == PackageSchema::V1
+                                 ? QStringList{
+                                       "id",
+                                       "displayName",
+                                       "description",
+                                       "dataType",
+                                       "value",
+                                       "required",
+                                       "defaultValue",
+                                   }
+                                 : QStringList{
+                                       "id",
+                                       "displayName",
+                                       "description",
+                                       "dataType",
+                                       "unit",
+                                       "engineeringConstraint",
+                                       "required",
+                                       "engineeringDefaultValue",
+                                   };
+    if (!checkKeys(object, keys, context, error)) {
         return false;
     }
     QString dataType;
@@ -832,26 +1437,77 @@ static bool parseActionParameter(
         || !parseString(object, "displayName", context, &result->displayName, error)
         || !parseString(object, "description", context, &result->description, error, true)
         || !parseString(object, "dataType", context, &dataType, error)
-        || !parseValueMetadata(object.value("value"), context + ".value", &result->valueMetadata, error)
-        || !parseBool(object, "required", context, &result->required, error)
-        || !parseScalar(
-            object.value("defaultValue"),
-            context + ".defaultValue",
-            true,
-            &result->defaultValue,
-            error)) {
+        || !parseBool(object, "required", context, &result->required, error)) {
         return false;
+    }
+    if (schema == PackageSchema::V1) {
+        if (!parseValueMetadata(
+                object.value("value"), context + ".value", &result->valueMetadata, error)
+            || !parseScalar(
+                object.value("defaultValue"),
+                context + ".defaultValue",
+                true,
+                &result->defaultValue,
+                error)) {
+            return false;
+        }
+        result->hasDefaultValue = !object.value("defaultValue").isNull();
+    } else {
+        if (!canonicalIdentifier(result->id))
+            return fail(error, QString("%1.id must be canonical").arg(context));
+        if (!parseString(object, "unit", context, &result->valueMetadata.unit, error, true)) {
+            return false;
+        }
+        EngineeringConstraint constraint;
+        if (!parseEngineeringConstraint(
+                object.value("engineeringConstraint"),
+                context + ".engineeringConstraint",
+                &constraint,
+                error)
+            || !parseOptionalEngineeringValue(
+                object.value("engineeringDefaultValue"),
+                context + ".engineeringDefaultValue",
+                &result->engineeringDefaultValue,
+                error)) {
+            return false;
+        }
+        result->engineeringConstraint = constraint;
+        result->hasDefaultValue = result->engineeringDefaultValue.has_value();
+        result->defaultValue = {};
+        result->valueMetadata.scale = 1.0;
+        result->valueMetadata.offset = 0.0;
+        result->valueMetadata.hasMinimum = constraint.minimum.has_value();
+        result->valueMetadata.minimum = constraint.minimum
+                                            ? rationalAsDisplayDouble(*constraint.minimum)
+                                            : 0.0;
+        result->valueMetadata.hasMaximum = constraint.maximum.has_value();
+        result->valueMetadata.maximum = constraint.maximum
+                                            ? rationalAsDisplayDouble(*constraint.maximum)
+                                            : 0.0;
+        result->valueMetadata.hasStep = constraint.step.has_value();
+        result->valueMetadata.step = constraint.step ? rationalAsDisplayDouble(*constraint.step)
+                                                     : 0.0;
+        if (result->engineeringDefaultValue) {
+            const Core::EngineeringContractValidation validation
+                = Core::validateEngineeringValueAgainstConstraint(
+                    *result->engineeringDefaultValue, constraint);
+            if (!validation.accepted())
+                return fail(error, QString("%1: %2").arg(context, validation.detail));
+        }
     }
     const auto parsedType = dataTypeFromString(dataType);
     if (!parsedType)
         return fail(error, QString("%1.dataType is not supported").arg(context));
     result->dataType = *parsedType;
-    result->hasDefaultValue = !object.value("defaultValue").isNull();
     return true;
 }
 
 static bool parseActionStep(
-    const QJsonValue &value, const QString &context, DeviceControlStep *result, QString *error)
+    const QJsonValue &value,
+    const QString &context,
+    PackageSchema schema,
+    DeviceControlStep *result,
+    QString *error)
 {
     if (!value.isObject())
         return fail(error, QString("%1 must be an object").arg(context));
@@ -861,9 +1517,13 @@ static bool parseActionStep(
     QString kind;
     if (!parseString(object, "kind", context, &kind, error)
         || !parseString(object, "signalId", context, &result->signalId.value, error, true)
-        || !parseControlValue(object.value("value"), context + ".value", &result->value, error)
-        || !parseControlValue(object.value("mask"), context + ".mask", &result->mask, error)) {
+        || !parseControlValue(object.value("value"), context + ".value", schema, &result->value, error)
+        || !parseControlValue(object.value("mask"), context + ".mask", schema, &result->mask, error)) {
         return false;
+    }
+    if (schema == PackageSchema::V2 && !result->signalId.value.isEmpty()
+        && !canonicalIdentifier(result->signalId.value)) {
+        return fail(error, QString("%1.signalId must be canonical").arg(context));
     }
     if (kind == "write-signal")
         result->kind = DeviceControlStepKind::WriteSignal;
@@ -889,12 +1549,33 @@ static bool parseActionStep(
     }
     if (result->timeoutMs == 0)
         return fail(error, QString("%1 step must have a finite timeout").arg(context));
+    if (schema == PackageSchema::V2) {
+        const bool valuePresent = result->value.source != DeviceControlValueSource::Invalid;
+        const bool maskPresent = result->mask.source != DeviceControlValueSource::Invalid;
+        if (result->kind == DeviceControlStepKind::Delay && (valuePresent || maskPresent)) {
+            return fail(error, QString("%1 delay cannot carry values").arg(context));
+        }
+        if (result->kind == DeviceControlStepKind::WriteSignal && (!valuePresent || maskPresent)) {
+            return fail(error, QString("%1 write requires one exact value and no mask").arg(context));
+        }
+        if (result->kind == DeviceControlStepKind::WaitMaskedEquals
+            && (!valuePresent || !maskPresent)) {
+            return fail(error, QString("%1 masked wait requires exact value and mask").arg(context));
+        }
+        if (result->kind == DeviceControlStepKind::WaitAbsoluteAtMost
+            && (!valuePresent || maskPresent)) {
+            return fail(
+                error,
+                QString("%1 absolute wait requires one exact value and no mask").arg(context));
+        }
+    }
     return true;
 }
 
 static bool parseActions(
     const QJsonValue &value,
     const QString &context,
+    PackageSchema schema,
     QList<DeviceControlAction> *result,
     QString *error)
 {
@@ -908,29 +1589,44 @@ static bool parseActions(
         if (!itemValue.isObject())
             return fail(error, QString("%1 must be an object").arg(itemContext));
         const QJsonObject object = itemValue.toObject();
-        if (!checkKeys(
-                object,
-                {"id",
-                 "displayName",
-                 "description",
-                 "enabled",
-                 "requiresExclusiveControl",
-                 "requiresDc",
-                 "holdToRun",
-                 "commandTtlMs",
-                 "runtimeConditions",
-                 "failureAction",
-                 "timeoutAction",
-                 "requiredSignals",
-                 "parameters",
-                 "steps"},
-                itemContext,
-                error)) {
+        const QStringList keys = schema == PackageSchema::V1
+                                     ? QStringList{
+                                           "id",
+                                           "displayName",
+                                           "description",
+                                           "enabled",
+                                           "requiresExclusiveControl",
+                                           "requiresDc",
+                                           "holdToRun",
+                                           "commandTtlMs",
+                                           "runtimeConditions",
+                                           "failureAction",
+                                           "timeoutAction",
+                                           "requiredSignals",
+                                           "parameters",
+                                           "steps",
+                                       }
+                                     : QStringList{
+                                           "id",
+                                           "displayName",
+                                           "description",
+                                           "enabled",
+                                           "requiresExclusiveControl",
+                                           "requiresDc",
+                                           "holdToRun",
+                                           "commandTtlMs",
+                                           "runtimeConditions",
+                                           "allowedReleaseActionIds",
+                                           "allowedTimeoutActionIds",
+                                           "allowedFailureActionIds",
+                                           "requiredSignals",
+                                           "parameters",
+                                           "steps",
+                                       };
+        if (!checkKeys(object, keys, itemContext, error)) {
             return false;
         }
         DeviceControlAction action;
-        QString failureAction;
-        QString timeoutAction;
         QStringList requiredSignals;
         if (!parseString(object, "id", itemContext, &action.id.value, error)
             || !parseString(object, "displayName", itemContext, &action.displayName, error)
@@ -945,12 +1641,23 @@ static bool parseActions(
             || !parseBool(object, "requiresDc", itemContext, &action.requiresDc, error)
             || !parseBool(object, "holdToRun", itemContext, &action.holdToRun, error)
             || !parseStringList(
-                object, "runtimeConditions", itemContext, &action.runtimeConditions, error)
-            || !parseString(object, "failureAction", itemContext, &failureAction, error)
-            || !parseString(object, "timeoutAction", itemContext, &timeoutAction, error)
-            || !parseStringList(object, "requiredSignals", itemContext, &requiredSignals, error)) {
+                object,
+                "runtimeConditions",
+                itemContext,
+                &action.runtimeConditions,
+                error,
+                schema == PackageSchema::V2)
+            || !parseStringList(
+                object,
+                "requiredSignals",
+                itemContext,
+                &requiredSignals,
+                error,
+                schema == PackageSchema::V2)) {
             return false;
         }
+        if (schema == PackageSchema::V2 && !canonicalIdentifier(action.id.value))
+            return fail(error, QString("%1.id must be canonical").arg(itemContext));
         quint64 commandTtlMs = 0;
         if (!parseUnsigned(
                 object,
@@ -962,12 +1669,44 @@ static bool parseActions(
             return false;
         }
         action.commandTtlMs = quint32(commandTtlMs);
-        const auto parsedFailureAction = timeoutActionFromString(failureAction);
-        const auto parsedTimeoutAction = timeoutActionFromString(timeoutAction);
-        if (!parsedFailureAction || !parsedTimeoutAction)
-            return fail(error, QString("%1 has an unsupported failure action").arg(itemContext));
-        action.failureAction = *parsedFailureAction;
-        action.timeoutAction = *parsedTimeoutAction;
+        if (schema == PackageSchema::V1) {
+            QString failureAction;
+            QString timeoutAction;
+            if (!parseString(object, "failureAction", itemContext, &failureAction, error)
+                || !parseString(object, "timeoutAction", itemContext, &timeoutAction, error)) {
+                return false;
+            }
+            const auto parsedFailureAction = timeoutActionFromString(failureAction);
+            const auto parsedTimeoutAction = timeoutActionFromString(timeoutAction);
+            if (!parsedFailureAction || !parsedTimeoutAction)
+                return fail(error, QString("%1 has an unsupported failure action").arg(itemContext));
+            action.failureAction = *parsedFailureAction;
+            action.timeoutAction = *parsedTimeoutAction;
+        } else {
+            const struct
+            {
+                const char *key;
+                QList<SemanticActionId> *target;
+            } fallbackLists[] = {
+                {"allowedReleaseActionIds", &action.allowedReleaseActionIds},
+                {"allowedTimeoutActionIds", &action.allowedTimeoutActionIds},
+                {"allowedFailureActionIds", &action.allowedFailureActionIds},
+            };
+            for (const auto &fallbackList : fallbackLists) {
+                QStringList values;
+                if (!parseStringList(
+                        object,
+                        QString::fromLatin1(fallbackList.key),
+                        itemContext,
+                        &values,
+                        error,
+                        true)) {
+                    return false;
+                }
+                for (const QString &fallbackId : std::as_const(values))
+                    fallbackList.target->append({fallbackId});
+            }
+        }
         for (const QString &signal : std::as_const(requiredSignals))
             action.requiredSignals.append({signal});
 
@@ -981,12 +1720,19 @@ static bool parseActions(
             if (!parseActionParameter(
                     parameters.toArray().at(parameterIndex),
                     QString("%1.parameters[%2]").arg(itemContext).arg(parameterIndex),
+                    schema,
                     &parameter,
                     error)) {
                 return false;
             }
             if (parameterIds.contains(parameter.id))
                 return fail(error, QString("%1 has duplicate parameter ids").arg(itemContext));
+            if (schema == PackageSchema::V2 && !action.parameters.isEmpty()
+                && parameter.id <= action.parameters.constLast().id) {
+                return fail(
+                    error,
+                    QString("%1.parameters must be in strict parameter ID order").arg(itemContext));
+            }
             parameterIds.insert(parameter.id);
             action.parameters.append(parameter);
         }
@@ -998,6 +1744,7 @@ static bool parseActions(
             if (!parseActionStep(
                     steps.toArray().at(stepIndex),
                     QString("%1.steps[%2]").arg(itemContext).arg(stepIndex),
+                    schema,
                     &step,
                     error)) {
                 return false;
@@ -1014,12 +1761,16 @@ static bool parseActions(
         if (actionIds.contains(action.id.value))
             return fail(error, QString("%1 contains duplicate action ids").arg(context));
         actionIds.insert(action.id.value);
+        if (schema == PackageSchema::V2 && !result->isEmpty()
+            && action.id.value <= result->constLast().id.value) {
+            return fail(error, QString("%1 must be in strict action ID order").arg(context));
+        }
         result->append(action);
     }
     return true;
 }
 
-static bool validateManifest(DeviceAdapterManifest *manifest, QString *error)
+static bool validateManifest(DeviceAdapterManifest *manifest, PackageSchema schema, QString *error)
 {
     if (manifest->match.vendorId == 0 || manifest->match.productCode == 0
         || manifest->match.minimumRevision > manifest->match.maximumRevision) {
@@ -1096,6 +1847,81 @@ static bool validateManifest(DeviceAdapterManifest *manifest, QString *error)
             }
         }
     }
+    if (schema == PackageSchema::V2) {
+        if (!canonicalIdentifier(manifest->id.value))
+            return fail(error, "v2 adapter ID must be canonical");
+
+        const auto signalForId = [manifest](const SemanticSignalId &id) {
+            const auto found = std::find_if(
+                manifest->semanticSignals.cbegin(),
+                manifest->semanticSignals.cend(),
+                [&id](const SemanticSignalDefinition &signal) { return signal.id == id; });
+            return found == manifest->semanticSignals.cend() ? nullptr : &*found;
+        };
+        QSet<QString> actionIds;
+        for (const DeviceControlAction &action : std::as_const(manifest->controlActions))
+            actionIds.insert(action.id.value);
+        for (const DeviceControlAction &action : std::as_const(manifest->controlActions)) {
+            const QList<QList<SemanticActionId>> fallbackLists{
+                action.allowedReleaseActionIds,
+                action.allowedTimeoutActionIds,
+                action.allowedFailureActionIds,
+            };
+            for (const QList<SemanticActionId> &fallbackList : fallbackLists) {
+                for (const SemanticActionId &fallback : fallbackList) {
+                    if (fallback == action.id || !actionIds.contains(fallback.value)) {
+                        return fail(
+                            error,
+                            QString(
+                                "action \"%1\" has a self-referential or unknown fallback \"%2\"")
+                                .arg(action.id.value, fallback.value));
+                    }
+                }
+            }
+            if (action.enabled
+                && (action.allowedReleaseActionIds.isEmpty()
+                    || action.allowedTimeoutActionIds.isEmpty()
+                    || action.allowedFailureActionIds.isEmpty())) {
+                return fail(
+                    error,
+                    QString("enabled v2 action \"%1\" requires explicit fallback allow-lists")
+                        .arg(action.id.value));
+            }
+            for (const DeviceControlStep &step : action.steps) {
+                if (step.kind == DeviceControlStepKind::Delay)
+                    continue;
+                const SemanticSignalDefinition *signal = signalForId(step.signalId);
+                if (!signal || !signal->engineeringTransform) {
+                    return fail(
+                        error,
+                        QString("action \"%1\" lacks an exact signal definition for \"%2\"")
+                            .arg(action.id.value, step.signalId.value));
+                }
+                if (step.value.source == DeviceControlValueSource::Literal) {
+                    const Core::EngineeringContractValidation validation
+                        = Core::validateEngineeringValueAgainstConstraint(
+                            *step.value.engineeringLiteralValue,
+                            signal->engineeringTransform->constraint);
+                    if (!validation.accepted()) {
+                        return fail(
+                            error,
+                            QString("action \"%1\" value for \"%2\" is invalid: %3")
+                                .arg(action.id.value, step.signalId.value, validation.detail));
+                    }
+                }
+                if (step.mask.source == DeviceControlValueSource::Literal) {
+                    const Core::EngineeringContractValidation validation
+                        = Core::validateEngineeringValue(*step.mask.engineeringLiteralValue);
+                    if (!validation.accepted()) {
+                        return fail(
+                            error,
+                            QString("action \"%1\" mask for \"%2\" is invalid: %3")
+                                .arg(action.id.value, step.signalId.value, validation.detail));
+                    }
+                }
+            }
+        }
+    }
     return true;
 }
 
@@ -1113,6 +1939,24 @@ static std::optional<Package> parsePackage(
     }
     const QString context = sourcePath.fileName();
     const QJsonObject object = document.object();
+    QString parsedSchema;
+    if (!parseString(object, "schemaVersion", context, &parsedSchema, error))
+        return std::nullopt;
+    PackageSchema schema;
+    if (parsedSchema == schemaVersionV1)
+        schema = PackageSchema::V1;
+    else if (parsedSchema == schemaVersionV2)
+        schema = PackageSchema::V2;
+    else {
+        fail(
+            error,
+            QString("%1.schemaVersion must equal \"%2\" or \"%3\"")
+                .arg(
+                    context,
+                    QString::fromLatin1(schemaVersionV1),
+                    QString::fromLatin1(schemaVersionV2)));
+        return std::nullopt;
+    }
     if (!checkKeys(
             object,
             {"schemaVersion",
@@ -1139,19 +1983,10 @@ static std::optional<Package> parsePackage(
 
     Package package;
     DeviceAdapterManifest &manifest = package.manifest;
-    QString parsedSchema;
-    if (!parseString(object, "schemaVersion", context, &parsedSchema, error)
-        || !parseString(object, "id", context, &manifest.id.value, error)
+    if (!parseString(object, "id", context, &manifest.id.value, error)
         || !parseString(object, "version", context, &manifest.version, error)
         || !parseString(object, "displayName", context, &manifest.displayName, error)
         || !parseString(object, "description", context, &manifest.description, error, true)) {
-        return std::nullopt;
-    }
-    if (parsedSchema != schemaVersion) {
-        fail(
-            error,
-            QString("%1.schemaVersion must equal \"%2\"")
-                .arg(context, QString::fromLatin1(schemaVersion)));
         return std::nullopt;
     }
 
@@ -1230,7 +2065,13 @@ static std::optional<Package> parsePackage(
     manifest.match.minimumRevision = quint32(minimumRevision);
     manifest.match.maximumRevision = quint32(maximumRevision);
 
-    if (!parseCapabilityList(object, "capabilities", context, &manifest.capabilities, error)) {
+    if (!parseCapabilityList(
+            object,
+            "capabilities",
+            context,
+            &manifest.capabilities,
+            error,
+            schema == PackageSchema::V2)) {
         return std::nullopt;
     }
     const QJsonValue sourceValue = object.value("source");
@@ -1250,27 +2091,36 @@ static std::optional<Package> parsePackage(
         || !parseBool(object, "signatureVerified", context, &manifest.signatureVerified, error)
         || !parseBool(object, "realHardwareAllowed", context, &manifest.realHardwareAllowed, error)
         || !parseSignals(
-            object.value("signals"), context + ".signals", &manifest.semanticSignals, error)
+            object.value("signals"), context + ".signals", schema, &manifest.semanticSignals, error)
         || !parseProfiles(
             object.value("processDataProfiles"),
             context + ".processDataProfiles",
+            schema,
             &manifest.processDataProfiles,
             error)
         || !parseModules(
             object.value("moduleProfiles"),
             context + ".moduleProfiles",
+            schema,
             &manifest.moduleProfiles,
             error)
         || !parseActions(
             object.value("controlActions"),
             context + ".controlActions",
+            schema,
             &manifest.controlActions,
             error)) {
         return std::nullopt;
     }
-    manifest.contentSha256 = QCryptographicHash::hash(contents, QCryptographicHash::Sha256);
+    if (schema == PackageSchema::V1) {
+        manifest.contentSha256 = QCryptographicHash::hash(contents, QCryptographicHash::Sha256);
+    } else {
+        manifest.contentSha256 = canonicalContentSha256V2(object, context, error);
+        if (manifest.contentSha256.isEmpty())
+            return std::nullopt;
+    }
     package.sourcePath = sourcePath;
-    if (!validateManifest(&manifest, error))
+    if (!validateManifest(&manifest, schema, error))
         return std::nullopt;
     return package;
 }

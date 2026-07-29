@@ -6,6 +6,7 @@
 
 #include <coreplugin/icore.h>
 
+#include <ethercatcore/manualcontrolcontract.h>
 #include <ethercatcore/providerregistry.h>
 
 #include <extensionsystem/pluginmanager.h>
@@ -13,6 +14,7 @@
 #include <utils/filepath.h>
 
 #include <QCryptographicHash>
+#include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -38,6 +40,77 @@ static bool writePackage(const QString &path, const QJsonObject &object)
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return false;
     return file.write(QJsonDocument(object).toJson()) >= 0;
+}
+
+static bool writeBytes(const QString &path, const QByteArray &contents)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    return file.write(contents) == contents.size();
+}
+
+static QByteArray compactJsonValue(const QJsonValue &value)
+{
+    if (value.isObject())
+        return QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact);
+    if (value.isArray())
+        return QJsonDocument(value.toArray()).toJson(QJsonDocument::Compact);
+    QJsonArray wrapper;
+    wrapper.append(value);
+    QByteArray result = QJsonDocument(wrapper).toJson(QJsonDocument::Compact);
+    result.remove(0, 1);
+    result.chop(1);
+    return result;
+}
+
+static QByteArray jsonWithReverseRootKeys(const QJsonObject &object)
+{
+    QStringList keys = object.keys();
+    std::reverse(keys.begin(), keys.end());
+    QByteArray result("{");
+    for (qsizetype index = 0; index < keys.size(); ++index) {
+        if (index != 0)
+            result.append(',');
+        result.append(compactJsonValue(keys.at(index)));
+        result.append(':');
+        result.append(compactJsonValue(object.value(keys.at(index))));
+    }
+    result.append('}');
+    return result;
+}
+
+static QString packageLoadError(const QJsonObject &object)
+{
+    QTemporaryDir temporaryDirectory;
+    if (!temporaryDirectory.isValid()
+        || !writePackage(temporaryDirectory.path() + "/package.adapter.json", object)) {
+        return QStringLiteral("test package could not be written");
+    }
+    AdapterPackageRepository repository(Utils::FilePath::fromString(temporaryDirectory.path()));
+    return repository.loadErrors().join('\n');
+}
+
+static QByteArray packageDigest(const QByteArray &contents, QString *error)
+{
+    QTemporaryDir temporaryDirectory;
+    if (!temporaryDirectory.isValid()
+        || !writeBytes(temporaryDirectory.path() + "/package.adapter.json", contents)) {
+        *error = QStringLiteral("test package could not be written");
+        return {};
+    }
+    AdapterPackageRepository repository(Utils::FilePath::fromString(temporaryDirectory.path()));
+    if (!repository.isAvailable() || repository.loadedPackageCount() != 1) {
+        *error = repository.loadErrors().join('\n');
+        return {};
+    }
+    error->clear();
+    return repository.adapterManifests().constFirst().contentSha256;
+}
+
+static Utils::FilePath adaptersRoot()
+{
+    return ::Core::ICore::resourcePath("ethercat/adapters");
 }
 
 static const Data::DeviceAdapterManifest *manifestForIdentity(
@@ -270,19 +343,21 @@ static const Data::BoundSemanticSignal *boundSignalForObject(
 
 void EtherCATDeviceAdaptersTests::testBundledResourcesAndManifests()
 {
-    const Utils::FilePath packageRoot = ::Core::ICore::resourcePath("ethercat/adapters/v1");
+    const Utils::FilePath packageRoot = adaptersRoot();
     AdapterPackageRepository repository(packageRoot);
     QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
     QCOMPARE(repository.packageRoot(), packageRoot);
-    QCOMPARE(repository.loadedPackageCount(), 2);
+    QCOMPARE(repository.loadedPackageCount(), 4);
     QVERIFY(repository.loadErrors().isEmpty());
 
     const QList<Data::DeviceAdapterManifest> manifests = repository.adapterManifests();
-    QCOMPARE(manifests.size(), 2);
+    QCOMPARE(manifests.size(), 4);
     const Data::DeviceAdapterManifest *xb6 = manifestForIdentity(manifests, xb6Identity);
     const Data::DeviceAdapterManifest *sv630n = manifestForIdentity(manifests, sv630nIdentity);
     QVERIFY(xb6);
     QVERIFY(sv630n);
+    QCOMPARE(xb6->version, QString("0.2.0"));
+    QCOMPARE(sv630n->version, QString("0.2.0"));
     QCOMPARE(xb6->match.exactEsiSha256, xb6EsiSha256);
     QCOMPARE(sv630n->match.exactEsiSha256, sv630nEsiSha256);
 
@@ -326,7 +401,7 @@ void EtherCATDeviceAdaptersTests::testInvalidPackagesAreRejected()
     QVERIFY(writePackage(root + "/c-unknown-field.adapter.json", unknownField));
 
     QJsonObject wrongSchema = valid;
-    wrongSchema.insert("schemaVersion", "embed-labs.device-adapter/v2");
+    wrongSchema.insert("schemaVersion", "embed-labs.device-adapter/v3");
     QVERIFY(writePackage(root + "/d-wrong-schema.adapter.json", wrongSchema));
 
     QJsonObject upperCaseHash = valid;
@@ -372,6 +447,348 @@ void EtherCATDeviceAdaptersTests::testInvalidPackagesAreRejected()
     QVERIFY(errors.contains("non-zero command TTL"));
     QVERIFY(errors.contains("embedded trust assertions"));
     QVERIFY(errors.contains("source SHA-256 does not match"));
+}
+
+void EtherCATDeviceAdaptersTests::testBundledV2ExactContracts()
+{
+    AdapterPackageRepository repository(adaptersRoot());
+    QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
+    const QList<Data::DeviceAdapterManifest> manifests = repository.adapterManifests();
+    const Data::DeviceAdapterManifest *xb6 = manifestForIdentity(manifests, xb6Identity);
+    const Data::DeviceAdapterManifest *sv630n = manifestForIdentity(manifests, sv630nIdentity);
+    QVERIFY(xb6);
+    QVERIFY(sv630n);
+    QCOMPARE(xb6->version, QString("0.2.0"));
+    QCOMPARE(sv630n->version, QString("0.2.0"));
+    QCOMPARE(
+        xb6->contentSha256,
+        QByteArray::fromHex("ec6ea39eaa5f7a12832f9cfeab4c3b29f66ffa004abe83f070772123d33c44d4"));
+    QCOMPARE(
+        sv630n->contentSha256,
+        QByteArray::fromHex("7fc445d4372799cce8f0cdf68fa71cad9ca2a8ea47e0a0b0dffd5aff02a3fb64"));
+
+    for (const Data::DeviceAdapterManifest *manifest : {xb6, sv630n}) {
+        QCOMPARE(manifest->qualification, Data::DeviceAdapterQualification::Candidate);
+        QVERIFY(!manifest->signatureVerified);
+        QVERIFY(!manifest->realHardwareAllowed);
+        QVERIFY(std::all_of(
+            manifest->controlActions.cbegin(),
+            manifest->controlActions.cend(),
+            [](const Data::DeviceControlAction &action) { return !action.enabled; }));
+    }
+
+    for (const Data::SemanticSignalDefinition &signal : xb6->semanticSignals) {
+        QCOMPARE(signal.exposure, Data::SemanticSignalExposure::Internal);
+        QVERIFY(signal.engineeringTransform);
+        QVERIFY(!signal.hasSafeValue);
+        QVERIFY(!signal.manualControl.allowed);
+    }
+    for (const Data::DeviceModuleProfile &module : xb6->moduleProfiles) {
+        for (const Data::SemanticSignalDefinition &signal : module.slotRelativeSignals) {
+            QCOMPARE(signal.exposure, Data::SemanticSignalExposure::Public);
+            QVERIFY(signal.engineeringTransform);
+            QCOMPARE(signal.engineeringTransform->scale, (Data::ExactRational{1, 1}));
+            QCOMPARE(signal.engineeringTransform->offset, (Data::ExactRational{0, 1}));
+            QVERIFY(signal.engineeringTransform->rounding);
+            QCOMPARE(*signal.engineeringTransform->rounding, Data::EngineeringRounding::RejectInexact);
+            QVERIFY(signal.engineeringTransform->constraint.minimum);
+            QVERIFY(signal.engineeringTransform->constraint.maximum);
+            QCOMPARE(*signal.engineeringTransform->constraint.minimum, (Data::ExactRational{0, 1}));
+            QCOMPARE(*signal.engineeringTransform->constraint.maximum, (Data::ExactRational{1, 1}));
+            QVERIFY(!signal.hasSafeValue);
+            QVERIFY(!signal.manualControl.allowed);
+        }
+    }
+
+    for (const Data::SemanticSignalDefinition &signal : sv630n->semanticSignals) {
+        QVERIFY(signal.engineeringTransform);
+        QCOMPARE(
+            signal.exposure,
+            signal.direction == Data::SemanticSignalDirection::Input
+                ? Data::SemanticSignalExposure::Public
+                : Data::SemanticSignalExposure::ActionOnly);
+        QVERIFY(!signal.engineeringTransform->unit.contains("rpm", Qt::CaseInsensitive));
+        QVERIFY(!signal.hasSafeValue);
+        QVERIFY(!signal.manualControl.allowed);
+    }
+    const Data::SemanticSignalDefinition *targetVelocity
+        = signalForObject(*sv630n, Data::PdoDirection::Rx, 0x1702, 0x60ff);
+    QVERIFY(targetVelocity);
+    QCOMPARE(targetVelocity->engineeringTransform->unit, QString("raw-drive-unit"));
+
+    const auto stop = std::find_if(
+        sv630n->controlActions.cbegin(),
+        sv630n->controlActions.cend(),
+        [](const Data::DeviceControlAction &action) {
+            return action.id.value.endsWith(".action.stop-csv");
+        });
+    QVERIFY(stop != sv630n->controlActions.cend());
+    QVERIFY(stop->allowedReleaseActionIds.isEmpty());
+    QVERIFY(stop->allowedTimeoutActionIds.isEmpty());
+    QVERIFY(stop->allowedFailureActionIds.isEmpty());
+    QCOMPARE(stop->parameters.size(), 1);
+    QVERIFY(stop->parameters.constFirst().engineeringConstraint);
+    QVERIFY(!stop->parameters.constFirst().engineeringDefaultValue);
+
+    for (const Data::DeviceControlAction &action : sv630n->controlActions) {
+        for (const Data::DeviceControlStep &step : action.steps) {
+            if (step.value.source == Data::DeviceControlValueSource::Literal)
+                QVERIFY(step.value.engineeringLiteralValue);
+            if (step.mask.source == Data::DeviceControlValueSource::Literal)
+                QVERIFY(step.mask.engineeringLiteralValue);
+            QVERIFY(!step.value.literalValue.isValid());
+            QVERIFY(!step.mask.literalValue.isValid());
+        }
+    }
+
+    const Data::DeviceControlAction &prepare = sv630n->controlActions.constFirst();
+    Data::ManualActionEnvelope actionEnvelope;
+    actionEnvelope.actionId = prepare.id;
+    actionEnvelope.holdToRun = prepare.holdToRun;
+    Data::ManualControlEnvelope envelope;
+    envelope.actionEnvelopes.append(actionEnvelope);
+    const Core::ManualControlContractValidation validation = Core::validateManualControlEnvelope(
+        envelope, sv630n->semanticSignals, sv630n->controlActions);
+    QCOMPARE(validation.error, Core::ManualControlContractError::MissingFallback);
+}
+
+void EtherCATDeviceAdaptersTests::testV2StrictParserAndCanonicalDigest()
+{
+    const Utils::FilePath bundledPath = ::Core::ICore::resourcePath(
+        "ethercat/adapters/v2/inovance-sv630n-rev00010000.adapter.json");
+    const Utils::Result<QByteArray> bundledContents = bundledPath.fileContents();
+    QVERIFY_RESULT(bundledContents);
+    const QJsonDocument bundledDocument = QJsonDocument::fromJson(*bundledContents);
+    QVERIFY(bundledDocument.isObject());
+    const QJsonObject valid = bundledDocument.object();
+    QVERIFY2(packageLoadError(valid).isEmpty(), qPrintable(packageLoadError(valid)));
+
+    QJsonObject nestedUnknown = valid;
+    QJsonArray signalArray = nestedUnknown.value("signals").toArray();
+    QJsonObject signal = signalArray.at(0).toObject();
+    QJsonObject transform = signal.value("engineeringTransform").toObject();
+    transform.insert("unexpected", true);
+    signal.insert("engineeringTransform", transform);
+    signalArray.replace(0, signal);
+    nestedUnknown.insert("signals", signalArray);
+    QVERIFY(packageLoadError(nestedUnknown).contains("unknown field \"unexpected\""));
+
+    QJsonObject nonCanonicalRational = valid;
+    signalArray = nonCanonicalRational.value("signals").toArray();
+    signal = signalArray.at(0).toObject();
+    transform = signal.value("engineeringTransform").toObject();
+    QJsonObject scale = transform.value("scale").toObject();
+    scale.insert("numerator", "01");
+    transform.insert("scale", scale);
+    signal.insert("engineeringTransform", transform);
+    signalArray.replace(0, signal);
+    nonCanonicalRational.insert("signals", signalArray);
+    QVERIFY(packageLoadError(nonCanonicalRational).contains("canonical signed decimal"));
+
+    QJsonObject unreducedRational = valid;
+    signalArray = unreducedRational.value("signals").toArray();
+    signal = signalArray.at(0).toObject();
+    transform = signal.value("engineeringTransform").toObject();
+    scale = transform.value("scale").toObject();
+    scale.insert("numerator", "2");
+    scale.insert("denominator", "2");
+    transform.insert("scale", scale);
+    signal.insert("engineeringTransform", transform);
+    signalArray.replace(0, signal);
+    unreducedRational.insert("signals", signalArray);
+    QVERIFY(packageLoadError(unreducedRational).contains("canonical reduced form"));
+
+    QJsonObject implicitRounding = valid;
+    signalArray = implicitRounding.value("signals").toArray();
+    signal = signalArray.at(0).toObject();
+    transform = signal.value("engineeringTransform").toObject();
+    transform.insert("rounding", "implicit");
+    signal.insert("engineeringTransform", transform);
+    signalArray.replace(0, signal);
+    implicitRounding.insert("signals", signalArray);
+    QVERIFY(packageLoadError(implicitRounding).contains("rounding is not supported"));
+
+    QJsonObject invalidExposure = valid;
+    signalArray = invalidExposure.value("signals").toArray();
+    signal = signalArray.at(0).toObject();
+    signal.insert("exposure", "writable");
+    signalArray.replace(0, signal);
+    invalidExposure.insert("signals", signalArray);
+    QVERIFY(packageLoadError(invalidExposure).contains("exposure is not supported"));
+
+    QJsonObject unsortedSignals = valid;
+    signalArray = unsortedSignals.value("signals").toArray();
+    const QJsonValue firstSignal = signalArray.at(0);
+    signalArray.replace(0, signalArray.at(1));
+    signalArray.replace(1, firstSignal);
+    unsortedSignals.insert("signals", signalArray);
+    QVERIFY(packageLoadError(unsortedSignals).contains("strict semantic ID order"));
+
+    QJsonObject invalidLiteral = valid;
+    QJsonArray actions = invalidLiteral.value("controlActions").toArray();
+    QJsonObject action = actions.at(0).toObject();
+    QJsonArray steps = action.value("steps").toArray();
+    QJsonObject step = steps.at(0).toObject();
+    QJsonObject controlValue = step.value("value").toObject();
+    QJsonObject exactValue = controlValue.value("engineeringLiteralValue").toObject();
+    exactValue.insert("value", "09");
+    controlValue.insert("engineeringLiteralValue", exactValue);
+    step.insert("value", controlValue);
+    steps.replace(0, step);
+    action.insert("steps", steps);
+    actions.replace(0, action);
+    invalidLiteral.insert("controlActions", actions);
+    QVERIFY(packageLoadError(invalidLiteral).contains("canonical signed decimal"));
+
+    QJsonObject unsortedFallback = valid;
+    actions = unsortedFallback.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    action.insert("allowedReleaseActionIds", QJsonArray{"z", "a"});
+    actions.replace(0, action);
+    unsortedFallback.insert("controlActions", actions);
+    QVERIFY(packageLoadError(unsortedFallback).contains("strict canonical order"));
+
+    QJsonObject unknownFallback = valid;
+    actions = unknownFallback.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    action.insert(
+        "allowedReleaseActionIds", QJsonArray{"org.embedlabs.inovance.sv630n.action.unknown"});
+    actions.replace(0, action);
+    unknownFallback.insert("controlActions", actions);
+    QVERIFY(packageLoadError(unknownFallback).contains("unknown fallback"));
+
+    QJsonObject selfFallback = valid;
+    actions = selfFallback.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    action.insert("allowedReleaseActionIds", QJsonArray{action.value("id").toString()});
+    actions.replace(0, action);
+    selfFallback.insert("controlActions", actions);
+    QVERIFY(packageLoadError(selfFallback).contains("self-referential"));
+
+    QJsonObject invalidParameterDefault = valid;
+    actions = invalidParameterDefault.value("controlActions").toArray();
+    action = actions.at(1).toObject();
+    QJsonArray parameters = action.value("parameters").toArray();
+    QJsonObject parameter = parameters.at(0).toObject();
+    parameter
+        .insert("engineeringDefaultValue", QJsonObject{{"kind", "signed-integer"}, {"value", "-1"}});
+    parameters.replace(0, parameter);
+    action.insert("parameters", parameters);
+    actions.replace(1, action);
+    invalidParameterDefault.insert("controlActions", actions);
+    QVERIFY(packageLoadError(invalidParameterDefault).contains("below the declared minimum"));
+
+    const QByteArray pretty = QJsonDocument(valid).toJson(QJsonDocument::Indented);
+    const QByteArray compact = QJsonDocument(valid).toJson(QJsonDocument::Compact);
+    const QByteArray reversed = jsonWithReverseRootKeys(valid);
+    QString error;
+    const QByteArray prettyDigest = packageDigest(pretty, &error);
+    QVERIFY2(!prettyDigest.isEmpty(), qPrintable(error));
+    const QByteArray compactDigest = packageDigest(compact, &error);
+    QVERIFY2(!compactDigest.isEmpty(), qPrintable(error));
+    const QByteArray reversedDigest = packageDigest(reversed, &error);
+    QVERIFY2(!reversedDigest.isEmpty(), qPrintable(error));
+    QCOMPARE(compactDigest, prettyDigest);
+    QCOMPARE(reversedDigest, prettyDigest);
+
+    QJsonObject semanticMutation = valid;
+    QString changedDescription = semanticMutation.value("description").toString();
+    changedDescription.append(" changed");
+    semanticMutation.insert("description", changedDescription);
+    const QByteArray changedDigest
+        = packageDigest(QJsonDocument(semanticMutation).toJson(QJsonDocument::Compact), &error);
+    QVERIFY2(!changedDigest.isEmpty(), qPrintable(error));
+    QVERIFY(changedDigest != prettyDigest);
+}
+
+void EtherCATDeviceAdaptersTests::testV1RemainsFailClosed()
+{
+    const Utils::FilePath bundledPath = ::Core::ICore::resourcePath(
+        "ethercat/adapters/v1/inovance-sv630n-rev00010000.adapter.json");
+    const Utils::Result<QByteArray> bundledContents = bundledPath.fileContents();
+    QVERIFY_RESULT(bundledContents);
+    AdapterPackageRepository repository(::Core::ICore::resourcePath("ethercat/adapters/v1"));
+    QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
+    const QList<Data::DeviceAdapterManifest> manifests = repository.adapterManifests();
+    const Data::DeviceAdapterManifest *sv630n = manifestForIdentity(manifests, sv630nIdentity);
+    QVERIFY(sv630n);
+    QCOMPARE(
+        sv630n->contentSha256,
+        QCryptographicHash::hash(*bundledContents, QCryptographicHash::Sha256));
+    QVERIFY(std::all_of(
+        sv630n->semanticSignals.cbegin(),
+        sv630n->semanticSignals.cend(),
+        [](const Data::SemanticSignalDefinition &signal) { return !signal.engineeringTransform; }));
+
+    const QJsonDocument document = QJsonDocument::fromJson(*bundledContents);
+    QVERIFY(document.isObject());
+    QString error;
+    const QByteArray compact = QJsonDocument(document.object()).toJson(QJsonDocument::Compact);
+    const QByteArray compactDigest = packageDigest(compact, &error);
+    QVERIFY2(!compactDigest.isEmpty(), qPrintable(error));
+    QCOMPARE(compactDigest, QCryptographicHash::hash(compact, QCryptographicHash::Sha256));
+    QVERIFY(compactDigest != sv630n->contentSha256);
+
+    const Data::SemanticSignalDefinition *controlword
+        = signalForObject(*sv630n, Data::PdoDirection::Rx, 0x1702, 0x6040);
+    QVERIFY(controlword);
+    Data::ManualSignalEnvelope signalEnvelope;
+    signalEnvelope.signalId = controlword->id;
+    Data::ManualControlEnvelope manualSignal;
+    manualSignal.signalEnvelopes.append(signalEnvelope);
+    QCOMPARE(
+        Core::validateManualControlEnvelope(
+            manualSignal, sv630n->semanticSignals, sv630n->controlActions)
+            .error,
+        Core::ManualControlContractError::ExactTransformMissing);
+
+    Data::ManualActionEnvelope actionEnvelope;
+    actionEnvelope.actionId = sv630n->controlActions.constFirst().id;
+    actionEnvelope.holdToRun = sv630n->controlActions.constFirst().holdToRun;
+    Data::ManualControlEnvelope manualAction;
+    manualAction.actionEnvelopes.append(actionEnvelope);
+    QCOMPARE(
+        Core::validateManualControlEnvelope(
+            manualAction, sv630n->semanticSignals, sv630n->controlActions)
+            .error,
+        Core::ManualControlContractError::InexactActionDefinition);
+}
+
+void EtherCATDeviceAdaptersTests::testV1AndV2ExactSelection()
+{
+    AdapterPackageRepository repository(adaptersRoot());
+    QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
+    const Data::DeviceAdapterId adapterId{
+        "org.embedlabs.adapter.inovance.sv630n-1axis.rev00010000",
+    };
+    const std::optional<Data::DeviceAdapterManifest> v1
+        = repository.adapterManifest(adapterId, "0.1.0");
+    const std::optional<Data::DeviceAdapterManifest> v2
+        = repository.adapterManifest(adapterId, "0.2.0");
+    QVERIFY(v1);
+    QVERIFY(v2);
+    QVERIFY(v1->contentSha256 != v2->contentSha256);
+
+    Data::DeviceAdapterResolutionRequest automatic = sv630nRequest(*v2);
+    const Data::DeviceAdapterResolutionResult automaticResult = repository.resolveDevice(automatic);
+    QVERIFY2(automaticResult.resolved, qPrintable(automaticResult.error));
+    QCOMPARE(automaticResult.model.adapterVersion, QString("0.2.0"));
+
+    Data::DeviceAdapterResolutionRequest exactV1 = automatic;
+    exactV1.expectedAdapterId = v1->id;
+    exactV1.expectedAdapterVersion = v1->version;
+    exactV1.expectedAdapterContentSha256 = v1->contentSha256;
+    const Data::DeviceAdapterResolutionResult v1Result = repository.resolveDevice(exactV1);
+    QVERIFY2(v1Result.resolved, qPrintable(v1Result.error));
+    QCOMPARE(v1Result.model.adapterVersion, QString("0.1.0"));
+
+    Data::DeviceAdapterResolutionRequest exactV2 = automatic;
+    exactV2.expectedAdapterId = v2->id;
+    exactV2.expectedAdapterVersion = v2->version;
+    exactV2.expectedAdapterContentSha256 = v2->contentSha256;
+    const Data::DeviceAdapterResolutionResult v2Result = repository.resolveDevice(exactV2);
+    QVERIFY2(v2Result.resolved, qPrintable(v2Result.error));
+    QCOMPARE(v2Result.model.adapterVersion, QString("0.2.0"));
 }
 
 void EtherCATDeviceAdaptersTests::testExactIdentityAndEsiMatching()
@@ -494,11 +911,10 @@ void EtherCATDeviceAdaptersTests::testCandidateHardwareGate()
             }
         }
         QVERIFY(outputCount > 0);
-        QVERIFY(
-            std::all_of(
-                manifest.controlActions.cbegin(),
-                manifest.controlActions.cend(),
-                [](const Data::DeviceControlAction &action) { return !action.enabled; }));
+        QVERIFY(std::all_of(
+            manifest.controlActions.cbegin(),
+            manifest.controlActions.cend(),
+            [](const Data::DeviceControlAction &action) { return !action.enabled; }));
     }
 
     const Data::DeviceAdapterManifest *sv630n = manifestForIdentity(manifests, sv630nIdentity);
@@ -792,27 +1208,25 @@ void EtherCATDeviceAdaptersTests::testXb6ExpandsDo16Modules()
             });
         QVERIFY(profile != xb6->moduleProfiles.cend());
         QCOMPARE(profile->slotRelativeSignals.size(), 16);
-        QVERIFY(
-            std::all_of(
-                profile->slotRelativeSignals.cbegin(),
-                profile->slotRelativeSignals.cend(),
-                [](const Data::SemanticSignalDefinition &signal) {
-                    return signal.bindings.size() == 1 && signal.bindings.constFirst().slotRelative;
-                }));
+        QVERIFY(std::all_of(
+            profile->slotRelativeSignals.cbegin(),
+            profile->slotRelativeSignals.cend(),
+            [](const Data::SemanticSignalDefinition &signal) {
+                return signal.bindings.size() == 1 && signal.bindings.constFirst().slotRelative;
+            }));
 
         const Data::DeviceAdapterResolutionResult singleModule = repository.resolveDevice(
             xb6SingleModuleRequest(moduleIdent));
         QVERIFY2(singleModule.resolved, qPrintable(singleModule.error));
         QVERIFY(singleModule.model.complete);
         QCOMPARE(singleModule.model.boundSignals.size(), 18);
-        QVERIFY(
-            std::all_of(
-                singleModule.model.boundSignals.cbegin(),
-                singleModule.model.boundSignals.cend(),
-                [moduleIdent](const Data::BoundSemanticSignal &signal) {
-                    return signal.slot < 0 ? signal.moduleIdent == 0
-                                           : signal.slot == 1 && signal.moduleIdent == moduleIdent;
-                }));
+        QVERIFY(std::all_of(
+            singleModule.model.boundSignals.cbegin(),
+            singleModule.model.boundSignals.cend(),
+            [moduleIdent](const Data::BoundSemanticSignal &signal) {
+                return signal.slot < 0 ? signal.moduleIdent == 0
+                                       : signal.slot == 1 && signal.moduleIdent == moduleIdent;
+            }));
     }
 
     const Data::DeviceAdapterResolutionResult result = repository.resolveDevice(xb6Request());
@@ -859,13 +1273,12 @@ void EtherCATDeviceAdaptersTests::testXb6ExpandsDo16Modules()
     const Data::DeviceAdapterResolutionResult npnResult = repository.resolveDevice(npn);
     QVERIFY2(npnResult.resolved, qPrintable(npnResult.error));
     QVERIFY(npnResult.model.complete);
-    QVERIFY(
-        std::all_of(
-            npnResult.model.boundSignals.cbegin(),
-            npnResult.model.boundSignals.cend(),
-            [](const Data::BoundSemanticSignal &signal) {
-                return signal.slot != 1 || signal.moduleIdent == 0x00000624;
-            }));
+    QVERIFY(std::all_of(
+        npnResult.model.boundSignals.cbegin(),
+        npnResult.model.boundSignals.cend(),
+        [](const Data::BoundSemanticSignal &signal) {
+            return signal.slot != 1 || signal.moduleIdent == 0x00000624;
+        }));
 }
 
 void EtherCATDeviceAdaptersTests::testXb6RejectsInvalidModuleLayouts()
@@ -911,17 +1324,16 @@ void EtherCATDeviceAdaptersTests::testProviderRegistryOrdering()
     QVERIFY(providers.contains(repository));
 
     const QList<Data::DeviceAdapterManifest> manifests = repository->adapterManifests();
-    QVERIFY(
-        std::is_sorted(
-            manifests.cbegin(),
-            manifests.cend(),
-            [](const Data::DeviceAdapterManifest &left, const Data::DeviceAdapterManifest &right) {
-                if (left.matchPriority != right.matchPriority)
-                    return left.matchPriority > right.matchPriority;
-                if (left.id.value != right.id.value)
-                    return left.id.value < right.id.value;
-                return left.version < right.version;
-            }));
+    QVERIFY(std::is_sorted(
+        manifests.cbegin(),
+        manifests.cend(),
+        [](const Data::DeviceAdapterManifest &left, const Data::DeviceAdapterManifest &right) {
+            if (left.matchPriority != right.matchPriority)
+                return left.matchPriority > right.matchPriority;
+            if (left.id.value != right.id.value)
+                return left.id.value < right.id.value;
+            return left.version < right.version;
+        }));
     for (const Data::DeviceAdapterManifest &manifest : manifests) {
         const std::optional<Data::DeviceAdapterManifest> exact
             = repository->adapterManifest(manifest.id, manifest.version);

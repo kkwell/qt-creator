@@ -13,6 +13,10 @@ class EtherCATDeviceAdaptersTests final : public QObject
 private slots:
     void testBundledResourcesAndManifests();
     void testInvalidPackagesAreRejected();
+    void testBundledV2ExactContracts();
+    void testV2StrictParserAndCanonicalDigest();
+    void testV1RemainsFailClosed();
+    void testV1AndV2ExactSelection();
     void testExactIdentityAndEsiMatching();
     void testExactPackageSelection();
     void testCandidateHardwareGate();
