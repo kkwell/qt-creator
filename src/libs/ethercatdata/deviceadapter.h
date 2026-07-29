@@ -3,9 +3,11 @@
 #pragma once
 
 #include "devicedescription.h"
+#include "engineeringvalue.h"
 #include "ethercatdata_global.h"
 #include "nodeid.h"
 #include "offlineconfiguration.h"
+#include "semanticids.h"
 
 #include <QByteArray>
 #include <QList>
@@ -15,36 +17,6 @@
 #include <QVariant>
 
 namespace EtherCAT::Data {
-
-// These identifiers deliberately retain their complete, namespaced text. The data layer does not
-// maintain a closed vocabulary for adapters, capabilities, semantic signals, or semantic actions.
-struct ETHERCATDATA_EXPORT DeviceAdapterId
-{
-    QString value;
-
-    friend bool operator==(const DeviceAdapterId &, const DeviceAdapterId &) = default;
-};
-
-struct ETHERCATDATA_EXPORT DeviceCapabilityId
-{
-    QString value;
-
-    friend bool operator==(const DeviceCapabilityId &, const DeviceCapabilityId &) = default;
-};
-
-struct ETHERCATDATA_EXPORT SemanticSignalId
-{
-    QString value;
-
-    friend bool operator==(const SemanticSignalId &, const SemanticSignalId &) = default;
-};
-
-struct ETHERCATDATA_EXPORT SemanticActionId
-{
-    QString value;
-
-    friend bool operator==(const SemanticActionId &, const SemanticActionId &) = default;
-};
 
 enum class DeviceAdapterQualification {
     Unqualified,
@@ -67,6 +39,7 @@ struct ETHERCATDATA_EXPORT DeviceAdapterMatch
 
 enum class SemanticSignalDirection { Input, Output, Bidirectional };
 enum class SemanticSignalAccess { ReadOnly, WriteOnly, ReadWrite };
+enum class SemanticSignalExposure { Public, ActionOnly, Internal };
 enum class DeviceByteOrder { LittleEndian, BigEndian };
 enum class DeviceSignalBindingKind { ProcessDataObject, ObjectDictionary };
 
@@ -137,9 +110,11 @@ struct ETHERCATDATA_EXPORT SemanticSignalDefinition
     QList<DeviceCapabilityId> capabilities;
     SemanticSignalDirection direction = SemanticSignalDirection::Input;
     SemanticSignalAccess access = SemanticSignalAccess::ReadOnly;
+    SemanticSignalExposure exposure = SemanticSignalExposure::Public;
     bool requiredForComplete = true;
     QList<DeviceSignalBinding> bindings;
     SemanticValueMetadata valueMetadata;
+    std::optional<EngineeringTransform> engineeringTransform;
     bool hasSafeValue = false;
     QVariant safeValue;
     ManualControlPolicy manualControl;
@@ -165,8 +140,7 @@ struct ETHERCATDATA_EXPORT DeviceModuleAssignment
     quint16 objectIndexOffset = 0;
     quint16 pdoIndexOffset = 0;
 
-    friend bool operator==(
-        const DeviceModuleAssignment &, const DeviceModuleAssignment &) = default;
+    friend bool operator==(const DeviceModuleAssignment &, const DeviceModuleAssignment &) = default;
 };
 
 struct ETHERCATDATA_EXPORT DeviceModuleProfile
@@ -188,9 +162,11 @@ struct ETHERCATDATA_EXPORT DeviceControlActionParameter
     QString description;
     EtherCATDataType dataType = EtherCATDataType::Unknown;
     SemanticValueMetadata valueMetadata;
+    std::optional<EngineeringConstraint> engineeringConstraint;
     bool required = true;
     bool hasDefaultValue = false;
     QVariant defaultValue;
+    std::optional<EngineeringValue> engineeringDefaultValue;
 
     friend bool operator==(
         const DeviceControlActionParameter &, const DeviceControlActionParameter &) = default;
@@ -202,6 +178,7 @@ struct ETHERCATDATA_EXPORT DeviceControlValue
 {
     DeviceControlValueSource source = DeviceControlValueSource::Invalid;
     QVariant literalValue;
+    std::optional<EngineeringValue> engineeringLiteralValue;
     QString parameterId;
 
     friend bool operator==(const DeviceControlValue &, const DeviceControlValue &) = default;
@@ -239,6 +216,9 @@ struct ETHERCATDATA_EXPORT DeviceControlAction
     QStringList runtimeConditions;
     ManualControlTimeoutAction failureAction = ManualControlTimeoutAction::ControlledStop;
     ManualControlTimeoutAction timeoutAction = ManualControlTimeoutAction::ControlledStop;
+    QList<SemanticActionId> allowedReleaseActionIds;
+    QList<SemanticActionId> allowedTimeoutActionIds;
+    QList<SemanticActionId> allowedFailureActionIds;
     QList<SemanticSignalId> requiredSignals;
     QList<DeviceControlActionParameter> parameters;
     QList<DeviceControlStep> steps;
@@ -312,8 +292,7 @@ struct ETHERCATDATA_EXPORT DeviceAdapterResolutionRequest
     }
 
     friend bool operator==(
-        const DeviceAdapterResolutionRequest &, const DeviceAdapterResolutionRequest &)
-        = default;
+        const DeviceAdapterResolutionRequest &, const DeviceAdapterResolutionRequest &) = default;
 };
 
 struct ETHERCATDATA_EXPORT BoundSemanticSignal
@@ -355,20 +334,16 @@ struct ETHERCATDATA_EXPORT DeviceAdapterResolutionResult
     QString error;
 
     friend bool operator==(
-        const DeviceAdapterResolutionResult &, const DeviceAdapterResolutionResult &)
-        = default;
+        const DeviceAdapterResolutionResult &, const DeviceAdapterResolutionResult &) = default;
 };
 
 } // namespace EtherCAT::Data
 
-Q_DECLARE_METATYPE(EtherCAT::Data::DeviceAdapterId)
-Q_DECLARE_METATYPE(EtherCAT::Data::DeviceCapabilityId)
-Q_DECLARE_METATYPE(EtherCAT::Data::SemanticSignalId)
-Q_DECLARE_METATYPE(EtherCAT::Data::SemanticActionId)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceAdapterQualification)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceAdapterMatch)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticSignalDirection)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticSignalAccess)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticSignalExposure)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceByteOrder)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceSignalBindingKind)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceSignalBinding)

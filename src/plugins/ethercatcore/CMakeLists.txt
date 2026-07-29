@@ -10,6 +10,8 @@ add_qtc_plugin(EtherCATCore
     ethercatcoresettings.cpp
     ethercatcoresettings.h
     ethercatcoretr.h
+    manualcontrolcontract.cpp
+    manualcontrolcontract.h
     providerregistry.cpp
     providerregistry.h
     providers.cpp

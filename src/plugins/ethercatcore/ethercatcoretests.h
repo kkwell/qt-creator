@@ -23,6 +23,10 @@ private slots:
     void testSemanticRuntimeReadValidation();
     void testSemanticRuntimeOperationContract();
     void testSemanticRuntimeServiceFailsClosed();
+    void testExactEngineeringRationalContract();
+    void testExactEngineeringConversionContract();
+    void testExactEngineeringConstraintContract();
+    void testManualControlEnvelopeContract();
     void testProcessDataConfigurationPreview();
     void testProcessDataConfigurationValidation();
     void testStartupAndDcConfigurationValidation();

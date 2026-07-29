@@ -6,6 +6,7 @@
 #include "ethercatcoreconstants.h"
 #include "ethercatcoresettings.h"
 #include "ethercatcoretr.h"
+#include "manualcontrolcontract.h"
 #include "providerregistry.h"
 #include "providers.h"
 #include "selectionservice.h"
@@ -19,14 +20,16 @@
 
 #include <ethercatdata/controllerconnection.h>
 #include <ethercatdata/deviceadapter.h>
+#include <ethercatdata/engineeringvalue.h>
+#include <ethercatdata/manualcontrol.h>
 #include <ethercatdata/nodeid.h>
 #include <ethercatdata/offlineconfiguration.h>
 #include <ethercatdata/projectsnapshot.h>
 #include <ethercatdata/runtimeresource.h>
 #include <ethercatdata/semanticruntime.h>
 
-#include <QSignalSpy>
 #include <QScopeGuard>
+#include <QSignalSpy>
 #include <QStringList>
 #include <QTest>
 #include <QWidget>
@@ -366,8 +369,7 @@ void EtherCATCoreTests::testAutomationServiceValueLookup()
     snapshot.mock = true;
     service.snapshots = {snapshot};
 
-    const std::optional<AutomationContextSnapshot> first
-        = service.context(snapshot.controllerId);
+    const std::optional<AutomationContextSnapshot> first = service.context(snapshot.controllerId);
     QVERIFY(first);
     QCOMPARE(*first, snapshot);
     QCOMPARE(service.readCount, 1);
@@ -927,34 +929,28 @@ void EtherCATCoreTests::testNodeIdRoundTrip()
 
 void EtherCATCoreTests::testProjectSnapshotValueSemantics()
 {
-    using RenameStructuralNodeMethod = Utils::Result<> (ProjectService::*)(
-        const Data::NodeId &, const Data::NodeId &, const QString &);
+    using RenameStructuralNodeMethod = Utils::Result<> (
+        ProjectService::*)(const Data::NodeId &, const Data::NodeId &, const QString &);
     static_assert(
-        std::is_same_v<
-            decltype(&ProjectService::renameStructuralNode), RenameStructuralNodeMethod>);
+        std::is_same_v<decltype(&ProjectService::renameStructuralNode), RenameStructuralNodeMethod>);
     using SetMasterConfigurationMethod = Utils::Result<> (ProjectService::*)(
-        const Data::NodeId &,
-        const Data::NodeId &,
-        const Data::MasterConfiguration &);
-    static_assert(
-        std::is_same_v<
-            decltype(&ProjectService::setMasterConfiguration),
-            SetMasterConfigurationMethod>);
+        const Data::NodeId &, const Data::NodeId &, const Data::MasterConfiguration &);
+    static_assert(std::is_same_v<
+                  decltype(&ProjectService::setMasterConfiguration),
+                  SetMasterConfigurationMethod>);
     using SetDeviceAdapterSelectionMethod = Utils::Result<> (ProjectService::*)(
         const Data::NodeId &,
         const Data::NodeId &,
         const QByteArray &,
         const Data::DeviceAdapterProjectSelection &);
-    static_assert(
-        std::is_same_v<
-            decltype(&ProjectService::setDeviceAdapterSelection),
-            SetDeviceAdapterSelectionMethod>);
-    using SetMasterBindingArtifactMethod = Utils::Result<> (ProjectService::*)(
-        const Data::NodeId &, const Data::SemanticBindingArtifactReference &);
-    static_assert(
-        std::is_same_v<
-            decltype(&ProjectService::setMasterBindingArtifact),
-            SetMasterBindingArtifactMethod>);
+    static_assert(std::is_same_v<
+                  decltype(&ProjectService::setDeviceAdapterSelection),
+                  SetDeviceAdapterSelectionMethod>);
+    using SetMasterBindingArtifactMethod = Utils::Result<> (
+        ProjectService::*)(const Data::NodeId &, const Data::SemanticBindingArtifactReference &);
+    static_assert(std::is_same_v<
+                  decltype(&ProjectService::setMasterBindingArtifact),
+                  SetMasterBindingArtifactMethod>);
 
     const Data::NodeId projectId = Data::NodeId::create();
     const Data::NodeId targetId = Data::NodeId::create();
@@ -1006,10 +1002,8 @@ void EtherCATCoreTests::testRuntimeResourceValueSemantics()
         Data::NodeId::create(),
     };
     const Data::RuntimeResourceId resourceId{QByteArray::fromHex("1020304050607080")};
-    const Data::RuntimeComponentInstanceId componentId{
-        QByteArray::fromHex("90a0b0c0d0e0f000")};
-    const Data::RuntimeComponentInstanceId parentId{
-        QByteArray::fromHex("1011121314151617")};
+    const Data::RuntimeComponentInstanceId componentId{QByteArray::fromHex("90a0b0c0d0e0f000")};
+    const Data::RuntimeComponentInstanceId parentId{QByteArray::fromHex("1011121314151617")};
     const Data::RuntimeConsistencyGroupId groupId{QByteArray::fromHex("0102030405060708")};
     QVERIFY(resourceId.isValid());
     QVERIFY(componentId.isValid());
@@ -1091,11 +1085,8 @@ void EtherCATCoreTests::testRuntimeResourceValueSemantics()
     const Data::RuntimeResourceSnapshot snapshotCopy = snapshot;
     QCOMPARE(snapshotCopy, snapshot);
     QCOMPARE(
-        snapshotCopy.samples.constFirst().value.opaqueRepresentation,
-        QByteArray::fromHex("123456"));
-    QCOMPARE(
-        snapshotCopy.samples.constFirst().quality.opaqueCode,
-        QByteArray::fromHex("8001"));
+        snapshotCopy.samples.constFirst().value.opaqueRepresentation, QByteArray::fromHex("123456"));
+    QCOMPARE(snapshotCopy.samples.constFirst().quality.opaqueCode, QByteArray::fromHex("8001"));
 
     snapshot.samples.first().value.primitiveType
         = Data::RuntimeResourcePrimitiveType::UnsignedInteger;
@@ -1150,9 +1141,7 @@ void EtherCATCoreTests::testRuntimeResourceSnapshotRequestContract()
     invalidSuccess.snapshot->scope.masterId = Data::NodeId::create();
     QVERIFY(!invalidSuccess.isValid());
     invalidSuccess = success;
-    std::swap(
-        invalidSuccess.snapshot->samples[0],
-        invalidSuccess.snapshot->samples[1]);
+    std::swap(invalidSuccess.snapshot->samples[0], invalidSuccess.snapshot->samples[1]);
     QVERIFY(!invalidSuccess.isValid());
 
     Data::RuntimeResourceSnapshotResult failure;
@@ -1174,11 +1163,9 @@ void EtherCATCoreTests::testRuntimeResourceSnapshotRequestContract()
     invalid.resourceIds.clear();
     QVERIFY(!invalid.isValid());
     invalid = request;
-    invalid.resourceIds.append(
-        {QByteArray::fromHex("1000000000000042")});
+    invalid.resourceIds.append({QByteArray::fromHex("1000000000000042")});
     for (int index = invalid.resourceIds.size(); index < 65; ++index) {
-        invalid.resourceIds.append(
-            {QByteArray::number(index).rightJustified(8, '\0')});
+        invalid.resourceIds.append({QByteArray::number(index).rightJustified(8, '\0')});
     }
     QVERIFY(!invalid.isValid());
     invalid = request;
@@ -1248,9 +1235,7 @@ void EtherCATCoreTests::testSemanticRuntimeValueSemantics()
     record.updatedAt = approval.decidedAt;
     const Data::SemanticOperationRecord recordCopy = record;
     QCOMPARE(recordCopy, record);
-    QVERIFY(
-        Data::SemanticOperationState::TimedOut
-        != Data::SemanticOperationState::OutcomeUnknown);
+    QVERIFY(Data::SemanticOperationState::TimedOut != Data::SemanticOperationState::OutcomeUnknown);
 
     Data::SemanticRuntimeAuditEvent auditEvent;
     auditEvent.sequence = 1;
@@ -1344,8 +1329,8 @@ void EtherCATCoreTests::testSemanticRuntimeReadValidation()
 {
     const SemanticRuntimeFixture fixture;
 
-    const SemanticRuntimeReadValidation good = validateSemanticRuntimeRead(
-        fixture.binding, fixture.catalog, fixture.snapshot);
+    const SemanticRuntimeReadValidation good
+        = validateSemanticRuntimeRead(fixture.binding, fixture.catalog, fixture.snapshot);
     QVERIFY(good.validation.accepted());
     QVERIFY(good.sample);
     QCOMPARE(good.sample->value.value.toBool(), true);
@@ -1365,8 +1350,7 @@ void EtherCATCoreTests::testSemanticRuntimeReadValidation()
     Data::RuntimeResourceSnapshot changedEpoch = fixture.snapshot;
     ++changedEpoch.epoch.runtimeGeneration;
     QCOMPARE(
-        validateSemanticRuntimeRead(fixture.binding, fixture.catalog, changedEpoch)
-            .validation.error,
+        validateSemanticRuntimeRead(fixture.binding, fixture.catalog, changedEpoch).validation.error,
         SemanticRuntimeValidationError::EpochMismatch);
 
     // A descriptor with the same presentation and PI coordinates is never a fallback for the
@@ -1374,8 +1358,7 @@ void EtherCATCoreTests::testSemanticRuntimeReadValidation()
     Data::RuntimeResourceCatalog lookalikeCatalog = fixture.catalog;
     lookalikeCatalog.resources.first().id = {QByteArray::fromHex("1000000000000002")};
     QCOMPARE(
-        validateSemanticRuntimeRead(
-            fixture.binding, lookalikeCatalog, fixture.snapshot)
+        validateSemanticRuntimeRead(fixture.binding, lookalikeCatalog, fixture.snapshot)
             .validation.error,
         SemanticRuntimeValidationError::ResourceNotFound);
 
@@ -1386,11 +1369,10 @@ void EtherCATCoreTests::testSemanticRuntimeReadValidation()
         SemanticRuntimeValidationError::SampleAmbiguous);
 
     Data::RuntimeResourceCatalog mismatchedDescriptor = fixture.catalog;
-    mismatchedDescriptor.resources.first().consistencyGroupId
-        = {QByteArray::fromHex("3000000000000002")};
+    mismatchedDescriptor.resources.first().consistencyGroupId = {
+        QByteArray::fromHex("3000000000000002")};
     QCOMPARE(
-        validateSemanticRuntimeRead(
-            fixture.binding, mismatchedDescriptor, fixture.snapshot)
+        validateSemanticRuntimeRead(fixture.binding, mismatchedDescriptor, fixture.snapshot)
             .validation.error,
         SemanticRuntimeValidationError::DescriptorMismatch);
 }
@@ -1480,8 +1462,7 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
 
     Data::SemanticOperationRequest wrongBooleanType = fixture.request;
     wrongBooleanType.value = QVariant::fromValue<qulonglong>(1);
-    QVERIFY(!isSemanticRuntimeValueCompatible(
-        wrongBooleanType.value, fixture.binding));
+    QVERIFY(!isSemanticRuntimeValueCompatible(wrongBooleanType.value, fixture.binding));
     QCOMPARE(
         validateSemanticOperationRequest(wrongBooleanType, fixture.context).error,
         SemanticRuntimeValidationError::InvalidRequest);
@@ -1489,27 +1470,21 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
     Data::SemanticRuntimeBinding signedEight = fixture.binding;
     signedEight.primitiveType = Data::RuntimeResourcePrimitiveType::SignedInteger;
     signedEight.bitWidth = 8;
-    QVERIFY(isSemanticRuntimeValueCompatible(
-        QVariant::fromValue<qlonglong>(-128), signedEight));
-    QVERIFY(isSemanticRuntimeValueCompatible(
-        QVariant::fromValue<qlonglong>(127), signedEight));
-    QVERIFY(!isSemanticRuntimeValueCompatible(
-        QVariant::fromValue<qlonglong>(128), signedEight));
+    QVERIFY(isSemanticRuntimeValueCompatible(QVariant::fromValue<qlonglong>(-128), signedEight));
+    QVERIFY(isSemanticRuntimeValueCompatible(QVariant::fromValue<qlonglong>(127), signedEight));
+    QVERIFY(!isSemanticRuntimeValueCompatible(QVariant::fromValue<qlonglong>(128), signedEight));
 
     Data::SemanticRuntimeBinding unsignedEight = fixture.binding;
     unsignedEight.primitiveType = Data::RuntimeResourcePrimitiveType::UnsignedInteger;
     unsignedEight.bitWidth = 8;
-    QVERIFY(isSemanticRuntimeValueCompatible(
-        QVariant::fromValue<qulonglong>(255), unsignedEight));
-    QVERIFY(!isSemanticRuntimeValueCompatible(
-        QVariant::fromValue<qulonglong>(256), unsignedEight));
+    QVERIFY(isSemanticRuntimeValueCompatible(QVariant::fromValue<qulonglong>(255), unsignedEight));
+    QVERIFY(!isSemanticRuntimeValueCompatible(QVariant::fromValue<qulonglong>(256), unsignedEight));
 
     Data::SemanticRuntimeBinding fixedPoint = fixture.binding;
     fixedPoint.primitiveType = Data::RuntimeResourcePrimitiveType::FloatingPoint;
     fixedPoint.bitWidth = 64;
     QVERIFY(isSemanticRuntimeValueCompatible(QVariant(1.25), fixedPoint));
-    QVERIFY(!isAllowedSemanticRuntimeValue(
-        QVariant(std::numeric_limits<double>::quiet_NaN())));
+    QVERIFY(!isAllowedSemanticRuntimeValue(QVariant(std::numeric_limits<double>::quiet_NaN())));
     QVERIFY(!isSemanticRuntimeValueCompatible(
         QVariant(std::numeric_limits<double>::infinity()), fixedPoint));
 
@@ -1537,15 +1512,13 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
     approval.challenge = approvalOperation.approvalChallenge;
     approval.expectedContextHash = fixture.context.contextHash;
     QVERIFY(
-        validateSemanticOperationApproval(
-            approval, fixture.actor, approvalOperation, fixture.context)
+        validateSemanticOperationApproval(approval, fixture.actor, approvalOperation, fixture.context)
             .accepted());
 
     Data::SemanticRuntimeActor automation = fixture.actor;
     automation.kind = Data::SemanticRuntimeActorKind::Automation;
     QCOMPARE(
-        validateSemanticOperationApproval(
-            approval, automation, approvalOperation, fixture.context)
+        validateSemanticOperationApproval(approval, automation, approvalOperation, fixture.context)
             .error,
         SemanticRuntimeValidationError::ApprovalActorInvalid);
 
@@ -1560,8 +1533,7 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
     Data::SemanticOperationApprovalRequest pending = approval;
     pending.decision = Data::SemanticApprovalDecision::Pending;
     QCOMPARE(
-        validateSemanticOperationApproval(
-            pending, fixture.actor, approvalOperation, fixture.context)
+        validateSemanticOperationApproval(pending, fixture.actor, approvalOperation, fixture.context)
             .error,
         SemanticRuntimeValidationError::InvalidRequest);
 }
@@ -1572,8 +1544,8 @@ void EtherCATCoreTests::testSemanticRuntimeServiceFailsClosed()
     TestSemanticRuntimeService service;
     service.snapshots = {fixture.context};
 
-    const std::optional<Data::SemanticRuntimeContext> context
-        = service.context(fixture.context.controllerId);
+    const std::optional<Data::SemanticRuntimeContext> context = service.context(
+        fixture.context.controllerId);
     QVERIFY(context);
     QCOMPARE(*context, fixture.context);
     QCOMPARE(service.readCount, 1);
@@ -1610,6 +1582,512 @@ void EtherCATCoreTests::testSemanticRuntimeServiceFailsClosed()
 
     QCOMPARE(operationSpy.count(), 0);
     QCOMPARE(auditSpy.count(), 0);
+}
+
+void EtherCATCoreTests::testExactEngineeringRationalContract()
+{
+    const ExactRationalResult half = normalizedExactRational(6, 12);
+    QVERIFY(half.validation.accepted());
+    QCOMPARE(half.value, std::optional<Data::ExactRational>({1, 2}));
+    QCOMPARE(normalizedExactRational(0, 999).value, std::optional<Data::ExactRational>({0, 1}));
+
+    const ExactRationalResult invalidDenominator = normalizedExactRational(1, 0);
+    QCOMPARE(invalidDenominator.validation.error, EngineeringContractError::InvalidRational);
+    QVERIFY(!invalidDenominator.value);
+    QCOMPARE(validateExactRational({2, 4}).error, EngineeringContractError::InvalidRational);
+    QCOMPARE(validateExactRational({0, 2}).error, EngineeringContractError::InvalidRational);
+    QCOMPARE(validateExactRational({1, -2}).error, EngineeringContractError::InvalidRational);
+    QVERIFY(validateExactRational({std::numeric_limits<qint64>::min(), 1}).accepted());
+
+    QVERIFY(validateEngineeringValue(Data::EngineeringValue::fromBoolean(true)).accepted());
+    QVERIFY(validateEngineeringValue(Data::EngineeringValue::fromSignedInteger(-17)).accepted());
+    QVERIFY(validateEngineeringValue(Data::EngineeringValue::fromUnsignedInteger(17)).accepted());
+    QVERIFY(validateEngineeringValue(Data::EngineeringValue::fromExactRational({-3, 7})).accepted());
+    QVERIFY(
+        validateEngineeringValue(Data::EngineeringValue::fromEnumeration("mode.ready")).accepted());
+
+    Data::EngineeringValue polluted = Data::EngineeringValue::fromSignedInteger(7);
+    polluted.unsignedInteger = 1;
+    QCOMPARE(validateEngineeringValue(polluted).error, EngineeringContractError::InvalidValue);
+}
+
+void EtherCATCoreTests::testExactEngineeringConversionContract()
+{
+    Data::EngineeringTransform transform;
+    transform.scale = {1, 10};
+    transform.offset = {-1, 1};
+    transform.rounding = Data::EngineeringRounding::RejectInexact;
+    transform.constraint.minimum = {-100, 1};
+    transform.constraint.maximum = {100, 1};
+
+    const EngineeringConversionResult engineering
+        = convertRawToEngineering(Data::EngineeringValue::fromSignedInteger(20), 16, transform);
+    QVERIFY(engineering.validation.accepted());
+    QCOMPARE(
+        engineering.value,
+        std::optional<Data::EngineeringValue>(Data::EngineeringValue::fromExactRational({1, 1})));
+
+    const EngineeringConversionResult raw = convertEngineeringToRaw(
+        Data::EngineeringValue::fromExactRational({3, 2}),
+        Data::EngineeringValueKind::SignedInteger,
+        16,
+        transform);
+    QVERIFY(raw.validation.accepted());
+    QCOMPARE(
+        raw.value,
+        std::optional<Data::EngineeringValue>(Data::EngineeringValue::fromSignedInteger(25)));
+
+    QCOMPARE(
+        convertEngineeringToRaw(
+            Data::EngineeringValue::fromExactRational({1, 3}),
+            Data::EngineeringValueKind::SignedInteger,
+            16,
+            transform)
+            .validation.error,
+        EngineeringContractError::InexactConversion);
+
+    Data::EngineeringTransform rounded;
+    rounded.scale = {1, 1};
+    rounded.offset = {0, 1};
+    rounded.rounding = Data::EngineeringRounding::NearestTiesToEven;
+    QCOMPARE(
+        convertEngineeringToRaw(
+            Data::EngineeringValue::fromExactRational({5, 2}),
+            Data::EngineeringValueKind::SignedInteger,
+            8,
+            rounded)
+            .value,
+        std::optional<Data::EngineeringValue>(Data::EngineeringValue::fromSignedInteger(2)));
+    QCOMPARE(
+        convertEngineeringToRaw(
+            Data::EngineeringValue::fromExactRational({7, 2}),
+            Data::EngineeringValueKind::SignedInteger,
+            8,
+            rounded)
+            .value,
+        std::optional<Data::EngineeringValue>(Data::EngineeringValue::fromSignedInteger(4)));
+    QCOMPARE(
+        convertEngineeringToRaw(
+            Data::EngineeringValue::fromExactRational({-5, 2}),
+            Data::EngineeringValueKind::SignedInteger,
+            8,
+            rounded)
+            .value,
+        std::optional<Data::EngineeringValue>(Data::EngineeringValue::fromSignedInteger(-2)));
+
+    Data::EngineeringTransform towardZero = rounded;
+    towardZero.rounding = Data::EngineeringRounding::TowardZero;
+    QCOMPARE(
+        convertEngineeringToRaw(
+            Data::EngineeringValue::fromExactRational({-7, 3}),
+            Data::EngineeringValueKind::SignedInteger,
+            8,
+            towardZero)
+            .value,
+        std::optional<Data::EngineeringValue>(Data::EngineeringValue::fromSignedInteger(-2)));
+    Data::EngineeringTransform towardNegative = rounded;
+    towardNegative.rounding = Data::EngineeringRounding::TowardNegativeInfinity;
+    QCOMPARE(
+        convertEngineeringToRaw(
+            Data::EngineeringValue::fromExactRational({-7, 3}),
+            Data::EngineeringValueKind::SignedInteger,
+            8,
+            towardNegative)
+            .value,
+        std::optional<Data::EngineeringValue>(Data::EngineeringValue::fromSignedInteger(-3)));
+    Data::EngineeringTransform towardPositive = rounded;
+    towardPositive.rounding = Data::EngineeringRounding::TowardPositiveInfinity;
+    QCOMPARE(
+        convertEngineeringToRaw(
+            Data::EngineeringValue::fromExactRational({7, 3}),
+            Data::EngineeringValueKind::SignedInteger,
+            8,
+            towardPositive)
+            .value,
+        std::optional<Data::EngineeringValue>(Data::EngineeringValue::fromSignedInteger(3)));
+
+    QVERIFY(convertRawToEngineering(Data::EngineeringValue::fromSignedInteger(127), 8, rounded)
+                .validation.accepted());
+    QCOMPARE(
+        convertRawToEngineering(Data::EngineeringValue::fromSignedInteger(128), 8, rounded)
+            .validation.error,
+        EngineeringContractError::RawValueOutOfRange);
+    QVERIFY(convertRawToEngineering(Data::EngineeringValue::fromUnsignedInteger(255), 8, rounded)
+                .validation.accepted());
+    QCOMPARE(
+        convertRawToEngineering(Data::EngineeringValue::fromUnsignedInteger(256), 8, rounded)
+            .validation.error,
+        EngineeringContractError::RawValueOutOfRange);
+    QCOMPARE(
+        convertRawToEngineering(
+            Data::EngineeringValue::fromUnsignedInteger(std::numeric_limits<quint64>::max()),
+            64,
+            rounded)
+            .validation.error,
+        EngineeringContractError::ArithmeticOverflow);
+
+    Data::EngineeringTransform booleanTransform = rounded;
+    const EngineeringConversionResult booleanEngineering
+        = convertRawToEngineering(Data::EngineeringValue::fromBoolean(true), 1, booleanTransform);
+    QCOMPARE(
+        booleanEngineering.value,
+        std::optional<Data::EngineeringValue>(Data::EngineeringValue::fromBoolean(true)));
+    QCOMPARE(
+        convertEngineeringToRaw(
+            Data::EngineeringValue::fromBoolean(false),
+            Data::EngineeringValueKind::Boolean,
+            1,
+            booleanTransform)
+            .value,
+        std::optional<Data::EngineeringValue>(Data::EngineeringValue::fromBoolean(false)));
+
+    Data::EngineeringTransform missingRounding = rounded;
+    missingRounding.rounding.reset();
+    QCOMPARE(
+        validateEngineeringTransform(missingRounding).error,
+        EngineeringContractError::InvalidTransform);
+    Data::EngineeringTransform zeroScale = rounded;
+    zeroScale.scale = {0, 1};
+    QCOMPARE(validateEngineeringTransform(zeroScale).error, EngineeringContractError::ScaleIsZero);
+}
+
+void EtherCATCoreTests::testExactEngineeringConstraintContract()
+{
+    Data::EngineeringConstraint stepped;
+    stepped.minimum = {-2, 1};
+    stepped.maximum = {2, 1};
+    stepped.step = {1, 2};
+    stepped.stepOrigin = {0, 1};
+    QVERIFY(validateEngineeringConstraint(stepped).accepted());
+    QVERIFY(validateEngineeringValueAgainstConstraint(
+                Data::EngineeringValue::fromExactRational({3, 2}), stepped)
+                .accepted());
+    QCOMPARE(
+        validateEngineeringValueAgainstConstraint(
+            Data::EngineeringValue::fromExactRational({1, 4}), stepped)
+            .error,
+        EngineeringContractError::ConstraintStepViolation);
+    QCOMPARE(
+        validateEngineeringValueAgainstConstraint(Data::EngineeringValue::fromSignedInteger(3), stepped)
+            .error,
+        EngineeringContractError::ConstraintRangeViolation);
+
+    Data::EngineeringConstraint enumeration;
+    enumeration.minimum = {0, 1};
+    enumeration.maximum = {1, 1};
+    enumeration.enumeration = {
+        {"mode.off", "Off", {0, 1}},
+        {"mode.on", "On", {1, 1}},
+    };
+    QVERIFY(validateEngineeringConstraint(enumeration).accepted());
+    QVERIFY(validateEngineeringValueAgainstConstraint(
+                Data::EngineeringValue::fromEnumeration("mode.on"), enumeration)
+                .accepted());
+    QCOMPARE(
+        validateEngineeringValueAgainstConstraint(
+            Data::EngineeringValue::fromEnumeration("mode.unknown"), enumeration)
+            .error,
+        EngineeringContractError::ConstraintEnumerationViolation);
+
+    Data::EngineeringConstraint unsorted = enumeration;
+    std::reverse(unsorted.enumeration.begin(), unsorted.enumeration.end());
+    QCOMPARE(
+        validateEngineeringConstraint(unsorted).error, EngineeringContractError::InvalidConstraint);
+    Data::EngineeringConstraint missingOrigin;
+    missingOrigin.step = {1, 1};
+    QCOMPARE(
+        validateEngineeringConstraint(missingOrigin).error,
+        EngineeringContractError::InvalidConstraint);
+}
+
+void EtherCATCoreTests::testManualControlEnvelopeContract()
+{
+    Data::EngineeringTransform signalTransform;
+    signalTransform.scale = {1, 1};
+    signalTransform.offset = {0, 1};
+    signalTransform.rounding = Data::EngineeringRounding::RejectInexact;
+    signalTransform.constraint.minimum = {0, 1};
+    signalTransform.constraint.maximum = {1, 1};
+    signalTransform.constraint.step = {1, 1};
+    signalTransform.constraint.stepOrigin = {0, 1};
+
+    Data::SemanticSignalDefinition signalDefinition;
+    signalDefinition.id = {"urn:test:signal/output"};
+    signalDefinition.direction = Data::SemanticSignalDirection::Output;
+    signalDefinition.access = Data::SemanticSignalAccess::WriteOnly;
+    signalDefinition.exposure = Data::SemanticSignalExposure::Public;
+    signalDefinition.engineeringTransform = signalTransform;
+
+    Data::EngineeringConstraint speedConstraint;
+    speedConstraint.minimum = {-100, 1};
+    speedConstraint.maximum = {100, 1};
+    speedConstraint.step = {1, 1};
+    speedConstraint.stepOrigin = {0, 1};
+
+    Data::SemanticSignalDefinition speedSignalDefinition;
+    speedSignalDefinition.id = {"urn:test:signal/target-speed"};
+    speedSignalDefinition.direction = Data::SemanticSignalDirection::Output;
+    speedSignalDefinition.access = Data::SemanticSignalAccess::WriteOnly;
+    speedSignalDefinition.exposure = Data::SemanticSignalExposure::ActionOnly;
+    Data::EngineeringTransform speedTransform;
+    speedTransform.scale = {1, 1};
+    speedTransform.offset = {0, 1};
+    speedTransform.rounding = Data::EngineeringRounding::RejectInexact;
+    speedTransform.constraint = speedConstraint;
+    speedSignalDefinition.engineeringTransform = speedTransform;
+    QList<Data::SemanticSignalDefinition> signalDefinitions{
+        signalDefinition,
+        speedSignalDefinition,
+    };
+
+    const auto terminalAction = [&signalDefinition](const QString &id) {
+        Data::DeviceControlAction action;
+        action.id = {id};
+        action.enabled = true;
+        action.holdToRun = false;
+        Data::DeviceControlStep step;
+        step.kind = Data::DeviceControlStepKind::WriteSignal;
+        step.signalId = signalDefinition.id;
+        step.value.source = Data::DeviceControlValueSource::Literal;
+        step.value.engineeringLiteralValue = Data::EngineeringValue::fromSignedInteger(0);
+        action.steps = {step};
+        return action;
+    };
+    Data::DeviceControlAction mainAction;
+    mainAction.id = {"urn:test:action/move"};
+    mainAction.enabled = true;
+    mainAction.holdToRun = true;
+    mainAction.allowedReleaseActionIds = {{"urn:test:action/release"}};
+    mainAction.allowedTimeoutActionIds = {{"urn:test:action/timeout"}};
+    mainAction.allowedFailureActionIds = {{"urn:test:action/fail"}};
+    Data::DeviceControlActionParameter speedParameter;
+    speedParameter.id = "speed";
+    speedParameter.required = true;
+    speedParameter.engineeringConstraint = speedConstraint;
+    mainAction.parameters = {speedParameter};
+    Data::DeviceControlStep mainStep;
+    mainStep.kind = Data::DeviceControlStepKind::WriteSignal;
+    mainStep.signalId = speedSignalDefinition.id;
+    mainStep.value.source = Data::DeviceControlValueSource::Parameter;
+    mainStep.value.parameterId = speedParameter.id;
+    mainAction.steps = {mainStep};
+
+    QList<Data::DeviceControlAction> actionDefinitions{
+        mainAction,
+        terminalAction("urn:test:action/fail"),
+        terminalAction("urn:test:action/release"),
+        terminalAction("urn:test:action/timeout"),
+    };
+
+    Data::ManualSignalEnvelope signal;
+    signal.signalId = signalDefinition.id;
+    signal.enabled = true;
+    signal.holdToRun = false;
+    signal.timing.commandTtlMs = 100;
+    signal.allowedRange = signalTransform.constraint;
+    signal.safeValue = Data::EngineeringValue::fromSignedInteger(0);
+
+    Data::ManualActionParameterEnvelope parameter;
+    parameter.parameterId = "speed";
+    parameter.allowedRange = speedConstraint;
+    parameter.defaultValue = Data::EngineeringValue::fromSignedInteger(0);
+
+    Data::ManualActionEnvelope action;
+    action.actionId = mainAction.id;
+    action.enabled = true;
+    action.holdToRun = true;
+    action.timing.commandTtlMs = 100;
+    action.timing.refreshTimeoutMs = 250;
+    action.timing.maxContinuousHoldMs = 5000;
+    action.parameters = {parameter};
+    action.releaseActionId = {"urn:test:action/release"};
+    action.timeoutActionId = {"urn:test:action/timeout"};
+    action.failureActionId = {"urn:test:action/fail"};
+
+    Data::ManualControlEnvelope envelope;
+    envelope.enabled = true;
+    envelope.signalEnvelopes = {signal};
+    envelope.actionEnvelopes = {action};
+    QVERIFY(
+        validateManualControlEnvelope(envelope, signalDefinitions, actionDefinitions).accepted());
+
+    QVERIFY(QMetaType::fromType<Data::ExactRational>().isValid());
+    QVERIFY(QMetaType::fromType<Data::EngineeringTransform>().isValid());
+    QVERIFY(QMetaType::fromType<Data::ManualControlEnvelope>().isValid());
+    QVERIFY(QMetaType::fromType<EngineeringConversionResult>().isValid());
+    QVERIFY(QMetaType::fromType<ManualControlContractValidation>().isValid());
+
+    Data::SemanticSignalDefinition legacySignal = signalDefinition;
+    legacySignal.engineeringTransform.reset();
+    QList<Data::SemanticSignalDefinition> legacySignals = signalDefinitions;
+    legacySignals[0] = legacySignal;
+    QCOMPARE(
+        validateManualControlEnvelope(envelope, legacySignals, actionDefinitions).error,
+        ManualControlContractError::ExactTransformMissing);
+
+    Data::SemanticSignalDefinition actionOnly = signalDefinition;
+    actionOnly.exposure = Data::SemanticSignalExposure::ActionOnly;
+    QList<Data::SemanticSignalDefinition> actionOnlySignals = signalDefinitions;
+    actionOnlySignals[0] = actionOnly;
+    QCOMPARE(
+        validateManualControlEnvelope(envelope, actionOnlySignals, actionDefinitions).error,
+        ManualControlContractError::SignalNotPublic);
+
+    Data::ManualControlEnvelope noTtl = envelope;
+    noTtl.signalEnvelopes[0].timing.commandTtlMs = 0;
+    QCOMPARE(
+        validateManualControlEnvelope(noTtl, signalDefinitions, actionDefinitions).error,
+        ManualControlContractError::InvalidTiming);
+
+    Data::ManualControlEnvelope duplicateSignal = envelope;
+    duplicateSignal.signalEnvelopes.append(signal);
+    QCOMPARE(
+        validateManualControlEnvelope(duplicateSignal, signalDefinitions, actionDefinitions).error,
+        ManualControlContractError::DuplicateIdentifier);
+
+    Data::ManualControlEnvelope broaderRange = envelope;
+    broaderRange.signalEnvelopes[0].allowedRange.minimum.reset();
+    QCOMPARE(
+        validateManualControlEnvelope(broaderRange, signalDefinitions, actionDefinitions).error,
+        ManualControlContractError::ConstraintNotSubset);
+
+    Data::ManualControlEnvelope unsignedEnumeration = envelope;
+    unsignedEnumeration.signalEnvelopes[0].allowedRange.enumeration = {
+        {"project.custom", "Custom", {0, 1}},
+    };
+    QCOMPARE(
+        validateManualControlEnvelope(unsignedEnumeration, signalDefinitions, actionDefinitions)
+            .error,
+        ManualControlContractError::ConstraintNotSubset);
+
+    Data::SemanticSignalDefinition alphabeticSignal = signalDefinition;
+    alphabeticSignal.id = {"urn:test:signal/alpha"};
+    Data::ManualSignalEnvelope alphabeticEnvelope = signal;
+    alphabeticEnvelope.signalId = alphabeticSignal.id;
+    alphabeticEnvelope.enabled = false;
+    Data::ManualControlEnvelope unsortedSignals = envelope;
+    unsortedSignals.signalEnvelopes.append(alphabeticEnvelope);
+    QList<Data::SemanticSignalDefinition> definitionsWithAlpha = signalDefinitions;
+    definitionsWithAlpha.append(alphabeticSignal);
+    QCOMPARE(
+        validateManualControlEnvelope(unsortedSignals, definitionsWithAlpha, actionDefinitions).error,
+        ManualControlContractError::NonCanonicalIdentifierOrder);
+
+    Data::ManualControlEnvelope unsortedActions = envelope;
+    Data::ManualActionEnvelope alphabeticAction;
+    alphabeticAction.actionId = {"urn:test:action/alpha"};
+    unsortedActions.actionEnvelopes.append(alphabeticAction);
+    QCOMPARE(
+        validateManualControlEnvelope(unsortedActions, signalDefinitions, actionDefinitions).error,
+        ManualControlContractError::NonCanonicalIdentifierOrder);
+
+    Data::SemanticSignalDefinition inputPeer = signalDefinition;
+    inputPeer.id = {"urn:test:signal/input-peer"};
+    inputPeer.direction = Data::SemanticSignalDirection::Input;
+    inputPeer.access = Data::SemanticSignalAccess::ReadOnly;
+    Data::ManualControlEnvelope unsafeGroup = envelope;
+    unsafeGroup.signalEnvelopes[0].consistencyGroupSafeValues = {
+        {inputPeer.id, Data::EngineeringValue::fromSignedInteger(0)},
+    };
+    QList<Data::SemanticSignalDefinition> definitionsWithInput = signalDefinitions;
+    definitionsWithInput.append(inputPeer);
+    QCOMPARE(
+        validateManualControlEnvelope(unsafeGroup, definitionsWithInput, actionDefinitions).error,
+        ManualControlContractError::InvalidSafeValue);
+
+    Data::SemanticSignalDefinition zuluPeer = signalDefinition;
+    zuluPeer.id = {"urn:test:signal/zulu-peer"};
+    Data::ManualControlEnvelope unsortedGroup = envelope;
+    unsortedGroup.signalEnvelopes[0].consistencyGroupSafeValues = {
+        {zuluPeer.id, Data::EngineeringValue::fromSignedInteger(0)},
+        {alphabeticSignal.id, Data::EngineeringValue::fromSignedInteger(0)},
+    };
+    QList<Data::SemanticSignalDefinition> definitionsForGroup = definitionsWithAlpha;
+    definitionsForGroup.append(zuluPeer);
+    QCOMPARE(
+        validateManualControlEnvelope(unsortedGroup, definitionsForGroup, actionDefinitions).error,
+        ManualControlContractError::InvalidSafeValue);
+
+    Data::ManualControlEnvelope selfFallback = envelope;
+    selfFallback.actionEnvelopes[0].failureActionId = mainAction.id;
+    QCOMPARE(
+        validateManualControlEnvelope(selfFallback, signalDefinitions, actionDefinitions).error,
+        ManualControlContractError::SelfReferentialFallback);
+
+    QList<Data::DeviceControlAction> disabledMain = actionDefinitions;
+    disabledMain[0].enabled = false;
+    QCOMPARE(
+        validateManualControlEnvelope(envelope, signalDefinitions, disabledMain).error,
+        ManualControlContractError::InexactActionDefinition);
+    QList<Data::DeviceControlAction> emptyMain = actionDefinitions;
+    emptyMain[0].steps.clear();
+    QCOMPARE(
+        validateManualControlEnvelope(envelope, signalDefinitions, emptyMain).error,
+        ManualControlContractError::InexactActionDefinition);
+    QList<Data::DeviceControlAction> inexactLiteral = actionDefinitions;
+    inexactLiteral[0].steps[0].value.source = Data::DeviceControlValueSource::Literal;
+    inexactLiteral[0].steps[0].value.literalValue = 0;
+    inexactLiteral[0].steps[0].value.parameterId.clear();
+    inexactLiteral[0].steps[0].value.engineeringLiteralValue.reset();
+    QCOMPARE(
+        validateManualControlEnvelope(envelope, signalDefinitions, inexactLiteral).error,
+        ManualControlContractError::InexactActionDefinition);
+    QList<Data::DeviceControlAction> broadParameter = actionDefinitions;
+    broadParameter[0].parameters[0].engineeringConstraint->minimum = {-200, 1};
+    QCOMPARE(
+        validateManualControlEnvelope(envelope, signalDefinitions, broadParameter).error,
+        ManualControlContractError::InexactActionDefinition);
+
+    QList<Data::DeviceControlAction> nonterminalFallbacks = actionDefinitions;
+    nonterminalFallbacks[1].allowedFailureActionIds = {{"urn:test:action/timeout"}};
+    QCOMPARE(
+        validateManualControlEnvelope(envelope, signalDefinitions, nonterminalFallbacks).error,
+        ManualControlContractError::FallbackNotTerminal);
+
+    QList<Data::DeviceControlAction> emptyFallback = actionDefinitions;
+    emptyFallback[1].steps.clear();
+    QCOMPARE(
+        validateManualControlEnvelope(envelope, signalDefinitions, emptyFallback).error,
+        ManualControlContractError::FallbackNotTerminal);
+
+    QList<Data::DeviceControlAction> fallbackMissingDefault = actionDefinitions;
+    Data::DeviceControlActionParameter fallbackParameter;
+    fallbackParameter.id = "required";
+    fallbackParameter.required = true;
+    fallbackParameter.engineeringConstraint = speedConstraint;
+    fallbackMissingDefault[1].parameters = {fallbackParameter};
+    QCOMPARE(
+        validateManualControlEnvelope(envelope, signalDefinitions, fallbackMissingDefault).error,
+        ManualControlContractError::FallbackNotTerminal);
+
+    QList<Data::DeviceControlAction> unsortedAllowList = actionDefinitions;
+    unsortedAllowList[0].allowedFailureActionIds = {
+        {"urn:test:action/timeout"},
+        {"urn:test:action/fail"},
+    };
+    QCOMPARE(
+        validateManualControlEnvelope(envelope, signalDefinitions, unsortedAllowList).error,
+        ManualControlContractError::NonCanonicalIdentifierOrder);
+
+    QList<Data::DeviceControlAction> parameterDefinitions = actionDefinitions;
+    Data::DeviceControlActionParameter alphaParameter;
+    alphaParameter.id = "alpha";
+    alphaParameter.required = false;
+    alphaParameter.engineeringConstraint = speedConstraint;
+    parameterDefinitions[0].parameters.append(alphaParameter);
+    Data::ManualControlEnvelope unsortedParameters = envelope;
+    Data::ManualActionParameterEnvelope alphaEnvelope;
+    alphaEnvelope.parameterId = alphaParameter.id;
+    alphaEnvelope.allowedRange = speedConstraint;
+    unsortedParameters.actionEnvelopes[0].parameters.append(alphaEnvelope);
+    QCOMPARE(
+        validateManualControlEnvelope(unsortedParameters, signalDefinitions, parameterDefinitions)
+            .error,
+        ManualControlContractError::InvalidParameter);
+
+    Data::ManualControlEnvelope disabled;
+    QVERIFY(
+        validateManualControlEnvelope(disabled, signalDefinitions, actionDefinitions).accepted());
 }
 
 void EtherCATCoreTests::testProcessDataConfigurationPreview()
@@ -1849,8 +2327,7 @@ void EtherCATCoreTests::testDeviceAdapterValueSemantics()
 
     QCOMPARE(qualified.id.value, QString("org.example.test.adapter/custom-drive"));
     QCOMPARE(
-        qualified.capabilities.at(1).value,
-        QString("example.test.capability/custom-diagnostics"));
+        qualified.capabilities.at(1).value, QString("example.test.capability/custom-diagnostics"));
     QCOMPARE(
         qualified.semanticSignals.constFirst().id.value,
         QString("urn:example.test:signal/custom.axis.target-velocity"));
@@ -2120,10 +2597,8 @@ void EtherCATCoreTests::testWorkbenchDerivedNodeKinds()
     QCOMPARE(int(WorkbenchNodeKind::Module), 16);
     QCOMPARE(int(WorkbenchNodeKind::Channel), 17);
 
-    const PropertyPageContext context{Data::NodeId::create(),
-                                      Data::NodeId::create(),
-                                      WorkbenchNodeKind::PdoEntry,
-                                      "Controlword"};
+    const PropertyPageContext context{
+        Data::NodeId::create(), Data::NodeId::create(), WorkbenchNodeKind::PdoEntry, "Controlword"};
     QCOMPARE(PropertyPageContext(context), context);
 }
 
@@ -2184,15 +2659,12 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
         unsupportedRuntimeRefresh.error(),
         Tr::tr("This controller provider does not support runtime resources."));
     QSignalSpy targetedFinishedSpy(
-        &provider,
-        &ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished);
-    const Utils::Result<> unsupportedTargetedRead
-        = provider.requestRuntimeResourceSnapshot({});
+        &provider, &ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished);
+    const Utils::Result<> unsupportedTargetedRead = provider.requestRuntimeResourceSnapshot({});
     QVERIFY(!unsupportedTargetedRead);
     QCOMPARE(
         unsupportedTargetedRead.error(),
-        Tr::tr(
-            "This controller provider does not support targeted runtime resource snapshots."));
+        Tr::tr("This controller provider does not support targeted runtime resource snapshots."));
     QCOMPARE(targetedFinishedSpy.count(), 0);
 
     Data::ControllerPackageDeploymentProgress deploymentProgress;
@@ -2244,8 +2716,8 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
     QSignalSpy profilesSpy(&provider, &ControllerConnectionProvider::connectionProfilesChanged);
     QSignalSpy snapshotSpy(&provider, &ControllerConnectionProvider::connectionSnapshotChanged);
     QSignalSpy catalogSpy(&provider, &ControllerConnectionProvider::runtimeResourceCatalogChanged);
-    QSignalSpy runtimeSnapshotSpy(
-        &provider, &ControllerConnectionProvider::runtimeResourceSnapshotChanged);
+    QSignalSpy
+        runtimeSnapshotSpy(&provider, &ControllerConnectionProvider::runtimeResourceSnapshotChanged);
     QCOMPARE(catalogSpy.count(), 0);
     QCOMPARE(runtimeSnapshotSpy.count(), 0);
     QVERIFY(!provider.isAvailable());

@@ -3,6 +3,7 @@
 #include "ethercatcoreconstants.h"
 #include "ethercatcoresettings.h"
 #include "ethercatcoretr.h"
+#include "manualcontrolcontract.h"
 #include "providerregistry.h"
 #include "selectionservice.h"
 #include "stateservice.h"
@@ -17,6 +18,8 @@
 #include <extensionsystem/pluginmanager.h>
 
 #include <ethercatdata/controllerconnection.h>
+#include <ethercatdata/engineeringvalue.h>
+#include <ethercatdata/manualcontrol.h>
 #include <ethercatdata/runtimeresource.h>
 
 #include <memory>
@@ -60,6 +63,13 @@ void EtherCATCorePlugin::initialize()
     qRegisterMetaType<Data::ControllerOperationError>();
     qRegisterMetaType<Data::RuntimeResourceSnapshotRequest>();
     qRegisterMetaType<Data::RuntimeResourceSnapshotResult>();
+    qRegisterMetaType<Data::ExactRational>();
+    qRegisterMetaType<Data::EngineeringValue>();
+    qRegisterMetaType<Data::EngineeringTransform>();
+    qRegisterMetaType<Data::ManualControlEnvelope>();
+    qRegisterMetaType<EngineeringContractValidation>();
+    qRegisterMetaType<EngineeringConversionResult>();
+    qRegisterMetaType<ManualControlContractValidation>();
     qRegisterMetaType<Data::NodeId>();
     qRegisterMetaType<Data::DeviceDescription>();
     qRegisterMetaType<Data::DeviceImportResult>();

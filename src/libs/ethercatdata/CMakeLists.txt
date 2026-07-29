@@ -6,7 +6,9 @@ add_qtc_library(EtherCATData
     deviceadapterselection.h
     diagnosticssnapshot.h
     devicedescription.h
+    engineeringvalue.h
     ethercatdata_global.h
+    manualcontrol.h
     nodeid.cpp
     nodeid.h
     offlineconfiguration.cpp
@@ -14,5 +16,6 @@ add_qtc_library(EtherCATData
     projectsnapshot.h
     runtimeresource.h
     scansnapshot.h
+    semanticids.h
     semanticruntime.h
 )
