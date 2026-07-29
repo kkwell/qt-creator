@@ -1001,14 +1001,33 @@ static QString controllerFaultAction(quint64 currentFaults, quint64 latchedFault
     return Tr::tr("Resolve the current fault before resetting the controller.");
 }
 
-static QString controllerFaultMessage(const Data::ControllerStateSummary &state)
+static QString controllerFaultMessage(const Data::ControllerConnectionSnapshot &snapshot)
 {
+    QTC_ASSERT(snapshot.controllerState, return {});
+    const Data::ControllerStateSummary &state = *snapshot.controllerState;
     QStringList fields{
-        Tr::tr("Controller fault"),
+        controllerConnectionStateName(snapshot.state),
+        Tr::tr("Fault"),
         Tr::tr("current: %1").arg(controllerFaultMaskSummary(state.currentFaults)),
         Tr::tr("latched: %1").arg(controllerFaultMaskSummary(state.latchedFaults)),
     };
-    if (state.latestAlarmSequence)
+    QStringList matchingAlarms;
+    const quint64 relevantFaults = state.currentFaults | state.latchedFaults;
+    for (qsizetype index = snapshot.recentAlarms.size(); index > 0
+         && matchingAlarms.size() < 2; --index) {
+        const Data::ControllerAlarmSummary &alarm = snapshot.recentAlarms.at(index - 1);
+        if (alarm.state != Data::ControllerAlarmState::Raised
+            || !(alarm.faultMask & relevantFaults)) {
+            continue;
+        }
+        QString alarmText = Tr::tr("alarm #%1: %2").arg(alarm.sequence).arg(alarm.codeName);
+        if (!alarm.detail.isEmpty())
+            alarmText += Tr::tr(" (%1)").arg(alarm.detail);
+        matchingAlarms.prepend(alarmText);
+    }
+    if (!matchingAlarms.isEmpty())
+        fields.append(matchingAlarms);
+    else if (state.latestAlarmSequence)
         fields.append(Tr::tr("alarm #%1").arg(state.latestAlarmSequence));
     if (state.latestCommandResult)
         fields.append(Tr::tr("last command: %1").arg(state.latestCommandResult));
@@ -1091,7 +1110,7 @@ static QString controllerOutputMessage(const Data::ControllerConnectionSnapshot 
         && (snapshot.controllerState->serviceState == Data::ControllerServiceState::Fault
             || snapshot.controllerState->currentFaults
             || snapshot.controllerState->latchedFaults)) {
-        return controllerFaultMessage(*snapshot.controllerState);
+        return controllerFaultMessage(snapshot);
     }
 
     if (snapshot.lastError)

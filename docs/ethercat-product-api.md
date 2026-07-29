@@ -424,7 +424,9 @@ hardware evidence for this contract remain gated on Windows
 `QTC_ETHER_CAT_TIMING_MODE` accepts:
 
 - `auto`, `free_run`, or `dc` for the complete package-dependent lifecycle;
-  and
+- `snapshot_only` to connect, record the authoritative three-channel
+  session/controller/package snapshot, and disconnect without acquiring the
+  control lease or issuing a controller command;
 - `scan_only` for an identity-discovery acceptance that never restores or
   starts a package; or
 - `free_run_rejection` for the exact DC-only-package rejection contract.

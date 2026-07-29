@@ -56418,9 +56418,57 @@ AL 状态：%3
         <source>Stop the application safely, then enter configuration so cyclic EtherCAT traffic and Distributed Clocks runtime stop. This is not an emergency stop.</source>
         <translation>安全停止应用程序后进入配置态，使 EtherCAT 周期通信及分布式时钟运行停止。这不是紧急停止。</translation>
     </message>
+    <message>
+        <source>alarm #%1: %2</source>
+        <translation>告警 #%1：%2</translation>
+    </message>
 </context>
 <context>
     <name>QtC::EtherCATProductApi</name>
+    <message>
+        <source>Expected an exact 64-byte AlarmEvent.</source>
+        <translation>需要精确的 64 字节 AlarmEvent。</translation>
+    </message>
+    <message>
+        <source>AlarmEvent frame flags are invalid.</source>
+        <translation>AlarmEvent 帧标志无效。</translation>
+    </message>
+    <message>
+        <source>AlarmEvent fields are invalid.</source>
+        <translation>AlarmEvent 字段无效。</translation>
+    </message>
+    <message>
+        <source>RuntimeError AlarmEvent has a nonzero reserved detail.</source>
+        <translation>RuntimeError AlarmEvent 的保留详情字段必须为零。</translation>
+    </message>
+    <message>
+        <source>Alarm code %1</source>
+        <translation>告警代码 %1</translation>
+    </message>
+    <message>
+        <source>Runtime error</source>
+        <translation>运行时错误</translation>
+    </message>
+    <message>
+        <source>result %1, phase %2</source>
+        <translation>结果 %1，阶段 %2</translation>
+    </message>
+    <message>
+        <source>OSL_ERR_TIMEOUT (%1), phase FAILED (%2)</source>
+        <translation>OSL_ERR_TIMEOUT（%1），阶段 FAILED（%2）</translation>
+    </message>
+    <message>
+        <source>RX timeout</source>
+        <translation>接收超时</translation>
+    </message>
+    <message>
+        <source>TX %1, RX %2, pending %3, last frame %4</source>
+        <translation>发送 %1，接收 %2，待接收 %3，最后帧 %4</translation>
+    </message>
+    <message>
+        <source>The controller returned an invalid live alarm.</source>
+        <translation>控制器返回了无效的实时告警。</translation>
+    </message>
     <message>
         <source>Enter a controller IP address.</source>
         <translation>请输入控制器 IP 地址。</translation>

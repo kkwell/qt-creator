@@ -590,9 +590,11 @@ chatter. Connecting, Handshaking, Disconnecting, pending control stages, and
 intermediate package-transfer stages produce no lines. A connection failure
 retains its summary, symbolic and numeric status, and distinct detail. The
 ProductApi adapter maps its complete v1.10 fault mask to the 17 shared
-controller-fault categories. Workbench reports those categories by name,
-separating `current_faults` from `latched_faults`, and includes the latest
-alarm sequence, nonzero command result, and a short corrective action.
+controller-fault categories. It also strictly decodes the bounded v1.10
+AlarmEvent replay and retains its provider-neutral recent alarm summaries.
+Workbench reports those categories by name, separates `current_faults` from
+`latched_faults`, and includes at most the two latest raised events matching
+the fault mask, the nonzero command result, and a short corrective action.
 `current_faults == 0` with nonzero `latched_faults` is reported as a cleared
 cause awaiting a confirmed reset. AL `OP` and matching WKC are current bus
 evidence only and do not suppress a current or historical controller fault.

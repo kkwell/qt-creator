@@ -49,6 +49,17 @@ enum class ControllerServiceState {
 
 enum class ControllerSeverity { None, Information, Warning, Error, Fatal };
 
+enum class ControllerAlarmState { Raised, Cleared };
+
+enum class ControllerAlarmSource {
+    Unknown,
+    Service,
+    Transport,
+    Protocol,
+    DistributedClocks,
+    Application,
+};
+
 // Providers translate native controller diagnostics into these shared categories.
 enum class ControllerFault : quint64 {
     Configuration = quint64(1) << 0,
@@ -410,6 +421,26 @@ struct ETHERCATDATA_EXPORT ControllerStateSummary
     friend bool operator==(const ControllerStateSummary &, const ControllerStateSummary &) = default;
 };
 
+struct ETHERCATDATA_EXPORT ControllerAlarmSummary
+{
+    quint32 sequence = 0;
+    quint32 code = 0;
+    QString codeName;
+    ControllerAlarmState state = ControllerAlarmState::Raised;
+    ControllerSeverity severity = ControllerSeverity::None;
+    ControllerAlarmSource source = ControllerAlarmSource::Unknown;
+    bool latched = false;
+    quint32 detail0 = 0;
+    quint32 detail1 = 0;
+    quint32 detail2 = 0;
+    quint64 controllerTimestampNs = 0;
+    quint64 cycleCount = 0;
+    quint64 faultMask = 0;
+    QString detail;
+
+    friend bool operator==(const ControllerAlarmSummary &, const ControllerAlarmSummary &) = default;
+};
+
 struct ETHERCATDATA_EXPORT ControllerPerformanceSummary
 {
     quint64 minimumExchangeTimeNs = 0;
@@ -547,6 +578,7 @@ struct ETHERCATDATA_EXPORT ControllerConnectionSnapshot
     bool mock = false;
     std::optional<ControllerSessionSummary> session;
     std::optional<ControllerStateSummary> controllerState;
+    QList<ControllerAlarmSummary> recentAlarms;
     std::optional<ControllerPerformanceSummary> performance;
     std::optional<ControllerCapabilitySummary> capability;
     std::optional<ControllerPackageSummary> package;
@@ -566,6 +598,8 @@ Q_DECLARE_METATYPE(EtherCAT::Data::ControllerConnectionState)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerChannelState)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerServiceState)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerSeverity)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerAlarmState)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerAlarmSource)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerSlot)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPackageState)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerFirmwareState)
@@ -591,6 +625,7 @@ Q_DECLARE_METATYPE(EtherCAT::Data::ControllerProtocolVersion)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerChannelStatus)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerSessionSummary)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerStateSummary)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerAlarmSummary)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPerformanceSummary)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerCapabilitySummary)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPackageSummary)

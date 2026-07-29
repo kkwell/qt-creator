@@ -19333,24 +19333,60 @@ void EtherCATWorkbenchTests::testControllerCommunicationPagePresentation()
 
     Data::ControllerConnectionSnapshot faultSnapshot = controlledSnapshot;
     faultSnapshot.controllerState->serviceState = Data::ControllerServiceState::Fault;
-    faultSnapshot.controllerState->currentFaults = quint64(1) << 5;
-    faultSnapshot.controllerState->latchedFaults = (quint64(1) << 5) | (quint64(1) << 7);
+    faultSnapshot.controllerState->currentFaults = quint64(1) << 15;
+    faultSnapshot.controllerState->latchedFaults = quint64(1) << 15;
     faultSnapshot.controllerState->latestCommandResult = -2;
     faultSnapshot.controllerState->latestAlarmSequence = 321;
     faultSnapshot.controllerState->expectedWorkingCounter = 11;
     faultSnapshot.controllerState->actualWorkingCounter = 11;
+    faultSnapshot.recentAlarms = {
+        {
+            320,
+            11,
+            Tr::tr("RX timeout"),
+            Data::ControllerAlarmState::Raised,
+            Data::ControllerSeverity::Fatal,
+            Data::ControllerAlarmSource::Transport,
+            false,
+            8719271,
+            8719268,
+            8719268,
+            1097337956160,
+            8698496,
+            quint64(1) << 15,
+            Tr::tr("TX 8719271, RX 8719268, pending 3, last frame 8719268"),
+        },
+        {
+            321,
+            3,
+            Tr::tr("Runtime error"),
+            Data::ControllerAlarmState::Raised,
+            Data::ControllerSeverity::Fatal,
+            Data::ControllerAlarmSource::Service,
+            true,
+            quint32(-2),
+            255,
+            0,
+            1097337958076,
+            8698496,
+            quint64(1) << 15,
+            Tr::tr("OSL_ERR_TIMEOUT (-2), phase FAILED (255)"),
+        },
+    };
     provider.publishSnapshot(faultSnapshot);
     QTRY_COMPARE(controllerOutput.count(), 1);
     const QString faultOutput = controllerOutput.constLast().at(0).toString();
-    QVERIFY(faultOutput.contains(Tr::tr("Controller fault")));
-    QVERIFY(faultOutput.contains(Tr::tr("WKC mismatch")));
-    QVERIFY(faultOutput.contains(Tr::tr("cycle deadline missed")));
-    QVERIFY(faultOutput.contains("0x00020"));
-    QVERIFY(faultOutput.contains("0x000a0"));
-    QVERIFY(faultOutput.contains(Tr::tr("alarm #%1").arg(321)));
-    QVERIFY(faultOutput.contains(Tr::tr("last command: %1").arg(-2)));
+    QVERIFY(faultOutput.contains(Tr::tr("Connected")));
+    QVERIFY(faultOutput.contains(Tr::tr("Fault")));
+    QVERIFY(faultOutput.contains(Tr::tr("internal")));
+    QVERIFY(faultOutput.contains("0x08000"));
+    QVERIFY(faultOutput.contains(Tr::tr("alarm #%1: %2").arg(320).arg(Tr::tr("RX timeout"))));
     QVERIFY(faultOutput.contains(
-        Tr::tr("Compare expected WKC with each slave's AL state and the topology.")));
+        Tr::tr("alarm #%1: %2").arg(321).arg(Tr::tr("Runtime error"))));
+    QVERIFY(faultOutput.contains(Tr::tr("pending 3")));
+    QVERIFY(faultOutput.contains(Tr::tr("OSL_ERR_TIMEOUT (-2), phase FAILED (255)")));
+    QVERIFY(faultOutput.contains(Tr::tr("last command: %1").arg(-2)));
+    QVERIFY(faultOutput.contains(Tr::tr("Preserve diagnostics and use controlled recovery.")));
     QCOMPARE(
         controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
         ControllerOutputLevel::Error);

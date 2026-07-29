@@ -38,7 +38,7 @@ constexpr quint32 FeatureFirmwareUpdate = 1U << 10;
 constexpr quint32 FeatureExplicitTimingModeStart = 1U << 11;
 constexpr int SessionCapacityStatus = -26;
 constexpr int EventGapStatus = -25;
-constexpr int AlarmEventBytes = 64;
+constexpr qsizetype AlarmHistoryCapacity = 32;
 
 QString channelId(Protocol::Role role)
 {
@@ -92,11 +92,6 @@ quint32 requiredFeatureMask(quint16 minor)
     if (minor >= Protocol::ExplicitTimingModeMinor)
         mask |= FeatureExplicitTimingModeStart;
     return mask;
-}
-
-quint32 readU32(QByteArrayView bytes, qsizetype offset)
-{
-    return qFromBigEndian<quint32>(reinterpret_cast<const uchar *>(bytes.data() + offset));
 }
 
 QString statusName(qint32 status)
@@ -744,7 +739,7 @@ public:
         snapshot.sessionGeneration = generation;
     }
 
-    void clearLiveIdentity()
+    void clearLiveIdentity(bool preserveAlarmHistory = false)
     {
         heartbeatTimer->stop();
         liveStateTimer->stop();
@@ -755,6 +750,8 @@ public:
         snapshot.protocolVersion = {};
         snapshot.connectedAt = {};
         snapshot.controllerState.reset();
+        if (!preserveAlarmHistory)
+            snapshot.recentAlarms.clear();
         snapshot.performance.reset();
         snapshot.capability.reset();
         snapshot.package.reset();
@@ -771,6 +768,7 @@ public:
     {
         lastAlarmSequence = 0;
         alarmCheckpointEstablished = false;
+        snapshot.recentAlarms.clear();
     }
 
     void clearPendingRequests()
@@ -1220,7 +1218,7 @@ public:
         const bool hasResumeIdentity = resumeSessionId && resumeBootId;
         advanceGeneration();
         teardownChannels();
-        clearLiveIdentity();
+        clearLiveIdentity(hasResumeIdentity);
         if (!hasResumeIdentity)
             clearAlarmCheckpoint();
         markChannelsDisconnected();
@@ -1228,6 +1226,7 @@ public:
         ++reconnectAttempt;
         if (reconnectAttempt > options.reconnectAttempts) {
             clearResumeCandidate();
+            snapshot.recentAlarms.clear();
             snapshot.state = Data::ControllerConnectionState::Disconnected;
             publish();
             return;
@@ -3081,6 +3080,18 @@ public:
         return value == std::numeric_limits<quint32>::max() ? 1 : value + 1;
     }
 
+    void appendAlarm(const Data::ControllerAlarmSummary &alarm)
+    {
+        if (!snapshot.recentAlarms.isEmpty()
+            && snapshot.recentAlarms.constLast().sequence == alarm.sequence) {
+            snapshot.recentAlarms.last() = alarm;
+            return;
+        }
+        snapshot.recentAlarms.append(alarm);
+        while (snapshot.recentAlarms.size() > AlarmHistoryCapacity)
+            snapshot.recentAlarms.removeFirst();
+    }
+
     void handleReplayEvent(Channel &value, const Protocol::Frame &frame, quint64 requestId)
     {
         auto found = pendingRequests.find(requestId);
@@ -3096,16 +3107,18 @@ public:
                 requestId);
             return;
         }
-        if (frame.payload.size() != AlarmEventBytes) {
+        Protocol::Error decodeError;
+        const auto alarm = Protocol::decodeAlarmEvent(frame, &decodeError);
+        if (!alarm) {
             failProtocol(
                 value.role,
                 Data::ControllerOperation::SubscribeEvents,
                 Tr::tr("The controller returned an invalid alarm event."),
-                {},
+                decodeError.text,
                 requestId);
             return;
         }
-        const quint32 sequence = readU32(frame.payload, 0);
+        const quint32 sequence = alarm->sequence;
         const bool more = frame.header.flags & Protocol::flagValue(Protocol::Flag::More);
         const bool expectedMore = found->remainingReplayEvents > 1;
         if (sequence != found->expectedAlarmSequence || more != expectedMore) {
@@ -3117,21 +3130,22 @@ public:
                 requestId);
             return;
         }
-
-        --found->remainingReplayEvents;
-        if (found->remainingReplayEvents) {
-            found->expectedAlarmSequence = nextAlarmSequence(sequence);
-            if (found->timer)
-                found->timer->start(found->responseTimeoutMs);
-            return;
-        }
-        if (sequence != found->latestAlarmSequence) {
+        if (found->remainingReplayEvents == 1 && sequence != found->latestAlarmSequence) {
             failProtocol(
                 value.role,
                 Data::ControllerOperation::SubscribeEvents,
                 Tr::tr("The controller event replay ended at the wrong checkpoint."),
                 {},
                 requestId);
+            return;
+        }
+
+        appendAlarm(*alarm);
+        --found->remainingReplayEvents;
+        if (found->remainingReplayEvents) {
+            found->expectedAlarmSequence = nextAlarmSequence(sequence);
+            if (found->timer)
+                found->timer->start(found->responseTimeoutMs);
             return;
         }
         lastAlarmSequence = sequence;
@@ -3235,14 +3249,19 @@ public:
         }
         if (frame.header.messageType == Protocol::MessageType::AlarmRaised
             || frame.header.messageType == Protocol::MessageType::AlarmCleared) {
-            if (!alarmCheckpointEstablished || frame.payload.size() != AlarmEventBytes) {
+            Protocol::Error decodeError;
+            const auto alarm = Protocol::decodeAlarmEvent(frame, &decodeError);
+            if (!alarmCheckpointEstablished || !alarm) {
                 failProtocol(
                     value.role,
                     Data::ControllerOperation::SubscribeEvents,
-                    Tr::tr("A live alarm arrived before an event checkpoint."));
+                    alarmCheckpointEstablished
+                        ? Tr::tr("The controller returned an invalid live alarm.")
+                        : Tr::tr("A live alarm arrived before an event checkpoint."),
+                    decodeError.text);
                 return;
             }
-            const quint32 sequence = readU32(frame.payload, 0);
+            const quint32 sequence = alarm->sequence;
             if (sequence != nextAlarmSequence(lastAlarmSequence)) {
                 clearAlarmCheckpoint();
                 snapshot.state = Data::ControllerConnectionState::Degraded;
@@ -3258,7 +3277,9 @@ public:
                 publish();
                 return;
             }
+            appendAlarm(*alarm);
             lastAlarmSequence = sequence;
+            publish();
             return;
         }
 

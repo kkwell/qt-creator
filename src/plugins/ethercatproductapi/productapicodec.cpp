@@ -1340,6 +1340,118 @@ std::optional<Data::ControllerStateSummary> decodeControllerState(const Frame &f
     return result;
 }
 
+std::optional<Data::ControllerAlarmSummary> decodeAlarmEvent(
+    const Frame &frame, Error *error)
+{
+    clearError(error);
+    const bool raised = frame.header.messageType == MessageType::AlarmRaised;
+    const bool cleared = frame.header.messageType == MessageType::AlarmCleared;
+    if ((!raised && !cleared) || frame.payload.size() != 64) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Expected an exact 64-byte AlarmEvent."));
+        return {};
+    }
+
+    const quint32 allowedFrameFlags = flagValue(Flag::Response) | flagValue(Flag::Important)
+                                      | flagValue(Flag::More);
+    const quint32 requiredFrameFlags = flagValue(Flag::Response) | flagValue(Flag::Important);
+    if ((frame.header.flags & ~allowedFrameFlags)
+        || (frame.header.flags & requiredFrameFlags) != requiredFrameFlags) {
+        setError(
+            error,
+            ErrorCategory::InvalidFlags,
+            QStringLiteral("AlarmEvent frame flags are invalid."));
+        return {};
+    }
+
+    const QByteArrayView payload(frame.payload);
+    const quint32 sequence = readBigEndian<quint32>(payload, 0);
+    const quint32 code = readBigEndian<quint32>(payload, 4);
+    const quint32 severityValue = readBigEndian<quint32>(payload, 8);
+    const quint32 sourceValue = readBigEndian<quint32>(payload, 12);
+    const quint32 eventFlags = readBigEndian<quint32>(payload, 16);
+    const quint64 faultMask = readBigEndian<quint64>(payload, 48);
+    const auto severity = decodeSeverity(severityValue);
+    if (!sequence || !code || !severity || severityValue == 0 || sourceValue < 1
+        || sourceValue > 5 || (eventFlags != 0x1 && eventFlags != 0x2 && eventFlags != 0x5)
+        || (raised && !(eventFlags & 0x1)) || (cleared && eventFlags != 0x2)
+        || faultMask & ~ControllerFaultKnownMask || readBigEndian<quint64>(payload, 56)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("AlarmEvent fields are invalid."));
+        return {};
+    }
+
+    Data::ControllerAlarmSource source = Data::ControllerAlarmSource::Unknown;
+    switch (sourceValue) {
+    case 1:
+        source = Data::ControllerAlarmSource::Service;
+        break;
+    case 2:
+        source = Data::ControllerAlarmSource::Transport;
+        break;
+    case 3:
+        source = Data::ControllerAlarmSource::Protocol;
+        break;
+    case 4:
+        source = Data::ControllerAlarmSource::DistributedClocks;
+        break;
+    case 5:
+        source = Data::ControllerAlarmSource::Application;
+        break;
+    }
+
+    const quint32 detail0 = readBigEndian<quint32>(payload, 20);
+    const quint32 detail1 = readBigEndian<quint32>(payload, 24);
+    const quint32 detail2 = readBigEndian<quint32>(payload, 28);
+    if (code == 3 && detail2) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("RuntimeError AlarmEvent has a nonzero reserved detail."));
+        return {};
+    }
+    QString codeName = Tr::tr("Alarm code %1").arg(code);
+    QString detail;
+    if (code == 3) {
+        codeName = Tr::tr("Runtime error");
+        const qint32 signedResult = qint32(detail0);
+        detail = signedResult == -2 && detail1 == 255
+                     ? Tr::tr("OSL_ERR_TIMEOUT (%1), phase FAILED (%2)")
+                           .arg(signedResult)
+                           .arg(detail1)
+                     : Tr::tr("result %1, phase %2").arg(signedResult).arg(detail1);
+    } else if (code == 11) {
+        codeName = Tr::tr("RX timeout");
+        const quint32 pendingFrames = detail0 - detail1;
+        detail = Tr::tr("TX %1, RX %2, pending %3, last frame %4")
+                     .arg(detail0)
+                     .arg(detail1)
+                     .arg(pendingFrames)
+                     .arg(detail2);
+    }
+
+    return Data::ControllerAlarmSummary{
+        sequence,
+        code,
+        codeName,
+        raised ? Data::ControllerAlarmState::Raised : Data::ControllerAlarmState::Cleared,
+        *severity,
+        source,
+        bool(eventFlags & 0x4),
+        detail0,
+        detail1,
+        detail2,
+        readBigEndian<quint64>(payload, 32),
+        readBigEndian<quint64>(payload, 40),
+        faultMask,
+        detail,
+    };
+}
+
 std::optional<Data::ControllerPerformanceSummary> decodePerformanceSnapshot(
     const Frame &frame, Error *error)
 {

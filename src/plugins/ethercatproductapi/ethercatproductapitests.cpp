@@ -228,6 +228,32 @@ QByteArray lifecycleControllerStatePayload(quint32 serviceState, quint64 cycleCo
     return payload;
 }
 
+QByteArray alarmEventPayload(
+    quint32 sequence,
+    quint32 code = 11,
+    quint32 severity = 4,
+    quint32 source = 2,
+    quint32 flags = 1,
+    quint32 detail0 = 8719271,
+    quint32 detail1 = 8719268,
+    quint32 detail2 = 8719268,
+    quint64 faultMask = quint64(1) << 15)
+{
+    QByteArray payload(AlarmEventBytes, '\0');
+    putU32(payload, 0, sequence);
+    putU32(payload, 4, code);
+    putU32(payload, 8, severity);
+    putU32(payload, 12, source);
+    putU32(payload, 16, flags);
+    putU32(payload, 20, detail0);
+    putU32(payload, 24, detail1);
+    putU32(payload, 28, detail2);
+    putU64(payload, 32, 1097337956160);
+    putU64(payload, 40, 8698496);
+    putU64(payload, 48, faultMask);
+    return payload;
+}
+
 QByteArray packageStatePayload(
     Protocol::MessageType originalType = Protocol::MessageType::GetPackageState,
     bool controllerPackageActive = true)
@@ -696,9 +722,12 @@ public:
             Peer *peer = found->get();
             if (peer->role == Protocol::Role::Push && peer->handshaken
                 && peer->socket->state() == QAbstractSocket::ConnectedState) {
-                QByteArray payload(AlarmEventBytes, '\0');
-                putU32(payload, 0, sequence);
-                sendResponse(*peer, Protocol::MessageType::AlarmRaised, 0, payload);
+                sendResponse(
+                    *peer,
+                    Protocol::MessageType::AlarmRaised,
+                    0,
+                    alarmEventPayload(sequence),
+                    Protocol::Flag::Response | Protocol::Flag::Important);
                 return true;
             }
         }
@@ -1525,6 +1554,10 @@ private:
         if (resumeStatus == InternalStatus) {
             putU32(resumePayload, 8, TestAlarmSequence);
             putU32(resumePayload, 12, TestAlarmSequence);
+        } else if (!resumeStatus && !requestedAfterSequence) {
+            putU32(resumePayload, 8, TestAlarmSequence);
+            putU32(resumePayload, 12, TestAlarmSequence);
+            putU32(resumePayload, 16, 1);
         } else if (!resumeStatus && requestedAfterSequence) {
             putU32(resumePayload, 8, requestedAfterSequence);
             putU32(resumePayload, 12, requestedAfterSequence);
@@ -1537,8 +1570,11 @@ private:
                                                 resumeStatus
                                                     ? Protocol::Flag::Response
                                                           | Protocol::Flag::Error
-                                                    : Protocol::flagValue(
-                                                          Protocol::Flag::Response));
+                                                    : !requestedAfterSequence
+                                                          ? Protocol::Flag::Response
+                                                                | Protocol::Flag::More
+                                                          : Protocol::flagValue(
+                                                                Protocol::Flag::Response));
 
         QByteArray heartbeatPayload(16, '\0');
         putU64(heartbeatPayload, 0, 77);
@@ -1552,10 +1588,12 @@ private:
 
         QByteArray coalesced = wireFor(progress) + wireFor(resume) + wireFor(heartbeat);
         if (!resumeStatus && !requestedAfterSequence) {
-            QByteArray alarmPayload(AlarmEventBytes, '\0');
-            putU32(alarmPayload, 0, TestAlarmSequence);
             coalesced += wireFor(response(
-                peer, Protocol::MessageType::AlarmRaised, 0, alarmPayload));
+                peer,
+                Protocol::MessageType::AlarmRaised,
+                request.header.requestId,
+                alarmEventPayload(TestAlarmSequence),
+                Protocol::Flag::Response | Protocol::Flag::Important));
         }
         if (!coalesced.isEmpty())
             peer.socket->write(coalesced);
@@ -1758,6 +1796,21 @@ void logHardwareSnapshot(const QString &label, const Data::ControllerConnectionS
                           << QStringLiteral("%1/%2")
                                  .arg(state.currentFaults)
                                  .arg(state.latchedFaults);
+    }
+    for (const Data::ControllerAlarmSummary &alarm : snapshot.recentAlarms) {
+        qInfo().noquote() << "[Product API hardware]" << label << "alarm=" << alarm.sequence
+                          << "code=" << alarm.code << alarm.codeName
+                          << "state=" << int(alarm.state) << "severity=" << int(alarm.severity)
+                          << "source=" << int(alarm.source) << "latched=" << alarm.latched
+                          << "faultMask="
+                          << QStringLiteral("0x%1")
+                                 .arg(alarm.faultMask, 16, 16, QLatin1Char('0'))
+                          << "detail=" << alarm.detail << "raw="
+                          << QStringLiteral("%1/%2/%3")
+                                 .arg(alarm.detail0)
+                                 .arg(alarm.detail1)
+                                 .arg(alarm.detail2)
+                          << "cycle=" << alarm.cycleCount;
     }
     if (snapshot.package) {
         const Data::ControllerPackageSummary &package = *snapshot.package;
@@ -2059,6 +2112,77 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
     QVERIFY(progress);
     QCOMPARE(progress->state, Data::ControllerFirmwareState::Receiving);
     QCOMPARE(progress->generation, quint64(42));
+
+    const Protocol::Frame alarmFrame = responseFrame(
+        Protocol::MessageType::AlarmRaised,
+        alarmEventPayload(8, 3, 4, 1, 5, quint32(-2), 255, 0),
+        3,
+        Protocol::Flag::Response | Protocol::Flag::Important);
+    const auto alarm = Protocol::decodeAlarmEvent(alarmFrame, &error);
+    QVERIFY(alarm);
+    QVERIFY(!error);
+    QCOMPARE(alarm->sequence, quint32(8));
+    QCOMPARE(alarm->code, quint32(3));
+    QCOMPARE(alarm->codeName, Tr::tr("Runtime error"));
+    QCOMPARE(alarm->state, Data::ControllerAlarmState::Raised);
+    QCOMPARE(alarm->severity, Data::ControllerSeverity::Fatal);
+    QCOMPARE(alarm->source, Data::ControllerAlarmSource::Service);
+    QVERIFY(alarm->latched);
+    QCOMPARE(qint32(alarm->detail0), qint32(-2));
+    QCOMPARE(alarm->detail1, quint32(255));
+    QCOMPARE(alarm->faultMask, quint64(1) << 15);
+    QCOMPARE(
+        alarm->detail,
+        Tr::tr("OSL_ERR_TIMEOUT (%1), phase FAILED (%2)").arg(-2).arg(255));
+
+    Protocol::Frame invalidAlarm = alarmFrame;
+    invalidAlarm.header.flags = Protocol::flagValue(Protocol::Flag::Response);
+    error = {};
+    QVERIFY(!Protocol::decodeAlarmEvent(invalidAlarm, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidFlags);
+
+    invalidAlarm = alarmFrame;
+    putU64(invalidAlarm.payload, 56, 1);
+    error = {};
+    QVERIFY(!Protocol::decodeAlarmEvent(invalidAlarm, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    invalidAlarm = alarmFrame;
+    putU32(invalidAlarm.payload, 28, 1);
+    error = {};
+    QVERIFY(!Protocol::decodeAlarmEvent(invalidAlarm, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    const auto clearedAlarm = Protocol::decodeAlarmEvent(
+        responseFrame(
+            Protocol::MessageType::AlarmCleared,
+            alarmEventPayload(9, 11, 2, 2, 2),
+            4,
+            Protocol::Flag::Response | Protocol::Flag::Important),
+        &error);
+    QVERIFY(clearedAlarm);
+    QCOMPARE(clearedAlarm->state, Data::ControllerAlarmState::Cleared);
+    QVERIFY(!clearedAlarm->latched);
+
+    error = {};
+    QVERIFY(!Protocol::decodeAlarmEvent(
+        responseFrame(
+            Protocol::MessageType::AlarmCleared,
+            alarmEventPayload(9, 11, 2, 2, 1),
+            4,
+            Protocol::Flag::Response | Protocol::Flag::Important),
+        &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    const auto unknownAlarm = Protocol::decodeAlarmEvent(
+        responseFrame(
+            Protocol::MessageType::AlarmRaised,
+            alarmEventPayload(9, 99),
+            4,
+            Protocol::Flag::Response | Protocol::Flag::Important),
+        &error);
+    QVERIFY(unknownAlarm);
+    QCOMPARE(unknownAlarm->code, quint32(99));
 
     QByteArray resumePayload(32, '\0');
     putU32(resumePayload, 20, 32);
@@ -2775,6 +2899,10 @@ void EtherCATProductApiTests::testThreeChannelInitialSnapshot()
     QCOMPARE(snapshot.session->bootId, TestBootId);
     QVERIFY(snapshot.controllerState);
     QCOMPARE(snapshot.controllerState->serviceState, Data::ControllerServiceState::Running);
+    QCOMPARE(snapshot.recentAlarms.size(), 1);
+    QCOMPARE(snapshot.recentAlarms.constFirst().sequence, TestAlarmSequence);
+    QCOMPARE(snapshot.recentAlarms.constFirst().codeName, Tr::tr("RX timeout"));
+    QVERIFY(snapshot.recentAlarms.constFirst().detail.contains(Tr::tr("pending %1").arg(3)));
     QVERIFY(snapshot.capability);
     QCOMPARE(snapshot.capability->descriptorSha256,
              QCryptographicHash::hash(
@@ -3614,12 +3742,14 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
 
     const QString timingMode = qEnvironmentVariable(TimingModeVariable).trimmed();
     if (timingMode != QStringLiteral("auto") && timingMode != QStringLiteral("free_run")
-        && timingMode != QStringLiteral("dc") && timingMode != QStringLiteral("scan_only")
+        && timingMode != QStringLiteral("dc") && timingMode != QStringLiteral("snapshot_only")
+        && timingMode != QStringLiteral("scan_only")
         && timingMode != QStringLiteral("free_run_rejection")) {
         QFAIL(
             "QTC_ETHER_CAT_TIMING_MODE must be set to exactly auto, free_run, dc, "
-            "scan_only, or free_run_rejection before the hardware test can run.");
+            "snapshot_only, scan_only, or free_run_rejection before the hardware test can run.");
     }
+    const bool snapshotOnly = timingMode == QStringLiteral("snapshot_only");
     const bool scanOnly = timingMode == QStringLiteral("scan_only");
     const bool expectFreeRunRejection = timingMode == QStringLiteral("free_run_rejection");
 
@@ -3827,12 +3957,51 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         }
     }
 
+    if (snapshotOnly && failure.isEmpty()) {
+        const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+        if (!snapshot.session || !snapshot.session->sessionId || !snapshot.session->bootId) {
+            recordFailure(QStringLiteral("The read-only snapshot has no complete session identity."));
+        } else if (snapshot.session->ownsControlLease) {
+            recordFailure(QStringLiteral("The snapshot-only session unexpectedly owns control."));
+        } else if (!snapshot.controllerState) {
+            recordFailure(QStringLiteral("The read-only snapshot has no controller state."));
+        } else if (snapshot.controllerState->controllerBootId != snapshot.session->bootId) {
+            recordFailure(
+                QStringLiteral("The read-only controller-state BootId does not match the session."));
+        } else {
+            qInfo().noquote()
+                << "[Product API hardware] snapshot-only gate confirmed without acquiring control";
+        }
+    }
+
+    if (snapshotOnly && connectionStarted
+        && provider.connectionSnapshot().state != Data::ControllerConnectionState::Disconnected) {
+        const Utils::Result<> disconnectResult = provider.disconnectFromController();
+        if (!disconnectResult) {
+            recordFailure(
+                QStringLiteral("Snapshot-only disconnect could not be started: %1")
+                    .arg(disconnectResult.error()));
+        } else if (!waitForHardwareCondition(
+                       [&provider] {
+                           return provider.connectionSnapshot().state
+                                  == Data::ControllerConnectionState::Disconnected;
+                       },
+                       ConnectStepTimeoutMs)) {
+            recordFailure(
+                QStringLiteral("Snapshot-only disconnect did not finish within %1 ms.")
+                    .arg(ConnectStepTimeoutMs));
+        } else {
+            qInfo().noquote()
+                << "[Product API hardware] snapshot-only acceptance disconnected";
+        }
+    }
+
     Data::ControllerControlCommand startCommand = Data::ControllerControlCommand::Start;
     if (timingMode == QStringLiteral("free_run") || expectFreeRunRejection)
         startCommand = Data::ControllerControlCommand::StartFreeRun;
     else if (timingMode == QStringLiteral("dc"))
         startCommand = Data::ControllerControlCommand::StartDistributedClocks;
-    if (failure.isEmpty()) {
+    if (failure.isEmpty() && !snapshotOnly) {
         const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
         const bool explicitTimingMode = timingMode == QStringLiteral("free_run")
                                         || timingMode == QStringLiteral("dc")
@@ -4010,21 +4179,21 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
     };
 
     Data::ControllerControlRequest control;
-    if (failure.isEmpty()) {
+    if (failure.isEmpty() && !snapshotOnly) {
         control.command = Data::ControllerControlCommand::AcquireControl;
         control.leaseDurationMs = 30000;
         executeMainCommand(control, QStringLiteral("acquire 30000 ms lease"));
         waitForMainGate(QStringLiteral("lease ownership"), ownsLease);
     }
 
-    if (failure.isEmpty()) {
+    if (failure.isEmpty() && !snapshotOnly) {
         control = {};
         control.command = Data::ControllerControlCommand::EnterConfigurationMode;
         executeMainCommand(control, QStringLiteral("enter configuration"));
         waitForMainGate(QStringLiteral("initial SHUTDOWN"), strictShutdownGate);
     }
 
-    if (failure.isEmpty()) {
+    if (failure.isEmpty() && !snapshotOnly) {
         control = {};
         control.command = Data::ControllerControlCommand::DiscoverTopology;
         control.firstStationAddress = 0x1001;
@@ -4065,14 +4234,14 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         }
     }
 
-    if (failure.isEmpty() && !scanOnly) {
+    if (failure.isEmpty() && !snapshotOnly && !scanOnly) {
         control = {};
         control.command = Data::ControllerControlCommand::RestoreActivePackage;
         executeMainCommand(control, QStringLiteral("restore exact active package"));
         waitForMainGate(QStringLiteral("restored OP_SAFE"), strictOperationalSafeGate);
     }
 
-    if (failure.isEmpty() && !scanOnly) {
+    if (failure.isEmpty() && !snapshotOnly && !scanOnly) {
         runtimeStartAttempted = true;
         control = {};
         control.command = startCommand;
@@ -4119,35 +4288,35 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         }
     }
 
-    if (failure.isEmpty() && !scanOnly && !expectFreeRunRejection) {
+    if (failure.isEmpty() && !snapshotOnly && !scanOnly && !expectFreeRunRejection) {
         control = {};
         control.command = Data::ControllerControlCommand::Pause;
         executeMainCommand(control, QStringLiteral("pause"));
         waitForMainGate(QStringLiteral("PAUSED"), strictPausedGate);
     }
 
-    if (failure.isEmpty() && !scanOnly && !expectFreeRunRejection) {
+    if (failure.isEmpty() && !snapshotOnly && !scanOnly && !expectFreeRunRejection) {
         control = {};
         control.command = Data::ControllerControlCommand::Resume;
         executeMainCommand(control, QStringLiteral("resume"));
         waitForMainGate(QStringLiteral("resumed RUNNING"), strictRunningGate);
     }
 
-    if (failure.isEmpty() && !scanOnly && !expectFreeRunRejection) {
+    if (failure.isEmpty() && !snapshotOnly && !scanOnly && !expectFreeRunRejection) {
         control = {};
         control.command = Data::ControllerControlCommand::ControlledStop;
         executeMainCommand(control, QStringLiteral("controlled stop"));
         waitForMainGate(QStringLiteral("stopped OP_SAFE"), strictOperationalSafeGate);
     }
 
-    if (failure.isEmpty() && !scanOnly) {
+    if (failure.isEmpty() && !snapshotOnly && !scanOnly) {
         control = {};
         control.command = Data::ControllerControlCommand::EnterConfigurationMode;
         executeMainCommand(control, QStringLiteral("final enter configuration"));
         waitForMainGate(QStringLiteral("final SHUTDOWN"), strictShutdownGate);
     }
 
-    if (failure.isEmpty()) {
+    if (failure.isEmpty() && !snapshotOnly) {
         control = {};
         control.command = Data::ControllerControlCommand::ReleaseControl;
         executeMainCommand(control, QStringLiteral("release control"));
@@ -4157,7 +4326,7 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         });
     }
 
-    if (failure.isEmpty()) {
+    if (failure.isEmpty() && !snapshotOnly) {
         const Utils::Result<> disconnectResult = provider.disconnectFromController();
         if (!disconnectResult) {
             recordFailure(
@@ -5327,6 +5496,9 @@ void EtherCATProductApiTests::testSessionReconnectAndGeneration()
     QTRY_COMPARE_WITH_TIMEOUT(provider.connectionSnapshot().state,
                               Data::ControllerConnectionState::Connected,
                               2000);
+    QCOMPARE(provider.connectionSnapshot().recentAlarms.size(), 1);
+    const Data::ControllerAlarmSummary initialAlarm
+        = provider.connectionSnapshot().recentAlarms.constFirst();
 
     const quint64 initialGeneration = provider.connectionSnapshot().sessionGeneration;
     controller.dropChannel(Protocol::Role::Push);
@@ -5337,6 +5509,8 @@ void EtherCATProductApiTests::testSessionReconnectAndGeneration()
                               2000);
     QCOMPARE(provider.connectionSnapshot().session->sessionId, TestSessionId);
     QCOMPARE(provider.connectionSnapshot().session->bootId, TestBootId);
+    QCOMPARE(provider.connectionSnapshot().recentAlarms.size(), 1);
+    QCOMPARE(provider.connectionSnapshot().recentAlarms.constFirst(), initialAlarm);
     QVERIFY(controller.acceptCount(Protocol::Role::Control) >= 2);
     QVERIFY(controller.acceptCount(Protocol::Role::Push) >= 2);
     QVERIFY(controller.acceptCount(Protocol::Role::Bulk) >= 2);
@@ -5349,6 +5523,7 @@ void EtherCATProductApiTests::testSessionReconnectAndGeneration()
     QVERIFY(provider.disconnectFromController());
     QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
     QCOMPARE(provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected);
+    QVERIFY(provider.connectionSnapshot().recentAlarms.isEmpty());
 }
 
 void EtherCATProductApiTests::testInvalidAlarmCheckpointRefresh_data()
@@ -5385,6 +5560,7 @@ void EtherCATProductApiTests::testInvalidAlarmCheckpointRefresh()
     QTRY_COMPARE_WITH_TIMEOUT(provider.connectionSnapshot().state,
                               Data::ControllerConnectionState::Degraded,
                               2000);
+    QVERIFY(provider.connectionSnapshot().recentAlarms.isEmpty());
 
     const qsizetype requestsBeforeRecovery = controller.resumeAfterSequences().size();
     QVERIFY(provider.refreshController());
@@ -5394,6 +5570,7 @@ void EtherCATProductApiTests::testInvalidAlarmCheckpointRefresh()
     QTRY_COMPARE_WITH_TIMEOUT(provider.connectionSnapshot().state,
                               Data::ControllerConnectionState::Connected,
                               2000);
+    QCOMPARE(provider.connectionSnapshot().recentAlarms.size(), 1);
     QVERIFY(controller.violations().isEmpty());
 
     QVERIFY(provider.disconnectFromController());

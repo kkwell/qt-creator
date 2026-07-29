@@ -506,24 +506,39 @@ void EtherCATWorkbenchPlugin::updateQuickControllerActions()
                     controllerSnapshot && controllerSnapshot->scope == *scope
                     && controllerSnapshot->state != Data::ControllerConnectionState::Disconnected) {
                     using State = Data::ControllerConnectionState;
-                    switch (controllerSnapshot->state) {
-                    case State::Connected:
-                        action->setIcon(Utils::Icons::LINK.icon());
-                        break;
-                    case State::Degraded:
-                        action->setIcon(Utils::Icons::WARNING_TOOLBAR.icon());
-                        break;
-                    case State::Failed:
+                    const bool controllerFault
+                        = controllerSnapshot->controllerState
+                          && (controllerSnapshot->controllerState->serviceState
+                                  == Data::ControllerServiceState::Fault
+                              || controllerSnapshot->controllerState->currentFaults
+                              || controllerSnapshot->controllerState->latchedFaults);
+                    if (controllerFault) {
                         action->setIcon(Utils::Icons::CRITICAL_TOOLBAR.icon());
-                        break;
-                    default:
-                        action->setIcon(Utils::Icons::RELOAD.icon());
-                        break;
+                    } else {
+                        switch (controllerSnapshot->state) {
+                        case State::Connected:
+                            action->setIcon(Utils::Icons::LINK.icon());
+                            break;
+                        case State::Degraded:
+                            action->setIcon(Utils::Icons::WARNING_TOOLBAR.icon());
+                            break;
+                        case State::Failed:
+                            action->setIcon(Utils::Icons::CRITICAL_TOOLBAR.icon());
+                            break;
+                        default:
+                            action->setIcon(Utils::Icons::RELOAD.icon());
+                            break;
+                        }
                     }
-                    text = Tr::tr("%1: %2")
-                               .arg(
-                                   Tr::tr("Controller"),
-                                   quickConnectionStateName(controllerSnapshot->state));
+                    text = controllerFault
+                               ? Tr::tr("%1 · %2")
+                                     .arg(
+                                         quickConnectionStateName(controllerSnapshot->state),
+                                         Tr::tr("Fault"))
+                               : Tr::tr("%1: %2")
+                                     .arg(
+                                         Tr::tr("Controller"),
+                                         quickConnectionStateName(controllerSnapshot->state));
                 } else {
                     text = Tr::tr("Run Controller");
                 }
