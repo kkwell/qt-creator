@@ -19245,11 +19245,17 @@ void EtherCATWorkbenchTests::testControllerCommunicationPagePresentation()
     operationError.codeName = "UNSUPPORTED";
     operationError.retryDisposition = Data::ControllerRetryDisposition::Reconnect;
     operationError.summary = "Previous optional query was not supported";
+    operationError.detail = "The connected controller does not implement the optional query";
     snapshot.lastError = operationError;
     provider.publishSnapshot(snapshot);
 
     QTRY_COMPARE(controllerOutput.count(), 1);
-    QVERIFY(controllerOutput.constLast().at(0).toString().contains("UNSUPPORTED"));
+    const QString operationErrorOutput = controllerOutput.constLast().at(0).toString();
+    QVERIFY(operationErrorOutput.contains("Previous optional query was not supported"));
+    QVERIFY(operationErrorOutput.contains("UNSUPPORTED"));
+    QVERIFY(operationErrorOutput.contains("-14"));
+    QVERIFY(operationErrorOutput.contains(
+        "The connected controller does not implement the optional query"));
     QCOMPARE(
         controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
         ControllerOutputLevel::Error);
@@ -19296,6 +19302,75 @@ void EtherCATWorkbenchTests::testControllerCommunicationPagePresentation()
     QCOMPARE(summaryValue(Tr::tr("Access")), Tr::tr("Exclusive control"));
 
     controllerOutput.clear();
+    Data::ControllerConnectionSnapshot transientSnapshot = controlledSnapshot;
+    transientSnapshot.state = Data::ControllerConnectionState::Connecting;
+    transientSnapshot.controllerState.reset();
+    provider.publishSnapshot(transientSnapshot);
+    transientSnapshot.state = Data::ControllerConnectionState::Handshaking;
+    provider.publishSnapshot(transientSnapshot);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCOMPARE(controllerOutput.count(), 0);
+
+    Data::ControllerConnectionSnapshot failedConnectionSnapshot = transientSnapshot;
+    failedConnectionSnapshot.state = Data::ControllerConnectionState::Failed;
+    Data::ControllerOperationError handshakeError;
+    handshakeError.operation = Data::ControllerOperation::Handshake;
+    handshakeError.code = -6;
+    handshakeError.codeName = "BAD_MESSAGE";
+    handshakeError.summary = "Controller handshake failed";
+    handshakeError.detail = "The controller returned an invalid HELLO response";
+    failedConnectionSnapshot.lastError = handshakeError;
+    provider.publishSnapshot(failedConnectionSnapshot);
+    QTRY_COMPARE(controllerOutput.count(), 1);
+    const QString failedConnectionOutput = controllerOutput.constLast().at(0).toString();
+    QVERIFY(failedConnectionOutput.contains(Tr::tr("Connection failed: %1").arg(QString())));
+    QVERIFY(failedConnectionOutput.contains("Controller handshake failed"));
+    QVERIFY(failedConnectionOutput.contains("BAD_MESSAGE"));
+    QVERIFY(failedConnectionOutput.contains("-6"));
+    QVERIFY(failedConnectionOutput.contains("The controller returned an invalid HELLO response"));
+    controllerOutput.clear();
+
+    Data::ControllerConnectionSnapshot faultSnapshot = controlledSnapshot;
+    faultSnapshot.controllerState->serviceState = Data::ControllerServiceState::Fault;
+    faultSnapshot.controllerState->currentFaults = quint64(1) << 5;
+    faultSnapshot.controllerState->latchedFaults = (quint64(1) << 5) | (quint64(1) << 7);
+    faultSnapshot.controllerState->latestCommandResult = -2;
+    faultSnapshot.controllerState->latestAlarmSequence = 321;
+    faultSnapshot.controllerState->expectedWorkingCounter = 11;
+    faultSnapshot.controllerState->actualWorkingCounter = 11;
+    provider.publishSnapshot(faultSnapshot);
+    QTRY_COMPARE(controllerOutput.count(), 1);
+    const QString faultOutput = controllerOutput.constLast().at(0).toString();
+    QVERIFY(faultOutput.contains(Tr::tr("Controller fault")));
+    QVERIFY(faultOutput.contains(Tr::tr("WKC mismatch")));
+    QVERIFY(faultOutput.contains(Tr::tr("cycle deadline missed")));
+    QVERIFY(faultOutput.contains("0x00020"));
+    QVERIFY(faultOutput.contains("0x000a0"));
+    QVERIFY(faultOutput.contains(Tr::tr("alarm #%1").arg(321)));
+    QVERIFY(faultOutput.contains(Tr::tr("last command: %1").arg(-2)));
+    QVERIFY(faultOutput.contains(
+        Tr::tr("Compare expected WKC with each slave's AL state and the topology.")));
+    QCOMPARE(
+        controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
+        ControllerOutputLevel::Error);
+
+    faultSnapshot.controllerState->cycleCount++;
+    provider.publishSnapshot(faultSnapshot);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCOMPARE(controllerOutput.count(), 1);
+
+    faultSnapshot.controllerState->currentFaults = 0;
+    provider.publishSnapshot(faultSnapshot);
+    QTRY_COMPARE(controllerOutput.count(), 2);
+    QVERIFY(controllerOutput.constLast().at(0).toString().contains(
+        Tr::tr("The cause has cleared; confirm it is safe, then reset the latched fault.")));
+
+    provider.publishSnapshot(controlledSnapshot);
+    QTRY_COMPARE(controllerOutput.count(), 3);
+    controllerOutput.clear();
+
     Data::ControllerConnectionSnapshot deploymentSnapshot = controlledSnapshot;
     deploymentSnapshot.packageDeploymentProgress.operationId = "deploy-output";
     deploymentSnapshot.packageDeploymentProgress.state
@@ -19304,20 +19379,18 @@ void EtherCATWorkbenchTests::testControllerCommunicationPagePresentation()
     deploymentSnapshot.packageDeploymentProgress.totalBytes = 100;
     deploymentSnapshot.packageDeploymentProgress.detail = "Uploading package chunk";
     provider.publishSnapshot(deploymentSnapshot);
-    QTRY_COMPARE(controllerOutput.count(), 1);
-    QVERIFY(controllerOutput.constLast().at(0).toString().contains(
-        Tr::tr("Package deployment %1").arg(Tr::tr("uploading"))));
-    QVERIFY(controllerOutput.constLast().at(0).toString().contains("deploy-output"));
-    QVERIFY(controllerOutput.constLast().at(0).toString().contains("25/100"));
-    QCOMPARE(
-        controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
-        ControllerOutputLevel::Information);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCOMPARE(controllerOutput.count(), 0);
 
     deploymentSnapshot.packageDeploymentProgress.state
         = Data::ControllerPackageDeploymentState::OutcomeUnknown;
     deploymentSnapshot.packageDeploymentProgress.detail = "Authoritative refresh required";
     provider.publishSnapshot(deploymentSnapshot);
-    QTRY_COMPARE(controllerOutput.count(), 2);
+    QTRY_COMPARE(controllerOutput.count(), 1);
+    QVERIFY(controllerOutput.constLast().at(0).toString().contains("deploy-output"));
+    QVERIFY(controllerOutput.constLast().at(0).toString().contains(
+        "Authoritative refresh required"));
     QCOMPARE(
         controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
         ControllerOutputLevel::Error);
@@ -19325,7 +19398,7 @@ void EtherCATWorkbenchTests::testControllerCommunicationPagePresentation()
     provider.publishSnapshot(deploymentSnapshot);
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    QCOMPARE(controllerOutput.count(), 2);
+    QCOMPARE(controllerOutput.count(), 1);
 
     const auto verifyButtonAction = [&page](const char *objectName, Utils::Id actionId) {
         QToolButton *button = page.findChild<QToolButton *>(objectName);
@@ -19790,6 +19863,8 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
 
     snapshot.state = Data::ControllerConnectionState::Degraded;
     provider.publishSnapshot(snapshot);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     provider.publishControlPendingOnExecute = true;
     controllerOutput.clear();
     const std::optional<Data::ControllerControlCommand> stopFromDegradedRunning
@@ -19804,19 +19879,16 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     QCOMPARE(
         provider.lastControlRequest.command,
         Data::ControllerControlCommand::ControlledStop);
-    QTRY_COMPARE(controllerOutput.count(), 1);
-    QVERIFY(controllerOutput.constLast().at(0).toString().contains(
-        Tr::tr("%1 %2").arg(Tr::tr("Controlled stop"), Tr::tr("in progress"))));
-    QCOMPARE(
-        controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
-        ControllerOutputLevel::Warning);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCOMPARE(controllerOutput.count(), 0);
     Data::ControllerConnectionSnapshot heartbeatSnapshot = provider.connectionSnapshot();
     heartbeatSnapshot.updatedAt = QDateTime::currentDateTimeUtc();
     provider.publishSnapshot(heartbeatSnapshot);
     provider.notifySnapshotChanged();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    QCOMPARE(controllerOutput.count(), 1);
+    QCOMPARE(controllerOutput.count(), 0);
     verifyAllControlsDisabled();
     QVERIFY(!controller.canExecuteControllerControl(
         scope, Data::ControllerControlCommand::ControlledStop));
@@ -19835,7 +19907,7 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     controllerState.applicationActive = false;
     snapshot.controllerState = controllerState;
     provider.publishSnapshot(snapshot);
-    QTRY_COMPARE(controllerOutput.count(), 2);
+    QTRY_COMPARE(controllerOutput.count(), 1);
     QVERIFY(controllerOutput.constLast().at(0).toString().contains(
         Tr::tr("%1 %2").arg(Tr::tr("Controlled stop"), Tr::tr("succeeded"))));
     QCOMPARE(
@@ -19847,18 +19919,20 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     provider.notifySnapshotChanged();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    QCOMPARE(controllerOutput.count(), 2);
+    QCOMPARE(controllerOutput.count(), 1);
 
     Data::ControllerConnectionSnapshot failedSnapshot = succeededHeartbeat;
     failedSnapshot.controlProgress.state = Data::ControllerControlState::Failed;
     failedSnapshot.controlProgress.detail = "Injected controlled stop failure";
     failedSnapshot.controlProgress.status = -16;
     provider.publishSnapshot(failedSnapshot);
-    QTRY_COMPARE(controllerOutput.count(), 3);
+    QTRY_COMPARE(controllerOutput.count(), 2);
     QVERIFY(controllerOutput.constLast().at(0).toString().contains(
         Tr::tr("%1 %2").arg(Tr::tr("Controlled stop"), Tr::tr("failed"))));
     QVERIFY(controllerOutput.constLast().at(0).toString().contains(
         "Injected controlled stop failure"));
+    QVERIFY(controllerOutput.constLast().at(0).toString().contains(
+        Tr::tr("status -16")));
     QCOMPARE(
         controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
         ControllerOutputLevel::Error);
@@ -19867,7 +19941,7 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     provider.notifySnapshotChanged();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    QCOMPARE(controllerOutput.count(), 3);
+    QCOMPARE(controllerOutput.count(), 2);
     QVERIFY(configuration->isEnabled());
     configuration->click();
     QCOMPARE(provider.controlCalls, 9);

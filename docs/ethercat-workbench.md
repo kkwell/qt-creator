@@ -7214,6 +7214,23 @@ timestamps and snapshot update times do not create output. The passive tab
 does not create a `RunControl`, change the active run count, or enable
 Run/Stop/Attach controls.
 
+The output is intentionally event-oriented. Connecting, Handshaking,
+Disconnecting, pending control stages, and intermediate package-deployment
+stages are silent. Only connection results, control/deployment outcomes,
+topology capability decisions, and faults are recorded. Connection failures
+preserve the error summary, symbolic and numeric code, and distinct provider
+detail instead of replacing one with another.
+
+`EtherCATData` defines 17 provider-neutral controller-fault categories. The
+ProductApi adapter validates and maps the complete v1.10 wire mask, while
+Workbench only presents the shared semantics. Output lists the names and exact
+hexadecimal values of `current_faults` and `latched_faults` separately,
+followed by the latest alarm sequence, a nonzero last-command result, and the
+shortest applicable recovery action. A zero current mask with a nonzero
+latched mask is described as a cleared cause awaiting confirmed reset.
+Matching WKC and AL `OP` do not erase latched evidence and therefore cannot,
+on their own, identify or clear a controller fault.
+
 When the selected Master is connected but has no currently valid Run/Resume
 command, the native lower-left Run action visibly changes to
 `Controller: <connection state>` with a matching link, progress, warning, or

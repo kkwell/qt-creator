@@ -49,6 +49,31 @@ enum class ControllerServiceState {
 
 enum class ControllerSeverity { None, Information, Warning, Error, Fatal };
 
+// Providers translate native controller diagnostics into these shared categories.
+enum class ControllerFault : quint64 {
+    Configuration = quint64(1) << 0,
+    LinkTimeout = quint64(1) << 1,
+    ReceiveDrop = quint64(1) << 2,
+    ReceiveOverflow = quint64(1) << 3,
+    TransmitUnavailable = quint64(1) << 4,
+    WorkingCounter = quint64(1) << 5,
+    Protocol = quint64(1) << 6,
+    CycleLate = quint64(1) << 7,
+    AlStatus = quint64(1) << 8,
+    Mailbox = quint64(1) << 9,
+    Sdo = quint64(1) << 10,
+    DistributedClocksConfiguration = quint64(1) << 11,
+    DistributedClocksDrift = quint64(1) << 12,
+    Command = quint64(1) << 13,
+    Watchdog = quint64(1) << 14,
+    Internal = quint64(1) << 15,
+    NetworkQuickStop = quint64(1) << 16,
+};
+
+inline constexpr int ControllerFaultCount = 17;
+inline constexpr quint64 ControllerFaultKnownMask
+    = (quint64(1) << ControllerFaultCount) - 1;
+
 enum class ControllerSlot { None, A, B };
 
 enum class ControllerPackageState {

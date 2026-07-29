@@ -55645,6 +55645,214 @@ AL 状态：%3
         <translation>等待控制器自动启动超时。</translation>
     </message>
     <message>
+        <source>configuration</source>
+        <translation>配置</translation>
+    </message>
+    <message>
+        <source>link timeout</source>
+        <translation>链路超时</translation>
+    </message>
+    <message>
+        <source>RX drop</source>
+        <translation>接收丢帧</translation>
+    </message>
+    <message>
+        <source>RX overflow</source>
+        <translation>接收溢出</translation>
+    </message>
+    <message>
+        <source>TX unavailable</source>
+        <translation>发送不可用</translation>
+    </message>
+    <message>
+        <source>WKC mismatch</source>
+        <translation>WKC 不匹配</translation>
+    </message>
+    <message>
+        <source>protocol</source>
+        <translation>协议</translation>
+    </message>
+    <message>
+        <source>cycle deadline missed</source>
+        <translation>周期超期</translation>
+    </message>
+    <message>
+        <source>slave AL status</source>
+        <translation>从站 AL 状态</translation>
+    </message>
+    <message>
+        <source>mailbox</source>
+        <translation>邮箱通信</translation>
+    </message>
+    <message>
+        <source>SDO abort</source>
+        <translation>SDO 中止</translation>
+    </message>
+    <message>
+        <source>DC configuration</source>
+        <translation>DC 配置</translation>
+    </message>
+    <message>
+        <source>DC drift</source>
+        <translation>DC 漂移</translation>
+    </message>
+    <message>
+        <source>command precondition</source>
+        <translation>命令前置条件</translation>
+    </message>
+    <message>
+        <source>watchdog</source>
+        <translation>看门狗</translation>
+    </message>
+    <message>
+        <source>internal</source>
+        <translation>内部故障</translation>
+    </message>
+    <message>
+        <source>network quick stop</source>
+        <translation>网络快速停止</translation>
+    </message>
+    <message>
+        <source>unknown bits</source>
+        <translation>未知位</translation>
+    </message>
+    <message>
+        <source>none (%1)</source>
+        <translation>无（%1）</translation>
+    </message>
+    <message>
+        <source>The cause has cleared; confirm it is safe, then reset the latched fault.</source>
+        <translation>原因已消失；确认安全后复位锁存故障。</translation>
+    </message>
+    <message>
+        <source>Refresh diagnostics; the controller reported no fault mask.</source>
+        <translation>刷新诊断；控制器未报告故障位。</translation>
+    </message>
+    <message>
+        <source>Resolve every current fault before resetting the controller.</source>
+        <translation>复位控制器前，请先处理全部当前故障。</translation>
+    </message>
+    <message>
+        <source>Check the active package, scanned topology, PDOs, and startup parameters.</source>
+        <translation>检查活动软件包、扫描拓扑、PDO 和启动参数。</translation>
+    </message>
+    <message>
+        <source>Check the EtherCAT cable, slave power, and link diagnostics.</source>
+        <translation>检查 EtherCAT 网线、从站供电和链路诊断。</translation>
+    </message>
+    <message>
+        <source>Check RX drops, frame identity, and receive context.</source>
+        <translation>检查接收丢帧、帧标识和接收上下文。</translation>
+    </message>
+    <message>
+        <source>Check the receive queue depth and processing load.</source>
+        <translation>检查接收队列深度和处理负载。</translation>
+    </message>
+    <message>
+        <source>Check the transmit ring and controller link readiness.</source>
+        <translation>检查发送环和控制器链路就绪状态。</translation>
+    </message>
+    <message>
+        <source>Compare expected WKC with each slave's AL state and the topology.</source>
+        <translation>对比期望 WKC、各从站 AL 状态和拓扑。</translation>
+    </message>
+    <message>
+        <source>Inspect the raw frame and datagram identity.</source>
+        <translation>检查原始帧和数据报标识。</translation>
+    </message>
+    <message>
+        <source>Check cycle timing and the submit deadline.</source>
+        <translation>检查周期时序和提交截止时间。</translation>
+    </message>
+    <message>
+        <source>Read the affected slave's AL status code.</source>
+        <translation>读取故障从站的 AL 状态码。</translation>
+    </message>
+    <message>
+        <source>Check the mailbox phase, size, protocol, and timeout.</source>
+        <translation>检查邮箱阶段、大小、协议和超时。</translation>
+    </message>
+    <message>
+        <source>Decode the SDO abort code and object index/subindex.</source>
+        <translation>解析 SDO 中止码和对象索引/子索引。</translation>
+    </message>
+    <message>
+        <source>Verify the ESI DC mode, cycle, shift, and reference clock.</source>
+        <translation>核对 ESI DC 模式、周期、偏移和参考时钟。</translation>
+    </message>
+    <message>
+        <source>Check DC synchronization, the reference clock, and the link.</source>
+        <translation>检查 DC 同步、参考时钟和链路。</translation>
+    </message>
+    <message>
+        <source>Refresh state and verify the command preconditions.</source>
+        <translation>刷新状态并核对命令前置条件。</translation>
+    </message>
+    <message>
+        <source>Check the cyclic task, application budget, and watchdog source.</source>
+        <translation>检查周期任务、应用预算和看门狗来源。</translation>
+    </message>
+    <message>
+        <source>Preserve diagnostics and use controlled recovery.</source>
+        <translation>保留诊断信息并执行受控恢复。</translation>
+    </message>
+    <message>
+        <source>Confirm the operator request before resetting the fault.</source>
+        <translation>确认操作者请求后再复位故障。</translation>
+    </message>
+    <message>
+        <source>Resolve the current fault before resetting the controller.</source>
+        <translation>复位控制器前，请先处理当前故障。</translation>
+    </message>
+    <message>
+        <source>Controller fault</source>
+        <translation>控制器故障</translation>
+    </message>
+    <message>
+        <source>current: %1</source>
+        <translation>当前：%1</translation>
+    </message>
+    <message>
+        <source>latched: %1</source>
+        <translation>锁存：%1</translation>
+    </message>
+    <message>
+        <source>alarm #%1</source>
+        <translation>告警 #%1</translation>
+    </message>
+    <message>
+        <source>last command: %1</source>
+        <translation>最近命令：%1</translation>
+    </message>
+    <message>
+        <source>Action: %1</source>
+        <translation>处理：%1</translation>
+    </message>
+    <message>
+        <source>status %1</source>
+        <translation>状态码 %1</translation>
+    </message>
+    <message>
+        <source>result %1</source>
+        <translation>结果 %1</translation>
+    </message>
+    <message>
+        <source>diagnostic 0x%1</source>
+        <translation>诊断 0x%1</translation>
+    </message>
+    <message>
+        <source>No diagnostic details were returned.</source>
+        <translation>未返回诊断详情。</translation>
+    </message>
+    <message>
+        <source>Connection failed: %1</source>
+        <translation>连接失败：%1</translation>
+    </message>
+    <message>
+        <source>Controller error: %1</source>
+        <translation>控制器错误：%1</translation>
+    </message>
+    <message>
         <source>uploading</source>
         <translation>正在上传</translation>
     </message>

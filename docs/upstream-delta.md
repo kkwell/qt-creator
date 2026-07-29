@@ -2264,3 +2264,26 @@ communication-page tests with 3 passes each, plus the complete ProductApi
 suite with 79 passes, 0 failures, and 1 real-hardware test skipped. No Product
 API, lease, scan, state, package, JTAG, CPU0, CPU1, FPGA, or other controller
 request was made during this delta.
+
+## Concise controller output and fault decoding delta
+
+Workbench Application Output now records terminal controller events instead
+of transport progress. Connecting, Handshaking, Disconnecting, pending
+control stages, and intermediate deployment stages are silent. Terminal
+connection errors retain the provider summary, symbolic and numeric status,
+and distinct diagnostic detail.
+
+`EtherCATData` now names 17 provider-neutral controller-fault categories. The
+ProductApi adapter validates the complete v1.10 wire mask against that shared
+contract, and Workbench turns only the shared semantics into short names and
+recovery guidance. Current and latched masks remain separate and retain their
+exact hexadecimal values; the output also includes the latest alarm sequence
+and nonzero command result. A cleared current mask with retained latched
+evidence explicitly asks for confirmation before reset. AL `OP` and matching
+WKC remain useful bus evidence but never hide a current or historical fault.
+
+Focused offscreen qualification covers silent Connecting/Handshaking and
+pending control/deployment stages, full error preservation, current/latched
+fault decoding, heartbeat deduplication, and terminal control results. This
+delta used no Product API, lease, scan, state, package, JTAG, CPU0, CPU1,
+FPGA, or other controller request.

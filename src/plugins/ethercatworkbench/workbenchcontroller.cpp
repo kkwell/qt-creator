@@ -886,6 +886,175 @@ static QString controllerPackageDeploymentStateName(Data::ControllerPackageDeplo
     return Tr::tr("unknown");
 }
 
+static QString controllerFaultName(Data::ControllerFault fault)
+{
+    using Fault = Data::ControllerFault;
+    switch (fault) {
+    case Fault::Configuration:
+        return Tr::tr("configuration");
+    case Fault::LinkTimeout:
+        return Tr::tr("link timeout");
+    case Fault::ReceiveDrop:
+        return Tr::tr("RX drop");
+    case Fault::ReceiveOverflow:
+        return Tr::tr("RX overflow");
+    case Fault::TransmitUnavailable:
+        return Tr::tr("TX unavailable");
+    case Fault::WorkingCounter:
+        return Tr::tr("WKC mismatch");
+    case Fault::Protocol:
+        return Tr::tr("protocol");
+    case Fault::CycleLate:
+        return Tr::tr("cycle deadline missed");
+    case Fault::AlStatus:
+        return Tr::tr("slave AL status");
+    case Fault::Mailbox:
+        return Tr::tr("mailbox");
+    case Fault::Sdo:
+        return Tr::tr("SDO abort");
+    case Fault::DistributedClocksConfiguration:
+        return Tr::tr("DC configuration");
+    case Fault::DistributedClocksDrift:
+        return Tr::tr("DC drift");
+    case Fault::Command:
+        return Tr::tr("command precondition");
+    case Fault::Watchdog:
+        return Tr::tr("watchdog");
+    case Fault::Internal:
+        return Tr::tr("internal");
+    case Fault::NetworkQuickStop:
+        return Tr::tr("network quick stop");
+    }
+    return Tr::tr("unknown");
+}
+
+static QString controllerFaultMaskHex(quint64 faults)
+{
+    return QStringLiteral("0x%1").arg(faults, 5, 16, QLatin1Char('0'));
+}
+
+static QString controllerFaultMaskSummary(quint64 faults)
+{
+    if (!faults)
+        return Tr::tr("none (%1)").arg(controllerFaultMaskHex(faults));
+
+    QStringList names;
+    for (int bit = 0; bit < Data::ControllerFaultCount; ++bit) {
+        if (faults & (quint64(1) << bit))
+            names.append(controllerFaultName(
+                static_cast<Data::ControllerFault>(quint64(1) << bit)));
+    }
+    if (faults & ~Data::ControllerFaultKnownMask)
+        names.append(Tr::tr("unknown bits"));
+    return Tr::tr("%1 (%2)").arg(names.join(QStringLiteral(", ")), controllerFaultMaskHex(faults));
+}
+
+static QString controllerFaultAction(quint64 currentFaults, quint64 latchedFaults)
+{
+    if (!currentFaults) {
+        return latchedFaults
+                   ? Tr::tr("The cause has cleared; confirm it is safe, then reset the latched fault.")
+                   : Tr::tr("Refresh diagnostics; the controller reported no fault mask.");
+    }
+    if (currentFaults & (currentFaults - 1)) {
+        return Tr::tr("Resolve every current fault before resetting the controller.");
+    }
+
+    const auto activeFault = static_cast<Data::ControllerFault>(currentFaults);
+    using Fault = Data::ControllerFault;
+    switch (activeFault) {
+    case Fault::Configuration:
+        return Tr::tr("Check the active package, scanned topology, PDOs, and startup parameters.");
+    case Fault::LinkTimeout:
+        return Tr::tr("Check the EtherCAT cable, slave power, and link diagnostics.");
+    case Fault::ReceiveDrop:
+        return Tr::tr("Check RX drops, frame identity, and receive context.");
+    case Fault::ReceiveOverflow:
+        return Tr::tr("Check the receive queue depth and processing load.");
+    case Fault::TransmitUnavailable:
+        return Tr::tr("Check the transmit ring and controller link readiness.");
+    case Fault::WorkingCounter:
+        return Tr::tr("Compare expected WKC with each slave's AL state and the topology.");
+    case Fault::Protocol:
+        return Tr::tr("Inspect the raw frame and datagram identity.");
+    case Fault::CycleLate:
+        return Tr::tr("Check cycle timing and the submit deadline.");
+    case Fault::AlStatus:
+        return Tr::tr("Read the affected slave's AL status code.");
+    case Fault::Mailbox:
+        return Tr::tr("Check the mailbox phase, size, protocol, and timeout.");
+    case Fault::Sdo:
+        return Tr::tr("Decode the SDO abort code and object index/subindex.");
+    case Fault::DistributedClocksConfiguration:
+        return Tr::tr("Verify the ESI DC mode, cycle, shift, and reference clock.");
+    case Fault::DistributedClocksDrift:
+        return Tr::tr("Check DC synchronization, the reference clock, and the link.");
+    case Fault::Command:
+        return Tr::tr("Refresh state and verify the command preconditions.");
+    case Fault::Watchdog:
+        return Tr::tr("Check the cyclic task, application budget, and watchdog source.");
+    case Fault::Internal:
+        return Tr::tr("Preserve diagnostics and use controlled recovery.");
+    case Fault::NetworkQuickStop:
+        return Tr::tr("Confirm the operator request before resetting the fault.");
+    }
+    return Tr::tr("Resolve the current fault before resetting the controller.");
+}
+
+static QString controllerFaultMessage(const Data::ControllerStateSummary &state)
+{
+    QStringList fields{
+        Tr::tr("Controller fault"),
+        Tr::tr("current: %1").arg(controllerFaultMaskSummary(state.currentFaults)),
+        Tr::tr("latched: %1").arg(controllerFaultMaskSummary(state.latchedFaults)),
+    };
+    if (state.latestAlarmSequence)
+        fields.append(Tr::tr("alarm #%1").arg(state.latestAlarmSequence));
+    if (state.latestCommandResult)
+        fields.append(Tr::tr("last command: %1").arg(state.latestCommandResult));
+    fields.append(
+        Tr::tr("Action: %1")
+            .arg(controllerFaultAction(state.currentFaults, state.latchedFaults)));
+    return fields.join(QStringLiteral(" · "));
+}
+
+static QString controllerOperationErrorMessage(
+    const Data::ControllerConnectionSnapshot &snapshot,
+    const Data::ControllerOperationError &error)
+{
+    QStringList details;
+    const QString summary = error.summary.trimmed();
+    const QString detail = error.detail.trimmed();
+    if (!summary.isEmpty())
+        details.append(summary);
+
+    QString status;
+    if (!error.codeName.isEmpty() && error.code) {
+        status = Tr::tr("%1 (%2)").arg(error.codeName).arg(*error.code);
+    } else if (!error.codeName.isEmpty()) {
+        status = error.codeName;
+    } else if (error.code) {
+        status = Tr::tr("status %1").arg(*error.code);
+    }
+    if (!status.isEmpty())
+        details.append(status);
+    if (error.operationResult && (!error.code || *error.operationResult != *error.code))
+        details.append(Tr::tr("result %1").arg(*error.operationResult));
+    if (!detail.isEmpty() && detail != summary)
+        details.append(detail);
+    if (error.sourceDetail)
+        details.append(Tr::tr("diagnostic 0x%1").arg(*error.sourceDetail, 0, 16));
+    if (details.isEmpty())
+        details.append(Tr::tr("No diagnostic details were returned."));
+
+    const bool connectionFailure
+        = snapshot.state == Data::ControllerConnectionState::Failed
+          || error.operation == Data::ControllerOperation::Connect
+          || error.operation == Data::ControllerOperation::Handshake;
+    return connectionFailure ? Tr::tr("Connection failed: %1").arg(details.join(Tr::tr(" · ")))
+                             : Tr::tr("Controller error: %1").arg(details.join(Tr::tr(" · ")));
+}
+
 static QString controllerOutputFingerprint(
     const QString &message, ControllerOutputLevel level)
 {
@@ -918,43 +1087,59 @@ static ControllerOutputLevel controllerOutputLevel(
 
 static QString controllerOutputMessage(const Data::ControllerConnectionSnapshot &snapshot)
 {
-    if (snapshot.lastError) {
-        QString error = snapshot.lastError->summary;
-        if (error.isEmpty())
-            error = snapshot.lastError->detail;
-        if (!snapshot.lastError->codeName.isEmpty()) {
-            error = error.isEmpty()
-                        ? snapshot.lastError->codeName
-                        : Tr::tr("%1 (%2)").arg(error, snapshot.lastError->codeName);
-        }
-        return error.isEmpty() ? Tr::tr("Error") : Tr::tr("Error: %1").arg(error);
+    if (snapshot.controllerState
+        && (snapshot.controllerState->serviceState == Data::ControllerServiceState::Fault
+            || snapshot.controllerState->currentFaults
+            || snapshot.controllerState->latchedFaults)) {
+        return controllerFaultMessage(*snapshot.controllerState);
     }
+
+    if (snapshot.lastError)
+        return controllerOperationErrorMessage(snapshot, *snapshot.lastError);
 
     if (snapshot.packageDeploymentProgress.state != Data::ControllerPackageDeploymentState::Idle) {
         const Data::ControllerPackageDeploymentProgress &deployment
             = snapshot.packageDeploymentProgress;
+        using State = Data::ControllerPackageDeploymentState;
+        if (deployment.state == State::Uploading || deployment.state == State::Committing
+            || deployment.state == State::Validating || deployment.state == State::Activating
+            || deployment.state == State::RollingBack || deployment.state == State::Canceling) {
+            return {};
+        }
         QString progress = Tr::tr("Package deployment %1")
                                .arg(controllerPackageDeploymentStateName(deployment.state));
         if (!deployment.operationId.isEmpty())
             progress += Tr::tr(" [%1]").arg(deployment.operationId);
-        if (deployment.totalBytes > 0) {
-            progress += Tr::tr(" %1/%2 bytes")
-                            .arg(deployment.transferredBytes)
-                            .arg(deployment.totalBytes);
-        }
         if (!deployment.detail.isEmpty())
             progress += Tr::tr(" (%1)").arg(deployment.detail);
         return progress;
     }
 
     if (snapshot.controlProgress.state != Data::ControllerControlState::Idle) {
+        if (snapshot.controlProgress.state == Data::ControllerControlState::Pending)
+            return {};
         QString progress = Tr::tr("%1 %2")
                                .arg(
                                    controllerControlCommandName(snapshot.controlProgress.command),
                                    controllerControlStateName(snapshot.controlProgress.state));
-        if (!snapshot.controlProgress.detail.isEmpty())
+        if (snapshot.controlProgress.status)
+            progress += Tr::tr(" · status %1").arg(*snapshot.controlProgress.status);
+        if (snapshot.controlProgress.operationResult
+            && (!snapshot.controlProgress.status
+                || *snapshot.controlProgress.operationResult != *snapshot.controlProgress.status)) {
+            progress += Tr::tr(" · result %1").arg(*snapshot.controlProgress.operationResult);
+        }
+        if (snapshot.controlProgress.state == Data::ControllerControlState::Failed
+            && !snapshot.controlProgress.detail.isEmpty()) {
             progress += Tr::tr(" (%1)").arg(snapshot.controlProgress.detail);
+        }
         return progress;
+    }
+
+    if (snapshot.state == Data::ControllerConnectionState::Connecting
+        || snapshot.state == Data::ControllerConnectionState::Handshaking
+        || snapshot.state == Data::ControllerConnectionState::Disconnecting) {
+        return {};
     }
 
     QStringList fields{controllerConnectionStateName(snapshot.state)};

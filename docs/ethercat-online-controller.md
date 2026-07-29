@@ -585,6 +585,18 @@ service, command, topology, and error changes while ignoring heartbeat
 timestamps. Controller connection state is likewise absent from the global
 status bar; the lower-left actions provide the compact actionable projection.
 
+Application Output records operation boundaries rather than transport
+chatter. Connecting, Handshaking, Disconnecting, pending control stages, and
+intermediate package-transfer stages produce no lines. A connection failure
+retains its summary, symbolic and numeric status, and distinct detail. The
+ProductApi adapter maps its complete v1.10 fault mask to the 17 shared
+controller-fault categories. Workbench reports those categories by name,
+separating `current_faults` from `latched_faults`, and includes the latest
+alarm sequence, nonzero command result, and a short corrective action.
+`current_faults == 0` with nonzero `latched_faults` is reported as a cleared
+cause awaiting a confirmed reset. AL `OP` and matching WKC are current bus
+evidence only and do not suppress a current or historical controller fault.
+
 Closing a Project is the sole automatic connection cleanup. Workbench clears every
 in-memory controller selection belonging to that Project and requests
 Disconnect from every Provider whose current snapshot belongs to it and is
