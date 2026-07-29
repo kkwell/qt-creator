@@ -11,6 +11,9 @@ class EtherCATSemanticRuntimeTests final : public QObject
     Q_OBJECT
 
 private slots:
+    void testCanonicalJsonRoundTrip();
+    void testCanonicalJsonRejectsAmbiguity();
+    void testCanonicalJsonTransferredManifests();
     void testEcpkgContainerCanonicalMinimal();
     void testEcpkgContainerRejectsMetadataMutations();
     void testEcpkgContainerRejectsLayoutsAndLimits();

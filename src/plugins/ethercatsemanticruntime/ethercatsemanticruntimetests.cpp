@@ -2,6 +2,7 @@
 
 #include "ethercatsemanticruntimetests.h"
 
+#include "canonicaljson_p.h"
 #include "ecpkgcontainer.h"
 #include "ed25519verifier.h"
 #include "semanticruntimeexecutor.h"
@@ -449,6 +450,91 @@ static QByteArray readTestData(const QString &relativePath)
     if (!file.open(QIODevice::ReadOnly))
         return {};
     return file.readAll();
+}
+
+void EtherCATSemanticRuntimeTests::testCanonicalJsonRoundTrip()
+{
+    const QByteArray canonical = "{\"array\":[true,false,null],\"control\":\"\\u0001\","
+                                 "\"large\":18446744073709551615,\"negative\":-9223372036854775808,"
+                                 "\"precise\":9007199254740993,\"unicode\":\"\\ud83d\\ude00\"}\n";
+
+    const Utils::Result<StrictJson> parsed = parseCanonicalJson(canonical, canonical.size());
+    QVERIFY_RESULT(parsed);
+    QVERIFY(parsed->at("large").is_number_unsigned());
+    QCOMPARE(parsed->at("large").get<quint64>(), std::numeric_limits<quint64>::max());
+    QVERIFY(parsed->at("negative").is_number_integer());
+    QCOMPARE(parsed->at("negative").get<qint64>(), std::numeric_limits<qint64>::min());
+    QCOMPARE(parsed->at("precise").get<quint64>(), quint64(9007199254740993ULL));
+
+    const Utils::Result<QByteArray> serialized = serializeCanonicalJson(*parsed, canonical.size());
+    QVERIFY_RESULT(serialized);
+    QCOMPARE(*serialized, canonical);
+
+    const QByteArray pretty = "{\n  \"value\": 1\n}\n";
+    const Utils::Result<StrictJson> strict = parseStrictJson(pretty, pretty.size());
+    QVERIFY_RESULT(strict);
+    QVERIFY(!parseCanonicalJson(pretty, pretty.size()));
+}
+
+void EtherCATSemanticRuntimeTests::testCanonicalJsonRejectsAmbiguity()
+{
+    const std::array<QByteArray, 17> invalidJson{
+        QByteArray(),
+        QByteArray("{\"a\":1,\"a\":2}"),
+        QByteArray("{\"a\":1,\"\\u0061\":2}"),
+        QByteArray("{\"outer\":{\"a\":1,\"a\":2}}"),
+        QByteArray("{\"float\":1.0}"),
+        QByteArray("{\"exponent\":1e2}"),
+        QByteArray("{\"overflow\":18446744073709551616}"),
+        QByteArray("{\"underflow\":-9223372036854775809}"),
+        QByteArray("{\"unterminated\":"),
+        QByteArray("{\"invalid\":\"\xc0\xaf\"}"),
+        QByteArray("\xef\xbb\xbf{\"a\":1}\n"),
+        QByteArray("{\"a\":1}\r\n"),
+        QByteArray("{\"a\":1}"),
+        QByteArray("{\"a\":1}\n\n"),
+        QByteArray("{ \"a\":1}\n"),
+        QByteArray("{\"b\":1,\"a\":2}\n"),
+        QByteArray("{\"unicode\":\"\xf0\x9f\x98\x80\"}\n"),
+    };
+
+    for (const QByteArray &input : invalidJson)
+        QVERIFY(!parseCanonicalJson(input, qMax<qsizetype>(input.size(), 1)));
+
+    QByteArray tooDeep;
+    for (int depth = 0; depth < 65; ++depth)
+        tooDeep.append('[');
+    tooDeep.append('0');
+    for (int depth = 0; depth < 65; ++depth)
+        tooDeep.append(']');
+    QVERIFY(!parseStrictJson(tooDeep, tooDeep.size()));
+
+    StrictJson floating = StrictJson::object();
+    floating["value"] = 1.5;
+    QVERIFY(!serializeCanonicalJson(floating, 128));
+
+    const StrictJson valid = StrictJson::object({{"value", 1}});
+    QVERIFY(!serializeCanonicalJson(valid, 11));
+    const Utils::Result<QByteArray> exactLimit = serializeCanonicalJson(valid, 12);
+    QVERIFY_RESULT(exactLimit);
+    QCOMPARE(*exactLimit, QByteArray("{\"value\":1}\n"));
+}
+
+void EtherCATSemanticRuntimeTests::testCanonicalJsonTransferredManifests()
+{
+    const std::array<QString, 2> manifests{
+        "testdata/api035-manifest.json",
+        "testdata/api036-manifest.json",
+    };
+    for (const QString &path : manifests) {
+        const QByteArray bytes = readTestData(path);
+        QVERIFY2(!bytes.isEmpty(), qPrintable(path));
+        const Utils::Result<StrictJson> parsed = parseCanonicalJson(bytes, 1024 * 1024);
+        QVERIFY_RESULT(parsed);
+        const Utils::Result<QByteArray> serialized = serializeCanonicalJson(*parsed, 1024 * 1024);
+        QVERIFY_RESULT(serialized);
+        QCOMPARE(*serialized, bytes);
+    }
 }
 
 namespace {
@@ -932,8 +1018,7 @@ void EtherCATSemanticRuntimeTests::testEd25519Rfc8032()
         "387b2eaeb4302aeeb00d291612bb0c00");
     const QByteArray oneByteMessage = fromHex("72");
 
-    QVERIFY(verifyEd25519DetachedSignature(
-        oneBytePublicKey, oneByteSignature, oneByteMessage));
+    QVERIFY(verifyEd25519DetachedSignature(oneBytePublicKey, oneByteSignature, oneByteMessage));
 }
 
 void EtherCATSemanticRuntimeTests::testEd25519RejectsInvalidInputs()
@@ -963,16 +1048,14 @@ void EtherCATSemanticRuntimeTests::testEd25519RejectsInvalidInputs()
     QVERIFY(!verifyEd25519DetachedSignature(publicKey, signature.first(63), QByteArrayView()));
     QByteArray oversizedSignature = signature;
     oversizedSignature.append('\0');
-    QVERIFY(!verifyEd25519DetachedSignature(
-        publicKey, oversizedSignature, QByteArrayView()));
+    QVERIFY(!verifyEd25519DetachedSignature(publicKey, oversizedSignature, QByteArrayView()));
 
     const QByteArray nonCanonicalSignature = fromHex(
         "e5564300c360ac729086e2cc806e828a"
         "84877f1eb8e5d974d873e06522490155"
         "4c8c7872aa064e049dbb3013fbf29380"
         "d25bf5f0595bbe24655141438e7a101b");
-    QVERIFY(!verifyEd25519DetachedSignature(
-        publicKey, nonCanonicalSignature, QByteArrayView()));
+    QVERIFY(!verifyEd25519DetachedSignature(publicKey, nonCanonicalSignature, QByteArrayView()));
 }
 
 void EtherCATSemanticRuntimeTests::testEd25519TransferredManifests()
