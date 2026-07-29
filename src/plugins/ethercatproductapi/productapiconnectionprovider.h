@@ -41,6 +41,11 @@ public:
     Utils::Result<> refreshRuntimeResources() override;
     Utils::Result<> requestRuntimeResourceSnapshot(
         const Data::RuntimeResourceSnapshotRequest &request) override;
+    bool supportsRuntimeSemanticMappingAttestation() const override;
+    std::optional<Data::RuntimeSemanticMappingAttestation>
+    runtimeSemanticMappingAttestation() const override;
+    Utils::Result<> requestRuntimeSemanticMappingAttestation(
+        const Data::RuntimeSemanticMappingAttestationRequest &request) override;
     bool supportsControlCommand(Data::ControllerControlCommand command) const override;
     Utils::Result<> executeControlCommand(
         const Data::ControllerControlRequest &request) override;

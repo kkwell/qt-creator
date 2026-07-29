@@ -424,6 +424,26 @@ Data::RuntimeResourceCatalogEpoch runtimeResourceEpoch(
     return epoch;
 }
 
+std::optional<Protocol::RuntimeResourceBinding> runtimeResourceBinding(
+    const Data::RuntimeResourceCatalogEpoch &epoch)
+{
+    if (epoch.topologyIdentity.size() != qsizetype(sizeof(quint64))
+        || !Data::isCompleteRuntimeSemanticMappingEpoch(epoch)) {
+        return {};
+    }
+    Protocol::RuntimeResourceBinding binding;
+    binding.bootId = epoch.controllerBootId;
+    binding.activeSlot = runtimeResourceSlot(epoch.activePackageSlot);
+    binding.packageGeneration = epoch.activePackageGeneration;
+    binding.configurationId = epoch.configurationId;
+    binding.topologyGeneration = epoch.topologyGeneration;
+    binding.runtimeGeneration = epoch.runtimeGeneration;
+    binding.catalogRevision = epoch.catalogRevision;
+    binding.topologyIdentity = qFromBigEndian<quint64>(
+        reinterpret_cast<const uchar *>(epoch.topologyIdentity.constData()));
+    return binding;
+}
+
 std::optional<Data::RuntimeResourcePrimitiveType> runtimeResourcePrimitiveType(
     Protocol::RuntimeResourcePrimitive primitive)
 {
@@ -664,6 +684,7 @@ public:
         RuntimeResourceCatalog,
         RuntimeResourceSnapshot,
         RuntimeResourceTargetedSnapshot,
+        RuntimeSemanticMappingAttestation,
         ResumeEvents,
         ResumeReplay,
         ControlCommand,
@@ -696,6 +717,10 @@ public:
         std::optional<Protocol::RuntimeResourceTableQuery> runtimeResourceTableQuery;
         std::optional<Protocol::RuntimeResourceSnapshotQuery> runtimeResourceSnapshotQuery;
         std::optional<Data::RuntimeResourceSnapshotRequest> targetedRuntimeResourceRequest;
+        std::optional<Protocol::SemanticBindingAttestationQuery>
+            semanticMappingAttestationQuery;
+        std::optional<Data::RuntimeSemanticMappingAttestationRequest>
+            semanticMappingAttestationRequest;
         QTimer *timer = nullptr;
     };
 
@@ -879,6 +904,25 @@ public:
             Qt::QueuedConnection);
     }
 
+    void notifyRuntimeSemanticMappingAttestationChanged()
+    {
+        QMetaObject::invokeMethod(
+            q,
+            [q = q] { emit q->runtimeSemanticMappingAttestationChanged(); },
+            Qt::QueuedConnection);
+    }
+
+    void notifyRuntimeSemanticMappingAttestationRequestFinished(
+        const Data::RuntimeSemanticMappingAttestationResult &result)
+    {
+        QMetaObject::invokeMethod(
+            q,
+            [q = q, result] {
+                emit q->runtimeSemanticMappingAttestationRequestFinished(result);
+            },
+            Qt::QueuedConnection);
+    }
+
     void ignoreLateRuntimeResourceResponse(quint64 requestId)
     {
         constexpr qsizetype maximumIgnoredRequestIds = 64;
@@ -892,6 +936,124 @@ public:
     bool canTrackAnotherLateRuntimeResourceResponse() const
     {
         return ignoredRuntimeResourceRequestIds.size() < 64;
+    }
+
+    void ignoreLateSemanticMappingAttestationResponse(quint64 requestId)
+    {
+        constexpr qsizetype maximumIgnoredRequestIds = 64;
+        if (!requestId || ignoredSemanticMappingAttestationRequestIds.contains(requestId))
+            return;
+        if (ignoredSemanticMappingAttestationRequestIds.size() >= maximumIgnoredRequestIds)
+            return;
+        ignoredSemanticMappingAttestationRequestIds.insert(requestId);
+    }
+
+    bool canTrackAnotherLateSemanticMappingAttestationResponse() const
+    {
+        return ignoredSemanticMappingAttestationRequestIds.size() < 64;
+    }
+
+    Data::ControllerOperationError semanticMappingAttestationError(
+        Data::ControllerErrorSource source,
+        const QString &summary,
+        const QString &detail = {},
+        std::optional<qint32> code = {},
+        std::optional<qint32> operationResult = {},
+        std::optional<quint64> requestId = {}) const
+    {
+        Data::ControllerOperationError error;
+        error.source = source;
+        error.channelId = channelId(Protocol::Role::Bulk);
+        error.operation = Data::ControllerOperation::QueryRuntimeSemanticMappingAttestation;
+        error.code = code;
+        error.operationResult = operationResult;
+        if (code)
+            error.codeName = statusName(*code);
+        error.requestId = requestId;
+        error.occurredAt = QDateTime::currentDateTimeUtc();
+        error.retryDisposition
+            = code ? retryDisposition(*code) : Data::ControllerRetryDisposition::NotRetryable;
+        error.summary = summary;
+        error.detail = detail;
+        return error;
+    }
+
+    void clearRuntimeSemanticMappingAttestation()
+    {
+        if (!semanticMappingAttestation)
+            return;
+        semanticMappingAttestation.reset();
+        notifyRuntimeSemanticMappingAttestationChanged();
+    }
+
+    void finishRuntimeSemanticMappingAttestationRequest(
+        const Data::RuntimeSemanticMappingAttestationRequest &request,
+        const std::optional<Data::RuntimeSemanticMappingAttestation> &attestation,
+        const std::optional<Data::ControllerOperationError> &error,
+        std::optional<quint64> requestId = {})
+    {
+        if (requestId)
+            removePending(*requestId);
+        semanticMappingAttestationInProgress = false;
+        Data::RuntimeSemanticMappingAttestationResult result;
+        result.request = request;
+        result.attestation = attestation;
+        result.error = error;
+        notifyRuntimeSemanticMappingAttestationRequestFinished(result);
+    }
+
+    void cancelRuntimeSemanticMappingAttestationRequest(const QString &summary)
+    {
+        auto found = std::find_if(
+            pendingRequests.begin(),
+            pendingRequests.end(),
+            [](const PendingRequest &request) {
+                return request.kind == PendingKind::RuntimeSemanticMappingAttestation
+                       && request.semanticMappingAttestationRequest;
+            });
+        if (found == pendingRequests.end()) {
+            semanticMappingAttestationInProgress = false;
+            return;
+        }
+
+        const quint64 requestId = found.key();
+        const Data::RuntimeSemanticMappingAttestationRequest request
+            = *found->semanticMappingAttestationRequest;
+        const Channel &pendingChannel = channel(found->role);
+        if (found->generation == generation && found->channelEpoch == pendingChannel.epoch
+            && pendingChannel.socket) {
+            ignoreLateSemanticMappingAttestationResponse(requestId);
+        }
+        finishRuntimeSemanticMappingAttestationRequest(
+            request,
+            {},
+            semanticMappingAttestationError(
+                Data::ControllerErrorSource::Network, summary, {}, {}, {}, requestId),
+            requestId);
+    }
+
+    void invalidateRuntimeSemanticMappingAttestation(const QString &pendingSummary)
+    {
+        cancelRuntimeSemanticMappingAttestationRequest(pendingSummary);
+        clearRuntimeSemanticMappingAttestation();
+    }
+
+    void invalidateRuntimeSemanticMappingAttestationIfContextChanged()
+    {
+        if (!semanticMappingAttestation)
+            return;
+        const auto activePackage = snapshot.package ? activePackageSelector(*snapshot.package)
+                                                    : std::nullopt;
+        const Data::RuntimeResourceCatalogEpoch &epoch = semanticMappingAttestation->epoch;
+        if (semanticMappingAttestation->scope != snapshot.scope
+            || semanticMappingAttestation->sessionGeneration != generation
+            || epoch.controllerBootId != bootId || !activePackage
+            || epoch.activePackageSlot != activePackage->slot
+            || epoch.activePackageGeneration != activePackage->generation
+            || epoch.configurationId != activePackage->configurationId
+            || (runtimeCatalog && runtimeCatalog->epoch != epoch)) {
+            clearRuntimeSemanticMappingAttestation();
+        }
     }
 
     Data::ControllerOperationError runtimeResourceSnapshotError(
@@ -1042,6 +1204,7 @@ public:
 
     void invalidateRuntimeResourcesIfBaseChanged()
     {
+        invalidateRuntimeSemanticMappingAttestationIfContextChanged();
         if (!runtimeCatalog && !runtimeSnapshot)
             return;
         const Data::RuntimeResourceCatalogEpoch *epoch = nullptr;
@@ -1282,10 +1445,13 @@ public:
 
     void advanceGeneration()
     {
+        invalidateRuntimeSemanticMappingAttestation(
+            Tr::tr("The semantic mapping attestation query ended with the controller session."));
         ++generation;
         if (!generation)
             ++generation;
         ignoredRuntimeResourceRequestIds.clear();
+        ignoredSemanticMappingAttestationRequestIds.clear();
         snapshot.sessionGeneration = generation;
     }
 
@@ -1294,6 +1460,8 @@ public:
         heartbeatTimer->stop();
         liveStateTimer->stop();
         invalidateRuntimeResources();
+        invalidateRuntimeSemanticMappingAttestation(
+            Tr::tr("The semantic mapping attestation query ended with the controller session."));
         heartbeatRequestId = 0;
         liveStatePollingDegraded = false;
         snapshot.readOnly = false;
@@ -1328,6 +1496,8 @@ public:
     {
         cancelTargetedRuntimeResourceSnapshot(
             Tr::tr("The targeted runtime resource read ended with the controller session."));
+        cancelRuntimeSemanticMappingAttestationRequest(
+            Tr::tr("The semantic mapping attestation query ended with the controller session."));
         if (snapshot.controlProgress.state == Data::ControllerControlState::Pending) {
             snapshot.controlProgress.state = Data::ControllerControlState::Failed;
             snapshot.controlProgress.final = false;
@@ -1949,6 +2119,26 @@ public:
                         requestId);
                     return;
                 }
+                if (kind == PendingKind::RuntimeSemanticMappingAttestation
+                    && found->semanticMappingAttestationRequest) {
+                    const Data::RuntimeSemanticMappingAttestationRequest request
+                        = *found->semanticMappingAttestationRequest;
+                    ignoreLateSemanticMappingAttestationResponse(requestId);
+                    clearRuntimeSemanticMappingAttestation();
+                    const Data::ControllerOperationError error
+                        = semanticMappingAttestationError(
+                            Data::ControllerErrorSource::Network,
+                            Tr::tr("The semantic mapping attestation query timed out."),
+                            {},
+                            {},
+                            {},
+                            requestId);
+                    snapshot.lastError = error;
+                    finishRuntimeSemanticMappingAttestationRequest(
+                        request, {}, error, requestId);
+                    publish();
+                    return;
+                }
                 if (isRuntimeResourceRequest(kind)) {
                     failRuntimeResourceQuery(
                         Data::ControllerErrorSource::Network,
@@ -2208,6 +2398,64 @@ public:
                 wire,
                 Protocol::Role::Bulk,
                 Data::ControllerOperation::QueryRuntimeResourceSnapshot)) {
+            return false;
+        }
+        return true;
+    }
+
+    bool sendRuntimeSemanticMappingAttestationQuery(
+        const Data::RuntimeSemanticMappingAttestationRequest &attestationRequest,
+        const Protocol::SemanticBindingAttestationQuery &query)
+    {
+        Channel &bulk = channel(Protocol::Role::Bulk);
+        if (!bulk.handshaken || !bulk.socket) {
+            const Data::ControllerOperationError error = semanticMappingAttestationError(
+                Data::ControllerErrorSource::Network,
+                Tr::tr("The controller Bulk channel is not connected."));
+            clearRuntimeSemanticMappingAttestation();
+            snapshot.lastError = error;
+            finishRuntimeSemanticMappingAttestationRequest(
+                attestationRequest, {}, error);
+            publish();
+            return false;
+        }
+
+        Protocol::Error codecError;
+        const quint64 requestId = allocateRequestId();
+        const QByteArray wire = Protocol::encodeQuerySemanticBindingAttestation(
+            query, sessionId, requestId, ++bulk.sendSequence, negotiatedMinor, &codecError);
+        if (wire.isEmpty()) {
+            const Data::ControllerOperationError error = semanticMappingAttestationError(
+                Data::ControllerErrorSource::ClientConfiguration,
+                Tr::tr("The semantic mapping attestation request could not be encoded."),
+                codecError.text,
+                {},
+                {},
+                requestId);
+            clearRuntimeSemanticMappingAttestation();
+            snapshot.lastError = error;
+            finishRuntimeSemanticMappingAttestationRequest(
+                attestationRequest, {}, error);
+            publish();
+            return false;
+        }
+
+        PendingRequest request;
+        request.kind = PendingKind::RuntimeSemanticMappingAttestation;
+        request.role = Protocol::Role::Bulk;
+        request.operation
+            = Data::ControllerOperation::QueryRuntimeSemanticMappingAttestation;
+        request.generation = generation;
+        request.channelEpoch = bulk.epoch;
+        request.requestType = Protocol::MessageType::QuerySemanticBindingAttestation;
+        request.semanticMappingAttestationQuery = query;
+        request.semanticMappingAttestationRequest = attestationRequest;
+        addPending(requestId, request, options.requestTimeoutMs);
+        if (!writeFrame(
+                bulk,
+                wire,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeSemanticMappingAttestation)) {
             return false;
         }
         return true;
@@ -2825,6 +3073,10 @@ public:
             invalidateRuntimeResources();
             snapshot.controllerState.reset();
             snapshot.package.reset();
+            invalidateRuntimeSemanticMappingAttestation(
+                Tr::tr(
+                    "The semantic mapping attestation query was canceled because the active "
+                    "package could not be confirmed."));
             switch (request.kind) {
             case PendingKind::State:
                 stateReceived = true;
@@ -2890,6 +3142,10 @@ public:
                 invalidateRuntimeResources();
                 snapshot.controllerState.reset();
                 snapshot.package.reset();
+                invalidateRuntimeSemanticMappingAttestation(
+                    Tr::tr(
+                        "The semantic mapping attestation query was canceled because the active "
+                        "package could not be confirmed."));
                 snapshot.state = Data::ControllerConnectionState::Degraded;
             }
             publish();
@@ -2924,6 +3180,10 @@ public:
         if (command != Data::ControllerControlCommand::AcquireControl
             && command != Data::ControllerControlCommand::ReleaseControl) {
             invalidateRuntimeResources();
+            invalidateRuntimeSemanticMappingAttestation(
+                Tr::tr(
+                    "The semantic mapping attestation query was canceled because the controller "
+                    "runtime changed."));
         }
         removePending(requestId);
         if (command != Data::ControllerControlCommand::ReleaseControl) {
@@ -3702,6 +3962,10 @@ public:
 
         if (!runtimeCatalogBinding) {
             const Data::RuntimeResourceCatalogEpoch epoch = runtimeResourceEpoch(page->binding);
+            if (semanticMappingAttestation
+                && semanticMappingAttestation->epoch != epoch) {
+                clearRuntimeSemanticMappingAttestation();
+            }
             const bool publishedBindingChanged = runtimeCatalog
                                                  && (runtimeCatalog->scope != snapshot.scope
                                                      || runtimeCatalog->sessionGeneration
@@ -3768,6 +4032,7 @@ public:
         const bool hadSnapshot = runtimeSnapshot.has_value();
         publishedRuntimeCatalogBinding = *runtimeCatalogBinding;
         runtimeCatalog = std::move(catalog);
+        invalidateRuntimeSemanticMappingAttestationIfContextChanged();
         runtimeSnapshot.reset();
         notifyRuntimeResourceCatalogChanged();
         if (hadSnapshot)
@@ -4078,6 +4343,207 @@ public:
         finishTargetedRuntimeResourceSnapshot(targetedRequest, *result, {}, requestId);
     }
 
+    void failRuntimeSemanticMappingAttestationProtocol(
+        const PendingRequest &pending,
+        quint64 requestId,
+        const QString &summary,
+        const QString &detail = {})
+    {
+        if (!pending.semanticMappingAttestationRequest) {
+            failProtocol(
+                pending.role,
+                pending.operation,
+                summary,
+                detail,
+                requestId);
+            return;
+        }
+        const Data::RuntimeSemanticMappingAttestationRequest request
+            = *pending.semanticMappingAttestationRequest;
+        clearRuntimeSemanticMappingAttestation();
+        const Data::ControllerOperationError error = semanticMappingAttestationError(
+            Data::ControllerErrorSource::Protocol,
+            summary,
+            detail,
+            {},
+            {},
+            requestId);
+        snapshot.lastError = error;
+        finishRuntimeSemanticMappingAttestationRequest(request, {}, error, requestId);
+        failProtocol(
+            pending.role,
+            pending.operation,
+            summary,
+            detail,
+            requestId);
+    }
+
+    void finishRuntimeSemanticMappingAttestationFailure(
+        const PendingRequest &pending,
+        quint64 requestId,
+        qint32 status,
+        std::optional<qint32> operationResult,
+        const QString &summary)
+    {
+        if (!pending.semanticMappingAttestationRequest) {
+            failRuntimeSemanticMappingAttestationProtocol(
+                pending,
+                requestId,
+                Tr::tr("The semantic mapping attestation request context is missing."));
+            return;
+        }
+        const Data::RuntimeSemanticMappingAttestationRequest request
+            = *pending.semanticMappingAttestationRequest;
+        clearRuntimeSemanticMappingAttestation();
+        const Data::ControllerOperationError error = semanticMappingAttestationError(
+            Data::ControllerErrorSource::Controller,
+            summary,
+            {},
+            status,
+            operationResult,
+            requestId);
+        snapshot.lastError = error;
+        finishRuntimeSemanticMappingAttestationRequest(request, {}, error, requestId);
+        if (isReconnectStatus(status))
+            scheduleReconnect();
+        else
+            publish();
+    }
+
+    void handleRuntimeSemanticMappingAttestationStatus(
+        const Protocol::Frame &frame, const PendingRequest &pending, quint64 requestId)
+    {
+        Protocol::Error decodeError;
+        const auto status = Protocol::decodeBulkStatus(frame, &decodeError);
+        if (!status || !status->status
+            || status->originalType
+                   != quint16(Protocol::MessageType::QuerySemanticBindingAttestation)
+            || pending.role != Protocol::Role::Bulk) {
+            failRuntimeSemanticMappingAttestationProtocol(
+                pending,
+                requestId,
+                Tr::tr("The controller returned a malformed semantic mapping status."),
+                decodeError.text);
+            return;
+        }
+        finishRuntimeSemanticMappingAttestationFailure(
+            pending,
+            requestId,
+            status->status,
+            status->operationResult,
+            Tr::tr("The controller rejected the semantic mapping attestation query."));
+    }
+
+    void handleRuntimeSemanticMappingAttestation(
+        const Protocol::Frame &frame, const PendingRequest &pending, quint64 requestId)
+    {
+        if (!semanticMappingAttestationInProgress
+            || !pending.semanticMappingAttestationQuery
+            || !pending.semanticMappingAttestationRequest) {
+            failRuntimeSemanticMappingAttestationProtocol(
+                pending,
+                requestId,
+                Tr::tr("The semantic mapping attestation request context is missing."));
+            return;
+        }
+
+        const Data::RuntimeSemanticMappingAttestationRequest request
+            = *pending.semanticMappingAttestationRequest;
+        Protocol::Error decodeError;
+        const auto protocolAttestation = Protocol::decodeSemanticBindingAttestation(
+            frame, *pending.semanticMappingAttestationQuery, &decodeError);
+        if (!protocolAttestation) {
+            failRuntimeSemanticMappingAttestationProtocol(
+                pending,
+                requestId,
+                Tr::tr("The controller returned an invalid semantic mapping attestation."),
+                decodeError.text);
+            return;
+        }
+        if (protocolAttestation->status) {
+            finishRuntimeSemanticMappingAttestationFailure(
+                pending,
+                requestId,
+                protocolAttestation->status,
+                {},
+                Tr::tr("The controller rejected the semantic mapping attestation query."));
+            return;
+        }
+
+        Data::RuntimeSemanticMappingProof proof;
+        proof.formatVersion = protocolAttestation->formatVersion;
+        proof.bindingCount = protocolAttestation->bindingCount;
+        proof.packageSigned
+            = protocolAttestation->securityFlags
+              & Protocol::semanticBindingSecurityFlagValue(
+                  Protocol::SemanticBindingSecurityFlag::Signed);
+        proof.signatureVerified
+            = protocolAttestation->securityFlags
+              & Protocol::semanticBindingSecurityFlagValue(
+                  Protocol::SemanticBindingSecurityFlag::Verified);
+        proof.semanticBindingVerified
+            = protocolAttestation->securityFlags
+              & Protocol::semanticBindingSecurityFlagValue(
+                  Protocol::SemanticBindingSecurityFlag::Binding);
+        proof.trust
+            = protocolAttestation->securityFlags
+                      & Protocol::semanticBindingSecurityFlagValue(
+                          Protocol::SemanticBindingSecurityFlag::Production)
+                  ? Data::RuntimeSemanticMappingTrust::Production
+                  : Data::RuntimeSemanticMappingTrust::Engineering;
+        proof.packageSha256 = protocolAttestation->packageSha256;
+        proof.manifestSha256 = protocolAttestation->manifestSha256;
+        proof.mappingSha256 = protocolAttestation->semanticMappingSha256;
+        proof.resourceRecordsSha256 = protocolAttestation->resourceRecordsSha256;
+        proof.resourceSectionSha256 = protocolAttestation->resourceSectionSha256;
+        proof.topologySha256 = protocolAttestation->topologySha256;
+        proof.signingKeyIdSha256 = protocolAttestation->signingKeyIdSha256;
+
+        Data::RuntimeSemanticMappingAttestation attestation;
+        attestation.scope = request.scope;
+        attestation.sessionGeneration = request.sessionGeneration;
+        attestation.epoch = runtimeResourceEpoch(protocolAttestation->binding);
+        attestation.proof = proof;
+        attestation.receivedAt = QDateTime::currentDateTimeUtc();
+
+        const auto activePackage = snapshot.package ? activePackageSelector(*snapshot.package)
+                                                    : std::nullopt;
+        const bool contextMatches
+            = request.scope == snapshot.scope && request.sessionGeneration == generation
+              && request.expectedEpoch == attestation.epoch
+              && request.expectedEpoch.controllerBootId == bootId && activePackage
+              && request.expectedEpoch.activePackageSlot == activePackage->slot
+              && request.expectedEpoch.activePackageGeneration == activePackage->generation
+              && request.expectedEpoch.configurationId == activePackage->configurationId;
+        if (!contextMatches || !attestation.isValid()
+            || !(proof == request.expectedProof)) {
+            failRuntimeSemanticMappingAttestationProtocol(
+                pending,
+                requestId,
+                Tr::tr("The controller semantic mapping proof does not match the IDE package."),
+                contextMatches
+                    ? Tr::tr(
+                          "One or more signed package digests, trust flags, format fields, or "
+                          "binding counts differ.")
+                    : Tr::tr("The controller session or complete package epoch changed."));
+            return;
+        }
+
+        const bool changed = !semanticMappingAttestation
+                             || *semanticMappingAttestation != attestation;
+        semanticMappingAttestation = attestation;
+        if (snapshot.lastError
+            && snapshot.lastError->operation
+                   == Data::ControllerOperation::QueryRuntimeSemanticMappingAttestation) {
+            snapshot.lastError.reset();
+            publish();
+        }
+        finishRuntimeSemanticMappingAttestationRequest(
+            request, attestation, {}, requestId);
+        if (changed)
+            notifyRuntimeSemanticMappingAttestationChanged();
+    }
+
     void dispatchFrame(Channel &value, const Protocol::Frame &frame)
     {
         const quint64 requestId = frame.header.requestId;
@@ -4089,6 +4555,8 @@ public:
         auto found = pendingRequests.find(requestId);
         if (found == pendingRequests.end()) {
             if (ignoredRuntimeResourceRequestIds.remove(requestId))
+                return;
+            if (ignoredSemanticMappingAttestationRequestIds.remove(requestId))
                 return;
             failProtocol(
                 value.role,
@@ -4108,6 +4576,14 @@ public:
             removePending(requestId);
             stopChannelTimer(value);
             handleHello(value, frame, requestId);
+            return;
+        }
+        if (request.kind == PendingKind::RuntimeSemanticMappingAttestation
+            && (frame.header.sessionId != sessionId || frame.header.bootId != bootId)) {
+            failRuntimeSemanticMappingAttestationProtocol(
+                request,
+                requestId,
+                Tr::tr("The semantic mapping response has a stale session identity."));
             return;
         }
         if (!validateEstablishedIdentity(frame, request, requestId))
@@ -4169,6 +4645,19 @@ public:
                     Tr::tr("The controller returned an invalid runtime resource status."),
                     {},
                     requestId);
+            }
+            return;
+        }
+        if (request.kind == PendingKind::RuntimeSemanticMappingAttestation
+            && frame.header.messageType
+                   != Protocol::MessageType::SemanticBindingAttestation) {
+            if (frame.header.messageType == Protocol::MessageType::BulkStatus) {
+                handleRuntimeSemanticMappingAttestationStatus(frame, request, requestId);
+            } else {
+                failRuntimeSemanticMappingAttestationProtocol(
+                    request,
+                    requestId,
+                    Tr::tr("The controller returned the wrong semantic mapping response type."));
             }
             return;
         }
@@ -4245,7 +4734,19 @@ public:
                 = negotiatedMinor >= Protocol::RuntimeResourceMinor
                   && (featureBits & Protocol::RuntimeResourceFeature)
                   && (bulkFeatureBits & Protocol::RuntimeResourceFeature);
+            capability->semanticMappingAttestation
+                = negotiatedMinor >= Protocol::SemanticBindingAttestationMinor
+                  && (featureBits & Protocol::SemanticBindingAttestationFeature)
+                  && (bulkFeatureBits & Protocol::SemanticBindingAttestationFeature);
             snapshot.capability = *capability;
+            if (!capability->semanticMappingAttestation) {
+                invalidateRuntimeSemanticMappingAttestation(
+                    Tr::tr(
+                        "The semantic mapping attestation query was canceled because controller "
+                        "support is unavailable."));
+            } else {
+                invalidateRuntimeSemanticMappingAttestationIfContextChanged();
+            }
             capabilityReceived = true;
             removePending(requestId);
             finishRefreshIfReady();
@@ -4294,6 +4795,9 @@ public:
         case PendingKind::RuntimeResourceTargetedSnapshot:
             handleTargetedRuntimeResourceSnapshot(frame, request, requestId);
             return;
+        case PendingKind::RuntimeSemanticMappingAttestation:
+            handleRuntimeSemanticMappingAttestation(frame, request, requestId);
+            return;
         case PendingKind::ResumeEvents:
             handleResumeResult(value, frame, requestId, &decodeError);
             return;
@@ -4331,6 +4835,10 @@ public:
                      slave.serial});
             }
             invalidateRuntimeResources();
+            invalidateRuntimeSemanticMappingAttestation(
+                Tr::tr(
+                    "The semantic mapping attestation query was canceled because the topology "
+                    "changed."));
             snapshot.topology = result;
             removePending(requestId);
             controlRefreshPending = true;
@@ -4372,6 +4880,10 @@ public:
                 break;
             snapshot.package = *package;
             invalidateRuntimeResources();
+            invalidateRuntimeSemanticMappingAttestation(
+                Tr::tr(
+                    "The semantic mapping attestation query was canceled because the active "
+                    "runtime package changed."));
             rememberPersistentPackageSelector(*package);
             removePending(requestId);
             controlRefreshPending = true;
@@ -4986,6 +5498,10 @@ public:
                     invalidateRuntimeResources();
                     snapshot.controllerState.reset();
                     snapshot.package.reset();
+                    invalidateRuntimeSemanticMappingAttestation(
+                        Tr::tr(
+                            "The semantic mapping attestation query was canceled because the "
+                            "active package could not be confirmed."));
                 }
                 const QString refreshDetail
                     = refreshRejected
@@ -5032,6 +5548,10 @@ public:
                 invalidateRuntimeResources();
                 snapshot.controllerState.reset();
                 snapshot.package.reset();
+                invalidateRuntimeSemanticMappingAttestation(
+                    Tr::tr(
+                        "The semantic mapping attestation query was canceled because the active "
+                        "package could not be confirmed."));
                 const QString detail = Tr::tr(
                     "The controller accepted the command, but its resulting state could not "
                     "be confirmed.");
@@ -5071,6 +5591,10 @@ public:
             invalidateRuntimeResources();
             snapshot.controllerState.reset();
             snapshot.package.reset();
+            invalidateRuntimeSemanticMappingAttestation(
+                Tr::tr(
+                    "The semantic mapping attestation query was canceled because the active "
+                    "package could not be confirmed."));
         }
         publish();
     }
@@ -5082,6 +5606,7 @@ public:
     std::array<Channel, 3> channels;
     QHash<quint64, PendingRequest> pendingRequests;
     QSet<quint64> ignoredRuntimeResourceRequestIds;
+    QSet<quint64> ignoredSemanticMappingAttestationRequestIds;
     QTimer *reconnectTimer = nullptr;
     QTimer *heartbeatTimer = nullptr;
     QTimer *liveStateTimer = nullptr;
@@ -5092,6 +5617,7 @@ public:
     QSet<QByteArray> runtimeCatalogIds;
     std::optional<Protocol::RuntimeResourceBinding> runtimeCatalogBinding;
     std::optional<Protocol::RuntimeResourceBinding> publishedRuntimeCatalogBinding;
+    std::optional<Data::RuntimeSemanticMappingAttestation> semanticMappingAttestation;
     std::optional<PersistentPackageSelector> persistentPackageSelector;
     std::optional<FaultResetConfirmation> faultResetConfirmation;
     quint64 generation = 0;
@@ -5119,6 +5645,7 @@ public:
     bool subscriptionDegraded = false;
     bool runtimeRefreshInProgress = false;
     bool targetedRuntimeSnapshotInProgress = false;
+    bool semanticMappingAttestationInProgress = false;
     quint32 runtimeCatalogTotalCount = 0;
     QElapsedTimer runtimeResourceRefreshTimer;
     bool alarmCheckpointEstablished = false;
@@ -5491,6 +6018,106 @@ Utils::Result<> ProductApiSession::requestRuntimeResourceSnapshot(
 
     d->targetedRuntimeSnapshotInProgress = true;
     d->sendTargetedRuntimeResourceSnapshotQuery(request, query);
+    return {};
+}
+
+bool ProductApiSession::supportsRuntimeSemanticMappingAttestation() const
+{
+    return d->negotiatedMinor >= Protocol::SemanticBindingAttestationMinor
+           && (d->featureBits & Protocol::SemanticBindingAttestationFeature)
+           && (d->bulkFeatureBits & Protocol::SemanticBindingAttestationFeature);
+}
+
+std::optional<Data::RuntimeSemanticMappingAttestation>
+ProductApiSession::runtimeSemanticMappingAttestation() const
+{
+    return d->semanticMappingAttestation;
+}
+
+Utils::Result<> ProductApiSession::requestRuntimeSemanticMappingAttestation(
+    const Data::RuntimeSemanticMappingAttestationRequest &request)
+{
+    if (d->shuttingDown)
+        return Utils::ResultError(Tr::tr("The controller session is shutting down."));
+    if (!request.isValid()) {
+        return Utils::ResultError(
+            Tr::tr("The semantic mapping attestation request is incomplete."));
+    }
+    if (d->snapshot.state != Data::ControllerConnectionState::Connected
+        && d->snapshot.state != Data::ControllerConnectionState::Degraded) {
+        return Utils::ResultError(
+            Tr::tr("Connect to the controller before verifying semantic mappings."));
+    }
+    if (!supportsRuntimeSemanticMappingAttestation()) {
+        return Utils::ResultError(
+            Tr::tr(
+                "UNSUPPORTED (-14): semantic mapping attestation requires Product API v1.13 "
+                "and feature bit 14 on the joined Bulk session; no controller request was sent."));
+    }
+    if (d->semanticMappingAttestationInProgress) {
+        return Utils::ResultError(
+            Tr::tr("A semantic mapping attestation query is already active."));
+    }
+    if (!d->canTrackAnotherLateSemanticMappingAttestationResponse()) {
+        return Utils::ResultError(
+            Tr::tr(
+                "Reconnect the controller before starting more semantic mapping queries; 64 "
+                "timed-out responses are still being discarded."));
+    }
+    if (d->refreshInProgress)
+        return Utils::ResultError(Tr::tr("Wait for the controller refresh to finish."));
+    if (d->runtimeRefreshInProgress || d->targetedRuntimeSnapshotInProgress) {
+        return Utils::ResultError(
+            Tr::tr("Wait for the runtime resource operation to finish."));
+    }
+    if (d->hasActiveControlOperation())
+        return Utils::ResultError(Tr::tr("Wait for the controller operation to finish."));
+    if (d->hasActiveDeployment())
+        return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
+    if (!d->sessionId || !d->bootId || !d->snapshot.session) {
+        return Utils::ResultError(
+            Tr::tr("The controller session identity is not available."));
+    }
+    if (!d->channel(Protocol::Role::Bulk).handshaken
+        || !d->channel(Protocol::Role::Bulk).socket) {
+        return Utils::ResultError(Tr::tr("The controller Bulk channel is not connected."));
+    }
+
+    const auto activePackage = d->snapshot.package
+                                   ? activePackageSelector(*d->snapshot.package)
+                                   : std::nullopt;
+    if (d->semanticMappingAttestation
+        && (d->semanticMappingAttestation->scope != request.scope
+            || d->semanticMappingAttestation->sessionGeneration != request.sessionGeneration
+            || d->semanticMappingAttestation->epoch != request.expectedEpoch)) {
+        d->clearRuntimeSemanticMappingAttestation();
+    }
+    if (request.scope != d->snapshot.scope || request.sessionGeneration != d->generation
+        || request.expectedEpoch.controllerBootId != d->bootId || !activePackage
+        || request.expectedEpoch.activePackageSlot != activePackage->slot
+        || request.expectedEpoch.activePackageGeneration != activePackage->generation
+        || request.expectedEpoch.configurationId != activePackage->configurationId
+        || (d->runtimeCatalog && d->runtimeCatalog->epoch != request.expectedEpoch)) {
+        return Utils::ResultError(
+            Tr::tr("The semantic mapping attestation request uses a stale package epoch."));
+    }
+
+    const auto binding = runtimeResourceBinding(request.expectedEpoch);
+    if (!binding) {
+        return Utils::ResultError(
+            Tr::tr("The semantic mapping attestation epoch cannot be encoded."));
+    }
+    Protocol::SemanticBindingAttestationQuery query;
+    query.binding = *binding;
+
+    d->semanticMappingAttestationInProgress = true;
+    if (d->snapshot.lastError
+        && d->snapshot.lastError->operation
+               == Data::ControllerOperation::QueryRuntimeSemanticMappingAttestation) {
+        d->snapshot.lastError.reset();
+        d->publish();
+    }
+    d->sendRuntimeSemanticMappingAttestationQuery(request, query);
     return {};
 }
 

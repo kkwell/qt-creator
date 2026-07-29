@@ -111,6 +111,16 @@ ProductApiConnectionProvider::ProductApiConnectionProvider(
         &ProductApiSession::runtimeResourceSnapshotRequestFinished,
         this,
         &ProductApiConnectionProvider::runtimeResourceSnapshotRequestFinished);
+    connect(
+        m_session,
+        &ProductApiSession::runtimeSemanticMappingAttestationChanged,
+        this,
+        &ProductApiConnectionProvider::runtimeSemanticMappingAttestationChanged);
+    connect(
+        m_session,
+        &ProductApiSession::runtimeSemanticMappingAttestationRequestFinished,
+        this,
+        &ProductApiConnectionProvider::runtimeSemanticMappingAttestationRequestFinished);
     setAvailable(endpoints.isValid() && options.isValid());
 }
 
@@ -251,6 +261,25 @@ Utils::Result<> ProductApiConnectionProvider::requestRuntimeResourceSnapshot(
     if (!isAvailable())
         return Utils::ResultError(Tr::tr("The Embed Labs controller provider is unavailable."));
     return m_session->requestRuntimeResourceSnapshot(request);
+}
+
+bool ProductApiConnectionProvider::supportsRuntimeSemanticMappingAttestation() const
+{
+    return isAvailable() && m_session->supportsRuntimeSemanticMappingAttestation();
+}
+
+std::optional<Data::RuntimeSemanticMappingAttestation>
+ProductApiConnectionProvider::runtimeSemanticMappingAttestation() const
+{
+    return m_session->runtimeSemanticMappingAttestation();
+}
+
+Utils::Result<> ProductApiConnectionProvider::requestRuntimeSemanticMappingAttestation(
+    const Data::RuntimeSemanticMappingAttestationRequest &request)
+{
+    if (!isAvailable())
+        return Utils::ResultError(Tr::tr("The Embed Labs controller provider is unavailable."));
+    return m_session->requestRuntimeSemanticMappingAttestation(request);
 }
 
 bool ProductApiConnectionProvider::supportsControlCommand(

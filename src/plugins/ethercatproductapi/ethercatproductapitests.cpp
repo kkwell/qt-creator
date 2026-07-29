@@ -884,6 +884,72 @@ QByteArray runtimeResourceSnapshotFailurePayload(qint32 status)
     return payload;
 }
 
+Data::RuntimeSemanticMappingProof runtimeSemanticMappingProof(
+    Data::RuntimeSemanticMappingTrust trust = Data::RuntimeSemanticMappingTrust::Production)
+{
+    Data::RuntimeSemanticMappingProof proof;
+    proof.formatVersion = 1;
+    proof.bindingCount = 56;
+    proof.packageSigned = true;
+    proof.signatureVerified = true;
+    proof.semanticBindingVerified = true;
+    proof.trust = trust;
+    proof.packageSha256 = QByteArray(32, char(0x11));
+    proof.manifestSha256 = QByteArray(32, char(0x22));
+    proof.mappingSha256 = QByteArray(32, char(0x33));
+    proof.resourceRecordsSha256 = QByteArray(32, char(0x44));
+    proof.resourceSectionSha256 = QByteArray(32, char(0x55));
+    proof.topologySha256 = QByteArray(32, char(0x66));
+    proof.signingKeyIdSha256 = QByteArray(32, char(0x77));
+    return proof;
+}
+
+QByteArray semanticBindingAttestationPayload(
+    const Protocol::RuntimeResourceBinding &binding,
+    const Data::RuntimeSemanticMappingProof &proof,
+    qint32 status = 0)
+{
+    QByteArray payload(320, '\0');
+    putU16(payload, 0, quint16(Protocol::MessageType::QuerySemanticBindingAttestation));
+    putU16(payload, 2, 320);
+    putI32(payload, 4, status);
+    if (status)
+        return payload;
+
+    putU32(payload, 8, binding.activeSlot);
+    putU16(payload, 12, proof.formatVersion);
+    quint32 securityFlags
+        = Protocol::semanticBindingSecurityFlagValue(
+              Protocol::SemanticBindingSecurityFlag::Signed)
+          | Protocol::semanticBindingSecurityFlagValue(
+              Protocol::SemanticBindingSecurityFlag::Verified)
+          | Protocol::semanticBindingSecurityFlagValue(
+              Protocol::SemanticBindingSecurityFlag::Binding);
+    securityFlags
+        |= proof.trust == Data::RuntimeSemanticMappingTrust::Production
+               ? Protocol::semanticBindingSecurityFlagValue(
+                     Protocol::SemanticBindingSecurityFlag::Production)
+               : Protocol::semanticBindingSecurityFlagValue(
+                     Protocol::SemanticBindingSecurityFlag::Engineering);
+    putU32(payload, 16, securityFlags);
+    putU32(payload, 20, proof.bindingCount);
+    putU64(payload, 24, binding.packageGeneration);
+    putU64(payload, 32, binding.configurationId);
+    putU64(payload, 40, binding.topologyGeneration);
+    putU64(payload, 48, binding.runtimeGeneration);
+    putU64(payload, 56, binding.catalogRevision);
+    putU64(payload, 64, binding.topologyIdentity);
+    putU64(payload, 72, binding.bootId);
+    payload.replace(80, 32, proof.packageSha256);
+    payload.replace(112, 32, proof.manifestSha256);
+    payload.replace(144, 32, proof.mappingSha256);
+    payload.replace(176, 32, proof.resourceRecordsSha256);
+    payload.replace(208, 32, proof.resourceSectionSha256);
+    payload.replace(240, 32, proof.topologySha256);
+    payload.replace(272, 32, proof.signingKeyIdSha256);
+    return payload;
+}
+
 class LoopbackController final : public QObject
 {
     struct Peer;
@@ -898,6 +964,16 @@ class LoopbackController final : public QObject
         CommandStatusResponse,
         FirmwareStatusResponse,
         BulkStatusNonzeroOperationResult,
+    };
+    enum class SemanticAttestationFailure {
+        None,
+        Typed,
+        BulkStatus,
+        WrongSession,
+        WrongBoot,
+        WrongEpoch,
+        MalformedPayload,
+        WrongResponse,
     };
 
 public:
@@ -924,6 +1000,7 @@ public:
         FaultReset,
         PackageDeployment,
         RuntimeResources,
+        SemanticAttestation,
     };
 
     explicit LoopbackController(Behavior behavior = Behavior::Normal)
@@ -934,7 +1011,9 @@ public:
             m_controllerPackageActive = true;
             m_latchedFaults = quint64(1) << 15;
             m_lastAlarmSequence = TestAlarmSequence;
-        } else if (m_behavior == Behavior::RuntimeResources) {
+        } else if (
+            m_behavior == Behavior::RuntimeResources
+            || m_behavior == Behavior::SemanticAttestation) {
             m_serviceState = 3;
             m_controllerPackageActive = true;
         }
@@ -1026,6 +1105,55 @@ public:
     {
         m_runtimePackageGeneration = generation;
         m_runtimeConfigurationId = configurationId;
+    }
+    void setRuntimeEpoch(
+        quint64 topologyGeneration,
+        quint64 runtimeGeneration,
+        quint64 catalogRevision,
+        quint64 topologyIdentity)
+    {
+        m_runtimeTopologyGeneration = topologyGeneration;
+        m_runtimeGeneration = runtimeGeneration;
+        m_runtimeCatalogRevision = catalogRevision;
+        m_runtimeTopologyIdentity = topologyIdentity;
+    }
+    void setSemanticMappingProof(const Data::RuntimeSemanticMappingProof &proof)
+    {
+        m_semanticMappingProof = proof;
+    }
+    void rejectNextSemanticAttestationTyped(qint32 status = -17)
+    {
+        m_nextSemanticAttestationFailure = SemanticAttestationFailure::Typed;
+        m_nextSemanticAttestationStatus = status;
+    }
+    void rejectNextSemanticAttestationWithBulkStatus(qint32 status = -7)
+    {
+        m_nextSemanticAttestationFailure = SemanticAttestationFailure::BulkStatus;
+        m_nextSemanticAttestationStatus = status;
+    }
+    void corruptNextSemanticAttestationSessionId()
+    {
+        m_nextSemanticAttestationFailure = SemanticAttestationFailure::WrongSession;
+    }
+    void corruptNextSemanticAttestationBootId()
+    {
+        m_nextSemanticAttestationFailure = SemanticAttestationFailure::WrongBoot;
+    }
+    void corruptNextSemanticAttestationEpoch()
+    {
+        m_nextSemanticAttestationFailure = SemanticAttestationFailure::WrongEpoch;
+    }
+    void corruptNextSemanticAttestationPayload()
+    {
+        m_nextSemanticAttestationFailure = SemanticAttestationFailure::MalformedPayload;
+    }
+    void sendWrongNextSemanticAttestationResponse()
+    {
+        m_nextSemanticAttestationFailure = SemanticAttestationFailure::WrongResponse;
+    }
+    void setSemanticAttestationDelayMs(int delayMs)
+    {
+        m_semanticAttestationDelayMs = delayMs;
     }
     void rejectNextRuntimeSnapshotTyped(qint32 status = -17)
     {
@@ -1365,6 +1493,9 @@ private:
         case Protocol::MessageType::GetResourceSnapshot:
             handleRuntimeResourceRequest(peer, frame);
             return;
+        case Protocol::MessageType::QuerySemanticBindingAttestation:
+            handleSemanticBindingAttestationRequest(peer, frame);
+            return;
         case Protocol::MessageType::ValidatePackage:
         case Protocol::MessageType::ActivatePackage:
         case Protocol::MessageType::RollbackPackage:
@@ -1393,13 +1524,19 @@ private:
 
     Protocol::RuntimeResourceBinding currentRuntimeResourceBinding() const
     {
-        return loopbackRuntimeResourceBinding(
+        Protocol::RuntimeResourceBinding binding = loopbackRuntimeResourceBinding(
             m_bootId, m_runtimePackageGeneration, m_runtimeConfigurationId);
+        binding.topologyGeneration = m_runtimeTopologyGeneration;
+        binding.runtimeGeneration = m_runtimeGeneration;
+        binding.catalogRevision = m_runtimeCatalogRevision;
+        binding.topologyIdentity = m_runtimeTopologyIdentity;
+        return binding;
     }
 
     void handleRuntimeResourceRequest(Peer &peer, const Protocol::Frame &request)
     {
-        if (m_behavior != Behavior::RuntimeResources) {
+        if (m_behavior != Behavior::RuntimeResources
+            && m_behavior != Behavior::SemanticAttestation) {
             m_violations.append(
                 QStringLiteral("A runtime resource request was emitted outside its test."));
             return;
@@ -1603,6 +1740,123 @@ private:
             snapshotPayload);
     }
 
+    void handleSemanticBindingAttestationRequest(
+        Peer &peer, const Protocol::Frame &request)
+    {
+        if (m_behavior != Behavior::SemanticAttestation) {
+            m_violations.append(
+                QStringLiteral("A semantic attestation request was emitted outside its test."));
+            return;
+        }
+        if (peer.role != Protocol::Role::Bulk) {
+            m_violations.append(
+                QStringLiteral("A semantic attestation request used the wrong channel."));
+        }
+
+        const Protocol::RuntimeResourceBinding binding = currentRuntimeResourceBinding();
+        if (request.payload.size() != 64
+            || readU32(request.payload, 0) != binding.activeSlot
+            || readU32(request.payload, 4)
+            || readU64(request.payload, 8) != binding.packageGeneration
+            || readU64(request.payload, 16) != binding.configurationId
+            || readU64(request.payload, 24) != binding.topologyGeneration
+            || readU64(request.payload, 32) != binding.runtimeGeneration
+            || readU64(request.payload, 40) != binding.catalogRevision
+            || readU64(request.payload, 48) != binding.topologyIdentity
+            || readU64(request.payload, 56)) {
+            m_violations.append(
+                QStringLiteral("A semantic attestation request was malformed."));
+            return;
+        }
+        if (m_leaseOwned) {
+            m_violations.append(
+                QStringLiteral("A semantic attestation query unexpectedly required a lease."));
+        }
+
+        const SemanticAttestationFailure failure = m_nextSemanticAttestationFailure;
+        m_nextSemanticAttestationFailure = SemanticAttestationFailure::None;
+        if (failure == SemanticAttestationFailure::Typed) {
+            const qint32 status = m_nextSemanticAttestationStatus;
+            m_nextSemanticAttestationStatus = -17;
+            sendResponse(
+                peer,
+                Protocol::MessageType::SemanticBindingAttestation,
+                request.header.requestId,
+                semanticBindingAttestationPayload(binding, m_semanticMappingProof, status),
+                Protocol::Flag::Response | Protocol::Flag::Error);
+            return;
+        }
+        if (failure == SemanticAttestationFailure::BulkStatus) {
+            QByteArray payload = bulkStatusPayload(
+                quint16(Protocol::MessageType::QuerySemanticBindingAttestation));
+            putI32(payload, 0, m_nextSemanticAttestationStatus);
+            putI32(payload, 4, 0);
+            m_nextSemanticAttestationStatus = -17;
+            sendResponse(
+                peer,
+                Protocol::MessageType::BulkStatus,
+                request.header.requestId,
+                payload,
+                Protocol::Flag::Response | Protocol::Flag::Error);
+            return;
+        }
+        if (failure == SemanticAttestationFailure::WrongResponse) {
+            sendResponse(
+                peer,
+                Protocol::MessageType::ResourceTablePage,
+                request.header.requestId,
+                {});
+            return;
+        }
+
+        Protocol::RuntimeResourceBinding responseBinding = binding;
+        if (failure == SemanticAttestationFailure::WrongEpoch)
+            ++responseBinding.runtimeGeneration;
+        QByteArray payload = semanticBindingAttestationPayload(
+            responseBinding, m_semanticMappingProof);
+        if (failure == SemanticAttestationFailure::MalformedPayload)
+            payload[304] = char(1);
+        if (failure == SemanticAttestationFailure::WrongSession
+            || failure == SemanticAttestationFailure::WrongBoot) {
+            Protocol::Frame frame = response(
+                peer,
+                Protocol::MessageType::SemanticBindingAttestation,
+                request.header.requestId,
+                payload);
+            if (failure == SemanticAttestationFailure::WrongSession)
+                frame.header.sessionId = TestSessionId + 1;
+            else
+                frame.header.bootId = m_bootId + 1;
+            const QByteArray wire = wireFor(frame);
+            if (!wire.isEmpty())
+                peer.socket->write(wire);
+            return;
+        }
+        if (m_semanticAttestationDelayMs > 0) {
+            Peer *peerPointer = &peer;
+            const quint64 requestId = request.header.requestId;
+            const int delayMs = m_semanticAttestationDelayMs;
+            QTimer::singleShot(
+                delayMs,
+                this,
+                [this, peerPointer, requestId, payload] {
+                    if (peerPointer->socket->state() == QAbstractSocket::ConnectedState) {
+                        sendResponse(
+                            *peerPointer,
+                            Protocol::MessageType::SemanticBindingAttestation,
+                            requestId,
+                            payload);
+                    }
+                });
+            return;
+        }
+        sendResponse(
+            peer,
+            Protocol::MessageType::SemanticBindingAttestation,
+            request.header.requestId,
+            payload);
+    }
+
     void sendStateResponse(Peer &peer, const Protocol::Frame &request)
     {
         if (m_nextStateStatus) {
@@ -1643,6 +1897,7 @@ private:
                           || m_behavior == Behavior::FaultReset
                           || m_behavior == Behavior::PackageDeployment
                           || m_behavior == Behavior::RuntimeResources
+                          || m_behavior == Behavior::SemanticAttestation
                       ? lifecycleControllerStatePayload(
                             m_serviceState,
                             cycleCount(),
@@ -1716,7 +1971,8 @@ private:
             return;
         }
         QByteArray payload;
-        if (m_behavior == Behavior::RuntimeResources) {
+        if (m_behavior == Behavior::RuntimeResources
+            || m_behavior == Behavior::SemanticAttestation) {
             payload = packageStatePayload();
             putU64(payload, 40, m_runtimePackageGeneration);
             putU64(payload, 48, m_runtimeConfigurationId);
@@ -1950,7 +2206,8 @@ private:
     {
         if (m_behavior != Behavior::ControlLifecycle && m_behavior != Behavior::FaultReset
             && m_behavior != Behavior::PackageDeployment
-            && m_behavior != Behavior::RuntimeResources) {
+            && m_behavior != Behavior::RuntimeResources
+            && m_behavior != Behavior::SemanticAttestation) {
             m_violations.append(
                 QStringLiteral("A control request was emitted outside the lifecycle test."));
             return;
@@ -2246,7 +2503,11 @@ private:
                 ? m_helloLeaseOwnerSessionId
                 : (m_leaseOwned ? TestSessionId : 0));
         const quint32 defaultFeatureBits
-            = m_protocolMinor >= Protocol::RuntimeResourceMinor
+            = m_protocolMinor >= Protocol::OutputTransactionMinor
+                  ? 0xffff
+              : m_protocolMinor >= Protocol::SemanticBindingAttestationMinor
+                  ? 0x7fff
+              : m_protocolMinor >= Protocol::RuntimeResourceMinor
                   ? 0x3fff
               : m_protocolMinor >= Protocol::ControlledFaultResetMinor
                   ? 0x1fff
@@ -2477,6 +2738,16 @@ private:
     bool m_holdNextRuntimeSnapshot = false;
     quint64 m_runtimePackageGeneration = 33;
     quint64 m_runtimeConfigurationId = 44;
+    quint64 m_runtimeTopologyGeneration = 7;
+    quint64 m_runtimeGeneration = 8;
+    quint64 m_runtimeCatalogRevision = 9;
+    quint64 m_runtimeTopologyIdentity = 0x3132333435363738;
+    Data::RuntimeSemanticMappingProof m_semanticMappingProof
+        = runtimeSemanticMappingProof();
+    SemanticAttestationFailure m_nextSemanticAttestationFailure
+        = SemanticAttestationFailure::None;
+    qint32 m_nextSemanticAttestationStatus = -17;
+    int m_semanticAttestationDelayMs = 0;
     Protocol::MessageType m_rejectedControlType = Protocol::MessageType::Error;
     Protocol::MessageType m_rejectedDeploymentType = Protocol::MessageType::Error;
     Protocol::MessageType m_rejectedDeploymentPackageStateType = Protocol::MessageType::Error;
@@ -2525,6 +2796,43 @@ Data::ControllerConnectionRequest requestFor(ProductApiConnectionProvider &provi
     if (profiles.isEmpty())
         return {};
     return {scope, profiles.constFirst().id};
+}
+
+Data::RuntimeResourceCatalogEpoch runtimeResourceEpochForTests(
+    const Protocol::RuntimeResourceBinding &binding)
+{
+    Data::RuntimeResourceCatalogEpoch epoch;
+    epoch.controllerBootId = binding.bootId;
+    epoch.activePackageSlot
+        = binding.activeSlot == quint32('A') ? Data::ControllerSlot::A
+                                            : Data::ControllerSlot::B;
+    epoch.activePackageGeneration = binding.packageGeneration;
+    epoch.configurationId = binding.configurationId;
+    epoch.topologyGeneration = binding.topologyGeneration;
+    epoch.runtimeGeneration = binding.runtimeGeneration;
+    epoch.catalogRevision = binding.catalogRevision;
+    epoch.topologyIdentity.resize(8);
+    qToBigEndian(
+        binding.topologyIdentity,
+        reinterpret_cast<uchar *>(epoch.topologyIdentity.data()));
+    return epoch;
+}
+
+Data::RuntimeSemanticMappingAttestationRequest semanticAttestationRequest(
+    const ProductApiConnectionProvider &provider,
+    const Data::RuntimeSemanticMappingProof &proof = runtimeSemanticMappingProof(),
+    const Protocol::RuntimeResourceBinding &binding = loopbackRuntimeResourceBinding(
+        TestBootId, 33, 44),
+    const QString &correlationId = QStringLiteral("semantic-attestation"))
+{
+    const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+    Data::RuntimeSemanticMappingAttestationRequest request;
+    request.correlationId = correlationId;
+    request.scope = snapshot.scope;
+    request.sessionGeneration = snapshot.sessionGeneration;
+    request.expectedEpoch = runtimeResourceEpochForTests(binding);
+    request.expectedProof = proof;
+    return request;
 }
 
 Data::RuntimeResourceSnapshotRequest targetedSnapshotRequest(
@@ -9606,6 +9914,404 @@ void EtherCATProductApiTests::testTargetedRuntimeResourceIgnoredRequestBound()
     QVERIFY(provider.disconnectFromController());
     QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
     QCOMPARE(provider.sessionForTests()->ignoredRuntimeResourceRequestCountForTests(), 0);
+}
+
+void EtherCATProductApiTests::testSemanticAttestationCapabilityGuards_data()
+{
+    QTest::addColumn<int>("protocolMinor");
+    QTest::addColumn<quint32>("controlFeatures");
+    QTest::addColumn<quint32>("bulkFeatures");
+    QTest::addColumn<int>("topologyIdentityBytes");
+    QTest::addColumn<bool>("expectedSupport");
+
+    QTest::newRow("minor-12")
+        << int(Protocol::SemanticBindingAttestationMinor - 1) << quint32(0xffff)
+        << quint32(0xffff) << 8 << false;
+    QTest::newRow("control-feature-missing")
+        << int(Protocol::CurrentMinor)
+        << quint32(0xffff & ~Protocol::SemanticBindingAttestationFeature)
+        << quint32(0xffff) << 8 << false;
+    QTest::newRow("bulk-feature-missing")
+        << int(Protocol::CurrentMinor) << quint32(0xffff)
+        << quint32(0xffff & ~Protocol::SemanticBindingAttestationFeature) << 8
+        << false;
+    QTest::newRow("topology-identity-1-byte")
+        << int(Protocol::CurrentMinor) << quint32(0xffff) << quint32(0xffff)
+        << 1 << true;
+    QTest::newRow("topology-identity-7-bytes")
+        << int(Protocol::CurrentMinor) << quint32(0xffff) << quint32(0xffff)
+        << 7 << true;
+    QTest::newRow("topology-identity-9-bytes")
+        << int(Protocol::CurrentMinor) << quint32(0xffff) << quint32(0xffff)
+        << 9 << true;
+}
+
+void EtherCATProductApiTests::testSemanticAttestationCapabilityGuards()
+{
+    QFETCH(int, protocolMinor);
+    QFETCH(quint32, controlFeatures);
+    QFETCH(quint32, bulkFeatures);
+    QFETCH(int, topologyIdentityBytes);
+    QFETCH(bool, expectedSupport);
+
+    LoopbackController controller(LoopbackController::Behavior::SemanticAttestation);
+    controller.setProtocolMinor(quint16(protocolMinor));
+    controller.setFeatureBits(controlFeatures);
+    controller.setRoleFeatureBits(Protocol::Role::Bulk, bulkFeatures);
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Connected,
+        2000);
+    QCOMPARE(provider.supportsRuntimeSemanticMappingAttestation(), expectedSupport);
+    QCOMPARE(
+        provider.connectionSnapshot().capability->semanticMappingAttestation,
+        expectedSupport);
+    QVERIFY(!provider.runtimeSemanticMappingAttestation());
+
+    Data::RuntimeSemanticMappingAttestationRequest request
+        = semanticAttestationRequest(provider);
+    request.expectedEpoch.topologyIdentity = QByteArray(topologyIdentityBytes, 'x');
+    QSignalSpy finishedSpy(
+        &provider,
+        &Core::ControllerConnectionProvider::
+            runtimeSemanticMappingAttestationRequestFinished);
+    const int sentBefore = controller.requestCount(
+        Protocol::MessageType::QuerySemanticBindingAttestation);
+    QVERIFY(!provider.requestRuntimeSemanticMappingAttestation(request));
+    QCOMPARE(
+        controller.requestCount(Protocol::MessageType::QuerySemanticBindingAttestation),
+        sentBefore);
+    QCOMPARE(finishedSpy.count(), 0);
+    QVERIFY(controller.violations().isEmpty());
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testSemanticAttestationLoopbackLifecycle()
+{
+    LoopbackController controller(LoopbackController::Behavior::SemanticAttestation);
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Connected,
+        2000);
+    QVERIFY(provider.supportsRuntimeSemanticMappingAttestation());
+
+    QSignalSpy changedSpy(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeSemanticMappingAttestationChanged);
+    QSignalSpy finishedSpy(
+        &provider,
+        &Core::ControllerConnectionProvider::
+            runtimeSemanticMappingAttestationRequestFinished);
+
+    const Data::RuntimeSemanticMappingAttestationRequest productionRequest
+        = semanticAttestationRequest(provider);
+    QVERIFY(productionRequest.isValid());
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(productionRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(changedSpy.count(), 1, 1000);
+    Data::RuntimeSemanticMappingAttestationResult result
+        = qvariant_cast<Data::RuntimeSemanticMappingAttestationResult>(
+            finishedSpy.constFirst().constFirst());
+    QVERIFY(result.isValid());
+    QCOMPARE(result.request, productionRequest);
+    QCOMPARE(result.attestation, provider.runtimeSemanticMappingAttestation());
+    QCOMPARE(
+        result.attestation->proof.trust,
+        Data::RuntimeSemanticMappingTrust::Production);
+    QCOMPARE(
+        controller.requestCount(
+            Protocol::MessageType::QuerySemanticBindingAttestation),
+        1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::AcquireControl), 0);
+
+    Data::RuntimeSemanticMappingProof engineeringProof = runtimeSemanticMappingProof(
+        Data::RuntimeSemanticMappingTrust::Engineering);
+    controller.setSemanticMappingProof(engineeringProof);
+    controller.setSemanticAttestationDelayMs(50);
+    const Data::RuntimeSemanticMappingAttestationRequest engineeringRequest
+        = semanticAttestationRequest(
+            provider,
+            engineeringProof,
+            loopbackRuntimeResourceBinding(TestBootId, 33, 44),
+            QStringLiteral("engineering-attestation"));
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(engineeringRequest));
+    QVERIFY(!provider.requestRuntimeSemanticMappingAttestation(engineeringRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        controller.requestCount(
+            Protocol::MessageType::QuerySemanticBindingAttestation),
+        2,
+        1000);
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 2, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(changedSpy.count(), 2, 1000);
+    result = qvariant_cast<Data::RuntimeSemanticMappingAttestationResult>(
+        finishedSpy.constLast().constFirst());
+    QVERIFY(result.isValid());
+    QCOMPARE(
+        provider.runtimeSemanticMappingAttestation()->proof.trust,
+        Data::RuntimeSemanticMappingTrust::Engineering);
+
+    Data::ControllerControlRequest acquire;
+    acquire.command = Data::ControllerControlCommand::AcquireControl;
+    acquire.leaseDurationMs = 30000;
+    QVERIFY(provider.executeControlCommand(acquire));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        provider.connectionSnapshot().session->ownsControlLease, 1000);
+    QVERIFY(provider.runtimeSemanticMappingAttestation());
+    Data::ControllerControlRequest release;
+    release.command = Data::ControllerControlCommand::ReleaseControl;
+    QVERIFY(provider.executeControlCommand(release));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !provider.connectionSnapshot().session->ownsControlLease, 1000);
+    QVERIFY(provider.runtimeSemanticMappingAttestation());
+    QVERIFY(controller.violations().isEmpty());
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testSemanticAttestationFailures()
+{
+    LoopbackController controller(LoopbackController::Behavior::SemanticAttestation);
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Connected,
+        2000);
+    QSignalSpy finishedSpy(
+        &provider,
+        &Core::ControllerConnectionProvider::
+            runtimeSemanticMappingAttestationRequestFinished);
+
+    const Data::RuntimeSemanticMappingAttestationRequest request
+        = semanticAttestationRequest(provider);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(request));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 1000);
+    QVERIFY(provider.runtimeSemanticMappingAttestation());
+
+    controller.rejectNextSemanticAttestationTyped(-22);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(request));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 2, 1000);
+    Data::RuntimeSemanticMappingAttestationResult failure
+        = qvariant_cast<Data::RuntimeSemanticMappingAttestationResult>(
+            finishedSpy.constLast().constFirst());
+    QVERIFY(failure.isValid());
+    QVERIFY(!failure.attestation);
+    QCOMPARE(failure.error->source, Data::ControllerErrorSource::Controller);
+    QCOMPARE(
+        failure.error->operation,
+        Data::ControllerOperation::QueryRuntimeSemanticMappingAttestation);
+    QCOMPARE(failure.error->channelId, QStringLiteral("bulk"));
+    QCOMPARE(failure.error->code, std::optional<qint32>(-22));
+    QCOMPARE(failure.error->codeName, QStringLiteral("PACKAGE_UNTRUSTED"));
+    QCOMPARE(failure.error->requestId.has_value(), true);
+    QVERIFY(!provider.runtimeSemanticMappingAttestation());
+    QCOMPARE(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Connected);
+
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(request));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 3, 1000);
+    QVERIFY(provider.runtimeSemanticMappingAttestation());
+
+    controller.rejectNextSemanticAttestationWithBulkStatus(-7);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(request));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 4, 1000);
+    failure = qvariant_cast<Data::RuntimeSemanticMappingAttestationResult>(
+        finishedSpy.constLast().constFirst());
+    QVERIFY(failure.isValid());
+    QCOMPARE(failure.error->source, Data::ControllerErrorSource::Controller);
+    QCOMPARE(failure.error->code, std::optional<qint32>(-7));
+    QCOMPARE(failure.error->codeName, QStringLiteral("BAD_SESSION"));
+    QCOMPARE(failure.error->operationResult, std::optional<qint32>(0));
+    QCOMPARE(
+        failure.error->retryDisposition,
+        Data::ControllerRetryDisposition::Reconnect);
+    QVERIFY(!provider.runtimeSemanticMappingAttestation());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Connected,
+        2000);
+    QVERIFY(controller.violations().isEmpty());
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testSemanticAttestationProtocolFailures_data()
+{
+    QTest::addColumn<int>("failure");
+    QTest::newRow("wrong-session") << 0;
+    QTest::newRow("wrong-boot") << 1;
+    QTest::newRow("wrong-epoch") << 2;
+    QTest::newRow("malformed-payload") << 3;
+    QTest::newRow("wrong-type") << 4;
+    QTest::newRow("digest-mismatch") << 5;
+}
+
+void EtherCATProductApiTests::testSemanticAttestationProtocolFailures()
+{
+    QFETCH(int, failure);
+    LoopbackController controller(LoopbackController::Behavior::SemanticAttestation);
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Connected,
+        2000);
+    const Data::RuntimeSemanticMappingAttestationRequest request
+        = semanticAttestationRequest(provider);
+    switch (failure) {
+    case 0:
+        controller.corruptNextSemanticAttestationSessionId();
+        break;
+    case 1:
+        controller.corruptNextSemanticAttestationBootId();
+        break;
+    case 2:
+        controller.corruptNextSemanticAttestationEpoch();
+        break;
+    case 3:
+        controller.corruptNextSemanticAttestationPayload();
+        break;
+    case 4:
+        controller.sendWrongNextSemanticAttestationResponse();
+        break;
+    case 5: {
+        Data::RuntimeSemanticMappingProof mismatch = runtimeSemanticMappingProof();
+        mismatch.mappingSha256[0] ^= char(1);
+        controller.setSemanticMappingProof(mismatch);
+        break;
+    }
+    default:
+        QFAIL("Unknown semantic attestation failure.");
+    }
+
+    QSignalSpy finishedSpy(
+        &provider,
+        &Core::ControllerConnectionProvider::
+            runtimeSemanticMappingAttestationRequestFinished);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(request));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 1000);
+    const Data::RuntimeSemanticMappingAttestationResult result
+        = qvariant_cast<Data::RuntimeSemanticMappingAttestationResult>(
+            finishedSpy.constFirst().constFirst());
+    QVERIFY(result.isValid());
+    QVERIFY(!result.attestation);
+    QCOMPARE(result.error->source, Data::ControllerErrorSource::Protocol);
+    QCOMPARE(
+        result.error->operation,
+        Data::ControllerOperation::QueryRuntimeSemanticMappingAttestation);
+    QVERIFY(result.error->requestId);
+    QVERIFY(!provider.runtimeSemanticMappingAttestation());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        1000);
+    QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testSemanticAttestationInvalidationAndStaleResponse()
+{
+    LoopbackController controller(LoopbackController::Behavior::SemanticAttestation);
+    QVERIFY(controller.start());
+
+    ProductApiSession::Options options = testOptions();
+    options.requestTimeoutMs = 30;
+    ProductApiConnectionProvider provider(controller.endpoints(), options);
+    const Data::ControllerConnectionRequest connectionRequest = requestFor(provider);
+    QVERIFY(provider.connectToController(connectionRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Connected,
+        2000);
+
+    QSignalSpy changedSpy(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeSemanticMappingAttestationChanged);
+    QSignalSpy finishedSpy(
+        &provider,
+        &Core::ControllerConnectionProvider::
+            runtimeSemanticMappingAttestationRequestFinished);
+    Data::RuntimeSemanticMappingAttestationRequest request
+        = semanticAttestationRequest(provider);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(request));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 1000);
+    QVERIFY(provider.runtimeSemanticMappingAttestation());
+
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+    QVERIFY(provider.runtimeSemanticMappingAttestation());
+
+    controller.setRuntimeEpoch(70, 80, 90, 0x4142434445464748);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        provider.runtimeResourceCatalog()
+            && provider.runtimeResourceCatalog()->epoch.topologyGeneration == 70,
+        2000);
+    QTRY_VERIFY_WITH_TIMEOUT(!provider.runtimeSemanticMappingAttestation(), 1000);
+
+    Protocol::RuntimeResourceBinding changedBinding
+        = loopbackRuntimeResourceBinding(TestBootId, 33, 44);
+    changedBinding.topologyGeneration = 70;
+    changedBinding.runtimeGeneration = 80;
+    changedBinding.catalogRevision = 90;
+    changedBinding.topologyIdentity = 0x4142434445464748;
+    request = semanticAttestationRequest(
+        provider,
+        runtimeSemanticMappingProof(),
+        changedBinding,
+        QStringLiteral("changed-epoch"));
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(request));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 2, 1000);
+    QVERIFY(provider.runtimeSemanticMappingAttestation());
+
+    controller.setSemanticAttestationDelayMs(80);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(request));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 3, 1000);
+    Data::RuntimeSemanticMappingAttestationResult timedOut
+        = qvariant_cast<Data::RuntimeSemanticMappingAttestationResult>(
+            finishedSpy.constLast().constFirst());
+    QVERIFY(timedOut.isValid());
+    QCOMPARE(timedOut.error->source, Data::ControllerErrorSource::Network);
+    QVERIFY(!provider.runtimeSemanticMappingAttestation());
+    QTest::qWait(100);
+    QCOMPARE(finishedSpy.count(), 3);
+    QCOMPARE(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Connected);
+
+    controller.setSemanticAttestationDelayMs(0);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(request));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 4, 1000);
+    QVERIFY(provider.runtimeSemanticMappingAttestation());
+    const quint64 oldGeneration = provider.connectionSnapshot().sessionGeneration;
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    QVERIFY(!provider.runtimeSemanticMappingAttestation());
+    controller.setBootId(TestBootId + 1);
+    QVERIFY(provider.connectToController(connectionRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Connected,
+        2000);
+    QVERIFY(provider.connectionSnapshot().sessionGeneration > oldGeneration);
+    QVERIFY(!provider.runtimeSemanticMappingAttestation());
+    QVERIFY(changedSpy.count() >= 4);
+    QVERIFY(controller.violations().isEmpty());
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
 }
 
 } // namespace EtherCAT::ProductApi::Internal

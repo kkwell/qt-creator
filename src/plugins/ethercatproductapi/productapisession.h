@@ -4,6 +4,7 @@
 
 #include <ethercatdata/controllerconnection.h>
 #include <ethercatdata/runtimeresource.h>
+#include <ethercatdata/semanticmappingattestation.h>
 
 #include <utils/result.h>
 
@@ -69,6 +70,11 @@ public:
     Utils::Result<> refreshRuntimeResources();
     Utils::Result<> requestRuntimeResourceSnapshot(
         const Data::RuntimeResourceSnapshotRequest &request);
+    bool supportsRuntimeSemanticMappingAttestation() const;
+    std::optional<Data::RuntimeSemanticMappingAttestation>
+    runtimeSemanticMappingAttestation() const;
+    Utils::Result<> requestRuntimeSemanticMappingAttestation(
+        const Data::RuntimeSemanticMappingAttestationRequest &request);
     bool supportsControlCommand(Data::ControllerControlCommand command) const;
     Utils::Result<> executeControlCommand(const Data::ControllerControlRequest &request);
     bool supportsPackageDeployment() const;
@@ -92,6 +98,9 @@ signals:
     void runtimeResourceSnapshotChanged();
     void runtimeResourceSnapshotRequestFinished(
         const EtherCAT::Data::RuntimeResourceSnapshotResult &result);
+    void runtimeSemanticMappingAttestationChanged();
+    void runtimeSemanticMappingAttestationRequestFinished(
+        const EtherCAT::Data::RuntimeSemanticMappingAttestationResult &result);
 
 private:
     std::unique_ptr<ProductApiSessionPrivate> d;
