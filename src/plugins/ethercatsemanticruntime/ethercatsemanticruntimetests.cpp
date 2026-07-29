@@ -7,6 +7,9 @@
 #include "ecpkgcontainer.h"
 #include "ed25519verifier.h"
 #include "productiontruststore_p.h"
+#include "readonlysemanticbindingfactory_p.h"
+#include "runtimepackageevidence_p.h"
+#include "runtimepackageevidencerepository_p.h"
 #include "semanticbindingartifact_p.h"
 #include "semanticruntimeexecutor.h"
 #include "signedecpkgmanifest_p.h"
@@ -21,6 +24,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QtEndian>
 
 #include <algorithm>
 #include <array>
@@ -252,7 +256,7 @@ public:
     std::optional<Data::RuntimeResourceSnapshot> runtimeResourceSnapshot() const final
     {
         ++resourceSnapshotReads;
-        return std::nullopt;
+        return resourceSnapshot;
     }
 
     Utils::Result<> refreshRuntimeResources() final
@@ -262,6 +266,25 @@ public:
     }
 
     Utils::Result<> requestRuntimeResourceSnapshot(const Data::RuntimeResourceSnapshotRequest &) final
+    {
+        ++mutationCalls;
+        return rejectedMutation();
+    }
+
+    bool supportsRuntimeSemanticMappingAttestation() const final
+    {
+        return semanticMappingAttestationSupported;
+    }
+
+    std::optional<Data::RuntimeSemanticMappingAttestation>
+    runtimeSemanticMappingAttestation() const final
+    {
+        ++semanticMappingAttestationReads;
+        return semanticMappingAttestation;
+    }
+
+    Utils::Result<> requestRuntimeSemanticMappingAttestation(
+        const Data::RuntimeSemanticMappingAttestationRequest &) final
     {
         ++mutationCalls;
         return rejectedMutation();
@@ -279,6 +302,19 @@ public:
         emit runtimeResourceCatalogChanged();
     }
 
+    void publishResourceSnapshot(const std::optional<Data::RuntimeResourceSnapshot> &value)
+    {
+        resourceSnapshot = value;
+        emit runtimeResourceSnapshotChanged();
+    }
+
+    void publishSemanticMappingAttestation(
+        const std::optional<Data::RuntimeSemanticMappingAttestation> &value)
+    {
+        semanticMappingAttestation = value;
+        emit runtimeSemanticMappingAttestationChanged();
+    }
+
     void setRuntimeResourcesSupported(bool supported)
     {
         runtimeResourcesSupported = supported;
@@ -288,10 +324,14 @@ public:
     mutable int snapshotReads = 0;
     mutable int catalogReads = 0;
     mutable int resourceSnapshotReads = 0;
+    mutable int semanticMappingAttestationReads = 0;
     int mutationCalls = 0;
     bool runtimeResourcesSupported = true;
+    bool semanticMappingAttestationSupported = true;
     Data::ControllerConnectionSnapshot snapshot;
     std::optional<Data::RuntimeResourceCatalog> catalog;
+    std::optional<Data::RuntimeResourceSnapshot> resourceSnapshot;
+    std::optional<Data::RuntimeSemanticMappingAttestation> semanticMappingAttestation;
 
 private:
     static Utils::Result<> rejectedMutation()
@@ -338,6 +378,7 @@ static Data::SemanticBindingArtifactReference bindingArtifact()
         QStringLiteral("binding/embed-labs/runtime/1"),
         QByteArray(32, '\x6b'),
         QByteArray(32, '\x7c'),
+        {},
     };
 }
 
@@ -699,6 +740,266 @@ static QByteArray readFile(const QString &path)
     if (!file.open(QIODevice::ReadOnly))
         return {};
     return file.readAll();
+}
+
+static bool writeFile(const QString &path, QByteArrayView bytes)
+{
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+           && file.write(bytes.data(), bytes.size()) == bytes.size()
+           && file.flush();
+}
+
+static QString systemTemporaryDirectoryTemplate(QStringView stem)
+{
+    QString temporaryRoot = QDir::tempPath();
+    const QString canonicalRoot = QFileInfo(temporaryRoot).canonicalFilePath();
+    if (!canonicalRoot.isEmpty())
+        temporaryRoot = canonicalRoot;
+    return QDir(temporaryRoot).filePath(stem.toString() + QStringLiteral("-XXXXXX"));
+}
+
+static QByteArray factoryOpaqueId(quint64 value)
+{
+    QByteArray bytes(qsizetype(sizeof(value)), '\0');
+    qToBigEndian(value, reinterpret_cast<uchar *>(bytes.data()));
+    return bytes;
+}
+
+static QByteArray factoryOpaqueId(quint32 value)
+{
+    QByteArray bytes(qsizetype(sizeof(value)), '\0');
+    qToBigEndian(value, reinterpret_cast<uchar *>(bytes.data()));
+    return bytes;
+}
+
+static Data::RuntimeResourcePrimitiveType factoryPrimitive(EcfgResourcePrimitive primitive)
+{
+    using RuntimePrimitive = Data::RuntimeResourcePrimitiveType;
+    switch (primitive) {
+    case EcfgResourcePrimitive::Bool:
+        return RuntimePrimitive::Boolean;
+    case EcfgResourcePrimitive::U8:
+    case EcfgResourcePrimitive::U16:
+    case EcfgResourcePrimitive::U32:
+    case EcfgResourcePrimitive::U64:
+        return RuntimePrimitive::UnsignedInteger;
+    case EcfgResourcePrimitive::S8:
+    case EcfgResourcePrimitive::S16:
+    case EcfgResourcePrimitive::S32:
+    case EcfgResourcePrimitive::S64:
+        return RuntimePrimitive::SignedInteger;
+    case EcfgResourcePrimitive::Q32_32:
+        return RuntimePrimitive::FloatingPoint;
+    case EcfgResourcePrimitive::RawBits:
+        return RuntimePrimitive::ByteArray;
+    }
+    return RuntimePrimitive::Opaque;
+}
+
+static QByteArray factoryValueTypeIdentity(EcfgResourcePrimitive primitive, quint16 bitWidth)
+{
+    return QByteArray("ethercat.runtime.value/primitive-") + QByteArray::number(quint8(primitive))
+           + "/bits-" + QByteArray::number(bitWidth);
+}
+
+static Data::RuntimeResourceTypedValue factorySafeValue(const VerifiedSemanticBinding &binding)
+{
+    Data::RuntimeResourceTypedValue value;
+    value.primitiveType = factoryPrimitive(binding.primitive);
+    value.typeIdentity = factoryValueTypeIdentity(binding.primitive, binding.bitWidth);
+
+    const quint64 unsignedValue = std::holds_alternative<quint64>(*binding.safeValue)
+                                      ? std::get<quint64>(*binding.safeValue)
+                                      : quint64(std::get<qint64>(*binding.safeValue));
+    const qint64 signedValue = std::holds_alternative<qint64>(*binding.safeValue)
+                                   ? std::get<qint64>(*binding.safeValue)
+                                   : qint64(std::get<quint64>(*binding.safeValue));
+    QByteArray bigEndian = binding.safeValueLittleEndian;
+    std::reverse(bigEndian.begin(), bigEndian.end());
+
+    switch (binding.primitive) {
+    case EcfgResourcePrimitive::Bool:
+        value.value = bool(unsignedValue);
+        break;
+    case EcfgResourcePrimitive::U8:
+    case EcfgResourcePrimitive::U16:
+    case EcfgResourcePrimitive::U32:
+    case EcfgResourcePrimitive::U64:
+        value.value = QVariant::fromValue<qulonglong>(unsignedValue);
+        break;
+    case EcfgResourcePrimitive::S8:
+    case EcfgResourcePrimitive::S16:
+    case EcfgResourcePrimitive::S32:
+    case EcfgResourcePrimitive::S64:
+        value.value = QVariant::fromValue<qlonglong>(signedValue);
+        break;
+    case EcfgResourcePrimitive::Q32_32:
+        value.value = double(signedValue) / 4294967296.0;
+        value.opaqueRepresentation = bigEndian;
+        break;
+    case EcfgResourcePrimitive::RawBits:
+        value.value = bigEndian;
+        break;
+    }
+    return value;
+}
+
+static Data::ProjectSnapshot factoryProject(const VerifiedRuntimePackageEvidence &evidence)
+{
+    const VerifiedSemanticBindingArtifact &artifact = evidence.semanticBindingArtifact();
+    Data::ProjectSnapshot project;
+    project.id = Data::NodeId::create();
+    project.name = QStringLiteral("API-037 semantic binding factory");
+    project.formatVersion = 6;
+    project.createdBy = QStringLiteral("EtherCATSemanticRuntimeTests");
+    project.valid = true;
+
+    const Data::NodeId masterId = Data::NodeId::create();
+    project.nodes = {
+        {project.id, {}, Data::ProjectNodeKind::Project, project.name},
+        {masterId, project.id, Data::ProjectNodeKind::Master, QStringLiteral("Master")},
+    };
+    project.masterBindingArtifact.artifactId = QStringLiteral("test/api037/semantic-binding-v2");
+    project.masterBindingArtifact.artifactSha256 = evidence.semanticMappingProof().mappingSha256;
+    project.masterBindingArtifact.projectConfigurationSha256 = evidence.projectConfigurationSha256();
+
+    for (const VerifiedSemanticDevice &device : artifact.devices) {
+        Data::OfflineSlaveConfiguration slave;
+        slave.id = Data::NodeId::create();
+        slave.masterId = masterId;
+        slave.position = device.position;
+        slave.name = device.projectDeviceId;
+        slave.esiSha256 = device.esiSha256;
+        const auto topology = std::find_if(
+            artifact.topologyInstances.cbegin(),
+            artifact.topologyInstances.cend(),
+            [&device](const SemanticBindingTopologyInstance &candidate) {
+                return candidate.position == device.position
+                       && candidate.stationAddress == device.stationAddress;
+            });
+        if (topology != artifact.topologyInstances.cend()) {
+            slave.identity.vendorId = topology->vendorId;
+            slave.identity.productCode = topology->productCode;
+            slave.identity.revisionNumber = topology->revision.value_or(0);
+            slave.serialNumber = topology->serial.value_or(0);
+        }
+        slave.adapterSelection.adapterId = {device.adapterId};
+        slave.adapterSelection.adapterVersion = device.adapterVersion;
+        slave.adapterSelection.adapterContentSha256 = device.adapterSha256;
+        project.slaves.append(slave);
+        project.nodes.append({slave.id, masterId, Data::ProjectNodeKind::Slave, slave.name});
+        project.masterBindingArtifact.projectDeviceBindings.append(
+            {slave.id, device.projectDeviceId});
+    }
+    return project;
+}
+
+static Data::RuntimeResourceCatalog factoryCatalog(
+    const Data::ProjectSnapshot &project, const VerifiedRuntimePackageEvidence &evidence)
+{
+    const VerifiedSemanticBindingArtifact &artifact = evidence.semanticBindingArtifact();
+    Data::RuntimeResourceCatalog catalog;
+    catalog.scope = projectScope(project);
+    catalog.sessionGeneration = 37;
+    catalog.epoch.controllerBootId = 0x1122334455667788ULL;
+    catalog.epoch.activePackageSlot = Data::ControllerSlot::B;
+    catalog.epoch.activePackageGeneration = 12;
+    catalog.epoch.configurationId = artifact.configurationId;
+    catalog.epoch.topologyGeneration = 13;
+    catalog.epoch.runtimeGeneration = 14;
+    catalog.epoch.catalogRevision = artifact.catalogRevision;
+    catalog.epoch.topologyIdentity = factoryOpaqueId(artifact.topologyIdentity);
+    catalog.receivedAt = QDateTime::currentDateTimeUtc();
+    catalog.resources.reserve(artifact.bindings.size());
+
+    for (const VerifiedSemanticBinding &binding : artifact.bindings) {
+        Data::RuntimeResourceDescriptor descriptor;
+        descriptor.id.value = factoryOpaqueId(binding.resourceId);
+        descriptor.componentInstanceId.value = factoryOpaqueId(binding.componentInstanceId);
+        if (binding.parentInstanceId)
+            descriptor.parentInstanceId.value = factoryOpaqueId(binding.parentInstanceId);
+        descriptor.instanceOrdinal = binding.instanceOrdinal;
+        descriptor.consistencyGroupId.value = factoryOpaqueId(binding.consistencyGroupId);
+        descriptor.primitiveType = factoryPrimitive(binding.primitive);
+        descriptor.valueTypeIdentity = factoryValueTypeIdentity(binding.primitive, binding.bitWidth);
+        descriptor.bitWidth = binding.bitWidth;
+        descriptor.direction = binding.direction == EcfgResourceDirection::Input
+                                   ? Data::RuntimeResourceDirection::Input
+                                   : Data::RuntimeResourceDirection::Output;
+        descriptor.access = binding.access == EcfgResourceAccess::Read
+                                ? Data::RuntimeResourceAccess::ReadOnly
+                                : Data::RuntimeResourceAccess::ReadWrite;
+        descriptor.processImageBitOffset = binding.processImageBitOffset;
+        descriptor.processImageBitLength = binding.processImageBitLength;
+        descriptor.qualityMask = binding.qualityMask;
+        if (binding.unit)
+            descriptor.unit = *binding.unit;
+        if (binding.safeValueDeclared)
+            descriptor.safeValue = factorySafeValue(binding);
+        catalog.resources.append(std::move(descriptor));
+    }
+    return catalog;
+}
+
+static Data::RuntimeSemanticMappingAttestation factoryAttestation(
+    const Data::RuntimeResourceCatalog &catalog, const VerifiedRuntimePackageEvidence &evidence)
+{
+    Data::RuntimeSemanticMappingAttestation attestation;
+    attestation.scope = catalog.scope;
+    attestation.sessionGeneration = catalog.sessionGeneration;
+    attestation.epoch = catalog.epoch;
+    attestation.proof = evidence.semanticMappingProof();
+    attestation.receivedAt = QDateTime::currentDateTimeUtc();
+    return attestation;
+}
+
+static Data::RuntimeResourceSnapshot factorySnapshot(
+    const Data::RuntimeResourceCatalog &catalog)
+{
+    Data::RuntimeResourceSnapshot snapshot;
+    snapshot.scope = catalog.scope;
+    snapshot.sessionGeneration = catalog.sessionGeneration;
+    snapshot.epoch = catalog.epoch;
+    snapshot.snapshotSequence = 1;
+    snapshot.captureCycle = 100;
+    snapshot.controllerTimestampNs = 1000;
+    snapshot.receivedAt = QDateTime::currentDateTimeUtc();
+    snapshot.complete = true;
+    snapshot.samples.reserve(catalog.resources.size());
+
+    for (const Data::RuntimeResourceDescriptor &descriptor : catalog.resources) {
+        Data::RuntimeResourceSample sample;
+        sample.resourceId = descriptor.id;
+        sample.consistencyGroupId = descriptor.consistencyGroupId;
+        sample.value.primitiveType = descriptor.primitiveType;
+        sample.value.typeIdentity = descriptor.valueTypeIdentity;
+        switch (descriptor.primitiveType) {
+        case Data::RuntimeResourcePrimitiveType::Boolean:
+            sample.value.value = false;
+            break;
+        case Data::RuntimeResourcePrimitiveType::SignedInteger:
+            sample.value.value = QVariant::fromValue<qlonglong>(0);
+            break;
+        case Data::RuntimeResourcePrimitiveType::UnsignedInteger:
+            sample.value.value = QVariant::fromValue<qulonglong>(0);
+            break;
+        case Data::RuntimeResourcePrimitiveType::FloatingPoint:
+            sample.value.value = 0.0;
+            break;
+        case Data::RuntimeResourcePrimitiveType::ByteArray:
+            sample.value.value = QByteArray((descriptor.bitWidth + 7) / 8, '\0');
+            break;
+        case Data::RuntimeResourcePrimitiveType::Text:
+        case Data::RuntimeResourcePrimitiveType::Opaque:
+            break;
+        }
+        sample.quality.state = Data::RuntimeResourceQualityState::Good;
+        sample.valueSequence = 1;
+        sample.controllerTimestampNs = snapshot.controllerTimestampNs;
+        snapshot.samples.append(std::move(sample));
+    }
+    return snapshot;
 }
 
 static quint32 testReadLe32(QByteArrayView bytes, qsizetype offset)
@@ -1444,7 +1745,7 @@ void EtherCATSemanticRuntimeTests::testSignedEcpkgTransferredPackages()
 void EtherCATSemanticRuntimeTests::testProductionTrustStore()
 {
     QTemporaryDir temporary(
-        QString::fromLatin1("/private/tmp/embed-labs-production-trust-XXXXXX"));
+        systemTemporaryDirectoryTemplate(u"embed-labs-production-trust"));
     QVERIFY(temporary.isValid());
     const QString trustDirectory = QDir(temporary.path()).filePath("trust");
     QVERIFY(QDir().mkpath(trustDirectory));
@@ -1500,20 +1801,19 @@ void EtherCATSemanticRuntimeTests::testProductionTrustStoreRejectsUnsafeInputs()
                && file.write(bytes.data(), bytes.size()) == bytes.size();
     };
 
-    QTemporaryDir empty(
-        QString::fromLatin1("/private/tmp/embed-labs-empty-trust-XXXXXX"));
+    QTemporaryDir empty(systemTemporaryDirectoryTemplate(u"embed-labs-empty-trust"));
     QVERIFY(empty.isValid());
     QVERIFY(!loadProductionEcpkgTrustStore(empty.path()));
 
     QTemporaryDir wrongName(
-        QString::fromLatin1("/private/tmp/embed-labs-wrong-trust-XXXXXX"));
+        systemTemporaryDirectoryTemplate(u"embed-labs-wrong-trust"));
     QVERIFY(wrongName.isValid());
     QVERIFY(writeFile(
         QDir(wrongName.path()).filePath(QString(64, '0') + ".pub"), publicKey));
     QVERIFY(!loadProductionEcpkgTrustStore(wrongName.path()));
 
     QTemporaryDir wrongSize(
-        QString::fromLatin1("/private/tmp/embed-labs-short-trust-XXXXXX"));
+        systemTemporaryDirectoryTemplate(u"embed-labs-short-trust"));
     QVERIFY(wrongSize.isValid());
     QVERIFY(writeFile(
         QDir(wrongSize.path()).filePath(QString::fromLatin1(keyId.toHex()) + ".pub"),
@@ -1521,7 +1821,7 @@ void EtherCATSemanticRuntimeTests::testProductionTrustStoreRejectsUnsafeInputs()
     QVERIFY(!loadProductionEcpkgTrustStore(wrongSize.path()));
 
     QTemporaryDir unexpected(
-        QString::fromLatin1("/private/tmp/embed-labs-extra-trust-XXXXXX"));
+        systemTemporaryDirectoryTemplate(u"embed-labs-extra-trust"));
     QVERIFY(unexpected.isValid());
     QVERIFY(writeFile(
         QDir(unexpected.path()).filePath(QString::fromLatin1(keyId.toHex()) + ".pub"),
@@ -1530,7 +1830,7 @@ void EtherCATSemanticRuntimeTests::testProductionTrustStoreRejectsUnsafeInputs()
     QVERIFY(!loadProductionEcpkgTrustStore(unexpected.path()));
 
     QTemporaryDir tooMany(
-        QString::fromLatin1("/private/tmp/embed-labs-many-trust-XXXXXX"));
+        systemTemporaryDirectoryTemplate(u"embed-labs-many-trust"));
     QVERIFY(tooMany.isValid());
     for (qsizetype index = 0; index <= maximumEcpkgTrustedPublicKeys; ++index) {
         QByteArray key(32, '\0');
@@ -1545,7 +1845,7 @@ void EtherCATSemanticRuntimeTests::testProductionTrustStoreRejectsUnsafeInputs()
     QVERIFY(!loadProductionEcpkgTrustStore(tooMany.path()));
 
     QTemporaryDir linked(
-        QString::fromLatin1("/private/tmp/embed-labs-linked-trust-XXXXXX"));
+        systemTemporaryDirectoryTemplate(u"embed-labs-linked-trust"));
     QVERIFY(linked.isValid());
     const QString realDirectory = QDir(linked.path()).filePath("real");
     const QString linkedDirectory = QDir(linked.path()).filePath("linked");
@@ -1738,6 +2038,321 @@ void EtherCATSemanticRuntimeTests::testSemanticBindingRejectsMismatches()
         unknownEvidence->first, unknownEvidence->second, *configuration));
 }
 
+void EtherCATSemanticRuntimeTests::testSemanticBindingV2TransferredPackage()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureRoot(
+        repositoryRoot.absoluteFilePath(
+            "build/vendor_api_037_handoff/api037_handoff_569d39310549"));
+    const QByteArray packageBytes = readFile(
+        fixtureRoot.absoluteFilePath(
+            "artifacts/three-slave-manual-control-cfg3701.ecpkg"));
+    const QByteArray canonicalArtifact = readFile(
+        fixtureRoot.absoluteFilePath("artifacts/semantic-binding-v2.json"));
+    const QByteArray projectBytes = readFile(
+        fixtureRoot.absoluteFilePath("package_inputs/project.json"));
+    const QByteArray publicKey = readFile(
+        fixtureRoot.absoluteFilePath(
+            "trust/eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub"));
+    if (packageBytes.isEmpty() || canonicalArtifact.isEmpty() || projectBytes.isEmpty()
+        || publicKey.isEmpty()) {
+        QSKIP("Transferred API-037 ECPKG fixture is not present");
+    }
+
+    QCOMPARE(packageBytes.size(), qsizetype(347840));
+    QCOMPARE(
+        QCryptographicHash::hash(packageBytes, QCryptographicHash::Sha256),
+        fromHex("1f0772f09dcb2e3b9e4f73e435b085b02e7e989e2a7cb39f7aa24bab95ef8814"));
+    QCOMPARE(
+        QCryptographicHash::hash(canonicalArtifact, QCryptographicHash::Sha256),
+        fromHex("a24a040d96a876fd4ac2753219aaa071d9fbbfb0a7db80d3adcb83872ec1f6e2"));
+
+    const QList<EcpkgTrustedPublicKey> trust{
+        {publicKey, EcpkgTrustClass::Production},
+    };
+    const Utils::Result<VerifiedEcpkgPackage> package
+        = verifyProductionEcpkg(packageBytes, trust, projectBytes);
+    QVERIFY_RESULT(package);
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidence
+        = verifyRuntimePackageEvidence(*package);
+    QVERIFY_RESULT(evidence);
+    QVERIFY(evidence->isValid());
+    QVERIFY(!evidence->permitsWritableActions());
+    QCOMPARE(package->configuration.cyclePeriodNs, quint32(125000));
+    QCOMPARE(package->configuration.dcRecords.size(), qsizetype(2));
+
+    const VerifiedSemanticBindingArtifact &artifact
+        = evidence->semanticBindingArtifact();
+    const Data::RuntimeSemanticMappingProof &proof
+        = evidence->semanticMappingProof();
+    QCOMPARE(artifact.formatVersion, quint16(2));
+    QCOMPARE(artifact.configurationId, quint64(3701));
+    QCOMPARE(artifact.catalogRevision, quint64(0x9ffaf9e73061d964ULL));
+    QCOMPARE(artifact.topologyIdentity, quint64(0x5b37fe1904c0300dULL));
+    QCOMPARE(artifact.canonicalArtifact, canonicalArtifact);
+    QCOMPARE(artifact.bindings.size(), qsizetype(56));
+    QCOMPARE(artifact.devices.size(), qsizetype(3));
+    QCOMPARE(artifact.actions.size(), qsizetype(8));
+    QVERIFY(artifact.permitsWritableActions());
+    QVERIFY(proof.isValid());
+    QCOMPARE(proof.formatVersion, quint16(2));
+    QCOMPARE(proof.mappingSha256, artifact.artifactSha256);
+
+    const VerifiedSemanticDevice *xb6
+        = artifact.findDevice(u"embedlabs:project:device:xb6");
+    QVERIFY(xb6);
+    QCOMPARE(xb6->components.size(), qsizetype(2));
+    QCOMPARE(xb6->adapterId, QStringLiteral("solidot.xb6_ec0002_rev1_do16"));
+    QVERIFY(!artifact.findDevice(u"embedlabs:project:device:missing"));
+
+    const VerifiedSemanticBinding *do0
+        = artifact.findBySemanticSignalId(u"embedlabs:fixture:xb6:output:do0");
+    QVERIFY(do0);
+    QCOMPARE(do0->semanticSignalDefinitionId,
+             QStringLiteral("org.embedlabs.solidot.xb6.slot.1.digital-output.channel.0"));
+    QCOMPARE(do0->projectDeviceId, xb6->projectDeviceId);
+    QCOMPARE(do0->componentBindingId,
+             QStringLiteral("embedlabs:project:component:xb6:do16"));
+    QCOMPARE(do0->resourceId, quint64(0xf768f3df0713bbfeULL));
+    QCOMPARE(do0->consistencyGroupId, quint32(0xf0286f69U));
+    QCOMPARE(do0->primitive, EcfgResourcePrimitive::Bool);
+    QCOMPARE(do0->direction, EcfgResourceDirection::Output);
+    QCOMPARE(do0->access, EcfgResourceAccess::ReadWrite);
+    QVERIFY(do0->safeValueDeclared);
+    QVERIFY(do0->safeValue.has_value());
+    QVERIFY(std::holds_alternative<quint64>(*do0->safeValue));
+    QCOMPARE(std::get<quint64>(*do0->safeValue), quint64(0));
+
+    const VerifiedSemanticAction *setOutputs
+        = artifact.findAction(u"embedlabs:project:action:xb6:set-outputs");
+    const VerifiedSemanticAction *clearOutputs
+        = artifact.findAction(u"embedlabs:project:action:xb6:clear-outputs");
+    QVERIFY(setOutputs);
+    QVERIFY(clearOutputs);
+    QVERIFY(setOutputs->enabled);
+    QCOMPARE(
+        setOutputs->qualification, VerifiedSemanticActionQualification::Qualified);
+    QVERIFY(!setOutputs->disabledReason);
+    QVERIFY(!setOutputs->dcRequired);
+    QCOMPARE(setOutputs->requiredBindings.size(), qsizetype(16));
+    QCOMPARE(setOutputs->parameters.size(), qsizetype(16));
+    QCOMPARE(setOutputs->consistencyGroups.size(), qsizetype(1));
+    QCOMPARE(
+        setOutputs->consistencyGroups.constFirst().consistencyGroupId,
+        quint32(0xf0286f69U));
+    QCOMPARE(
+        setOutputs->consistencyGroups.constFirst().recoveryPolicy,
+        EcfgOutputRecoveryPolicy::HoldSafe);
+    QCOMPARE(setOutputs->consistencyGroups.constFirst().maximumTtlCycles, quint32(1000));
+    QCOMPARE(setOutputs->steps.size(), qsizetype(1));
+    QCOMPARE(
+        setOutputs->steps.constFirst().kind,
+        VerifiedSemanticActionStepKind::WriteGroup);
+    QCOMPARE(setOutputs->steps.constFirst().assignments.size(), qsizetype(16));
+    QVERIFY(clearOutputs->enabled);
+    QCOMPARE(clearOutputs->parameters.size(), qsizetype(0));
+    QVERIFY(!evidence->invocableAction(
+        u"embedlabs:project:action:xb6:set-outputs", false));
+    QVERIFY(!evidence->invocableAction(
+        u"embedlabs:project:action:xb6:clear-outputs", false));
+
+    const VerifiedSemanticAction *axis0Velocity
+        = artifact.findAction(u"embedlabs:project:action:axis0:set-csv-velocity");
+    const VerifiedSemanticAction *axis1Stop
+        = artifact.findAction(u"embedlabs:project:action:axis1:stop-csv");
+    QVERIFY(axis0Velocity);
+    QVERIFY(axis1Stop);
+    QVERIFY(!axis0Velocity->enabled);
+    QVERIFY(!axis1Stop->enabled);
+    QCOMPARE(
+        axis0Velocity->qualification,
+        VerifiedSemanticActionQualification::Unqualified);
+    QVERIFY(axis0Velocity->disabledReason.has_value());
+    QCOMPARE(
+        *axis0Velocity->disabledReason,
+        QStringLiteral("reference_unit_to_rpm_conversion_not_bound"));
+    QVERIFY(axis0Velocity->dcRequired);
+    QVERIFY(!evidence->invocableAction(
+        u"embedlabs:project:action:axis0:set-csv-velocity", false));
+    QVERIFY(!evidence->invocableAction(
+        u"embedlabs:project:action:axis0:set-csv-velocity", true));
+    QVERIFY(!evidence->invocableAction(
+        u"embedlabs:project:action:axis1:stop-csv", true));
+    QVERIFY(!evidence->invocableAction(u"embedlabs:project:action:missing", true));
+    QVERIFY(!artifact.findAction(u"embedlabs:project:action:missing"));
+}
+
+void EtherCATSemanticRuntimeTests::testSemanticBindingV2RejectsDeepMutations()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureRoot(
+        repositoryRoot.absoluteFilePath(
+            "build/vendor_api_037_handoff/api037_handoff_569d39310549"));
+    const QByteArray packageBytes = readFile(
+        fixtureRoot.absoluteFilePath(
+            "artifacts/three-slave-manual-control-cfg3701.ecpkg"));
+    const QByteArray publicKey = readFile(
+        fixtureRoot.absoluteFilePath(
+            "trust/eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub"));
+    if (packageBytes.isEmpty() || publicKey.isEmpty())
+        QSKIP("Transferred API-037 ECPKG fixture is not present");
+
+    const Utils::Result<EcpkgContainer> container
+        = parseCanonicalEcpkgContainer(packageBytes);
+    QVERIFY_RESULT(container);
+    const Utils::Result<VerifiedSignedEcpkgManifest> manifest
+        = verifySignedEcpkgManifest(
+            *container, {{publicKey, EcpkgTrustClass::Production}});
+    QVERIFY_RESULT(manifest);
+    const Utils::Result<EcfgConfiguration> configuration
+        = parseStrictEcfgConfiguration(container->configurationEcfg);
+    QVERIFY_RESULT(configuration);
+    QVERIFY_RESULT(verifySemanticBindingArtifact(*container, *manifest, *configuration));
+    const Utils::Result<StrictJson> parsedReport
+        = parseStrictJson(container->compileReportJson, container->compileReportJson.size());
+    QVERIFY_RESULT(parsedReport);
+
+    const auto rebuildReportEvidence =
+        [&container, &manifest](StrictJson report) {
+            VerifiedSignedEcpkgManifest rebuiltManifest = *manifest;
+            const Utils::Result<QByteArray> canonicalArtifact = serializeCanonicalJson(
+                report.at("semantic_binding_manifest"),
+                defaultMaximumSemanticArtifactBytes);
+            if (!canonicalArtifact)
+                return std::optional<std::pair<EcpkgContainer, VerifiedSignedEcpkgManifest>>();
+            const QByteArray mappingSha256 = QCryptographicHash::hash(
+                *canonicalArtifact, QCryptographicHash::Sha256);
+            report["semantic_binding_manifest_sha256"]
+                = mappingSha256.toHex().toStdString();
+            std::string reportText = report.dump(2);
+            reportText.push_back('\n');
+
+            EcpkgContainer rebuiltContainer = *container;
+            rebuiltContainer.compileReportJson = QByteArray(
+                reportText.data(), qsizetype(reportText.size()));
+            rebuiltManifest.compileReport.bytes
+                = quint32(rebuiltContainer.compileReportJson.size());
+            rebuiltManifest.compileReport.sha256 = QCryptographicHash::hash(
+                rebuiltContainer.compileReportJson, QCryptographicHash::Sha256);
+            rebuiltManifest.semanticBinding->mappingSha256 = mappingSha256;
+            return std::optional(std::pair(
+                std::move(rebuiltContainer), std::move(rebuiltManifest)));
+        };
+
+    const auto rejects =
+        [&rebuildReportEvidence, &configuration](StrictJson report) {
+            const auto evidence = rebuildReportEvidence(std::move(report));
+            return evidence
+                   && !verifySemanticBindingArtifact(
+                       evidence->first, evidence->second, *configuration);
+        };
+
+    StrictJson wrongProjectDevice = *parsedReport;
+    wrongProjectDevice["semantic_binding_manifest"]["bindings"][0]["project_device_id"]
+        = "embedlabs:project:device:axis1";
+    QVERIFY(rejects(std::move(wrongProjectDevice)));
+
+    StrictJson swappedDeviceInstances = *parsedReport;
+    std::swap(
+        swappedDeviceInstances["project_device_bindings"][0]["position"],
+        swappedDeviceInstances["project_device_bindings"][1]["position"]);
+    std::swap(
+        swappedDeviceInstances["project_device_bindings"][0]["station_address"],
+        swappedDeviceInstances["project_device_bindings"][1]["station_address"]);
+    QVERIFY(rejects(std::move(swappedDeviceInstances)));
+
+    StrictJson collidedDefinition = *parsedReport;
+    collidedDefinition["semantic_binding_manifest"]["bindings"][1]
+                      ["semantic_signal_definition_id"]
+        = "org.embedlabs.inovance.sv630n.negative-torque-limit";
+    collidedDefinition["semantic_symbols"][24]["semantic_definition_id"]
+        = "org.embedlabs.inovance.sv630n.negative-torque-limit";
+    QVERIFY(rejects(std::move(collidedDefinition)));
+
+    StrictJson wrongSafeValue = *parsedReport;
+    wrongSafeValue["semantic_binding_manifest"]["bindings"][38]["safe_value"] = 1;
+    wrongSafeValue["semantic_symbols"][38]["safe_value"] = 1;
+    QVERIFY(rejects(std::move(wrongSafeValue)));
+
+    StrictJson enabledUnqualified = *parsedReport;
+    enabledUnqualified["semantic_binding_manifest"]["actions"][0]["enabled"] = true;
+    enabledUnqualified["semantic_action_plans"][0]["enabled"] = true;
+    QVERIFY(rejects(std::move(enabledUnqualified)));
+
+    StrictJson partialWriteGroup = *parsedReport;
+    partialWriteGroup["semantic_binding_manifest"]["actions"][6]["steps"][0]["assignments"]
+        .erase(
+            partialWriteGroup["semantic_binding_manifest"]["actions"][6]["steps"][0]
+                ["assignments"]
+                    .begin());
+    partialWriteGroup["semantic_action_plans"][6]["steps"][0]["assignments"].erase(
+        partialWriteGroup["semantic_action_plans"][6]["steps"][0]["assignments"].begin());
+    QVERIFY(rejects(std::move(partialWriteGroup)));
+
+    StrictJson crossDeviceAction = *parsedReport;
+    crossDeviceAction["semantic_binding_manifest"]["actions"][6]["required_bindings"][0]
+        ["semantic_binding_id"] = "embedlabs:fixture:axis0:command:controlword";
+    crossDeviceAction["semantic_action_plans"][6]["required_bindings"][0]
+        ["semantic_binding_id"] = "embedlabs:fixture:axis0:command:controlword";
+    QVERIFY(rejects(std::move(crossDeviceAction)));
+
+    StrictJson staleFormat = *parsedReport;
+    staleFormat["semantic_binding_manifest"]["format_version"] = 1;
+    QVERIFY(rejects(std::move(staleFormat)));
+
+    EcfgConfiguration missingDcRuntime = *configuration;
+    missingDcRuntime.dcRecords.clear();
+    QVERIFY(!verifySemanticBindingArtifact(*container, *manifest, missingDcRuntime));
+}
+
+void EtherCATSemanticRuntimeTests::testSemanticBindingV2ParserGuards()
+{
+    QList<VerifiedSemanticComponent> components{
+        {
+            QStringLiteral("component.a"),
+            1,
+            std::nullopt,
+            0,
+            0,
+        },
+        {
+            QStringLiteral("component.b"),
+            2,
+            QStringLiteral("component.a"),
+            1,
+            0,
+        },
+        {
+            QStringLiteral("component.c"),
+            3,
+            QStringLiteral("component.b"),
+            2,
+            0,
+        },
+    };
+    QVERIFY(isAcyclicSemanticComponentParentGraph(components));
+
+    // Mutate an otherwise valid three-level graph into a cycle that does not
+    // rely on the parser's direct self-parent rejection.
+    components[0].parentComponentBindingId = QStringLiteral("component.c");
+    components[0].parentInstanceId = 3;
+    QVERIFY(!isAcyclicSemanticComponentParentGraph(components));
+
+    components[0].parentComponentBindingId.reset();
+    components[0].parentInstanceId = 0;
+    components[2].parentComponentBindingId = QStringLiteral("component.missing");
+    QVERIFY(!isAcyclicSemanticComponentParentGraph(components));
+
+    QVERIFY(isValidSemanticMaskedWaitCondition(0x0f, 0x05, 8));
+    QVERIFY(isValidSemanticMaskedWaitCondition(
+        quint64(1) << 63, quint64(1) << 63, 64));
+    QVERIFY(!isValidSemanticMaskedWaitCondition(0, 0, 8));
+    QVERIFY(!isValidSemanticMaskedWaitCondition(0x0f, 0x10, 8));
+    QVERIFY(!isValidSemanticMaskedWaitCondition(0x10, 0, 4));
+}
+
 void EtherCATSemanticRuntimeTests::testVerifiedEcpkgStore()
 {
     const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
@@ -1788,7 +2403,8 @@ void EtherCATSemanticRuntimeTests::testVerifiedEcpkgStore()
     wrongProject[0] ^= 1;
     QVERIFY(!verifyProductionEcpkg(package035, trust, wrongProject));
 
-    QTemporaryDir temporary;
+    QTemporaryDir temporary(
+        systemTemporaryDirectoryTemplate(u"embed-labs-verified-ecpkg-store"));
     QVERIFY(temporary.isValid());
     const QString storeRoot = QDir(temporary.path()).absoluteFilePath("packages");
     const Utils::Result<VerifiedEcpkgPackage> imported
@@ -1861,7 +2477,8 @@ void EtherCATSemanticRuntimeTests::testVerifiedEcpkgStoreRejectsTampering()
     const QByteArray packageSha256
         = fromHex("b41d1fe06960c94df6730ca36a5c7505c30f905f155c47f00228c5f5eaf13dee");
 
-    QTemporaryDir temporary;
+    QTemporaryDir temporary(
+        systemTemporaryDirectoryTemplate(u"embed-labs-verified-ecpkg-unsafe"));
     QVERIFY(temporary.isValid());
     const QString storeRoot = QDir(temporary.path()).absoluteFilePath("packages");
     const Utils::Result<VerifiedEcpkgPackage> imported
@@ -1895,6 +2512,904 @@ void EtherCATSemanticRuntimeTests::testVerifiedEcpkgStoreRejectsTampering()
         fromHex("1b9b8d93222fb199a2b0f767e22a4ed53dd8898c09cc2260a1c1e929f551c64f"),
         trust,
         project));
+}
+
+void EtherCATSemanticRuntimeTests::testRuntimePackageEvidenceTransferredPackages()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureRoot(
+        repositoryRoot.absoluteFilePath("build/vendor_api_036_handoff"));
+    const QByteArray publicKey = fromHex(
+        "bd51c2d7cb14eeabac5de51ca5feb5f3"
+        "6d3d87986b77f19d056a7da4845f7063");
+    const QList<EcpkgTrustedPublicKey> trust{
+        {publicKey, EcpkgTrustClass::Production},
+    };
+
+    struct Fixture
+    {
+        QString directory;
+        QString packageName;
+        QByteArray packageSha256;
+        QByteArray manifestSha256;
+        QByteArray mappingSha256;
+        quint64 catalogRevision = 0;
+    };
+    const std::array<Fixture, 2> fixtures{
+        Fixture{
+            "api035",
+            "three-slave-xb6-sv630n-semantic-binding-cfg3501.ecpkg",
+            fromHex("b41d1fe06960c94df6730ca36a5c7505c30f905f155c47f00228c5f5eaf13dee"),
+            fromHex("f82dcf1bd1188b1eb4648396f946b8db5828ebf15d0c22fcc50fa2d14a6de4c0"),
+            fromHex("1b9b8d93222fb199a2b0f767e22a4ed53dd8898c09cc2260a1c1e929f551c64f"),
+            0x0dea3816a0a0d7afULL,
+        },
+        Fixture{
+            "api036",
+            "three-slave-output-transaction-cfg3501.ecpkg",
+            fromHex("40222de1f5156556117ade48922ea2e2ed246ba0a51a3caa871131803987980b"),
+            fromHex("9eb3fcc112dfa5e52d286eb5e257a75f9e81d4fb0ace64ea4efdba9c2c680dcf"),
+            fromHex("d4143cbbae9ac312181b12210d107db46957fb3b84a2d7d8082e929e96c26f2e"),
+            0xc84fe35be276b2a8ULL,
+        },
+    };
+
+    QList<QByteArray> mappingDigests;
+    for (const Fixture &fixture : fixtures) {
+        const QDir directory(fixtureRoot.absoluteFilePath(fixture.directory));
+        const QByteArray packageBytes
+            = readFile(directory.absoluteFilePath(fixture.packageName));
+        const QByteArray projectBytes
+            = readFile(directory.absoluteFilePath("project.json"));
+        if (packageBytes.isEmpty() || projectBytes.isEmpty())
+            QSKIP("Transferred API-035/API-036 ECPKG fixtures are not present");
+
+        const Utils::Result<VerifiedEcpkgPackage> package
+            = verifyProductionEcpkg(packageBytes, trust, projectBytes);
+        QVERIFY_RESULT(package);
+        const Utils::Result<VerifiedRuntimePackageEvidence> evidence
+            = verifyRuntimePackageEvidence(*package);
+        QVERIFY_RESULT(evidence);
+        QVERIFY(evidence->isValid());
+        QVERIFY(!evidence->permitsWritableActions());
+        QCOMPARE(
+            evidence->projectConfigurationSha256(),
+            QCryptographicHash::hash(projectBytes, QCryptographicHash::Sha256));
+
+        const VerifiedSemanticBindingArtifact &artifact
+            = evidence->semanticBindingArtifact();
+        const Data::RuntimeSemanticMappingProof &proof
+            = evidence->semanticMappingProof();
+        QCOMPARE(artifact.trust, EcpkgTrustClass::Production);
+        QCOMPARE(artifact.configurationId, quint64(3501));
+        QCOMPARE(artifact.catalogRevision, fixture.catalogRevision);
+        QCOMPARE(artifact.topologyIdentity, quint64(0x2ee7c79bc774840cULL));
+        QCOMPARE(artifact.bindings.size(), qsizetype(56));
+
+        QVERIFY(proof.isValid());
+        QCOMPARE(proof.formatVersion, quint16(1));
+        QCOMPARE(proof.bindingCount, quint32(56));
+        QVERIFY(proof.packageSigned);
+        QVERIFY(proof.signatureVerified);
+        QVERIFY(proof.semanticBindingVerified);
+        QCOMPARE(proof.trust, Data::RuntimeSemanticMappingTrust::Production);
+        QCOMPARE(proof.packageSha256, fixture.packageSha256);
+        QCOMPARE(proof.manifestSha256, fixture.manifestSha256);
+        QCOMPARE(proof.mappingSha256, fixture.mappingSha256);
+        QCOMPARE(proof.packageSha256, artifact.packageSha256);
+        QCOMPARE(proof.manifestSha256, artifact.manifestSha256);
+        QCOMPARE(proof.mappingSha256, artifact.artifactSha256);
+        QCOMPARE(proof.resourceRecordsSha256, artifact.resourceRecordsSha256);
+        QCOMPARE(proof.resourceSectionSha256, artifact.resourceSectionSha256);
+        QCOMPARE(proof.topologySha256, artifact.topologySha256);
+        QCOMPARE(proof.signingKeyIdSha256, artifact.signingKeyIdSha256);
+        QCOMPARE(proof.mappingSha256, package->manifest.semanticBinding->mappingSha256);
+        mappingDigests.append(proof.mappingSha256);
+    }
+
+    QCOMPARE(mappingDigests.size(), qsizetype(2));
+    QVERIFY(mappingDigests.at(0) != mappingDigests.at(1));
+}
+
+void EtherCATSemanticRuntimeTests::testRuntimePackageEvidenceRejectsMismatches()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureDirectory(
+        repositoryRoot.absoluteFilePath("build/vendor_api_036_handoff/api036"));
+    const QByteArray packageBytes = readFile(
+        fixtureDirectory.absoluteFilePath(
+            "three-slave-output-transaction-cfg3501.ecpkg"));
+    const QByteArray projectBytes
+        = readFile(fixtureDirectory.absoluteFilePath("project.json"));
+    if (packageBytes.isEmpty() || projectBytes.isEmpty())
+        QSKIP("Transferred API-036 ECPKG fixture is not present");
+
+    const QByteArray publicKey = fromHex(
+        "bd51c2d7cb14eeabac5de51ca5feb5f3"
+        "6d3d87986b77f19d056a7da4845f7063");
+    const QList<EcpkgTrustedPublicKey> trust{
+        {publicKey, EcpkgTrustClass::Production},
+    };
+    const Utils::Result<VerifiedEcpkgPackage> package
+        = verifyProductionEcpkg(packageBytes, trust, projectBytes);
+    QVERIFY_RESULT(package);
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidenceResult
+        = verifyRuntimePackageEvidence(*package);
+    QVERIFY_RESULT(evidenceResult);
+    const VerifiedRuntimePackageEvidence evidence = *evidenceResult;
+
+    const Data::ControllerConnectionScope scope{
+        Data::NodeId::create(),
+        Data::NodeId::create(),
+    };
+    constexpr quint64 sessionGeneration = 17;
+    Data::RuntimeResourceCatalogEpoch epoch;
+    epoch.controllerBootId = 0x1122334455667788ULL;
+    epoch.activePackageSlot = Data::ControllerSlot::B;
+    epoch.activePackageGeneration = 12;
+    epoch.configurationId = evidence.semanticBindingArtifact().configurationId;
+    epoch.topologyGeneration = 23;
+    epoch.runtimeGeneration = 24;
+    epoch.catalogRevision = evidence.semanticBindingArtifact().catalogRevision;
+    epoch.topologyIdentity = QByteArray(qsizetype(sizeof(quint64)), '\0');
+    qToBigEndian(
+        evidence.semanticBindingArtifact().topologyIdentity,
+        reinterpret_cast<uchar *>(epoch.topologyIdentity.data()));
+
+    Data::SemanticBindingArtifactReference artifactReference;
+    artifactReference.artifactId = QStringLiteral("test/runtime/api036");
+    artifactReference.artifactSha256 = evidence.semanticMappingProof().mappingSha256;
+    artifactReference.projectConfigurationSha256 = evidence.projectConfigurationSha256();
+
+    Data::RuntimeSemanticMappingAttestation attestation;
+    attestation.scope = scope;
+    attestation.sessionGeneration = sessionGeneration;
+    attestation.epoch = epoch;
+    attestation.proof = evidence.semanticMappingProof();
+    attestation.receivedAt = QDateTime::currentDateTimeUtc();
+    QVERIFY(attestation.isValid());
+    QVERIFY_RESULT(verifyRuntimeSemanticMappingAttestation(
+        attestation, scope, sessionGeneration, epoch, artifactReference, evidence));
+
+    const auto rejects =
+        [&artifactReference, &evidence](
+            const Data::RuntimeSemanticMappingAttestation &candidate,
+            const Data::ControllerConnectionScope &expectedScope,
+            quint64 expectedSession,
+            const Data::RuntimeResourceCatalogEpoch &expectedEpoch) {
+            return !verifyRuntimeSemanticMappingAttestation(
+                candidate,
+                expectedScope,
+                expectedSession,
+                expectedEpoch,
+                artifactReference,
+                evidence);
+        };
+
+    Data::RuntimeSemanticMappingAttestation wrong = attestation;
+    wrong.scope.projectId = Data::NodeId::create();
+    QVERIFY(rejects(wrong, scope, sessionGeneration, epoch));
+
+    wrong = attestation;
+    ++wrong.sessionGeneration;
+    QVERIFY(rejects(wrong, scope, sessionGeneration, epoch));
+
+    wrong = attestation;
+    ++wrong.epoch.controllerBootId;
+    QVERIFY(rejects(wrong, scope, sessionGeneration, epoch));
+
+    wrong = attestation;
+    wrong.epoch.activePackageSlot = Data::ControllerSlot::A;
+    QVERIFY(rejects(wrong, scope, sessionGeneration, epoch));
+
+    wrong = attestation;
+    ++wrong.epoch.activePackageGeneration;
+    QVERIFY(rejects(wrong, scope, sessionGeneration, epoch));
+
+    wrong = attestation;
+    ++wrong.epoch.topologyGeneration;
+    QVERIFY(rejects(wrong, scope, sessionGeneration, epoch));
+
+    wrong = attestation;
+    ++wrong.epoch.runtimeGeneration;
+    QVERIFY(rejects(wrong, scope, sessionGeneration, epoch));
+
+    Data::RuntimeResourceCatalogEpoch wrongPackageEpoch = epoch;
+    ++wrongPackageEpoch.configurationId;
+    wrong = attestation;
+    wrong.epoch = wrongPackageEpoch;
+    QVERIFY(rejects(
+        wrong, scope, sessionGeneration, wrongPackageEpoch));
+
+    wrongPackageEpoch = epoch;
+    ++wrongPackageEpoch.catalogRevision;
+    wrong = attestation;
+    wrong.epoch = wrongPackageEpoch;
+    QVERIFY(rejects(
+        wrong, scope, sessionGeneration, wrongPackageEpoch));
+
+    wrongPackageEpoch = epoch;
+    wrongPackageEpoch.topologyIdentity[0] ^= 1;
+    wrong = attestation;
+    wrong.epoch = wrongPackageEpoch;
+    QVERIFY(rejects(
+        wrong, scope, sessionGeneration, wrongPackageEpoch));
+
+    using ProofDigest = QByteArray Data::RuntimeSemanticMappingProof::*;
+    const std::array<ProofDigest, 7> proofDigests{
+        &Data::RuntimeSemanticMappingProof::packageSha256,
+        &Data::RuntimeSemanticMappingProof::manifestSha256,
+        &Data::RuntimeSemanticMappingProof::mappingSha256,
+        &Data::RuntimeSemanticMappingProof::resourceRecordsSha256,
+        &Data::RuntimeSemanticMappingProof::resourceSectionSha256,
+        &Data::RuntimeSemanticMappingProof::topologySha256,
+        &Data::RuntimeSemanticMappingProof::signingKeyIdSha256,
+    };
+    for (ProofDigest digest : proofDigests) {
+        wrong = attestation;
+        (wrong.proof.*digest)[0] ^= 1;
+        QVERIFY(wrong.isValid());
+        QVERIFY(rejects(wrong, scope, sessionGeneration, epoch));
+    }
+
+    wrong = attestation;
+    wrong.proof.trust = Data::RuntimeSemanticMappingTrust::Engineering;
+    QVERIFY(wrong.isValid());
+    QVERIFY(rejects(wrong, scope, sessionGeneration, epoch));
+
+    Data::SemanticBindingArtifactReference wrongArtifactReference = artifactReference;
+    wrongArtifactReference.artifactSha256[0] ^= 1;
+    QVERIFY(!verifyRuntimeSemanticMappingAttestation(
+        attestation,
+        scope,
+        sessionGeneration,
+        epoch,
+        wrongArtifactReference,
+        evidence));
+
+    wrongArtifactReference = artifactReference;
+    wrongArtifactReference.projectConfigurationSha256[0] ^= 1;
+    QVERIFY(!verifyRuntimeSemanticMappingAttestation(
+        attestation,
+        scope,
+        sessionGeneration,
+        epoch,
+        wrongArtifactReference,
+        evidence));
+
+    wrongArtifactReference = artifactReference;
+    wrongArtifactReference.artifactId.clear();
+    QVERIFY(!verifyRuntimeSemanticMappingAttestation(
+        attestation,
+        scope,
+        sessionGeneration,
+        epoch,
+        wrongArtifactReference,
+        evidence));
+
+    VerifiedEcpkgPackage engineeringPackage = *package;
+    engineeringPackage.manifest.trust = EcpkgTrustClass::Engineering;
+    QVERIFY(!verifyRuntimePackageEvidence(engineeringPackage));
+
+    VerifiedEcpkgPackage changedBytes = *package;
+    changedBytes.packageBytes[0] ^= 1;
+    QVERIFY(!verifyRuntimePackageEvidence(changedBytes));
+}
+
+void EtherCATSemanticRuntimeTests::testRuntimePackageEvidenceRepository()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureRoot(
+        repositoryRoot.absoluteFilePath(
+            "build/vendor_api_037_handoff/api037_handoff_569d39310549"));
+    const QByteArray packageBytes = readFile(
+        fixtureRoot.absoluteFilePath(
+            "artifacts/three-slave-manual-control-cfg3701.ecpkg"));
+    const QByteArray projectBytes
+        = readFile(fixtureRoot.absoluteFilePath("package_inputs/project.json"));
+    const QByteArray publicKey = readFile(
+        fixtureRoot.absoluteFilePath(
+            "trust/eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub"));
+    if (packageBytes.isEmpty() || projectBytes.isEmpty() || publicKey.isEmpty())
+        QSKIP("Transferred API-037 repository fixture is not present");
+
+    const auto writeBytes = [](const QString &path, QByteArrayView bytes) {
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+            || file.write(bytes.data(), bytes.size()) != bytes.size()) {
+            return false;
+        }
+        file.close();
+        return file.error() == QFileDevice::NoError;
+    };
+
+    QTemporaryDir temporary(
+        systemTemporaryDirectoryTemplate(u"embed-labs-runtime-evidence-repository"));
+    QVERIFY(temporary.isValid());
+    const QString packageStoreRoot = QDir(temporary.path()).filePath("packages");
+    const QString projectSourceRoot = QDir(temporary.path()).filePath("projects");
+    const QString trustDirectory = QDir(temporary.path()).filePath("trust");
+    QVERIFY(QDir().mkpath(trustDirectory));
+    const QByteArray keyId
+        = QCryptographicHash::hash(publicKey, QCryptographicHash::Sha256);
+    QVERIFY(writeBytes(
+        QDir(trustDirectory).filePath(QString::fromLatin1(keyId.toHex()) + ".pub"),
+        publicKey));
+
+    const RuntimePackageEvidenceRepository repository{
+        packageStoreRoot,
+        trustDirectory,
+        projectSourceRoot,
+    };
+    QCOMPARE(repository.verifiedPackageStoreRoot(), packageStoreRoot);
+    QCOMPARE(repository.productionTrustDirectory(), trustDirectory);
+    QCOMPARE(repository.compiledProjectSourceRoot(), projectSourceRoot);
+
+    const Utils::Result<VerifiedRuntimePackageEvidence> imported
+        = repository.import(packageBytes, projectBytes);
+    QVERIFY_RESULT(imported);
+    QVERIFY(imported->isValid());
+    QVERIFY(!imported->permitsWritableActions());
+    QVERIFY(imported->semanticBindingArtifact().permitsWritableActions());
+    QCOMPARE(imported->semanticMappingProof().formatVersion, quint16(2));
+
+    const QByteArray packageSha256
+        = QCryptographicHash::hash(packageBytes, QCryptographicHash::Sha256);
+    const QByteArray projectSha256
+        = QCryptographicHash::hash(projectBytes, QCryptographicHash::Sha256);
+    QCOMPARE(imported->projectConfigurationSha256(), projectSha256);
+    const QString storedPackagePath
+        = QDir(QDir(packageStoreRoot).filePath("sha256"))
+              .filePath(QString::fromLatin1(packageSha256.toHex()) + ".ecpkg");
+    const QString storedProjectPath
+        = QDir(QDir(projectSourceRoot).filePath("sha256"))
+              .filePath(QString::fromLatin1(projectSha256.toHex()) + ".json");
+    QCOMPARE(readFile(storedPackagePath), packageBytes);
+    QCOMPARE(readFile(storedProjectPath), projectBytes);
+
+    Data::SemanticBindingArtifactReference reference;
+    // artifactId remains opaque metadata and must never participate in path
+    // construction.
+    reference.artifactId = QStringLiteral("../../opaque-not-a-path");
+    reference.artifactSha256
+        = imported->semanticBindingArtifact().artifactSha256;
+    reference.projectConfigurationSha256 = projectSha256;
+    const Utils::Result<VerifiedRuntimePackageEvidence> loaded
+        = repository.load(reference);
+    QVERIFY_RESULT(loaded);
+    QCOMPARE(
+        loaded->semanticBindingArtifact().packageSha256,
+        imported->semanticBindingArtifact().packageSha256);
+    QCOMPARE(
+        loaded->semanticBindingArtifact().artifactSha256,
+        imported->semanticBindingArtifact().artifactSha256);
+
+    const Utils::Result<VerifiedRuntimePackageEvidence> repeated
+        = repository.import(packageBytes, projectBytes);
+    QVERIFY_RESULT(repeated);
+    QCOMPARE(
+        repeated->semanticBindingArtifact().packageSha256,
+        imported->semanticBindingArtifact().packageSha256);
+
+    const auto concurrentImport = [&repository, &packageBytes, &projectBytes] {
+        const Utils::Result<VerifiedRuntimePackageEvidence> result
+            = repository.import(packageBytes, projectBytes);
+        return result ? result->semanticBindingArtifact().packageSha256 : QByteArray();
+    };
+    std::future<QByteArray> first = std::async(std::launch::async, concurrentImport);
+    std::future<QByteArray> second = std::async(std::launch::async, concurrentImport);
+    QCOMPARE(first.get(), packageSha256);
+    QCOMPARE(second.get(), packageSha256);
+    QCOMPARE(
+        QDir(QDir(packageStoreRoot).filePath("sha256"))
+            .entryList({"*.ecpkg"}, QDir::Files)
+            .size(),
+        qsizetype(1));
+    QCOMPARE(
+        QDir(QDir(projectSourceRoot).filePath("sha256"))
+            .entryList({"*.json"}, QDir::Files)
+            .size(),
+        qsizetype(1));
+
+    Data::SemanticBindingArtifactReference wrongReference = reference;
+    wrongReference.artifactSha256[0] ^= 1;
+    QVERIFY(!repository.load(wrongReference));
+    wrongReference = reference;
+    wrongReference.projectConfigurationSha256[0] ^= 1;
+    QVERIFY(!repository.load(wrongReference));
+    wrongReference = reference;
+    wrongReference.artifactId.clear();
+    QVERIFY(!repository.load(wrongReference));
+}
+
+void EtherCATSemanticRuntimeTests::testRuntimePackageEvidenceRepositoryRejectsUnsafeInputs()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureRoot(
+        repositoryRoot.absoluteFilePath(
+            "build/vendor_api_037_handoff/api037_handoff_569d39310549"));
+    const QByteArray packageBytes = readFile(
+        fixtureRoot.absoluteFilePath(
+            "artifacts/three-slave-manual-control-cfg3701.ecpkg"));
+    const QByteArray projectBytes
+        = readFile(fixtureRoot.absoluteFilePath("package_inputs/project.json"));
+    const QByteArray publicKey = readFile(
+        fixtureRoot.absoluteFilePath(
+            "trust/eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub"));
+    if (packageBytes.isEmpty() || projectBytes.isEmpty() || publicKey.isEmpty())
+        QSKIP("Transferred API-037 repository fixture is not present");
+
+    const auto writeBytes = [](const QString &path, QByteArrayView bytes) {
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+            || file.write(bytes.data(), bytes.size()) != bytes.size()) {
+            return false;
+        }
+        file.close();
+        return file.error() == QFileDevice::NoError;
+    };
+    const QByteArray keyId
+        = QCryptographicHash::hash(publicKey, QCryptographicHash::Sha256);
+    const QByteArray packageSha256
+        = QCryptographicHash::hash(packageBytes, QCryptographicHash::Sha256);
+    const QByteArray projectSha256
+        = QCryptographicHash::hash(projectBytes, QCryptographicHash::Sha256);
+
+    QTemporaryDir temporary(
+        systemTemporaryDirectoryTemplate(u"embed-labs-runtime-evidence-unsafe"));
+    QVERIFY(temporary.isValid());
+    const QString packageStoreRoot = QDir(temporary.path()).filePath("packages");
+    const QString projectSourceRoot = QDir(temporary.path()).filePath("projects");
+    const QString trustDirectory = QDir(temporary.path()).filePath("trust");
+    QVERIFY(QDir().mkpath(trustDirectory));
+    QVERIFY(writeBytes(
+        QDir(trustDirectory).filePath(QString::fromLatin1(keyId.toHex()) + ".pub"),
+        publicKey));
+
+    const RuntimePackageEvidenceRepository repository{
+        packageStoreRoot,
+        trustDirectory,
+        projectSourceRoot,
+    };
+    const Utils::Result<VerifiedRuntimePackageEvidence> imported
+        = repository.import(packageBytes, projectBytes);
+    QVERIFY_RESULT(imported);
+
+    Data::SemanticBindingArtifactReference reference;
+    reference.artifactId = QStringLiteral("test/api037/runtime-evidence");
+    reference.artifactSha256
+        = imported->semanticBindingArtifact().artifactSha256;
+    reference.projectConfigurationSha256 = projectSha256;
+    QVERIFY_RESULT(repository.load(reference));
+
+    const QString storedPackagePath
+        = QDir(QDir(packageStoreRoot).filePath("sha256"))
+              .filePath(QString::fromLatin1(packageSha256.toHex()) + ".ecpkg");
+    const QString storedProjectPath
+        = QDir(QDir(projectSourceRoot).filePath("sha256"))
+              .filePath(QString::fromLatin1(projectSha256.toHex()) + ".json");
+
+    QByteArray tamperedPackage = packageBytes;
+    tamperedPackage[0] ^= 1;
+    QVERIFY(writeBytes(storedPackagePath, tamperedPackage));
+    QVERIFY(!repository.load(reference));
+    QVERIFY(writeBytes(storedPackagePath, packageBytes));
+    QVERIFY_RESULT(repository.load(reference));
+
+    QByteArray tamperedProject = projectBytes;
+    tamperedProject[0] ^= 1;
+    QVERIFY(writeBytes(storedProjectPath, tamperedProject));
+    QVERIFY(!repository.load(reference));
+    QVERIFY(writeBytes(storedProjectPath, projectBytes));
+    QVERIFY_RESULT(repository.load(reference));
+
+    QFile hidden(QDir(QDir(projectSourceRoot).filePath("sha256")).filePath(".hidden"));
+    QVERIFY(hidden.open(QIODevice::WriteOnly));
+    QCOMPARE(hidden.write("x"), qint64(1));
+    hidden.close();
+    QVERIFY(!repository.load(reference));
+    QVERIFY(QFile::remove(hidden.fileName()));
+    QVERIFY_RESULT(repository.load(reference));
+
+    const QString originalProjectPath = storedProjectPath + ".original";
+    QVERIFY(QFile::rename(storedProjectPath, originalProjectPath));
+    if (QFile::link(originalProjectPath, storedProjectPath)) {
+        QVERIFY(!repository.load(reference));
+        QVERIFY(QFile::remove(storedProjectPath));
+        QVERIFY(QFile::rename(originalProjectPath, storedProjectPath));
+    } else {
+        QVERIFY(QFile::rename(originalProjectPath, storedProjectPath));
+    }
+    QVERIFY_RESULT(repository.load(reference));
+
+    const QString linkedPackageRoot = QDir(temporary.path()).filePath("linked-packages");
+    if (QFile::link(packageStoreRoot, linkedPackageRoot)) {
+        const RuntimePackageEvidenceRepository linkedRepository{
+            linkedPackageRoot,
+            trustDirectory,
+            projectSourceRoot,
+        };
+        QVERIFY(!linkedRepository.load(reference));
+    }
+
+    const QString wrongTrustDirectory = QDir(temporary.path()).filePath("wrong-trust");
+    QVERIFY(QDir().mkpath(wrongTrustDirectory));
+    const QByteArray wrongKey(32, '\x5a');
+    const QByteArray wrongKeyId
+        = QCryptographicHash::hash(wrongKey, QCryptographicHash::Sha256);
+    QVERIFY(writeBytes(
+        QDir(wrongTrustDirectory)
+            .filePath(QString::fromLatin1(wrongKeyId.toHex()) + ".pub"),
+        wrongKey));
+    const RuntimePackageEvidenceRepository wrongTrustRepository{
+        packageStoreRoot,
+        wrongTrustDirectory,
+        projectSourceRoot,
+    };
+    QVERIFY(!wrongTrustRepository.load(reference));
+
+    const QString trustedKeyPath
+        = QDir(trustDirectory).filePath(QString::fromLatin1(keyId.toHex()) + ".pub");
+    QVERIFY(writeBytes(trustedKeyPath, wrongKey));
+    QVERIFY(!repository.load(reference));
+    QVERIFY(writeBytes(trustedKeyPath, publicKey));
+    QVERIFY_RESULT(repository.load(reference));
+
+    const RuntimePackageEvidenceRepository noncanonicalRepository{
+        packageStoreRoot + QStringLiteral("/../packages"),
+        trustDirectory,
+        projectSourceRoot,
+    };
+    QVERIFY(!noncanonicalRepository.load(reference));
+
+    // Force the two-root transaction to fail only after the project sidecar
+    // has been committed. The orphan remains digest-addressed and cannot
+    // produce evidence while the package entry is invalid.
+    const QString halfPackageRoot = QDir(temporary.path()).filePath("half-packages");
+    const QString halfProjectRoot = QDir(temporary.path()).filePath("half-projects");
+    const QString halfPackageDirectory = QDir(halfPackageRoot).filePath("sha256");
+    QVERIFY(QDir().mkpath(halfPackageDirectory));
+    const QString halfPackagePath
+        = QDir(halfPackageDirectory)
+              .filePath(QString::fromLatin1(packageSha256.toHex()) + ".ecpkg");
+    QVERIFY(writeBytes(halfPackagePath, QByteArrayView("not-an-ecpkg", 12)));
+    const RuntimePackageEvidenceRepository halfRepository{
+        halfPackageRoot,
+        trustDirectory,
+        halfProjectRoot,
+    };
+    QVERIFY(!halfRepository.import(packageBytes, projectBytes));
+    const QString orphanProjectPath
+        = QDir(QDir(halfProjectRoot).filePath("sha256"))
+              .filePath(QString::fromLatin1(projectSha256.toHex()) + ".json");
+    QCOMPARE(readFile(orphanProjectPath), projectBytes);
+    QCOMPARE(readFile(halfPackagePath), QByteArray("not-an-ecpkg"));
+    QVERIFY(!halfRepository.load(reference));
+
+    QVERIFY(QFile::remove(halfPackagePath));
+    const Utils::Result<VerifiedRuntimePackageEvidence> recovered
+        = halfRepository.import(packageBytes, projectBytes);
+    QVERIFY_RESULT(recovered);
+    QCOMPARE(
+        recovered->semanticBindingArtifact().packageSha256,
+        imported->semanticBindingArtifact().packageSha256);
+    QVERIFY_RESULT(halfRepository.load(reference));
+}
+
+void EtherCATSemanticRuntimeTests::testReadOnlySemanticBindingFactory()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureRoot(repositoryRoot.absoluteFilePath(
+        "build/vendor_api_037_handoff/api037_handoff_569d39310549"));
+    const QByteArray packageBytes = readFile(
+        fixtureRoot.absoluteFilePath("artifacts/three-slave-manual-control-cfg3701.ecpkg"));
+    const QByteArray projectBytes = readFile(
+        fixtureRoot.absoluteFilePath("package_inputs/project.json"));
+    const QByteArray publicKey = readFile(fixtureRoot.absoluteFilePath(
+        "trust/eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub"));
+    if (packageBytes.isEmpty() || projectBytes.isEmpty() || publicKey.isEmpty())
+        QSKIP("Transferred API-037 binding factory fixture is not present");
+
+    const Utils::Result<VerifiedEcpkgPackage> package = verifyProductionEcpkg(
+        packageBytes, {{publicKey, EcpkgTrustClass::Production}}, projectBytes);
+    QVERIFY_RESULT(package);
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidenceResult
+        = verifyRuntimePackageEvidence(*package);
+    QVERIFY_RESULT(evidenceResult);
+    const VerifiedRuntimePackageEvidence evidence = *evidenceResult;
+
+    const Data::ProjectSnapshot project = factoryProject(evidence);
+    const Data::RuntimeResourceCatalog catalog = factoryCatalog(project, evidence);
+    const Data::RuntimeSemanticMappingAttestation attestation
+        = factoryAttestation(catalog, evidence);
+    QVERIFY(attestation.isValid());
+
+    const Utils::Result<ReadOnlySemanticBindingCandidates> candidates
+        = buildReadOnlySemanticBindingCandidates(
+            u"embed-labs.product-api", project, evidence, catalog, attestation);
+    QVERIFY_RESULT(candidates);
+    QCOMPARE(candidates->verification.state, Data::SemanticBindingVerificationState::Verified);
+    QVERIFY(candidates->verification.verifiedAt.isValid());
+    QCOMPARE(candidates->mappingDigest.value, evidence.semanticMappingProof().mappingSha256);
+    QCOMPARE(candidates->controllerMappingDigest, candidates->mappingDigest);
+    QCOMPARE(candidates->bindings.size(), qsizetype(56));
+    QCOMPARE(candidates->signalStates.size(), qsizetype(56));
+
+    const VerifiedSemanticBindingArtifact &artifact = evidence.semanticBindingArtifact();
+    QSet<QString> targets;
+    qsizetype writableSignals = 0;
+    for (qsizetype index = 0; index < artifact.bindings.size(); ++index) {
+        const VerifiedSemanticBinding &signedBinding = artifact.bindings.at(index);
+        const Data::SemanticRuntimeBinding &binding = candidates->bindings.at(index);
+        const Data::SemanticSignalRuntimeState &state = candidates->signalStates.at(index);
+
+        QCOMPARE(binding.target, state.target);
+        QCOMPARE(binding.target.controllerId, QStringLiteral("embed-labs.product-api"));
+        QCOMPARE(binding.target.scope, catalog.scope);
+        QCOMPARE(binding.target.kind, Data::SemanticRuntimeTargetKind::Signal);
+        QCOMPARE(binding.target.signalId.value, signedBinding.semanticSignalDefinitionId);
+        QVERIFY(!binding.target.deviceId.isNull());
+        const QString targetKey = binding.target.deviceId.toString() + QLatin1Char('/')
+                                  + binding.target.signalId.value;
+        QVERIFY(!targets.contains(targetKey));
+        targets.insert(targetKey);
+
+        QCOMPARE(binding.semanticBindingId, signedBinding.semanticBindingId);
+        QCOMPARE(binding.componentBindingId, signedBinding.componentBindingId);
+        QCOMPARE(binding.resourceId.value, factoryOpaqueId(signedBinding.resourceId));
+        QCOMPARE(
+            binding.componentInstanceId.value, factoryOpaqueId(signedBinding.componentInstanceId));
+        QCOMPARE(binding.consistencyGroupId.value, factoryOpaqueId(signedBinding.consistencyGroupId));
+        QCOMPARE(binding.sessionGeneration, catalog.sessionGeneration);
+        QCOMPARE(binding.epoch, catalog.epoch);
+        QCOMPARE(binding.verification.state, Data::SemanticBindingVerificationState::Verified);
+
+        QCOMPARE(state.availability, Data::SemanticSignalAvailability::Unverified);
+        QVERIFY(state.binding.has_value());
+        QCOMPARE(*state.binding, binding);
+        QVERIFY(!state.value.has_value());
+        QVERIFY(!state.snapshotComplete);
+        QCOMPARE(state.definition.id.value, signedBinding.semanticSignalDefinitionId);
+        QVERIFY(!state.definition.manualControl.allowed);
+        QVERIFY(state.definition.manualControl.requiresExclusiveControl);
+        QCOMPARE(
+            state.definition.manualControl.timeoutAction,
+            Data::ManualControlTimeoutAction::RejectFurtherWrites);
+
+        if (signedBinding.access == EcfgResourceAccess::ReadWrite) {
+            ++writableSignals;
+            QCOMPARE(state.definition.access, Data::SemanticSignalAccess::ReadWrite);
+            QCOMPARE(binding.access, Data::RuntimeResourceAccess::ReadWrite);
+            QVERIFY(state.detail.contains(QStringLiteral("disabled")));
+        }
+    }
+    QCOMPARE(targets.size(), qsizetype(56));
+    QCOMPARE(writableSignals, qsizetype(22));
+}
+
+void EtherCATSemanticRuntimeTests::testReadOnlySemanticBindingFactoryRejectsMismatches()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureRoot(repositoryRoot.absoluteFilePath(
+        "build/vendor_api_037_handoff/api037_handoff_569d39310549"));
+    const QByteArray packageBytes = readFile(
+        fixtureRoot.absoluteFilePath("artifacts/three-slave-manual-control-cfg3701.ecpkg"));
+    const QByteArray projectBytes = readFile(
+        fixtureRoot.absoluteFilePath("package_inputs/project.json"));
+    const QByteArray publicKey = readFile(fixtureRoot.absoluteFilePath(
+        "trust/eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub"));
+    if (packageBytes.isEmpty() || projectBytes.isEmpty() || publicKey.isEmpty())
+        QSKIP("Transferred API-037 binding factory fixture is not present");
+
+    const QList<EcpkgTrustedPublicKey> trust{
+        {publicKey, EcpkgTrustClass::Production},
+    };
+    const Utils::Result<VerifiedEcpkgPackage> package
+        = verifyProductionEcpkg(packageBytes, trust, projectBytes);
+    QVERIFY_RESULT(package);
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidenceResult
+        = verifyRuntimePackageEvidence(*package);
+    QVERIFY_RESULT(evidenceResult);
+    const VerifiedRuntimePackageEvidence evidence = *evidenceResult;
+
+    const Data::ProjectSnapshot project = factoryProject(evidence);
+    const Data::RuntimeResourceCatalog catalog = factoryCatalog(project, evidence);
+    const Data::RuntimeSemanticMappingAttestation attestation
+        = factoryAttestation(catalog, evidence);
+    QVERIFY_RESULT(buildReadOnlySemanticBindingCandidates(
+        u"embed-labs.product-api", project, evidence, catalog, attestation));
+
+    Data::ProjectSnapshot missingMapping = project;
+    missingMapping.masterBindingArtifact.projectDeviceBindings.removeLast();
+    QVERIFY(!buildReadOnlySemanticBindingCandidates(
+        u"embed-labs.product-api", missingMapping, evidence, catalog, attestation));
+
+    Data::ProjectSnapshot duplicateMapping = project;
+    duplicateMapping.masterBindingArtifact.projectDeviceBindings[1].projectDeviceId
+        = duplicateMapping.masterBindingArtifact.projectDeviceBindings[0].projectDeviceId;
+    QVERIFY(!buildReadOnlySemanticBindingCandidates(
+        u"embed-labs.product-api", duplicateMapping, evidence, catalog, attestation));
+
+    Data::ProjectSnapshot swappedIdenticalDevices = project;
+    auto axis0Mapping = std::find_if(
+        swappedIdenticalDevices.masterBindingArtifact.projectDeviceBindings.begin(),
+        swappedIdenticalDevices.masterBindingArtifact.projectDeviceBindings.end(),
+        [](const Data::SemanticProjectDeviceBinding &mapping) {
+            return mapping.projectDeviceId == QStringLiteral("embedlabs:project:device:axis0");
+        });
+    auto axis1Mapping = std::find_if(
+        swappedIdenticalDevices.masterBindingArtifact.projectDeviceBindings.begin(),
+        swappedIdenticalDevices.masterBindingArtifact.projectDeviceBindings.end(),
+        [](const Data::SemanticProjectDeviceBinding &mapping) {
+            return mapping.projectDeviceId == QStringLiteral("embedlabs:project:device:axis1");
+        });
+    QVERIFY(
+        axis0Mapping != swappedIdenticalDevices.masterBindingArtifact.projectDeviceBindings.end());
+    QVERIFY(
+        axis1Mapping != swappedIdenticalDevices.masterBindingArtifact.projectDeviceBindings.end());
+    std::swap(axis0Mapping->slaveId, axis1Mapping->slaveId);
+    QVERIFY(!buildReadOnlySemanticBindingCandidates(
+        u"embed-labs.product-api", swappedIdenticalDevices, evidence, catalog, attestation));
+
+    Data::ProjectSnapshot localAdapterSelection = project;
+    for (Data::OfflineSlaveConfiguration &slave : localAdapterSelection.slaves) {
+        slave.adapterSelection.adapterId = {
+            QStringLiteral("org.embedlabs.ide.local-adapter"),
+        };
+        slave.adapterSelection.adapterVersion = QStringLiteral("local");
+        slave.adapterSelection.adapterContentSha256 = QByteArray(32, '\x5a');
+    }
+    QVERIFY_RESULT(buildReadOnlySemanticBindingCandidates(
+        u"embed-labs.product-api", localAdapterSelection, evidence, catalog, attestation));
+
+    Data::RuntimeResourceCatalog changedDescriptor = catalog;
+    ++changedDescriptor.resources[0].bitWidth;
+    QVERIFY(!buildReadOnlySemanticBindingCandidates(
+        u"embed-labs.product-api", project, evidence, changedDescriptor, attestation));
+
+    Data::RuntimeResourceCatalog duplicateDescriptor = catalog;
+    duplicateDescriptor.resources[1].id = duplicateDescriptor.resources[0].id;
+    QVERIFY(!buildReadOnlySemanticBindingCandidates(
+        u"embed-labs.product-api", project, evidence, duplicateDescriptor, attestation));
+
+    Data::RuntimeSemanticMappingAttestation changedProof = attestation;
+    changedProof.proof.mappingSha256[0] ^= 1;
+    QVERIFY(changedProof.isValid());
+    QVERIFY(!buildReadOnlySemanticBindingCandidates(
+        u"embed-labs.product-api", project, evidence, catalog, changedProof));
+
+    Data::RuntimeSemanticMappingAttestation changedAttestationEpoch = attestation;
+    ++changedAttestationEpoch.epoch.runtimeGeneration;
+    QVERIFY(changedAttestationEpoch.isValid());
+    QVERIFY(!buildReadOnlySemanticBindingCandidates(
+        u"embed-labs.product-api", project, evidence, catalog, changedAttestationEpoch));
+
+    Data::RuntimeResourceCatalog changedPackageEpoch = catalog;
+    ++changedPackageEpoch.epoch.configurationId;
+    Data::RuntimeSemanticMappingAttestation matchingChangedPackageEpoch
+        = factoryAttestation(changedPackageEpoch, evidence);
+    QVERIFY(matchingChangedPackageEpoch.isValid());
+    QVERIFY(!buildReadOnlySemanticBindingCandidates(
+        u"embed-labs.product-api",
+        project,
+        evidence,
+        changedPackageEpoch,
+        matchingChangedPackageEpoch));
+
+    const QDir v1Fixture(repositoryRoot.absoluteFilePath("build/vendor_api_036_handoff/api036"));
+    const QByteArray v1PackageBytes = readFile(
+        v1Fixture.absoluteFilePath("three-slave-output-transaction-cfg3501.ecpkg"));
+    const QByteArray v1ProjectBytes = readFile(v1Fixture.absoluteFilePath("project.json"));
+    if (v1PackageBytes.isEmpty() || v1ProjectBytes.isEmpty())
+        QSKIP("Transferred API-036 format-1 rejection fixture is not present");
+    const Utils::Result<VerifiedEcpkgPackage> v1Package
+        = verifyProductionEcpkg(v1PackageBytes, trust, v1ProjectBytes);
+    QVERIFY_RESULT(v1Package);
+    const Utils::Result<VerifiedRuntimePackageEvidence> v1Evidence = verifyRuntimePackageEvidence(
+        *v1Package);
+    QVERIFY_RESULT(v1Evidence);
+    QCOMPARE(v1Evidence->semanticMappingProof().formatVersion, quint16(1));
+    QVERIFY(!buildReadOnlySemanticBindingCandidates(
+        u"embed-labs.product-api", project, *v1Evidence, catalog, attestation));
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorPublishesVerifiedReadOnlyContext()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureRoot(repositoryRoot.absoluteFilePath(
+        "build/vendor_api_037_handoff/api037_handoff_569d39310549"));
+    const QByteArray packageBytes = readFile(
+        fixtureRoot.absoluteFilePath("artifacts/three-slave-manual-control-cfg3701.ecpkg"));
+    const QByteArray projectBytes = readFile(
+        fixtureRoot.absoluteFilePath("package_inputs/project.json"));
+    const QString keyFileName
+        = QStringLiteral(
+              "eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub");
+    const QByteArray publicKey = readFile(
+        fixtureRoot.absoluteFilePath(QStringLiteral("trust/") + keyFileName));
+    if (packageBytes.isEmpty() || projectBytes.isEmpty() || publicKey.isEmpty())
+        QSKIP("Transferred API-037 executor fixture is not present");
+
+    QTemporaryDir temporary(
+        systemTemporaryDirectoryTemplate(u"embed-labs-semantic-executor"));
+    QVERIFY(temporary.isValid());
+    const QString packageRoot = QDir(temporary.path()).filePath("packages");
+    const QString trustRoot = QDir(temporary.path()).filePath("trust");
+    const QString projectRoot = QDir(temporary.path()).filePath("projects");
+    QVERIFY(QDir().mkpath(trustRoot));
+    QVERIFY(writeFile(QDir(trustRoot).filePath(keyFileName), publicKey));
+
+    auto evidenceRepository = std::make_shared<RuntimePackageEvidenceRepository>(
+        packageRoot, trustRoot, projectRoot);
+    const Utils::Result<VerifiedRuntimePackageEvidence> imported
+        = evidenceRepository->import(packageBytes, projectBytes);
+    QVERIFY_RESULT(imported);
+
+    const Data::ProjectSnapshot project = factoryProject(*imported);
+    const Data::ControllerConnectionScope scope = projectScope(project);
+    const Data::RuntimeResourceCatalog catalog = factoryCatalog(project, *imported);
+    const Data::RuntimeSemanticMappingAttestation attestation
+        = factoryAttestation(catalog, *imported);
+    Data::RuntimeResourceSnapshot snapshot = factorySnapshot(catalog);
+
+    TestProjectService projects;
+    projects.addProject(project);
+    auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+
+    CountingControllerProvider provider("EtherCAT.SemanticRuntime.Tests.VerifiedReadOnly");
+    provider.publishSnapshot(connectedSnapshot(scope, catalog.sessionGeneration));
+    provider.publishCatalog(catalog);
+    provider.publishSemanticMappingAttestation(attestation);
+    provider.publishResourceSnapshot(snapshot);
+    provider.setAvailable(true);
+    RegisteredObject registration(&provider);
+
+    SemanticRuntimeExecutor executor(
+        &projects, registry, nullptr, evidenceRepository);
+    QCOMPARE(executor.contexts().size(), 1);
+    const Data::SemanticRuntimeContext initial = executor.contexts().constFirst();
+    QVERIFY(initial.complete);
+    QCOMPARE(
+        initial.bindingVerification.state,
+        Data::SemanticBindingVerificationState::Verified);
+    QCOMPARE(initial.mappingDigest, initial.controllerMappingDigest);
+    QCOMPARE(initial.signalStates.size(), qsizetype(56));
+    QVERIFY(initial.actionStates.isEmpty());
+    QVERIFY(std::all_of(
+        initial.signalStates.cbegin(),
+        initial.signalStates.cend(),
+        [](const Data::SemanticSignalRuntimeState &state) {
+            return state.availability == Data::SemanticSignalAvailability::Ready
+                   && state.snapshotComplete && state.captureCycle == 100
+                   && state.controllerTimestampNs == 1000 && state.value.has_value();
+        }));
+
+    snapshot.snapshotSequence = 2;
+    snapshot.captureCycle = 101;
+    snapshot.controllerTimestampNs = 1010;
+    for (Data::RuntimeResourceSample &sample : snapshot.samples)
+        sample.controllerTimestampNs = snapshot.controllerTimestampNs;
+    provider.publishResourceSnapshot(snapshot);
+
+    const Data::SemanticRuntimeContext refreshed = executor.contexts().constFirst();
+    QVERIFY(refreshed.complete);
+    QCOMPARE(refreshed.contextHash, initial.contextHash);
+    QVERIFY(std::all_of(
+        refreshed.signalStates.cbegin(),
+        refreshed.signalStates.cend(),
+        [](const Data::SemanticSignalRuntimeState &state) {
+            return state.availability == Data::SemanticSignalAvailability::Ready
+                   && state.captureCycle == 101 && state.controllerTimestampNs == 1010;
+        }));
+    QCOMPARE(provider.mutationCalls, 0);
 }
 
 void EtherCATSemanticRuntimeTests::testPublishesOneProductionService()

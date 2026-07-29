@@ -85,6 +85,14 @@ struct EcfgOutputGroupPolicy
     QList<quint64> resourceIds;
 };
 
+struct EcfgDcRecord
+{
+    quint16 stationAddress = 0;
+    quint16 assignActivate = 0;
+    quint32 sync0CycleNs = 0;
+    bool referenceClock = false;
+};
+
 struct EcfgConfiguration
 {
     quint16 formatMajor = 0;
@@ -96,6 +104,8 @@ struct EcfgConfiguration
     QByteArray capabilitySha256;
     QByteArray payloadSha256;
     QList<EcfgSectionDescriptor> sections;
+    quint32 cyclePeriodNs = 0;
+    QList<EcfgDcRecord> dcRecords;
     quint32 processInputBits = 0;
     quint32 processOutputBits = 0;
     quint64 catalogRevision = 0;

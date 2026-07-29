@@ -16,6 +16,12 @@ add_qtc_plugin(EtherCATSemanticRuntime
     ethercatsemanticruntimeplugin.cpp
     productiontruststore_p.cpp
     productiontruststore_p.h
+    readonlysemanticbindingfactory_p.cpp
+    readonlysemanticbindingfactory_p.h
+    runtimepackageevidence_p.cpp
+    runtimepackageevidence_p.h
+    runtimepackageevidencerepository_p.cpp
+    runtimepackageevidencerepository_p.h
     semanticbindingartifact_p.cpp
     semanticbindingartifact_p.h
     semanticruntimeexecutor.cpp

@@ -64,7 +64,8 @@ struct ETHERCATDATA_EXPORT RuntimeSemanticMappingProof
 
     bool isValid() const
     {
-        return formatVersion == 1 && bindingCount && packageSigned && signatureVerified
+        return (formatVersion == 1 || formatVersion == 2) && bindingCount && packageSigned
+               && signatureVerified
                && semanticBindingVerified
                && (trust == RuntimeSemanticMappingTrust::Production
                    || trust == RuntimeSemanticMappingTrust::Engineering)

@@ -18,16 +18,74 @@
 
 namespace EtherCAT::SemanticRuntime::Internal {
 
+bool isAcyclicSemanticComponentParentGraph(
+    const QList<VerifiedSemanticComponent> &components)
+{
+    QHash<QString, qsizetype> componentIndexes;
+    componentIndexes.reserve(components.size());
+    for (qsizetype index = 0; index < components.size(); ++index) {
+        const VerifiedSemanticComponent &component = components.at(index);
+        if (component.componentBindingId.isEmpty()
+            || componentIndexes.contains(component.componentBindingId)) {
+            return false;
+        }
+        componentIndexes.insert(component.componentBindingId, index);
+    }
+
+    for (qsizetype startIndex = 0; startIndex < components.size(); ++startIndex) {
+        QSet<qsizetype> path;
+        qsizetype currentIndex = startIndex;
+        while (currentIndex >= 0) {
+            if (path.contains(currentIndex))
+                return false;
+            path.insert(currentIndex);
+
+            const VerifiedSemanticComponent &component = components.at(currentIndex);
+            if (!component.parentComponentBindingId)
+                break;
+            const qsizetype parentIndex
+                = componentIndexes.value(*component.parentComponentBindingId, -1);
+            if (parentIndex < 0
+                || components.at(parentIndex).componentInstanceId
+                       != component.parentInstanceId) {
+                return false;
+            }
+            currentIndex = parentIndex;
+        }
+    }
+    return true;
+}
+
+bool isValidSemanticMaskedWaitCondition(quint64 mask, quint64 value, quint16 bitWidth)
+{
+    if (!mask || !bitWidth || bitWidth > 64 || (value & ~mask))
+        return false;
+    return bitWidth == 64 || ((mask | value) >> bitWidth) == 0;
+}
+
 namespace {
 
-constexpr quint32 semanticBindingFormatVersion = 1;
+constexpr quint32 semanticBindingFormatVersion1 = 1;
+constexpr quint32 semanticBindingFormatVersion2 = 2;
 constexpr quint32 maximumBindings = 8192;
 constexpr quint32 maximumTopologyInstances = 256;
+constexpr quint32 maximumDevices = 256;
+constexpr quint32 maximumComponentsPerDevice = 256;
+constexpr quint32 maximumActions = 4096;
+constexpr quint32 maximumActionBindings = 256;
+constexpr quint32 maximumActionParameters = 64;
+constexpr quint32 maximumActionGroups = 64;
+constexpr quint32 maximumActionSteps = 256;
+constexpr quint32 maximumActionAssignments = 64;
 constexpr qsizetype sha256Bytes = 32;
 
 struct ReportSemanticSymbol
 {
     QString semanticSignalId;
+    QString semanticSignalDefinitionId;
+    QString semanticBindingId;
+    QString projectDeviceId;
+    QString componentBindingId;
     quint64 resourceId = 0;
     quint64 componentInstanceId = 0;
     quint64 parentInstanceId = 0;
@@ -45,6 +103,12 @@ struct ReportSemanticSymbol
     quint16 position = 0;
     quint16 stationAddress = 0;
     quint32 slot = 0;
+    std::optional<QString> unit;
+    qint64 scaleNumerator = 1;
+    qint64 scaleDenominator = 1;
+    qint64 scaleOffset = 0;
+    bool safeValueDeclared = false;
+    std::optional<std::variant<qint64, quint64>> safeValue;
 };
 
 Utils::ResultError invalidArtifact(const QString &detail)
@@ -194,6 +258,87 @@ bool readString(
         return false;
     }
     *result = string;
+    return true;
+}
+
+bool readOptionalString(
+    const StrictJson &value,
+    qsizetype maximum,
+    const QString &path,
+    std::optional<QString> *result,
+    QString *error)
+{
+    if (value.is_null()) {
+        result->reset();
+        return true;
+    }
+    QString text;
+    if (!readString(value, 0, maximum, path, &text, error))
+        return false;
+    *result = std::move(text);
+    return true;
+}
+
+bool readSignedInteger(
+    const StrictJson &value, const QString &path, qint64 *result, QString *error)
+{
+    if (value.is_boolean() || !value.is_number_integer()) {
+        *error = QString::fromLatin1("%1 must be an integer").arg(path);
+        return false;
+    }
+    if (value.is_number_unsigned()) {
+        const quint64 number = value.get<StrictJson::number_unsigned_t>();
+        if (number > quint64(std::numeric_limits<qint64>::max())) {
+            *error = QString::fromLatin1("%1 is outside the supported signed 64-bit range")
+                         .arg(path);
+            return false;
+        }
+        *result = qint64(number);
+        return true;
+    }
+    *result = qint64(value.get<StrictJson::number_integer_t>());
+    return true;
+}
+
+bool readIntegerValue(
+    const StrictJson &value,
+    const QString &path,
+    std::variant<qint64, quint64> *result,
+    QString *error)
+{
+    if (value.is_boolean() || !value.is_number_integer()) {
+        *error = QString::fromLatin1("%1 must be an integer").arg(path);
+        return false;
+    }
+    if (value.is_number_unsigned()) {
+        *result = quint64(value.get<StrictJson::number_unsigned_t>());
+        return true;
+    }
+    const qint64 number = qint64(value.get<StrictJson::number_integer_t>());
+    if (number < 0)
+        *result = number;
+    else
+        *result = quint64(number);
+    return true;
+}
+
+bool readScale(
+    const StrictJson &value,
+    const QString &path,
+    qint64 *numerator,
+    qint64 *denominator,
+    qint64 *offset,
+    QString *error)
+{
+    if (!hasExactFields(value, path, {"numerator", "denominator", "offset"}, error)
+        || !readSignedInteger(value.at("numerator"), path + ".numerator", numerator, error)
+        || !readSignedInteger(value.at("denominator"), path + ".denominator", denominator, error)
+        || !*denominator
+        || !readSignedInteger(value.at("offset"), path + ".offset", offset, error)) {
+        if (error->isEmpty())
+            *error = path + QString::fromLatin1(".denominator must be nonzero");
+        return false;
+    }
     return true;
 }
 
@@ -389,6 +534,69 @@ bool readSource(
     return false;
 }
 
+bool primitiveIsSigned(EcfgResourcePrimitive primitive)
+{
+    return primitive == EcfgResourcePrimitive::S8 || primitive == EcfgResourcePrimitive::S16
+           || primitive == EcfgResourcePrimitive::S32 || primitive == EcfgResourcePrimitive::S64
+           || primitive == EcfgResourcePrimitive::Q32_32;
+}
+
+bool integerFits(
+    const std::variant<qint64, quint64> &value,
+    EcfgResourcePrimitive primitive,
+    quint16 bitWidth)
+{
+    if (!bitWidth || bitWidth > 128)
+        return false;
+    if (primitive == EcfgResourcePrimitive::Bool) {
+        return bitWidth == 1 && std::holds_alternative<quint64>(value)
+               && std::get<quint64>(value) <= 1;
+    }
+
+    if (primitiveIsSigned(primitive)) {
+        if (bitWidth > 64)
+            return false;
+        if (std::holds_alternative<quint64>(value)) {
+            const quint64 number = std::get<quint64>(value);
+            return bitWidth == 64 ? number <= quint64(std::numeric_limits<qint64>::max())
+                                  : number < (quint64(1) << (bitWidth - 1));
+        }
+        if (bitWidth == 64)
+            return true;
+        const qint64 number = std::get<qint64>(value);
+        const qint64 limit = qint64(1) << (bitWidth - 1);
+        return number >= -limit && number < limit;
+    }
+
+    if (std::holds_alternative<qint64>(value))
+        return false;
+    const quint64 number = std::get<quint64>(value);
+    return bitWidth >= 64 || number < (quint64(1) << bitWidth);
+}
+
+QByteArray integerLittleEndian(
+    const std::variant<qint64, quint64> &value, quint16 bitWidth)
+{
+    const qsizetype bytes = (bitWidth + 7) / 8;
+    QByteArray encoded(bytes, '\0');
+    const bool negative
+        = std::holds_alternative<qint64>(value) && std::get<qint64>(value) < 0;
+    quint64 low = std::holds_alternative<qint64>(value)
+                      ? quint64(std::get<qint64>(value))
+                      : std::get<quint64>(value);
+    for (qsizetype index = 0; index < bytes; ++index) {
+        if (index < 8)
+            encoded[index] = char(low >> (index * 8));
+        else
+            encoded[index] = negative ? char(0xff) : char(0);
+    }
+    if (bitWidth % 8) {
+        const quint8 mask = quint8((quint16(1) << (bitWidth % 8)) - 1);
+        encoded[bytes - 1] = char(quint8(encoded.at(bytes - 1)) & mask);
+    }
+    return encoded;
+}
+
 QByteArray sha256(QByteArrayView bytes)
 {
     return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
@@ -559,31 +767,61 @@ bool sameTopologyInstance(
 bool parseArtifactBinding(
     const StrictJson &value,
     const QString &path,
+    quint16 formatVersion,
     VerifiedSemanticBinding *result,
     QString *error)
 {
-    if (!hasExactFields(
-            value,
-            path,
-            {"semantic_signal_id",
-             "resource_id",
-             "component_instance_id",
-             "consistency_group_id",
-             "primitive",
-             "bit_width",
-             "direction",
-             "access",
-             "adapter_id",
-             "adapter_version",
-             "adapter_sha256",
-             "esi_sha256",
-             "canonical_symbol",
-             "position",
-             "station_address",
-             "slot"},
-            error)) {
+    const bool v2 = formatVersion == semanticBindingFormatVersion2;
+    const bool fieldsValid
+        = v2 ? hasExactFields(
+                   value,
+                   path,
+                   {"semantic_signal_definition_id",
+                    "semantic_binding_id",
+                    "project_device_id",
+                    "component_binding_id",
+                    "resource_id",
+                    "component_instance_id",
+                    "consistency_group_id",
+                    "primitive",
+                    "bit_width",
+                    "direction",
+                    "access",
+                    "unit",
+                    "scale",
+                    "safe_value_declared",
+                    "safe_value",
+                    "adapter_id",
+                    "adapter_version",
+                    "adapter_sha256",
+                    "esi_sha256",
+                    "canonical_symbol",
+                    "position",
+                    "station_address",
+                    "slot"},
+                   error)
+             : hasExactFields(
+                   value,
+                   path,
+                   {"semantic_signal_id",
+                    "resource_id",
+                    "component_instance_id",
+                    "consistency_group_id",
+                    "primitive",
+                    "bit_width",
+                    "direction",
+                    "access",
+                    "adapter_id",
+                    "adapter_version",
+                    "adapter_sha256",
+                    "esi_sha256",
+                    "canonical_symbol",
+                    "position",
+                    "station_address",
+                    "slot"},
+                   error);
+    if (!fieldsValid)
         return false;
-    }
 
     quint64 resourceId = 0;
     quint64 componentInstanceId = 0;
@@ -592,9 +830,10 @@ bool parseArtifactBinding(
     quint64 position = 0;
     quint64 stationAddress = 0;
     quint64 slot = 0;
+    const std::string_view identityField = v2 ? "semantic_binding_id" : "semantic_signal_id";
     if (!readSemanticSignalId(
-            value.at("semantic_signal_id"),
-            path + ".semantic_signal_id",
+            value.at(identityField),
+            fieldPath(path, identityField),
             &result->semanticSignalId,
             error)
         || !readFixedHex(value.at("resource_id"), 16, path + ".resource_id", &resourceId, error)
@@ -662,6 +901,66 @@ bool parseArtifactBinding(
             error)) {
         return false;
     }
+
+    if (v2) {
+        bool safeValueDeclared = false;
+        if (!readSemanticSignalId(
+                value.at("semantic_signal_definition_id"),
+                path + ".semantic_signal_definition_id",
+                &result->semanticSignalDefinitionId,
+                error)
+            || !readSemanticSignalId(
+                value.at("semantic_binding_id"),
+                path + ".semantic_binding_id",
+                &result->semanticBindingId,
+                error)
+            || result->semanticBindingId != result->semanticSignalId
+            || !readSemanticSignalId(
+                value.at("project_device_id"),
+                path + ".project_device_id",
+                &result->projectDeviceId,
+                error)
+            || !readSemanticSignalId(
+                value.at("component_binding_id"),
+                path + ".component_binding_id",
+                &result->componentBindingId,
+                error)
+            || !readOptionalString(value.at("unit"), 64, path + ".unit", &result->unit, error)
+            || !readScale(
+                value.at("scale"),
+                path + ".scale",
+                &result->scaleNumerator,
+                &result->scaleDenominator,
+                &result->scaleOffset,
+                error)
+            || !readBoolean(
+                value.at("safe_value_declared"),
+                path + ".safe_value_declared",
+                &safeValueDeclared,
+                error)) {
+            if (error->isEmpty())
+                *error = path + QString::fromLatin1(" contains inconsistent v2 identities");
+            return false;
+        }
+        result->safeValueDeclared = safeValueDeclared;
+        if (value.at("safe_value").is_null()) {
+            result->safeValue.reset();
+        } else {
+            std::variant<qint64, quint64> safeValue;
+            if (!readIntegerValue(value.at("safe_value"), path + ".safe_value", &safeValue, error))
+                return false;
+            result->safeValue = std::move(safeValue);
+        }
+        if (result->safeValueDeclared != result->safeValue.has_value()
+            || (result->safeValue
+                && !integerFits(*result->safeValue, result->primitive, quint16(bitWidth)))) {
+            *error = path
+                     + QString::fromLatin1(
+                         " has an inconsistent or out-of-range safe-value declaration");
+            return false;
+        }
+    }
+
     if (!resourceId || !componentInstanceId || !consistencyGroupId) {
         *error = QString::fromLatin1("%1 contains a zero runtime identity").arg(path);
         return false;
@@ -680,13 +979,16 @@ bool parseArtifactBinding(
 bool parseReportSemanticSymbol(
     const StrictJson &value,
     const QString &path,
+    quint16 formatVersion,
     ReportSemanticSymbol *result,
     QString *error)
 {
+    const bool v2 = formatVersion == semanticBindingFormatVersion2;
+    const std::string_view identityField = v2 ? "semantic_binding_id" : "semantic_signal_id";
     if (!hasFields(
             value,
             path,
-            {"semantic_signal_id",
+            {identityField,
              "resource_id",
              "component_instance_id",
              "parent_instance_id",
@@ -721,8 +1023,8 @@ bool parseReportSemanticSymbol(
     quint64 stationAddress = 0;
     quint64 slot = 0;
     if (!readSemanticSignalId(
-            value.at("semantic_signal_id"),
-            path + ".semantic_signal_id",
+            value.at(identityField),
+            fieldPath(path, identityField),
             &result->semanticSignalId,
             error)
         || !readUnsigned(
@@ -827,6 +1129,77 @@ bool parseReportSemanticSymbol(
     }
     Q_UNUSED(bindingFlags)
 
+    if (v2) {
+        bool safeValueDeclared = false;
+        if (!hasFields(
+                value,
+                path,
+                {"semantic_definition_id",
+                 "semantic_binding_id",
+                 "project_device_id",
+                 "component_binding_id",
+                 "unit",
+                 "scale",
+                 "safe_value_declared",
+                 "safe_value"},
+                error)
+            || !readSemanticSignalId(
+                value.at("semantic_definition_id"),
+                path + ".semantic_definition_id",
+                &result->semanticSignalDefinitionId,
+                error)
+            || !readSemanticSignalId(
+                value.at("semantic_binding_id"),
+                path + ".semantic_binding_id",
+                &result->semanticBindingId,
+                error)
+            || result->semanticBindingId != result->semanticSignalId
+            || !readSemanticSignalId(
+                value.at("project_device_id"),
+                path + ".project_device_id",
+                &result->projectDeviceId,
+                error)
+            || !readSemanticSignalId(
+                value.at("component_binding_id"),
+                path + ".component_binding_id",
+                &result->componentBindingId,
+                error)
+            || !readOptionalString(value.at("unit"), 64, path + ".unit", &result->unit, error)
+            || !readScale(
+                value.at("scale"),
+                path + ".scale",
+                &result->scaleNumerator,
+                &result->scaleDenominator,
+                &result->scaleOffset,
+                error)
+            || !readBoolean(
+                value.at("safe_value_declared"),
+                path + ".safe_value_declared",
+                &safeValueDeclared,
+                error)) {
+            if (error->isEmpty())
+                *error = path + QString::fromLatin1(" contains inconsistent v2 identities");
+            return false;
+        }
+        result->safeValueDeclared = safeValueDeclared;
+        if (value.at("safe_value").is_null()) {
+            result->safeValue.reset();
+        } else {
+            std::variant<qint64, quint64> safeValue;
+            if (!readIntegerValue(value.at("safe_value"), path + ".safe_value", &safeValue, error))
+                return false;
+            result->safeValue = std::move(safeValue);
+        }
+        if (result->safeValueDeclared != result->safeValue.has_value()
+            || (result->safeValue
+                && !integerFits(*result->safeValue, result->primitive, quint16(bitWidth)))) {
+            *error = path
+                     + QString::fromLatin1(
+                         " has an inconsistent or out-of-range safe-value declaration");
+            return false;
+        }
+    }
+
     result->resourceId = resourceId;
     result->componentInstanceId = componentInstanceId;
     result->parentInstanceId = parentInstanceId;
@@ -895,7 +1268,10 @@ bool validateReportEnvelope(
     const EcpkgContainer &container,
     const VerifiedSignedEcpkgManifest &manifest,
     const EcfgConfiguration &configuration,
+    quint16 *declaredFormatVersion,
     quint32 *declaredBindingCount,
+    quint32 *declaredDeviceCount,
+    quint32 *declaredActionCount,
     QString *error)
 {
     const QString root = QString::fromLatin1("$.compile_report");
@@ -932,15 +1308,15 @@ bool validateReportEnvelope(
     const StrictJson &request = report.at("semantic_binding_request");
     quint64 requestedFormat = 0;
     quint64 requestedCount = 0;
-    if (!hasExactFields(
+    if (!hasFields(
             request,
             root + ".semantic_binding_request",
             {"format_version", "binding_count"},
             error)
         || !readUnsigned(
             request.at("format_version"),
-            semanticBindingFormatVersion,
-            semanticBindingFormatVersion,
+            semanticBindingFormatVersion1,
+            semanticBindingFormatVersion2,
             root + ".semantic_binding_request.format_version",
             &requestedFormat,
             error)
@@ -953,8 +1329,61 @@ bool validateReportEnvelope(
             error)) {
         return false;
     }
-    Q_UNUSED(requestedFormat)
+    const bool format2 = requestedFormat == semanticBindingFormatVersion2;
+    if ((format2
+         && !hasExactFields(
+             request,
+             root + ".semantic_binding_request",
+             {"format_version", "binding_count", "device_count", "action_count"},
+             error))
+        || (!format2
+            && !hasExactFields(
+                request,
+                root + ".semantic_binding_request",
+                {"format_version", "binding_count"},
+                error))) {
+        return false;
+    }
+    quint64 requestedDeviceCount = 0;
+    quint64 requestedActionCount = 0;
+    if (format2
+        && (!readUnsigned(
+                request.at("device_count"),
+                1,
+                maximumDevices,
+                root + ".semantic_binding_request.device_count",
+                &requestedDeviceCount,
+                error)
+            || !readUnsigned(
+                request.at("action_count"),
+                1,
+                maximumActions,
+                root + ".semantic_binding_request.action_count",
+                &requestedActionCount,
+                error))) {
+        return false;
+    }
+    if (format2
+        && (!hasFields(
+                report,
+                root,
+                {"project_device_bindings", "semantic_action_plans"},
+                error)
+            || !report.at("project_device_bindings").is_array()
+            || report.at("project_device_bindings").size() != requestedDeviceCount
+            || !report.at("semantic_action_plans").is_array()
+            || report.at("semantic_action_plans").size() != requestedActionCount)) {
+        if (error->isEmpty()) {
+            *error = root
+                     + QString::fromLatin1(
+                         " v2 device/action evidence differs from the declared request");
+        }
+        return false;
+    }
+    *declaredFormatVersion = quint16(requestedFormat);
     *declaredBindingCount = quint32(requestedCount);
+    *declaredDeviceCount = quint32(requestedDeviceCount);
+    *declaredActionCount = quint32(requestedActionCount);
 
     const StrictJson &resourceTable = report.at("runtime_resource_table");
     bool enabled = false;
@@ -1194,6 +1623,7 @@ bool validateArtifactPackage(
 
 bool validateArtifactCatalog(
     const StrictJson &value,
+    quint16 semanticFormatVersion,
     const VerifiedSignedEcpkgManifest &manifest,
     const EcfgConfiguration &configuration,
     VerifiedSemanticBindingArtifact *result,
@@ -1255,7 +1685,7 @@ bool validateArtifactCatalog(
         || resourceCount != quint64(configuration.resources.size())
         || recordsSha != configuration.resourceRecordsSha256
         || sectionSha != configuration.resourceTableSectionSha256
-        || summary.formatVersion != semanticBindingFormatVersion
+        || summary.formatVersion != semanticFormatVersion
         || summary.bindingCount != resourceCount || summary.catalogRevision != catalogRevision
         || summary.topologyIdentity != topologyIdentity
         || summary.resourceRecordsSha256 != recordsSha
@@ -1410,6 +1840,7 @@ bool validateBindingAgainstEvidence(
     const ReportSemanticSymbol &symbol,
     const EcfgRuntimeResource &resource,
     const SemanticBindingTopologyInstance &instance,
+    quint16 formatVersion,
     const QString &path,
     QString *error)
 {
@@ -1435,6 +1866,28 @@ bool validateBindingAgainstEvidence(
         return false;
     }
 
+    if (formatVersion == semanticBindingFormatVersion2) {
+        if (binding->semanticSignalDefinitionId != symbol.semanticSignalDefinitionId
+            || binding->semanticBindingId != symbol.semanticBindingId
+            || binding->projectDeviceId != symbol.projectDeviceId
+            || binding->componentBindingId != symbol.componentBindingId
+            || binding->unit != symbol.unit
+            || binding->scaleNumerator != symbol.scaleNumerator
+            || binding->scaleDenominator != symbol.scaleDenominator
+            || binding->scaleOffset != symbol.scaleOffset
+            || binding->safeValueDeclared != symbol.safeValueDeclared
+            || binding->safeValue != symbol.safeValue
+            || binding->safeValueDeclared != (resource.safeValueBytes != 0)
+            || (binding->safeValue
+                && integerLittleEndian(*binding->safeValue, binding->bitWidth)
+                       != resource.safeValueLittleEndian)) {
+            *error = QString::fromLatin1(
+                         "%1 differs from the signed v2 project binding or safe-value evidence")
+                         .arg(path);
+            return false;
+        }
+    }
+
     binding->parentInstanceId = resource.parentInstanceId;
     binding->instanceOrdinal = resource.instanceOrdinal;
     binding->source = resource.source;
@@ -1450,6 +1903,7 @@ bool validateBindingAgainstEvidence(
 bool validateBindings(
     const StrictJson &artifactBindings,
     const StrictJson &reportSymbols,
+    quint16 formatVersion,
     quint32 declaredBindingCount,
     const EcfgConfiguration &configuration,
     VerifiedSemanticBindingArtifact *result,
@@ -1483,8 +1937,10 @@ bool validateBindings(
         ReportSemanticSymbol symbol;
         const QString path
             = arrayPath(QString::fromLatin1("$.compile_report.semantic_symbols"), index);
-        if (!parseReportSemanticSymbol(reportSymbols[index], path, &symbol, error))
+        if (!parseReportSemanticSymbol(
+                reportSymbols[index], path, formatVersion, &symbol, error)) {
             return false;
+        }
         const EcfgRuntimeResource *resource = resources.value(symbol.resourceId);
         if (!resource || symbols.contains(symbol.resourceId)
             || reportSemanticIds.contains(symbol.semanticSignalId)
@@ -1515,12 +1971,15 @@ bool validateBindings(
     bindings.reserve(qsizetype(artifactBindings.size()));
     QSet<QString> semanticIds;
     QSet<quint64> resourceIds;
+    QHash<QString, qsizetype> semanticDefinitionIndexes;
     QByteArray previousSemanticId;
     for (std::size_t index = 0; index < artifactBindings.size(); ++index) {
         VerifiedSemanticBinding binding;
         const QString path = arrayPath(artifactPath, index);
-        if (!parseArtifactBinding(artifactBindings[index], path, &binding, error))
+        if (!parseArtifactBinding(
+                artifactBindings[index], path, formatVersion, &binding, error)) {
             return false;
+        }
         const QByteArray semanticId = binding.semanticSignalId.toLatin1();
         if ((!previousSemanticId.isEmpty() && semanticId <= previousSemanticId)
             || semanticIds.contains(binding.semanticSignalId)
@@ -1545,8 +2004,40 @@ bool validateBindings(
             return false;
         }
         if (!validateBindingAgainstEvidence(
-                &binding, *symbolIterator, *resource, *instance, path, error)) {
+                &binding,
+                *symbolIterator,
+                *resource,
+                *instance,
+                formatVersion,
+                path,
+                error)) {
             return false;
+        }
+        if (formatVersion == semanticBindingFormatVersion2) {
+            const auto definitionIterator
+                = semanticDefinitionIndexes.constFind(binding.semanticSignalDefinitionId);
+            if (definitionIterator != semanticDefinitionIndexes.cend()) {
+                const VerifiedSemanticBinding &definition
+                    = bindings.at(*definitionIterator);
+                if (definition.primitive != binding.primitive
+                    || definition.bitWidth != binding.bitWidth
+                    || definition.direction != binding.direction
+                    || definition.access != binding.access || definition.unit != binding.unit
+                    || definition.scaleNumerator != binding.scaleNumerator
+                    || definition.scaleDenominator != binding.scaleDenominator
+                    || definition.scaleOffset != binding.scaleOffset
+                    || definition.safeValueDeclared != binding.safeValueDeclared
+                    || definition.safeValue != binding.safeValue) {
+                    *error = QString::fromLatin1(
+                                 "%1 reuses a semantic signal definition with changed "
+                                 "type, direction, access, unit, scale, or safe value")
+                                 .arg(path);
+                    return false;
+                }
+            } else {
+                semanticDefinitionIndexes.insert(
+                    binding.semanticSignalDefinitionId, bindings.size());
+            }
         }
         bindings.append(std::move(binding));
     }
@@ -1555,6 +2046,1412 @@ bool validateBindings(
         return false;
     }
     result->bindings = std::move(bindings);
+    return true;
+}
+
+std::string fixedHexString(quint64 value, qsizetype digits)
+{
+    return QString::fromLatin1("0x%1").arg(value, digits, 16, QLatin1Char('0')).toStdString();
+}
+
+bool normalizedReportDevices(
+    const StrictJson &reportDevices, StrictJson *expected, QString *error)
+{
+    const QString path = QString::fromLatin1("$.compile_report.project_device_bindings");
+    if (!reportDevices.is_array() || reportDevices.empty()
+        || reportDevices.size() > maximumDevices) {
+        *error = path + QString::fromLatin1(" must contain a bounded nonempty array");
+        return false;
+    }
+
+    *expected = StrictJson::array();
+    for (std::size_t index = 0; index < reportDevices.size(); ++index) {
+        const StrictJson &source = reportDevices[index];
+        const QString itemPath = arrayPath(path, index);
+        if (!hasFields(
+                source,
+                itemPath,
+                {"project_device_id",
+                 "adapter_id",
+                 "adapter_version",
+                 "adapter_sha256",
+                 "esi_sha256",
+                 "position",
+                 "station_address",
+                 "components"},
+                error)
+            || !source.at("components").is_array() || source.at("components").empty()
+            || source.at("components").size() > maximumComponentsPerDevice) {
+            if (error->isEmpty())
+                *error = itemPath + QString::fromLatin1(".components is invalid");
+            return false;
+        }
+        StrictJson target = StrictJson::object();
+        for (std::string_view field :
+             {"project_device_id",
+              "adapter_id",
+              "adapter_version",
+              "adapter_sha256",
+              "esi_sha256"}) {
+            target[field] = source.at(field);
+        }
+        target["components"] = StrictJson::array();
+        for (std::size_t componentIndex = 0;
+             componentIndex < source.at("components").size();
+             ++componentIndex) {
+            const StrictJson &component = source.at("components")[componentIndex];
+            const QString componentPath = arrayPath(itemPath + ".components", componentIndex);
+            if (!hasExactFields(
+                    component,
+                    componentPath,
+                    {"component_binding_id",
+                     "component_instance_id",
+                     "parent_component_binding_id",
+                     "parent_instance_id",
+                     "slot"},
+                    error)) {
+                return false;
+            }
+            quint64 componentInstanceId = 0;
+            quint64 parentInstanceId = 0;
+            if (!readUnsigned(
+                    component.at("component_instance_id"),
+                    1,
+                    std::numeric_limits<quint64>::max(),
+                    componentPath + ".component_instance_id",
+                    &componentInstanceId,
+                    error)
+                || !readUnsigned(
+                    component.at("parent_instance_id"),
+                    0,
+                    std::numeric_limits<quint64>::max(),
+                    componentPath + ".parent_instance_id",
+                    &parentInstanceId,
+                    error)) {
+                return false;
+            }
+            StrictJson normalized = component;
+            normalized["component_instance_id"] = fixedHexString(componentInstanceId, 16);
+            normalized["parent_instance_id"] = fixedHexString(parentInstanceId, 16);
+            target["components"].push_back(std::move(normalized));
+        }
+        std::sort(
+            target["components"].begin(),
+            target["components"].end(),
+            [](const StrictJson &left, const StrictJson &right) {
+                return left.at("component_binding_id").get_ref<const std::string &>()
+                       < right.at("component_binding_id").get_ref<const std::string &>();
+            });
+        expected->push_back(std::move(target));
+    }
+    std::sort(expected->begin(), expected->end(), [](const StrictJson &left, const StrictJson &right) {
+        return left.at("project_device_id").get_ref<const std::string &>()
+               < right.at("project_device_id").get_ref<const std::string &>();
+    });
+    return true;
+}
+
+bool normalizedReportActions(
+    const StrictJson &reportActions, StrictJson *expected, QString *error)
+{
+    const QString path = QString::fromLatin1("$.compile_report.semantic_action_plans");
+    if (!reportActions.is_array() || reportActions.empty()
+        || reportActions.size() > maximumActions) {
+        *error = path + QString::fromLatin1(" must contain a bounded nonempty array");
+        return false;
+    }
+    *expected = reportActions;
+    for (std::size_t index = 0; index < expected->size(); ++index) {
+        StrictJson &action = expected->at(index);
+        const QString actionPath = arrayPath(path, index);
+        if (!hasFields(
+                action,
+                actionPath,
+                {"action_binding_id",
+                 "consistency_groups",
+                 "required_bindings",
+                 "optional_bindings",
+                 "steps"},
+                error)
+            || !action.at("consistency_groups").is_array()
+            || !action.at("required_bindings").is_array()
+            || !action.at("optional_bindings").is_array() || !action.at("steps").is_array()) {
+            if (error->isEmpty())
+                *error = actionPath + QString::fromLatin1(" contains invalid action arrays");
+            return false;
+        }
+        for (std::size_t groupIndex = 0;
+             groupIndex < action.at("consistency_groups").size();
+             ++groupIndex) {
+            StrictJson &group = action["consistency_groups"][groupIndex];
+            quint64 groupId = 0;
+            if (!containsField(group, "consistency_group_id")
+                || !readUnsigned(
+                    group.at("consistency_group_id"),
+                    1,
+                    std::numeric_limits<quint32>::max(),
+                    arrayPath(actionPath + ".consistency_groups", groupIndex)
+                        + ".consistency_group_id",
+                    &groupId,
+                    error)) {
+                return false;
+            }
+            group["consistency_group_id"] = fixedHexString(groupId, 8);
+        }
+        for (std::string_view collectionName : {"required_bindings", "optional_bindings"}) {
+            StrictJson &collection = action[collectionName];
+            for (std::size_t bindingIndex = 0; bindingIndex < collection.size(); ++bindingIndex) {
+                StrictJson &binding = collection[bindingIndex];
+                const QString bindingPath = arrayPath(
+                    fieldPath(actionPath, collectionName), bindingIndex);
+                quint64 resourceId = 0;
+                quint64 groupId = 0;
+                if (!containsField(binding, "resource_id")
+                    || !containsField(binding, "consistency_group_id")
+                    || !readUnsigned(
+                        binding.at("resource_id"),
+                        1,
+                        std::numeric_limits<quint64>::max(),
+                        bindingPath + ".resource_id",
+                        &resourceId,
+                        error)
+                    || !readUnsigned(
+                        binding.at("consistency_group_id"),
+                        1,
+                        std::numeric_limits<quint32>::max(),
+                        bindingPath + ".consistency_group_id",
+                        &groupId,
+                        error)) {
+                    return false;
+                }
+                binding["resource_id"] = fixedHexString(resourceId, 16);
+                binding["consistency_group_id"] = fixedHexString(groupId, 8);
+            }
+        }
+        for (std::size_t stepIndex = 0; stepIndex < action.at("steps").size(); ++stepIndex) {
+            StrictJson &step = action["steps"][stepIndex];
+            const QString stepPath = arrayPath(actionPath + ".steps", stepIndex);
+            if (!containsField(step, "kind") || !step.at("kind").is_string())
+                return false;
+            if (step.at("kind").get_ref<const std::string &>() != "write_group")
+                continue;
+            quint64 groupId = 0;
+            if (!containsField(step, "consistency_group_id")
+                || !readUnsigned(
+                    step.at("consistency_group_id"),
+                    1,
+                    std::numeric_limits<quint32>::max(),
+                    stepPath + ".consistency_group_id",
+                    &groupId,
+                    error)) {
+                return false;
+            }
+            step["consistency_group_id"] = fixedHexString(groupId, 8);
+        }
+    }
+    std::sort(expected->begin(), expected->end(), [](const StrictJson &left, const StrictJson &right) {
+        return left.at("action_binding_id").get_ref<const std::string &>()
+               < right.at("action_binding_id").get_ref<const std::string &>();
+    });
+    return true;
+}
+
+const VerifiedSemanticComponent *findComponent(
+    const VerifiedSemanticDevice &device, QStringView componentBindingId)
+{
+    const auto iterator = std::lower_bound(
+        device.components.cbegin(),
+        device.components.cend(),
+        componentBindingId,
+        [](const VerifiedSemanticComponent &component, QStringView wanted) {
+            return QStringView(component.componentBindingId).compare(wanted) < 0;
+        });
+    return iterator != device.components.cend()
+                   && QStringView(iterator->componentBindingId) == componentBindingId
+               ? &*iterator
+               : nullptr;
+}
+
+bool validateDevices(
+    const StrictJson &artifactDevices,
+    const StrictJson &reportDevices,
+    quint32 declaredDeviceCount,
+    VerifiedSemanticBindingArtifact *result,
+    QString *error)
+{
+    const QString path = QString::fromLatin1("$.semantic_binding_manifest.devices");
+    StrictJson expected;
+    if (!normalizedReportDevices(reportDevices, &expected, error))
+        return false;
+    if (!artifactDevices.is_array() || artifactDevices != expected
+        || artifactDevices.size() != declaredDeviceCount) {
+        *error = path
+                 + QString::fromLatin1(
+                     " differs from the signed compile-report project-device bindings");
+        return false;
+    }
+
+    QList<VerifiedSemanticDevice> devices;
+    devices.reserve(qsizetype(artifactDevices.size()));
+    QSet<QString> deviceIds;
+    QSet<QString> componentIds;
+    QSet<quint64> componentInstanceIds;
+    QByteArray previousDeviceId;
+    for (std::size_t index = 0; index < artifactDevices.size(); ++index) {
+        const StrictJson &value = artifactDevices[index];
+        const QString itemPath = arrayPath(path, index);
+        if (!hasExactFields(
+                value,
+                itemPath,
+                {"project_device_id",
+                 "adapter_id",
+                 "adapter_version",
+                 "adapter_sha256",
+                 "esi_sha256",
+                 "components"},
+                error)
+            || !value.at("components").is_array() || value.at("components").empty()
+            || value.at("components").size() > maximumComponentsPerDevice) {
+            if (error->isEmpty())
+                *error = itemPath + QString::fromLatin1(".components is invalid");
+            return false;
+        }
+
+        VerifiedSemanticDevice device;
+        if (!readSemanticSignalId(
+                value.at("project_device_id"),
+                itemPath + ".project_device_id",
+                &device.projectDeviceId,
+                error)
+            || !readSemanticSignalId(
+                value.at("adapter_id"), itemPath + ".adapter_id", &device.adapterId, error)
+            || !readString(
+                value.at("adapter_version"),
+                1,
+                64,
+                itemPath + ".adapter_version",
+                &device.adapterVersion,
+                error)
+            || !readSha256(
+                value.at("adapter_sha256"),
+                itemPath + ".adapter_sha256",
+                &device.adapterSha256,
+                error)
+            || !readSha256(
+                value.at("esi_sha256"), itemPath + ".esi_sha256", &device.esiSha256, error)) {
+            return false;
+        }
+        const QByteArray canonicalDeviceId = device.projectDeviceId.toLatin1();
+        if ((!previousDeviceId.isEmpty() && canonicalDeviceId <= previousDeviceId)
+            || deviceIds.contains(device.projectDeviceId)) {
+            *error = itemPath
+                     + QString::fromLatin1(
+                         " is duplicate or not in canonical project-device order");
+            return false;
+        }
+        previousDeviceId = canonicalDeviceId;
+        deviceIds.insert(device.projectDeviceId);
+
+        QByteArray previousComponentId;
+        for (std::size_t componentIndex = 0;
+             componentIndex < value.at("components").size();
+             ++componentIndex) {
+            const StrictJson &componentValue = value.at("components")[componentIndex];
+            const QString componentPath = arrayPath(itemPath + ".components", componentIndex);
+            if (!hasExactFields(
+                    componentValue,
+                    componentPath,
+                    {"component_binding_id",
+                     "component_instance_id",
+                     "parent_component_binding_id",
+                     "parent_instance_id",
+                     "slot"},
+                    error)) {
+                return false;
+            }
+            VerifiedSemanticComponent component;
+            quint64 slot = 0;
+            if (!readSemanticSignalId(
+                    componentValue.at("component_binding_id"),
+                    componentPath + ".component_binding_id",
+                    &component.componentBindingId,
+                    error)
+                || !readFixedHex(
+                    componentValue.at("component_instance_id"),
+                    16,
+                    componentPath + ".component_instance_id",
+                    &component.componentInstanceId,
+                    error)
+                || !readFixedHex(
+                    componentValue.at("parent_instance_id"),
+                    16,
+                    componentPath + ".parent_instance_id",
+                    &component.parentInstanceId,
+                    error)
+                || !readUnsigned(
+                    componentValue.at("slot"),
+                    0,
+                    std::numeric_limits<quint32>::max(),
+                    componentPath + ".slot",
+                    &slot,
+                    error)) {
+                return false;
+            }
+            if (componentValue.at("parent_component_binding_id").is_null()) {
+                component.parentComponentBindingId.reset();
+            } else {
+                QString parentId;
+                if (!readSemanticSignalId(
+                        componentValue.at("parent_component_binding_id"),
+                        componentPath + ".parent_component_binding_id",
+                        &parentId,
+                        error)) {
+                    return false;
+                }
+                component.parentComponentBindingId = std::move(parentId);
+            }
+            component.slot = quint32(slot);
+            const QByteArray canonicalComponentId = component.componentBindingId.toLatin1();
+            if (!component.componentInstanceId
+                || (!previousComponentId.isEmpty()
+                    && canonicalComponentId <= previousComponentId)
+                || componentIds.contains(component.componentBindingId)
+                || componentInstanceIds.contains(component.componentInstanceId)
+                || component.parentComponentBindingId.has_value()
+                       != bool(component.parentInstanceId)
+                || (component.parentComponentBindingId
+                    && *component.parentComponentBindingId == component.componentBindingId)) {
+                *error = componentPath
+                         + QString::fromLatin1(
+                             " has duplicate, unordered, or inconsistent component identity");
+                return false;
+            }
+            previousComponentId = canonicalComponentId;
+            componentIds.insert(component.componentBindingId);
+            componentInstanceIds.insert(component.componentInstanceId);
+            device.components.append(std::move(component));
+        }
+        if (!isAcyclicSemanticComponentParentGraph(device.components)) {
+            *error = itemPath
+                     + QString::fromLatin1(
+                         ".components contains an unknown, mismatched, or cyclic parent graph");
+            return false;
+        }
+        devices.append(std::move(device));
+    }
+
+    for (std::size_t index = 0; index < reportDevices.size(); ++index) {
+        const StrictJson &reportDevice = reportDevices[index];
+        QString projectDeviceId;
+        quint64 position = 0;
+        quint64 stationAddress = 0;
+        const QString reportPath
+            = arrayPath(QString::fromLatin1("$.compile_report.project_device_bindings"), index);
+        if (!readSemanticSignalId(
+                reportDevice.at("project_device_id"),
+                reportPath + ".project_device_id",
+                &projectDeviceId,
+                error)
+            || !readUnsigned(
+                reportDevice.at("position"),
+                0,
+                std::numeric_limits<quint16>::max(),
+                reportPath + ".position",
+                &position,
+                error)
+            || !readUnsigned(
+                reportDevice.at("station_address"),
+                1,
+                std::numeric_limits<quint16>::max(),
+                reportPath + ".station_address",
+                &stationAddress,
+                error)) {
+            return false;
+        }
+        const auto deviceIterator = std::lower_bound(
+            devices.begin(),
+            devices.end(),
+            QStringView(projectDeviceId),
+            [](const VerifiedSemanticDevice &device, QStringView wanted) {
+                return QStringView(device.projectDeviceId).compare(wanted) < 0;
+            });
+        const SemanticBindingTopologyInstance *topology
+            = findTopologyInstance(result->topologyInstances, quint16(position));
+        if (deviceIterator == devices.end()
+            || deviceIterator->projectDeviceId != projectDeviceId || !topology
+            || topology->stationAddress != stationAddress
+            || topology->adapterId != deviceIterator->adapterId
+            || topology->adapterVersion != deviceIterator->adapterVersion
+            || topology->adapterSha256 != deviceIterator->adapterSha256
+            || topology->esiSha256 != deviceIterator->esiSha256) {
+            *error = path
+                     + QString::fromLatin1(
+                         " differs from the exact signed topology provenance");
+            return false;
+        }
+        deviceIterator->position = quint16(position);
+        deviceIterator->stationAddress = quint16(stationAddress);
+    }
+
+    result->devices = std::move(devices);
+    for (const VerifiedSemanticBinding &binding : std::as_const(result->bindings)) {
+        const auto deviceIterator = std::lower_bound(
+            result->devices.cbegin(),
+            result->devices.cend(),
+            QStringView(binding.projectDeviceId),
+            [](const VerifiedSemanticDevice &device, QStringView wanted) {
+                return QStringView(device.projectDeviceId).compare(wanted) < 0;
+            });
+        if (deviceIterator == result->devices.cend()
+            || deviceIterator->projectDeviceId != binding.projectDeviceId) {
+            *error = path + QString::fromLatin1(" does not own every semantic binding");
+            return false;
+        }
+        const VerifiedSemanticComponent *component
+            = findComponent(*deviceIterator, binding.componentBindingId);
+        if (!component || component->componentInstanceId != binding.componentInstanceId
+            || component->slot != binding.slot
+            || deviceIterator->position != binding.position
+            || deviceIterator->stationAddress != binding.stationAddress
+            || deviceIterator->adapterId != binding.adapterId
+            || deviceIterator->adapterVersion != binding.adapterVersion
+            || deviceIterator->adapterSha256 != binding.adapterSha256
+            || deviceIterator->esiSha256 != binding.esiSha256) {
+            *error = path
+                     + QString::fromLatin1(
+                         " has a component or device identity inconsistent with a binding");
+            return false;
+        }
+    }
+    return true;
+}
+
+const VerifiedSemanticBinding *findBinding(
+    const VerifiedSemanticBindingArtifact &artifact, QStringView semanticBindingId)
+{
+    const auto iterator = std::lower_bound(
+        artifact.bindings.cbegin(),
+        artifact.bindings.cend(),
+        semanticBindingId,
+        [](const VerifiedSemanticBinding &binding, QStringView wanted) {
+            return QStringView(binding.semanticSignalId).compare(wanted) < 0;
+        });
+    return iterator != artifact.bindings.cend()
+                   && QStringView(iterator->semanticSignalId) == semanticBindingId
+               ? &*iterator
+               : nullptr;
+}
+
+bool parseActionBindingReference(
+    const StrictJson &value,
+    const QString &path,
+    const VerifiedSemanticBindingArtifact &artifact,
+    VerifiedSemanticActionBindingReference *result,
+    QString *error)
+{
+    if (!hasExactFields(
+            value,
+            path,
+            {"semantic_signal_definition_id",
+             "semantic_binding_id",
+             "resource_id",
+             "component_binding_id",
+             "consistency_group_id",
+             "primitive",
+             "bit_width",
+             "direction",
+             "access",
+             "unit",
+             "scale"},
+            error)) {
+        return false;
+    }
+    quint64 bitWidth = 0;
+    quint64 groupId = 0;
+    if (!readSemanticSignalId(
+            value.at("semantic_signal_definition_id"),
+            path + ".semantic_signal_definition_id",
+            &result->semanticSignalDefinitionId,
+            error)
+        || !readSemanticSignalId(
+            value.at("semantic_binding_id"),
+            path + ".semantic_binding_id",
+            &result->semanticBindingId,
+            error)
+        || !readFixedHex(
+            value.at("resource_id"), 16, path + ".resource_id", &result->resourceId, error)
+        || !readSemanticSignalId(
+            value.at("component_binding_id"),
+            path + ".component_binding_id",
+            &result->componentBindingId,
+            error)
+        || !readFixedHex(
+            value.at("consistency_group_id"),
+            8,
+            path + ".consistency_group_id",
+            &groupId,
+            error)
+        || !readPrimitive(value.at("primitive"), path + ".primitive", &result->primitive, error)
+        || !readUnsigned(
+            value.at("bit_width"), 1, 128, path + ".bit_width", &bitWidth, error)
+        || !readDirection(value.at("direction"), path + ".direction", &result->direction, error)
+        || !readAccess(value.at("access"), path + ".access", &result->access, error)
+        || !readOptionalString(value.at("unit"), 64, path + ".unit", &result->unit, error)
+        || !readScale(
+            value.at("scale"),
+            path + ".scale",
+            &result->scaleNumerator,
+            &result->scaleDenominator,
+            &result->scaleOffset,
+            error)) {
+        return false;
+    }
+    result->consistencyGroupId = quint32(groupId);
+    result->bitWidth = quint16(bitWidth);
+    const VerifiedSemanticBinding *binding = findBinding(artifact, result->semanticBindingId);
+    if (!result->resourceId || !result->consistencyGroupId || !binding
+        || binding->semanticSignalDefinitionId != result->semanticSignalDefinitionId
+        || binding->resourceId != result->resourceId
+        || binding->componentBindingId != result->componentBindingId
+        || binding->consistencyGroupId != result->consistencyGroupId
+        || binding->primitive != result->primitive || binding->bitWidth != result->bitWidth
+        || binding->direction != result->direction || binding->access != result->access
+        || binding->unit != result->unit || binding->scaleNumerator != result->scaleNumerator
+        || binding->scaleDenominator != result->scaleDenominator
+        || binding->scaleOffset != result->scaleOffset) {
+        *error = path
+                 + QString::fromLatin1(
+                     " differs from the exact signed project binding descriptor");
+        return false;
+    }
+    return true;
+}
+
+bool validateActionBindingCollection(
+    const StrictJson &collection,
+    const QString &path,
+    bool required,
+    const VerifiedSemanticBindingArtifact &artifact,
+    QList<VerifiedSemanticActionBindingReference> *result,
+    QString *error)
+{
+    if (!collection.is_array() || (required && collection.empty())
+        || collection.size() > maximumActionBindings) {
+        *error = path + QString::fromLatin1(" has an invalid binding count");
+        return false;
+    }
+    QByteArray previousId;
+    QSet<QString> ids;
+    for (std::size_t index = 0; index < collection.size(); ++index) {
+        VerifiedSemanticActionBindingReference binding;
+        const QString itemPath = arrayPath(path, index);
+        if (!parseActionBindingReference(collection[index], itemPath, artifact, &binding, error))
+            return false;
+        const QByteArray canonicalId = binding.semanticBindingId.toLatin1();
+        if ((!previousId.isEmpty() && canonicalId <= previousId)
+            || ids.contains(binding.semanticBindingId)) {
+            *error = itemPath
+                     + QString::fromLatin1(
+                         " is duplicate or not in canonical SemanticBindingId order");
+            return false;
+        }
+        previousId = canonicalId;
+        ids.insert(binding.semanticBindingId);
+        result->append(std::move(binding));
+    }
+    return true;
+}
+
+const EcfgOutputGroupPolicy *findOutputPolicy(
+    const EcfgConfiguration &configuration, quint32 groupId)
+{
+    const auto iterator = std::lower_bound(
+        configuration.outputPolicies.cbegin(),
+        configuration.outputPolicies.cend(),
+        groupId,
+        [](const EcfgOutputGroupPolicy &policy, quint32 wanted) {
+            return policy.consistencyGroupId < wanted;
+        });
+    return iterator != configuration.outputPolicies.cend()
+                   && iterator->consistencyGroupId == groupId
+               ? &*iterator
+               : nullptr;
+}
+
+bool validateActionParameters(
+    const StrictJson &parameters,
+    const QString &path,
+    QList<VerifiedSemanticActionParameter> *result,
+    QString *error)
+{
+    if (!parameters.is_array() || parameters.size() > maximumActionParameters) {
+        *error = path + QString::fromLatin1(" has an invalid parameter count");
+        return false;
+    }
+    QSet<QString> parameterIds;
+    for (std::size_t index = 0; index < parameters.size(); ++index) {
+        const StrictJson &value = parameters[index];
+        const QString itemPath = arrayPath(path, index);
+        if (!hasExactFields(
+                value,
+                itemPath,
+                {"parameter_id", "primitive", "unit", "minimum", "maximum"},
+                error)) {
+            return false;
+        }
+        VerifiedSemanticActionParameter parameter;
+        if (!readSemanticSignalId(
+                value.at("parameter_id"),
+                itemPath + ".parameter_id",
+                &parameter.parameterId,
+                error)
+            || !readPrimitive(
+                value.at("primitive"), itemPath + ".primitive", &parameter.primitive, error)
+            || !readOptionalString(
+                value.at("unit"), 64, itemPath + ".unit", &parameter.unit, error)
+            || !readSignedInteger(
+                value.at("minimum"), itemPath + ".minimum", &parameter.minimum, error)
+            || !readSignedInteger(
+                value.at("maximum"), itemPath + ".maximum", &parameter.maximum, error)
+            || parameter.minimum > parameter.maximum
+            || parameterIds.contains(parameter.parameterId)) {
+            if (error->isEmpty())
+                *error = itemPath + QString::fromLatin1(" is duplicate or has invalid bounds");
+            return false;
+        }
+        parameterIds.insert(parameter.parameterId);
+        result->append(std::move(parameter));
+    }
+    return true;
+}
+
+bool validateActionGroups(
+    const StrictJson &groups,
+    const QString &path,
+    const EcfgConfiguration &configuration,
+    QList<VerifiedSemanticActionGroup> *result,
+    QString *error)
+{
+    if (!groups.is_array() || groups.empty() || groups.size() > maximumActionGroups) {
+        *error = path + QString::fromLatin1(" has an invalid consistency-group count");
+        return false;
+    }
+    QSet<quint32> ids;
+    for (std::size_t index = 0; index < groups.size(); ++index) {
+        const StrictJson &value = groups[index];
+        const QString itemPath = arrayPath(path, index);
+        if (!hasExactFields(
+                value,
+                itemPath,
+                {"consistency_group_id", "recovery_policy", "max_ttl_cycles"},
+                error)) {
+            return false;
+        }
+        VerifiedSemanticActionGroup group;
+        quint64 groupId = 0;
+        quint64 maximumTtl = 0;
+        if (!readFixedHex(
+                value.at("consistency_group_id"),
+                8,
+                itemPath + ".consistency_group_id",
+                &groupId,
+                error)
+            || !readUnsigned(
+                value.at("max_ttl_cycles"),
+                1,
+                std::numeric_limits<quint32>::max(),
+                itemPath + ".max_ttl_cycles",
+                &maximumTtl,
+                error)
+            || !value.at("recovery_policy").is_string()) {
+            return false;
+        }
+        const std::string &recovery = value.at("recovery_policy").get_ref<const std::string &>();
+        if (recovery == "hold_safe")
+            group.recoveryPolicy = EcfgOutputRecoveryPolicy::HoldSafe;
+        else if (recovery == "task_output")
+            group.recoveryPolicy = EcfgOutputRecoveryPolicy::ReturnTask;
+        else {
+            *error = itemPath + QString::fromLatin1(".recovery_policy is unsupported");
+            return false;
+        }
+        group.consistencyGroupId = quint32(groupId);
+        group.maximumTtlCycles = quint32(maximumTtl);
+        const EcfgOutputGroupPolicy *policy
+            = findOutputPolicy(configuration, group.consistencyGroupId);
+        if (!group.consistencyGroupId || ids.contains(group.consistencyGroupId) || !policy
+            || policy->recoveryPolicy != group.recoveryPolicy
+            || policy->maximumTtlCycles != group.maximumTtlCycles) {
+            *error = itemPath
+                     + QString::fromLatin1(
+                         " differs from the signed ECFG output-group policy");
+            return false;
+        }
+        ids.insert(group.consistencyGroupId);
+        result->append(std::move(group));
+    }
+    return true;
+}
+
+const VerifiedSemanticActionParameter *findParameter(
+    const VerifiedSemanticAction &action, QStringView parameterId)
+{
+    const auto iterator = std::find_if(
+        action.parameters.cbegin(),
+        action.parameters.cend(),
+        [parameterId](const VerifiedSemanticActionParameter &parameter) {
+            return QStringView(parameter.parameterId) == parameterId;
+        });
+    return iterator == action.parameters.cend() ? nullptr : &*iterator;
+}
+
+bool parseActionAssignment(
+    const StrictJson &value,
+    const QString &path,
+    const VerifiedSemanticBindingArtifact &artifact,
+    const VerifiedSemanticAction &action,
+    VerifiedSemanticActionAssignment *result,
+    QString *error)
+{
+    if (!hasExactFields(value, path, {"semantic_binding_id", "value_source"}, error)
+        || !readSemanticSignalId(
+            value.at("semantic_binding_id"),
+            path + ".semantic_binding_id",
+            &result->semanticBindingId,
+            error)) {
+        return false;
+    }
+    const VerifiedSemanticBinding *binding = findBinding(artifact, result->semanticBindingId);
+    if (!binding || binding->direction != EcfgResourceDirection::Output
+        || binding->access != EcfgResourceAccess::ReadWrite || !binding->safeValueDeclared) {
+        *error = path + QString::fromLatin1(" does not target a writable safe output");
+        return false;
+    }
+    const StrictJson &source = value.at("value_source");
+    if (!hasFields(source, path + ".value_source", {"kind"}, error)
+        || !source.at("kind").is_string()) {
+        return false;
+    }
+    const std::string &kind = source.at("kind").get_ref<const std::string &>();
+    if (kind == "constant") {
+        if (!hasExactFields(source, path + ".value_source", {"kind", "value"}, error))
+            return false;
+        std::variant<qint64, quint64> constant;
+        if (!readIntegerValue(
+                source.at("value"), path + ".value_source.value", &constant, error)
+            || !integerFits(constant, binding->primitive, binding->bitWidth)) {
+            if (error->isEmpty())
+                *error = path + QString::fromLatin1(".value_source.value is out of range");
+            return false;
+        }
+        result->constantValue = std::move(constant);
+    } else if (kind == "parameter") {
+        if (!hasExactFields(source, path + ".value_source", {"kind", "parameter_id"}, error)) {
+            return false;
+        }
+        QString parameterId;
+        if (!readSemanticSignalId(
+                source.at("parameter_id"),
+                path + ".value_source.parameter_id",
+                &parameterId,
+                error)) {
+            return false;
+        }
+        const VerifiedSemanticActionParameter *parameter = findParameter(action, parameterId);
+        const std::variant<qint64, quint64> minimumValue
+            = parameter && parameter->minimum < 0
+                  ? std::variant<qint64, quint64>{parameter->minimum}
+                  : std::variant<qint64, quint64>{
+                      quint64(parameter ? parameter->minimum : 0)};
+        const std::variant<qint64, quint64> maximumValue
+            = parameter && parameter->maximum < 0
+                  ? std::variant<qint64, quint64>{parameter->maximum}
+                  : std::variant<qint64, quint64>{
+                      quint64(parameter ? parameter->maximum : 0)};
+        if (!parameter || parameter->primitive != binding->primitive
+            || parameter->unit != binding->unit
+            || !integerFits(minimumValue, binding->primitive, binding->bitWidth)
+            || !integerFits(maximumValue, binding->primitive, binding->bitWidth)) {
+            *error = path
+                     + QString::fromLatin1(
+                         " references a missing or type-incompatible parameter");
+            return false;
+        }
+        result->parameterId = std::move(parameterId);
+    } else {
+        *error = path + QString::fromLatin1(".value_source.kind is unsupported");
+        return false;
+    }
+    return true;
+}
+
+bool validateActionSteps(
+    const StrictJson &steps,
+    const QString &path,
+    const EcfgConfiguration &configuration,
+    const VerifiedSemanticBindingArtifact &artifact,
+    VerifiedSemanticAction *action,
+    QString *error)
+{
+    if (!steps.is_array() || steps.empty() || steps.size() > maximumActionSteps) {
+        *error = path + QString::fromLatin1(" has an invalid step count");
+        return false;
+    }
+    QSet<quint32> declaredGroups;
+    for (const VerifiedSemanticActionGroup &group : std::as_const(action->consistencyGroups))
+        declaredGroups.insert(group.consistencyGroupId);
+    QSet<quint32> usedGroups;
+    for (std::size_t index = 0; index < steps.size(); ++index) {
+        const StrictJson &value = steps[index];
+        const QString itemPath = arrayPath(path, index);
+        if (!hasFields(value, itemPath, {"kind"}, error) || !value.at("kind").is_string())
+            return false;
+        const std::string &kind = value.at("kind").get_ref<const std::string &>();
+        VerifiedSemanticActionStep step;
+        if (kind == "write_group") {
+            if (!hasExactFields(
+                    value,
+                    itemPath,
+                    {"kind", "consistency_group_id", "assignments"},
+                    error)
+                || !value.at("assignments").is_array() || value.at("assignments").empty()
+                || value.at("assignments").size() > maximumActionAssignments) {
+                if (error->isEmpty())
+                    *error = itemPath + QString::fromLatin1(".assignments is invalid");
+                return false;
+            }
+            quint64 groupId = 0;
+            if (!readFixedHex(
+                    value.at("consistency_group_id"),
+                    8,
+                    itemPath + ".consistency_group_id",
+                    &groupId,
+                    error)) {
+                return false;
+            }
+            step.kind = VerifiedSemanticActionStepKind::WriteGroup;
+            step.consistencyGroupId = quint32(groupId);
+            const EcfgOutputGroupPolicy *policy
+                = findOutputPolicy(configuration, step.consistencyGroupId);
+            if (!declaredGroups.contains(step.consistencyGroupId) || !policy) {
+                *error = itemPath
+                         + QString::fromLatin1(
+                             " references an undeclared output consistency group");
+                return false;
+            }
+            usedGroups.insert(step.consistencyGroupId);
+            QSet<QString> assignmentIds;
+            QSet<quint64> assignedResources;
+            QByteArray previousId;
+            for (std::size_t assignmentIndex = 0;
+                 assignmentIndex < value.at("assignments").size();
+                 ++assignmentIndex) {
+                VerifiedSemanticActionAssignment assignment;
+                const QString assignmentPath
+                    = arrayPath(itemPath + ".assignments", assignmentIndex);
+                if (!parseActionAssignment(
+                        value.at("assignments")[assignmentIndex],
+                        assignmentPath,
+                        artifact,
+                        *action,
+                        &assignment,
+                        error)) {
+                    return false;
+                }
+                const QByteArray canonicalId = assignment.semanticBindingId.toLatin1();
+                const VerifiedSemanticBinding *binding
+                    = findBinding(artifact, assignment.semanticBindingId);
+                const bool isRequired = std::any_of(
+                    action->requiredBindings.cbegin(),
+                    action->requiredBindings.cend(),
+                    [&assignment](const VerifiedSemanticActionBindingReference &reference) {
+                        return reference.semanticBindingId == assignment.semanticBindingId;
+                    });
+                if ((!previousId.isEmpty() && canonicalId <= previousId)
+                    || assignmentIds.contains(assignment.semanticBindingId) || !binding
+                    || !isRequired
+                    || binding->consistencyGroupId != step.consistencyGroupId) {
+                    *error = assignmentPath
+                             + QString::fromLatin1(
+                                 " is duplicate, unordered, or outside the complete group");
+                    return false;
+                }
+                previousId = canonicalId;
+                assignmentIds.insert(assignment.semanticBindingId);
+                assignedResources.insert(binding->resourceId);
+                step.assignments.append(std::move(assignment));
+            }
+            QSet<quint64> policyResources(
+                policy->resourceIds.cbegin(), policy->resourceIds.cend());
+            if (assignedResources != policyResources
+                || assignedResources.size() != policy->resourceCount) {
+                *error = itemPath
+                         + QString::fromLatin1(
+                             " does not assign the complete signed output group");
+                return false;
+            }
+        } else if (kind == "wait_masked") {
+            if (!hasExactFields(
+                    value,
+                    itemPath,
+                    {"kind", "semantic_binding_id", "mask", "value", "timeout_cycles"},
+                    error)) {
+                return false;
+            }
+            quint64 timeoutCycles = 0;
+            if (!readSemanticSignalId(
+                    value.at("semantic_binding_id"),
+                    itemPath + ".semantic_binding_id",
+                    &step.semanticBindingId,
+                    error)
+                || !readUnsigned(
+                    value.at("mask"),
+                    0,
+                    std::numeric_limits<quint64>::max(),
+                    itemPath + ".mask",
+                    &step.mask,
+                    error)
+                || !readUnsigned(
+                    value.at("value"),
+                    0,
+                    std::numeric_limits<quint64>::max(),
+                    itemPath + ".value",
+                    &step.value,
+                    error)
+                || !readUnsigned(
+                    value.at("timeout_cycles"),
+                    1,
+                    std::numeric_limits<quint32>::max(),
+                    itemPath + ".timeout_cycles",
+                    &timeoutCycles,
+                    error)) {
+                return false;
+            }
+            step.kind = VerifiedSemanticActionStepKind::WaitMasked;
+            step.timeoutCycles = quint32(timeoutCycles);
+            const VerifiedSemanticBinding *binding
+                = findBinding(artifact, step.semanticBindingId);
+            const bool actionKnowsBinding = std::any_of(
+                    action->requiredBindings.cbegin(),
+                    action->requiredBindings.cend(),
+                    [&step](const VerifiedSemanticActionBindingReference &reference) {
+                        return reference.semanticBindingId == step.semanticBindingId;
+                    })
+                || std::any_of(
+                    action->optionalBindings.cbegin(),
+                    action->optionalBindings.cend(),
+                    [&step](const VerifiedSemanticActionBindingReference &reference) {
+                        return reference.semanticBindingId == step.semanticBindingId;
+                    });
+            if (!binding || !actionKnowsBinding
+                || binding->direction != EcfgResourceDirection::Input
+                || binding->access != EcfgResourceAccess::Read || binding->bitWidth > 64
+                || !isValidSemanticMaskedWaitCondition(
+                    step.mask, step.value, binding->bitWidth)) {
+                *error = itemPath
+                         + QString::fromLatin1(
+                             " has an invalid or unbound masked wait condition");
+                return false;
+            }
+        } else if (kind == "wait_absolute_limit") {
+            if (!hasExactFields(
+                    value,
+                    itemPath,
+                    {"kind", "semantic_binding_id", "limit", "timeout_cycles"},
+                    error)) {
+                return false;
+            }
+            quint64 timeoutCycles = 0;
+            if (!readSemanticSignalId(
+                    value.at("semantic_binding_id"),
+                    itemPath + ".semantic_binding_id",
+                    &step.semanticBindingId,
+                    error)
+                || !readUnsigned(
+                    value.at("limit"),
+                    0,
+                    std::numeric_limits<quint64>::max(),
+                    itemPath + ".limit",
+                    &step.absoluteLimit,
+                    error)
+                || !readUnsigned(
+                    value.at("timeout_cycles"),
+                    1,
+                    std::numeric_limits<quint32>::max(),
+                    itemPath + ".timeout_cycles",
+                    &timeoutCycles,
+                    error)) {
+                return false;
+            }
+            step.kind = VerifiedSemanticActionStepKind::WaitAbsoluteLimit;
+            step.timeoutCycles = quint32(timeoutCycles);
+            const VerifiedSemanticBinding *binding
+                = findBinding(artifact, step.semanticBindingId);
+            const bool actionKnowsBinding = std::any_of(
+                    action->requiredBindings.cbegin(),
+                    action->requiredBindings.cend(),
+                    [&step](const VerifiedSemanticActionBindingReference &reference) {
+                        return reference.semanticBindingId == step.semanticBindingId;
+                    })
+                || std::any_of(
+                    action->optionalBindings.cbegin(),
+                    action->optionalBindings.cend(),
+                    [&step](const VerifiedSemanticActionBindingReference &reference) {
+                        return reference.semanticBindingId == step.semanticBindingId;
+                    });
+            if (!binding || !actionKnowsBinding
+                || binding->direction != EcfgResourceDirection::Input
+                || binding->access != EcfgResourceAccess::Read
+                || !primitiveIsSigned(binding->primitive) || binding->bitWidth > 64) {
+                *error = itemPath
+                         + QString::fromLatin1(
+                             " has an invalid or unbound absolute-limit wait condition");
+                return false;
+            }
+        } else {
+            *error = itemPath + QString::fromLatin1(".kind is unsupported");
+            return false;
+        }
+        action->steps.append(std::move(step));
+    }
+    if (usedGroups != declaredGroups) {
+        *error = path
+                 + QString::fromLatin1(
+                     " does not use every declared consistency group in a write step");
+        return false;
+    }
+    return true;
+}
+
+bool validateActions(
+    const StrictJson &artifactActions,
+    const StrictJson &reportActions,
+    quint32 declaredActionCount,
+    const EcfgConfiguration &configuration,
+    VerifiedSemanticBindingArtifact *result,
+    QString *error)
+{
+    const QString path = QString::fromLatin1("$.semantic_binding_manifest.actions");
+    StrictJson expected;
+    if (!normalizedReportActions(reportActions, &expected, error))
+        return false;
+    if (!artifactActions.is_array() || artifactActions != expected
+        || artifactActions.size() != declaredActionCount) {
+        *error = path
+                 + QString::fromLatin1(
+                     " differs from the signed compile-report semantic action plans");
+        return false;
+    }
+
+    QSet<QString> actionBindingIds;
+    QHash<QString, QByteArray> definitionDigests;
+    QByteArray previousActionBindingId;
+    QList<VerifiedSemanticAction> actions;
+    actions.reserve(qsizetype(artifactActions.size()));
+    for (std::size_t index = 0; index < artifactActions.size(); ++index) {
+        const StrictJson &value = artifactActions[index];
+        const QString itemPath = arrayPath(path, index);
+        if (!hasExactFields(
+                value,
+                itemPath,
+                {"action_definition_id",
+                 "action_definition_sha256",
+                 "action_binding_id",
+                 "project_device_id",
+                 "component_binding_ids",
+                 "adapter_action_key",
+                 "enabled",
+                 "qualification",
+                 "disabled_reason",
+                 "dc_required",
+                 "adapter_id",
+                 "adapter_version",
+                 "adapter_sha256",
+                 "esi_sha256",
+                 "required_bindings",
+                 "optional_bindings",
+                 "parameters",
+                 "consistency_groups",
+                 "steps"},
+                error)) {
+            return false;
+        }
+        VerifiedSemanticAction action;
+        bool enabled = false;
+        bool dcRequired = false;
+        if (!readSemanticSignalId(
+                value.at("action_definition_id"),
+                itemPath + ".action_definition_id",
+                &action.actionDefinitionId,
+                error)
+            || !readSha256(
+                value.at("action_definition_sha256"),
+                itemPath + ".action_definition_sha256",
+                &action.actionDefinitionSha256,
+                error)
+            || !readSemanticSignalId(
+                value.at("action_binding_id"),
+                itemPath + ".action_binding_id",
+                &action.actionBindingId,
+                error)
+            || !readSemanticSignalId(
+                value.at("project_device_id"),
+                itemPath + ".project_device_id",
+                &action.projectDeviceId,
+                error)
+            || !readSemanticSignalId(
+                value.at("adapter_action_key"),
+                itemPath + ".adapter_action_key",
+                &action.adapterActionKey,
+                error)
+            || !readBoolean(value.at("enabled"), itemPath + ".enabled", &enabled, error)
+            || !readBoolean(
+                value.at("dc_required"), itemPath + ".dc_required", &dcRequired, error)
+            || !readSemanticSignalId(
+                value.at("adapter_id"), itemPath + ".adapter_id", &action.adapterId, error)
+            || !readString(
+                value.at("adapter_version"),
+                1,
+                64,
+                itemPath + ".adapter_version",
+                &action.adapterVersion,
+                error)
+            || !readSha256(
+                value.at("adapter_sha256"),
+                itemPath + ".adapter_sha256",
+                &action.adapterSha256,
+                error)
+            || !readSha256(
+                value.at("esi_sha256"), itemPath + ".esi_sha256", &action.esiSha256, error)) {
+            return false;
+        }
+        action.enabled = enabled;
+        action.dcRequired = dcRequired;
+        if (!value.at("qualification").is_string()) {
+            *error = itemPath + QString::fromLatin1(".qualification is invalid");
+            return false;
+        }
+        const std::string &qualification
+            = value.at("qualification").get_ref<const std::string &>();
+        if (qualification == "qualified")
+            action.qualification = VerifiedSemanticActionQualification::Qualified;
+        else if (qualification == "unqualified")
+            action.qualification = VerifiedSemanticActionQualification::Unqualified;
+        else {
+            *error = itemPath + QString::fromLatin1(".qualification is unsupported");
+            return false;
+        }
+        if (value.at("disabled_reason").is_null()) {
+            action.disabledReason.reset();
+        } else {
+            QString reason;
+            if (!readString(
+                    value.at("disabled_reason"),
+                    1,
+                    256,
+                    itemPath + ".disabled_reason",
+                    &reason,
+                    error)) {
+                return false;
+            }
+            action.disabledReason = std::move(reason);
+        }
+        if (action.enabled
+                != (action.qualification == VerifiedSemanticActionQualification::Qualified)
+            || action.disabledReason.has_value() == action.enabled) {
+            *error = itemPath
+                     + QString::fromLatin1(
+                         " has an inconsistent enabled, qualification, or disabled reason state");
+            return false;
+        }
+
+        if (!value.at("component_binding_ids").is_array()
+            || value.at("component_binding_ids").empty()
+            || value.at("component_binding_ids").size() > maximumComponentsPerDevice) {
+            *error = itemPath + QString::fromLatin1(".component_binding_ids is invalid");
+            return false;
+        }
+        QSet<QString> componentIds;
+        QByteArray previousComponentId;
+        for (std::size_t componentIndex = 0;
+             componentIndex < value.at("component_binding_ids").size();
+             ++componentIndex) {
+            QString componentId;
+            const QString componentPath
+                = arrayPath(itemPath + ".component_binding_ids", componentIndex);
+            if (!readSemanticSignalId(
+                    value.at("component_binding_ids")[componentIndex],
+                    componentPath,
+                    &componentId,
+                    error)) {
+                return false;
+            }
+            const QByteArray canonicalId = componentId.toLatin1();
+            if ((!previousComponentId.isEmpty() && canonicalId <= previousComponentId)
+                || componentIds.contains(componentId)) {
+                *error = componentPath
+                         + QString::fromLatin1(
+                             " is duplicate or not in canonical component order");
+                return false;
+            }
+            previousComponentId = canonicalId;
+            componentIds.insert(componentId);
+            action.componentBindingIds.append(std::move(componentId));
+        }
+
+        const VerifiedSemanticDevice *device = nullptr;
+        const auto deviceIterator = std::lower_bound(
+            result->devices.cbegin(),
+            result->devices.cend(),
+            QStringView(action.projectDeviceId),
+            [](const VerifiedSemanticDevice &candidate, QStringView wanted) {
+                return QStringView(candidate.projectDeviceId).compare(wanted) < 0;
+            });
+        if (deviceIterator != result->devices.cend()
+            && deviceIterator->projectDeviceId == action.projectDeviceId) {
+            device = &*deviceIterator;
+        }
+        if (!device || device->adapterId != action.adapterId
+            || device->adapterVersion != action.adapterVersion
+            || device->adapterSha256 != action.adapterSha256
+            || device->esiSha256 != action.esiSha256
+            || std::any_of(
+                action.componentBindingIds.cbegin(),
+                action.componentBindingIds.cend(),
+                [device](const QString &componentId) {
+                    return !findComponent(*device, componentId);
+                })) {
+            *error = itemPath
+                     + QString::fromLatin1(
+                         " differs from its signed project-device/component binding");
+            return false;
+        }
+
+        if (!validateActionBindingCollection(
+                value.at("required_bindings"),
+                itemPath + ".required_bindings",
+                true,
+                *result,
+                &action.requiredBindings,
+                error)
+            || !validateActionBindingCollection(
+                value.at("optional_bindings"),
+                itemPath + ".optional_bindings",
+                false,
+                *result,
+                &action.optionalBindings,
+                error)
+            || !validateActionParameters(
+                value.at("parameters"), itemPath + ".parameters", &action.parameters, error)
+            || !validateActionGroups(
+                value.at("consistency_groups"),
+                itemPath + ".consistency_groups",
+                configuration,
+                &action.consistencyGroups,
+                error)) {
+            return false;
+        }
+
+        QSet<QString> referencedBindingIds;
+        for (const VerifiedSemanticActionBindingReference &reference :
+             std::as_const(action.requiredBindings)) {
+            referencedBindingIds.insert(reference.semanticBindingId);
+            const VerifiedSemanticBinding *binding
+                = findBinding(*result, reference.semanticBindingId);
+            if (!binding || binding->projectDeviceId != action.projectDeviceId
+                || !componentIds.contains(binding->componentBindingId)) {
+                *error = itemPath
+                         + QString::fromLatin1(
+                             ".required_bindings crosses a project-device boundary");
+                return false;
+            }
+        }
+        for (const VerifiedSemanticActionBindingReference &reference :
+             std::as_const(action.optionalBindings)) {
+            const VerifiedSemanticBinding *binding
+                = findBinding(*result, reference.semanticBindingId);
+            if (referencedBindingIds.contains(reference.semanticBindingId) || !binding
+                || binding->projectDeviceId != action.projectDeviceId
+                || !componentIds.contains(binding->componentBindingId)) {
+                *error = itemPath
+                         + QString::fromLatin1(
+                             ".optional_bindings is duplicate or crosses a device boundary");
+                return false;
+            }
+            referencedBindingIds.insert(reference.semanticBindingId);
+        }
+
+        if (!validateActionSteps(
+                value.at("steps"),
+                itemPath + ".steps",
+                configuration,
+                *result,
+                &action,
+                error)) {
+            return false;
+        }
+        if (action.dcRequired) {
+            if (!configuration.cyclePeriodNs || configuration.dcRecords.isEmpty()) {
+                *error = itemPath
+                         + QString::fromLatin1(
+                             " requires DC but the signed ECFG has no DC runtime");
+                return false;
+            }
+            const bool allWritableBindingsUseDc = std::all_of(
+                action.requiredBindings.cbegin(),
+                action.requiredBindings.cend(),
+                [result, &configuration](
+                    const VerifiedSemanticActionBindingReference &reference) {
+                    if (reference.direction != EcfgResourceDirection::Output)
+                        return true;
+                    const VerifiedSemanticBinding *binding
+                        = findBinding(*result, reference.semanticBindingId);
+                    const SemanticBindingTopologyInstance *topology
+                        = binding
+                              ? findTopologyInstance(
+                                  result->topologyInstances, binding->position)
+                              : nullptr;
+                    const auto dcRecord = binding
+                                              ? std::find_if(
+                                                  configuration.dcRecords.cbegin(),
+                                                  configuration.dcRecords.cend(),
+                                                  [binding](
+                                                      const EcfgDcRecord &record) {
+                                                      return record.stationAddress
+                                                             == binding->stationAddress;
+                                                  })
+                                              : configuration.dcRecords.cend();
+                    return topology && topology->dcProfile.has_value()
+                           && dcRecord != configuration.dcRecords.cend()
+                           && dcRecord->assignActivate
+                           && dcRecord->sync0CycleNs == configuration.cyclePeriodNs;
+                });
+            if (!allWritableBindingsUseDc) {
+                *error = itemPath
+                         + QString::fromLatin1(
+                             " requires DC but references a non-DC output component");
+                return false;
+            }
+        }
+
+        const QByteArray canonicalActionId = action.actionBindingId.toLatin1();
+        const auto previousDefinition = definitionDigests.constFind(action.actionDefinitionId);
+        if ((!previousActionBindingId.isEmpty()
+             && canonicalActionId <= previousActionBindingId)
+            || actionBindingIds.contains(action.actionBindingId)
+            || (previousDefinition != definitionDigests.cend()
+                && *previousDefinition != action.actionDefinitionSha256)) {
+            *error = itemPath
+                     + QString::fromLatin1(
+                         " is duplicate, unordered, or reuses a changed action definition");
+            return false;
+        }
+        previousActionBindingId = canonicalActionId;
+        actionBindingIds.insert(action.actionBindingId);
+        definitionDigests.insert(action.actionDefinitionId, action.actionDefinitionSha256);
+        actions.append(std::move(action));
+    }
+    result->actions = std::move(actions);
     return true;
 }
 
@@ -1587,6 +3484,42 @@ const VerifiedSemanticBinding *VerifiedSemanticBindingArtifact::findByResourceId
     return iterator == bindings.cend() ? nullptr : &*iterator;
 }
 
+const VerifiedSemanticDevice *VerifiedSemanticBindingArtifact::findDevice(
+    QStringView projectDeviceId) const
+{
+    const auto iterator = std::lower_bound(
+        devices.cbegin(),
+        devices.cend(),
+        projectDeviceId,
+        [](const VerifiedSemanticDevice &device, QStringView wanted) {
+            return QStringView(device.projectDeviceId).compare(wanted) < 0;
+        });
+    return iterator != devices.cend() && QStringView(iterator->projectDeviceId) == projectDeviceId
+               ? &*iterator
+               : nullptr;
+}
+
+const VerifiedSemanticAction *VerifiedSemanticBindingArtifact::findAction(
+    QStringView actionBindingId) const
+{
+    const auto iterator = std::lower_bound(
+        actions.cbegin(),
+        actions.cend(),
+        actionBindingId,
+        [](const VerifiedSemanticAction &action, QStringView wanted) {
+            return QStringView(action.actionBindingId).compare(wanted) < 0;
+        });
+    return iterator != actions.cend() && QStringView(iterator->actionBindingId) == actionBindingId
+               ? &*iterator
+               : nullptr;
+}
+
+bool VerifiedSemanticBindingArtifact::permitsWritableActions() const
+{
+    return formatVersion == semanticBindingFormatVersion2
+           && trust == EcpkgTrustClass::Production && !devices.isEmpty() && !actions.isEmpty();
+}
+
 Utils::Result<VerifiedSemanticBindingArtifact> verifySemanticBindingArtifact(
     const EcpkgContainer &container,
     const VerifiedSignedEcpkgManifest &manifest,
@@ -1615,33 +3548,58 @@ Utils::Result<VerifiedSemanticBindingArtifact> verifySemanticBindingArtifact(
         return invalidArtifact(report.error());
 
     try {
+        quint16 declaredFormatVersion = 0;
         quint32 declaredBindingCount = 0;
+        quint32 declaredDeviceCount = 0;
+        quint32 declaredActionCount = 0;
         if (!validateReportEnvelope(
                 *report,
                 container,
                 manifest,
                 configuration,
+                &declaredFormatVersion,
                 &declaredBindingCount,
+                &declaredDeviceCount,
+                &declaredActionCount,
                 &error)) {
             return invalidArtifact(error);
         }
 
         const StrictJson &artifact = report->at("semantic_binding_manifest");
         const QString artifactPath = QString::fromLatin1("$.semantic_binding_manifest");
-        if (!hasExactFields(
-                artifact,
-                artifactPath,
-                {"format",
-                 "format_version",
-                 "binding_count",
-                 "package",
-                 "resource_catalog",
-                 "topology",
-                 "bindings"},
-                &error)
+        const bool format2 = declaredFormatVersion == semanticBindingFormatVersion2;
+        const bool fieldsValid
+            = format2
+                  ? hasExactFields(
+                      artifact,
+                      artifactPath,
+                      {"format",
+                       "format_version",
+                       "binding_count",
+                       "device_count",
+                       "action_count",
+                       "package",
+                       "resource_catalog",
+                       "topology",
+                       "devices",
+                       "bindings",
+                       "actions"},
+                      &error)
+                  : hasExactFields(
+                      artifact,
+                      artifactPath,
+                      {"format",
+                       "format_version",
+                       "binding_count",
+                       "package",
+                       "resource_catalog",
+                       "topology",
+                       "bindings"},
+                      &error);
+        if (!fieldsValid
             || !readConstantString(
                 artifact.at("format"),
-                "ethercat-semantic-binding-v1",
+                format2 ? "ethercat-semantic-binding-v2" : "ethercat-semantic-binding-v1",
                 artifactPath + ".format",
                 &error)) {
             return invalidArtifact(error);
@@ -1651,8 +3609,8 @@ Utils::Result<VerifiedSemanticBindingArtifact> verifySemanticBindingArtifact(
         quint64 bindingCount = 0;
         if (!readUnsigned(
                 artifact.at("format_version"),
-                semanticBindingFormatVersion,
-                semanticBindingFormatVersion,
+                declaredFormatVersion,
+                declaredFormatVersion,
                 artifactPath + ".format_version",
                 &formatVersion,
                 &error)
@@ -1672,7 +3630,32 @@ Utils::Result<VerifiedSemanticBindingArtifact> verifySemanticBindingArtifact(
             }
             return invalidArtifact(error);
         }
-        Q_UNUSED(formatVersion)
+        if (format2) {
+            quint64 deviceCount = 0;
+            quint64 actionCount = 0;
+            if (!readUnsigned(
+                    artifact.at("device_count"),
+                    1,
+                    maximumDevices,
+                    artifactPath + ".device_count",
+                    &deviceCount,
+                    &error)
+                || !readUnsigned(
+                    artifact.at("action_count"),
+                    1,
+                    maximumActions,
+                    artifactPath + ".action_count",
+                    &actionCount,
+                    &error)
+                || deviceCount != declaredDeviceCount || actionCount != declaredActionCount) {
+                if (error.isEmpty()) {
+                    error = artifactPath
+                            + QString::fromLatin1(
+                                " device/action counts differ from compile evidence");
+                }
+                return invalidArtifact(error);
+            }
+        }
 
         Utils::Result<QByteArray> canonical
             = serializeCanonicalJson(artifact, maximumArtifactBytes);
@@ -1697,6 +3680,7 @@ Utils::Result<VerifiedSemanticBindingArtifact> verifySemanticBindingArtifact(
         }
 
         VerifiedSemanticBindingArtifact result;
+        result.formatVersion = quint16(formatVersion);
         result.trust = manifest.trust;
         result.packageSha256 = manifest.packageSha256;
         result.manifestSha256 = manifest.manifestSha256;
@@ -1712,7 +3696,12 @@ Utils::Result<VerifiedSemanticBindingArtifact> verifySemanticBindingArtifact(
                 &result,
                 &error)
             || !validateArtifactCatalog(
-                artifact.at("resource_catalog"), manifest, configuration, &result, &error)
+                artifact.at("resource_catalog"),
+                declaredFormatVersion,
+                manifest,
+                configuration,
+                &result,
+                &error)
             || !validateTopology(
                 artifact.at("topology"),
                 report->at("instances"),
@@ -1723,10 +3712,27 @@ Utils::Result<VerifiedSemanticBindingArtifact> verifySemanticBindingArtifact(
             || !validateBindings(
                 artifact.at("bindings"),
                 report->at("semantic_symbols"),
+                declaredFormatVersion,
                 declaredBindingCount,
                 configuration,
                 &result,
                 &error)) {
+            return invalidArtifact(error);
+        }
+        if (format2
+            && (!validateDevices(
+                    artifact.at("devices"),
+                    report->at("project_device_bindings"),
+                    declaredDeviceCount,
+                    &result,
+                    &error)
+                || !validateActions(
+                    artifact.at("actions"),
+                    report->at("semantic_action_plans"),
+                    declaredActionCount,
+                    configuration,
+                    &result,
+                    &error))) {
             return invalidArtifact(error);
         }
         return result;

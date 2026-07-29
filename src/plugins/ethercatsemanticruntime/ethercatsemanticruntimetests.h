@@ -28,8 +28,18 @@ private slots:
     void testProductionTrustStoreRejectsUnsafeInputs();
     void testSemanticBindingTransferredPackages();
     void testSemanticBindingRejectsMismatches();
+    void testSemanticBindingV2TransferredPackage();
+    void testSemanticBindingV2RejectsDeepMutations();
+    void testSemanticBindingV2ParserGuards();
     void testVerifiedEcpkgStore();
     void testVerifiedEcpkgStoreRejectsTampering();
+    void testRuntimePackageEvidenceTransferredPackages();
+    void testRuntimePackageEvidenceRejectsMismatches();
+    void testRuntimePackageEvidenceRepository();
+    void testRuntimePackageEvidenceRepositoryRejectsUnsafeInputs();
+    void testReadOnlySemanticBindingFactory();
+    void testReadOnlySemanticBindingFactoryRejectsMismatches();
+    void testExecutorPublishesVerifiedReadOnlyContext();
     void testPublishesOneProductionService();
     void testProjectAndProviderLifecycle();
     void testStrictProviderCardinality();

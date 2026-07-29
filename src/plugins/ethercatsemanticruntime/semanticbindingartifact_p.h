@@ -14,6 +14,7 @@
 #include <QStringView>
 
 #include <optional>
+#include <variant>
 
 namespace EtherCAT::SemanticRuntime::Internal {
 
@@ -38,7 +39,13 @@ struct SemanticBindingTopologyInstance
 
 struct VerifiedSemanticBinding
 {
+    // For format 1 this is the signed semantic_signal_id. For format 2 it is the
+    // project-instance semantic_binding_id and remains the canonical lookup key.
     QString semanticSignalId;
+    QString semanticSignalDefinitionId;
+    QString semanticBindingId;
+    QString projectDeviceId;
+    QString componentBindingId;
     quint64 resourceId = 0;
     quint64 componentInstanceId = 0;
     quint64 parentInstanceId = 0;
@@ -55,6 +62,12 @@ struct VerifiedSemanticBinding
     quint8 safeValueBytes = 0;
     quint16 qualityMask = 0;
     QByteArray safeValueLittleEndian;
+    std::optional<QString> unit;
+    qint64 scaleNumerator = 1;
+    qint64 scaleDenominator = 1;
+    qint64 scaleOffset = 0;
+    bool safeValueDeclared = false;
+    std::optional<std::variant<qint64, quint64>> safeValue;
 
     QString adapterId;
     QString adapterVersion;
@@ -66,8 +79,123 @@ struct VerifiedSemanticBinding
     quint32 slot = 0;
 };
 
+struct VerifiedSemanticComponent
+{
+    QString componentBindingId;
+    quint64 componentInstanceId = 0;
+    std::optional<QString> parentComponentBindingId;
+    quint64 parentInstanceId = 0;
+    quint32 slot = 0;
+};
+
+struct VerifiedSemanticDevice
+{
+    QString projectDeviceId;
+    quint16 position = 0;
+    quint16 stationAddress = 0;
+    QString adapterId;
+    QString adapterVersion;
+    QByteArray adapterSha256;
+    QByteArray esiSha256;
+    QList<VerifiedSemanticComponent> components;
+};
+
+// Parser invariants exposed from this private header so they can be exercised
+// with hermetic mutation tests.
+bool isAcyclicSemanticComponentParentGraph(
+    const QList<VerifiedSemanticComponent> &components);
+bool isValidSemanticMaskedWaitCondition(quint64 mask, quint64 value, quint16 bitWidth);
+
+enum class VerifiedSemanticActionQualification {
+    Qualified,
+    Unqualified,
+};
+
+struct VerifiedSemanticActionBindingReference
+{
+    QString semanticSignalDefinitionId;
+    QString semanticBindingId;
+    quint64 resourceId = 0;
+    QString componentBindingId;
+    quint32 consistencyGroupId = 0;
+    EcfgResourcePrimitive primitive = EcfgResourcePrimitive::Bool;
+    quint16 bitWidth = 0;
+    EcfgResourceDirection direction = EcfgResourceDirection::Input;
+    EcfgResourceAccess access = EcfgResourceAccess::Read;
+    std::optional<QString> unit;
+    qint64 scaleNumerator = 1;
+    qint64 scaleDenominator = 1;
+    qint64 scaleOffset = 0;
+};
+
+struct VerifiedSemanticActionParameter
+{
+    QString parameterId;
+    EcfgResourcePrimitive primitive = EcfgResourcePrimitive::Bool;
+    std::optional<QString> unit;
+    qint64 minimum = 0;
+    qint64 maximum = 0;
+};
+
+struct VerifiedSemanticActionGroup
+{
+    quint32 consistencyGroupId = 0;
+    EcfgOutputRecoveryPolicy recoveryPolicy = EcfgOutputRecoveryPolicy::ReturnTask;
+    quint32 maximumTtlCycles = 0;
+};
+
+struct VerifiedSemanticActionAssignment
+{
+    QString semanticBindingId;
+    std::optional<std::variant<qint64, quint64>> constantValue;
+    std::optional<QString> parameterId;
+};
+
+enum class VerifiedSemanticActionStepKind {
+    WriteGroup,
+    WaitMasked,
+    WaitAbsoluteLimit,
+};
+
+struct VerifiedSemanticActionStep
+{
+    VerifiedSemanticActionStepKind kind = VerifiedSemanticActionStepKind::WriteGroup;
+    quint32 consistencyGroupId = 0;
+    QList<VerifiedSemanticActionAssignment> assignments;
+    QString semanticBindingId;
+    quint64 mask = 0;
+    quint64 value = 0;
+    quint64 absoluteLimit = 0;
+    quint32 timeoutCycles = 0;
+};
+
+struct VerifiedSemanticAction
+{
+    QString actionDefinitionId;
+    QByteArray actionDefinitionSha256;
+    QString actionBindingId;
+    QString projectDeviceId;
+    QStringList componentBindingIds;
+    QString adapterActionKey;
+    bool enabled = false;
+    VerifiedSemanticActionQualification qualification
+        = VerifiedSemanticActionQualification::Unqualified;
+    std::optional<QString> disabledReason;
+    bool dcRequired = false;
+    QString adapterId;
+    QString adapterVersion;
+    QByteArray adapterSha256;
+    QByteArray esiSha256;
+    QList<VerifiedSemanticActionBindingReference> requiredBindings;
+    QList<VerifiedSemanticActionBindingReference> optionalBindings;
+    QList<VerifiedSemanticActionParameter> parameters;
+    QList<VerifiedSemanticActionGroup> consistencyGroups;
+    QList<VerifiedSemanticActionStep> steps;
+};
+
 struct VerifiedSemanticBindingArtifact
 {
+    quint16 formatVersion = 0;
     EcpkgTrustClass trust = EcpkgTrustClass::Engineering;
     QByteArray packageSha256;
     QByteArray manifestSha256;
@@ -88,10 +216,15 @@ struct VerifiedSemanticBindingArtifact
     QByteArray topologySha256;
 
     QList<SemanticBindingTopologyInstance> topologyInstances;
+    QList<VerifiedSemanticDevice> devices;
     QList<VerifiedSemanticBinding> bindings;
+    QList<VerifiedSemanticAction> actions;
 
     const VerifiedSemanticBinding *findBySemanticSignalId(QStringView semanticSignalId) const;
     const VerifiedSemanticBinding *findByResourceId(quint64 resourceId) const;
+    const VerifiedSemanticDevice *findDevice(QStringView projectDeviceId) const;
+    const VerifiedSemanticAction *findAction(QStringView actionBindingId) const;
+    bool permitsWritableActions() const;
 };
 
 // All inputs must originate from one read of an ECPKG: the canonical container, its

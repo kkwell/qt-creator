@@ -403,11 +403,15 @@ bool validateDc(
     QByteArrayView wire,
     const WireSection &section,
     const QSet<quint16> &stations,
-    quint32 cyclePeriodNs)
+    quint32 cyclePeriodNs,
+    QList<EcfgDcRecord> *records)
 {
-    if (!fixedSectionHasSize(section, dcRecordBytes, maximumDcRecords))
+    if (!records || !records->isEmpty()
+        || !fixedSectionHasSize(section, dcRecordBytes, maximumDcRecords)) {
         return false;
+    }
     quint32 referenceClocks = 0;
+    QSet<quint16> dcStations;
     for (quint32 index = 0; index < section.count; ++index) {
         const quint64 offset = section.offset + quint64(index) * dcRecordBytes;
         const quint16 station = readLe16(wire, offset);
@@ -418,13 +422,16 @@ bool validateDc(
         const quint32 warmupCycles = readLe32(wire, offset + 28);
         const quint32 faultThreshold = readLe32(wire, offset + 32);
         const quint32 stableCycles = readLe32(wire, offset + 36);
-        if (!stations.contains(station) || (flags & ~quint16(1)) || !assignActivate
+        if (!stations.contains(station) || dcStations.contains(station)
+            || (flags & ~quint16(1)) || !assignActivate
             || sync0Cycle != cyclePeriodNs || !convergence || !warmupCycles || !faultThreshold
             || !stableCycles || !bytesAreZero(wire, offset + 40, 8)) {
             return false;
         }
+        dcStations.insert(station);
         if (flags & 1)
             ++referenceClocks;
+        records->append({station, assignActivate, sync0Cycle, bool(flags & 1)});
     }
     return referenceClocks == 1;
 }
@@ -798,6 +805,7 @@ Utils::Result<EcfgConfiguration> parseStrictEcfgConfiguration(
     quint32 inputBits = 0;
     quint32 outputBits = 0;
     quint32 cyclePeriodNs = 0;
+    QList<EcfgDcRecord> dcRecords;
     if (!validateTopology(wire, *topology, &stations))
         return invalidConfiguration("the topology section is invalid");
     if (const WireSection *startup = findSection(wireSections, startupSection);
@@ -809,7 +817,7 @@ Utils::Result<EcfgConfiguration> parseStrictEcfgConfiguration(
     if (!validateFrameSection(wire, *frames, &cyclePeriodNs))
         return invalidConfiguration("the cyclic frame section is invalid");
     if (const WireSection *dc = findSection(wireSections, dcSection);
-        dc && !validateDc(wire, *dc, stations, cyclePeriodNs)) {
+        dc && !validateDc(wire, *dc, stations, cyclePeriodNs, &dcRecords)) {
         return invalidConfiguration("the DC section is invalid");
     }
     if (!validateFault(wire, *fault, outputBits))
@@ -824,6 +832,8 @@ Utils::Result<EcfgConfiguration> parseStrictEcfgConfiguration(
     configuration.configurationSha256 = sha256(wire);
     configuration.capabilitySha256 = QByteArray(wire.data() + 36, 32);
     configuration.payloadSha256 = computedPayloadSha256;
+    configuration.cyclePeriodNs = cyclePeriodNs;
+    configuration.dcRecords = std::move(dcRecords);
     configuration.processInputBits = inputBits;
     configuration.processOutputBits = outputBits;
     configuration.sections.reserve(sectionCount);

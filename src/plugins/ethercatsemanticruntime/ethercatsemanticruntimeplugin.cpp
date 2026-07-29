@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Embed Labs
 
 #include "semanticruntimeexecutor.h"
+#include "runtimepackageevidencerepository_p.h"
 
 #ifdef WITH_TESTS
 #include "ethercatsemanticruntimetests.h"
@@ -8,6 +9,8 @@
 
 #include <extensionsystem/iplugin.h>
 #include <extensionsystem/pluginmanager.h>
+
+#include <coreplugin/icore.h>
 
 #include <utils/qtcassert.h>
 
@@ -30,6 +33,7 @@ private:
     void shutdown();
 
     std::unique_ptr<SemanticRuntimeExecutor> m_runtime;
+    std::shared_ptr<RuntimePackageEvidenceRepository> m_evidenceRepository;
     bool m_registered = false;
 };
 
@@ -49,7 +53,14 @@ void EtherCATSemanticRuntimePlugin::initialize()
     qRegisterMetaType<Data::SemanticOperationId>();
     qRegisterMetaType<Data::SemanticRuntimeContext>();
 
-    m_runtime = std::make_unique<SemanticRuntimeExecutor>(projectService, providerRegistry);
+    const Utils::FilePath evidenceRoot
+        = ::Core::ICore::userResourcePath("ethercat/runtime-evidence");
+    m_evidenceRepository = std::make_shared<RuntimePackageEvidenceRepository>(
+        (evidenceRoot / "verified-packages").toFSPathString(),
+        (evidenceRoot / "production-trust").toFSPathString(),
+        (evidenceRoot / "compiled-projects").toFSPathString());
+    m_runtime = std::make_unique<SemanticRuntimeExecutor>(
+        projectService, providerRegistry, nullptr, m_evidenceRepository);
     ExtensionSystem::PluginManager::addObject(m_runtime.get());
     m_registered = true;
 
@@ -71,6 +82,7 @@ void EtherCATSemanticRuntimePlugin::shutdown()
         m_registered = false;
     }
     m_runtime.reset();
+    m_evidenceRepository.reset();
 }
 
 } // namespace EtherCAT::SemanticRuntime::Internal

@@ -802,7 +802,7 @@ bool validateSemanticBinding(
              "resource_section_sha256",
              "topology_sha256"},
             error)
-        || !validateUnsigned(value.at("format_version"), 1, 1, path + ".format_version", error)
+        || !validateUnsigned(value.at("format_version"), 1, 2, path + ".format_version", error)
         || !validateUnsigned(
             value.at("binding_count"), 1, 8192, path + ".binding_count", error)
         || !validateUnsigned(
@@ -842,7 +842,7 @@ bool validateSemanticBinding(
 
     quint64 formatVersion = 0;
     quint64 bindingCount = 0;
-    readUnsigned(value.at("format_version"), 1, &formatVersion);
+    readUnsigned(value.at("format_version"), 2, &formatVersion);
     readUnsigned(value.at("binding_count"), 8192, &bindingCount);
     readUnsigned(
         value.at("catalog_revision"),

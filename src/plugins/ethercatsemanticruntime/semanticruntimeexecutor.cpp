@@ -2,7 +2,13 @@
 
 #include "semanticruntimeexecutor.h"
 
+#include "readonlysemanticbindingfactory_p.h"
+#include "runtimepackageevidencerepository_p.h"
+
 #include <ethercatcore/automationservice.h>
+
+#include <QCryptographicHash>
+#include <QtEndian>
 
 #include <algorithm>
 
@@ -53,6 +59,46 @@ QString semanticRuntimeContextIssueDetail(ContextIssue issue)
         return QStringLiteral(
             "semantic-binding-proof-unavailable: A signed semantic binding and controller mapping "
             "proof are required.");
+    case ContextIssue::RuntimePackageEvidenceUnavailable:
+        return QStringLiteral(
+            "runtime-package-evidence-unavailable: The referenced production package evidence "
+            "could not be loaded and verified.");
+    case ContextIssue::SemanticBindingAttestationUnsupported:
+        return QStringLiteral(
+            "semantic-binding-attestation-unsupported: The controller provider does not expose "
+            "semantic mapping attestation.");
+    case ContextIssue::SemanticBindingAttestationUnavailable:
+        return QStringLiteral(
+            "semantic-binding-attestation-unavailable: No controller semantic mapping "
+            "attestation is available.");
+    case ContextIssue::SemanticBindingAttestationInvalid:
+        return QStringLiteral(
+            "semantic-binding-attestation-invalid: The controller semantic mapping attestation "
+            "is malformed.");
+    case ContextIssue::SemanticBindingAttestationStale:
+        return QStringLiteral(
+            "semantic-binding-attestation-stale: The controller semantic mapping attestation "
+            "does not match the current scope, session, or package epoch.");
+    case ContextIssue::SemanticBindingResolutionFailed:
+        return QStringLiteral(
+            "semantic-binding-resolution-failed: The signed project-device and runtime-resource "
+            "bindings could not be resolved exactly.");
+    case ContextIssue::RuntimeResourceSnapshotUnavailable:
+        return QStringLiteral(
+            "runtime-resource-snapshot-unavailable: No complete runtime resource snapshot is "
+            "available.");
+    case ContextIssue::RuntimeResourceSnapshotStale:
+        return QStringLiteral(
+            "runtime-resource-snapshot-stale: The runtime resource snapshot does not match the "
+            "current scope, session, or package epoch.");
+    case ContextIssue::RuntimeResourceSnapshotIncomplete:
+        return QStringLiteral(
+            "runtime-resource-snapshot-incomplete: The runtime resource snapshot is not an exact "
+            "complete set for the verified semantic bindings.");
+    case ContextIssue::RuntimeResourceSnapshotInvalid:
+        return QStringLiteral(
+            "runtime-resource-snapshot-invalid: One or more runtime samples failed verified read "
+            "validation.");
     }
     return {};
 }
@@ -76,7 +122,18 @@ static bool bindingArtifactIsValid(const Data::SemanticBindingArtifactReference 
            && reference.projectConfigurationSha256.size() == 32;
 }
 
-static void rejectContext(Data::SemanticRuntimeContext &context, ContextIssue issue)
+static QByteArray evidenceCacheKey(
+    const Data::SemanticBindingArtifactReference &reference)
+{
+    QByteArray key = reference.artifactId.toUtf8();
+    key.append('\0');
+    key.append(reference.artifactSha256);
+    key.append(reference.projectConfigurationSha256);
+    return key;
+}
+
+static void rejectContext(
+    Data::SemanticRuntimeContext &context, ContextIssue issue, const QString &additionalDetail = {})
 {
     context.complete = false;
     context.mappingDigest = {};
@@ -87,14 +144,144 @@ static void rejectContext(Data::SemanticRuntimeContext &context, ContextIssue is
     context.bindingVerification = {};
     context.bindingVerification.state = Data::SemanticBindingVerificationState::Unverified;
     context.detail = semanticRuntimeContextIssueDetail(issue);
+    if (!additionalDetail.isEmpty())
+        context.detail += QStringLiteral(" ") + additionalDetail;
     context.bindingVerification.detail = context.detail;
 }
 
+static bool explicitProjectDevicePositionsMatch(
+    const Data::ProjectSnapshot &project,
+    const VerifiedRuntimePackageEvidence &evidence,
+    QString *detail)
+{
+    const VerifiedSemanticBindingArtifact &artifact = evidence.semanticBindingArtifact();
+    for (const Data::SemanticProjectDeviceBinding &mapping :
+         project.masterBindingArtifact.projectDeviceBindings) {
+        const VerifiedSemanticDevice *signedDevice = artifact.findDevice(mapping.projectDeviceId);
+        const auto slave = std::find_if(
+            project.slaves.cbegin(),
+            project.slaves.cend(),
+            [&mapping](const Data::OfflineSlaveConfiguration &candidate) {
+                return candidate.id == mapping.slaveId;
+            });
+        if (!signedDevice || slave == project.slaves.cend() || slave->position < 0
+            || slave->position != int(signedDevice->position)) {
+            if (detail) {
+                *detail = QStringLiteral(
+                    "An explicit project-device mapping does not match its signed bus position.");
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+static void appendContextBytes(QByteArray &canonical, QByteArrayView bytes)
+{
+    const quint32 size = quint32(bytes.size());
+    const quint32 bigEndianSize = qToBigEndian(size);
+    canonical.append(
+        reinterpret_cast<const char *>(&bigEndianSize), qsizetype(sizeof(bigEndianSize)));
+    canonical.append(bytes.data(), bytes.size());
+}
+
+static void appendContextString(QByteArray &canonical, const QString &value)
+{
+    appendContextBytes(canonical, value.toUtf8());
+}
+
+static void appendContextInteger(QByteArray &canonical, quint64 value)
+{
+    const quint64 bigEndianValue = qToBigEndian(value);
+    canonical.append(
+        reinterpret_cast<const char *>(&bigEndianValue), qsizetype(sizeof(bigEndianValue)));
+}
+
+static QByteArray semanticRuntimeContextHash(const Data::SemanticRuntimeContext &context)
+{
+    QByteArray canonical("embed-labs.semantic-runtime-context.v1", 38);
+    appendContextString(canonical, context.controllerId);
+    appendContextString(canonical, context.scope.projectId.toString());
+    appendContextString(canonical, context.scope.masterId.toString());
+    appendContextInteger(canonical, context.sessionGeneration);
+    appendContextInteger(canonical, context.epoch.controllerBootId);
+    appendContextInteger(canonical, quint64(context.epoch.activePackageSlot));
+    appendContextInteger(canonical, context.epoch.activePackageGeneration);
+    appendContextInteger(canonical, context.epoch.configurationId);
+    appendContextInteger(canonical, context.epoch.topologyGeneration);
+    appendContextInteger(canonical, context.epoch.runtimeGeneration);
+    appendContextInteger(canonical, context.epoch.catalogRevision);
+    appendContextBytes(canonical, context.epoch.topologyIdentity);
+    appendContextBytes(canonical, context.mappingDigest.value);
+    appendContextBytes(canonical, context.controllerMappingDigest.value);
+
+    QList<Data::SemanticSignalRuntimeState> states = context.signalStates;
+    std::sort(
+        states.begin(),
+        states.end(),
+        [](const Data::SemanticSignalRuntimeState &left,
+           const Data::SemanticSignalRuntimeState &right) {
+            if (left.target.deviceId != right.target.deviceId) {
+                return left.target.deviceId.toString() < right.target.deviceId.toString();
+            }
+            return left.target.signalId.value < right.target.signalId.value;
+        });
+    appendContextInteger(canonical, quint64(states.size()));
+    for (const Data::SemanticSignalRuntimeState &state : std::as_const(states)) {
+        appendContextString(canonical, state.target.deviceId.toString());
+        appendContextString(canonical, state.target.signalId.value);
+        if (!state.binding)
+            continue;
+        appendContextString(canonical, state.binding->semanticBindingId);
+        appendContextBytes(canonical, state.binding->resourceId.value);
+        appendContextBytes(canonical, state.binding->consistencyGroupId.value);
+        appendContextBytes(canonical, state.binding->valueTypeIdentity);
+        appendContextInteger(canonical, state.binding->bitWidth);
+        appendContextInteger(canonical, quint64(state.binding->direction));
+        appendContextInteger(canonical, quint64(state.binding->access));
+    }
+    return QCryptographicHash::hash(canonical, QCryptographicHash::Sha256);
+}
+
+static bool snapshotHasExactBindingSet(
+    const Data::RuntimeResourceSnapshot &snapshot,
+    const ReadOnlySemanticBindingCandidates &candidates)
+{
+    if (!snapshot.complete || snapshot.samples.size() != candidates.bindings.size())
+        return false;
+
+    QList<QByteArray> expectedIds;
+    expectedIds.reserve(candidates.bindings.size());
+    for (const Data::SemanticRuntimeBinding &binding : candidates.bindings) {
+        if (!binding.resourceId.isValid())
+            return false;
+        expectedIds.append(binding.resourceId.value);
+    }
+    std::sort(expectedIds.begin(), expectedIds.end());
+    if (std::adjacent_find(expectedIds.cbegin(), expectedIds.cend()) != expectedIds.cend())
+        return false;
+
+    QList<QByteArray> actualIds;
+    actualIds.reserve(snapshot.samples.size());
+    for (const Data::RuntimeResourceSample &sample : snapshot.samples) {
+        if (!sample.resourceId.isValid())
+            return false;
+        actualIds.append(sample.resourceId.value);
+    }
+    std::sort(actualIds.begin(), actualIds.end());
+    return actualIds == expectedIds
+           && std::adjacent_find(actualIds.cbegin(), actualIds.cend()) == actualIds.cend();
+}
+
 SemanticRuntimeExecutor::SemanticRuntimeExecutor(
-    Core::ProjectService *projectService, Core::ProviderRegistry *providerRegistry, QObject *parent)
+    Core::ProjectService *projectService,
+    Core::ProviderRegistry *providerRegistry,
+    QObject *parent,
+    std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository)
     : SemanticRuntimeService(parent)
     , m_projectService(projectService)
     , m_providerRegistry(providerRegistry)
+    , m_evidenceRepository(std::move(evidenceRepository))
 {
     if (m_projectService) {
         connect(m_projectService, &Core::Provider::availabilityChanged, this, [this] {
@@ -106,6 +293,7 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
             this,
             [this](const Data::ProjectSnapshot &project) {
                 m_projectsBeingRemoved.remove(project.id);
+                clearEvidenceCache();
                 publishContexts();
             });
         connect(
@@ -114,6 +302,7 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
             this,
             [this](const Data::ProjectSnapshot &project) {
                 m_projectsBeingRemoved.remove(project.id);
+                clearEvidenceCache();
                 publishContexts();
             });
         connect(
@@ -122,6 +311,7 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
             this,
             [this](const Data::NodeId &projectId) {
                 m_projectsBeingRemoved.insert(projectId);
+                clearEvidenceCache();
                 publishContexts();
             });
         connect(m_projectService, &Core::ProjectService::activeProjectChanged, this, [this] {
@@ -173,6 +363,33 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
 QList<Data::SemanticRuntimeContext> SemanticRuntimeExecutor::contexts() const
 {
     return m_contexts;
+}
+
+std::shared_ptr<const VerifiedRuntimePackageEvidence>
+SemanticRuntimeExecutor::cachedEvidence(
+    const Data::SemanticBindingArtifactReference &reference, QString *error) const
+{
+    const QByteArray key = evidenceCacheKey(reference);
+    const auto cached = m_evidenceCache.constFind(key);
+    if (cached != m_evidenceCache.cend())
+        return *cached;
+
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidence
+        = m_evidenceRepository->load(reference);
+    if (!evidence) {
+        if (error)
+            *error = evidence.error();
+        return {};
+    }
+
+    auto verified = std::make_shared<const VerifiedRuntimePackageEvidence>(*evidence);
+    m_evidenceCache.insert(key, verified);
+    return verified;
+}
+
+void SemanticRuntimeExecutor::clearEvidenceCache()
+{
+    m_evidenceCache.clear();
 }
 
 QList<Data::SemanticRuntimeContext> SemanticRuntimeExecutor::buildContexts() const
@@ -290,7 +507,128 @@ Data::SemanticRuntimeContext SemanticRuntimeExecutor::buildContext(
     }
 
     context.epoch = catalog->epoch;
-    rejectContext(context, ContextIssue::SemanticBindingProofUnavailable);
+    if (!m_evidenceRepository) {
+        // Preserve the original fail-closed behavior for hosts that have not yet
+        // configured the application-owned evidence stores.
+        rejectContext(context, ContextIssue::SemanticBindingProofUnavailable);
+        return context;
+    }
+
+    QString evidenceError;
+    const std::shared_ptr<const VerifiedRuntimePackageEvidence> evidence
+        = cachedEvidence(project.masterBindingArtifact, &evidenceError);
+    if (!evidence) {
+        rejectContext(
+            context, ContextIssue::RuntimePackageEvidenceUnavailable, evidenceError);
+        return context;
+    }
+
+    QString projectDeviceDetail;
+    if (!explicitProjectDevicePositionsMatch(project, *evidence, &projectDeviceDetail)) {
+        rejectContext(
+            context, ContextIssue::SemanticBindingResolutionFailed, projectDeviceDetail);
+        return context;
+    }
+
+    if (!candidate.provider->supportsRuntimeSemanticMappingAttestation()) {
+        rejectContext(context, ContextIssue::SemanticBindingAttestationUnsupported);
+        return context;
+    }
+    const std::optional<Data::RuntimeSemanticMappingAttestation> attestation
+        = candidate.provider->runtimeSemanticMappingAttestation();
+    if (!attestation) {
+        rejectContext(context, ContextIssue::SemanticBindingAttestationUnavailable);
+        return context;
+    }
+    if (!attestation->isValid()) {
+        rejectContext(context, ContextIssue::SemanticBindingAttestationInvalid);
+        return context;
+    }
+    if (attestation->scope != context.scope
+        || attestation->sessionGeneration != context.sessionGeneration
+        || attestation->epoch != context.epoch) {
+        rejectContext(context, ContextIssue::SemanticBindingAttestationStale);
+        return context;
+    }
+
+    const Utils::Result<ReadOnlySemanticBindingCandidates> bindingCandidates
+        = buildReadOnlySemanticBindingCandidates(
+            context.controllerId, project, *evidence, *catalog, *attestation);
+    if (!bindingCandidates || bindingCandidates->bindings.isEmpty()
+        || bindingCandidates->bindings.size() != bindingCandidates->signalStates.size()) {
+        rejectContext(
+            context,
+            ContextIssue::SemanticBindingResolutionFailed,
+            bindingCandidates
+                ? QStringLiteral("The verified binding set is empty or inconsistent.")
+                : bindingCandidates.error());
+        return context;
+    }
+
+    context.mappingDigest = bindingCandidates->mappingDigest;
+    context.controllerMappingDigest = bindingCandidates->controllerMappingDigest;
+    context.bindingVerification = bindingCandidates->verification;
+    context.signalStates = bindingCandidates->signalStates;
+    context.actionStates.clear();
+    context.complete = true;
+    context.contextHash = semanticRuntimeContextHash(context);
+
+    const std::optional<Data::RuntimeResourceSnapshot> snapshot
+        = candidate.provider->runtimeResourceSnapshot();
+    if (!snapshot) {
+        context.detail = semanticRuntimeContextIssueDetail(
+            ContextIssue::RuntimeResourceSnapshotUnavailable);
+        return context;
+    }
+    if (snapshot->scope != context.scope
+        || snapshot->sessionGeneration != context.sessionGeneration
+        || snapshot->epoch != context.epoch) {
+        context.detail = semanticRuntimeContextIssueDetail(
+            ContextIssue::RuntimeResourceSnapshotStale);
+        for (Data::SemanticSignalRuntimeState &state : context.signalStates)
+            state.detail = context.detail;
+        return context;
+    }
+    if (!snapshotHasExactBindingSet(*snapshot, *bindingCandidates)) {
+        context.detail = semanticRuntimeContextIssueDetail(
+            ContextIssue::RuntimeResourceSnapshotIncomplete);
+        for (Data::SemanticSignalRuntimeState &state : context.signalStates)
+            state.detail = context.detail;
+        return context;
+    }
+
+    bool allSamplesReady = true;
+    for (qsizetype index = 0; index < bindingCandidates->bindings.size(); ++index) {
+        Data::SemanticSignalRuntimeState &state = context.signalStates[index];
+        const Core::SemanticRuntimeReadValidation validation
+            = Core::validateSemanticRuntimeRead(
+                bindingCandidates->bindings.at(index), *catalog, *snapshot);
+        if (!validation.validation.accepted() || !validation.sample) {
+            allSamplesReady = false;
+            state.availability = Data::SemanticSignalAvailability::Unverified;
+            state.value.reset();
+            state.quality = {};
+            state.snapshotComplete = false;
+            state.captureCycle = 0;
+            state.controllerTimestampNs = 0;
+            state.detail = validation.validation.detail;
+            continue;
+        }
+
+        state.availability = Data::SemanticSignalAvailability::Ready;
+        state.value = validation.sample->value;
+        state.quality = validation.sample->quality;
+        state.snapshotComplete = true;
+        state.captureCycle = snapshot->captureCycle;
+        state.controllerTimestampNs = validation.sample->controllerTimestampNs;
+        state.detail = QStringLiteral("Verified live runtime sample.");
+    }
+
+    context.detail
+        = allSamplesReady
+              ? QStringLiteral(
+                    "semantic-runtime-ready: Signed bindings and live samples are verified.")
+              : semanticRuntimeContextIssueDetail(ContextIssue::RuntimeResourceSnapshotInvalid);
     return context;
 }
 
@@ -324,6 +662,26 @@ void SemanticRuntimeExecutor::trackProvider(Core::Provider *provider)
         &Core::ControllerConnectionProvider::runtimeResourceCatalogChanged,
         this,
         [this] { publishContexts(); }));
+    connections.append(connect(
+        connectionProvider,
+        &Core::ControllerConnectionProvider::runtimeResourceSnapshotChanged,
+        this,
+        [this] { publishContexts(); }));
+    connections.append(connect(
+        connectionProvider,
+        &Core::ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished,
+        this,
+        [this](const Data::RuntimeResourceSnapshotResult &) { publishContexts(); }));
+    connections.append(connect(
+        connectionProvider,
+        &Core::ControllerConnectionProvider::runtimeSemanticMappingAttestationChanged,
+        this,
+        [this] { publishContexts(); }));
+    connections.append(connect(
+        connectionProvider,
+        &Core::ControllerConnectionProvider::runtimeSemanticMappingAttestationRequestFinished,
+        this,
+        [this](const Data::RuntimeSemanticMappingAttestationResult &) { publishContexts(); }));
     connections.append(
         connect(connectionProvider, &QObject::destroyed, this, [this, connectionProvider] {
             m_providerConnections.remove(connectionProvider);
