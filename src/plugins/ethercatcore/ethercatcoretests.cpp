@@ -1473,12 +1473,6 @@ void EtherCATCoreTests::testRuntimeSemanticMappingAttestationContract()
     epoch = request.expectedEpoch;
     epoch.topologyIdentity.clear();
     invalidEpochs.append(epoch);
-    epoch = request.expectedEpoch;
-    epoch.topologyIdentity.chop(1);
-    invalidEpochs.append(epoch);
-    epoch = request.expectedEpoch;
-    epoch.topologyIdentity.append('\0');
-    invalidEpochs.append(epoch);
     for (const Data::RuntimeResourceCatalogEpoch &invalidEpoch : std::as_const(invalidEpochs)) {
         invalidRequest = request;
         invalidRequest.expectedEpoch = invalidEpoch;

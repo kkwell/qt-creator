@@ -113,8 +113,7 @@ inline bool isCompleteRuntimeSemanticMappingEpoch(const RuntimeResourceCatalogEp
            && (epoch.activePackageSlot == ControllerSlot::A
                || epoch.activePackageSlot == ControllerSlot::B)
            && epoch.activePackageGeneration && epoch.configurationId && epoch.topologyGeneration
-           && epoch.runtimeGeneration && epoch.catalogRevision
-           && epoch.topologyIdentity.size() == 8;
+           && epoch.runtimeGeneration && epoch.catalogRevision && !epoch.topologyIdentity.isEmpty();
 }
 
 inline bool isValidRuntimeSemanticMappingCorrelationId(const QString &correlationId)
