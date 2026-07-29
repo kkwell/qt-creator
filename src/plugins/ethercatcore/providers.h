@@ -9,6 +9,7 @@
 #include <ethercatdata/devicedescription.h>
 #include <ethercatdata/diagnosticssnapshot.h>
 #include <ethercatdata/projectsnapshot.h>
+#include <ethercatdata/runtimeoutputtransaction.h>
 #include <ethercatdata/runtimeresource.h>
 #include <ethercatdata/scansnapshot.h>
 
@@ -288,6 +289,13 @@ public:
     virtual Utils::Result<> refreshRuntimeResources();
     virtual Utils::Result<> requestRuntimeResourceSnapshot(
         const Data::RuntimeResourceSnapshotRequest &request);
+    virtual bool supportsRuntimeOutputTransactions() const;
+    virtual Utils::Result<> requestRuntimeOutputGroupPolicy(
+        const Data::RuntimeOutputGroupPolicyRequest &request);
+    virtual Utils::Result<> requestRuntimeOutputTransactionState(
+        const Data::RuntimeOutputTransactionStateRequest &request);
+    virtual Utils::Result<> applyRuntimeOutputTransaction(
+        const Data::RuntimeOutputTransactionRequest &request);
 
 signals:
     void connectionProfilesChanged();
@@ -296,6 +304,14 @@ signals:
     void runtimeResourceSnapshotChanged();
     void runtimeResourceSnapshotRequestFinished(
         const EtherCAT::Data::RuntimeResourceSnapshotResult &result);
+    void runtimeOutputGroupPolicyRequestFinished(
+        const EtherCAT::Data::RuntimeOutputGroupPolicyResult &result);
+    void runtimeOutputTransactionStateChanged(
+        const EtherCAT::Data::RuntimeOutputTransactionState &state);
+    void runtimeOutputTransactionStateRequestFinished(
+        const EtherCAT::Data::RuntimeOutputTransactionStateResult &result);
+    void runtimeOutputTransactionFinished(
+        const EtherCAT::Data::RuntimeOutputTransactionResult &result);
 };
 
 class ETHERCATCORE_EXPORT ScanProvider : public Provider

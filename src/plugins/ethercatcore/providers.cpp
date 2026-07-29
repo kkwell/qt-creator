@@ -216,6 +216,32 @@ Utils::Result<> ControllerConnectionProvider::requestRuntimeResourceSnapshot(
         Tr::tr("This controller provider does not support targeted runtime resource snapshots."));
 }
 
+bool ControllerConnectionProvider::supportsRuntimeOutputTransactions() const
+{
+    return false;
+}
+
+Utils::Result<> ControllerConnectionProvider::requestRuntimeOutputGroupPolicy(
+    const Data::RuntimeOutputGroupPolicyRequest &)
+{
+    return Utils::ResultError(
+        Tr::tr("This controller provider does not support runtime output group policies."));
+}
+
+Utils::Result<> ControllerConnectionProvider::requestRuntimeOutputTransactionState(
+    const Data::RuntimeOutputTransactionStateRequest &)
+{
+    return Utils::ResultError(
+        Tr::tr("This controller provider does not support runtime output transaction state."));
+}
+
+Utils::Result<> ControllerConnectionProvider::applyRuntimeOutputTransaction(
+    const Data::RuntimeOutputTransactionRequest &)
+{
+    return Utils::ResultError(
+        Tr::tr("This controller provider does not support runtime output transactions."));
+}
+
 ScanProvider::ScanProvider(Utils::Id id, const QString &displayName, QObject *parent)
     : Provider(ProviderKind::Scan, id, displayName, parent)
 {}

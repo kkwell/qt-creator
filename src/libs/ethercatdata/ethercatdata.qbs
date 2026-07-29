@@ -21,6 +21,7 @@ QtcLibrary {
         "offlineconfiguration.cpp",
         "offlineconfiguration.h",
         "projectsnapshot.h",
+        "runtimeoutputtransaction.h",
         "runtimeresource.h",
         "scansnapshot.h",
         "semanticids.h",

@@ -20,6 +20,7 @@
 #include <ethercatdata/controllerconnection.h>
 #include <ethercatdata/engineeringvalue.h>
 #include <ethercatdata/manualcontrol.h>
+#include <ethercatdata/runtimeoutputtransaction.h>
 #include <ethercatdata/runtimeresource.h>
 
 #include <memory>
@@ -63,6 +64,10 @@ void EtherCATCorePlugin::initialize()
     qRegisterMetaType<Data::ControllerOperationError>();
     qRegisterMetaType<Data::RuntimeResourceSnapshotRequest>();
     qRegisterMetaType<Data::RuntimeResourceSnapshotResult>();
+    qRegisterMetaType<Data::RuntimeOutputGroupPolicyResult>();
+    qRegisterMetaType<Data::RuntimeOutputTransactionState>();
+    qRegisterMetaType<Data::RuntimeOutputTransactionStateResult>();
+    qRegisterMetaType<Data::RuntimeOutputTransactionResult>();
     qRegisterMetaType<Data::ExactRational>();
     qRegisterMetaType<Data::EngineeringValue>();
     qRegisterMetaType<Data::EngineeringTransform>();

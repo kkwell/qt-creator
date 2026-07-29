@@ -18,6 +18,7 @@ private slots:
     void testProjectSnapshotValueSemantics();
     void testRuntimeResourceValueSemantics();
     void testRuntimeResourceSnapshotRequestContract();
+    void testRuntimeOutputTransactionContract();
     void testSemanticRuntimeValueSemantics();
     void testSemanticRuntimeEpochValidation();
     void testSemanticRuntimeReadValidation();

@@ -25,6 +25,7 @@
 #include <ethercatdata/nodeid.h>
 #include <ethercatdata/offlineconfiguration.h>
 #include <ethercatdata/projectsnapshot.h>
+#include <ethercatdata/runtimeoutputtransaction.h>
 #include <ethercatdata/runtimeresource.h>
 #include <ethercatdata/semanticruntime.h>
 
@@ -214,6 +215,108 @@ struct SemanticRuntimeFixture
         request.parameters.insert("mode", "manual");
         request.ttlMs = 250;
         request.reason = "test";
+    }
+};
+
+struct RuntimeOutputFixture
+{
+    Data::ControllerConnectionScope scope{Data::NodeId::create(), Data::NodeId::create()};
+    Data::RuntimeResourceCatalogEpoch epoch;
+    Data::RuntimeConsistencyGroupId groupId{QByteArray::fromHex("00000055")};
+    QByteArray mappingDigest = QByteArray(32, '\x33');
+    QByteArray groupRecordDigest = QByteArray(32, '\x44');
+    Data::RuntimeOutputOperationId operationId{
+        QByteArray::fromHex("00112233445566778899aabbccddeeff")};
+    Data::RuntimeOutputGroupPolicyRequest policyRequest;
+    Data::RuntimeOutputGroupPolicy policy;
+    Data::RuntimeOutputTransactionStateRequest stateRequest;
+    Data::RuntimeOutputTransactionState idleState;
+    Data::RuntimeOutputTransactionRequest transactionRequest;
+    Data::RuntimeOutputTransactionState appliedState;
+
+    RuntimeOutputFixture()
+    {
+        epoch.controllerBootId = 0x2122232425262728;
+        epoch.activePackageSlot = Data::ControllerSlot::A;
+        epoch.activePackageGeneration = 7;
+        epoch.configurationId = 0x100;
+        epoch.topologyGeneration = 9;
+        epoch.runtimeGeneration = 11;
+        epoch.catalogRevision = 13;
+        epoch.topologyIdentity = QByteArray::fromHex("6000000000000001");
+
+        policyRequest.correlationId = "output-policy-1";
+        policyRequest.scope = scope;
+        policyRequest.sessionGeneration = 3;
+        policyRequest.expectedEpoch = epoch;
+        policyRequest.consistencyGroupId = groupId;
+        policyRequest.expectedMappingDigest = mappingDigest;
+
+        policy.scope = scope;
+        policy.sessionGeneration = policyRequest.sessionGeneration;
+        policy.epoch = epoch;
+        policy.consistencyGroupId = groupId;
+        policy.mappingDigest = mappingDigest;
+        policy.completeGroupRecordDigest = groupRecordDigest;
+        policy.recoveryPolicy = Data::RuntimeOutputRecoveryPolicy::ReturnTask;
+        policy.maximumTtlCycles = 1000;
+        policy.completeResourceCount = 2;
+        policy.currentOutputGeneration = 9;
+        policy.manualWriteAllowed = true;
+        policy.receivedAt = QDateTime::currentDateTimeUtc();
+
+        stateRequest.correlationId = "output-state-1";
+        stateRequest.scope = scope;
+        stateRequest.sessionGeneration = policyRequest.sessionGeneration;
+        stateRequest.expectedEpoch = epoch;
+        stateRequest.expectedMappingDigest = mappingDigest;
+
+        idleState.scope = scope;
+        idleState.sessionGeneration = stateRequest.sessionGeneration;
+        idleState.epoch = epoch;
+        idleState.mappingDigest = mappingDigest;
+        idleState.state = Data::RuntimeOutputState::Idle;
+        idleState.outputGeneration = policy.currentOutputGeneration;
+        idleState.controllerTimestampNs = 1000;
+        idleState.receivedAt = policy.receivedAt;
+
+        Data::RuntimeOutputValueWrite first;
+        first.resourceId.value = QByteArray::fromHex("1000000000000001");
+        first.bitWidth = 8;
+        first.value.primitiveType = Data::RuntimeResourcePrimitiveType::UnsignedInteger;
+        first.value.value = QVariant::fromValue<qulonglong>(1);
+        first.value.typeIdentity = "u8";
+
+        Data::RuntimeOutputValueWrite second = first;
+        second.resourceId.value = QByteArray::fromHex("1000000000000002");
+        second.value.value = QVariant::fromValue<qulonglong>(2);
+
+        transactionRequest.operationId = operationId;
+        transactionRequest.scope = scope;
+        transactionRequest.sessionGeneration = policyRequest.sessionGeneration;
+        transactionRequest.expectedEpoch = epoch;
+        transactionRequest.expectedMappingDigest = mappingDigest;
+        transactionRequest.expectedCompleteGroupRecordDigest = groupRecordDigest;
+        transactionRequest.expectedCompleteResourceCount = 2;
+        transactionRequest.expectedRecoveryPolicy = policy.recoveryPolicy;
+        transactionRequest.expectedMaximumTtlCycles = policy.maximumTtlCycles;
+        transactionRequest.expectedOutputGeneration = policy.currentOutputGeneration;
+        transactionRequest.ttlCycles = 5;
+        transactionRequest.consistencyGroupId = groupId;
+        transactionRequest.completeGroupWrites = {first, second};
+
+        appliedState = idleState;
+        appliedState.state = Data::RuntimeOutputState::OverrideActive;
+        appliedState.resultFlags = Data::RuntimeOutputTransactionResultFlag::OverrideActive;
+        appliedState.operationId = operationId;
+        appliedState.appliedCycle = 100;
+        appliedState.expiryCycle = 105;
+        appliedState.outputGeneration = 10;
+        appliedState.consistencyGroupId = groupId;
+        appliedState.ttlCycles = transactionRequest.ttlCycles;
+        appliedState.recoveryPolicy = Data::RuntimeOutputRecoveryPolicy::ReturnTask;
+        appliedState.valueCount = 2;
+        appliedState.controllerTimestampNs = 2000;
     }
 };
 
@@ -1183,6 +1286,255 @@ void EtherCATCoreTests::testRuntimeResourceSnapshotRequestContract()
 
     QVERIFY(QMetaType::fromType<Data::RuntimeResourceSnapshotRequest>().isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimeResourceSnapshotResult>().isValid());
+}
+
+void EtherCATCoreTests::testRuntimeOutputTransactionContract()
+{
+    RuntimeOutputFixture fixture;
+
+    QVERIFY(fixture.operationId.isValid());
+    QCOMPARE(qHash(Data::RuntimeOutputOperationId(fixture.operationId)), qHash(fixture.operationId));
+    QVERIFY(Data::isCompleteRuntimeOutputEpoch(fixture.epoch));
+    QVERIFY(Data::isValidRuntimeOutputDigest(fixture.mappingDigest));
+    QVERIFY(Data::isValidRuntimeOutputCorrelationId(fixture.policyRequest.correlationId));
+    QVERIFY(fixture.policyRequest.isValid());
+    QVERIFY(fixture.policy.isValid());
+    QVERIFY(fixture.stateRequest.isValid());
+    QVERIFY(fixture.idleState.isValid());
+    QVERIFY(fixture.transactionRequest.isValid());
+    QVERIFY(fixture.appliedState.isValid());
+
+    Data::RuntimeOutputGroupPolicyResult policySuccess;
+    policySuccess.request = fixture.policyRequest;
+    policySuccess.policy = fixture.policy;
+    QVERIFY(policySuccess.isValid());
+    QCOMPARE(Data::RuntimeOutputGroupPolicyResult(policySuccess), policySuccess);
+
+    Data::RuntimeOutputGroupPolicyResult policyFailure;
+    policyFailure.request = fixture.policyRequest;
+    Data::ControllerOperationError policyError;
+    policyError.operation = Data::ControllerOperation::QueryRuntimeOutputGroupPolicy;
+    policyFailure.error = policyError;
+    QVERIFY(policyFailure.isValid());
+    policyFailure.error->operation = Data::ControllerOperation::QueryRuntimeResourceCatalog;
+    QVERIFY(!policyFailure.isValid());
+    policyFailure = policySuccess;
+    policyFailure.policy->mappingDigest = QByteArray(32, '\x45');
+    QVERIFY(!policyFailure.isValid());
+    policyFailure = policySuccess;
+    policyFailure.error = policyError;
+    QVERIFY(!policyFailure.isValid());
+
+    Data::RuntimeOutputGroupPolicy invalidPolicy = fixture.policy;
+    invalidPolicy.manualWriteAllowed = false;
+    QVERIFY(!invalidPolicy.isValid());
+    invalidPolicy = fixture.policy;
+    invalidPolicy.recoveryPolicy = Data::RuntimeOutputRecoveryPolicy::Unknown;
+    QVERIFY(!invalidPolicy.isValid());
+    invalidPolicy = fixture.policy;
+    invalidPolicy.completeResourceCount = 65;
+    QVERIFY(!invalidPolicy.isValid());
+    invalidPolicy = fixture.policy;
+    invalidPolicy.maximumTtlCycles = 65536;
+    QVERIFY(!invalidPolicy.isValid());
+    invalidPolicy = fixture.policy;
+    invalidPolicy.completeGroupRecordDigest.fill('\0');
+    QVERIFY(!invalidPolicy.isValid());
+
+    Data::RuntimeOutputGroupPolicyRequest invalidPolicyRequest = fixture.policyRequest;
+    invalidPolicyRequest.correlationId = " output-policy-1";
+    QVERIFY(!invalidPolicyRequest.isValid());
+    invalidPolicyRequest = fixture.policyRequest;
+    invalidPolicyRequest.correlationId = "output\npolicy";
+    QVERIFY(!invalidPolicyRequest.isValid());
+    invalidPolicyRequest = fixture.policyRequest;
+    invalidPolicyRequest.consistencyGroupId = {};
+    QVERIFY(!invalidPolicyRequest.isValid());
+    invalidPolicyRequest = fixture.policyRequest;
+    invalidPolicyRequest.expectedEpoch.runtimeGeneration = 0;
+    QVERIFY(!invalidPolicyRequest.isValid());
+
+    Data::RuntimeOutputTransactionStateResult stateSuccess;
+    stateSuccess.request = fixture.stateRequest;
+    stateSuccess.state = fixture.idleState;
+    QVERIFY(stateSuccess.isValid());
+    QCOMPARE(Data::RuntimeOutputTransactionStateResult(stateSuccess), stateSuccess);
+
+    Data::RuntimeOutputTransactionStateResult stateFailure;
+    stateFailure.request = fixture.stateRequest;
+    Data::ControllerOperationError stateError;
+    stateError.operation = Data::ControllerOperation::QueryRuntimeOutputTransactionState;
+    stateFailure.error = stateError;
+    QVERIFY(stateFailure.isValid());
+    stateFailure.error->operation = Data::ControllerOperation::QueryRuntimeResourceSnapshot;
+    QVERIFY(!stateFailure.isValid());
+    stateFailure = stateSuccess;
+    stateFailure.state->sessionGeneration++;
+    QVERIFY(!stateFailure.isValid());
+
+    Data::RuntimeOutputTransactionState invalidState = fixture.idleState;
+    invalidState.operationId = fixture.operationId;
+    QVERIFY(!invalidState.isValid());
+    invalidState = fixture.appliedState;
+    invalidState.resultFlags = Data::RuntimeOutputTransactionResultFlag::SafeHold;
+    QVERIFY(!invalidState.isValid());
+    invalidState = fixture.appliedState;
+    invalidState.resultFlags = static_cast<Data::RuntimeOutputTransactionResultFlag>(
+        quint32(1) << 4);
+    QVERIFY(!invalidState.isValid());
+    invalidState = fixture.appliedState;
+    invalidState.expiryCycle++;
+    QVERIFY(!invalidState.isValid());
+    invalidState = fixture.appliedState;
+    invalidState.ttlCycles = 65536;
+    invalidState.expiryCycle = invalidState.appliedCycle + invalidState.ttlCycles;
+    QVERIFY(!invalidState.isValid());
+
+    Data::RuntimeOutputTransactionState returnedTask = fixture.appliedState;
+    returnedTask.state = Data::RuntimeOutputState::Idle;
+    returnedTask.resultFlags = Data::RuntimeOutputTransactionResultFlag::ReturnedTask;
+    returnedTask.outputGeneration++;
+    QVERIFY(returnedTask.isValid());
+
+    Data::RuntimeOutputTransactionState safeHold = fixture.appliedState;
+    safeHold.state = Data::RuntimeOutputState::SafeHold;
+    safeHold.resultFlags = Data::RuntimeOutputTransactionResultFlag::SafeHold;
+    safeHold.recoveryPolicy = Data::RuntimeOutputRecoveryPolicy::HoldSafe;
+    safeHold.outputGeneration++;
+    QVERIFY(safeHold.isValid());
+    safeHold.resultFlags |= Data::RuntimeOutputTransactionResultFlag::OverrideActive;
+    QVERIFY(!safeHold.isValid());
+
+    Data::RuntimeOutputValueWrite booleanWrite;
+    booleanWrite.resourceId.value = QByteArray::fromHex("01");
+    booleanWrite.bitWidth = 1;
+    booleanWrite.value.primitiveType = Data::RuntimeResourcePrimitiveType::Boolean;
+    booleanWrite.value.value = true;
+    QVERIFY(booleanWrite.isValid());
+    booleanWrite.bitWidth = 2;
+    QVERIFY(!booleanWrite.isValid());
+
+    Data::RuntimeOutputValueWrite signedWrite;
+    signedWrite.resourceId.value = QByteArray::fromHex("02");
+    signedWrite.bitWidth = 4;
+    signedWrite.value.primitiveType = Data::RuntimeResourcePrimitiveType::SignedInteger;
+    signedWrite.value.value = QVariant::fromValue<qlonglong>(-8);
+    QVERIFY(signedWrite.isValid());
+    signedWrite.value.value = QVariant::fromValue<qlonglong>(-9);
+    QVERIFY(!signedWrite.isValid());
+    signedWrite.value.value = QVariant::fromValue<qint8>(-8);
+    QVERIFY(!signedWrite.isValid());
+
+    Data::RuntimeOutputValueWrite unsignedWrite;
+    unsignedWrite.resourceId.value = QByteArray::fromHex("03");
+    unsignedWrite.bitWidth = 4;
+    unsignedWrite.value.primitiveType = Data::RuntimeResourcePrimitiveType::UnsignedInteger;
+    unsignedWrite.value.value = QVariant::fromValue<qulonglong>(15);
+    QVERIFY(unsignedWrite.isValid());
+    unsignedWrite.value.value = QVariant::fromValue<qulonglong>(16);
+    QVERIFY(!unsignedWrite.isValid());
+    unsignedWrite.value.value = QVariant::fromValue<quint8>(15);
+    QVERIFY(!unsignedWrite.isValid());
+
+    Data::RuntimeOutputValueWrite floatingWrite;
+    floatingWrite.resourceId.value = QByteArray::fromHex("0350");
+    floatingWrite.bitWidth = 64;
+    floatingWrite.value.primitiveType = Data::RuntimeResourcePrimitiveType::FloatingPoint;
+    floatingWrite.value.value = 1.0;
+    QVERIFY(!floatingWrite.isValid());
+
+    Data::RuntimeOutputValueWrite bytesWrite;
+    bytesWrite.resourceId.value = QByteArray::fromHex("04");
+    bytesWrite.bitWidth = 12;
+    bytesWrite.value.primitiveType = Data::RuntimeResourcePrimitiveType::ByteArray;
+    bytesWrite.value.value = QByteArray::fromHex("0fff");
+    QVERIFY(bytesWrite.isValid());
+    bytesWrite.value.value = QByteArray::fromHex("1fff");
+    QVERIFY(!bytesWrite.isValid());
+    bytesWrite.value.value = QByteArray::fromHex("0f");
+    QVERIFY(!bytesWrite.isValid());
+
+    Data::RuntimeOutputValueWrite opaqueWrite = bytesWrite;
+    opaqueWrite.bitWidth = 8;
+    opaqueWrite.value.primitiveType = Data::RuntimeResourcePrimitiveType::Opaque;
+    opaqueWrite.value.value = QByteArray::fromHex("01");
+    QVERIFY(!opaqueWrite.isValid());
+
+    Data::RuntimeOutputTransactionRequest invalidRequest = fixture.transactionRequest;
+    invalidRequest.operationId.value.fill('\0');
+    QVERIFY(!invalidRequest.isValid());
+    invalidRequest = fixture.transactionRequest;
+    invalidRequest.expectedMappingDigest.resize(31);
+    QVERIFY(!invalidRequest.isValid());
+    invalidRequest = fixture.transactionRequest;
+    invalidRequest.expectedCompleteResourceCount = 1;
+    QVERIFY(!invalidRequest.isValid());
+    invalidRequest = fixture.transactionRequest;
+    invalidRequest.expectedRecoveryPolicy = Data::RuntimeOutputRecoveryPolicy::Unknown;
+    QVERIFY(!invalidRequest.isValid());
+    invalidRequest = fixture.transactionRequest;
+    invalidRequest.ttlCycles = invalidRequest.expectedMaximumTtlCycles + 1;
+    QVERIFY(!invalidRequest.isValid());
+    invalidRequest = fixture.transactionRequest;
+    invalidRequest.completeGroupWrites.removeLast();
+    QVERIFY(!invalidRequest.isValid());
+    invalidRequest = fixture.transactionRequest;
+    std::swap(invalidRequest.completeGroupWrites[0], invalidRequest.completeGroupWrites[1]);
+    QVERIFY(!invalidRequest.isValid());
+    invalidRequest = fixture.transactionRequest;
+    invalidRequest.completeGroupWrites[1].resourceId
+        = invalidRequest.completeGroupWrites[0].resourceId;
+    QVERIFY(!invalidRequest.isValid());
+    invalidRequest = fixture.transactionRequest;
+    invalidRequest.completeGroupWrites[0].value.opaqueRepresentation = "wire-bytes";
+    QVERIFY(!invalidRequest.isValid());
+
+    Data::RuntimeOutputTransactionResult applied;
+    applied.request = fixture.transactionRequest;
+    applied.outcome = Data::RuntimeOutputTransactionOutcome::Applied;
+    applied.finalResponseObserved = true;
+    applied.state = fixture.appliedState;
+    QVERIFY(applied.isValid());
+    QCOMPARE(Data::RuntimeOutputTransactionResult(applied), applied);
+    applied.state->outputGeneration++;
+    QVERIFY(!applied.isValid());
+    applied.state = fixture.appliedState;
+    applied.state->recoveryPolicy = Data::RuntimeOutputRecoveryPolicy::HoldSafe;
+    QVERIFY(!applied.isValid());
+    applied.state = fixture.appliedState;
+    applied.state->state = Data::RuntimeOutputState::Idle;
+    applied.state->resultFlags = Data::RuntimeOutputTransactionResultFlag::ReturnedTask;
+    QVERIFY(!applied.isValid());
+
+    Data::RuntimeOutputTransactionResult rejected;
+    rejected.request = fixture.transactionRequest;
+    rejected.outcome = Data::RuntimeOutputTransactionOutcome::Rejected;
+    rejected.finalResponseObserved = true;
+    Data::ControllerOperationError applyError;
+    applyError.operation = Data::ControllerOperation::ApplyRuntimeOutputTransaction;
+    rejected.error = applyError;
+    QVERIFY(rejected.isValid());
+    rejected.outcome = Data::RuntimeOutputTransactionOutcome::OutcomeUnknown;
+    QVERIFY(!rejected.isValid());
+    rejected.finalResponseObserved = false;
+    QVERIFY(rejected.isValid());
+    rejected.outcome = Data::RuntimeOutputTransactionOutcome::Unknown;
+    QVERIFY(!rejected.isValid());
+    rejected.outcome = Data::RuntimeOutputTransactionOutcome::Rejected;
+    rejected.state = fixture.appliedState;
+    QVERIFY(!rejected.isValid());
+
+    QVERIFY(!Data::RuntimeOutputOperationId{QByteArray(16, '\0')}.isValid());
+    QVERIFY(!Data::RuntimeOutputOperationId{QByteArray(15, '\x01')}.isValid());
+    QVERIFY(!Data::isValidRuntimeOutputDigest(QByteArray(32, '\0')));
+    Data::RuntimeOutputTransactionRequest saturatedGeneration = fixture.transactionRequest;
+    saturatedGeneration.expectedOutputGeneration = std::numeric_limits<quint64>::max();
+    QVERIFY(!saturatedGeneration.isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimeOutputOperationId>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimeOutputGroupPolicyResult>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimeOutputTransactionStateResult>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimeOutputTransactionRequest>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimeOutputTransactionResult>().isValid());
 }
 
 void EtherCATCoreTests::testSemanticRuntimeValueSemantics()
@@ -2799,6 +3151,39 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
         Tr::tr("This controller provider does not support targeted runtime resource snapshots."));
     QCOMPARE(targetedFinishedSpy.count(), 0);
 
+    RuntimeOutputFixture runtimeOutput;
+    QVERIFY(!provider.supportsRuntimeOutputTransactions());
+    QSignalSpy outputPolicyFinishedSpy(
+        &provider, &ControllerConnectionProvider::runtimeOutputGroupPolicyRequestFinished);
+    QSignalSpy outputStateChangedSpy(
+        &provider, &ControllerConnectionProvider::runtimeOutputTransactionStateChanged);
+    QSignalSpy outputStateFinishedSpy(
+        &provider, &ControllerConnectionProvider::runtimeOutputTransactionStateRequestFinished);
+    QSignalSpy outputTransactionFinishedSpy(
+        &provider, &ControllerConnectionProvider::runtimeOutputTransactionFinished);
+    const Utils::Result<> unsupportedOutputPolicy = provider.requestRuntimeOutputGroupPolicy(
+        runtimeOutput.policyRequest);
+    QVERIFY(!unsupportedOutputPolicy);
+    QCOMPARE(
+        unsupportedOutputPolicy.error(),
+        Tr::tr("This controller provider does not support runtime output group policies."));
+    const Utils::Result<> unsupportedOutputState = provider.requestRuntimeOutputTransactionState(
+        runtimeOutput.stateRequest);
+    QVERIFY(!unsupportedOutputState);
+    QCOMPARE(
+        unsupportedOutputState.error(),
+        Tr::tr("This controller provider does not support runtime output transaction state."));
+    const Utils::Result<> unsupportedOutputTransaction = provider.applyRuntimeOutputTransaction(
+        runtimeOutput.transactionRequest);
+    QVERIFY(!unsupportedOutputTransaction);
+    QCOMPARE(
+        unsupportedOutputTransaction.error(),
+        Tr::tr("This controller provider does not support runtime output transactions."));
+    QCOMPARE(outputPolicyFinishedSpy.count(), 0);
+    QCOMPARE(outputStateChangedSpy.count(), 0);
+    QCOMPARE(outputStateFinishedSpy.count(), 0);
+    QCOMPARE(outputTransactionFinishedSpy.count(), 0);
+
     Data::ControllerPackageDeploymentProgress deploymentProgress;
     deploymentProgress.operationId = deploymentRequest.operationId;
     deploymentProgress.artifactSha256 = QByteArray(32, '\x5a');
@@ -2926,6 +3311,7 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
     QVERIFY(connected.capability->controlLease);
     QVERIFY(connected.capability->resumablePush);
     QVERIFY(connected.capability->transactionalBulk);
+    QVERIFY(!connected.capability->runtimeOutputTransactions);
     QVERIFY(connected.capability->firmwareUpdate);
     QVERIFY(connected.capability->coe);
     QVERIFY(connected.capability->distributedClocks);
