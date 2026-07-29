@@ -12,6 +12,8 @@ QtcPlugin {
     Depends { name: "EtherCATProject" }
 
     files: [
+        "ecpkgcontainer.cpp",
+        "ecpkgcontainer.h",
         "ed25519verifier.cpp",
         "ed25519verifier.h",
         "ethercatsemanticruntimeplugin.cpp",

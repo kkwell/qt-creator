@@ -5,6 +5,8 @@ add_qtc_plugin(EtherCATSemanticRuntime
     EtherCATCore
     EtherCATProject
   SOURCES
+    ecpkgcontainer.cpp
+    ecpkgcontainer.h
     ed25519verifier.cpp
     ed25519verifier.h
     ethercatsemanticruntimeplugin.cpp

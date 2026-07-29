@@ -2,17 +2,22 @@
 
 #include "ethercatsemanticruntimetests.h"
 
+#include "ecpkgcontainer.h"
 #include "ed25519verifier.h"
 #include "semanticruntimeexecutor.h"
 
 #include <extensionsystem/pluginmanager.h>
 
 #include <QCryptographicHash>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QSignalSpy>
 #include <QTest>
 
 #include <algorithm>
+#include <array>
+#include <limits>
 
 namespace EtherCAT::SemanticRuntime::Internal {
 
@@ -444,6 +449,464 @@ static QByteArray readTestData(const QString &relativePath)
     if (!file.open(QIODevice::ReadOnly))
         return {};
     return file.readAll();
+}
+
+namespace {
+
+constexpr std::array<const char *, 6> canonicalTestEntryNames{
+    "manifest.json",
+    "capability.bin",
+    "configuration.ecfg",
+    "runtime.erun",
+    "compile_report.json",
+    "manifest.sig",
+};
+
+struct CanonicalTestEcpkg
+{
+    QByteArray wire;
+    std::array<qsizetype, 6> localOffsets;
+    std::array<qsizetype, 6> dataOffsets;
+    std::array<qsizetype, 6> centralOffsets;
+    qsizetype centralOffset = 0;
+    qsizetype eocdOffset = 0;
+};
+
+static void appendLe16(QByteArray &bytes, quint16 value)
+{
+    bytes.append(char(value & 0xff));
+    bytes.append(char((value >> 8) & 0xff));
+}
+
+static void appendLe32(QByteArray &bytes, quint32 value)
+{
+    bytes.append(char(value & 0xff));
+    bytes.append(char((value >> 8) & 0xff));
+    bytes.append(char((value >> 16) & 0xff));
+    bytes.append(char((value >> 24) & 0xff));
+}
+
+static void putLe16(QByteArray &bytes, qsizetype offset, quint16 value)
+{
+    bytes[offset] = char(value & 0xff);
+    bytes[offset + 1] = char((value >> 8) & 0xff);
+}
+
+static void putLe32(QByteArray &bytes, qsizetype offset, quint32 value)
+{
+    bytes[offset] = char(value & 0xff);
+    bytes[offset + 1] = char((value >> 8) & 0xff);
+    bytes[offset + 2] = char((value >> 16) & 0xff);
+    bytes[offset + 3] = char((value >> 24) & 0xff);
+}
+
+static quint32 testZipCrc32(QByteArrayView bytes)
+{
+    quint32 crc = std::numeric_limits<quint32>::max();
+    for (char byte : bytes) {
+        crc ^= quint8(byte);
+        for (int bit = 0; bit < 8; ++bit) {
+            const quint32 lowBitMask = quint32(0) - (crc & 1);
+            crc = (crc >> 1) ^ (0xedb88320 & lowBitMask);
+        }
+    }
+    return ~crc;
+}
+
+static std::array<QByteArray, 6> canonicalTestPayloads()
+{
+    return {
+        QByteArray("{\"format\":\"test\"}\n"),
+        QByteArray::fromHex("01020304"),
+        QByteArray::fromHex("454346470100"),
+        QByteArray::fromHex("4552554e0100"),
+        QByteArray("{\"result\":\"ok\"}\n"),
+        QByteArray(64, char(0xa5)),
+    };
+}
+
+static std::array<QByteArray, 6> canonicalTestNames()
+{
+    std::array<QByteArray, 6> names;
+    for (std::size_t index = 0; index < names.size(); ++index)
+        names[index] = canonicalTestEntryNames[index];
+    return names;
+}
+
+static CanonicalTestEcpkg buildCanonicalTestEcpkg(
+    const std::array<QByteArray, 6> &payloads = canonicalTestPayloads(),
+    const std::array<QByteArray, 6> &names = canonicalTestNames())
+{
+    CanonicalTestEcpkg package;
+    std::array<quint32, 6> crcs;
+
+    for (std::size_t index = 0; index < payloads.size(); ++index) {
+        const QByteArray &name = names[index];
+        const QByteArray &payload = payloads[index];
+        package.localOffsets[index] = package.wire.size();
+        crcs[index] = testZipCrc32(payload);
+
+        appendLe32(package.wire, 0x04034b50);
+        appendLe16(package.wire, 20);
+        appendLe16(package.wire, 0);
+        appendLe16(package.wire, 0);
+        appendLe16(package.wire, 0);
+        appendLe16(package.wire, 33);
+        appendLe32(package.wire, crcs[index]);
+        appendLe32(package.wire, quint32(payload.size()));
+        appendLe32(package.wire, quint32(payload.size()));
+        appendLe16(package.wire, quint16(name.size()));
+        appendLe16(package.wire, 0);
+        package.wire.append(name);
+        package.dataOffsets[index] = package.wire.size();
+        package.wire.append(payload);
+    }
+
+    package.centralOffset = package.wire.size();
+    for (std::size_t index = 0; index < payloads.size(); ++index) {
+        const QByteArray &name = names[index];
+        const QByteArray &payload = payloads[index];
+        package.centralOffsets[index] = package.wire.size();
+
+        appendLe32(package.wire, 0x02014b50);
+        appendLe16(package.wire, 0x0314);
+        appendLe16(package.wire, 20);
+        appendLe16(package.wire, 0);
+        appendLe16(package.wire, 0);
+        appendLe16(package.wire, 0);
+        appendLe16(package.wire, 33);
+        appendLe32(package.wire, crcs[index]);
+        appendLe32(package.wire, quint32(payload.size()));
+        appendLe32(package.wire, quint32(payload.size()));
+        appendLe16(package.wire, quint16(name.size()));
+        appendLe16(package.wire, 0);
+        appendLe16(package.wire, 0);
+        appendLe16(package.wire, 0);
+        appendLe16(package.wire, 0);
+        appendLe32(package.wire, 0x81a40000);
+        appendLe32(package.wire, quint32(package.localOffsets[index]));
+        package.wire.append(name);
+    }
+
+    package.eocdOffset = package.wire.size();
+    appendLe32(package.wire, 0x06054b50);
+    appendLe16(package.wire, 0);
+    appendLe16(package.wire, 0);
+    appendLe16(package.wire, 6);
+    appendLe16(package.wire, 6);
+    appendLe32(package.wire, quint32(package.eocdOffset - package.centralOffset));
+    appendLe32(package.wire, quint32(package.centralOffset));
+    appendLe16(package.wire, 0);
+    return package;
+}
+
+static QByteArray readFile(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    return file.readAll();
+}
+
+} // namespace
+
+void EtherCATSemanticRuntimeTests::testEcpkgContainerCanonicalMinimal()
+{
+    const std::array<QByteArray, 6> payloads = canonicalTestPayloads();
+    const CanonicalTestEcpkg package = buildCanonicalTestEcpkg(payloads);
+
+    const Utils::Result<EcpkgContainer> parsed = parseCanonicalEcpkgContainer(package.wire);
+    QVERIFY_RESULT(parsed);
+    QCOMPARE(
+        parsed->packageSha256, QCryptographicHash::hash(package.wire, QCryptographicHash::Sha256));
+    QCOMPARE(parsed->manifestJson, payloads[0]);
+    QCOMPARE(parsed->capabilityBin, payloads[1]);
+    QCOMPARE(parsed->configurationEcfg, payloads[2]);
+    QCOMPARE(parsed->runtimeErun, payloads[3]);
+    QCOMPARE(parsed->compileReportJson, payloads[4]);
+    QCOMPARE(parsed->manifestSignature, payloads[5]);
+
+    const Utils::Result<EcpkgContainer> explicitLimit
+        = parseCanonicalEcpkgContainer(package.wire, package.wire.size());
+    QVERIFY_RESULT(explicitLimit);
+}
+
+void EtherCATSemanticRuntimeTests::testEcpkgContainerRejectsMetadataMutations()
+{
+    const CanonicalTestEcpkg package = buildCanonicalTestEcpkg();
+
+    const auto rejectMutation = [&package](const char *description, const auto &mutate) {
+        QByteArray altered = package.wire;
+        mutate(altered);
+        const Utils::Result<EcpkgContainer> parsed = parseCanonicalEcpkgContainer(altered);
+        QVERIFY2(!parsed, description);
+    };
+
+    const qsizetype local = package.localOffsets[0];
+    rejectMutation("local magic", [local](QByteArray &bytes) { putLe32(bytes, local, 0x04034b51); });
+    rejectMutation("local version needed", [local](QByteArray &bytes) {
+        putLe16(bytes, local + 4, 21);
+    });
+    rejectMutation("local flags/data descriptor", [local](QByteArray &bytes) {
+        putLe16(bytes, local + 6, 0x0008);
+    });
+    rejectMutation("local compression method", [local](QByteArray &bytes) {
+        putLe16(bytes, local + 8, 8);
+    });
+    rejectMutation("local DOS time", [local](QByteArray &bytes) { putLe16(bytes, local + 10, 1); });
+    rejectMutation("local DOS date", [local](QByteArray &bytes) { putLe16(bytes, local + 12, 34); });
+    rejectMutation("local CRC", [local](QByteArray &bytes) { putLe32(bytes, local + 14, 1); });
+    rejectMutation("local compressed size", [local](QByteArray &bytes) {
+        putLe32(bytes, local + 18, 1);
+    });
+    rejectMutation("local uncompressed size", [local](QByteArray &bytes) {
+        putLe32(bytes, local + 22, 1);
+    });
+    rejectMutation("local name length", [local](QByteArray &bytes) {
+        putLe16(bytes, local + 26, 1);
+    });
+    rejectMutation("local extra length", [local](QByteArray &bytes) {
+        putLe16(bytes, local + 28, 1);
+    });
+    rejectMutation("local name", [local](QByteArray &bytes) { bytes[local + 30] ^= 1; });
+
+    const qsizetype central = package.centralOffsets[0];
+    rejectMutation("central magic", [central](QByteArray &bytes) {
+        putLe32(bytes, central, 0x02014b51);
+    });
+    rejectMutation("central version made by", [central](QByteArray &bytes) {
+        putLe16(bytes, central + 4, 0x0014);
+    });
+    rejectMutation("central version needed", [central](QByteArray &bytes) {
+        putLe16(bytes, central + 6, 21);
+    });
+    rejectMutation("central flags", [central](QByteArray &bytes) {
+        putLe16(bytes, central + 8, 1);
+    });
+    rejectMutation("central compression method", [central](QByteArray &bytes) {
+        putLe16(bytes, central + 10, 8);
+    });
+    rejectMutation("central DOS time", [central](QByteArray &bytes) {
+        putLe16(bytes, central + 12, 1);
+    });
+    rejectMutation("central DOS date", [central](QByteArray &bytes) {
+        putLe16(bytes, central + 14, 34);
+    });
+    rejectMutation("central CRC", [central](QByteArray &bytes) { putLe32(bytes, central + 16, 1); });
+    rejectMutation("central compressed size", [central](QByteArray &bytes) {
+        putLe32(bytes, central + 20, 1);
+    });
+    rejectMutation("central uncompressed size", [central](QByteArray &bytes) {
+        putLe32(bytes, central + 24, 1);
+    });
+    rejectMutation("central name length", [central](QByteArray &bytes) {
+        putLe16(bytes, central + 28, 1);
+    });
+    rejectMutation("central extra length", [central](QByteArray &bytes) {
+        putLe16(bytes, central + 30, 1);
+    });
+    rejectMutation("central comment length", [central](QByteArray &bytes) {
+        putLe16(bytes, central + 32, 1);
+    });
+    rejectMutation("central disk", [central](QByteArray &bytes) {
+        putLe16(bytes, central + 34, 1);
+    });
+    rejectMutation("central internal attributes", [central](QByteArray &bytes) {
+        putLe16(bytes, central + 36, 1);
+    });
+    rejectMutation("central external attributes", [central](QByteArray &bytes) {
+        putLe32(bytes, central + 38, 0x81ed0000);
+    });
+    rejectMutation("central local offset", [central](QByteArray &bytes) {
+        putLe32(bytes, central + 42, 1);
+    });
+    rejectMutation("central name", [central](QByteArray &bytes) { bytes[central + 46] ^= 1; });
+
+    const qsizetype eocd = package.eocdOffset;
+    rejectMutation("EOCD magic", [eocd](QByteArray &bytes) { putLe32(bytes, eocd, 0x06054b51); });
+    rejectMutation("EOCD disk", [eocd](QByteArray &bytes) { putLe16(bytes, eocd + 4, 1); });
+    rejectMutation("EOCD central disk", [eocd](QByteArray &bytes) { putLe16(bytes, eocd + 6, 1); });
+    rejectMutation("EOCD disk entry count", [eocd](QByteArray &bytes) {
+        putLe16(bytes, eocd + 8, 5);
+    });
+    rejectMutation("EOCD total entry count", [eocd](QByteArray &bytes) {
+        putLe16(bytes, eocd + 10, 5);
+    });
+    rejectMutation("EOCD central size", [eocd](QByteArray &bytes) { putLe32(bytes, eocd + 12, 1); });
+    rejectMutation("EOCD central offset", [eocd](QByteArray &bytes) {
+        putLe32(bytes, eocd + 16, 1);
+    });
+    rejectMutation("EOCD archive comment", [eocd](QByteArray &bytes) {
+        putLe16(bytes, eocd + 20, 1);
+    });
+
+    rejectMutation("payload CRC", [&package](QByteArray &bytes) {
+        bytes[package.dataOffsets[0]] ^= 1;
+    });
+}
+
+void EtherCATSemanticRuntimeTests::testEcpkgContainerRejectsLayoutsAndLimits()
+{
+    const CanonicalTestEcpkg package = buildCanonicalTestEcpkg();
+    const auto reject = [](const QByteArray &wire, const char *description) {
+        const Utils::Result<EcpkgContainer> parsed = parseCanonicalEcpkgContainer(wire);
+        QVERIFY2(!parsed, description);
+    };
+
+    std::array<QByteArray, 6> reorderedNames = canonicalTestNames();
+    std::swap(reorderedNames[0], reorderedNames[1]);
+    reject(buildCanonicalTestEcpkg(canonicalTestPayloads(), reorderedNames).wire, "entry order");
+
+    std::array<QByteArray, 6> duplicateNames = canonicalTestNames();
+    duplicateNames[1] = duplicateNames[0];
+    reject(buildCanonicalTestEcpkg(canonicalTestPayloads(), duplicateNames).wire, "duplicate entry");
+
+    std::array<QByteArray, 6> unsafeNames = canonicalTestNames();
+    unsafeNames[0] = "../manifest.json";
+    reject(buildCanonicalTestEcpkg(canonicalTestPayloads(), unsafeNames).wire, "zip slip name");
+
+    QByteArray prefix = package.wire;
+    prefix.prepend('\0');
+    for (std::size_t index = 0; index < package.centralOffsets.size(); ++index) {
+        putLe32(
+            prefix,
+            package.centralOffsets[index] + 1 + 42,
+            quint32(package.localOffsets[index] + 1));
+    }
+    putLe32(prefix, package.eocdOffset + 1 + 16, quint32(package.centralOffset + 1));
+    reject(prefix, "leading bytes");
+
+    QByteArray gap = package.wire;
+    gap.insert(package.centralOffset, '\0');
+    putLe32(gap, package.eocdOffset + 1 + 16, quint32(package.centralOffset + 1));
+    reject(gap, "gap before central directory");
+
+    QByteArray overlap = package.wire;
+    putLe32(overlap, package.centralOffsets[1] + 42, quint32(package.localOffsets[0]));
+    reject(overlap, "overlapping local entries");
+
+    QByteArray trailing = package.wire;
+    trailing.append('\0');
+    reject(trailing, "trailing bytes");
+
+    QByteArray zip64Size = package.wire;
+    putLe32(zip64Size, package.centralOffsets[0] + 20, 0xffffffff);
+    putLe32(zip64Size, package.centralOffsets[0] + 24, 0xffffffff);
+    reject(zip64Size, "ZIP64 size marker");
+
+    QByteArray zip64Offset = package.wire;
+    putLe32(zip64Offset, package.centralOffsets[0] + 42, 0xffffffff);
+    reject(zip64Offset, "ZIP64 offset marker");
+
+    QByteArray zip64Count = package.wire;
+    putLe16(zip64Count, package.eocdOffset + 8, 0xffff);
+    putLe16(zip64Count, package.eocdOffset + 10, 0xffff);
+    reject(zip64Count, "ZIP64 count marker");
+
+    const std::array<qsizetype, 9> truncationPoints{
+        0,
+        1,
+        21,
+        package.localOffsets[0] + 29,
+        package.dataOffsets[0],
+        package.centralOffset,
+        package.centralOffsets[0] + 45,
+        package.eocdOffset,
+        package.wire.size() - 1,
+    };
+    for (qsizetype bytes : truncationPoints)
+        reject(package.wire.first(bytes), "truncated package");
+
+    QVERIFY(!parseCanonicalEcpkgContainer(package.wire, 0));
+    QVERIFY(!parseCanonicalEcpkgContainer(package.wire, -1));
+    QVERIFY(!parseCanonicalEcpkgContainer(package.wire, package.wire.size() - 1));
+    const QByteArray tooLarge(defaultMaximumEcpkgContainerBytes + 1, '\0');
+    QVERIFY(!parseCanonicalEcpkgContainer(tooLarge));
+    QVERIFY(!parseCanonicalEcpkgContainer(tooLarge, tooLarge.size()));
+
+    const std::array<qsizetype, 5> entryLimits{
+        1024 * 1024,
+        2 * 1024 * 1024,
+        2 * 1024 * 1024,
+        2 * 1024 * 1024,
+        8 * 1024 * 1024,
+    };
+    for (std::size_t index = 0; index < entryLimits.size(); ++index) {
+        std::array<QByteArray, 6> payloads = canonicalTestPayloads();
+        payloads[index] = QByteArray(entryLimits[index] + 1, char(index + 1));
+        reject(buildCanonicalTestEcpkg(payloads).wire, "entry size limit");
+    }
+
+    std::array<QByteArray, 6> maximumPayloads = canonicalTestPayloads();
+    for (std::size_t index = 0; index < entryLimits.size(); ++index)
+        maximumPayloads[index] = QByteArray(entryLimits[index], char(index + 1));
+    const Utils::Result<EcpkgContainer> maximumEntries = parseCanonicalEcpkgContainer(
+        buildCanonicalTestEcpkg(maximumPayloads).wire);
+    QVERIFY_RESULT(maximumEntries);
+
+    std::array<QByteArray, 6> shortSignature = canonicalTestPayloads();
+    shortSignature[5].chop(1);
+    reject(buildCanonicalTestEcpkg(shortSignature).wire, "short signature");
+
+    std::array<QByteArray, 6> longSignature = canonicalTestPayloads();
+    longSignature[5].append('\0');
+    reject(buildCanonicalTestEcpkg(longSignature).wire, "long signature");
+
+    for (std::size_t index = 0; index < canonicalTestEntryNames.size(); ++index) {
+        std::array<QByteArray, 6> payloads = canonicalTestPayloads();
+        payloads[index].clear();
+        reject(buildCanonicalTestEcpkg(payloads).wire, "empty entry");
+    }
+}
+
+void EtherCATSemanticRuntimeTests::testEcpkgContainerTransferredPackages()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QString fixtureRoot = repositoryRoot.absoluteFilePath("build/vendor_api_036_handoff");
+
+    struct Fixture
+    {
+        QString directory;
+        QString packageName;
+        QByteArray packageSha256;
+    };
+    const std::array<Fixture, 2> fixtures{
+        Fixture{
+            "api035",
+            "three-slave-xb6-sv630n-semantic-binding-cfg3501.ecpkg",
+            QByteArray::fromHex("b41d1fe06960c94df6730ca36a5c7505c30f905f155c47f00228c5f5eaf13dee"),
+        },
+        Fixture{
+            "api036",
+            "three-slave-output-transaction-cfg3501.ecpkg",
+            QByteArray::fromHex("40222de1f5156556117ade48922ea2e2ed246ba0a51a3caa871131803987980b"),
+        },
+    };
+
+    bool foundFixture = false;
+    for (const Fixture &fixture : fixtures) {
+        const QDir directory(QDir(fixtureRoot).absoluteFilePath(fixture.directory));
+        const QString packagePath = directory.absoluteFilePath(fixture.packageName);
+        if (!QFileInfo::exists(packagePath))
+            continue;
+        foundFixture = true;
+
+        const QByteArray package = readFile(packagePath);
+        QVERIFY2(!package.isEmpty(), qPrintable(packagePath));
+        const Utils::Result<EcpkgContainer> parsed = parseCanonicalEcpkgContainer(package);
+        QVERIFY_RESULT(parsed);
+        QCOMPARE(parsed->packageSha256, fixture.packageSha256);
+        QCOMPARE(parsed->manifestJson, readFile(directory.absoluteFilePath("manifest.json")));
+        QCOMPARE(
+            parsed->configurationEcfg, readFile(directory.absoluteFilePath("configuration.ecfg")));
+        QCOMPARE(
+            parsed->compileReportJson, readFile(directory.absoluteFilePath("compile_report.json")));
+        QCOMPARE(parsed->manifestSignature, readFile(directory.absoluteFilePath("manifest.sig")));
+    }
+
+    if (!foundFixture)
+        QSKIP("Transferred API-035/API-036 ECPKG fixtures are not present");
 }
 
 void EtherCATSemanticRuntimeTests::testEd25519Rfc8032()

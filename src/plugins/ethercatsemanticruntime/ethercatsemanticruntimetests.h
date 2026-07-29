@@ -11,6 +11,10 @@ class EtherCATSemanticRuntimeTests final : public QObject
     Q_OBJECT
 
 private slots:
+    void testEcpkgContainerCanonicalMinimal();
+    void testEcpkgContainerRejectsMetadataMutations();
+    void testEcpkgContainerRejectsLayoutsAndLimits();
+    void testEcpkgContainerTransferredPackages();
     void testEd25519Rfc8032();
     void testEd25519RejectsInvalidInputs();
     void testEd25519TransferredManifests();
