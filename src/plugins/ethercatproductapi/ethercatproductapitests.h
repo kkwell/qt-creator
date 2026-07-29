@@ -21,6 +21,9 @@ private slots:
     void testRuntimeResourceGoldenFrames();
     void testRuntimeResourceCodecRejectsMalformed_data();
     void testRuntimeResourceCodecRejectsMalformed();
+    void testSemanticBindingAttestationGoldenFrames();
+    void testSemanticBindingAttestationRejectsMalformed_data();
+    void testSemanticBindingAttestationRejectsMalformed();
     void testOutputTransactionGoldenFrames();
     void testOutputTransactionCodecRejectsMalformed_data();
     void testOutputTransactionCodecRejectsMalformed();

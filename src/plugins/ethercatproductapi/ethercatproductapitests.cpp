@@ -591,6 +591,33 @@ QByteArray runtimeResourceSnapshotFailureGoldenWire()
         "00000000000000000000000000000000");
 }
 
+QByteArray semanticBindingAttestationQueryGoldenWire()
+{
+    return QByteArray::fromHex(
+        "454341500001000d0040040d0000000000000040010203040506070841424344"
+        "45464748000000000000000421222324252627280000000000000000091ab694"
+        "0000004100000000000000000000000700000000000001000000000000000009"
+        "000000000000000b000000000000000d60000000000000010000000000000000");
+}
+
+QByteArray semanticBindingAttestationGoldenWire()
+{
+    return QByteArray::fromHex(
+        "454341500001000d004004890000000100000140010203040506070841424344"
+        "45464748000000000000000521222324252627286162636465666768d4dc3ccd"
+        "040d014000000000000000410001000000000017000000380000000000000007"
+        "00000000000001000000000000000009000000000000000b000000000000000d"
+        "60000000000000012122232425262728"
+        "0101010101010101010101010101010101010101010101010101010101010101"
+        "0202020202020202020202020202020202020202020202020202020202020202"
+        "0303030303030303030303030303030303030303030303030303030303030303"
+        "0404040404040404040404040404040404040404040404040404040404040404"
+        "0505050505050505050505050505050505050505050505050505050505050505"
+        "0606060606060606060606060606060606060606060606060606060606060606"
+        "0707070707070707070707070707070707070707070707070707070707070707"
+        "00000000000000000000000000000000");
+}
+
 QByteArray outputGroupPolicyQueryGoldenWire()
 {
     return QByteArray::fromHex(
@@ -691,6 +718,13 @@ Protocol::RuntimeResourceBinding outputTransactionBinding()
     binding.catalogRevision = 0xd;
     binding.topologyIdentity = 0x6000000000000001;
     return binding;
+}
+
+Protocol::SemanticBindingAttestationQuery semanticBindingAttestationQuery()
+{
+    Protocol::SemanticBindingAttestationQuery query;
+    query.binding = outputTransactionBinding();
+    return query;
 }
 
 Protocol::OutputGroupPolicyQuery outputGroupPolicyQuery()
@@ -2955,6 +2989,315 @@ void EtherCATProductApiTests::testRuntimeResourceCodecRejectsMalformed()
     QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
 }
 
+void EtherCATProductApiTests::testSemanticBindingAttestationGoldenFrames()
+{
+    constexpr quint64 sessionId = 0x0102030405060708;
+    constexpr quint64 requestId = 0x4142434445464748;
+
+    const Protocol::SemanticBindingAttestationQuery query
+        = semanticBindingAttestationQuery();
+    Protocol::Error error;
+    const QByteArray request = Protocol::encodeQuerySemanticBindingAttestation(
+        query,
+        sessionId,
+        requestId,
+        4,
+        Protocol::SemanticBindingAttestationMinor,
+        &error);
+    QVERIFY(!error);
+    QCOMPARE(request.size(), Protocol::HeaderBytes + 64);
+    QCOMPARE(readU32(request, 60), quint32(0x091ab694));
+    QCOMPARE(request, semanticBindingAttestationQueryGoldenWire());
+
+    const QByteArray response = semanticBindingAttestationGoldenWire();
+    QCOMPARE(response.size(), Protocol::HeaderBytes + 320);
+    QCOMPARE(readU32(response, 60), quint32(0xd4dc3ccd));
+    Protocol::FrameParser parser(Protocol::Role::Bulk);
+    const Protocol::ParseResult parsed = parser.append(response);
+    QVERIFY(!parsed.error);
+    QCOMPARE(parsed.frames.size(), 1);
+
+    const auto attestation = Protocol::decodeSemanticBindingAttestation(
+        parsed.frames.constFirst(), query, &error);
+    QVERIFY(attestation);
+    QVERIFY(!error);
+    QCOMPARE(attestation->status, 0);
+    QCOMPARE(attestation->binding.bootId, query.binding.bootId);
+    QCOMPARE(attestation->binding.activeSlot, query.binding.activeSlot);
+    QCOMPARE(attestation->binding.packageGeneration, query.binding.packageGeneration);
+    QCOMPARE(attestation->binding.configurationId, query.binding.configurationId);
+    QCOMPARE(attestation->binding.topologyGeneration, query.binding.topologyGeneration);
+    QCOMPARE(attestation->binding.runtimeGeneration, query.binding.runtimeGeneration);
+    QCOMPARE(attestation->binding.catalogRevision, query.binding.catalogRevision);
+    QCOMPARE(attestation->binding.topologyIdentity, query.binding.topologyIdentity);
+    QCOMPARE(attestation->formatVersion, quint16(1));
+    QCOMPARE(
+        attestation->securityFlags,
+        Protocol::semanticBindingSecurityFlagValue(
+            Protocol::SemanticBindingSecurityFlag::Signed)
+            | Protocol::semanticBindingSecurityFlagValue(
+                Protocol::SemanticBindingSecurityFlag::Verified)
+            | Protocol::semanticBindingSecurityFlagValue(
+                Protocol::SemanticBindingSecurityFlag::Production)
+            | Protocol::semanticBindingSecurityFlagValue(
+                Protocol::SemanticBindingSecurityFlag::Binding));
+    QCOMPARE(attestation->bindingCount, quint32(56));
+    QCOMPARE(attestation->packageSha256, QByteArray(32, char(0x01)));
+    QCOMPARE(attestation->manifestSha256, QByteArray(32, char(0x02)));
+    QCOMPARE(attestation->semanticMappingSha256, QByteArray(32, char(0x03)));
+    QCOMPARE(attestation->resourceRecordsSha256, QByteArray(32, char(0x04)));
+    QCOMPARE(attestation->resourceSectionSha256, QByteArray(32, char(0x05)));
+    QCOMPARE(attestation->topologySha256, QByteArray(32, char(0x06)));
+    QCOMPARE(attestation->signingKeyIdSha256, QByteArray(32, char(0x07)));
+
+    QByteArray engineeringPayload = response.mid(Protocol::HeaderBytes);
+    putU32(
+        engineeringPayload,
+        16,
+        Protocol::semanticBindingSecurityFlagValue(
+            Protocol::SemanticBindingSecurityFlag::Signed)
+            | Protocol::semanticBindingSecurityFlagValue(
+                Protocol::SemanticBindingSecurityFlag::Verified)
+            | Protocol::semanticBindingSecurityFlagValue(
+                Protocol::SemanticBindingSecurityFlag::Engineering)
+            | Protocol::semanticBindingSecurityFlagValue(
+                Protocol::SemanticBindingSecurityFlag::Binding));
+    Protocol::Frame engineeringFrame = responseFrame(
+        Protocol::MessageType::SemanticBindingAttestation, engineeringPayload);
+    engineeringFrame.header.protocolMinor = Protocol::SemanticBindingAttestationMinor;
+    engineeringFrame.header.bootId = query.binding.bootId;
+    error = {};
+    const auto engineering = Protocol::decodeSemanticBindingAttestation(
+        engineeringFrame, query, &error);
+    QVERIFY(engineering);
+    QVERIFY(!error);
+
+    const std::array<qint32, 9> typedFailures{
+        -6,
+        -14,
+        -16,
+        -17,
+        -18,
+        -21,
+        -22,
+        -23,
+        -24,
+    };
+    for (const qint32 status : typedFailures) {
+        QByteArray failurePayload(320, '\0');
+        putU16(
+            failurePayload,
+            0,
+            quint16(Protocol::MessageType::QuerySemanticBindingAttestation));
+        putU16(failurePayload, 2, 320);
+        putI32(failurePayload, 4, status);
+        Protocol::Frame failureFrame = responseFrame(
+            Protocol::MessageType::SemanticBindingAttestation,
+            failurePayload,
+            1,
+            Protocol::Flag::Response | Protocol::Flag::Error);
+        failureFrame.header.protocolMinor = Protocol::SemanticBindingAttestationMinor;
+        failureFrame.header.bootId = query.binding.bootId;
+        error = {};
+        const auto failure = Protocol::decodeSemanticBindingAttestation(
+            failureFrame, query, &error);
+        QVERIFY2(failure, qPrintable(QString::number(status)));
+        QVERIFY(!error);
+        QCOMPARE(failure->status, status);
+    }
+}
+
+void EtherCATProductApiTests::testSemanticBindingAttestationRejectsMalformed_data()
+{
+    QTest::addColumn<QByteArray>("payload");
+    QTest::addColumn<quint32>("flags");
+
+    const QByteArray valid
+        = semanticBindingAttestationGoldenWire().mid(Protocol::HeaderBytes);
+    const quint32 responseFlag = Protocol::flagValue(Protocol::Flag::Response);
+    const quint32 errorFlags = Protocol::Flag::Response | Protocol::Flag::Error;
+
+    QByteArray shortPayload = valid;
+    shortPayload.chop(1);
+    QTest::newRow("short") << shortPayload << responseFlag;
+
+    QByteArray original = valid;
+    putU16(original, 0, quint16(Protocol::MessageType::GetResourceSnapshot));
+    QTest::newRow("original") << original << responseFlag;
+
+    QByteArray structureBytes = valid;
+    putU16(structureBytes, 2, 319);
+    QTest::newRow("structure-bytes") << structureBytes << responseFlag;
+
+    QByteArray status = valid;
+    putI32(status, 4, -15);
+    QTest::newRow("status") << status << errorFlags;
+
+    QByteArray slot = valid;
+    putU32(slot, 8, quint32('C'));
+    QTest::newRow("slot") << slot << responseFlag;
+
+    QByteArray format = valid;
+    putU16(format, 12, 2);
+    QTest::newRow("format") << format << responseFlag;
+
+    QByteArray headerReserved = valid;
+    putU16(headerReserved, 14, 1);
+    QTest::newRow("header-reserved") << headerReserved << responseFlag;
+
+    QByteArray unknownSecurity = valid;
+    putU32(unknownSecurity, 16, 0x37);
+    QTest::newRow("security-unknown") << unknownSecurity << responseFlag;
+
+    for (const auto &[name, securityFlags] :
+         std::array{
+             std::pair{"security-missing-signed", quint32(0x16)},
+             std::pair{"security-missing-verified", quint32(0x15)},
+             std::pair{"security-missing-binding", quint32(0x07)},
+             std::pair{"security-missing-environment", quint32(0x13)},
+             std::pair{"security-both-environments", quint32(0x1f)},
+         }) {
+        QByteArray security = valid;
+        putU32(security, 16, securityFlags);
+        QTest::newRow(name) << security << responseFlag;
+    }
+
+    QByteArray bindingCount = valid;
+    putU32(bindingCount, 20, 0);
+    QTest::newRow("binding-count") << bindingCount << responseFlag;
+
+    for (const qsizetype offset : std::array<qsizetype, 7>{80, 112, 144, 176, 208, 240, 272}) {
+        QByteArray digest = valid;
+        digest.replace(offset, 32, QByteArray(32, '\0'));
+        QTest::newRow(qPrintable(QString::fromLatin1("digest-%1").arg(offset)))
+            << digest << responseFlag;
+    }
+
+    for (const qsizetype offset :
+         std::array<qsizetype, 7>{24, 32, 40, 48, 56, 64, 72}) {
+        QByteArray binding = valid;
+        putU64(binding, offset, readU64(binding, offset) + 1);
+        QTest::newRow(qPrintable(QString::fromLatin1("binding-%1").arg(offset)))
+            << binding << responseFlag;
+    }
+
+    QByteArray responseReserved = valid;
+    responseReserved[319] = 1;
+    QTest::newRow("response-reserved") << responseReserved << responseFlag;
+
+    QTest::newRow("success-flags") << valid << errorFlags;
+
+    QByteArray failure(320, '\0');
+    putU16(
+        failure, 0, quint16(Protocol::MessageType::QuerySemanticBindingAttestation));
+    putU16(failure, 2, 320);
+    putI32(failure, 4, -17);
+    failure[319] = 1;
+    QTest::newRow("failure-fields") << failure << errorFlags;
+
+    failure[319] = 0;
+    QTest::newRow("failure-flags") << failure << responseFlag;
+}
+
+void EtherCATProductApiTests::testSemanticBindingAttestationRejectsMalformed()
+{
+    const Protocol::SemanticBindingAttestationQuery validQuery
+        = semanticBindingAttestationQuery();
+    Protocol::Error error;
+    QVERIFY(Protocol::encodeQuerySemanticBindingAttestation(
+                validQuery,
+                TestSessionId,
+                1,
+                1,
+                Protocol::SemanticBindingAttestationMinor - 1,
+                &error)
+                .isEmpty());
+    QCOMPARE(error.category, Protocol::ErrorCategory::IncompatibleVersion);
+    QCOMPARE(error.status, std::optional<qint32>(-14));
+
+    Protocol::SemanticBindingAttestationQuery invalidQuery = validQuery;
+    invalidQuery.binding.configurationId = 0;
+    error = {};
+    QVERIFY(Protocol::encodeQuerySemanticBindingAttestation(
+                invalidQuery, TestSessionId, 1, 1, Protocol::CurrentMinor, &error)
+                .isEmpty());
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    QByteArray reservedRequest
+        = semanticBindingAttestationQueryGoldenWire().mid(Protocol::HeaderBytes);
+    putU64(reservedRequest, 56, 1);
+    error = {};
+    QVERIFY(Protocol::encodeRequest(
+                Protocol::MessageType::QuerySemanticBindingAttestation,
+                reservedRequest,
+                TestSessionId,
+                1,
+                1,
+                validQuery.binding.bootId,
+                Protocol::CurrentMinor,
+                &error)
+                .isEmpty());
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    Protocol::FrameParser requestRoleParser(
+        Protocol::Role::Control, Protocol::FrameDirection::ClientRequest);
+    const Protocol::ParseResult requestRole
+        = requestRoleParser.append(semanticBindingAttestationQueryGoldenWire());
+    QVERIFY(requestRole.error);
+    QCOMPARE(requestRole.error->category, Protocol::ErrorCategory::UnsupportedMessage);
+
+    Protocol::FrameParser responseRoleParser(Protocol::Role::Control);
+    const Protocol::ParseResult responseRole
+        = responseRoleParser.append(semanticBindingAttestationGoldenWire());
+    QVERIFY(responseRole.error);
+    QCOMPARE(responseRole.error->category, Protocol::ErrorCategory::UnsupportedMessage);
+
+    for (const qint32 status : std::array<qint32, 4>{-6, -7, -8, -12}) {
+        QByteArray preDispatch = bulkStatusPayload(
+            quint16(Protocol::MessageType::QuerySemanticBindingAttestation));
+        putI32(preDispatch, 0, status);
+        putI32(preDispatch, 4, 0);
+        error = {};
+        const auto bulkStatus = Protocol::decodeBulkStatus(
+            responseFrame(
+                Protocol::MessageType::BulkStatus,
+                preDispatch,
+                1,
+                Protocol::Flag::Response | Protocol::Flag::Error),
+            &error);
+        QVERIFY(bulkStatus);
+        QVERIFY(!error);
+        QCOMPARE(bulkStatus->status, status);
+    }
+
+    Protocol::Frame identityFrame = responseFrame(
+        Protocol::MessageType::SemanticBindingAttestation,
+        semanticBindingAttestationGoldenWire().mid(Protocol::HeaderBytes));
+    identityFrame.header.protocolMinor = Protocol::SemanticBindingAttestationMinor;
+    identityFrame.header.bootId = validQuery.binding.bootId + 1;
+    error = {};
+    QVERIFY(!Protocol::decodeSemanticBindingAttestation(
+        identityFrame, validQuery, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::IdentityMismatch);
+
+    identityFrame.header.bootId = validQuery.binding.bootId;
+    identityFrame.header.requestId = 0;
+    error = {};
+    QVERIFY(!Protocol::decodeSemanticBindingAttestation(
+        identityFrame, validQuery, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::IdentityMismatch);
+
+    QFETCH(QByteArray, payload);
+    QFETCH(quint32, flags);
+    Protocol::Frame frame = responseFrame(
+        Protocol::MessageType::SemanticBindingAttestation, payload, 1, flags);
+    frame.header.protocolMinor = Protocol::SemanticBindingAttestationMinor;
+    frame.header.bootId = validQuery.binding.bootId;
+    error = {};
+    QVERIFY(!Protocol::decodeSemanticBindingAttestation(frame, validQuery, &error));
+    QVERIFY(error);
+}
+
 void EtherCATProductApiTests::testOutputTransactionGoldenFrames()
 {
     constexpr quint64 sessionId = 0x0102030405060708;
@@ -3713,7 +4056,27 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
     QVERIFY(capability->firmwareUpdate);
     QVERIFY(capability->explicitTimingModeStart);
     QVERIFY(capability->faultReset);
+    QVERIFY(!capability->runtimeResources);
+    QVERIFY(!capability->semanticMappingAttestation);
     QVERIFY(!capability->runtimeOutputTransactions);
+
+    error = {};
+    const auto runtimeCapability = Protocol::decodeCapability(
+        responseFrame(Protocol::MessageType::Capability, descriptor), 0x3fff, &error);
+    QVERIFY(runtimeCapability);
+    QVERIFY(!error);
+    QVERIFY(runtimeCapability->runtimeResources);
+    QVERIFY(!runtimeCapability->semanticMappingAttestation);
+    QVERIFY(!runtimeCapability->runtimeOutputTransactions);
+
+    error = {};
+    const auto semanticCapability = Protocol::decodeCapability(
+        responseFrame(Protocol::MessageType::Capability, descriptor), 0x7fff, &error);
+    QVERIFY(semanticCapability);
+    QVERIFY(!error);
+    QVERIFY(semanticCapability->runtimeResources);
+    QVERIFY(semanticCapability->semanticMappingAttestation);
+    QVERIFY(!semanticCapability->runtimeOutputTransactions);
 
     error = {};
     const auto outputCapability = Protocol::decodeCapability(
@@ -3721,6 +4084,7 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
     QVERIFY(outputCapability);
     QVERIFY(!error);
     QVERIFY(outputCapability->runtimeResources);
+    QVERIFY(outputCapability->semanticMappingAttestation);
     QVERIFY(outputCapability->runtimeOutputTransactions);
 
     error = {};
@@ -4195,6 +4559,7 @@ void EtherCATProductApiTests::testSupportedRequestPolicy()
         Protocol::MessageType::GetPackageState,
         Protocol::MessageType::GetFirmwareState,
         Protocol::MessageType::ResumeEvents,
+        Protocol::MessageType::QuerySemanticBindingAttestation,
     };
     for (const Protocol::MessageType type : allowed)
         QVERIFY(Protocol::isReadOnlyRequest(type));

@@ -31,6 +31,14 @@ constexpr quint32 StructuredHelloErrorFeature = 1U << 9;
 constexpr quint32 FirmwareUpdateFeature = 1U << 10;
 constexpr quint32 ExplicitTimingModeStartFeature = 1U << 11;
 constexpr quint32 ControlledFaultResetFeature = 1U << 12;
+constexpr quint32 SemanticBindingSecurityKnownMask = 0x1f;
+constexpr quint32 SemanticBindingSecurityRequiredMask
+    = quint32(SemanticBindingSecurityFlag::Signed)
+      | quint32(SemanticBindingSecurityFlag::Verified)
+      | quint32(SemanticBindingSecurityFlag::Binding);
+constexpr quint32 SemanticBindingSecurityEnvironmentMask
+    = quint32(SemanticBindingSecurityFlag::Production)
+      | quint32(SemanticBindingSecurityFlag::Engineering);
 constexpr quint32 OutputTransactionPolicyFlagKnownMask
     = quint32(OutputGroupPolicyFlag::ManualWrite);
 constexpr quint32 OutputTransactionResultFlagKnownMask = 0xf;
@@ -234,6 +242,25 @@ bool validResourceSnapshotQueryPayload(QByteArrayView payload)
     return true;
 }
 
+bool validSemanticBindingAttestationQuery(const SemanticBindingAttestationQuery &query)
+{
+    return validRuntimeResourceBinding(query.binding);
+}
+
+bool validSemanticBindingAttestationQueryPayload(QByteArrayView payload)
+{
+    return payload.size() == 64
+           && validRuntimeResourceSlot(readBigEndian<quint32>(payload, 0))
+           && !readBigEndian<quint32>(payload, 4)
+           && readBigEndian<quint64>(payload, 8)
+           && readBigEndian<quint64>(payload, 16)
+           && readBigEndian<quint64>(payload, 24)
+           && readBigEndian<quint64>(payload, 32)
+           && readBigEndian<quint64>(payload, 40)
+           && readBigEndian<quint64>(payload, 48)
+           && !readBigEndian<quint64>(payload, 56);
+}
+
 bool runtimeResourceStatusAllowed(qint32 status)
 {
     switch (status) {
@@ -244,6 +271,25 @@ bool runtimeResourceStatusAllowed(qint32 status)
     case -17:
     case -18:
     case -21:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool semanticBindingAttestationStatusAllowed(qint32 status)
+{
+    switch (status) {
+    case 0:
+    case -6:
+    case -14:
+    case -16:
+    case -17:
+    case -18:
+    case -21:
+    case -22:
+    case -23:
+    case -24:
         return true;
     default:
         return false;
@@ -537,6 +583,7 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
                    || type == MessageType::BulkAbort
                    || type == MessageType::QueryResourceTable
                    || type == MessageType::GetResourceSnapshot
+                   || type == MessageType::QuerySemanticBindingAttestation
                    || type == MessageType::QueryOutputGroupPolicy
                    || type == MessageType::GetOutputTransactionState);
     }
@@ -560,6 +607,7 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
                || type == MessageType::FirmwareStatus
                || type == MessageType::ResourceTablePage
                || type == MessageType::ResourceSnapshot
+               || type == MessageType::SemanticBindingAttestation
                || type == MessageType::OutputGroupPolicy
                || type == MessageType::OutputTransactionState);
 }
@@ -933,6 +981,7 @@ bool bulkStatusOriginalAllowed(quint16 originalType)
     return (originalType >= 0x0300 && originalType <= 0x0303) || originalType == 0x0400
            || originalType == quint16(MessageType::QueryResourceTable)
            || originalType == quint16(MessageType::GetResourceSnapshot)
+           || originalType == quint16(MessageType::QuerySemanticBindingAttestation)
            || originalType == quint16(MessageType::QueryOutputGroupPolicy)
            || originalType == quint16(MessageType::GetOutputTransactionState);
 }
@@ -1366,6 +1415,7 @@ bool isReadOnlyRequest(MessageType type)
            || type == MessageType::GetPackageState || type == MessageType::GetFirmwareState
            || type == MessageType::ResumeEvents || type == MessageType::QueryResourceTable
            || type == MessageType::GetResourceSnapshot
+           || type == MessageType::QuerySemanticBindingAttestation
            || type == MessageType::QueryOutputGroupPolicy
            || type == MessageType::GetOutputTransactionState;
 }
@@ -1483,6 +1533,15 @@ QByteArray encodeRequest(
             -14);
         return {};
     }
+    if (type == MessageType::QuerySemanticBindingAttestation
+        && protocolMinor < SemanticBindingAttestationMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            Tr::tr("Semantic binding attestation requires protocol v1.13."),
+            -14);
+        return {};
+    }
     if ((type == MessageType::QueryOutputGroupPolicy
          || type == MessageType::GetOutputTransactionState
          || type == MessageType::ApplyOutputTransaction)
@@ -1525,6 +1584,8 @@ QByteArray encodeRequest(
         payloadValid = validResourceTableQueryPayload(payload);
     } else if (type == MessageType::GetResourceSnapshot) {
         payloadValid = validResourceSnapshotQueryPayload(payload);
+    } else if (type == MessageType::QuerySemanticBindingAttestation) {
+        payloadValid = validSemanticBindingAttestationQueryPayload(payload);
     } else if (type == MessageType::QueryOutputGroupPolicy) {
         payloadValid = validOutputGroupPolicyQueryPayload(payload);
     } else if (type == MessageType::GetOutputTransactionState) {
@@ -1717,6 +1778,42 @@ QByteArray encodeGetResourceSnapshot(
         writeBigEndian(payload, 64 + index * 8, query.resourceIds.at(index));
     return encodeRequest(
         MessageType::GetResourceSnapshot,
+        payload,
+        sessionId,
+        requestId,
+        sequence,
+        query.binding.bootId,
+        protocolMinor,
+        error);
+}
+
+QByteArray encodeQuerySemanticBindingAttestation(
+    const SemanticBindingAttestationQuery &query,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint16 protocolMinor,
+    Error *error)
+{
+    clearError(error);
+    if (!validSemanticBindingAttestationQuery(query)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Semantic binding attestation query is invalid."));
+        return {};
+    }
+
+    QByteArray payload(64, '\0');
+    writeBigEndian(payload, 0, query.binding.activeSlot);
+    writeBigEndian(payload, 8, query.binding.packageGeneration);
+    writeBigEndian(payload, 16, query.binding.configurationId);
+    writeBigEndian(payload, 24, query.binding.topologyGeneration);
+    writeBigEndian(payload, 32, query.binding.runtimeGeneration);
+    writeBigEndian(payload, 40, query.binding.catalogRevision);
+    writeBigEndian(payload, 48, query.binding.topologyIdentity);
+    return encodeRequest(
+        MessageType::QuerySemanticBindingAttestation,
         payload,
         sessionId,
         requestId,
@@ -2238,6 +2335,7 @@ std::optional<BulkStatus> decodeBulkStatus(const Frame &frame, Error *error)
     const bool runtimeResourcePreDispatch
         = originalType == quint16(MessageType::QueryResourceTable)
           || originalType == quint16(MessageType::GetResourceSnapshot)
+          || originalType == quint16(MessageType::QuerySemanticBindingAttestation)
           || originalType == quint16(MessageType::QueryOutputGroupPolicy)
           || originalType == quint16(MessageType::GetOutputTransactionState);
     const bool runtimeResourcePreDispatchStatus
@@ -2798,6 +2896,7 @@ std::optional<Data::ControllerCapabilitySummary> decodeCapability(
     result.explicitTimingModeStart = featureBits & ExplicitTimingModeStartFeature;
     result.faultReset = featureBits & ControlledFaultResetFeature;
     result.runtimeResources = featureBits & RuntimeResourceFeature;
+    result.semanticMappingAttestation = featureBits & SemanticBindingAttestationFeature;
     result.runtimeOutputTransactions = featureBits & OutputTransactionFeature;
     return result;
 }
@@ -3254,6 +3353,135 @@ std::optional<RuntimeResourceSnapshot> decodeResourceSnapshot(
     }
     snapshot.complete = true;
     return snapshot;
+}
+
+std::optional<SemanticBindingAttestation> decodeSemanticBindingAttestation(
+    const Frame &frame, const SemanticBindingAttestationQuery &query, Error *error)
+{
+    clearError(error);
+    if (frame.header.protocolMajor != CurrentMajor
+        || frame.header.protocolMinor < SemanticBindingAttestationMinor
+        || frame.header.protocolMinor > CurrentMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            QStringLiteral("Semantic binding attestation requires Product API v1.13."));
+        return {};
+    }
+    if (!validSemanticBindingAttestationQuery(query)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Expected semantic binding attestation query is invalid."));
+        return {};
+    }
+    if (frame.header.messageType != MessageType::SemanticBindingAttestation
+        || frame.payload.size() != 320) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Expected exact 320-byte SemanticBindingAttestation."));
+        return {};
+    }
+    if (!frame.header.requestId || frame.header.bootId != query.binding.bootId) {
+        setError(
+            error,
+            ErrorCategory::IdentityMismatch,
+            QStringLiteral("SemanticBindingAttestation response identity is invalid."));
+        return {};
+    }
+
+    const QByteArrayView payload(frame.payload);
+    const qint32 status = readBigEndian<qint32>(payload, 4);
+    if (readBigEndian<quint16>(payload, 0)
+            != quint16(MessageType::QuerySemanticBindingAttestation)
+        || readBigEndian<quint16>(payload, 2) != 320
+        || !semanticBindingAttestationStatusAllowed(status)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("SemanticBindingAttestation header is invalid."));
+        return {};
+    }
+
+    SemanticBindingAttestation attestation;
+    attestation.status = status;
+    if (status) {
+        if (frame.header.flags != (Flag::Response | Flag::Error)
+            || !bytesAreZero(payload, 8, 312)) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                QStringLiteral("SemanticBindingAttestation failure fields must be zero."));
+            return {};
+        }
+        return attestation;
+    }
+
+    RuntimeResourceBinding binding{
+        readBigEndian<quint64>(payload, 72),
+        readBigEndian<quint32>(payload, 8),
+        readBigEndian<quint64>(payload, 24),
+        readBigEndian<quint64>(payload, 32),
+        readBigEndian<quint64>(payload, 40),
+        readBigEndian<quint64>(payload, 48),
+        readBigEndian<quint64>(payload, 56),
+        readBigEndian<quint64>(payload, 64),
+    };
+    const quint16 formatVersion = readBigEndian<quint16>(payload, 12);
+    const quint32 securityFlags = readBigEndian<quint32>(payload, 16);
+    const quint32 bindingCount = readBigEndian<quint32>(payload, 20);
+    const quint32 securityEnvironment
+        = securityFlags & SemanticBindingSecurityEnvironmentMask;
+    const QByteArray packageSha256 = frame.payload.mid(80, 32);
+    const QByteArray manifestSha256 = frame.payload.mid(112, 32);
+    const QByteArray semanticMappingSha256 = frame.payload.mid(144, 32);
+    const QByteArray resourceRecordsSha256 = frame.payload.mid(176, 32);
+    const QByteArray resourceSectionSha256 = frame.payload.mid(208, 32);
+    const QByteArray topologySha256 = frame.payload.mid(240, 32);
+    const QByteArray signingKeyIdSha256 = frame.payload.mid(272, 32);
+    const std::array<QByteArrayView, 7> digests{
+        packageSha256,
+        manifestSha256,
+        semanticMappingSha256,
+        resourceRecordsSha256,
+        resourceSectionSha256,
+        topologySha256,
+        signingKeyIdSha256,
+    };
+    if (frame.header.flags != flagValue(Flag::Response)
+        || !runtimeResourceBindingsEqual(binding, query.binding)
+        || binding.bootId != frame.header.bootId || formatVersion != 1
+        || readBigEndian<quint16>(payload, 14)
+        || securityFlags & ~SemanticBindingSecurityKnownMask
+        || (securityFlags & SemanticBindingSecurityRequiredMask)
+               != SemanticBindingSecurityRequiredMask
+        || (securityEnvironment != quint32(SemanticBindingSecurityFlag::Production)
+            && securityEnvironment != quint32(SemanticBindingSecurityFlag::Engineering))
+        || !bindingCount
+        || std::any_of(digests.cbegin(), digests.cend(), [](QByteArrayView digest) {
+               return !bytesAreNonzero(digest);
+           })
+        || !bytesAreZero(payload, 304, 16)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("SemanticBindingAttestation success fields violate the v1.13 contract."));
+        return {};
+    }
+
+    attestation.binding = binding;
+    attestation.formatVersion = formatVersion;
+    attestation.securityFlags = securityFlags;
+    attestation.bindingCount = bindingCount;
+    attestation.packageSha256 = packageSha256;
+    attestation.manifestSha256 = manifestSha256;
+    attestation.semanticMappingSha256 = semanticMappingSha256;
+    attestation.resourceRecordsSha256 = resourceRecordsSha256;
+    attestation.resourceSectionSha256 = resourceSectionSha256;
+    attestation.topologySha256 = topologySha256;
+    attestation.signingKeyIdSha256 = signingKeyIdSha256;
+    return attestation;
 }
 
 std::optional<OutputGroupPolicy> decodeOutputGroupPolicy(

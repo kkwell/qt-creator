@@ -21,9 +21,11 @@ inline constexpr quint16 FirmwareMinor = 9;
 inline constexpr quint16 ExplicitTimingModeMinor = 10;
 inline constexpr quint16 ControlledFaultResetMinor = 11;
 inline constexpr quint16 RuntimeResourceMinor = 12;
+inline constexpr quint16 SemanticBindingAttestationMinor = 13;
 inline constexpr quint16 OutputTransactionMinor = 14;
 inline constexpr quint16 CurrentMinor = OutputTransactionMinor;
 inline constexpr quint32 RuntimeResourceFeature = 1U << 13;
+inline constexpr quint32 SemanticBindingAttestationFeature = 1U << 14;
 inline constexpr quint32 OutputTransactionFeature = 1U << 15;
 inline constexpr quint32 OutputTransactionMaximumTtlCycles = 65535;
 inline constexpr quint32 ControlMaximumPayloadBytes = 4096;
@@ -82,6 +84,7 @@ enum class MessageType : quint16 {
     RestoreActivePackage = 0x0407,
     QueryResourceTable = 0x040b,
     GetResourceSnapshot = 0x040c,
+    QuerySemanticBindingAttestation = 0x040d,
     QueryOutputGroupPolicy = 0x040e,
     GetOutputTransactionState = 0x040f,
     Capability = 0x0480,
@@ -89,6 +92,7 @@ enum class MessageType : quint16 {
     PackageState = 0x0483,
     ResourceTablePage = 0x0487,
     ResourceSnapshot = 0x0488,
+    SemanticBindingAttestation = 0x0489,
     OutputGroupPolicy = 0x048a,
     OutputTransactionState = 0x048b,
     GetFirmwareState = 0x0504,
@@ -404,6 +408,40 @@ struct RuntimeResourceSnapshot
     QList<RuntimeResourceSample> samples;
 };
 
+enum class SemanticBindingSecurityFlag : quint32 {
+    Signed = 1U << 0,
+    Verified = 1U << 1,
+    Production = 1U << 2,
+    Engineering = 1U << 3,
+    Binding = 1U << 4,
+};
+
+constexpr quint32 semanticBindingSecurityFlagValue(SemanticBindingSecurityFlag flag)
+{
+    return static_cast<quint32>(flag);
+}
+
+struct SemanticBindingAttestationQuery
+{
+    RuntimeResourceBinding binding;
+};
+
+struct SemanticBindingAttestation
+{
+    qint32 status = 0;
+    RuntimeResourceBinding binding;
+    quint16 formatVersion = 0;
+    quint32 securityFlags = 0;
+    quint32 bindingCount = 0;
+    QByteArray packageSha256;
+    QByteArray manifestSha256;
+    QByteArray semanticMappingSha256;
+    QByteArray resourceRecordsSha256;
+    QByteArray resourceSectionSha256;
+    QByteArray topologySha256;
+    QByteArray signingKeyIdSha256;
+};
+
 enum class OutputTransactionApiStatus : qint32 {
     Ok = 0,
     OperationConflict = -36,
@@ -570,6 +608,13 @@ QByteArray encodeGetResourceSnapshot(
     quint64 sequence,
     quint16 protocolMinor = CurrentMinor,
     Error *error = nullptr);
+QByteArray encodeQuerySemanticBindingAttestation(
+    const SemanticBindingAttestationQuery &query,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint16 protocolMinor = CurrentMinor,
+    Error *error = nullptr);
 QByteArray encodeQueryOutputGroupPolicy(
     const OutputGroupPolicyQuery &query,
     quint64 sessionId,
@@ -620,6 +665,10 @@ std::optional<RuntimeResourceTablePage> decodeResourceTablePage(
     const Frame &frame, const RuntimeResourceTableQuery &query, Error *error = nullptr);
 std::optional<RuntimeResourceSnapshot> decodeResourceSnapshot(
     const Frame &frame, const RuntimeResourceSnapshotQuery &query, Error *error = nullptr);
+std::optional<SemanticBindingAttestation> decodeSemanticBindingAttestation(
+    const Frame &frame,
+    const SemanticBindingAttestationQuery &query,
+    Error *error = nullptr);
 std::optional<OutputGroupPolicy> decodeOutputGroupPolicy(
     const Frame &frame, const OutputGroupPolicyQuery &query, Error *error = nullptr);
 std::optional<OutputTransactionRecord> decodeOutputTransactionState(
