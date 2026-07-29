@@ -521,6 +521,7 @@ SemanticRuntimeValidation validateSemanticOperationRequest(
             || matches.constFirst().qualification != Data::SemanticActionQualification::Qualified
             || !matches.constFirst().disabledReason.isEmpty()
             || matches.constFirst().actionBindingId != request.target.actionId.value
+            || matches.constFirst().actionDefinitionId.isEmpty()
             || !isCanonicalSha256Digest(matches.constFirst().actionDefinitionDigest)
             || !digestsMatch(
                 request.expectedActionDefinitionDigest,

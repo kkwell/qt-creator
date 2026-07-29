@@ -41,6 +41,7 @@ enum class SemanticRuntimeContextIssue {
 };
 
 QString semanticRuntimeContextIssueDetail(SemanticRuntimeContextIssue issue);
+QByteArray semanticRuntimeContextHash(const Data::SemanticRuntimeContext &context);
 
 class SemanticRuntimeExecutor final : public Core::SemanticRuntimeService
 {

@@ -1886,6 +1886,7 @@ void EtherCATCoreTests::testSemanticRuntimeValueSemantics()
     action.definition.id = action.target.actionId;
     action.definition.displayName = "Controlled stop";
     action.actionBindingId = action.target.actionId.value;
+    action.actionDefinitionId = "urn:example.test:action-definition/controlled-stop";
     action.actionDefinitionDigest = {"sha256", QByteArray(32, '\x71')};
     action.qualification = Data::SemanticActionQualification::Qualified;
     action.availability = Data::SemanticActionAvailability::AwaitingApproval;
@@ -2285,6 +2286,7 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
     action.definition.id = action.target.actionId;
     action.definition.enabled = true;
     action.actionBindingId = action.target.actionId.value;
+    action.actionDefinitionId = "urn:example.test:action-definition/manual";
     action.actionDefinitionDigest = {"sha256", QByteArray(32, '\x72')};
     action.qualification = Data::SemanticActionQualification::Qualified;
     action.availability = Data::SemanticActionAvailability::Ready;

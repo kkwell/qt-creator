@@ -4,6 +4,7 @@
 
 #include "readonlysemanticbindingfactory_p.h"
 #include "runtimepackageevidencerepository_p.h"
+#include "semanticactionruntimefactory_p.h"
 
 #include <ethercatcore/automationservice.h>
 
@@ -11,6 +12,7 @@
 #include <QtEndian>
 
 #include <algorithm>
+#include <cstring>
 
 namespace EtherCAT::SemanticRuntime::Internal {
 
@@ -138,6 +140,8 @@ static void rejectContext(
     context.complete = false;
     context.mappingDigest = {};
     context.controllerMappingDigest = {};
+    context.actionDefinitionsDigest = {};
+    context.cyclePeriodNs = 0;
     context.contextHash.clear();
     context.signalStates.clear();
     context.actionStates.clear();
@@ -197,12 +201,69 @@ static void appendContextInteger(QByteArray &canonical, quint64 value)
         reinterpret_cast<const char *>(&bigEndianValue), qsizetype(sizeof(bigEndianValue)));
 }
 
-static QByteArray semanticRuntimeContextHash(const Data::SemanticRuntimeContext &context)
+static bool appendContextValue(QByteArray &canonical, const QVariant &value)
 {
-    QByteArray canonical("embed-labs.semantic-runtime-context.v1", 38);
+    switch (value.metaType().id()) {
+    case QMetaType::Bool:
+        appendContextInteger(canonical, 1);
+        appendContextInteger(canonical, value.toBool() ? 1 : 0);
+        return true;
+    case QMetaType::LongLong:
+        appendContextInteger(canonical, 2);
+        appendContextInteger(canonical, quint64(value.toLongLong()));
+        return true;
+    case QMetaType::ULongLong:
+        appendContextInteger(canonical, 3);
+        appendContextInteger(canonical, value.toULongLong());
+        return true;
+    case QMetaType::Double: {
+        appendContextInteger(canonical, 4);
+        quint64 bits = 0;
+        const double number = value.toDouble();
+        static_assert(sizeof(bits) == sizeof(number));
+        std::memcpy(&bits, &number, sizeof(bits));
+        appendContextInteger(canonical, bits);
+        return true;
+    }
+    case QMetaType::QString:
+        appendContextInteger(canonical, 5);
+        appendContextString(canonical, value.toString());
+        return true;
+    case QMetaType::QByteArray:
+        appendContextInteger(canonical, 6);
+        appendContextBytes(canonical, value.toByteArray());
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void appendBindingIdentity(
+    QByteArray &canonical, const Data::SemanticRuntimeBinding &binding)
+{
+    appendContextString(canonical, binding.semanticBindingId);
+    appendContextString(canonical, binding.componentBindingId);
+    appendContextString(canonical, binding.adapterId.value);
+    appendContextString(canonical, binding.adapterVersion);
+    appendContextBytes(canonical, binding.adapterContentSha256);
+    appendContextBytes(canonical, binding.esiSha256);
+    appendContextBytes(canonical, binding.bindingArtifactSha256);
+    appendContextBytes(canonical, binding.resourceId.value);
+    appendContextBytes(canonical, binding.componentInstanceId.value);
+    appendContextBytes(canonical, binding.consistencyGroupId.value);
+    appendContextBytes(canonical, binding.valueTypeIdentity);
+    appendContextInteger(canonical, binding.bitWidth);
+    appendContextInteger(canonical, quint64(binding.direction));
+    appendContextInteger(canonical, quint64(binding.access));
+}
+
+QByteArray semanticRuntimeContextHash(const Data::SemanticRuntimeContext &context)
+{
+    QByteArray canonical = QByteArrayLiteral("embed-labs.semantic-runtime-context.v2");
     appendContextString(canonical, context.controllerId);
     appendContextString(canonical, context.scope.projectId.toString());
     appendContextString(canonical, context.scope.masterId.toString());
+    appendContextInteger(canonical, context.mock ? 1 : 0);
     appendContextInteger(canonical, context.sessionGeneration);
     appendContextInteger(canonical, context.epoch.controllerBootId);
     appendContextInteger(canonical, quint64(context.epoch.activePackageSlot));
@@ -214,6 +275,10 @@ static QByteArray semanticRuntimeContextHash(const Data::SemanticRuntimeContext 
     appendContextBytes(canonical, context.epoch.topologyIdentity);
     appendContextBytes(canonical, context.mappingDigest.value);
     appendContextBytes(canonical, context.controllerMappingDigest.value);
+    appendContextBytes(canonical, context.actionDefinitionsDigest.value);
+    appendContextInteger(canonical, context.cyclePeriodNs);
+    appendContextString(canonical, context.bindingVerification.verifierId);
+    appendContextBytes(canonical, context.bindingVerification.signedManifestDigest.value);
 
     QList<Data::SemanticSignalRuntimeState> states = context.signalStates;
     std::sort(
@@ -227,18 +292,107 @@ static QByteArray semanticRuntimeContextHash(const Data::SemanticRuntimeContext 
             return left.target.signalId.value < right.target.signalId.value;
         });
     appendContextInteger(canonical, quint64(states.size()));
+    QSet<QString> signalTargets;
     for (const Data::SemanticSignalRuntimeState &state : std::as_const(states)) {
+        const QString targetKey
+            = state.target.deviceId.toString() + QLatin1Char('/') + state.target.signalId.value;
+        if (signalTargets.contains(targetKey))
+            return {};
+        signalTargets.insert(targetKey);
         appendContextString(canonical, state.target.deviceId.toString());
         appendContextString(canonical, state.target.signalId.value);
+        appendContextInteger(canonical, state.binding.has_value() ? 1 : 0);
         if (!state.binding)
             continue;
-        appendContextString(canonical, state.binding->semanticBindingId);
-        appendContextBytes(canonical, state.binding->resourceId.value);
-        appendContextBytes(canonical, state.binding->consistencyGroupId.value);
-        appendContextBytes(canonical, state.binding->valueTypeIdentity);
-        appendContextInteger(canonical, state.binding->bitWidth);
-        appendContextInteger(canonical, quint64(state.binding->direction));
-        appendContextInteger(canonical, quint64(state.binding->access));
+        appendBindingIdentity(canonical, *state.binding);
+        appendContextString(canonical, state.definition.manualControl.policyId);
+        appendContextInteger(canonical, state.definition.manualControl.allowed ? 1 : 0);
+        appendContextInteger(
+            canonical, state.definition.manualControl.requiresExclusiveControl ? 1 : 0);
+        appendContextInteger(canonical, state.definition.manualControl.holdToRun ? 1 : 0);
+        appendContextInteger(canonical, state.definition.manualControl.commandTimeoutMs);
+        appendContextInteger(
+            canonical, quint64(state.definition.manualControl.timeoutAction));
+        appendContextInteger(canonical, state.definition.hasSafeValue ? 1 : 0);
+        if (state.definition.hasSafeValue
+            && !appendContextValue(canonical, state.definition.safeValue)) {
+            return {};
+        }
+    }
+
+    QList<Data::SemanticActionRuntimeState> actions = context.actionStates;
+    std::sort(
+        actions.begin(),
+        actions.end(),
+        [](const Data::SemanticActionRuntimeState &left,
+           const Data::SemanticActionRuntimeState &right) {
+            if (left.target.deviceId != right.target.deviceId) {
+                return left.target.deviceId.toString() < right.target.deviceId.toString();
+            }
+            return left.target.actionId.value < right.target.actionId.value;
+        });
+    appendContextInteger(canonical, quint64(actions.size()));
+    QSet<QString> actionTargets;
+    for (Data::SemanticActionRuntimeState &action : actions) {
+        const QString targetKey
+            = action.target.deviceId.toString() + QLatin1Char('/') + action.target.actionId.value;
+        if (actionTargets.contains(targetKey))
+            return {};
+        actionTargets.insert(targetKey);
+        appendContextString(canonical, action.target.deviceId.toString());
+        appendContextString(canonical, action.target.actionId.value);
+        appendContextString(canonical, action.actionBindingId);
+        appendContextString(canonical, action.actionDefinitionId);
+        appendContextBytes(canonical, action.actionDefinitionDigest.value);
+        appendContextInteger(canonical, quint64(action.qualification));
+        appendContextInteger(canonical, action.definition.enabled ? 1 : 0);
+        appendContextString(canonical, action.disabledReason);
+        appendContextInteger(canonical, action.requiresApproval ? 1 : 0);
+        appendContextInteger(canonical, action.requiresExclusiveControl ? 1 : 0);
+        appendContextInteger(canonical, action.requiresDc ? 1 : 0);
+        appendContextInteger(canonical, action.holdToRun ? 1 : 0);
+        appendContextInteger(canonical, action.maximumTtlCycles);
+
+        std::sort(
+            action.parameters.begin(),
+            action.parameters.end(),
+            [](const Data::SemanticActionParameterRuntimeDefinition &left,
+               const Data::SemanticActionParameterRuntimeDefinition &right) {
+                return left.id < right.id;
+            });
+        appendContextInteger(canonical, quint64(action.parameters.size()));
+        QSet<QString> parameterIds;
+        for (const Data::SemanticActionParameterRuntimeDefinition &parameter :
+             std::as_const(action.parameters)) {
+            if (parameter.id.isEmpty() || parameterIds.contains(parameter.id))
+                return {};
+            parameterIds.insert(parameter.id);
+            appendContextString(canonical, parameter.id);
+            appendContextInteger(canonical, quint64(parameter.primitiveType));
+            appendContextString(canonical, parameter.unit);
+            if (!appendContextValue(canonical, parameter.minimum)
+                || !appendContextValue(canonical, parameter.maximum)) {
+                return {};
+            }
+        }
+
+        std::sort(
+            action.bindings.begin(),
+            action.bindings.end(),
+            [](const Data::SemanticRuntimeBinding &left,
+               const Data::SemanticRuntimeBinding &right) {
+                return left.semanticBindingId < right.semanticBindingId;
+            });
+        appendContextInteger(canonical, quint64(action.bindings.size()));
+        QSet<QString> bindingIds;
+        for (const Data::SemanticRuntimeBinding &binding : std::as_const(action.bindings)) {
+            if (binding.semanticBindingId.isEmpty()
+                || bindingIds.contains(binding.semanticBindingId)) {
+                return {};
+            }
+            bindingIds.insert(binding.semanticBindingId);
+            appendBindingIdentity(canonical, binding);
+        }
     }
     return QCryptographicHash::hash(canonical, QCryptographicHash::Sha256);
 }
@@ -567,9 +721,44 @@ Data::SemanticRuntimeContext SemanticRuntimeExecutor::buildContext(
 
     context.mappingDigest = bindingCandidates->mappingDigest;
     context.controllerMappingDigest = bindingCandidates->controllerMappingDigest;
+    context.cyclePeriodNs = evidence->cyclePeriodNs();
     context.bindingVerification = bindingCandidates->verification;
     context.signalStates = bindingCandidates->signalStates;
-    context.actionStates.clear();
+    if (evidence->actionDefinitions()) {
+        context.actionDefinitionsDigest = {
+            QStringLiteral("sha256"),
+            evidence->actionDefinitions()->definitionsSha256,
+        };
+        SemanticActionRuntimeGates gates;
+        gates.outputTransactionsSupported
+            = candidate.provider->supportsRuntimeOutputTransactions()
+              && candidate.snapshot.capability
+              && candidate.snapshot.capability->runtimeOutputTransactions;
+        gates.ownsExclusiveControl
+            = !candidate.snapshot.readOnly && candidate.snapshot.session
+              && candidate.snapshot.session->sessionId
+              && candidate.snapshot.session->ownsControlLease
+              && candidate.snapshot.session->controlLeaseOwnerSessionId
+                     == candidate.snapshot.session->sessionId;
+        if (candidate.snapshot.controllerState) {
+            gates.serviceState = candidate.snapshot.controllerState->serviceState;
+            gates.dcRuntimeActive
+                = candidate.snapshot.controllerState->busOperational
+                  && candidate.snapshot.controllerState->distributedClocksLocked;
+        }
+        const Utils::Result<QList<Data::SemanticActionRuntimeState>> actions
+            = buildSemanticActionRuntimeStates(
+                context.controllerId, project, *evidence, *bindingCandidates, gates);
+        if (!actions) {
+            rejectContext(
+                context, ContextIssue::SemanticBindingResolutionFailed, actions.error());
+            return context;
+        }
+        context.actionStates = *actions;
+    } else {
+        context.actionDefinitionsDigest = {};
+        context.actionStates.clear();
+    }
     context.complete = true;
     context.contextHash = semanticRuntimeContextHash(context);
 

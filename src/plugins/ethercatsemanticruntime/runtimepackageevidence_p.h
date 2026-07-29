@@ -22,6 +22,7 @@ public:
     const Data::RuntimeSemanticMappingProof &semanticMappingProof() const;
     const QByteArray &projectConfigurationSha256() const;
     const std::optional<VerifiedSemanticActionDefinitions> &actionDefinitions() const;
+    quint32 cyclePeriodNs() const;
 
     bool isValid() const;
     bool permitsWritableActions() const;
@@ -33,12 +34,14 @@ private:
         VerifiedSemanticBindingArtifact artifact,
         Data::RuntimeSemanticMappingProof proof,
         QByteArray projectConfigurationSha256,
-        std::optional<VerifiedSemanticActionDefinitions> actionDefinitions);
+        std::optional<VerifiedSemanticActionDefinitions> actionDefinitions,
+        quint32 cyclePeriodNs);
 
     VerifiedSemanticBindingArtifact m_semanticBindingArtifact;
     Data::RuntimeSemanticMappingProof m_semanticMappingProof;
     QByteArray m_projectConfigurationSha256;
     std::optional<VerifiedSemanticActionDefinitions> m_actionDefinitions;
+    quint32 m_cyclePeriodNs = 0;
 
     friend Utils::Result<VerifiedRuntimePackageEvidence> verifyRuntimePackageEvidence(
         const VerifiedEcpkgPackage &package);

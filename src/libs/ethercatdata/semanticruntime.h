@@ -150,6 +150,7 @@ struct ETHERCATDATA_EXPORT SemanticActionRuntimeState
     SemanticRuntimeTarget target;
     DeviceControlAction definition;
     QString actionBindingId;
+    QString actionDefinitionId;
     SemanticRuntimeDigest actionDefinitionDigest;
     SemanticActionQualification qualification = SemanticActionQualification::Unqualified;
     QString disabledReason;

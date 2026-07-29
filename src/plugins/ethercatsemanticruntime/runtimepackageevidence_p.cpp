@@ -67,6 +67,10 @@ Utils::Result<> validateEvidence(const VerifiedRuntimePackageEvidence &evidence)
         return evidenceError(
             QString::fromLatin1("the compiled project identity is incomplete"));
     }
+    if (!evidence.cyclePeriodNs()) {
+        return evidenceError(
+            QString::fromLatin1("the signed runtime cycle period is incomplete"));
+    }
     if (!proof.isValid() || proof.trust != Data::RuntimeSemanticMappingTrust::Production) {
         return evidenceError(
             QString::fromLatin1("the local semantic mapping proof is not production trusted"));
@@ -206,11 +210,13 @@ VerifiedRuntimePackageEvidence::VerifiedRuntimePackageEvidence(
     VerifiedSemanticBindingArtifact artifact,
     Data::RuntimeSemanticMappingProof proof,
     QByteArray projectConfigurationSha256,
-    std::optional<VerifiedSemanticActionDefinitions> actionDefinitions)
+    std::optional<VerifiedSemanticActionDefinitions> actionDefinitions,
+    quint32 cyclePeriodNs)
     : m_semanticBindingArtifact(std::move(artifact))
     , m_semanticMappingProof(std::move(proof))
     , m_projectConfigurationSha256(std::move(projectConfigurationSha256))
     , m_actionDefinitions(std::move(actionDefinitions))
+    , m_cyclePeriodNs(cyclePeriodNs)
 {}
 
 const VerifiedSemanticBindingArtifact &
@@ -234,6 +240,11 @@ const std::optional<VerifiedSemanticActionDefinitions> &
 VerifiedRuntimePackageEvidence::actionDefinitions() const
 {
     return m_actionDefinitions;
+}
+
+quint32 VerifiedRuntimePackageEvidence::cyclePeriodNs() const
+{
+    return m_cyclePeriodNs;
 }
 
 Utils::Result<VerifiedRuntimePackageEvidence> verifyRuntimePackageEvidence(
@@ -286,6 +297,7 @@ Utils::Result<VerifiedRuntimePackageEvidence> verifyRuntimePackageEvidence(
         std::move(proof),
         package.manifest.compiledProjectSource.sha256,
         std::move(actionDefinitions),
+        package.configuration.cyclePeriodNs,
     };
     const Utils::Result<> resultValidation = validateEvidence(result);
     if (!resultValidation)

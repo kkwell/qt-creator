@@ -24,6 +24,8 @@ add_qtc_plugin(EtherCATSemanticRuntime
     runtimepackageevidencerepository_p.h
     semanticactiondefinitions_p.cpp
     semanticactiondefinitions_p.h
+    semanticactionruntimefactory_p.cpp
+    semanticactionruntimefactory_p.h
     semanticbindingartifact_p.cpp
     semanticbindingartifact_p.h
     semanticruntimeexecutor.cpp

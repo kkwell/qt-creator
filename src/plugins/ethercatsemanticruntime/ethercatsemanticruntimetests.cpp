@@ -11,6 +11,7 @@
 #include "runtimepackageevidence_p.h"
 #include "runtimepackageevidencerepository_p.h"
 #include "semanticactiondefinitions_p.h"
+#include "semanticactionruntimefactory_p.h"
 #include "semanticbindingartifact_p.h"
 #include "semanticruntimeexecutor.h"
 #include "signedecpkgmanifest_p.h"
@@ -2416,6 +2417,7 @@ void EtherCATSemanticRuntimeTests::testSemanticActionDefinitionsProductionPackag
     QVERIFY(evidence->actionDefinitions()->isValid());
     QCOMPARE(evidence->actionDefinitions()->definitionCount, quint32(5));
     QCOMPARE(evidence->actionDefinitions()->actionCount, quint32(8));
+    QCOMPARE(evidence->cyclePeriodNs(), quint32(125000));
     QVERIFY(evidence->permitsWritableActions());
 
     QVERIFY(evidence->invocableAction(
@@ -3563,6 +3565,284 @@ void EtherCATSemanticRuntimeTests::testReadOnlySemanticBindingFactoryRejectsMism
     QCOMPARE(v1Evidence->semanticMappingProof().formatVersion, quint16(1));
     QVERIFY(!buildReadOnlySemanticBindingCandidates(
         u"embed-labs.product-api", project, *v1Evidence, catalog, attestation));
+}
+
+void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactory()
+{
+    const QByteArray packageBytes = readTestData(
+        "testdata/api038/three-slave-manual-control-cfg3701.ecpkg");
+    const QByteArray projectBytes = readTestData("testdata/api038/project.json");
+    const QByteArray publicKey = readTestData(
+        "testdata/api038/"
+        "eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub");
+    const Utils::Result<VerifiedEcpkgPackage> package = verifyProductionEcpkg(
+        packageBytes, {{publicKey, EcpkgTrustClass::Production}}, projectBytes);
+    QVERIFY_RESULT(package);
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidenceResult
+        = verifyRuntimePackageEvidence(*package);
+    QVERIFY_RESULT(evidenceResult);
+    const VerifiedRuntimePackageEvidence evidence = *evidenceResult;
+
+    const Data::ProjectSnapshot project = factoryProject(evidence);
+    const Data::RuntimeResourceCatalog catalog = factoryCatalog(project, evidence);
+    const Data::RuntimeSemanticMappingAttestation attestation
+        = factoryAttestation(catalog, evidence);
+    const Utils::Result<ReadOnlySemanticBindingCandidates> candidates
+        = buildReadOnlySemanticBindingCandidates(
+            u"embed-labs.product-api", project, evidence, catalog, attestation);
+    QVERIFY_RESULT(candidates);
+
+    const SemanticActionRuntimeGates readyGates{
+        true,
+        true,
+        Data::ControllerServiceState::OperationalSafe,
+        true,
+    };
+    const Utils::Result<QList<Data::SemanticActionRuntimeState>> states
+        = buildSemanticActionRuntimeStates(
+            u"embed-labs.product-api", project, evidence, *candidates, readyGates);
+    QVERIFY_RESULT(states);
+    QCOMPARE(states->size(), qsizetype(8));
+
+    const VerifiedSemanticBindingArtifact &artifact = evidence.semanticBindingArtifact();
+    qsizetype readyCount = 0;
+    qsizetype rejectedCount = 0;
+    QSet<QString> actionBindingIds;
+    for (const Data::SemanticActionRuntimeState &state : *states) {
+        const VerifiedSemanticAction *action = artifact.findAction(state.actionBindingId);
+        QVERIFY(action);
+        QVERIFY(!actionBindingIds.contains(state.actionBindingId));
+        actionBindingIds.insert(state.actionBindingId);
+
+        QCOMPARE(state.target.controllerId, QStringLiteral("embed-labs.product-api"));
+        QCOMPARE(state.target.scope, catalog.scope);
+        QCOMPARE(state.target.kind, Data::SemanticRuntimeTargetKind::Action);
+        QVERIFY(state.target.signalId.value.isEmpty());
+        QCOMPARE(state.target.actionId.value, action->actionBindingId);
+        QCOMPARE(state.actionBindingId, action->actionBindingId);
+        QCOMPARE(state.actionDefinitionId, action->actionDefinitionId);
+        QCOMPARE(state.definition.id, state.target.actionId);
+        QCOMPARE(state.definition.displayName, action->actionDefinitionId);
+        QCOMPARE(state.definition.enabled, action->enabled);
+        QCOMPARE(state.definition.requiresDc, action->dcRequired);
+        QVERIFY(state.definition.requiresExclusiveControl);
+        QVERIFY(state.definition.steps.isEmpty());
+        QCOMPARE(
+            state.actionDefinitionDigest,
+            (Data::SemanticRuntimeDigest{
+                QStringLiteral("sha256"),
+                action->actionDefinitionSha256,
+            }));
+        QCOMPARE(
+            state.qualification,
+            action->qualification == VerifiedSemanticActionQualification::Qualified
+                ? Data::SemanticActionQualification::Qualified
+                : Data::SemanticActionQualification::Unqualified);
+        QCOMPARE(state.requiresDc, action->dcRequired);
+        QVERIFY(state.requiresApproval);
+        QVERIFY(state.requiresExclusiveControl);
+        QVERIFY(!state.holdToRun);
+        QCOMPARE(state.maximumTtlMs, quint32(0));
+        QCOMPARE(state.maximumTtlCycles, quint32(1000));
+        QCOMPARE(
+            state.bindings.size(),
+            action->requiredBindings.size() + action->optionalBindings.size());
+        QCOMPARE(state.parameters.size(), action->parameters.size());
+        QCOMPARE(state.definition.parameters.size(), action->parameters.size());
+        QCOMPARE(state.definition.requiredSignals.size(), action->requiredBindings.size());
+
+        QSet<QString> publicBindingIds;
+        for (const Data::SemanticRuntimeBinding &binding : state.bindings) {
+            QVERIFY(!binding.semanticBindingId.isEmpty());
+            QVERIFY(!publicBindingIds.contains(binding.semanticBindingId));
+            publicBindingIds.insert(binding.semanticBindingId);
+            QCOMPARE(binding.target.deviceId, state.target.deviceId);
+            QCOMPARE(binding.target.kind, Data::SemanticRuntimeTargetKind::Signal);
+        }
+
+        const bool xb6Action = state.actionBindingId.startsWith(
+            QStringLiteral("embedlabs:project:action:xb6:"));
+        if (xb6Action) {
+            ++readyCount;
+            QCOMPARE(state.availability, Data::SemanticActionAvailability::Ready);
+            QCOMPARE(state.qualification, Data::SemanticActionQualification::Qualified);
+            QVERIFY(state.disabledReason.isEmpty());
+            QVERIFY(state.detail.isEmpty());
+            QVERIFY(!state.requiresDc);
+        } else {
+            ++rejectedCount;
+            QCOMPARE(state.availability, Data::SemanticActionAvailability::Rejected);
+            QCOMPARE(state.qualification, Data::SemanticActionQualification::Unqualified);
+            QCOMPARE(
+                state.disabledReason, QStringLiteral("reference_unit_to_rpm_conversion_not_bound"));
+            QCOMPARE(state.detail, state.disabledReason);
+            QVERIFY(state.requiresDc);
+        }
+    }
+    QCOMPARE(actionBindingIds.size(), qsizetype(8));
+    QCOMPARE(readyCount, qsizetype(2));
+    QCOMPARE(rejectedCount, qsizetype(6));
+
+    const auto setOutputs = std::find_if(
+        states->cbegin(), states->cend(), [](const Data::SemanticActionRuntimeState &state) {
+            return state.actionBindingId
+                   == QStringLiteral("embedlabs:project:action:xb6:set-outputs");
+        });
+    QVERIFY(setOutputs != states->cend());
+    QCOMPARE(setOutputs->parameters.size(), qsizetype(16));
+    for (const Data::SemanticActionParameterRuntimeDefinition &parameter : setOutputs->parameters) {
+        QCOMPARE(parameter.primitiveType, Data::RuntimeResourcePrimitiveType::Boolean);
+        QCOMPARE(parameter.minimum.metaType().id(), int(QMetaType::Bool));
+        QCOMPARE(parameter.maximum.metaType().id(), int(QMetaType::Bool));
+        QVERIFY(!parameter.minimum.toBool());
+        QVERIFY(parameter.maximum.toBool());
+    }
+
+    const auto axisVelocity = std::find_if(
+        states->cbegin(), states->cend(), [](const Data::SemanticActionRuntimeState &state) {
+            return state.actionBindingId
+                   == QStringLiteral("embedlabs:project:action:axis0:set-csv-velocity");
+        });
+    QVERIFY(axisVelocity != states->cend());
+    QCOMPARE(axisVelocity->parameters.size(), qsizetype(1));
+    QCOMPARE(
+        axisVelocity->parameters.constFirst().primitiveType,
+        Data::RuntimeResourcePrimitiveType::SignedInteger);
+    QCOMPARE(axisVelocity->parameters.constFirst().unit, QStringLiteral("reference_unit_per_second"));
+    QCOMPARE(axisVelocity->parameters.constFirst().minimum.toLongLong(), qlonglong(-1000));
+    QCOMPARE(axisVelocity->parameters.constFirst().maximum.toLongLong(), qlonglong(1000));
+
+    Data::SemanticRuntimeContext context;
+    context.controllerId = QStringLiteral("embed-labs.product-api");
+    context.scope = catalog.scope;
+    context.sessionGeneration = catalog.sessionGeneration;
+    context.epoch = catalog.epoch;
+    context.mappingDigest = candidates->mappingDigest;
+    context.controllerMappingDigest = candidates->controllerMappingDigest;
+    context.actionDefinitionsDigest = {
+        QStringLiteral("sha256"),
+        evidence.actionDefinitions()->definitionsSha256,
+    };
+    context.cyclePeriodNs = evidence.cyclePeriodNs();
+    context.bindingVerification = candidates->verification;
+    context.signalStates = candidates->signalStates;
+    context.actionStates = *states;
+    context.complete = true;
+    const QByteArray contextHash = semanticRuntimeContextHash(context);
+    QCOMPARE(contextHash.size(), qsizetype(32));
+
+    Data::SemanticRuntimeContext displayChange = context;
+    displayChange.actionStates.first().definition.displayName = QStringLiteral(
+        "Localized display name");
+    displayChange.actionStates.first().availability = Data::SemanticActionAvailability::Unavailable;
+    QCOMPARE(semanticRuntimeContextHash(displayChange), contextHash);
+
+    Data::SemanticRuntimeContext reordered = context;
+    std::reverse(reordered.signalStates.begin(), reordered.signalStates.end());
+    std::reverse(reordered.actionStates.begin(), reordered.actionStates.end());
+    for (Data::SemanticActionRuntimeState &action : reordered.actionStates) {
+        std::reverse(action.parameters.begin(), action.parameters.end());
+        std::reverse(action.bindings.begin(), action.bindings.end());
+    }
+    QCOMPARE(semanticRuntimeContextHash(reordered), contextHash);
+
+    Data::SemanticRuntimeContext changedDefinition = context;
+    changedDefinition.actionStates.first().actionDefinitionId.append(QStringLiteral(".changed"));
+    QVERIFY(semanticRuntimeContextHash(changedDefinition) != contextHash);
+    Data::SemanticRuntimeContext changedDefinitionDigest = context;
+    changedDefinitionDigest.actionStates.first().actionDefinitionDigest.value[0] ^= 1;
+    QVERIFY(semanticRuntimeContextHash(changedDefinitionDigest) != contextHash);
+    Data::SemanticRuntimeContext changedCompanion = context;
+    changedCompanion.actionDefinitionsDigest.value[0] ^= 1;
+    QVERIFY(semanticRuntimeContextHash(changedCompanion) != contextHash);
+    Data::SemanticRuntimeContext changedCycle = context;
+    ++changedCycle.cyclePeriodNs;
+    QVERIFY(semanticRuntimeContextHash(changedCycle) != contextHash);
+    Data::SemanticRuntimeContext mockContext = context;
+    mockContext.mock = true;
+    QVERIFY(semanticRuntimeContextHash(mockContext) != contextHash);
+    Data::SemanticRuntimeContext changedManualPolicy = context;
+    changedManualPolicy.signalStates.first().definition.manualControl.policyId = QStringLiteral(
+        "changed-policy");
+    QVERIFY(semanticRuntimeContextHash(changedManualPolicy) != contextHash);
+    Data::SemanticRuntimeContext duplicateAction = context;
+    duplicateAction.actionStates.append(duplicateAction.actionStates.constFirst());
+    QVERIFY(semanticRuntimeContextHash(duplicateAction).isEmpty());
+}
+
+void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactoryFailsClosed()
+{
+    const QByteArray packageBytes = readTestData(
+        "testdata/api038/three-slave-manual-control-cfg3701.ecpkg");
+    const QByteArray projectBytes = readTestData("testdata/api038/project.json");
+    const QByteArray publicKey = readTestData(
+        "testdata/api038/"
+        "eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub");
+    const Utils::Result<VerifiedEcpkgPackage> package = verifyProductionEcpkg(
+        packageBytes, {{publicKey, EcpkgTrustClass::Production}}, projectBytes);
+    QVERIFY_RESULT(package);
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidenceResult
+        = verifyRuntimePackageEvidence(*package);
+    QVERIFY_RESULT(evidenceResult);
+    const VerifiedRuntimePackageEvidence evidence = *evidenceResult;
+
+    const Data::ProjectSnapshot project = factoryProject(evidence);
+    const Data::RuntimeResourceCatalog catalog = factoryCatalog(project, evidence);
+    const Data::RuntimeSemanticMappingAttestation attestation
+        = factoryAttestation(catalog, evidence);
+    const Utils::Result<ReadOnlySemanticBindingCandidates> candidates
+        = buildReadOnlySemanticBindingCandidates(
+            u"embed-labs.product-api", project, evidence, catalog, attestation);
+    QVERIFY_RESULT(candidates);
+
+    SemanticActionRuntimeGates gates{
+        false,
+        true,
+        Data::ControllerServiceState::OperationalSafe,
+        true,
+    };
+    const Utils::Result<QList<Data::SemanticActionRuntimeState>> unsupported
+        = buildSemanticActionRuntimeStates(
+            u"embed-labs.product-api", project, evidence, *candidates, gates);
+    QVERIFY_RESULT(unsupported);
+    QCOMPARE(unsupported->size(), qsizetype(8));
+    for (const Data::SemanticActionRuntimeState &state : *unsupported) {
+        if (state.actionBindingId.startsWith(QStringLiteral("embedlabs:project:action:xb6:"))) {
+            QCOMPARE(state.availability, Data::SemanticActionAvailability::Unavailable);
+            QCOMPARE(state.detail, QStringLiteral("runtime_output_transactions_unavailable"));
+        } else {
+            QCOMPARE(state.availability, Data::SemanticActionAvailability::Rejected);
+            QCOMPARE(state.detail, QStringLiteral("reference_unit_to_rpm_conversion_not_bound"));
+        }
+    }
+
+    gates.outputTransactionsSupported = true;
+    gates.ownsExclusiveControl = false;
+    const Utils::Result<QList<Data::SemanticActionRuntimeState>> noControl
+        = buildSemanticActionRuntimeStates(
+            u"embed-labs.product-api", project, evidence, *candidates, gates);
+    QVERIFY_RESULT(noControl);
+    for (const Data::SemanticActionRuntimeState &state : *noControl) {
+        if (state.actionBindingId.startsWith(QStringLiteral("embedlabs:project:action:xb6:"))) {
+            QCOMPARE(state.availability, Data::SemanticActionAvailability::Unavailable);
+            QCOMPARE(state.detail, QStringLiteral("exclusive_control_not_owned"));
+        }
+    }
+
+    ReadOnlySemanticBindingCandidates incomplete = *candidates;
+    incomplete.bindings.removeLast();
+    QVERIFY(!buildSemanticActionRuntimeStates(
+        u"embed-labs.product-api", project, evidence, incomplete, gates));
+
+    ReadOnlySemanticBindingCandidates changedResource = *candidates;
+    changedResource.bindings[0].resourceId.value[0] ^= 1;
+    QVERIFY(!buildSemanticActionRuntimeStates(
+        u"embed-labs.product-api", project, evidence, changedResource, gates));
+
+    Data::ProjectSnapshot missingDevice = project;
+    missingDevice.masterBindingArtifact.projectDeviceBindings.removeLast();
+    QVERIFY(!buildSemanticActionRuntimeStates(
+        u"embed-labs.product-api", missingDevice, evidence, *candidates, gates));
 }
 
 void EtherCATSemanticRuntimeTests::testExecutorPublishesVerifiedReadOnlyContext()

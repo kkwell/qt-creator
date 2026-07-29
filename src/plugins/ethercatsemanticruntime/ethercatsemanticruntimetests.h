@@ -41,6 +41,8 @@ private slots:
     void testRuntimePackageEvidenceRepositoryRejectsUnsafeInputs();
     void testReadOnlySemanticBindingFactory();
     void testReadOnlySemanticBindingFactoryRejectsMismatches();
+    void testSemanticActionRuntimeFactory();
+    void testSemanticActionRuntimeFactoryFailsClosed();
     void testExecutorPublishesVerifiedReadOnlyContext();
     void testPublishesOneProductionService();
     void testProjectAndProviderLifecycle();
