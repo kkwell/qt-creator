@@ -11,9 +11,26 @@
 #include <extensionsystem/iplugin.h>
 #include <extensionsystem/pluginmanager.h>
 
+#include <QDir>
+
+#include <algorithm>
 #include <memory>
 
 namespace EtherCAT::Devices::Internal {
+
+static Utils::FilePaths esiXmlFiles(const Utils::FilePath &directory)
+{
+    Utils::FilePaths files = directory.dirEntries(QDir::Files | QDir::NoDotAndDotDot);
+    files.erase(
+        std::remove_if(files.begin(), files.end(), [](const Utils::FilePath &filePath) {
+            return filePath.suffix().compare("xml", Qt::CaseInsensitive) != 0;
+        }),
+        files.end());
+    std::sort(files.begin(), files.end(), [](const auto &left, const auto &right) {
+        return left.toUrlishString() < right.toUrlishString();
+    });
+    return files;
+}
 
 class EtherCATDevicesPlugin final : public ExtensionSystem::IPlugin
 {
@@ -53,8 +70,18 @@ void EtherCATDevicesPlugin::initialize()
 
 bool EtherCATDevicesPlugin::delayedInitialize()
 {
-    if (m_repository && m_repository->isAvailable())
-        m_repository->rebuildIndex();
+    if (!m_repository || !m_repository->isAvailable())
+        return true;
+
+    m_repository->rebuildIndex();
+    Utils::FilePaths libraryFiles
+        = esiXmlFiles(::Core::ICore::resourcePath("ethercat/esi"));
+    const Utils::FilePath userLibrary
+        = ::Core::ICore::userResourcePath("ethercat/esi/library");
+    if (userLibrary.ensureWritableDir())
+        libraryFiles.append(esiXmlFiles(userLibrary));
+    if (!libraryFiles.isEmpty())
+        m_repository->importFiles(libraryFiles);
     return true;
 }
 

@@ -157,6 +157,45 @@ QByteArray controllerStatePayload()
     return payload;
 }
 
+QByteArray performanceSnapshotPayload()
+{
+    QByteArray payload(320, '\0');
+    putU64(payload, 0, 100);
+    putU64(payload, 8, 240);
+    putU64(payload, 16, 17);
+    putU32(payload, 24, 2);
+    putU32(payload, 28, 3);
+    putU32(payload, 32, 4);
+    putU32(payload, 36, 5);
+    putU32(payload, 40, 6);
+    putU32(payload, 44, 7);
+    putU32(payload, 48, 8);
+    putU32(payload, 52, 9);
+    putU32(payload, 56, 10);
+    putU32(payload, 120, 0x11);
+    putU32(payload, 124, 12);
+    const std::array<quint32, 4> sampleWords{
+        0x04030201,
+        0x08070605,
+        0x0c0b0a09,
+        0x100f0e0d,
+    };
+    for (qsizetype index = 0; index < qsizetype(sampleWords.size()); ++index) {
+        putU32(payload, 240 + index * 4, sampleWords.at(size_t(index)));
+        putU32(payload, 256 + index * 4, sampleWords.at(size_t(index)));
+    }
+    putU32(payload, 272, 0x7); // valid | fresh | complete
+    putU32(payload, 276, 0);
+    putU32(payload, 280, 16);
+    putU32(payload, 284, 16);
+    putU32(payload, 288, 13);
+    putU32(payload, 292, 128);
+    putU64(payload, 296, 33);
+    putU64(payload, 304, 44);
+    putU64(payload, 312, 303);
+    return payload;
+}
+
 QByteArray lifecycleControllerStatePayload(quint32 serviceState, quint64 cycleCount = 202)
 {
     QByteArray payload(80, '\0');
@@ -1583,6 +1622,7 @@ ProductApiSession::Options testOptions()
     options.reconnectInitialDelayMs = 20;
     options.reconnectMaximumDelayMs = 20;
     options.reconnectAttempts = 2;
+    options.liveStatePollIntervalMs = 0;
     return options;
 }
 
@@ -1888,6 +1928,57 @@ void EtherCATProductApiTests::testSemanticControllerState()
     error = {};
     QVERIFY(!Protocol::decodeControllerState(wrongEpoch, &error));
     QCOMPARE(error.category, Protocol::ErrorCategory::IdentityMismatch);
+}
+
+void EtherCATProductApiTests::testSemanticPerformanceSnapshot()
+{
+    Protocol::Frame frame = responseFrame(
+        Protocol::MessageType::PerformanceSnapshot,
+        performanceSnapshotPayload(),
+        1,
+        Protocol::Flag::Response | Protocol::Flag::Replaceable);
+    frame.header.requestId = 0;
+
+    Protocol::Error error;
+    const auto performance = Protocol::decodePerformanceSnapshot(frame, &error);
+    QVERIFY(performance);
+    QVERIFY(!error);
+    QCOMPARE(performance->minimumExchangeTimeNs, quint64(100));
+    QCOMPARE(performance->maximumExchangeTimeNs, quint64(240));
+    QCOMPARE(performance->maximumSubmitLatenessNs, quint64(17));
+    QCOMPARE(performance->timeoutCount, quint32(2));
+    QCOMPARE(performance->cycleLateCount, quint32(6));
+    QCOMPARE(performance->badWorkingCounterCount, quint32(7));
+    QCOMPARE(performance->fpgaSnapshotSequence, quint32(12));
+    QVERIFY(performance->processInputSampleValid);
+    QVERIFY(performance->processInputSampleFresh);
+    QVERIFY(performance->processInputSampleComplete);
+    QCOMPARE(performance->processInputSample.size(), 16);
+    QCOMPARE(performance->processInputSample.front(), char(0x01));
+    QCOMPARE(performance->processInputSample.back(), char(0x10));
+    QCOMPARE(performance->processInputSampleCycleCount, quint64(303));
+
+    Protocol::Frame reserved = frame;
+    putU32(reserved.payload, 164, 1);
+    error = {};
+    QVERIFY(!Protocol::decodePerformanceSnapshot(reserved, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    Protocol::Frame stale = frame;
+    putU32(stale.payload, 292, 129);
+    error = {};
+    QVERIFY(!Protocol::decodePerformanceSnapshot(stale, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    Protocol::Frame legacy = frame;
+    legacy.header.protocolMinor = 6;
+    legacy.payload = legacy.payload.first(256);
+    legacy.header.payloadLength = quint32(legacy.payload.size());
+    error = {};
+    const auto legacyPerformance = Protocol::decodePerformanceSnapshot(legacy, &error);
+    QVERIFY(legacyPerformance);
+    QVERIFY(!error);
+    QVERIFY(!legacyPerformance->processInputSampleValid);
 }
 
 void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
@@ -2703,6 +2794,29 @@ void EtherCATProductApiTests::testThreeChannelInitialSnapshot()
 
     QVERIFY(provider.disconnectFromController());
     QCOMPARE(provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected);
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testLiveStatePolling()
+{
+    LoopbackController controller;
+    QVERIFY(controller.start());
+
+    ProductApiSession::Options options = testOptions();
+    options.liveStatePollIntervalMs = 50;
+    ProductApiConnectionProvider provider(controller.endpoints(), options);
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(controller.requestCount(Protocol::MessageType::GetState) >= 1);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        controller.requestCount(Protocol::MessageType::GetState) >= 2, 1000);
+    QVERIFY(provider.connectionSnapshot().controllerState);
+    QVERIFY(controller.violations().isEmpty());
+
+    QVERIFY(provider.disconnectFromController());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected, 1000);
     QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
 }
 

@@ -435,11 +435,12 @@ void EtherCATWorkbenchPlugin::updateQuickControllerActions()
                 if (startupInProgress) {
                     action->setIcon(Utils::Icons::RELOAD.icon());
                     text = Tr::tr("Starting Controller...");
-                } else if (command == Data::ControllerControlCommand::EnterConfigurationMode) {
+                } else if (command == Data::ControllerControlCommand::RestoreActivePackage) {
                     text = Tr::tr("Run Controller");
                     availableDescription = Tr::tr(
-                        "Enter configuration, scan the EtherCAT bus, restore the active package, "
-                        "then start it using its configured FreeRun or Distributed Clocks mode.");
+                        "Restore the saved controller package and start it using its configured "
+                        "FreeRun or Distributed Clocks mode. Scan is available only from the "
+                        "explicit Rescan command.");
                 } else if (command == Data::ControllerControlCommand::Start) {
                     text = Tr::tr("Start Controller");
                     availableDescription = Tr::tr(
@@ -585,9 +586,9 @@ void EtherCATWorkbenchPlugin::setupActions()
         = new QAction(Utils::Icons::LINK.icon(), Tr::tr("Connect Controller"), this);
     const QString connectControllerDescription = Tr::tr(
         "Establish the Control, Push, and Bulk channels, read the authoritative controller "
-        "snapshot, then automatically request the exclusive control lease. When the controller "
-        "is safely in Shutdown, the EtherCAT bus is scanned automatically without writing the "
-        "offline project.");
+        "snapshot, then automatically request the exclusive control lease. Connecting never "
+        "scans the bus or changes the controller state; use Rescan explicitly when the physical "
+        "bus has changed.");
     connectControllerAction->setToolTip(connectControllerDescription);
     connectControllerAction->setStatusTip(connectControllerDescription);
     ::Core::Command *connectControllerCommand = ::Core::ActionManager::registerAction(
@@ -605,7 +606,7 @@ void EtherCATWorkbenchPlugin::setupActions()
     });
 
     auto scanControllerAction
-        = new QAction(Utils::Icons::NEWSEARCH_TOOLBAR.icon(), Tr::tr("Scan Bus"), this);
+        = new QAction(Utils::Icons::NEWSEARCH_TOOLBAR.icon(), Tr::tr("Rescan Bus"), this);
     const QString scanControllerDescription = Tr::tr(
         "Scan the live EtherCAT bus connected to the selected Master. This does not modify the "
         "offline project.");

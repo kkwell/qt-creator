@@ -187,6 +187,60 @@ static StateMarker markerForSeverity(Data::DifferenceSeverity severity)
     return StateMarker::None;
 }
 
+enum class DeviceFunction { Generic, Coupler, Drive, InputOutput, Safety, Sensor };
+
+static DeviceFunction deviceFunction(const WorkbenchTreeModel::Node *node)
+{
+    if (!node)
+        return DeviceFunction::Generic;
+    const QString description
+        = (node->name + ' ' + node->device.name + ' ' + node->device.typeName + ' '
+           + node->device.group)
+              .toLower();
+    if (description.contains("safety") || description.contains("safe")
+        || description.contains("fsoe")) {
+        return DeviceFunction::Safety;
+    }
+    if (description.contains("servo") || description.contains("drive")
+        || description.contains("motor") || description.contains("axis")
+        || description.contains("cia402")) {
+        return DeviceFunction::Drive;
+    }
+    if (description.contains("coupler") || description.contains("coupling")
+        || description.contains("gateway") || description.contains("junction")) {
+        return DeviceFunction::Coupler;
+    }
+    if (description.contains("encoder") || description.contains("sensor")
+        || description.contains("measurement") || description.contains("analog")) {
+        return DeviceFunction::Sensor;
+    }
+    if (description.contains("i/o") || description.contains(" io ")
+        || description.contains("input") || description.contains("output")
+        || description.contains("terminal") || description.contains("module")) {
+        return DeviceFunction::InputOutput;
+    }
+    return DeviceFunction::Generic;
+}
+
+static QIcon deviceFunctionIcon(const WorkbenchTreeModel::Node *node)
+{
+    switch (deviceFunction(node)) {
+    case DeviceFunction::Coupler:
+        return Utils::Icons::LINK.icon();
+    case DeviceFunction::Drive:
+        return Utils::Icons::SETTINGS.icon();
+    case DeviceFunction::InputOutput:
+        return Utils::Icons::SNAPSHOT.icon();
+    case DeviceFunction::Safety:
+        return Utils::Icons::LOCKED.icon();
+    case DeviceFunction::Sensor:
+        return Utils::Icons::EYE_OPEN.icon();
+    case DeviceFunction::Generic:
+        return ::Core::Icons::DESKTOP_DEVICE_SMALL.icon();
+    }
+    return ::Core::Icons::DESKTOP_DEVICE_SMALL.icon();
+}
+
 static void raiseMarker(WorkbenchTreeModel::Node *node, StateMarker marker)
 {
     if (node && markerPriority(marker) > markerPriority(node->marker))
@@ -861,7 +915,7 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
         }
         return text;
     }
-    if (role == Qt::DecorationRole && index.column() == 0) {
+    if (role == Qt::DecorationRole && index.column() == 1) {
         switch (node->marker) {
         case StateMarker::Healthy:
             return Utils::Icons::OK.icon();
@@ -872,8 +926,10 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
         case StateMarker::Error:
             return Utils::Icons::CRITICAL.icon();
         case StateMarker::None:
-            break;
+            return {};
         }
+    }
+    if (role == Qt::DecorationRole && index.column() == 0) {
         switch (node->kind) {
         case Core::WorkbenchNodeKind::Project:
             return Utils::Icons::PROJECT.icon();
@@ -883,8 +939,7 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
             return Utils::Icons::SETTINGS.icon();
         case Core::WorkbenchNodeKind::Device:
         case Core::WorkbenchNodeKind::ConfiguredSlave:
-            return node->device.supported ? ::Core::Icons::DESKTOP_DEVICE_SMALL.icon()
-                                          : Utils::Icons::BROKEN.icon();
+            return deviceFunctionIcon(node);
         case Core::WorkbenchNodeKind::Diagnostics:
             return Utils::Icons::INFO.icon();
         case Core::WorkbenchNodeKind::ProcessInputs:
@@ -900,7 +955,7 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
         case Core::WorkbenchNodeKind::Modules:
             return Utils::Icons::DIR.icon();
         case Core::WorkbenchNodeKind::Module:
-            return ::Core::Icons::DESKTOP_DEVICE_SMALL.icon();
+            return deviceFunctionIcon(node);
         case Core::WorkbenchNodeKind::Placeholder:
             return Utils::Icons::NOTLOADED.icon();
         default:
@@ -2170,7 +2225,12 @@ void WorkbenchTreeModel::rebuild()
                                 const QString deviceName
                                     = esiDevice && !esiDevice->name.isEmpty()
                                           ? esiDevice->name
-                                          : Tr::tr("EtherCAT device");
+                                          : Tr::tr("Unknown device 0x%1")
+                                                .arg(
+                                                    slave.productCode,
+                                                    8,
+                                                    16,
+                                                    QLatin1Char('0'));
                                 auto onlineDevice = makeNode(
                                     nodePointer,
                                     controllerBusSlaveId(nodePointer->id, slave),

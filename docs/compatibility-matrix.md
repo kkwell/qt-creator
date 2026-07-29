@@ -42,11 +42,11 @@ local decisions and easier maintenance.
 | EasyBoard | Existing board discovery/deployment mode | Preserve; visibility review pending |
 | EtherCATCore | EtherCAT services and extension points | Stage 1 verified |
 | EtherCATProject | Offline project lifecycle and persistence | Stage 2 verified |
-| EtherCATDevices | Offline ESI repository and immutable device data | Stage 3 verified |
+| EtherCATDevices | Managed ESI repository, bundled vendor library, and immutable device data | Current suite passed 9 tests; the original XB6 and SV630N XML identities, hashes, names, and DC capability are parser-verified |
 | EtherCATWorkbench | EtherCAT mode, device tree, selection, master-side ESI insertion, supported-device drag-and-drop, offline property pages, embedded commissioning, and native quick controller controls | Current English Workbench suite passed 95 tests with no failures; controller prompts use one passive Application Output channel, the status bar excludes controller connection state, and the lower-left controls retain the compact actionable projection |
 | EtherCATScan | Local Mock scan, topology comparison, and checked acceptance | Stage 5 verified |
 | EtherCATDiagnostics | Local Mock state, WKC, DC, alarm, and performance views | Stage 6 verified |
-| EtherCATProductApi | Headless Embed Labs Product API v1.10 client with bounded v1.9 compatibility | Current English ProductApi suite passed 71 tests with no failures and 1 hardware skip; endpoint parsing/configuration is included, generic Start and explicit DC hardware lifecycles each passed 3 tests with no failures, and no FreeRun lifecycle ran |
+| EtherCATProductApi | Headless Embed Labs Product API v1.10 client with bounded v1.9 compatibility | Current English ProductApi suite passed 79 tests with no failures and 1 hardware skip; exact PerformanceSnapshot validation and 500 ms read-only live-state polling are included |
 
 ### Phase-1 EtherCAT profile
 
@@ -103,6 +103,16 @@ current endpoint and unified-output revision is covered by widget-level
 Workbench tests and a three-pass ProjectExplorer passive-output lifecycle test.
 No controller connection or hardware command was executed in this round.
 
+The current explicit-rescan revision keeps Connect and normal Run free of
+discovery. From `SHUTDOWN`, quick Run restores the exact persistent package
+and then starts it; only the user-facing **Rescan Bus** command enters the
+commissioning scan path. The fixed product ESI library now contains the
+unmodified XB6 and SV630N XML, with a separate fixed writable directory for
+additional vendor XML. Product API v1.10 performance pushes are decoded with
+exact envelope, size, and sample validation, while a 500 ms read-only
+GetState poll keeps current cycle, WKC, and DC data moving. This revision was
+qualified offline; it did not connect to or command the controller.
+
 The later local control extension implements leased discovery and the Product
 API v1.10 explicit timing-mode start contract. The 2026-07-24 record observed
 v1.10 with feature bits `0xfff` and reached AcquireControl, Configuration,
@@ -145,7 +155,7 @@ function is outside the product target and records migration or recovery.
 | Editable Startup page | Verified in current Workbench issue |
 | Editable DC page | Verified, including keyboard-accessible read-only preview of every parsed ESI mode on repository Device pages and unchanged Project-owned editing on configured slaves |
 | Offline EtherCAT project | Stage 2 verified |
-| ESI repository | Devices storage/parser/provider, Workbench import/reload/cancel UI, and actionable empty guidance verified; local/offline only |
+| ESI repository | Devices storage/parser/provider, automatic bundled XB6/SV630N indexing, fixed writable vendor-XML directory, Workbench import/reload/cancel UI, and actionable guidance verified; local/offline only |
 | Individual ESI catalogue-device General page | Verified with TwinCAT-aligned identity, configuration coverage, qualification/source details, explicit unavailable state, and no controller access |
 | Master-side ESI device insertion | Verified with context-only `Add New Item...`, ESI search, latest/previous revision handling, qualification gating, stable IDs, and Project Undo/Redo |
 | Supported ESI device drag-and-drop | Verified for private stable-ID CopyAction, exact active-Master targeting, append semantics, rejection boundaries, and Project Undo/Redo |
@@ -154,9 +164,9 @@ function is outside the product target and records migration or recovery.
 | Optional Scan/Diagnostics Provider state | Verified for absent, registered/unavailable, and available states with public `Local Mock` producer names and no installation inference |
 | Product API v1 | v1.10 explicit timing-mode client contract is locally qualified with bounded v1.9 compatibility; RAM-only v1.10 hardware is qualified through Scan, with Restore and runtime transitions pending |
 | Controller connection Core contract | Verified multi-provider/profile semantic prerequisite with arbitrary named channels; no Qt network or hardware claim |
-| Provider-neutral Communication page | Embedded Master Details page for connection, automatic/manual Acquire, Configuration, Scan, Restore/Release, Actual Bus, and information; runtime uses the lower-left native quick controls; earlier read-only qualification remains historical |
-| Real EtherCAT scan | Typed leased discovery is verified against three real slaves and remains separate from the offline Project; Project Apply remains pending |
-| Real controller diagnostics | Existing Mock contract reusable; ProductApi Push/Bulk source pending |
+| Provider-neutral Communication page | Embedded Master Details page for connection, automatic/manual Acquire, Configuration, explicit Rescan, Restore/Release, Actual Bus, and information; Connect never scans and runtime uses the lower-left native quick controls |
+| Real EtherCAT scan | Typed leased discovery remains separate from the offline Project and runs only from explicit Rescan; no scan occurs during Connect or normal Run |
+| Real controller diagnostics | Current ControllerState cycle/WKC/DC fields refresh through a 500 ms read-only poll; v1.10 PerformanceSnapshot timing/error/sample data is decoded and presented, with current hardware refresh still requiring UI observation |
 | Physical topology graph | Linear scan order only with current API; branch/star graph blocked by missing port-neighbor edge ABI |
 | ECPKG/ECFG/ETIR | Headless transfer and the embedded Master Deployment page accept only already-built immutable ECPKG bytes for validate/optional-activate; construction, signing, ECFG/DC serialization, and ETIR generation remain out of scope |
 | ST/LD/FBD | Explicitly out of scope |

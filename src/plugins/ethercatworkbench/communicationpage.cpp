@@ -249,7 +249,7 @@ CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *p
     m_saveEndpoint->setObjectName("EtherCATCommunicationSaveEndpoint");
     m_saveEndpoint->setAccessibleName(Tr::tr("Save controller address and connect"));
     m_saveEndpoint->setToolTip(
-        Tr::tr("Save the controller address, then connect and scan automatically."));
+        Tr::tr("Save the controller address and connect. Rescan the bus explicitly when needed."));
     m_saveEndpoint->setIcon(Utils::Icons::LINK.icon());
     m_saveEndpoint->setAutoRaise(true);
 
@@ -340,8 +340,8 @@ CommunicationPage::CommunicationPage(WorkbenchController *controller, QWidget *p
     configureControlButton(
         m_scanBus,
         "EtherCATCommunicationScanBus",
-        Tr::tr("Scan Bus"),
-        Tr::tr("Scan the live EtherCAT bus. This does not modify the offline Project."),
+        Tr::tr("Rescan Bus"),
+        Tr::tr("Explicitly rescan the live EtherCAT bus. This does not modify the offline Project."),
         Data::ControllerControlCommand::DiscoverTopology);
     configureControlButton(
         m_restorePackage,

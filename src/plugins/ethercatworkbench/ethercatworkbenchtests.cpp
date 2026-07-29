@@ -47,6 +47,7 @@
 
 #include <utils/filepath.h>
 #include <utils/infolabel.h>
+#include <utils/qtcsettings.h>
 #include <utils/stylehelper.h>
 #include <utils/utilsicons.h>
 
@@ -4254,7 +4255,20 @@ void EtherCATWorkbenchTests::testEsiRepositoryGeneralWorkflow()
     WorkbenchController controller;
     Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
     QVERIFY(repository);
-    QTRY_VERIFY(!repository->isIndexing());
+    const auto containsIdentity = [repository](const Data::DeviceIdentity &identity) {
+        const QList<Data::DeviceSummary> devices = repository->devices();
+        return std::any_of(
+            devices.cbegin(),
+            devices.cend(),
+            [&identity](const Data::DeviceSummary &device) {
+                return device.identity == identity;
+            });
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(
+        containsIdentity({0x00884443, 0x000000b6, 0x00000001}), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        containsIdentity({0x00100000, 0x000c0112, 0x00010000}), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(!repository->isIndexing(), 15000);
     controller.treeModel()->setProjects({projectSnapshot("ESI Repository")});
 
     EsiRepositoryPage page(repository);
@@ -6606,7 +6620,7 @@ void EtherCATWorkbenchTests::testConfiguredSlaveStateIcon()
     const int iconSize = QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize);
     QCOMPARE(
         actual.pixmap(iconSize, iconSize).toImage(),
-        ::Core::Icons::DESKTOP_DEVICE_SMALL.icon().pixmap(iconSize, iconSize).toImage());
+        Utils::Icons::SETTINGS.icon().pixmap(iconSize, iconSize).toImage());
 
     QList<Data::DeviceSummary> repository = deviceSummaries(2);
     repository.first().supported = false;
@@ -6614,7 +6628,100 @@ void EtherCATWorkbenchTests::testConfiguredSlaveStateIcon()
     const QModelIndex unsupported = model.indexForNodeId(repository.first().id);
     QCOMPARE(
         unsupported.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
-        Utils::Icons::BROKEN.icon().pixmap(iconSize, iconSize).toImage());
+        Utils::Icons::SNAPSHOT.icon().pixmap(iconSize, iconSize).toImage());
+}
+
+void EtherCATWorkbenchTests::testBundledEsiOnlineTopologyPresentation()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    QVERIFY(repository);
+    const auto containsIdentity = [repository](const Data::DeviceIdentity &identity) {
+        const QList<Data::DeviceSummary> devices = repository->devices();
+        return std::any_of(
+            devices.cbegin(),
+            devices.cend(),
+            [&identity](const Data::DeviceSummary &device) {
+                return device.identity == identity;
+            });
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(
+        containsIdentity({0x00884443, 0x000000b6, 0x00000001}), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        containsIdentity({0x00100000, 0x000c0112, 0x00010000}), 15000);
+
+    WorkbenchTreeModel model;
+    const Data::ProjectSnapshot project = projectSnapshot("Vendor ESI Topology");
+    const Data::NodeId master = masterId(project);
+    model.setProjects({project});
+    model.syncDevices(repository->devices());
+
+    Data::ControllerTopologySnapshot topology;
+    topology.firstStationAddress = 0x1001;
+    topology.respondingCount = 2;
+    topology.slaves = {
+        {0, 0x1001, 0x0008, 0, 0x00884443, 0x000000b6, 0x00000001, 0x00000001},
+        {1, 0x1002, 0x0008, 0, 0x00100000, 0x000c0112, 0x00010000, 0x00000002},
+    };
+    Data::ControllerConnectionSnapshot snapshot;
+    snapshot.scope = {project.id, master};
+    snapshot.state = Data::ControllerConnectionState::Connected;
+    snapshot.topology = topology;
+    model.setControllerConnections({snapshot});
+
+    const QModelIndex masterIndex = model.indexForNodeId(master);
+    QVERIFY(masterIndex.isValid());
+    QList<QModelIndex> onlineDevices;
+    for (int row = 0; row < model.rowCount(masterIndex); ++row) {
+        const QModelIndex child = model.index(row, 0, masterIndex);
+        if (child.data(WorkbenchTreeModel::NodeKindRole).value<Core::WorkbenchNodeKind>()
+            == Core::WorkbenchNodeKind::Module) {
+            onlineDevices.append(child);
+        }
+    }
+    QCOMPARE(onlineDevices.size(), 2);
+    const QModelIndex xb6 = onlineDevices.at(0);
+    const QModelIndex sv630n = onlineDevices.at(1);
+    QCOMPARE(xb6.data().toString(), QString("[0] XB6-EC0002(Modules/Slots and MDP)"));
+    QCOMPARE(sv630n.data().toString(), QString("[1] SV630N_1Axis_03716"));
+
+    const int iconSize = QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize);
+    QCOMPARE(
+        xb6.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
+        Utils::Icons::SNAPSHOT.icon().pixmap(iconSize, iconSize).toImage());
+    QCOMPARE(
+        sv630n.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
+        Utils::Icons::SETTINGS.icon().pixmap(iconSize, iconSize).toImage());
+}
+
+void EtherCATWorkbenchTests::testNavigationHeaderResizePersistence()
+{
+    const Utils::Key settingsKey("EtherCAT/Workbench/NavigationHeaderState");
+    const bool settingsExisted = Utils::userSettings().contains(settingsKey);
+    const QVariant previousSettings = Utils::userSettings().value(settingsKey);
+    const auto restoreSettings = qScopeGuard([&] {
+        if (settingsExisted)
+            Utils::userSettings().setValue(settingsKey, previousSettings);
+        else
+            Utils::userSettings().remove(settingsKey);
+    });
+    Utils::userSettings().remove(settingsKey);
+
+    WorkbenchController controller;
+    constexpr int nodeColumnWidth = 247;
+    {
+        WorkbenchNavigationWidget navigation(&controller);
+        QHeaderView *header = navigation.treeView()->header();
+        QCOMPARE(header->sectionResizeMode(0), QHeaderView::Interactive);
+        QCOMPARE(header->sectionResizeMode(1), QHeaderView::Interactive);
+        QVERIFY(header->stretchLastSection());
+        header->resizeSection(0, nodeColumnWidth);
+        QCOMPARE(header->sectionSize(0), nodeColumnWidth);
+    }
+    {
+        WorkbenchNavigationWidget restored(&controller);
+        QCOMPARE(restored.treeView()->header()->sectionSize(0), nodeColumnWidth);
+    }
 }
 
 void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
@@ -6684,7 +6791,11 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
     QVERIFY(master.data(Qt::ToolTipRole).toString().contains(fullMatchStatus));
     QVERIFY(!controller.treeModel()->firstTopologyDifference().isValid());
     QTRY_COMPARE(
-        master.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
+        master.siblingAtColumn(1)
+            .data(Qt::DecorationRole)
+            .value<QIcon>()
+            .pixmap(iconSize, iconSize)
+            .toImage(),
         Utils::Icons::OK.icon().pixmap(iconSize, iconSize).toImage());
 
     scanResult.comparison.exactMatch = false;
@@ -6767,7 +6878,11 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
     QVERIFY(controller.treeModel()->firstTopologyDifference().isValid());
 
     QTRY_COMPARE(
-        revision.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
+        revision.siblingAtColumn(1)
+            .data(Qt::DecorationRole)
+            .value<QIcon>()
+            .pixmap(iconSize, iconSize)
+            .toImage(),
         Utils::Icons::CRITICAL.icon().pixmap(iconSize, iconSize).toImage());
 
     WorkbenchNavigationWidget navigation(&controller);
@@ -6852,7 +6967,11 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
                     .toString()
                     .contains("2 active"));
     QTRY_COMPARE(
-        missing.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
+        missing.siblingAtColumn(1)
+            .data(Qt::DecorationRole)
+            .value<QIcon>()
+            .pixmap(iconSize, iconSize)
+            .toImage(),
         Utils::Icons::CRITICAL.icon().pixmap(iconSize, iconSize).toImage());
 
     navigation.filterEdit()->setText("MOCK slave fault");
@@ -6916,7 +7035,7 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
                 .contains("Local Mock only"));
     QCOMPARE(
         missing.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
-        ::Core::Icons::DESKTOP_DEVICE_SMALL.icon().pixmap(iconSize, iconSize).toImage());
+        Utils::Icons::SETTINGS.icon().pixmap(iconSize, iconSize).toImage());
     controller.selectionService()->clear();
 }
 
@@ -7748,7 +7867,11 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QVERIFY(invalidRoot.data(WorkbenchTreeModel::SearchTextRole).toString().contains(invalid.error));
     const int iconSize = QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize);
     QCOMPARE(
-        invalidRoot.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
+        invalidRoot.siblingAtColumn(1)
+            .data(Qt::DecorationRole)
+            .value<QIcon>()
+            .pixmap(iconSize, iconSize)
+            .toImage(),
         Utils::Icons::CRITICAL.icon().pixmap(iconSize, iconSize).toImage());
     QCOMPARE(
         controller.treeModel()
@@ -7769,7 +7892,11 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
         QString::fromUtf8("Invalid · Offline"));
     QVERIFY(invalidRoot.data(Qt::ToolTipRole).toString().contains(invalid.error));
     QCOMPARE(
-        invalidRoot.data(Qt::DecorationRole).value<QIcon>().pixmap(iconSize, iconSize).toImage(),
+        invalidRoot.siblingAtColumn(1)
+            .data(Qt::DecorationRole)
+            .value<QIcon>()
+            .pixmap(iconSize, iconSize)
+            .toImage(),
         Utils::Icons::CRITICAL.icon().pixmap(iconSize, iconSize).toImage());
 
     QCOMPARE(controller.treeModel()->rowCount(invalidRoot), 1);
@@ -10335,10 +10462,11 @@ void EtherCATWorkbenchTests::testTwinCatProcessDataTree()
     QCOMPARE(navigation.treeView()->textElideMode(), Qt::ElideRight);
     QCOMPARE(
         navigation.treeView()->header()->sectionResizeMode(0),
-        QHeaderView::Stretch);
+        QHeaderView::Interactive);
     QCOMPARE(
         navigation.treeView()->header()->sectionResizeMode(1),
-        QHeaderView::Stretch);
+        QHeaderView::Interactive);
+    QVERIFY(navigation.treeView()->header()->stretchLastSection());
     QVERIFY(!navigation.treeView()->accessibleName().isEmpty());
     QVERIFY(!navigation.treeView()->accessibleDescription().isEmpty());
     navigation.resize(360, 300);
@@ -10347,6 +10475,9 @@ void EtherCATWorkbenchTests::testTwinCatProcessDataTree()
     QTRY_VERIFY(navigation.treeView()->viewport()->width() > 0);
     QVERIFY(navigation.treeView()->header()->sectionSize(0) > 0);
     QVERIFY(navigation.treeView()->header()->sectionSize(1) > 0);
+    const int resizedNodeColumn = navigation.treeView()->header()->sectionSize(0) + 24;
+    navigation.treeView()->header()->resizeSection(0, resizedNodeColumn);
+    QCOMPARE(navigation.treeView()->header()->sectionSize(0), resizedNodeColumn);
     QTRY_COMPARE(navigation.treeView()->horizontalScrollBar()->maximum(), 0);
     const QModelIndex compactSlave
         = findById(navigation.treeView()->model(), fixture.slaveId);
@@ -19161,9 +19292,9 @@ void EtherCATWorkbenchTests::testControllerCommunicationPagePresentation()
     QCOMPARE(connectAction->text(), Tr::tr("Connect Controller"));
     const QString connectDescription = Tr::tr(
         "Establish the Control, Push, and Bulk channels, read the authoritative controller "
-        "snapshot, then automatically request the exclusive control lease. When the controller "
-        "is safely in Shutdown, the EtherCAT bus is scanned automatically without writing the "
-        "offline project.");
+        "snapshot, then automatically request the exclusive control lease. Connecting never "
+        "scans the bus or changes the controller state; use Rescan explicitly when the physical "
+        "bus has changed.");
     QVERIFY(connectAction->toolTip().contains(connectDescription));
     QVERIFY(!connectAction->toolTip().contains("read-only", Qt::CaseInsensitive));
     QVERIFY(!disconnectAction->toolTip().contains("read-only", Qt::CaseInsensitive));
@@ -20232,9 +20363,7 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
     provider.setAvailable(true);
     provider.setSingleProfile(true);
     provider.setSupportedControlCommands(
-        {Data::ControllerControlCommand::EnterConfigurationMode,
-         Data::ControllerControlCommand::DiscoverTopology,
-         Data::ControllerControlCommand::RestoreActivePackage,
+        {Data::ControllerControlCommand::RestoreActivePackage,
          Data::ControllerControlCommand::Start});
     bool providerRegistered = false;
     const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
@@ -20310,7 +20439,7 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
     const std::optional<Data::ControllerControlCommand> startupCommand
         = controller.quickControllerControlCommand(scope, ControllerQuickControlAction::Run);
     QVERIFY(startupCommand);
-    QCOMPARE(*startupCommand, Data::ControllerControlCommand::EnterConfigurationMode);
+    QCOMPARE(*startupCommand, Data::ControllerControlCommand::RestoreActivePackage);
     QCOMPARE(
         controller.quickControllerControlUnavailableReason(scope, ControllerQuickControlAction::Run),
         QString());
@@ -20322,7 +20451,8 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
     QVERIFY(controller.controllerStartupInProgress(scope));
     QCOMPARE(provider.controlCalls, 1);
     QCOMPARE(
-        provider.lastControlRequest.command, Data::ControllerControlCommand::EnterConfigurationMode);
+        provider.lastControlRequest.command,
+        Data::ControllerControlCommand::RestoreActivePackage);
 
     const auto completedSnapshot = [&provider](Data::ControllerControlCommand command) {
         Data::ControllerConnectionSnapshot completed = provider.connectionSnapshot();
@@ -20334,14 +20464,6 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
         return completed;
     };
 
-    snapshot = completedSnapshot(Data::ControllerControlCommand::EnterConfigurationMode);
-    snapshot.controllerState->serviceState = Data::ControllerServiceState::Shutdown;
-    snapshot.package->controllerState = Data::ControllerPackageState::Empty;
-    provider.publishSnapshot(snapshot);
-    QTRY_COMPARE(provider.controlCalls, 2);
-    QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::DiscoverTopology);
-
-    snapshot = completedSnapshot(Data::ControllerControlCommand::DiscoverTopology);
     Data::ControllerTopologySnapshot topology;
     topology.firstStationAddress = 0x1001;
     topology.respondingCount = 2;
@@ -20351,12 +20473,6 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
         {0, 0x1001, 0x0008, 0, 0x00000002, 0x12345678, 0x00000011, 0x00000021},
         {1, 0x1002, 0x0008, 0, 0x00000003, 0x87654321, 0x00000012, 0x00000022},
     };
-    snapshot.topology = topology;
-    provider.publishSnapshot(snapshot);
-    QTRY_COMPARE(provider.controlCalls, 3);
-    QCOMPARE(
-        provider.lastControlRequest.command, Data::ControllerControlCommand::RestoreActivePackage);
-
     snapshot = completedSnapshot(Data::ControllerControlCommand::RestoreActivePackage);
     snapshot.controllerState->serviceState = Data::ControllerServiceState::OperationalSafe;
     snapshot.controllerState->busOperational = true;
@@ -20367,7 +20483,7 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
     snapshot.package->controllerBootId = session.bootId;
     snapshot.topology = topology;
     provider.publishSnapshot(snapshot);
-    QTRY_COMPARE(provider.controlCalls, 4);
+    QTRY_COMPARE(provider.controlCalls, 2);
     QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::Start);
 
     snapshot = completedSnapshot(Data::ControllerControlCommand::Start);
@@ -20380,6 +20496,17 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
     snapshot.controllerState->distributedClocksLocked = true;
     snapshot.controllerState->distributedClockDifferenceNs = 48;
     snapshot.controllerState->cycleCount = 1234;
+    Data::ControllerPerformanceSummary performance;
+    performance.minimumExchangeTimeNs = 84000;
+    performance.maximumExchangeTimeNs = 91000;
+    performance.maximumSubmitLatenessNs = 700;
+    performance.cycleLateCount = 2;
+    performance.badWorkingCounterCount = 1;
+    performance.processInputSampleValid = true;
+    performance.processInputSampleAgeCycles = 1;
+    performance.processInputSampleCycleCount = 1235;
+    performance.processInputSample = QByteArray::fromHex("01020304");
+    snapshot.performance = performance;
     snapshot.package->controllerState = Data::ControllerPackageState::Active;
     snapshot.package->controllerBootId = session.bootId;
     snapshot.topology = topology;
@@ -20492,11 +20619,16 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
     QVERIFY(frameState);
     QVERIFY(telemetry);
     QVERIFY(summary->text().contains(QStringLiteral("WKC 6/6")));
-    QVERIFY(frameState->text().contains(QString::number(snapshot.controllerState->cycleCount)));
-    QCOMPARE(telemetry->topLevelItemCount(), 5);
+    QVERIFY(frameState->text().contains(QStringLiteral("1234")));
+    QCOMPARE(telemetry->topLevelItemCount(), 8);
     QCOMPARE(telemetry->headerItem()->text(0), Tr::tr("Live metric"));
     QCOMPARE(telemetry->topLevelItem(0)->text(0), Tr::tr("Cycle counter"));
     QCOMPARE(telemetry->topLevelItem(0)->text(1), QString("1234"));
+    QCOMPARE(telemetry->topLevelItem(5)->text(0), Tr::tr("Cycle timing"));
+    QVERIFY(telemetry->topLevelItem(5)->text(1).contains(QString("91000")));
+    QCOMPARE(telemetry->topLevelItem(6)->text(0), Tr::tr("Cyclic alerts"));
+    QCOMPARE(telemetry->topLevelItem(7)->text(0), Tr::tr("Process sample"));
+    QVERIFY(telemetry->topLevelItem(7)->text(1).contains(QString("1235")));
 
     snapshot.controllerState->cycleCount = 1240;
     provider.publishSnapshot(snapshot);
@@ -20660,7 +20792,7 @@ void EtherCATWorkbenchTests::testControllerCommunicationAutoAcquire()
     QCOMPARE(provider.controlCalls, 3);
 }
 
-void EtherCATWorkbenchTests::testControllerCommunicationAutoDiscovery()
+void EtherCATWorkbenchTests::testControllerCommunicationDoesNotAutoDiscover()
 {
     WorkbenchController controller;
     Core::ProjectService *projectService = controller.projectService();
@@ -20672,8 +20804,8 @@ void EtherCATWorkbenchTests::testControllerCommunicationAutoDiscovery()
     const TestProjectFile file = writeProjectWithSlave(
         directory,
         deviceSummaries(1).constFirst(),
-        "controller-auto-discovery.ecatproject",
-        "Controller Auto Discovery");
+        "controller-manual-discovery.ecatproject",
+        "Controller Manual Discovery");
     QVERIFY(!file.path.isEmpty());
     const ProjectExplorer::OpenProjectResult opened
         = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
@@ -20681,8 +20813,8 @@ void EtherCATWorkbenchTests::testControllerCommunicationAutoDiscovery()
     ProjectExplorer::ProjectManager::setStartupProject(opened.project());
 
     ControlledControllerConnectionProvider provider(
-        Utils::Id("EtherCAT.Workbench.TestControllerConnection.AutoDiscovery"),
-        "Auto discovery controller");
+        Utils::Id("EtherCAT.Workbench.TestControllerConnection.ManualDiscovery"),
+        "Manual discovery controller");
     provider.setAvailable(true);
     provider.setSupportedControlCommands(
         {Data::ControllerControlCommand::AcquireControl,
@@ -20749,17 +20881,16 @@ void EtherCATWorkbenchTests::testControllerCommunicationAutoDiscovery()
     snapshot.controlProgress.final = true;
     provider.publishSnapshot(snapshot);
 
-    QTRY_COMPARE(provider.controlCalls, 2);
-    QCOMPARE(
-        provider.lastControlRequest.command,
-        Data::ControllerControlCommand::DiscoverTopology);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCOMPARE(provider.controlCalls, 1);
 
     snapshot.controlProgress = {};
     provider.publishSnapshot(snapshot);
     provider.notifySnapshotChanged();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    QCOMPARE(provider.controlCalls, 2);
+    QCOMPARE(provider.controlCalls, 1);
 
     Data::ControllerTopologySnapshot topology;
     topology.firstStationAddress = 0x1001;
@@ -20773,7 +20904,7 @@ void EtherCATWorkbenchTests::testControllerCommunicationAutoDiscovery()
     provider.publishSnapshot(snapshot);
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    QCOMPARE(provider.controlCalls, 2);
+    QCOMPARE(provider.controlCalls, 1);
 
     snapshot.sessionGeneration = 2;
     snapshot.topology.reset();
@@ -20781,7 +20912,7 @@ void EtherCATWorkbenchTests::testControllerCommunicationAutoDiscovery()
     provider.publishSnapshot(snapshot);
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    QCOMPARE(provider.controlCalls, 2);
+    QCOMPARE(provider.controlCalls, 1);
 }
 
 void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()

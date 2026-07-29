@@ -50413,8 +50413,8 @@ Discovered slaves: %3</source>
         <translation>扫描失败：%1</translation>
     </message>
     <message>
-        <source>Starting · Config → Scan → Restore → Run</source>
-        <translation>正在启动 · 配置 → 扫描 → 恢复 → 运行</translation>
+        <source>Starting · Restore → Run</source>
+        <translation>正在启动 · 恢复 → 运行</translation>
     </message>
     <message>
         <source>Running · WKC %1/%2 · cycle %3</source>
@@ -51685,8 +51685,8 @@ Object Id: %1</source>
         <translation>ESI 设备存储库管理</translation>
     </message>
     <message>
-        <source>Manage the local offline ESI catalogue used to configure EtherCAT devices. Import one or more XML files, or reload descriptions already stored in the repository. No network or controller is accessed.</source>
-        <translation>管理用于配置 EtherCAT 设备的本地离线 ESI 目录。可导入一个或多个 XML 文件，或重新加载存储库中已有的描述。不会访问网络或控制器。</translation>
+        <source>Built-in and local offline ESI files are indexed automatically. Add vendor XML to %1, or import files here.</source>
+        <translation>内置和本地离线 ESI 文件会自动建立索引。可将厂商 XML 放入 %1，或在此导入。</translation>
     </message>
     <message>
         <source>ESI repository status</source>
@@ -54217,8 +54217,8 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation type="vanished">建立 Control、Push 和 Bulk 通道，读取权威控制器快照，然后自动请求独占控制租约。连接操作不会扫描总线、切换控制器状态或写入配置。</translation>
     </message>
     <message>
-        <source>Establish the Control, Push, and Bulk channels, read the authoritative controller snapshot, then automatically request the exclusive control lease. When the controller is safely in Shutdown, the EtherCAT bus is scanned automatically without writing the offline project.</source>
-        <translation>建立 Control、Push 和 Bulk 通道，读取权威控制器快照，然后自动请求独占控制租约。控制器安全处于关停状态时，将自动扫描 EtherCAT 总线，但不会写入离线工程。</translation>
+        <source>Establish the Control, Push, and Bulk channels, read the authoritative controller snapshot, then automatically request the exclusive control lease. Connecting never scans the bus or changes the controller state; use Rescan explicitly when the physical bus has changed.</source>
+        <translation>建立 Control、Push 和 Bulk 通道，读取权威控制器快照，然后自动请求独占控制租约。连接不会扫描总线或切换控制器状态；物理总线变化后请明确执行“重新扫描”。</translation>
     </message>
     <message>
         <source>Scan the live EtherCAT bus connected to the selected Master. This does not modify the offline project.</source>
@@ -54725,8 +54725,8 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>保存控制器地址并连接</translation>
     </message>
     <message>
-        <source>Save the controller address, then connect and scan automatically.</source>
-        <translation>保存控制器地址，然后自动连接并扫描总线。</translation>
+        <source>Save the controller address and connect. Rescan the bus explicitly when needed.</source>
+        <translation>保存控制器地址并连接。需要时请明确执行总线重新扫描。</translation>
     </message>
     <message>
         <source>Enter only the IPv4 controller address. Control, Push, and Bulk always use ports 15200, 15201, and 15202.</source>
@@ -55249,12 +55249,12 @@ Drop a supported ESI device here to append it to this offline Master.</source>
         <translation>以受控方式停止当前操作并进入控制器配置模式。</translation>
     </message>
     <message>
-        <source>Scan Bus</source>
-        <translation>扫描总线</translation>
+        <source>Rescan Bus</source>
+        <translation>重新扫描总线</translation>
     </message>
     <message>
-        <source>Scan the live EtherCAT bus. This does not modify the offline Project.</source>
-        <translation>扫描实际 EtherCAT 总线。此操作不会修改离线项目。</translation>
+        <source>Explicitly rescan the live EtherCAT bus. This does not modify the offline Project.</source>
+        <translation>明确重新扫描实际 EtherCAT 总线。此操作不会修改离线项目。</translation>
     </message>
     <message>
         <source>Restore Package</source>
@@ -55451,8 +55451,8 @@ AL 状态：%3
         <translation>控制器总线扫描返回结果 %1。</translation>
     </message>
     <message>
-        <source>EtherCAT device</source>
-        <translation>EtherCAT 设备</translation>
+        <source>Unknown device 0x%1</source>
+        <translation>未知设备 0x%1</translation>
     </message>
     <message>
         <source>[%1] %2</source>
@@ -55493,8 +55493,32 @@ AL 状态：%3
         <translation>控制器启动失败：%1</translation>
     </message>
     <message>
-        <source>Controller state push</source>
-        <translation>控制器状态推送</translation>
+        <source>Performance push</source>
+        <translation>性能推送</translation>
+    </message>
+    <message>
+        <source>Cycle timing</source>
+        <translation>周期时序</translation>
+    </message>
+    <message>
+        <source>%1–%2 ns · submit late %3 ns</source>
+        <translation>%1–%2 ns · 提交延迟 %3 ns</translation>
+    </message>
+    <message>
+        <source>Cyclic alerts</source>
+        <translation>周期告警</translation>
+    </message>
+    <message>
+        <source>Late %1 · WKC %2 · timeout %3</source>
+        <translation>超期 %1 · WKC %2 · 超时 %3</translation>
+    </message>
+    <message>
+        <source>Process sample</source>
+        <translation>过程数据采样</translation>
+    </message>
+    <message>
+        <source>%1 bytes · capture cycle %2 · age %3</source>
+        <translation>%1 字节 · 采样周期 %2 · 延迟 %3</translation>
     </message>
     <message>
         <source>Cycle counter</source>
@@ -55513,8 +55537,8 @@ AL 状态：%3
         <translation>分布式时钟未锁定；偏差 %1 ns。</translation>
     </message>
     <message>
-        <source>Enter configuration, scan the EtherCAT bus, restore the active package, then start it using its configured FreeRun or Distributed Clocks mode.</source>
-        <translation>进入配置模式、扫描 EtherCAT 总线、恢复活动软件包，然后按其配置的 FreeRun 或分布式时钟模式启动。</translation>
+        <source>Restore the saved controller package and start it using its configured FreeRun or Distributed Clocks mode. Scan is available only from the explicit Rescan command.</source>
+        <translation>恢复已保存的控制器软件包，并按其配置的 FreeRun 或分布式时钟模式启动。只有明确执行“重新扫描”命令时才会扫描总线。</translation>
     </message>
     <message>
         <source>EtherCAT AL state</source>
@@ -55601,8 +55625,8 @@ AL 状态：%3
         <translation>自动启动期间控制器连接已断开。</translation>
     </message>
     <message>
-        <source>The controller does not support the complete automatic startup sequence.</source>
-        <translation>控制器不支持完整的自动启动流程。</translation>
+        <source>The controller does not support the fast restart sequence.</source>
+        <translation>控制器不支持快速重新启动流程。</translation>
     </message>
     <message>
         <source>The controller is connected; waiting for its authoritative runtime state.</source>

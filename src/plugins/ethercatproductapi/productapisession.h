@@ -42,6 +42,7 @@ public:
         int reconnectInitialDelayMs = 250;
         int reconnectMaximumDelayMs = 5000;
         int reconnectAttempts = 5;
+        int liveStatePollIntervalMs = 500;
 
         bool isValid() const;
 

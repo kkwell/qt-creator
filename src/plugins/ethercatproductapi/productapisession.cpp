@@ -380,6 +380,7 @@ public:
     enum class PendingKind {
         Hello,
         State,
+        LiveState,
         Capability,
         Package,
         Firmware,
@@ -478,6 +479,12 @@ public:
             sendHeartbeat();
         });
 
+        liveStateTimer = new QTimer(q);
+        liveStateTimer->setTimerType(Qt::CoarseTimer);
+        QObject::connect(liveStateTimer, &QTimer::timeout, q, [this] {
+            sendLiveStateQuery();
+        });
+
         nextRequestId = QRandomGenerator::system()->generate64()
                         & std::numeric_limits<qint64>::max();
         if (!nextRequestId)
@@ -491,6 +498,7 @@ public:
         teardownChannels();
         reconnectTimer->stop();
         heartbeatTimer->stop();
+        liveStateTimer->stop();
     }
 
     Channel &channel(Protocol::Role role)
@@ -739,9 +747,12 @@ public:
     void clearLiveIdentity()
     {
         heartbeatTimer->stop();
+        liveStateTimer->stop();
         heartbeatRequestId = 0;
+        liveStatePollingDegraded = false;
         snapshot.readOnly = false;
         snapshot.session.reset();
+        snapshot.performance.reset();
         snapshot.lastHeartbeatAt = {};
         sessionId = 0;
         bootId = 0;
@@ -1976,6 +1987,8 @@ public:
             case PendingKind::State:
                 stateReceived = true;
                 break;
+            case PendingKind::LiveState:
+                break;
             case PendingKind::Capability:
                 capabilityReceived = true;
                 break;
@@ -2024,6 +2037,10 @@ public:
             snapshot.controlProgress.detail = Tr::tr(
                 "The command was rejected; refreshing authoritative controller state.");
             beginRefresh(true);
+        } else if (request.kind == PendingKind::LiveState) {
+            liveStatePollingDegraded = true;
+            snapshot.state = Data::ControllerConnectionState::Degraded;
+            publish();
         } else if (!controlRequest && !heartbeat) {
             if (refreshInProgress)
                 finishRefreshIfReady();
@@ -2801,6 +2818,26 @@ public:
             finishRefreshIfReady();
             return;
         }
+        case PendingKind::LiveState: {
+            const auto state = Protocol::decodeControllerState(frame, &decodeError);
+            if (!state)
+                break;
+            snapshot.controllerState = *state;
+            removePending(requestId);
+            if (liveStatePollingDegraded) {
+                liveStatePollingDegraded = false;
+                if (snapshot.lastError
+                    && snapshot.lastError->operation == Data::ControllerOperation::QueryState) {
+                    snapshot.lastError.reset();
+                }
+                if (snapshot.state == Data::ControllerConnectionState::Degraded
+                    && !subscriptionDegraded) {
+                    snapshot.state = Data::ControllerConnectionState::Connected;
+                }
+            }
+            publish();
+            return;
+        }
         case PendingKind::Capability: {
             const auto capability = Protocol::decodeCapability(frame, featureBits, &decodeError);
             if (!capability)
@@ -3109,11 +3146,11 @@ public:
             return true;
         }
         case Protocol::MessageType::PerformanceSnapshot: {
-            const int expectedBytes = frame.header.protocolMinor == 1
-                                          ? 240
-                                          : (frame.header.protocolMinor <= 6 ? 256 : 320);
-            if (frame.payload.size() != expectedBytes)
+            const auto performance = Protocol::decodePerformanceSnapshot(frame, &decodeError);
+            if (!performance)
                 break;
+            snapshot.performance = *performance;
+            publish();
             return true;
         }
         case Protocol::MessageType::PushHeartbeat: {
@@ -3316,6 +3353,40 @@ public:
             .arg(commandDisplayName(command), expected);
     }
 
+    void startLiveStatePolling()
+    {
+        if (options.liveStatePollIntervalMs <= 0)
+            return;
+        liveStateTimer->setInterval(options.liveStatePollIntervalMs);
+        liveStateTimer->start();
+    }
+
+    void sendLiveStateQuery()
+    {
+        if (shuttingDown || userDisconnecting || refreshInProgress || hasActiveControlOperation()
+            || hasActiveDeployment() || !sessionId
+            || (snapshot.state != Data::ControllerConnectionState::Connected
+                && snapshot.state != Data::ControllerConnectionState::Degraded)) {
+            return;
+        }
+        if (std::any_of(
+                pendingRequests.cbegin(),
+                pendingRequests.cend(),
+                [](const PendingRequest &request) {
+                    return request.kind == PendingKind::LiveState;
+                })) {
+            return;
+        }
+        Channel &control = channel(Protocol::Role::Control);
+        if (!control.handshaken || !control.socket)
+            return;
+        sendRequest(
+            control,
+            Protocol::MessageType::GetState,
+            PendingKind::LiveState,
+            Data::ControllerOperation::QueryState);
+    }
+
     void beginRefresh(bool preserveError = false)
     {
         if (refreshInProgress || shuttingDown || !sessionId)
@@ -3379,6 +3450,7 @@ public:
         snapshot.state = subscriptionDegraded || refreshRejected
                              ? Data::ControllerConnectionState::Degraded
                              : Data::ControllerConnectionState::Connected;
+        startLiveStatePolling();
         if (!snapshot.connectedAt.isValid())
             snapshot.connectedAt = QDateTime::currentDateTimeUtc();
         if (controlRefreshPending) {
@@ -3465,6 +3537,7 @@ public:
     QHash<quint64, PendingRequest> pendingRequests;
     QTimer *reconnectTimer = nullptr;
     QTimer *heartbeatTimer = nullptr;
+    QTimer *liveStateTimer = nullptr;
     Data::ControllerConnectionRequest currentRequest;
     std::optional<PersistentPackageSelector> persistentPackageSelector;
     quint64 generation = 0;
@@ -3482,6 +3555,7 @@ public:
     bool userDisconnecting = false;
     bool refreshInProgress = false;
     bool refreshRejected = false;
+    bool liveStatePollingDegraded = false;
     bool stateReceived = false;
     bool capabilityReceived = false;
     bool packageReceived = false;
@@ -3535,7 +3609,8 @@ bool ProductApiSession::Options::isValid() const
 {
     return connectTimeoutMs > 0 && handshakeTimeoutMs > 0 && requestTimeoutMs > 0
            && reconnectInitialDelayMs > 0
-           && reconnectMaximumDelayMs >= reconnectInitialDelayMs && reconnectAttempts >= 0;
+           && reconnectMaximumDelayMs >= reconnectInitialDelayMs && reconnectAttempts >= 0
+           && (liveStatePollIntervalMs == 0 || liveStatePollIntervalMs >= 50);
 }
 
 ProductApiSession::ProductApiSession(QObject *parent)
@@ -3634,6 +3709,7 @@ Utils::Result<> ProductApiSession::connectToController(
     d->snapshot.connectedAt = {};
     d->snapshot.lastError.reset();
     d->snapshot.controllerState.reset();
+    d->snapshot.performance.reset();
     d->snapshot.capability.reset();
     d->snapshot.package.reset();
     d->snapshot.firmware.reset();
@@ -3667,6 +3743,7 @@ Utils::Result<> ProductApiSession::disconnectFromController()
                     "The controller control lease ownership is unverified for this session."));
         }
     }
+    d->liveStateTimer->stop();
     if (d->snapshot.session && d->snapshot.session->ownsControlLease) {
         Data::ControllerControlRequest release;
         release.command = Data::ControllerControlCommand::ReleaseControl;
@@ -3682,6 +3759,7 @@ Utils::Result<> ProductApiSession::disconnectFromController()
                 d->stateBeforeDisconnectRelease.reset();
                 if (d->snapshot.session && d->snapshot.session->ownsControlLease)
                     d->startHeartbeat();
+                d->startLiveStatePolling();
             }
             return result;
         }

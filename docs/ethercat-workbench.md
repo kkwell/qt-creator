@@ -6960,7 +6960,7 @@ The Communication page contains:
 - Provider/profile selection plus Connect, Refresh, and Disconnect;
 - Acquire, primarily as manual recovery for automatic acquisition;
 - Configuration;
-- Scan Bus;
+- Rescan Bus;
 - Restore Package and Release;
 - command progress, authoritative controller/session/package information; and
 - the read-only Actual Bus result.
@@ -6983,14 +6983,22 @@ observation, but their control writes are rejected by the controller with
 `LEASE_BUSY (-10)`. Workbench never steals or silently replaces another
 session's lease.
 
-After automatic or manual Acquire, the commissioning path is:
+Connect and automatic/manual Acquire never scan the bus or switch controller
+state. For an unchanged physical installation, the operator uses the native
+Run control directly. From `SHUTDOWN`, Workbench performs only:
 
-`Connect -> Acquire -> Configuration -> Scan Bus -> Restore Package`
+`Restore Package -> Start`
+
+The separate commissioning path runs only after the operator explicitly
+invokes **Rescan Bus**:
+
+`Configuration -> Rescan Bus -> Restore Package`
 
 Runtime control then uses the standard quick-control area:
 
 | Quick control | Authoritative state | Provider command |
 |---|---|---|
+| Run | `SHUTDOWN` | Restore the exact persistent package, then Start; no scan |
 | Run | `OP_SAFE` | `Start`; starts the already active package using the timing mode encoded by that package |
 | Run | `PAUSED` | `Resume` |
 | Debug | `RUNNING` | `Pause` |
@@ -7013,7 +7021,7 @@ command-specific state gate:
 |---|---|
 | Acquire | Established session, no lease owned by this session, and no reported owner; normally attempted automatically |
 | Configuration | Lease owned; controller ready in `OP_SAFE`, `RUNNING`, `FAULT`, `PAUSED`, or `SHUTDOWN` |
-| Scan Bus | Lease owned, ready `SHUTDOWN`, package summary present, and controller package not Active |
+| Rescan Bus | Lease owned, ready `SHUTDOWN`, package summary present, and controller package not Active |
 | Restore Package | Lease owned, controller ready, exact persistent slot/generation/configuration ID present, and state `SHUTDOWN` or `OP_SAFE` |
 | Start | Lease owned, ready `OP_SAFE`, active current-Boot package, OP bus, nonzero matching WKC, and no current or latched faults |
 | Pause | Lease owned, ready `RUNNING`, and active package |
@@ -7030,7 +7038,7 @@ controller-authoritative and may still stop it.
 
 ### Actual Bus presentation
 
-Scan Bus invokes the selected controller Provider's stateful topology
+Rescan Bus invokes the selected controller Provider's stateful topology
 discovery. The page presents the most recent result in a separate read-only
 **Actual Bus** tree with scan position, station address, AL state, VendorId,
 ProductCode, RevisionNo, and SerialNo. A scan never inserts, removes, or
@@ -7044,13 +7052,35 @@ configuration ID, then the provider refreshes authoritative controller and
 package state. The quick Run control becomes available only after the restored
 package and real bus satisfy the common startup gate.
 
+### Managed ESI library and device presentation
+
+The product ships the unmodified vendor XML for XB6
+`0x00884443/0x000000b6/0x00000001` and SV630N
+`0x00100000/0x000c0112/0x00010000` in its fixed
+`ethercat/esi` resource directory. The Devices plugin indexes those files at
+startup and also imports XML from the fixed writable
+`ethercat/esi/library` user-resource directory. The ESI Repository page shows
+the resolved writable path for additional vendors.
+
+An online identity is matched only by exact VendorId, ProductCode, and
+RevisionNo. A match uses the ESI device name and functional group in the
+device tree. Function-specific icons distinguish drive, coupler, I/O, safety,
+and sensor roles while the second column retains the independent runtime
+state marker. An unmatched identity is shown as
+`Unknown device 0x<product-code>` rather than receiving a fabricated device
+name.
+
+The navigation header is interactive. Users can drag the boundary between the
+device-name and state columns, and the saved header geometry is restored on
+the next launch.
+
 ### Apply Current Bus to Project
 
 `ISSUE-WORKBENCH-CURRENT-BUS-APPLY-001` turns a successful production
 Controller topology result into an explicit local engineering operation.
 `Apply Current Bus to Project` is registered in the shared EtherCAT menu, so it
 also appears in the Workbench command strip, and it is available beside
-`Scan Bus` in the selected Project/Master device-tree context menu.
+`Rescan Bus` in the selected Project/Master device-tree context menu.
 
 The command is enabled only for a current, complete, non-Mock scan from the
 explicit Provider/profile selected for the open Project's Master. Duplicate
@@ -7144,11 +7174,21 @@ not convert Mock data into controller or hardware evidence.
 
 ### Controller endpoint and unified output
 
-The selected Product API profile exposes an inline base-endpoint editor on the
-embedded Communication page. It accepts an IPv4 address with an optional base
-port, defaults the Control port to `15200`, and derives Push and Bulk as the
-next two ports. Saving validates and persists the endpoint in user settings
-but never opens a socket. Editing is locked while a connection is active.
+The selected Product API profile exposes an inline controller-address editor
+on the embedded Communication page. It accepts only an IPv4 address. The
+adapter always uses fixed Control, Push, and Bulk ports `15200`, `15201`, and
+`15202`; users cannot edit them. Saving validates and persists the address but
+never opens a socket. Editing is locked while a connection is active.
+
+While the session is Connected or Degraded and no command, refresh, or
+deployment is active, the adapter performs a read-only `GetState` every
+500 ms. The EtherCAT page therefore refreshes current cycle count,
+expected/actual WKC, AL/OP state, bus state, DC lock, and absolute DC
+difference even when no state-change event occurs. Valid Product API v1.10
+PerformanceSnapshot pushes add exchange timing, late-cycle/WKC/timeout
+counters, and process-input sample evidence. The process-sample capture cycle
+is labeled as push evidence and never substitutes for a newer authoritative
+ControllerState cycle.
 
 The Communication page no longer displays a separate connection banner,
 safety paragraph, command-progress label, or error label. It retains only

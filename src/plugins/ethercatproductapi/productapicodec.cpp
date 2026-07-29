@@ -8,6 +8,8 @@
 #include <QDateTime>
 #include <QtEndian>
 
+#include <algorithm>
+#include <array>
 #include <limits>
 
 namespace EtherCAT::ProductApi::Internal::Protocol {
@@ -1334,6 +1336,180 @@ std::optional<Data::ControllerStateSummary> decodeControllerState(const Frame &f
     result.actualWorkingCounter = readBigEndian<quint32>(payload, 64);
     result.distributedClockDifferenceNs = readBigEndian<quint32>(payload, 68);
     result.latestAlarmSequence = readBigEndian<quint32>(payload, 76);
+    return result;
+}
+
+std::optional<Data::ControllerPerformanceSummary> decodePerformanceSnapshot(
+    const Frame &frame, Error *error)
+{
+    clearError(error);
+    if (frame.header.protocolMajor != CurrentMajor
+        || frame.header.protocolMinor < MinimumMinor
+        || frame.header.protocolMinor > CurrentMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            QStringLiteral("PerformanceSnapshot uses an unsupported Product API version."));
+        return {};
+    }
+
+    const qsizetype expectedBytes = frame.header.protocolMinor == 1
+                                        ? 240
+                                        : (frame.header.protocolMinor <= 6 ? 256 : 320);
+    if (frame.header.messageType != MessageType::PerformanceSnapshot
+        || frame.payload.size() != expectedBytes) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Expected exact PerformanceSnapshot payload."));
+        return {};
+    }
+    if (frame.header.flags != (Flag::Response | Flag::Replaceable)) {
+        setError(
+            error,
+            ErrorCategory::InvalidFlags,
+            QStringLiteral("PerformanceSnapshot flags are invalid."));
+        return {};
+    }
+    if (frame.header.requestId) {
+        setError(
+            error,
+            ErrorCategory::InvalidEnvelope,
+            QStringLiteral("PerformanceSnapshot must have RequestId zero."));
+        return {};
+    }
+
+    const QByteArrayView payload(frame.payload);
+    if (readBigEndian<quint32>(payload, 164)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("PerformanceSnapshot reserved bytes are nonzero."));
+        return {};
+    }
+
+    Data::ControllerPerformanceSummary result;
+    result.minimumExchangeTimeNs = readBigEndian<quint64>(payload, 0);
+    result.maximumExchangeTimeNs = readBigEndian<quint64>(payload, 8);
+    result.maximumSubmitLatenessNs = readBigEndian<quint64>(payload, 16);
+    result.timeoutCount = readBigEndian<quint32>(payload, 24);
+    result.receiveDropCount = readBigEndian<quint32>(payload, 28);
+    result.receiveOverflowCount = readBigEndian<quint32>(payload, 32);
+    result.transmitUnavailableCount = readBigEndian<quint32>(payload, 36);
+    result.cycleLateCount = readBigEndian<quint32>(payload, 40);
+    result.badWorkingCounterCount = readBigEndian<quint32>(payload, 44);
+    result.protocolErrorCount = readBigEndian<quint32>(payload, 48);
+    result.staleReceiveCount = readBigEndian<quint32>(payload, 52);
+    result.handoffSkippedCycleCount = readBigEndian<quint32>(payload, 56);
+    result.fpgaLatencyStatusFlags = readBigEndian<quint32>(payload, 120);
+    result.fpgaSnapshotSequence = readBigEndian<quint32>(payload, 124);
+    if (frame.header.protocolMinor < 7)
+        return result;
+
+    const std::array<quint32, 4> legacyWords{
+        readBigEndian<quint32>(payload, 240),
+        readBigEndian<quint32>(payload, 244),
+        readBigEndian<quint32>(payload, 248),
+        readBigEndian<quint32>(payload, 252),
+    };
+    const std::array<quint32, 4> sampleWords{
+        readBigEndian<quint32>(payload, 256),
+        readBigEndian<quint32>(payload, 260),
+        readBigEndian<quint32>(payload, 264),
+        readBigEndian<quint32>(payload, 268),
+    };
+    const quint32 flags = readBigEndian<quint32>(payload, 272);
+    const quint32 offset = readBigEndian<quint32>(payload, 276);
+    const quint32 count = readBigEndian<quint32>(payload, 280);
+    const quint32 total = readBigEndian<quint32>(payload, 284);
+    const quint32 sequence = readBigEndian<quint32>(payload, 288);
+    const quint32 age = readBigEndian<quint32>(payload, 292);
+    const quint64 generation = readBigEndian<quint64>(payload, 296);
+    const quint64 configurationId = readBigEndian<quint64>(payload, 304);
+    const quint64 cycleCount = readBigEndian<quint64>(payload, 312);
+    constexpr quint32 Valid = 1U << 0;
+    constexpr quint32 Fresh = 1U << 1;
+    constexpr quint32 Complete = 1U << 2;
+    constexpr quint32 KnownSampleFlags = Valid | Fresh | Complete;
+    constexpr quint32 MaximumProcessInputBytes = 8192;
+    constexpr quint32 FreshMaximumAgeCycles = 128;
+
+    if (flags & ~KnownSampleFlags) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("PerformanceSnapshot sample flags are invalid."));
+        return {};
+    }
+    if (!(flags & Valid)) {
+        for (qsizetype index = 256; index < expectedBytes; ++index) {
+            if (payload[index]) {
+                setError(
+                    error,
+                    ErrorCategory::InvalidPayload,
+                    QStringLiteral("PerformanceSnapshot invalid sample is not zero."));
+                return {};
+            }
+        }
+        return result;
+    }
+
+    if (count < 1 || count > 16 || total < 1 || total > MaximumProcessInputBytes
+        || count > total || offset > total - count || offset % 16
+        || count != std::min<quint32>(16, total - offset) || !sequence || !generation
+        || !configurationId) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("PerformanceSnapshot sample bounds are invalid."));
+        return {};
+    }
+    const bool complete = offset == 0 && count == total;
+    const bool fresh = age <= FreshMaximumAgeCycles;
+    if (bool(flags & Complete) != complete || bool(flags & Fresh) != fresh) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("PerformanceSnapshot sample state is inconsistent."));
+        return {};
+    }
+
+    QByteArray sampleBytes;
+    sampleBytes.reserve(16);
+    for (const quint32 word : sampleWords) {
+        sampleBytes.append(char(word));
+        sampleBytes.append(char(word >> 8));
+        sampleBytes.append(char(word >> 16));
+        sampleBytes.append(char(word >> 24));
+    }
+    for (qsizetype index = count; index < sampleBytes.size(); ++index) {
+        if (sampleBytes.at(index)) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                QStringLiteral("PerformanceSnapshot sample padding is nonzero."));
+            return {};
+        }
+    }
+    if (!offset && sampleWords != legacyWords) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("PerformanceSnapshot legacy and window samples disagree."));
+        return {};
+    }
+
+    result.processInputSampleValid = true;
+    result.processInputSampleFresh = fresh;
+    result.processInputSampleComplete = complete;
+    result.processInputSampleOffset = offset;
+    result.processInputSampleTotalBytes = total;
+    result.processInputSampleSequence = sequence;
+    result.processInputSampleAgeCycles = age;
+    result.processInputSampleGeneration = generation;
+    result.processInputSampleConfigurationId = configurationId;
+    result.processInputSampleCycleCount = cycleCount;
+    result.processInputSample = sampleBytes.first(count);
     return result;
 }
 

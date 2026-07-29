@@ -5,6 +5,7 @@
 #include "ethercatworkbenchtr.h"
 
 #include <coreplugin/documentmanager.h>
+#include <coreplugin/icore.h>
 
 #include <utils/stylehelper.h>
 
@@ -100,10 +101,11 @@ EsiRepositoryPage::EsiRepositoryPage(
     m_title->setObjectName("EtherCATEsiRepositoryTitle");
     m_title->setFont(Utils::StyleHelper::uiFont(Utils::StyleHelper::UiElementH5));
     m_description->setObjectName("EtherCATEsiRepositoryDescription");
-    m_description->setText(Tr::tr(
-        "Manage the local offline ESI catalogue used to configure EtherCAT devices. "
-        "Import one or more XML files, or reload descriptions already stored in the "
-        "repository. No network or controller is accessed."));
+    m_description->setText(
+        Tr::tr("Built-in and local offline ESI files are indexed automatically. Add vendor XML "
+               "to %1, or import files here.")
+            .arg(
+                ::Core::ICore::userResourcePath("ethercat/esi/library").toUserOutput()));
     m_description->setWordWrap(true);
     m_description->setTextInteractionFlags(Qt::TextSelectableByMouse);
 

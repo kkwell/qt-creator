@@ -328,6 +328,8 @@ std::optional<BulkStatus> decodeBulkStatus(const Frame &frame, Error *error = nu
 std::optional<FirmwareStatus> decodeFirmwareStatus(const Frame &frame, Error *error = nullptr);
 std::optional<Data::ControllerStateSummary> decodeControllerState(
     const Frame &frame, Error *error = nullptr);
+std::optional<Data::ControllerPerformanceSummary> decodePerformanceSnapshot(
+    const Frame &frame, Error *error = nullptr);
 std::optional<Data::ControllerCapabilitySummary> decodeCapability(
     const Frame &frame, quint32 featureBits, Error *error = nullptr);
 std::optional<Data::ControllerPackageSummary> decodePackageState(

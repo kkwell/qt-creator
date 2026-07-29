@@ -15,6 +15,7 @@
 
 #include <projectexplorer/projectexplorerconstants.h>
 
+#include <utils/qtcsettings.h>
 #include <utils/stylehelper.h>
 
 #include <QAction>
@@ -41,6 +42,9 @@
 #include <optional>
 
 namespace EtherCAT::Workbench::Internal {
+
+static const Utils::Key navigationHeaderStateKey(
+    "EtherCAT/Workbench/NavigationHeaderState");
 
 class WorkbenchItemViewFind final : public ::Core::ItemViewFind
 {
@@ -213,8 +217,17 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
     m_treeView->installEventFilter(this);
     m_treeView->viewport()->installEventFilter(this);
     m_treeView->setHeaderHidden(false);
-    m_treeView->header()->setStretchLastSection(false);
-    m_treeView->header()->setSectionResizeMode(QHeaderView::Stretch);
+    QHeaderView *header = m_treeView->header();
+    header->setStretchLastSection(true);
+    header->setSectionsMovable(false);
+    header->setSectionResizeMode(QHeaderView::Interactive);
+    const QByteArray headerState
+        = Utils::userSettings().value(navigationHeaderStateKey).toByteArray();
+    if (!headerState.isEmpty())
+        header->restoreState(headerState);
+    connect(header, &QHeaderView::sectionResized, this, [header] {
+        Utils::userSettings().setValue(navigationHeaderStateKey, header->saveState());
+    });
     setFocusProxy(m_treeView);
 
     auto findSupport = new WorkbenchItemViewFind(

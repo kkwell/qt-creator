@@ -1832,7 +1832,7 @@ std::optional<Data::ControllerControlCommand> WorkbenchController::quickControll
     switch (action) {
     case ControllerQuickControlAction::Run:
         if (serviceState == ServiceState::Shutdown)
-            return Command::EnterConfigurationMode;
+            return Command::RestoreActivePackage;
         if (serviceState == ServiceState::OperationalSafe)
             return Command::Start;
         if (serviceState == ServiceState::Paused)
@@ -1884,7 +1884,7 @@ QString WorkbenchController::quickControllerControlUnavailableReason(
 
     const std::optional<Data::ControllerControlCommand> command
         = quickControllerControlCommand(scope, action);
-    if (command == Data::ControllerControlCommand::EnterConfigurationMode
+    if (command == Data::ControllerControlCommand::RestoreActivePackage
         && action == ControllerQuickControlAction::Run) {
         return controllerStartupUnavailableReason(provider, snapshot);
     }
@@ -1943,7 +1943,7 @@ Utils::Result<> WorkbenchController::executeQuickControllerControl(
         return Utils::ResultError(Tr::tr("The selected controller adapter is unavailable."));
     if (action == ControllerQuickControlAction::Stop)
         return beginControllerStop(provider, provider->connectionSnapshot());
-    if (*command == Data::ControllerControlCommand::EnterConfigurationMode)
+    if (*command == Data::ControllerControlCommand::RestoreActivePackage)
         return beginControllerStartup(provider, provider->connectionSnapshot());
 
     Data::ControllerControlRequest request;
@@ -2961,41 +2961,11 @@ void WorkbenchController::scheduleControllerAutoAcquire()
                 snapshot.sessionGeneration,
                 false,
                 false,
-                false,
-                false,
             };
         }
 
-        if (snapshot.session->ownsControlLease) {
-            if (!state.acquireAttempted || snapshot.topology || state.discoveryQueued
-                || state.discoveryAttempted
-                || !canExecuteControllerControl(
-                    scope, Data::ControllerControlCommand::DiscoverTopology)) {
-                continue;
-            }
-
-            state.discoveryQueued = true;
-            const QPointer<Core::ControllerConnectionProvider> guardedProvider(provider);
-            const Data::NodeId expectedProfileId = selection.profileId;
-            const quint64 expectedGeneration = snapshot.sessionGeneration;
-            QMetaObject::invokeMethod(
-                this,
-                [this,
-                 guardedProvider,
-                 scope,
-                 expectedProfileId,
-                 expectedGeneration,
-                 providerEpoch] {
-                    executeControllerAutoDiscovery(
-                        guardedProvider,
-                        scope,
-                        expectedProfileId,
-                        expectedGeneration,
-                        providerEpoch);
-                },
-                Qt::QueuedConnection);
+        if (snapshot.session->ownsControlLease)
             continue;
-        }
 
         if (state.acquireQueued || state.acquireAttempted
             || !canExecuteControllerControl(
@@ -3076,55 +3046,6 @@ void WorkbenchController::executeControllerAutoAcquire(
     }
 }
 
-void WorkbenchController::executeControllerAutoDiscovery(
-    Core::ControllerConnectionProvider *provider,
-    const Data::ControllerConnectionScope &expectedScope,
-    const Data::NodeId &expectedProfileId,
-    quint64 expectedGeneration,
-    quint64 expectedProviderEpoch)
-{
-    if (m_shuttingDown || !provider
-        || m_controllerConnectionProviderEpochs.value(provider) != expectedProviderEpoch) {
-        return;
-    }
-
-    auto state = m_controllerAutoAcquireStates.find(provider);
-    if (state == m_controllerAutoAcquireStates.end() || !state->discoveryQueued
-        || state->discoveryAttempted || !state->acquireAttempted
-        || state->providerEpoch != expectedProviderEpoch || state->scope != expectedScope
-        || state->profileId != expectedProfileId
-        || state->sessionGeneration != expectedGeneration) {
-        return;
-    }
-    state->discoveryQueued = false;
-
-    if (!controllerConnectionScopeIsValid(expectedScope)
-        || controllerConnectionProvider(expectedScope) != provider) {
-        return;
-    }
-    const ControllerConnectionSelection selection = controllerConnectionSelection(expectedScope);
-    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
-    if (!selection.providerExplicitlySelected || selection.providerId != provider->id()
-        || !selection.profileExplicitlySelected || selection.profileId != expectedProfileId
-        || snapshot.scope != expectedScope || snapshot.profileId != expectedProfileId
-        || snapshot.sessionGeneration != expectedGeneration || !snapshot.session
-        || !snapshot.session->ownsControlLease || snapshot.topology
-        || !canExecuteControllerControl(
-            expectedScope, Data::ControllerControlCommand::DiscoverTopology)) {
-        return;
-    }
-
-    state->discoveryAttempted = true;
-    Data::ControllerControlRequest request;
-    request.command = Data::ControllerControlCommand::DiscoverTopology;
-    const Utils::Result<> result = executeControllerControl(expectedScope, request);
-    if (!result) {
-        writeControllerOutput(
-            Tr::tr("Scan failed: %1").arg(result.error()),
-            ControllerOutputLevel::Error);
-    }
-}
-
 QString WorkbenchController::controllerStartupUnavailableReason(
     Core::ControllerConnectionProvider *provider,
     const Data::ControllerConnectionSnapshot &snapshot) const
@@ -3137,19 +3058,15 @@ QString WorkbenchController::controllerStartupUnavailableReason(
         return Tr::tr("Controller stop verification is in progress.");
 
     using Command = Data::ControllerControlCommand;
-    for (const Command command :
-         {Command::EnterConfigurationMode,
-          Command::DiscoverTopology,
-          Command::RestoreActivePackage,
-          Command::Start}) {
+    for (const Command command : {Command::RestoreActivePackage, Command::Start}) {
         if (!provider->supportsControlCommand(command)) {
             return Tr::tr(
-                "The controller does not support the complete automatic startup sequence.");
+                "The controller does not support the fast restart sequence.");
         }
     }
 
     if (const QString reason
-        = controllerControlStateUnavailableReason(snapshot, Command::EnterConfigurationMode);
+        = controllerControlStateUnavailableReason(snapshot, Command::RestoreActivePackage);
         !reason.isEmpty()) {
         return reason;
     }
@@ -3184,14 +3101,14 @@ Utils::Result<> WorkbenchController::beginControllerStartup(
     state.sessionGeneration = snapshot.sessionGeneration;
     state.sessionId = snapshot.session->sessionId;
     state.bootId = snapshot.session->bootId;
-    state.phase = ControllerStartupPhase::WaitingForConfiguration;
+    state.phase = ControllerStartupPhase::WaitingForRestore;
     state.remainingPolls = controllerStartupMaximumPhasePolls;
     m_controllerStartupStates.insert(provider, state);
 
-    writeControllerOutput(Tr::tr("Starting · Config → Scan → Restore → Run"));
+    writeControllerOutput(Tr::tr("Starting · Restore → Run"));
 
     Data::ControllerControlRequest request;
-    request.command = Data::ControllerControlCommand::EnterConfigurationMode;
+    request.command = Data::ControllerControlCommand::RestoreActivePackage;
     const Utils::Result<> result = provider->executeControlCommand(request);
     if (!result) {
         m_controllerStartupStates.remove(provider);
@@ -3290,10 +3207,6 @@ void WorkbenchController::advanceControllerStartup(
     using Command = Data::ControllerControlCommand;
     const Command expectedCommand = [phase = state->phase] {
         switch (phase) {
-        case ControllerStartupPhase::WaitingForConfiguration:
-            return Command::EnterConfigurationMode;
-        case ControllerStartupPhase::WaitingForTopology:
-            return Command::DiscoverTopology;
         case ControllerStartupPhase::WaitingForRestore:
             return Command::RestoreActivePackage;
         case ControllerStartupPhase::WaitingForRunning:
@@ -3339,7 +3252,7 @@ void WorkbenchController::advanceControllerStartup(
         if (!provider->supportsControlCommand(command)) {
             failControllerStartup(
                 provider,
-                Tr::tr("The controller does not support the complete automatic startup sequence."));
+                Tr::tr("The controller does not support the fast restart sequence."));
             return;
         }
         if (const QString reason = controllerControlStateUnavailableReason(snapshot, command);
@@ -3367,25 +3280,6 @@ void WorkbenchController::advanceControllerStartup(
 
     const std::optional<Data::ControllerStateSummary> &controllerState = snapshot.controllerState;
     switch (state->phase) {
-    case ControllerStartupPhase::WaitingForConfiguration:
-        if (!controllerState || !controllerState->ready
-            || controllerState->serviceState != Data::ControllerServiceState::Shutdown
-            || !snapshot.package
-            || snapshot.package->controllerState == Data::ControllerPackageState::Active) {
-            waitForSnapshot();
-            return;
-        }
-        dispatch(Command::DiscoverTopology, ControllerStartupPhase::WaitingForTopology);
-        return;
-    case ControllerStartupPhase::WaitingForTopology:
-        if (!snapshot.topology || snapshot.topology->result
-            || !snapshot.topology->respondingCount
-            || snapshot.topology->respondingCount != quint32(snapshot.topology->slaves.size())) {
-            waitForSnapshot();
-            return;
-        }
-        dispatch(Command::RestoreActivePackage, ControllerStartupPhase::WaitingForRestore);
-        return;
     case ControllerStartupPhase::WaitingForRestore:
         if (!controllerState
             || controllerState->serviceState != Data::ControllerServiceState::OperationalSafe

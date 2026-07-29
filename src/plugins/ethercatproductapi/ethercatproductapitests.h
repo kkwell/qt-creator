@@ -16,6 +16,7 @@ private slots:
     void testFrameStreamRejectsMalformedInput_data();
     void testFrameStreamRejectsMalformedInput();
     void testSemanticControllerState();
+    void testSemanticPerformanceSnapshot();
     void testSemanticAuxiliaryRecords();
     void testSupportedRequestPolicy();
     void testPackageDeploymentRequestPolicy();
@@ -24,6 +25,7 @@ private slots:
     void testConnectionProfileEndpointReconfigurationGuards();
     void testConnectionProfileEndpointPersistence();
     void testThreeChannelInitialSnapshot();
+    void testLiveStatePolling();
     void testLeaseOwnershipRequiresAcquireOrResume();
     void testProtocolMinorDowngrade();
     void testControlLifecycle();

@@ -46,6 +46,8 @@ private slots:
     void testStatusBarTracksPreferredDiagnosticsMode();
     void testTreeModelLargeIncrementalUpdate();
     void testConfiguredSlaveStateIcon();
+    void testBundledEsiOnlineTopologyPresentation();
+    void testNavigationHeaderResizePersistence();
     void testProviderStateTreeAndNavigation();
     void testProjectScopedLocateNavigation();
     void testNavigationSelectionAndFiltering();
@@ -101,7 +103,7 @@ private slots:
     void testControllerQuickStopToShutdown();
     void testControllerQuickStartupAndLivePresentation();
     void testControllerCommunicationAutoAcquire();
-    void testControllerCommunicationAutoDiscovery();
+    void testControllerCommunicationDoesNotAutoDiscover();
     void testControllerCurrentBusApplyWorkflow();
     void testControllerCommunicationAutoAcquireAcrossProjects();
     void testControllerProjectRemovalPreservesAutonomousRuntime();

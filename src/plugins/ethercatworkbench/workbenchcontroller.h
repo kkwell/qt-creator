@@ -256,13 +256,9 @@ private:
         quint64 sessionGeneration = 0;
         bool acquireQueued = false;
         bool acquireAttempted = false;
-        bool discoveryQueued = false;
-        bool discoveryAttempted = false;
     };
 
     enum class ControllerStartupPhase {
-        WaitingForConfiguration,
-        WaitingForTopology,
         WaitingForRestore,
         WaitingForRunning,
     };
@@ -275,7 +271,7 @@ private:
         quint64 sessionGeneration = 0;
         quint64 sessionId = 0;
         quint64 bootId = 0;
-        ControllerStartupPhase phase = ControllerStartupPhase::WaitingForConfiguration;
+        ControllerStartupPhase phase = ControllerStartupPhase::WaitingForRestore;
         int remainingPolls = 0;
         int refreshCooldown = 0;
         bool scheduled = false;
@@ -341,12 +337,6 @@ private:
         const Data::ControllerConnectionSnapshot &snapshot);
     void scheduleControllerAutoAcquire();
     void executeControllerAutoAcquire(
-        Core::ControllerConnectionProvider *provider,
-        const Data::ControllerConnectionScope &expectedScope,
-        const Data::NodeId &expectedProfileId,
-        quint64 expectedGeneration,
-        quint64 expectedProviderEpoch);
-    void executeControllerAutoDiscovery(
         Core::ControllerConnectionProvider *provider,
         const Data::ControllerConnectionScope &expectedScope,
         const Data::NodeId &expectedProfileId,

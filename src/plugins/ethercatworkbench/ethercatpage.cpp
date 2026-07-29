@@ -582,12 +582,13 @@ void EtherCATPage::updateMasterPresentation()
     }
 
     const Data::ControllerStateSummary &state = *snapshot.controllerState;
+    const quint64 liveCycleCount = state.cycleCount;
     if (state.serviceState == Data::ControllerServiceState::Running) {
         m_masterFrameState->setText(
             Tr::tr(
                 "Live cyclic transfer is running. Cycle counter %1, WKC %2/%3. Protocol v1.10 "
                 "provides aggregate cyclic evidence but not individual frame descriptors.")
-                .arg(state.cycleCount)
+                .arg(liveCycleCount)
                 .arg(state.actualWorkingCounter)
                 .arg(state.expectedWorkingCounter));
     } else if (state.busOperational && state.expectedWorkingCounter) {
@@ -596,7 +597,7 @@ void EtherCATPage::updateMasterPresentation()
                 "The EtherCAT bus is operational while the runtime is %1. Cycle counter %2, "
                 "WKC %3/%4.")
                 .arg(controllerServiceStateName(state.serviceState))
-                .arg(state.cycleCount)
+                .arg(liveCycleCount)
                 .arg(state.actualWorkingCounter)
                 .arg(state.expectedWorkingCounter));
     } else {
@@ -606,27 +607,53 @@ void EtherCATPage::updateMasterPresentation()
     }
 
     addControllerTelemetryRow(
-        Tr::tr("Cycle counter"), QString::number(state.cycleCount), Tr::tr("Controller state push"));
+        Tr::tr("Cycle counter"), QString::number(liveCycleCount), Tr::tr("Controller state"));
     addControllerTelemetryRow(
         Tr::tr("Working counter"),
         Tr::tr("%1 / %2").arg(state.actualWorkingCounter).arg(state.expectedWorkingCounter),
-        Tr::tr("Controller state push"));
+        Tr::tr("Controller state"));
     addControllerTelemetryRow(
         Tr::tr("EtherCAT AL state"),
         Tr::tr("%1 (%2)").arg(
             controllerAlStateName(state.ethercatAlStateBits),
             hexValue(state.ethercatAlStateBits, 4)),
-        Tr::tr("Controller state push"));
+        Tr::tr("Controller state"));
     addControllerTelemetryRow(
         Tr::tr("Bus operational"),
         state.busOperational ? Tr::tr("Yes") : Tr::tr("No"),
-        Tr::tr("Controller state push"));
+        Tr::tr("Controller state"));
     addControllerTelemetryRow(
         Tr::tr("Distributed Clocks"),
         state.distributedClocksLocked
             ? Tr::tr("Locked — difference %1 ns").arg(state.distributedClockDifferenceNs)
             : Tr::tr("Not locked — difference %1 ns").arg(state.distributedClockDifferenceNs),
-        Tr::tr("Controller state push"));
+        Tr::tr("Controller state"));
+    if (snapshot.performance) {
+        const Data::ControllerPerformanceSummary &performance = *snapshot.performance;
+        addControllerTelemetryRow(
+            Tr::tr("Cycle timing"),
+            Tr::tr("%1–%2 ns · submit late %3 ns")
+                .arg(performance.minimumExchangeTimeNs)
+                .arg(performance.maximumExchangeTimeNs)
+                .arg(performance.maximumSubmitLatenessNs),
+            Tr::tr("Performance push"));
+        addControllerTelemetryRow(
+            Tr::tr("Cyclic alerts"),
+            Tr::tr("Late %1 · WKC %2 · timeout %3")
+                .arg(performance.cycleLateCount)
+                .arg(performance.badWorkingCounterCount)
+                .arg(performance.timeoutCount),
+            Tr::tr("Performance push"));
+        if (performance.processInputSampleValid) {
+            addControllerTelemetryRow(
+                Tr::tr("Process sample"),
+                Tr::tr("%1 bytes · capture cycle %2 · age %3")
+                    .arg(performance.processInputSample.size())
+                    .arg(performance.processInputSampleCycleCount)
+                    .arg(performance.processInputSampleAgeCycles),
+                Tr::tr("Performance push"));
+        }
+    }
 }
 
 void EtherCATPage::addControllerTelemetryRow(

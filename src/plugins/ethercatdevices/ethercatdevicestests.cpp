@@ -6,6 +6,8 @@
 #include "esiparser.h"
 #include "ethercatdevicesconstants.h"
 
+#include <coreplugin/icore.h>
+
 #include <extensionsystem/pluginmanager.h>
 #include <extensionsystem/pluginspec.h>
 
@@ -122,6 +124,19 @@ void EtherCATDevicesTests::testMetadataAndProvider()
     QVERIFY(repository);
     QCOMPARE(repository->id(), Utils::Id(Constants::REPOSITORY_PROVIDER_ID));
     QVERIFY(repository->isAvailable());
+    const auto containsIdentity = [repository](const Data::DeviceIdentity &identity) {
+        const QList<Data::DeviceSummary> devices = repository->devices();
+        return std::any_of(
+            devices.cbegin(),
+            devices.cend(),
+            [&identity](const Data::DeviceSummary &device) {
+                return device.identity == identity;
+            });
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(
+        containsIdentity({0x00884443, 0x000000b6, 0x00000001}), 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        containsIdentity({0x00100000, 0x000c0112, 0x00010000}), 15000);
 }
 
 void EtherCATDevicesTests::testParserRejectsInvalidInput()
@@ -208,6 +223,65 @@ void EtherCATDevicesTests::testParserReadsOperationalData()
     QVERIFY_RESULT(modular);
     QVERIFY(!modular->first().summary.supported);
     QVERIFY(!modular->first().unsupportedFeatures.isEmpty());
+}
+
+void EtherCATDevicesTests::testBundledVendorEsiFiles()
+{
+    struct ExpectedDevice
+    {
+        QString fileName;
+        QByteArray sha256;
+        Data::DeviceIdentity identity;
+        QString typeName;
+        QString name;
+        QString group;
+        bool hasDistributedClocks = false;
+    };
+    const QList<ExpectedDevice> expectedDevices = {
+        {"EcatTerminal-XB6_V3.22_ENUM.xml",
+         QByteArray::fromHex(
+             "5b0bfbfffdfde1fd293589deb4a1c59f974aa79dcd9206ac0a695ab00f395bf7"),
+         {0x00884443, 0x000000b6, 0x00000001},
+         "XB6-EC0002",
+         "XB6-EC0002(Modules/Slots and MDP)",
+         "XB6 Series Fieldbus",
+         false},
+        {"INOVANCE_SV630N_1Axis_V16.xml",
+         QByteArray::fromHex(
+             "e6f39fd4e0f8801c83ec3ac796e138fe3ee1566cb94bb28285b93538fdb9e4a1"),
+         {0x00100000, 0x000c0112, 0x00010000},
+         "InoSV630N",
+         "SV630N_1Axis_03716",
+         "Servo Drives",
+         true},
+    };
+
+    const Utils::FilePath library = ::Core::ICore::resourcePath("ethercat/esi");
+    for (const ExpectedDevice &expected : expectedDevices) {
+        const Utils::FilePath filePath = library.pathAppended(expected.fileName);
+        QVERIFY2(filePath.isFile(), qPrintable(filePath.toUserOutput()));
+        const Utils::Result<QByteArray> contents = filePath.fileContents();
+        QVERIFY_RESULT(contents);
+        const Utils::Result<QList<Data::DeviceDescription>> parsed = parseEsiFile(
+            *contents, filePath.toUserOutput(), QDateTime::currentDateTimeUtc());
+        QVERIFY_RESULT(parsed);
+        const auto match = std::find_if(
+            parsed->cbegin(),
+            parsed->cend(),
+            [&expected](const Data::DeviceDescription &device) {
+                return device.summary.identity == expected.identity;
+            });
+        QVERIFY(match != parsed->cend());
+        QCOMPARE(match->sourceSha256, expected.sha256);
+        QCOMPARE(match->summary.typeName, expected.typeName);
+        QCOMPARE(match->summary.name, expected.name);
+        QCOMPARE(match->summary.group, expected.group);
+        QCOMPARE(!match->dcModes.isEmpty(), expected.hasDistributedClocks);
+        if (expected.hasDistributedClocks) {
+            QCOMPARE(match->dcModes.constFirst().name, QString("DC"));
+            QCOMPARE(match->dcModes.constFirst().assignActivate, quint16(0x0300));
+        }
+    }
 }
 
 void EtherCATDevicesTests::testRepositoryImportFilterAndRebuild()

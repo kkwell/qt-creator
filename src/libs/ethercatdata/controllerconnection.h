@@ -385,6 +385,39 @@ struct ETHERCATDATA_EXPORT ControllerStateSummary
     friend bool operator==(const ControllerStateSummary &, const ControllerStateSummary &) = default;
 };
 
+struct ETHERCATDATA_EXPORT ControllerPerformanceSummary
+{
+    quint64 minimumExchangeTimeNs = 0;
+    quint64 maximumExchangeTimeNs = 0;
+    quint64 maximumSubmitLatenessNs = 0;
+    quint32 timeoutCount = 0;
+    quint32 receiveDropCount = 0;
+    quint32 receiveOverflowCount = 0;
+    quint32 transmitUnavailableCount = 0;
+    quint32 cycleLateCount = 0;
+    quint32 badWorkingCounterCount = 0;
+    quint32 protocolErrorCount = 0;
+    quint32 staleReceiveCount = 0;
+    quint32 handoffSkippedCycleCount = 0;
+    quint32 fpgaLatencyStatusFlags = 0;
+    quint32 fpgaSnapshotSequence = 0;
+    bool processInputSampleValid = false;
+    bool processInputSampleFresh = false;
+    bool processInputSampleComplete = false;
+    quint32 processInputSampleOffset = 0;
+    quint32 processInputSampleTotalBytes = 0;
+    quint32 processInputSampleSequence = 0;
+    quint32 processInputSampleAgeCycles = 0;
+    quint64 processInputSampleGeneration = 0;
+    quint64 processInputSampleConfigurationId = 0;
+    quint64 processInputSampleCycleCount = 0;
+    QByteArray processInputSample;
+
+    friend bool operator==(
+        const ControllerPerformanceSummary &, const ControllerPerformanceSummary &)
+        = default;
+};
+
 struct ETHERCATDATA_EXPORT ControllerCapabilitySummary
 {
     int maximumSlaves = 0;
@@ -489,6 +522,7 @@ struct ETHERCATDATA_EXPORT ControllerConnectionSnapshot
     bool mock = false;
     std::optional<ControllerSessionSummary> session;
     std::optional<ControllerStateSummary> controllerState;
+    std::optional<ControllerPerformanceSummary> performance;
     std::optional<ControllerCapabilitySummary> capability;
     std::optional<ControllerPackageSummary> package;
     std::optional<ControllerFirmwareSummary> firmware;
@@ -532,6 +566,7 @@ Q_DECLARE_METATYPE(EtherCAT::Data::ControllerProtocolVersion)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerChannelStatus)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerSessionSummary)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerStateSummary)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPerformanceSummary)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerCapabilitySummary)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPackageSummary)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerFirmwareSummary)

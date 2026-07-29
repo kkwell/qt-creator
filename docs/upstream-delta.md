@@ -2201,3 +2201,47 @@ Configuration, and a three-slave DiscoverTopology, then safely released and
 disconnected. Exact restore of `A/11/810` returned typed
 `CAPABILITY_MISMATCH (-20)`, so that run did not qualify Start, Pause/Resume,
 ControlledStop, or cyclic FreeRun/DC behavior.
+
+## Explicit rescan, managed ESI, and live telemetry delta
+
+This local product delta changes only the product-owned EtherCAT data,
+Devices, ProductApi, and Workbench surfaces plus shared product resources,
+translations, and qualification documents. It adds no upstream Qt Creator
+Core, ProjectExplorer, or application-bootstrap change.
+
+Normal controller operation no longer includes topology discovery. Connect
+still establishes the selected Provider/profile session and queues the
+generation-bound exclusive lease request, but it never scans or changes
+controller state. Quick Run from `SHUTDOWN` now performs the bounded
+`RestoreActivePackage -> Start` sequence. Run from `OP_SAFE` and `PAUSED`
+retains Start and Resume. Only the explicit **Rescan Bus** action sends
+DiscoverTopology; the existing lease, ready `SHUTDOWN`, and inactive-package
+gates remain unchanged.
+
+The fixed product resource directory contains the unmodified vendor XML for
+XB6 and SV630N. Their SHA-256 values are
+`5b0bfbfffdfde1fd293589deb4a1c59f974aa79dcd9206ac0a695ab00f395bf7`
+and
+`e6f39fd4e0f8801c83ec3ac796e138fe3ee1566cb94bb28285b93538fdb9e4a1`.
+Devices indexes those resources and XML in the fixed writable
+`ethercat/esi/library` user directory. Exact identity matching supplies the
+vendor name and capability; unknown devices remain explicitly unknown.
+Workbench adds function-specific device icons and persists the user-resized
+two-column navigation header.
+
+`EtherCATData` adds a decoded performance summary without exposing Product API
+message IDs or wire offsets. `EtherCATProductApi` privately validates the exact
+v1.1, v1.2-v1.6, and v1.7-v1.10 PerformanceSnapshot sizes, response envelope,
+reserved bytes, sample flags, bounds, freshness, completeness, padding, and
+legacy-window consistency. It also schedules a 500 ms read-only GetState query
+only while the session is live and no refresh, control, or deployment
+operation is active. Workbench uses ControllerState for current cycle, WKC,
+AL/bus, and DC data and PerformanceSnapshot for timing, cyclic counters, and
+sample-capture evidence.
+
+CMake and qbs resource lists are synchronized. Offline qualification includes
+the 79-pass ProductApi suite with one real-hardware test skipped, the 9-pass
+Devices suite with exact vendor-file assertions, and six focused Workbench
+tests covering fast restart, no automatic discovery, functional/state icons,
+and live telemetry. No Product API, lease, scan, state, package, JTAG, CPU0,
+CPU1, FPGA, or other controller request was made during this delta.

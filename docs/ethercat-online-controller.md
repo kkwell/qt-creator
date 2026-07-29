@@ -45,6 +45,41 @@ progress, selectors, and audit events, and sends all operator-facing results
 to Application Output. ECPKG construction/signing, SDO/PDO access, firmware
 writes, and a vendor-neutral physical-edge graph remain absent.
 
+## Current operator workflow
+
+Connecting and controlling a previously commissioned controller no longer
+implies a bus scan. Connect establishes the Product API session, reads the
+authoritative snapshots, and requests the exclusive management lease. It does
+not change the controller state or topology.
+
+The normal lower-left control path is intentionally short:
+
+- from `SHUTDOWN`, Run restores the exact persistent active package and then
+  starts it;
+- from `OP_SAFE`, Run starts the already active package;
+- from `PAUSED`, Run resumes it; and
+- Stop performs Controlled Stop when required and then enters `SHUTDOWN`,
+  confirming that cyclic traffic, WKC, and DC are inactive.
+
+None of those paths discovers the bus. **Rescan Bus** is the only command that
+invokes topology discovery. It remains an explicit commissioning operation
+for a physical-bus change and therefore requires the lease, configuration
+mode, `SHUTDOWN`, and no active package.
+
+The product contains the original XB6 and SV630N vendor ESI XML under its
+fixed `ethercat/esi` resource directory. On startup it also indexes vendor XML
+dropped into the fixed per-user `ethercat/esi/library` directory. Exact
+VendorId/ProductCode/Revision matching supplies device names, functional
+classification, PDO/startup data, and DC capability without regenerating or
+simplifying the source XML.
+
+While connected, the Product API adapter issues a read-only `GetState` every
+500 ms when no refresh, deployment, or control operation is active. Current
+cycle count, expected/actual WKC, bus state, and DC difference therefore come
+from `ControllerState`. Push `PerformanceSnapshot` data supplies exchange
+timing, cyclic error counters, and the optional process-input sample window;
+its sample capture cycle is not treated as the controller's current cycle.
+
 ## Multi-vendor adapter boundary
 
 `EtherCATProductApi` is the first headless adapter and owns only the Embed Labs
@@ -180,32 +215,30 @@ never trigger this workflow implicitly.
 
 ## Controlled commissioning flow
 
-The current local implementation models one explicit, reversible commissioning
-flow:
+The current local implementation separates ordinary runtime control from the
+explicit commissioning path:
 
 1. Connect and complete the read-only three-channel refresh.
 2. Workbench automatically requests AcquireControl for that authoritative
    session snapshot; use the Communication-page Acquire action only when a
    manual retry is needed.
-3. EnterConfigurationMode.
-4. Refresh and confirm ready `SHUTDOWN` with no active controller package.
-5. DiscoverTopology, preserving its result as read-only Current Bus evidence.
-6. RestoreActivePackage using the exact persistent slot, generation, and
-   configuration ID captured before Configuration.
-7. Refresh and confirm `OP_SAFE`, the active package tied to the current
-   BootId, OP bus state, nonzero matching expected/actual WKC, and no current
-   or latched faults.
-8. Use the lower-left Run control. In `OP_SAFE` it sends automatic-mode
-   `Start (0x0102)` for the already active package; that package determines
-   FreeRun versus Distributed Clocks. In `PAUSED`, Run sends Resume.
-9. Use the lower-left Debug control to Pause from `RUNNING` or Resume from
-   `PAUSED`, with authoritative state confirmation.
-10. Use Controlled Stop only when the operator intends to stop, then confirm
-    `OP_SAFE`.
-11. A commissioning shutdown may enter Configuration again and confirm
-    `SHUTDOWN` with no active controller package.
-12. ReleaseControl, then Disconnect. Releasing a management lease from
-    `RUNNING` or `PAUSED` leaves the configured cyclic task autonomous.
+3. For an unchanged physical bus, use Run directly. From `SHUTDOWN`, Workbench
+   restores the exact persistent slot, generation, and configuration ID and
+   then starts it. No Configuration or discovery command is sent.
+4. Only after the operator invokes **Rescan Bus**, enter configuration mode,
+   confirm ready `SHUTDOWN` with no active package, and run
+   DiscoverTopology. Preserve its result as read-only Current Bus evidence.
+5. After commissioning, restore the exact persistent package and confirm
+   `OP_SAFE`, current-Boot activation, OP bus state, nonzero matching WKC, and
+   no current or latched faults.
+6. In `OP_SAFE`, Run sends automatic-mode `Start (0x0102)`; the active package
+   determines FreeRun versus Distributed Clocks. In `PAUSED`, Run sends Resume.
+7. Debug pauses from `RUNNING` or resumes from `PAUSED`, with authoritative
+   state confirmation.
+8. Stop performs Controlled Stop when needed and then Configuration, finally
+   confirming `SHUTDOWN`, no active application, zero WKC/AL state, and DC off.
+9. ReleaseControl, then Disconnect. Releasing a management lease from
+   `RUNNING` or `PAUSED` leaves the configured cyclic task autonomous.
 
 The client does not report a state-changing command Succeeded merely because
 the controller accepted its final command stage. It performs an authoritative

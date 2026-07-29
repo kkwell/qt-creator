@@ -16,6 +16,7 @@ Product {
             "debugger/**/*",
             "debugger-with-python2/**/*",
             "designer/**/*",
+            "ethercat/**/*",
             "glsl/**/*",
             "jsonschemas/**/*",
             "lua-lupdate/**/*",
