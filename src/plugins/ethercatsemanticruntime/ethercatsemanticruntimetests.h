@@ -14,6 +14,8 @@ private slots:
     void testCanonicalJsonRoundTrip();
     void testCanonicalJsonRejectsAmbiguity();
     void testCanonicalJsonTransferredManifests();
+    void testEcfgTransferredConfigurations();
+    void testEcfgRejectsDeepMutations();
     void testEcpkgContainerCanonicalMinimal();
     void testEcpkgContainerRejectsMetadataMutations();
     void testEcpkgContainerRejectsLayoutsAndLimits();

@@ -3,6 +3,7 @@
 #include "ethercatsemanticruntimetests.h"
 
 #include "canonicaljson_p.h"
+#include "ecfgconfiguration_p.h"
 #include "ecpkgcontainer.h"
 #include "ed25519verifier.h"
 #include "semanticruntimeexecutor.h"
@@ -695,7 +696,226 @@ static QByteArray readFile(const QString &path)
     return file.readAll();
 }
 
+static quint32 testReadLe32(QByteArrayView bytes, qsizetype offset)
+{
+    return quint32(quint8(bytes[offset])) | (quint32(quint8(bytes[offset + 1])) << 8)
+           | (quint32(quint8(bytes[offset + 2])) << 16)
+           | (quint32(quint8(bytes[offset + 3])) << 24);
+}
+
+static void putLe64(QByteArray &bytes, qsizetype offset, quint64 value)
+{
+    putLe32(bytes, offset, quint32(value));
+    putLe32(bytes, offset + 4, quint32(value >> 32));
+}
+
+static quint32 testCrc32c(QByteArrayView bytes)
+{
+    quint32 crc = std::numeric_limits<quint32>::max();
+    for (qsizetype index = 0; index < bytes.size(); ++index) {
+        const quint8 value = index >= 116 && index < 120 ? 0 : quint8(bytes[index]);
+        crc ^= value;
+        for (int bit = 0; bit < 8; ++bit) {
+            const quint32 lowBitMask = quint32(0) - (crc & 1U);
+            crc = (crc >> 1) ^ (0x82f63b78U & lowBitMask);
+        }
+    }
+    return ~crc;
+}
+
+static void refreshEcfgEnvelope(QByteArray &configuration)
+{
+    const quint32 payloadOffset = testReadLe32(configuration, 108);
+    const quint32 payloadBytes = testReadLe32(configuration, 112);
+    const QByteArray payloadSha256 = QCryptographicHash::hash(
+        QByteArrayView(configuration).sliced(payloadOffset, payloadBytes),
+        QCryptographicHash::Sha256);
+    configuration.replace(68, payloadSha256.size(), payloadSha256);
+    putLe32(configuration, 116, testCrc32c(configuration));
+}
+
+static void refreshResourceTableSection(
+    QByteArray &configuration, const EcfgSectionDescriptor &section)
+{
+    const qsizetype recordsOffset = section.offset + 80;
+    const qsizetype recordsBytes = section.length - 80;
+    const QByteArray recordsSha256 = QCryptographicHash::hash(
+        QByteArrayView(configuration).sliced(recordsOffset, recordsBytes),
+        QCryptographicHash::Sha256);
+    configuration.replace(section.offset + 40, recordsSha256.size(), recordsSha256);
+    quint64 catalogRevision = 0;
+    for (int index = 0; index < 8; ++index)
+        catalogRevision |= quint64(quint8(recordsSha256[index])) << (index * 8);
+    putLe64(configuration, section.offset + 16, catalogRevision ? catalogRevision : 1);
+}
+
+static void refreshOutputPolicySection(
+    QByteArray &configuration, const EcfgSectionDescriptor &section)
+{
+    const qsizetype recordsOffset = section.offset + 64;
+    const qsizetype recordsBytes = section.length - 64;
+    const QByteArray recordsSha256 = QCryptographicHash::hash(
+        QByteArrayView(configuration).sliced(recordsOffset, recordsBytes),
+        QCryptographicHash::Sha256);
+    configuration.replace(section.offset + 24, recordsSha256.size(), recordsSha256);
+}
+
 } // namespace
+
+void EtherCATSemanticRuntimeTests::testEcfgTransferredConfigurations()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureRoot(
+        repositoryRoot.absoluteFilePath("build/vendor_api_036_handoff"));
+    const QByteArray publicKey = fromHex(
+        "bd51c2d7cb14eeabac5de51ca5feb5f3"
+        "6d3d87986b77f19d056a7da4845f7063");
+
+    struct Fixture
+    {
+        QString directory;
+        QString packageName;
+        quint16 formatMinor = 0;
+        QByteArray configurationSha256;
+        quint64 catalogRevision = 0;
+        qsizetype policyCount = 0;
+    };
+    const std::array<Fixture, 2> fixtures{
+        Fixture{
+            "api035",
+            "three-slave-xb6-sv630n-semantic-binding-cfg3501.ecpkg",
+            1,
+            fromHex("3df29b74313a43678d751fb5646c7cac1f851f518c95bab64aee2c5edda9ac71"),
+            0x0dea3816a0a0d7afULL,
+            0,
+        },
+        Fixture{
+            "api036",
+            "three-slave-output-transaction-cfg3501.ecpkg",
+            2,
+            fromHex("0e7f51d93400224bc1dfc362359525815222e78c44e83bc6794922c26702c99d"),
+            0xc84fe35be276b2a8ULL,
+            1,
+        },
+    };
+
+    bool foundFixture = false;
+    for (const Fixture &fixture : fixtures) {
+        const QDir directory(fixtureRoot.absoluteFilePath(fixture.directory));
+        const QByteArray packageBytes
+            = readFile(directory.absoluteFilePath(fixture.packageName));
+        if (packageBytes.isEmpty())
+            continue;
+        foundFixture = true;
+
+        const Utils::Result<EcpkgContainer> container
+            = parseCanonicalEcpkgContainer(packageBytes);
+        QVERIFY_RESULT(container);
+        const Utils::Result<VerifiedSignedEcpkgManifest> manifest
+            = verifySignedEcpkgManifest(
+                *container, {{publicKey, EcpkgTrustClass::Production}});
+        QVERIFY_RESULT(manifest);
+        const Utils::Result<EcfgConfiguration> configuration
+            = parseStrictEcfgConfiguration(container->configurationEcfg);
+        QVERIFY_RESULT(configuration);
+
+        QCOMPARE(configuration->formatMajor, quint16(1));
+        QCOMPARE(configuration->formatMinor, fixture.formatMinor);
+        QCOMPARE(configuration->configurationId, quint64(3501));
+        QCOMPARE(configuration->configurationSha256, fixture.configurationSha256);
+        QCOMPARE(configuration->configurationSha256, manifest->configuration.sha256);
+        QCOMPARE(quint32(container->configurationEcfg.size()), manifest->configuration.bytes);
+        QCOMPARE(configuration->processInputBits, quint32(480));
+        QCOMPARE(configuration->processOutputBits, quint32(400));
+        QCOMPARE(configuration->catalogRevision, fixture.catalogRevision);
+        QCOMPARE(configuration->topologyIdentity, quint64(0x2ee7c79bc774840cULL));
+        QCOMPARE(configuration->resources.size(), qsizetype(56));
+        QCOMPARE(configuration->outputPolicies.size(), fixture.policyCount);
+        QVERIFY(manifest->semanticBinding.has_value());
+        QCOMPARE(
+            configuration->resourceRecordsSha256,
+            manifest->semanticBinding->resourceRecordsSha256);
+        QCOMPARE(
+            configuration->resourceTableSectionSha256,
+            manifest->semanticBinding->resourceSectionSha256);
+        QCOMPARE(
+            configuration->catalogRevision, manifest->semanticBinding->catalogRevision);
+        QCOMPARE(
+            configuration->topologyIdentity, manifest->semanticBinding->topologyIdentity);
+
+        if (fixture.policyCount == 1) {
+            const EcfgOutputGroupPolicy &policy = configuration->outputPolicies.constFirst();
+            QCOMPARE(policy.consistencyGroupId, quint32(13825));
+            QCOMPARE(policy.flags, quint32(1));
+            QCOMPARE(policy.recoveryPolicy, EcfgOutputRecoveryPolicy::ReturnTask);
+            QCOMPARE(policy.maximumTtlCycles, quint32(1000));
+            QCOMPARE(policy.resourceCount, quint32(2));
+            QCOMPARE(policy.resourceIds.size(), qsizetype(2));
+        }
+    }
+
+    if (!foundFixture)
+        QSKIP("Transferred API-035/API-036 ECFG fixtures are not present");
+}
+
+void EtherCATSemanticRuntimeTests::testEcfgRejectsDeepMutations()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureDirectory(
+        repositoryRoot.absoluteFilePath("build/vendor_api_036_handoff/api036"));
+    const QByteArray original
+        = readFile(fixtureDirectory.absoluteFilePath("configuration.ecfg"));
+    if (original.isEmpty())
+        QSKIP("Transferred API-036 ECFG fixture is not present");
+
+    const Utils::Result<EcfgConfiguration> parsed = parseStrictEcfgConfiguration(original);
+    QVERIFY_RESULT(parsed);
+    QCOMPARE(parsed->sections.size(), qsizetype(8));
+
+    QByteArray truncated = original;
+    truncated.chop(1);
+    QVERIFY(!parseStrictEcfgConfiguration(truncated));
+    QVERIFY(!parseStrictEcfgConfiguration(original, original.size() - 1));
+
+    QByteArray badCrc = original;
+    badCrc[130] ^= 1;
+    QVERIFY(!parseStrictEcfgConfiguration(badCrc));
+
+    QByteArray reservedHeader = original;
+    reservedHeader[120] = 1;
+    refreshEcfgEnvelope(reservedHeader);
+    QVERIFY(!parseStrictEcfgConfiguration(reservedHeader));
+
+    QByteArray unknownSection = original;
+    putLe16(unknownSection, 128 + 7 * 16, 9);
+    refreshEcfgEnvelope(unknownSection);
+    QVERIFY(!parseStrictEcfgConfiguration(unknownSection));
+
+    const EcfgSectionDescriptor resourceSection = parsed->sections.at(6);
+    QByteArray duplicateResource = original;
+    const qsizetype firstResource = resourceSection.offset + 80;
+    const qsizetype secondResource = firstResource + 64;
+    duplicateResource.replace(
+        secondResource, 8, QByteArrayView(duplicateResource).sliced(firstResource, 8));
+    refreshResourceTableSection(duplicateResource, resourceSection);
+    refreshEcfgEnvelope(duplicateResource);
+    QVERIFY(!parseStrictEcfgConfiguration(duplicateResource));
+
+    const EcfgSectionDescriptor policySection = parsed->sections.at(7);
+    QByteArray reservedPolicy = original;
+    reservedPolicy[policySection.offset + 64 + 20] = 1;
+    refreshOutputPolicySection(reservedPolicy, policySection);
+    refreshEcfgEnvelope(reservedPolicy);
+    QVERIFY(!parseStrictEcfgConfiguration(reservedPolicy));
+
+    QByteArray wrongGroupDigest = original;
+    wrongGroupDigest[policySection.offset + 64 + 32] ^= 1;
+    refreshOutputPolicySection(wrongGroupDigest, policySection);
+    refreshEcfgEnvelope(wrongGroupDigest);
+    QVERIFY(!parseStrictEcfgConfiguration(wrongGroupDigest));
+}
 
 void EtherCATSemanticRuntimeTests::testEcpkgContainerCanonicalMinimal()
 {

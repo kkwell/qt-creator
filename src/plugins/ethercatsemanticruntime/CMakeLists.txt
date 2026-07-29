@@ -7,6 +7,8 @@ add_qtc_plugin(EtherCATSemanticRuntime
   SOURCES
     canonicaljson_p.cpp
     canonicaljson_p.h
+    ecfgconfiguration_p.cpp
+    ecfgconfiguration_p.h
     ecpkgcontainer.cpp
     ecpkgcontainer.h
     ed25519verifier.cpp
