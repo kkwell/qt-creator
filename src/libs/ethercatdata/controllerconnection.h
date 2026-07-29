@@ -130,6 +130,7 @@ enum class ControllerOperation {
     QueryFirmwareState,
     QueryRuntimeResourceCatalog,
     QueryRuntimeResourceSnapshot,
+    QueryRuntimeSemanticMappingAttestation,
     QueryRuntimeOutputGroupPolicy,
     QueryRuntimeOutputTransactionState,
     ApplyRuntimeOutputTransaction,
@@ -507,6 +508,7 @@ struct ETHERCATDATA_EXPORT ControllerCapabilitySummary
     bool explicitTimingModeStart = false;
     bool faultReset = false;
     bool runtimeResources = false;
+    bool semanticMappingAttestation = false;
     bool runtimeOutputTransactions = false;
     bool coe = false;
     bool distributedClocks = false;

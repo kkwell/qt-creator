@@ -12,6 +12,7 @@
 #include <ethercatdata/runtimeoutputtransaction.h>
 #include <ethercatdata/runtimeresource.h>
 #include <ethercatdata/scansnapshot.h>
+#include <ethercatdata/semanticmappingattestation.h>
 
 #include <utils/filepath.h>
 #include <utils/id.h>
@@ -289,6 +290,11 @@ public:
     virtual Utils::Result<> refreshRuntimeResources();
     virtual Utils::Result<> requestRuntimeResourceSnapshot(
         const Data::RuntimeResourceSnapshotRequest &request);
+    virtual bool supportsRuntimeSemanticMappingAttestation() const;
+    virtual std::optional<Data::RuntimeSemanticMappingAttestation>
+    runtimeSemanticMappingAttestation() const;
+    virtual Utils::Result<> requestRuntimeSemanticMappingAttestation(
+        const Data::RuntimeSemanticMappingAttestationRequest &request);
     virtual bool supportsRuntimeOutputTransactions() const;
     virtual Utils::Result<> requestRuntimeOutputGroupPolicy(
         const Data::RuntimeOutputGroupPolicyRequest &request);
@@ -304,6 +310,9 @@ signals:
     void runtimeResourceSnapshotChanged();
     void runtimeResourceSnapshotRequestFinished(
         const EtherCAT::Data::RuntimeResourceSnapshotResult &result);
+    void runtimeSemanticMappingAttestationChanged();
+    void runtimeSemanticMappingAttestationRequestFinished(
+        const EtherCAT::Data::RuntimeSemanticMappingAttestationResult &result);
     void runtimeOutputGroupPolicyRequestFinished(
         const EtherCAT::Data::RuntimeOutputGroupPolicyResult &result);
     void runtimeOutputTransactionStateChanged(

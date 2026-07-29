@@ -17,6 +17,7 @@ add_qtc_library(EtherCATData
     runtimeoutputtransaction.h
     runtimeresource.h
     scansnapshot.h
+    semanticmappingattestation.h
     semanticids.h
     semanticruntime.h
 )

@@ -27,6 +27,7 @@
 #include <ethercatdata/projectsnapshot.h>
 #include <ethercatdata/runtimeoutputtransaction.h>
 #include <ethercatdata/runtimeresource.h>
+#include <ethercatdata/semanticmappingattestation.h>
 #include <ethercatdata/semanticruntime.h>
 
 #include <QScopeGuard>
@@ -36,6 +37,7 @@
 #include <QWidget>
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <type_traits>
 
@@ -1286,6 +1288,257 @@ void EtherCATCoreTests::testRuntimeResourceSnapshotRequestContract()
 
     QVERIFY(QMetaType::fromType<Data::RuntimeResourceSnapshotRequest>().isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimeResourceSnapshotResult>().isValid());
+}
+
+void EtherCATCoreTests::testRuntimeSemanticMappingAttestationContract()
+{
+    using SupportsMethod = bool (ControllerConnectionProvider::*)() const;
+    using CachedMethod = std::optional<Data::RuntimeSemanticMappingAttestation> (
+        ControllerConnectionProvider::*)() const;
+    using RequestMethod = Utils::Result<> (ControllerConnectionProvider::*)(
+        const Data::RuntimeSemanticMappingAttestationRequest &);
+    static_assert(std::is_same_v<
+                  decltype(&ControllerConnectionProvider::
+                               supportsRuntimeSemanticMappingAttestation),
+                  SupportsMethod>);
+    static_assert(std::is_same_v<
+                  decltype(&ControllerConnectionProvider::runtimeSemanticMappingAttestation),
+                  CachedMethod>);
+    static_assert(std::is_same_v<
+                  decltype(&ControllerConnectionProvider::
+                               requestRuntimeSemanticMappingAttestation),
+                  RequestMethod>);
+
+    Data::RuntimeSemanticMappingProof proof;
+    proof.formatVersion = 1;
+    proof.bindingCount = 56;
+    proof.packageSigned = true;
+    proof.signatureVerified = true;
+    proof.semanticBindingVerified = true;
+    proof.trust = Data::RuntimeSemanticMappingTrust::Production;
+    proof.packageSha256 = QByteArray(32, '\x11');
+    proof.manifestSha256 = QByteArray(32, '\x22');
+    proof.mappingSha256 = QByteArray(32, '\x33');
+    proof.resourceRecordsSha256 = QByteArray(32, '\x44');
+    proof.resourceSectionSha256 = QByteArray(32, '\x55');
+    proof.topologySha256 = QByteArray(32, '\x66');
+    proof.signingKeyIdSha256 = QByteArray(32, '\x77');
+    QVERIFY(proof.isValid());
+    QCOMPARE(Data::RuntimeSemanticMappingProof(proof), proof);
+    QVERIFY(Data::isValidRuntimeSemanticMappingDigest(proof.packageSha256));
+    QVERIFY(Data::runtimeSemanticMappingDigestsEqual(
+        proof.packageSha256, QByteArray(32, '\x11')));
+    QVERIFY(!Data::runtimeSemanticMappingDigestsEqual(
+        proof.packageSha256, QByteArray(32, '\x12')));
+    QVERIFY(!Data::runtimeSemanticMappingDigestsEqual(
+        proof.packageSha256, QByteArray(31, '\x11')));
+
+    Data::RuntimeSemanticMappingAttestationRequest request;
+    request.correlationId = "semantic-attestation-1";
+    request.scope = {Data::NodeId::create(), Data::NodeId::create()};
+    request.sessionGeneration = 7;
+    request.expectedEpoch.controllerBootId = 11;
+    request.expectedEpoch.activePackageSlot = Data::ControllerSlot::B;
+    request.expectedEpoch.activePackageGeneration = 12;
+    request.expectedEpoch.configurationId = 13;
+    request.expectedEpoch.topologyGeneration = 14;
+    request.expectedEpoch.runtimeGeneration = 15;
+    request.expectedEpoch.catalogRevision = 16;
+    request.expectedEpoch.topologyIdentity = QByteArray::fromHex("0102030405060708");
+    request.expectedProof = proof;
+    QVERIFY(request.isValid());
+    QVERIFY(Data::isCompleteRuntimeSemanticMappingEpoch(request.expectedEpoch));
+    QVERIFY(Data::isValidRuntimeSemanticMappingCorrelationId(request.correlationId));
+    QCOMPARE(Data::RuntimeSemanticMappingAttestationRequest(request), request);
+
+    Data::RuntimeSemanticMappingAttestation attestation;
+    attestation.scope = request.scope;
+    attestation.sessionGeneration = request.sessionGeneration;
+    attestation.epoch = request.expectedEpoch;
+    attestation.proof = proof;
+    attestation.receivedAt = QDateTime::currentDateTimeUtc();
+    QVERIFY(attestation.isValid());
+    QCOMPARE(Data::RuntimeSemanticMappingAttestation(attestation), attestation);
+
+    Data::RuntimeSemanticMappingAttestationResult success;
+    success.request = request;
+    success.attestation = attestation;
+    QVERIFY(success.isValid());
+    QCOMPARE(Data::RuntimeSemanticMappingAttestationResult(success), success);
+
+    Data::RuntimeSemanticMappingAttestationResult failure;
+    failure.request = request;
+    Data::ControllerOperationError error;
+    error.operation = Data::ControllerOperation::QueryRuntimeSemanticMappingAttestation;
+    failure.error = error;
+    QVERIFY(failure.isValid());
+    failure.error->operation = Data::ControllerOperation::QueryRuntimeResourceCatalog;
+    QVERIFY(!failure.isValid());
+    failure = success;
+    failure.error = error;
+    QVERIFY(!failure.isValid());
+
+    Data::RuntimeSemanticMappingProof invalidProof = proof;
+    invalidProof.formatVersion = 2;
+    QVERIFY(!invalidProof.isValid());
+    invalidProof = proof;
+    invalidProof.bindingCount = 0;
+    QVERIFY(!invalidProof.isValid());
+    invalidProof = proof;
+    invalidProof.packageSigned = false;
+    QVERIFY(!invalidProof.isValid());
+    invalidProof = proof;
+    invalidProof.signatureVerified = false;
+    QVERIFY(!invalidProof.isValid());
+    invalidProof = proof;
+    invalidProof.semanticBindingVerified = false;
+    QVERIFY(!invalidProof.isValid());
+    invalidProof = proof;
+    invalidProof.trust = Data::RuntimeSemanticMappingTrust::Unknown;
+    QVERIFY(!invalidProof.isValid());
+    invalidProof = proof;
+    invalidProof.trust = Data::RuntimeSemanticMappingTrust::Engineering;
+    QVERIFY(invalidProof.isValid());
+
+    using DigestMember = QByteArray Data::RuntimeSemanticMappingProof::*;
+    constexpr std::array<DigestMember, 7> digestMembers{
+        &Data::RuntimeSemanticMappingProof::packageSha256,
+        &Data::RuntimeSemanticMappingProof::manifestSha256,
+        &Data::RuntimeSemanticMappingProof::mappingSha256,
+        &Data::RuntimeSemanticMappingProof::resourceRecordsSha256,
+        &Data::RuntimeSemanticMappingProof::resourceSectionSha256,
+        &Data::RuntimeSemanticMappingProof::topologySha256,
+        &Data::RuntimeSemanticMappingProof::signingKeyIdSha256,
+    };
+    for (DigestMember member : digestMembers) {
+        invalidProof = proof;
+        (invalidProof.*member).resize(31);
+        QVERIFY(!invalidProof.isValid());
+        invalidProof = proof;
+        (invalidProof.*member).append('\x01');
+        QVERIFY(!invalidProof.isValid());
+        invalidProof = proof;
+        (invalidProof.*member).fill('\0');
+        QVERIFY(!invalidProof.isValid());
+
+        Data::RuntimeSemanticMappingAttestationResult mismatch = success;
+        (mismatch.attestation->proof.*member)[31] ^= '\x01';
+        QVERIFY(!mismatch.isValid());
+    }
+
+    Data::RuntimeSemanticMappingAttestationRequest invalidRequest = request;
+    invalidRequest.correlationId.clear();
+    QVERIFY(!invalidRequest.isValid());
+    invalidRequest = request;
+    invalidRequest.correlationId.prepend(' ');
+    QVERIFY(!invalidRequest.isValid());
+    invalidRequest = request;
+    invalidRequest.correlationId = QStringLiteral("semantic\nattestation");
+    QVERIFY(!invalidRequest.isValid());
+    invalidRequest = request;
+    invalidRequest.correlationId = QString(129, QLatin1Char('a'));
+    QVERIFY(!invalidRequest.isValid());
+    invalidRequest = request;
+    invalidRequest.scope.projectId = {};
+    QVERIFY(!invalidRequest.isValid());
+    invalidRequest = request;
+    invalidRequest.scope.masterId = {};
+    QVERIFY(!invalidRequest.isValid());
+    invalidRequest = request;
+    invalidRequest.sessionGeneration = 0;
+    QVERIFY(!invalidRequest.isValid());
+
+    QList<Data::RuntimeResourceCatalogEpoch> invalidEpochs;
+    Data::RuntimeResourceCatalogEpoch epoch = request.expectedEpoch;
+    epoch.controllerBootId = 0;
+    invalidEpochs.append(epoch);
+    epoch = request.expectedEpoch;
+    epoch.activePackageSlot = Data::ControllerSlot::None;
+    invalidEpochs.append(epoch);
+    epoch = request.expectedEpoch;
+    epoch.activePackageGeneration = 0;
+    invalidEpochs.append(epoch);
+    epoch = request.expectedEpoch;
+    epoch.configurationId = 0;
+    invalidEpochs.append(epoch);
+    epoch = request.expectedEpoch;
+    epoch.topologyGeneration = 0;
+    invalidEpochs.append(epoch);
+    epoch = request.expectedEpoch;
+    epoch.runtimeGeneration = 0;
+    invalidEpochs.append(epoch);
+    epoch = request.expectedEpoch;
+    epoch.catalogRevision = 0;
+    invalidEpochs.append(epoch);
+    epoch = request.expectedEpoch;
+    epoch.topologyIdentity.clear();
+    invalidEpochs.append(epoch);
+    epoch = request.expectedEpoch;
+    epoch.topologyIdentity.chop(1);
+    invalidEpochs.append(epoch);
+    epoch = request.expectedEpoch;
+    epoch.topologyIdentity.append('\0');
+    invalidEpochs.append(epoch);
+    for (const Data::RuntimeResourceCatalogEpoch &invalidEpoch : std::as_const(invalidEpochs)) {
+        invalidRequest = request;
+        invalidRequest.expectedEpoch = invalidEpoch;
+        QVERIFY(!invalidRequest.isValid());
+    }
+
+    Data::RuntimeSemanticMappingAttestationResult mismatch = success;
+    mismatch.attestation->scope.projectId = Data::NodeId::create();
+    QVERIFY(!mismatch.isValid());
+    mismatch = success;
+    mismatch.attestation->scope.masterId = Data::NodeId::create();
+    QVERIFY(!mismatch.isValid());
+    mismatch = success;
+    ++mismatch.attestation->sessionGeneration;
+    QVERIFY(!mismatch.isValid());
+    mismatch = success;
+    ++mismatch.attestation->epoch.controllerBootId;
+    QVERIFY(!mismatch.isValid());
+    mismatch = success;
+    mismatch.attestation->epoch.activePackageSlot = Data::ControllerSlot::A;
+    QVERIFY(!mismatch.isValid());
+    mismatch = success;
+    ++mismatch.attestation->epoch.activePackageGeneration;
+    QVERIFY(!mismatch.isValid());
+    mismatch = success;
+    ++mismatch.attestation->epoch.configurationId;
+    QVERIFY(!mismatch.isValid());
+    mismatch = success;
+    ++mismatch.attestation->epoch.topologyGeneration;
+    QVERIFY(!mismatch.isValid());
+    mismatch = success;
+    ++mismatch.attestation->epoch.runtimeGeneration;
+    QVERIFY(!mismatch.isValid());
+    mismatch = success;
+    ++mismatch.attestation->epoch.catalogRevision;
+    QVERIFY(!mismatch.isValid());
+    mismatch = success;
+    mismatch.attestation->epoch.topologyIdentity[0] ^= '\x01';
+    QVERIFY(!mismatch.isValid());
+    mismatch = success;
+    ++mismatch.attestation->proof.bindingCount;
+    QVERIFY(!mismatch.isValid());
+    mismatch = success;
+    mismatch.attestation->proof.trust = Data::RuntimeSemanticMappingTrust::Engineering;
+    QVERIFY(!mismatch.isValid());
+    mismatch = success;
+    mismatch.attestation->receivedAt = {};
+    QVERIFY(!mismatch.isValid());
+
+    Data::ControllerCapabilitySummary capability;
+    QVERIFY(!capability.semanticMappingAttestation);
+    capability.semanticMappingAttestation = true;
+    QCOMPARE(Data::ControllerCapabilitySummary(capability), capability);
+
+    QVERIFY(QMetaType::fromType<Data::RuntimeSemanticMappingTrust>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimeSemanticMappingProof>().isValid());
+    QVERIFY(
+        QMetaType::fromType<Data::RuntimeSemanticMappingAttestationRequest>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimeSemanticMappingAttestation>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimeSemanticMappingAttestationResult>().isValid());
 }
 
 void EtherCATCoreTests::testRuntimeOutputTransactionContract()
@@ -3150,6 +3403,22 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
         unsupportedTargetedRead.error(),
         Tr::tr("This controller provider does not support targeted runtime resource snapshots."));
     QCOMPARE(targetedFinishedSpy.count(), 0);
+
+    QVERIFY(!provider.supportsRuntimeSemanticMappingAttestation());
+    QVERIFY(!provider.runtimeSemanticMappingAttestation());
+    QSignalSpy semanticAttestationChangedSpy(
+        &provider, &ControllerConnectionProvider::runtimeSemanticMappingAttestationChanged);
+    QSignalSpy semanticAttestationFinishedSpy(
+        &provider,
+        &ControllerConnectionProvider::runtimeSemanticMappingAttestationRequestFinished);
+    const Utils::Result<> unsupportedSemanticAttestation
+        = provider.requestRuntimeSemanticMappingAttestation({});
+    QVERIFY(!unsupportedSemanticAttestation);
+    QCOMPARE(
+        unsupportedSemanticAttestation.error(),
+        Tr::tr("This controller provider does not support semantic mapping attestation."));
+    QCOMPARE(semanticAttestationChangedSpy.count(), 0);
+    QCOMPARE(semanticAttestationFinishedSpy.count(), 0);
 
     RuntimeOutputFixture runtimeOutput;
     QVERIFY(!provider.supportsRuntimeOutputTransactions());

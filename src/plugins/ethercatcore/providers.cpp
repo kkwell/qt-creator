@@ -216,6 +216,24 @@ Utils::Result<> ControllerConnectionProvider::requestRuntimeResourceSnapshot(
         Tr::tr("This controller provider does not support targeted runtime resource snapshots."));
 }
 
+bool ControllerConnectionProvider::supportsRuntimeSemanticMappingAttestation() const
+{
+    return false;
+}
+
+std::optional<Data::RuntimeSemanticMappingAttestation>
+ControllerConnectionProvider::runtimeSemanticMappingAttestation() const
+{
+    return std::nullopt;
+}
+
+Utils::Result<> ControllerConnectionProvider::requestRuntimeSemanticMappingAttestation(
+    const Data::RuntimeSemanticMappingAttestationRequest &)
+{
+    return Utils::ResultError(
+        Tr::tr("This controller provider does not support semantic mapping attestation."));
+}
+
 bool ControllerConnectionProvider::supportsRuntimeOutputTransactions() const
 {
     return false;

@@ -24,6 +24,7 @@ QtcLibrary {
         "runtimeoutputtransaction.h",
         "runtimeresource.h",
         "scansnapshot.h",
+        "semanticmappingattestation.h",
         "semanticids.h",
         "semanticruntime.h",
     ]

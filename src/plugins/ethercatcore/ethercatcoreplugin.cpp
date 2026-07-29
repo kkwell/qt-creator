@@ -22,6 +22,7 @@
 #include <ethercatdata/manualcontrol.h>
 #include <ethercatdata/runtimeoutputtransaction.h>
 #include <ethercatdata/runtimeresource.h>
+#include <ethercatdata/semanticmappingattestation.h>
 
 #include <memory>
 
@@ -64,6 +65,11 @@ void EtherCATCorePlugin::initialize()
     qRegisterMetaType<Data::ControllerOperationError>();
     qRegisterMetaType<Data::RuntimeResourceSnapshotRequest>();
     qRegisterMetaType<Data::RuntimeResourceSnapshotResult>();
+    qRegisterMetaType<Data::RuntimeSemanticMappingTrust>();
+    qRegisterMetaType<Data::RuntimeSemanticMappingProof>();
+    qRegisterMetaType<Data::RuntimeSemanticMappingAttestationRequest>();
+    qRegisterMetaType<Data::RuntimeSemanticMappingAttestation>();
+    qRegisterMetaType<Data::RuntimeSemanticMappingAttestationResult>();
     qRegisterMetaType<Data::RuntimeOutputGroupPolicyResult>();
     qRegisterMetaType<Data::RuntimeOutputTransactionState>();
     qRegisterMetaType<Data::RuntimeOutputTransactionStateResult>();
