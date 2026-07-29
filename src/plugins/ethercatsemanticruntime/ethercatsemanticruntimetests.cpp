@@ -6,6 +6,7 @@
 #include "ecfgconfiguration_p.h"
 #include "ecpkgcontainer.h"
 #include "ed25519verifier.h"
+#include "productiontruststore_p.h"
 #include "semanticbindingartifact_p.h"
 #include "semanticruntimeexecutor.h"
 #include "signedecpkgmanifest_p.h"
@@ -1438,6 +1439,122 @@ void EtherCATSemanticRuntimeTests::testSignedEcpkgTransferredPackages()
 
     if (!foundFixture)
         QSKIP("Transferred API-035/API-036 ECPKG fixtures are not present");
+}
+
+void EtherCATSemanticRuntimeTests::testProductionTrustStore()
+{
+    QTemporaryDir temporary(
+        QString::fromLatin1("/private/tmp/embed-labs-production-trust-XXXXXX"));
+    QVERIFY(temporary.isValid());
+    const QString trustDirectory = QDir(temporary.path()).filePath("trust");
+    QVERIFY(QDir().mkpath(trustDirectory));
+
+    const QByteArray publicKey = fromHex(
+        "bd51c2d7cb14eeabac5de51ca5feb5f3"
+        "6d3d87986b77f19d056a7da4845f7063");
+    const QByteArray keyId
+        = QCryptographicHash::hash(publicKey, QCryptographicHash::Sha256);
+    QCOMPARE(
+        keyId.toHex(),
+        QByteArray("eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6"));
+
+    QFile keyFile(
+        QDir(trustDirectory).filePath(QString::fromLatin1(keyId.toHex()) + ".pub"));
+    QVERIFY(keyFile.open(QIODevice::WriteOnly));
+    QCOMPARE(keyFile.write(publicKey), qint64(publicKey.size()));
+    keyFile.close();
+
+    const Utils::Result<QList<EcpkgTrustedPublicKey>> trust
+        = loadProductionEcpkgTrustStore(trustDirectory);
+    QVERIFY_RESULT(trust);
+    QCOMPARE(trust->size(), qsizetype(1));
+    QCOMPARE(trust->constFirst().rawPublicKey, publicKey);
+    QCOMPARE(trust->constFirst().trust, EcpkgTrustClass::Production);
+
+    const QDir fixtureDirectory(
+        QDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR))
+            .absoluteFilePath("../../../build/vendor_api_036_handoff/api036"));
+    const QByteArray packageBytes = readFile(
+        fixtureDirectory.absoluteFilePath(
+            "three-slave-output-transaction-cfg3501.ecpkg"));
+    if (!packageBytes.isEmpty()) {
+        const Utils::Result<EcpkgContainer> container
+            = parseCanonicalEcpkgContainer(packageBytes);
+        QVERIFY_RESULT(container);
+        QVERIFY_RESULT(verifySignedEcpkgManifest(*container, *trust));
+    }
+}
+
+void EtherCATSemanticRuntimeTests::testProductionTrustStoreRejectsUnsafeInputs()
+{
+    QVERIFY(!loadProductionEcpkgTrustStore(QString::fromLatin1("relative/trust")));
+
+    const QByteArray publicKey = fromHex(
+        "bd51c2d7cb14eeabac5de51ca5feb5f3"
+        "6d3d87986b77f19d056a7da4845f7063");
+    const QByteArray keyId
+        = QCryptographicHash::hash(publicKey, QCryptographicHash::Sha256);
+    const auto writeFile = [](const QString &path, QByteArrayView bytes) {
+        QFile file(path);
+        return file.open(QIODevice::WriteOnly)
+               && file.write(bytes.data(), bytes.size()) == bytes.size();
+    };
+
+    QTemporaryDir empty(
+        QString::fromLatin1("/private/tmp/embed-labs-empty-trust-XXXXXX"));
+    QVERIFY(empty.isValid());
+    QVERIFY(!loadProductionEcpkgTrustStore(empty.path()));
+
+    QTemporaryDir wrongName(
+        QString::fromLatin1("/private/tmp/embed-labs-wrong-trust-XXXXXX"));
+    QVERIFY(wrongName.isValid());
+    QVERIFY(writeFile(
+        QDir(wrongName.path()).filePath(QString(64, '0') + ".pub"), publicKey));
+    QVERIFY(!loadProductionEcpkgTrustStore(wrongName.path()));
+
+    QTemporaryDir wrongSize(
+        QString::fromLatin1("/private/tmp/embed-labs-short-trust-XXXXXX"));
+    QVERIFY(wrongSize.isValid());
+    QVERIFY(writeFile(
+        QDir(wrongSize.path()).filePath(QString::fromLatin1(keyId.toHex()) + ".pub"),
+        publicKey.first(31)));
+    QVERIFY(!loadProductionEcpkgTrustStore(wrongSize.path()));
+
+    QTemporaryDir unexpected(
+        QString::fromLatin1("/private/tmp/embed-labs-extra-trust-XXXXXX"));
+    QVERIFY(unexpected.isValid());
+    QVERIFY(writeFile(
+        QDir(unexpected.path()).filePath(QString::fromLatin1(keyId.toHex()) + ".pub"),
+        publicKey));
+    QVERIFY(writeFile(QDir(unexpected.path()).filePath(".hidden"), QByteArrayView("x", 1)));
+    QVERIFY(!loadProductionEcpkgTrustStore(unexpected.path()));
+
+    QTemporaryDir tooMany(
+        QString::fromLatin1("/private/tmp/embed-labs-many-trust-XXXXXX"));
+    QVERIFY(tooMany.isValid());
+    for (qsizetype index = 0; index <= maximumEcpkgTrustedPublicKeys; ++index) {
+        QByteArray key(32, '\0');
+        key[0] = char(index);
+        key[31] = char(index + 1);
+        const QByteArray digest
+            = QCryptographicHash::hash(key, QCryptographicHash::Sha256);
+        QVERIFY(writeFile(
+            QDir(tooMany.path()).filePath(QString::fromLatin1(digest.toHex()) + ".pub"),
+            key));
+    }
+    QVERIFY(!loadProductionEcpkgTrustStore(tooMany.path()));
+
+    QTemporaryDir linked(
+        QString::fromLatin1("/private/tmp/embed-labs-linked-trust-XXXXXX"));
+    QVERIFY(linked.isValid());
+    const QString realDirectory = QDir(linked.path()).filePath("real");
+    const QString linkedDirectory = QDir(linked.path()).filePath("linked");
+    QVERIFY(QDir().mkpath(realDirectory));
+    QVERIFY(writeFile(
+        QDir(realDirectory).filePath(QString::fromLatin1(keyId.toHex()) + ".pub"),
+        publicKey));
+    if (QFile::link(realDirectory, linkedDirectory))
+        QVERIFY(!loadProductionEcpkgTrustStore(linkedDirectory));
 }
 
 void EtherCATSemanticRuntimeTests::testSemanticBindingTransferredPackages()

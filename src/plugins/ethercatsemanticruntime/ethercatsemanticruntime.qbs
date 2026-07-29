@@ -21,6 +21,8 @@ QtcPlugin {
         "ed25519verifier.cpp",
         "ed25519verifier.h",
         "ethercatsemanticruntimeplugin.cpp",
+        "productiontruststore_p.cpp",
+        "productiontruststore_p.h",
         "semanticbindingartifact_p.cpp",
         "semanticbindingartifact_p.h",
         "semanticruntimeexecutor.cpp",
