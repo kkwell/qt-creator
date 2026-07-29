@@ -2181,7 +2181,9 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
     releaseHold.value = {};
     releaseHold.parameters.clear();
     releaseHold.ttlMs = 0;
-    QVERIFY(validateSemanticOperationRequest(releaseHold, fixture.context).accepted());
+    QCOMPARE(
+        validateSemanticOperationRequest(releaseHold, fixture.context).error,
+        SemanticRuntimeValidationError::InvalidRequest);
 
     Data::SemanticOperationRequest resourceInjection = fixture.request;
     resourceInjection.value = QVariant::fromValue(fixture.binding.resourceId);
@@ -2305,11 +2307,20 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
     actionRequest.value = {};
     actionRequest.ttlMs = 0;
     actionRequest.ttlCycles = 1000;
+    actionRequest.expectedActionDefinitionDigest = action.actionDefinitionDigest;
     actionRequest.parameters = {{"enable", true}};
 
     Data::SemanticRuntimeContext actionContext = fixture.context;
+    actionContext.actionDefinitionsDigest = {"sha256", QByteArray(32, '\x73')};
+    actionContext.cyclePeriodNs = 125000;
     actionContext.actionStates = {action};
     QVERIFY(validateSemanticOperationRequest(actionRequest, actionContext).accepted());
+
+    Data::SemanticRuntimeContext missingActionEvidence = actionContext;
+    missingActionEvidence.actionDefinitionsDigest = {};
+    QCOMPARE(
+        validateSemanticOperationRequest(actionRequest, missingActionEvidence).error,
+        SemanticRuntimeValidationError::InvalidTarget);
 
     Data::SemanticOperationRequest missingActionParameter = actionRequest;
     missingActionParameter.parameters.clear();
@@ -2331,6 +2342,11 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
     QCOMPARE(
         validateSemanticOperationRequest(excessiveActionTtl, actionContext).error,
         SemanticRuntimeValidationError::InvalidRequest);
+    Data::SemanticOperationRequest changedActionDigest = actionRequest;
+    changedActionDigest.expectedActionDefinitionDigest.value[0] ^= '\x01';
+    QCOMPARE(
+        validateSemanticOperationRequest(changedActionDigest, actionContext).error,
+        SemanticRuntimeValidationError::InvalidTarget);
 
     Data::SemanticRuntimeBinding secondBinding = fixture.binding;
     secondBinding.target.signalId = {"urn:example.test:signal/velocity"};
@@ -2363,7 +2379,7 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
         validateSemanticOperationRequest(actionRequest, actionBindingTargetMismatch).error,
         SemanticRuntimeValidationError::InvalidBinding);
 
-    Data::SemanticRuntimeContext duplicateActionBinding = fixture.context;
+    Data::SemanticRuntimeContext duplicateActionBinding = actionContext;
     duplicateActionBinding.actionStates = {action};
     duplicateActionBinding.actionStates.first().bindings.append(fixture.binding);
     QCOMPARE(
@@ -2408,6 +2424,14 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
     QCOMPARE(
         validateSemanticOperationApproval(
             wrongRequestDigest, fixture.actor, approvalOperation, fixture.context)
+            .error,
+        SemanticRuntimeValidationError::ApprovalChallengeMismatch);
+
+    Data::SemanticOperationRecord changedApprovedRequest = approvalOperation;
+    changedApprovedRequest.request.ttlMs += 1;
+    QCOMPARE(
+        validateSemanticOperationApproval(
+            approval, fixture.actor, changedApprovedRequest, fixture.context)
             .error,
         SemanticRuntimeValidationError::ApprovalChallengeMismatch);
 

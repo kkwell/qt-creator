@@ -298,6 +298,7 @@ QByteArray canonicalSemanticOperationRequest(const Data::SemanticOperationReques
     writeEpoch(stream, request.expectedEpoch);
     writeDigest(stream, request.expectedMappingDigest);
     writeDigest(stream, request.expectedControllerMappingDigest);
+    writeDigest(stream, request.expectedActionDefinitionDigest);
     stream << request.expectedContextHash << request.value << request.parameters << request.ttlMs
            << request.ttlCycles << request.reason;
     if (stream.status() != QDataStream::Ok)
@@ -399,13 +400,13 @@ SemanticRuntimeValidation validateSemanticOperationRequest(
         || (request.kind == Data::SemanticOperationKind::SetSignalValue
             && (request.target.kind != Data::SemanticRuntimeTargetKind::Signal
                 || !isAllowedSemanticRuntimeValue(request.value) || request.ttlMs == 0
-                || request.ttlCycles != 0 || !request.parameters.isEmpty()))
+                || request.ttlCycles != 0 || !request.parameters.isEmpty()
+                || request.expectedActionDefinitionDigest != Data::SemanticRuntimeDigest{}))
         || (request.kind == Data::SemanticOperationKind::InvokeAction
             && (request.target.kind != Data::SemanticRuntimeTargetKind::Action
-                || request.value.isValid() || request.ttlMs != 0 || request.ttlCycles == 0))
-        || (request.kind == Data::SemanticOperationKind::ReleaseHold
-            && (request.value.isValid() || !request.parameters.isEmpty() || request.ttlMs != 0
-                || request.ttlCycles != 0))) {
+                || request.value.isValid() || request.ttlMs != 0 || request.ttlCycles == 0
+                || !isCanonicalSha256Digest(request.expectedActionDefinitionDigest)))
+        || request.kind == Data::SemanticOperationKind::ReleaseHold) {
         return rejection(
             SemanticRuntimeValidationError::InvalidRequest,
             QStringLiteral("Semantic operation request is incomplete."));
@@ -515,12 +516,18 @@ SemanticRuntimeValidation validateSemanticOperationRequest(
         if (matches.size() != 1
             || matches.constFirst().availability != Data::SemanticActionAvailability::Ready
             || !matches.constFirst().definition.enabled
+            || !isCanonicalSha256Digest(context.actionDefinitionsDigest)
+            || context.cyclePeriodNs == 0
             || matches.constFirst().qualification != Data::SemanticActionQualification::Qualified
             || !matches.constFirst().disabledReason.isEmpty()
             || matches.constFirst().actionBindingId != request.target.actionId.value
             || !isCanonicalSha256Digest(matches.constFirst().actionDefinitionDigest)
+            || !digestsMatch(
+                request.expectedActionDefinitionDigest,
+                matches.constFirst().actionDefinitionDigest)
             || matches.constFirst().bindings.isEmpty()
-            || matches.constFirst().maximumTtlCycles == 0) {
+            || matches.constFirst().maximumTtlCycles == 0
+            || matches.constFirst().maximumTtlCycles > 65535) {
             return rejection(
                 SemanticRuntimeValidationError::InvalidTarget,
                 QStringLiteral("Semantic action is not uniquely bound and ready."));
@@ -611,9 +618,16 @@ SemanticRuntimeValidation validateSemanticOperationApproval(
             SemanticRuntimeValidationError::ApprovalActorInvalid,
             QStringLiteral("A verified human user must approve the semantic operation."));
     }
+    const QByteArray canonicalRequest = canonicalSemanticOperationRequest(operation.request);
+    const QByteArray currentRequestDigest
+        = canonicalRequest.isEmpty()
+              ? QByteArray()
+              : QCryptographicHash::hash(canonicalRequest, QCryptographicHash::Sha256);
     if (!sha256BytesAreValid(operation.approvalChallenge)
         || !sha256BytesAreValid(approval.challenge)
         || operation.approvalChallenge != approval.challenge
+        || !sha256BytesAreValid(operation.canonicalRequestDigest)
+        || currentRequestDigest != operation.canonicalRequestDigest
         || !sha256BytesAreValid(approval.expectedRequestDigest)
         || approval.expectedRequestDigest != operation.canonicalRequestDigest
         || !sha256BytesAreValid(approval.expectedContextHash)

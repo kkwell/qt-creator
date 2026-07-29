@@ -138,7 +138,6 @@ struct ETHERCATDATA_EXPORT SemanticActionParameterRuntimeDefinition
     QString unit;
     QVariant minimum;
     QVariant maximum;
-    bool required = true;
 
     friend bool operator==(
         const SemanticActionParameterRuntimeDefinition &,
@@ -177,6 +176,8 @@ struct ETHERCATDATA_EXPORT SemanticRuntimeContext
     RuntimeResourceCatalogEpoch epoch;
     SemanticRuntimeDigest mappingDigest;
     SemanticRuntimeDigest controllerMappingDigest;
+    SemanticRuntimeDigest actionDefinitionsDigest;
+    quint32 cyclePeriodNs = 0;
     SemanticBindingVerification bindingVerification;
     QByteArray contextHash;
     QList<SemanticSignalRuntimeState> signalStates;
@@ -233,6 +234,7 @@ struct ETHERCATDATA_EXPORT SemanticOperationRequest
     RuntimeResourceCatalogEpoch expectedEpoch;
     SemanticRuntimeDigest expectedMappingDigest;
     SemanticRuntimeDigest expectedControllerMappingDigest;
+    SemanticRuntimeDigest expectedActionDefinitionDigest;
     QByteArray expectedContextHash;
     QVariant value;
     QMap<QString, QVariant> parameters;
