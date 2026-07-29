@@ -72,6 +72,7 @@ inline constexpr quint32 RuntimeOutputTransactionResultKnownMask
 enum class RuntimeOutputTransactionOutcome {
     Unknown,
     Applied,
+    AppliedThenRecovered,
     Rejected,
     OutcomeUnknown,
 };
@@ -391,7 +392,9 @@ struct ETHERCATDATA_EXPORT RuntimeOutputTransactionRequest
                 && expectedRecoveryPolicy != RuntimeOutputRecoveryPolicy::HoldSafe)
             || !expectedMaximumTtlCycles || expectedMaximumTtlCycles > 65535
             || !expectedOutputGeneration
-            || expectedOutputGeneration == std::numeric_limits<quint64>::max() || !ttlCycles
+            || expectedOutputGeneration
+                   > std::numeric_limits<quint64>::max() - quint64(2)
+            || !ttlCycles
             || ttlCycles > expectedMaximumTtlCycles
             || !consistencyGroupId.isValid()
             || quint32(completeGroupWrites.size()) != expectedCompleteResourceCount) {
@@ -416,9 +419,10 @@ struct ETHERCATDATA_EXPORT RuntimeOutputTransactionResult
 {
     RuntimeOutputTransactionRequest request;
     RuntimeOutputTransactionOutcome outcome = RuntimeOutputTransactionOutcome::Unknown;
-    // True only after the provider decoded a valid terminal controller response. A disconnect,
-    // timeout, or framing failure after transmission leaves this false and the outcome unknown;
-    // callers must reconcile with the same OperationId instead of issuing a new mutation.
+    // True only after the provider decoded the original ApplyOutputTransaction terminal response.
+    // A state query can prove Applied or AppliedThenRecovered while this remains false. A network
+    // failure without such proof remains OutcomeUnknown and must be reconciled with the same
+    // OperationId instead of issuing a new mutation.
     bool finalResponseObserved = false;
     std::optional<RuntimeOutputTransactionState> state;
     std::optional<ControllerOperationError> error;
@@ -428,21 +432,38 @@ struct ETHERCATDATA_EXPORT RuntimeOutputTransactionResult
         if (!request.isValid())
             return false;
 
+        const auto stateMatchesRequest = [this] {
+            return state && state->isValid() && state->operationId
+                   && *state->operationId == request.operationId
+                   && state->scope == request.scope
+                   && state->sessionGeneration == request.sessionGeneration
+                   && state->epoch == request.expectedEpoch
+                   && state->mappingDigest == request.expectedMappingDigest
+                   && state->consistencyGroupId == request.consistencyGroupId
+                   && state->recoveryPolicy == request.expectedRecoveryPolicy
+                   && state->ttlCycles == request.ttlCycles
+                   && state->valueCount == quint16(request.completeGroupWrites.size());
+        };
+
         if (outcome == RuntimeOutputTransactionOutcome::Applied) {
-            if (!finalResponseObserved || !state || error || !state->isValid()
-                || state->state != RuntimeOutputState::OverrideActive || !state->operationId
-                || *state->operationId != request.operationId || state->scope != request.scope
-                || state->sessionGeneration != request.sessionGeneration
-                || state->epoch != request.expectedEpoch
-                || state->mappingDigest != request.expectedMappingDigest
-                || state->consistencyGroupId != request.consistencyGroupId
-                || state->recoveryPolicy != request.expectedRecoveryPolicy
-                || state->ttlCycles != request.ttlCycles
-                || state->valueCount != quint16(request.completeGroupWrites.size())
-                || state->outputGeneration != request.expectedOutputGeneration + 1) {
+            return !error && stateMatchesRequest()
+                   && state->state == RuntimeOutputState::OverrideActive
+                   && state->outputGeneration == request.expectedOutputGeneration + 1;
+        }
+
+        if (outcome == RuntimeOutputTransactionOutcome::AppliedThenRecovered) {
+            if (finalResponseObserved || error || !stateMatchesRequest()
+                || state->outputGeneration != request.expectedOutputGeneration + 2) {
                 return false;
             }
-            return true;
+            return (request.expectedRecoveryPolicy == RuntimeOutputRecoveryPolicy::ReturnTask
+                    && state->state == RuntimeOutputState::Idle
+                    && state->resultFlags.testFlag(
+                        RuntimeOutputTransactionResultFlag::ReturnedTask))
+                   || (request.expectedRecoveryPolicy == RuntimeOutputRecoveryPolicy::HoldSafe
+                       && state->state == RuntimeOutputState::SafeHold
+                       && state->resultFlags.testFlag(
+                           RuntimeOutputTransactionResultFlag::SafeHold));
         }
 
         if (outcome == RuntimeOutputTransactionOutcome::Rejected

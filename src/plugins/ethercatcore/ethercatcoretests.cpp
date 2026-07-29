@@ -1651,6 +1651,8 @@ void EtherCATCoreTests::testRuntimeOutputTransactionContract()
     QVERIFY(safeHold.isValid());
     safeHold.resultFlags |= Data::RuntimeOutputTransactionResultFlag::OverrideActive;
     QVERIFY(!safeHold.isValid());
+    safeHold.resultFlags = Data::RuntimeOutputTransactionResultFlag::SafeHold;
+    QVERIFY(safeHold.isValid());
 
     Data::RuntimeOutputValueWrite booleanWrite;
     booleanWrite.resourceId.value = QByteArray::fromHex("01");
@@ -1743,6 +1745,9 @@ void EtherCATCoreTests::testRuntimeOutputTransactionContract()
     applied.state = fixture.appliedState;
     QVERIFY(applied.isValid());
     QCOMPARE(Data::RuntimeOutputTransactionResult(applied), applied);
+    applied.finalResponseObserved = false;
+    QVERIFY(applied.isValid());
+    applied.finalResponseObserved = true;
     applied.state->outputGeneration++;
     QVERIFY(!applied.isValid());
     applied.state = fixture.appliedState;
@@ -1752,6 +1757,67 @@ void EtherCATCoreTests::testRuntimeOutputTransactionContract()
     applied.state->state = Data::RuntimeOutputState::Idle;
     applied.state->resultFlags = Data::RuntimeOutputTransactionResultFlag::ReturnedTask;
     QVERIFY(!applied.isValid());
+
+    Data::RuntimeOutputTransactionResult recovered;
+    recovered.request = fixture.transactionRequest;
+    recovered.outcome = Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered;
+    recovered.state = returnedTask;
+    QVERIFY(recovered.isValid());
+    recovered.finalResponseObserved = true;
+    QVERIFY(!recovered.isValid());
+    recovered.finalResponseObserved = false;
+    recovered.state = safeHold;
+    QVERIFY(!recovered.isValid());
+    recovered.request.expectedRecoveryPolicy = Data::RuntimeOutputRecoveryPolicy::HoldSafe;
+    recovered.state->recoveryPolicy = Data::RuntimeOutputRecoveryPolicy::HoldSafe;
+    QVERIFY(recovered.isValid());
+    recovered.state->outputGeneration--;
+    QVERIFY(!recovered.isValid());
+    recovered.state = safeHold;
+    recovered.state->operationId = Data::RuntimeOutputOperationId{QByteArray(16, '\x55')};
+    QVERIFY(!recovered.isValid());
+    recovered.state = safeHold;
+    recovered.state->resultFlags |= Data::RuntimeOutputTransactionResultFlag::Replayed;
+    QVERIFY(recovered.isValid());
+    const auto rejectRecoveredMutation =
+        [&recovered](const auto &mutation) {
+            Data::RuntimeOutputTransactionResult invalid = recovered;
+            mutation(invalid);
+            QVERIFY(!invalid.isValid());
+        };
+    rejectRecoveredMutation([](Data::RuntimeOutputTransactionResult &invalid) {
+        invalid.state->scope.masterId = Data::NodeId::create();
+    });
+    rejectRecoveredMutation([](Data::RuntimeOutputTransactionResult &invalid) {
+        ++invalid.state->sessionGeneration;
+    });
+    rejectRecoveredMutation([](Data::RuntimeOutputTransactionResult &invalid) {
+        ++invalid.state->epoch.runtimeGeneration;
+    });
+    rejectRecoveredMutation([](Data::RuntimeOutputTransactionResult &invalid) {
+        invalid.state->mappingDigest[0] ^= 1;
+    });
+    rejectRecoveredMutation([](Data::RuntimeOutputTransactionResult &invalid) {
+        invalid.state->consistencyGroupId.value[0] ^= 1;
+    });
+    rejectRecoveredMutation([](Data::RuntimeOutputTransactionResult &invalid) {
+        ++invalid.state->ttlCycles;
+        invalid.state->expiryCycle = invalid.state->appliedCycle + invalid.state->ttlCycles;
+    });
+    rejectRecoveredMutation([](Data::RuntimeOutputTransactionResult &invalid) {
+        --invalid.state->valueCount;
+    });
+    rejectRecoveredMutation([](Data::RuntimeOutputTransactionResult &invalid) {
+        invalid.state->operationId.reset();
+        invalid.state->state = Data::RuntimeOutputState::Idle;
+        invalid.state->resultFlags = {};
+        invalid.state->appliedCycle = 0;
+        invalid.state->expiryCycle = 0;
+        invalid.state->consistencyGroupId = {};
+        invalid.state->ttlCycles = 0;
+        invalid.state->recoveryPolicy = Data::RuntimeOutputRecoveryPolicy::Unknown;
+        invalid.state->valueCount = 0;
+    });
 
     Data::RuntimeOutputTransactionResult rejected;
     rejected.request = fixture.transactionRequest;
@@ -1776,6 +1842,9 @@ void EtherCATCoreTests::testRuntimeOutputTransactionContract()
     QVERIFY(!Data::isValidRuntimeOutputDigest(QByteArray(32, '\0')));
     Data::RuntimeOutputTransactionRequest saturatedGeneration = fixture.transactionRequest;
     saturatedGeneration.expectedOutputGeneration = std::numeric_limits<quint64>::max();
+    QVERIFY(!saturatedGeneration.isValid());
+    saturatedGeneration.expectedOutputGeneration
+        = std::numeric_limits<quint64>::max() - quint64(1);
     QVERIFY(!saturatedGeneration.isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimeOutputOperationId>().isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimeOutputGroupPolicyResult>().isValid());
