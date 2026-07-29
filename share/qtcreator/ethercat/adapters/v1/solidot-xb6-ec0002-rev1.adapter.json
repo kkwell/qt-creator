@@ -1,0 +1,2852 @@
+{
+  "schemaVersion": "embed-labs.device-adapter/v1",
+  "id": "org.embedlabs.adapter.solidot.xb6-ec0002.rev1",
+  "version": "0.1.0",
+  "displayName": "Solidot XB6-EC0002 revision 1",
+  "description": "Candidate upper-layer adapter for the exact modular XB6 coupler and four exact 16-channel digital module types.",
+  "qualification": "candidate",
+  "matchPriority": 900,
+  "match": {
+    "vendorId": 8930371,
+    "productCode": 182,
+    "minimumRevision": 1,
+    "maximumRevision": 1,
+    "exactEsiSha256": "5b0bfbfffdfde1fd293589deb4a1c59f974aa79dcd9206ac0a695ab00f395bf7"
+  },
+  "capabilities": [
+    "org.embedlabs.ethercat.modular-device-profile",
+    "org.embedlabs.ethercat.coe",
+    "org.embedlabs.ethercat.diagnostics"
+  ],
+  "source": {
+    "id": "org.embedlabs.esi.solidot.xb6-v3.22",
+    "version": "3.22",
+    "location": "resource://ethercat/esi/EcatTerminal-XB6_V3.22_ENUM.xml",
+    "sha256": "5b0bfbfffdfde1fd293589deb4a1c59f974aa79dcd9206ac0a695ab00f395bf7"
+  },
+  "evidenceSha256": "",
+  "signatureVerified": false,
+  "realHardwareAllowed": false,
+  "signals": [
+    {
+      "id": "org.embedlabs.solidot.xb6.coupler-state.raw",
+      "displayName": "Coupler state (raw)",
+      "description": "Read-only raw UINT16 state. The ESI does not define its bit meanings.",
+      "capabilities": [
+        "org.embedlabs.ethercat.diagnostics"
+      ],
+      "direction": "input",
+      "access": "read-only",
+      "required": false,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "tx",
+          "pdoIndex": 6911,
+          "objectIndex": 61696,
+          "subIndex": 1,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "value": {
+        "unit": "",
+        "scale": 1,
+        "offset": 0,
+        "minimum": null,
+        "maximum": null,
+        "step": null,
+        "enumValues": []
+      },
+      "safeValue": null,
+      "manualControl": {
+        "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+        "allowed": false,
+        "requiresExclusiveControl": true,
+        "holdToRun": false,
+        "commandTimeoutMs": 0,
+        "timeoutAction": "reject"
+      }
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6.coupler-control.internal-disabled",
+      "displayName": "Coupler control (internal, disabled)",
+      "description": "Internal raw UINT16 output retained for exact layout validation; never exposed as a manual control because the ESI defines no bit semantics.",
+      "capabilities": [
+        "org.embedlabs.ethercat.internal"
+      ],
+      "direction": "output",
+      "access": "write-only",
+      "required": false,
+      "bindings": [
+        {
+          "kind": "process-data-object",
+          "pdoDirection": "rx",
+          "pdoIndex": 5887,
+          "objectIndex": 61952,
+          "subIndex": 1,
+          "physicalType": "unsigned-integer16",
+          "bitWidth": 16,
+          "byteOrder": "little-endian",
+          "slotRelative": false
+        }
+      ],
+      "value": {
+        "unit": "",
+        "scale": 1,
+        "offset": 0,
+        "minimum": null,
+        "maximum": null,
+        "step": null,
+        "enumValues": []
+      },
+      "safeValue": null,
+      "manualControl": {
+        "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+        "allowed": false,
+        "requiresExclusiveControl": true,
+        "holdToRun": false,
+        "commandTimeoutMs": 0,
+        "timeoutAction": "reject"
+      }
+    }
+  ],
+  "processDataProfiles": [],
+  "moduleProfiles": [
+    {
+      "id": "org.embedlabs.solidot.xb6-1600b",
+      "moduleIdent": 1577,
+      "typeName": "XB6-1600B",
+      "moduleClass": "xb_dig_in",
+      "capabilities": [
+        "org.embedlabs.io.digital-input"
+      ],
+      "signals": [
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.1",
+          "displayName": "Slot {slot} digital input 1",
+          "description": "XB6-1600B PNP channel 1; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 1,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.2",
+          "displayName": "Slot {slot} digital input 2",
+          "description": "XB6-1600B PNP channel 2; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 2,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.3",
+          "displayName": "Slot {slot} digital input 3",
+          "description": "XB6-1600B PNP channel 3; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 3,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.4",
+          "displayName": "Slot {slot} digital input 4",
+          "description": "XB6-1600B PNP channel 4; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 4,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.5",
+          "displayName": "Slot {slot} digital input 5",
+          "description": "XB6-1600B PNP channel 5; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 5,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.6",
+          "displayName": "Slot {slot} digital input 6",
+          "description": "XB6-1600B PNP channel 6; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 6,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.7",
+          "displayName": "Slot {slot} digital input 7",
+          "description": "XB6-1600B PNP channel 7; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 7,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.8",
+          "displayName": "Slot {slot} digital input 8",
+          "description": "XB6-1600B PNP channel 8; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 8,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.9",
+          "displayName": "Slot {slot} digital input 9",
+          "description": "XB6-1600B PNP channel 9; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 9,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.10",
+          "displayName": "Slot {slot} digital input 10",
+          "description": "XB6-1600B PNP channel 10; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 10,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.11",
+          "displayName": "Slot {slot} digital input 11",
+          "description": "XB6-1600B PNP channel 11; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 11,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.12",
+          "displayName": "Slot {slot} digital input 12",
+          "description": "XB6-1600B PNP channel 12; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 12,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.13",
+          "displayName": "Slot {slot} digital input 13",
+          "description": "XB6-1600B PNP channel 13; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 13,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.14",
+          "displayName": "Slot {slot} digital input 14",
+          "description": "XB6-1600B PNP channel 14; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 14,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.15",
+          "displayName": "Slot {slot} digital input 15",
+          "description": "XB6-1600B PNP channel 15; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 15,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.16",
+          "displayName": "Slot {slot} digital input 16",
+          "description": "XB6-1600B PNP channel 16; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 16,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        }
+      ]
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6-1600a",
+      "moduleIdent": 1576,
+      "typeName": "XB6-1600A",
+      "moduleClass": "xb_dig_in",
+      "capabilities": [
+        "org.embedlabs.io.digital-input"
+      ],
+      "signals": [
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.1",
+          "displayName": "Slot {slot} digital input 1",
+          "description": "XB6-1600A NPN channel 1; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 1,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.2",
+          "displayName": "Slot {slot} digital input 2",
+          "description": "XB6-1600A NPN channel 2; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 2,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.3",
+          "displayName": "Slot {slot} digital input 3",
+          "description": "XB6-1600A NPN channel 3; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 3,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.4",
+          "displayName": "Slot {slot} digital input 4",
+          "description": "XB6-1600A NPN channel 4; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 4,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.5",
+          "displayName": "Slot {slot} digital input 5",
+          "description": "XB6-1600A NPN channel 5; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 5,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.6",
+          "displayName": "Slot {slot} digital input 6",
+          "description": "XB6-1600A NPN channel 6; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 6,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.7",
+          "displayName": "Slot {slot} digital input 7",
+          "description": "XB6-1600A NPN channel 7; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 7,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.8",
+          "displayName": "Slot {slot} digital input 8",
+          "description": "XB6-1600A NPN channel 8; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 8,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.9",
+          "displayName": "Slot {slot} digital input 9",
+          "description": "XB6-1600A NPN channel 9; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 9,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.10",
+          "displayName": "Slot {slot} digital input 10",
+          "description": "XB6-1600A NPN channel 10; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 10,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.11",
+          "displayName": "Slot {slot} digital input 11",
+          "description": "XB6-1600A NPN channel 11; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 11,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.12",
+          "displayName": "Slot {slot} digital input 12",
+          "description": "XB6-1600A NPN channel 12; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 12,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.13",
+          "displayName": "Slot {slot} digital input 13",
+          "description": "XB6-1600A NPN channel 13; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 13,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.14",
+          "displayName": "Slot {slot} digital input 14",
+          "description": "XB6-1600A NPN channel 14; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 14,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.15",
+          "displayName": "Slot {slot} digital input 15",
+          "description": "XB6-1600A NPN channel 15; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 15,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-input.channel.16",
+          "displayName": "Slot {slot} digital input 16",
+          "description": "XB6-1600A NPN channel 16; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-input"
+          ],
+          "direction": "input",
+          "access": "read-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "tx",
+              "pdoIndex": 6656,
+              "objectIndex": 24576,
+              "subIndex": 16,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        }
+      ]
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6-0016b",
+      "moduleIdent": 1573,
+      "typeName": "XB6-0016B(W)",
+      "moduleClass": "xb_dig_out",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "signals": [
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.1",
+          "displayName": "Slot {slot} digital output 1",
+          "description": "XB6-0016B(W) PNP channel 1; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 1,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.2",
+          "displayName": "Slot {slot} digital output 2",
+          "description": "XB6-0016B(W) PNP channel 2; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 2,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.3",
+          "displayName": "Slot {slot} digital output 3",
+          "description": "XB6-0016B(W) PNP channel 3; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 3,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.4",
+          "displayName": "Slot {slot} digital output 4",
+          "description": "XB6-0016B(W) PNP channel 4; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 4,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.5",
+          "displayName": "Slot {slot} digital output 5",
+          "description": "XB6-0016B(W) PNP channel 5; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 5,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.6",
+          "displayName": "Slot {slot} digital output 6",
+          "description": "XB6-0016B(W) PNP channel 6; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 6,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.7",
+          "displayName": "Slot {slot} digital output 7",
+          "description": "XB6-0016B(W) PNP channel 7; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 7,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.8",
+          "displayName": "Slot {slot} digital output 8",
+          "description": "XB6-0016B(W) PNP channel 8; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 8,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.9",
+          "displayName": "Slot {slot} digital output 9",
+          "description": "XB6-0016B(W) PNP channel 9; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 9,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.10",
+          "displayName": "Slot {slot} digital output 10",
+          "description": "XB6-0016B(W) PNP channel 10; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 10,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.11",
+          "displayName": "Slot {slot} digital output 11",
+          "description": "XB6-0016B(W) PNP channel 11; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 11,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.12",
+          "displayName": "Slot {slot} digital output 12",
+          "description": "XB6-0016B(W) PNP channel 12; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 12,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.13",
+          "displayName": "Slot {slot} digital output 13",
+          "description": "XB6-0016B(W) PNP channel 13; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 13,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.14",
+          "displayName": "Slot {slot} digital output 14",
+          "description": "XB6-0016B(W) PNP channel 14; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 14,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.15",
+          "displayName": "Slot {slot} digital output 15",
+          "description": "XB6-0016B(W) PNP channel 15; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 15,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.16",
+          "displayName": "Slot {slot} digital output 16",
+          "description": "XB6-0016B(W) PNP channel 16; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 16,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        }
+      ]
+    },
+    {
+      "id": "org.embedlabs.solidot.xb6-0016a",
+      "moduleIdent": 1572,
+      "typeName": "XB6-0016A",
+      "moduleClass": "xb_dig_out",
+      "capabilities": [
+        "org.embedlabs.io.digital-output"
+      ],
+      "signals": [
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.1",
+          "displayName": "Slot {slot} digital output 1",
+          "description": "XB6-0016A NPN channel 1; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 1,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.2",
+          "displayName": "Slot {slot} digital output 2",
+          "description": "XB6-0016A NPN channel 2; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 2,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.3",
+          "displayName": "Slot {slot} digital output 3",
+          "description": "XB6-0016A NPN channel 3; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 3,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.4",
+          "displayName": "Slot {slot} digital output 4",
+          "description": "XB6-0016A NPN channel 4; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 4,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.5",
+          "displayName": "Slot {slot} digital output 5",
+          "description": "XB6-0016A NPN channel 5; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 5,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.6",
+          "displayName": "Slot {slot} digital output 6",
+          "description": "XB6-0016A NPN channel 6; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 6,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.7",
+          "displayName": "Slot {slot} digital output 7",
+          "description": "XB6-0016A NPN channel 7; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 7,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.8",
+          "displayName": "Slot {slot} digital output 8",
+          "description": "XB6-0016A NPN channel 8; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 8,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.9",
+          "displayName": "Slot {slot} digital output 9",
+          "description": "XB6-0016A NPN channel 9; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 9,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.10",
+          "displayName": "Slot {slot} digital output 10",
+          "description": "XB6-0016A NPN channel 10; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 10,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.11",
+          "displayName": "Slot {slot} digital output 11",
+          "description": "XB6-0016A NPN channel 11; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 11,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.12",
+          "displayName": "Slot {slot} digital output 12",
+          "description": "XB6-0016A NPN channel 12; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 12,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.13",
+          "displayName": "Slot {slot} digital output 13",
+          "description": "XB6-0016A NPN channel 13; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 13,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.14",
+          "displayName": "Slot {slot} digital output 14",
+          "description": "XB6-0016A NPN channel 14; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 14,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.15",
+          "displayName": "Slot {slot} digital output 15",
+          "description": "XB6-0016A NPN channel 15; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 15,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        },
+        {
+          "id": "org.embedlabs.solidot.xb6.slot.{slot}.digital-output.channel.16",
+          "displayName": "Slot {slot} digital output 16",
+          "description": "XB6-0016A NPN channel 16; the slot is resolved from an exact ModuleIdent assignment.",
+          "capabilities": [
+            "org.embedlabs.io.digital-output"
+          ],
+          "direction": "output",
+          "access": "write-only",
+          "required": true,
+          "bindings": [
+            {
+              "kind": "process-data-object",
+              "pdoDirection": "rx",
+              "pdoIndex": 5632,
+              "objectIndex": 28672,
+              "subIndex": 16,
+              "physicalType": "boolean",
+              "bitWidth": 1,
+              "byteOrder": "little-endian",
+              "slotRelative": true
+            }
+          ],
+          "value": {
+            "unit": "",
+            "scale": 1,
+            "offset": 0,
+            "minimum": null,
+            "maximum": null,
+            "step": null,
+            "enumValues": []
+          },
+          "safeValue": null,
+          "manualControl": {
+            "policyId": "org.embedlabs.policy.solidot.xb6.candidate-disabled",
+            "allowed": false,
+            "requiresExclusiveControl": true,
+            "holdToRun": false,
+            "commandTimeoutMs": 0,
+            "timeoutAction": "reject"
+          }
+        }
+      ]
+    }
+  ],
+  "controlActions": []
+}

@@ -43,6 +43,7 @@ Project {
         "dotnet/dotnet.qbs",
         "easyboard/easyboard.qbs",
         "ethercatcore/ethercatcore.qbs",
+        "ethercatdeviceadapters/ethercatdeviceadapters.qbs",
         "ethercatdevices/ethercatdevices.qbs",
         "ethercatproductapi/ethercatproductapi.qbs",
         "ethercatproject/ethercatproject.qbs",

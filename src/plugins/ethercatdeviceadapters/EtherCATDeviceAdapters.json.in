@@ -1,0 +1,14 @@
+{
+    "Id" : "ethercatdeviceadapters",
+    "DisplayName" : "EtherCAT Device Adapters",
+    "Name" : "EtherCATDeviceAdapters",
+    "Version" : "${IDE_VERSION}",
+    "CompatVersion" : "${IDE_VERSION_COMPAT}",
+    "VendorId" : "embedlabs",
+    "Vendor" : "Embed Labs",
+    "Copyright" : "(C) 2026 Embed Labs",
+    "License" : [ "Commercial Usage" ],
+    "Category" : "EtherCAT",
+    "Description" : "Data-driven semantic adapters for EtherCAT slave devices.",
+    ${IDE_PLUGIN_DEPENDENCIES}
+}

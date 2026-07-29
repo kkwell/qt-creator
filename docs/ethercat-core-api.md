@@ -194,6 +194,16 @@ controller runtime. Those remain separate issues so the IDE stays the single
 engineering source of truth and the 125 us runtime remains independent of UI,
 MCP, and network timing.
 
+The later `EtherCATDeviceAdapters` plugin supplies the first concrete,
+data-driven implementation of this extension point. It loads versioned
+packages from `ethercat/adapters/v1`, rejects malformed or ambiguous package
+sets, and resolves exact ESI identities against the selected process image.
+The shared model now also retains an explicit process-data profile, modular
+slot assignments, slot-relative signal templates, and finite control-action
+compiler input. These additions remain upper-layer data: the plugin does not
+open a controller connection, read or write a runtime process image, execute
+an action, or add a manufacturer branch to Core or a controller Provider.
+
 ## Controller connection provider contract
 
 `ControllerConnectionProvider` is the GUI-thread, in-process boundary between

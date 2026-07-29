@@ -2351,3 +2351,31 @@ Product API v1.11/feature mask `0x00001fff` on BootId
 The healthy real snapshot had fault masks `0/0`, so no real-controller
 ResetFault request, AlarmCleared response, or recovered hardware state is
 claimed.
+
+## Data-driven XB6 and SV630N adapter package delta
+
+The independent `EtherCATDeviceAdapters` plugin now provides the first
+concrete implementation of the provider-neutral device-adapter contract. It
+loads strict versioned package data from the shared EtherCAT resource tree and
+selects a package only from the exact identity, revision, ESI SHA-256, process
+data profile, and modular assignment. The resolver binds semantic signals to
+the Project process-image description; it owns no Product API transport and
+does not read or write live process data.
+
+The XB6 Candidate package preserves the coupler separately from installed
+modules and contains four exact 16-channel DI/DO ModuleIdent templates.
+Slot-relative signal IDs and PDO/object indexes are expanded from explicit
+module assignments. The SV630N Candidate package describes the DC-only
+RxPDO `0x1702` and TxPDO `0x1b04` velocity profile plus finite CiA 402
+preparation and stop plans. Manufacturer identities, PDO indexes, and action
+details remain package data and do not appear as branches in Core, Workbench,
+ProductApi, or the controller runtime.
+
+Both packages are unsigned Candidates with real-hardware permission disabled.
+All writable signals have manual control disabled, no safe output value is
+asserted, and both SV630N actions are disabled. This round therefore claims
+only deterministic package loading and offline semantic binding. The focused
+Qt 6.11 offscreen suite passed 13 tests with no failures, and the complete
+Core suite passed 22 tests. The `WITH_TESTS=OFF` product targets built with
+the new plugin and copied packages present in the app resource tree. No
+visible GUI or controller connection was used.

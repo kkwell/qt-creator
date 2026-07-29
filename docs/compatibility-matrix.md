@@ -3589,7 +3589,7 @@ historical results of those earlier issues.
 | Topology boundary | Position and device identity support truthful linear display; physical port-to-port edges remain unavailable |
 | Mock visibility | Production hides local Mock Scan/Diagnostics UI by default; it is available only with `WITH_TESTS` or `QTC_ETHER_CAT_ENABLE_MOCK_UI=1` |
 | Current English regression | Workbench 95, Project 15, Devices 8, Core 19, Scan 11, Diagnostics 7, and ProductApi 71; 226 passed, 0 failed, and 1 ProductApi hardware test skipped |
-| Current product build | The `WITH_TESTS=OFF` product build passed and contains exactly 17 plugin dylibs |
+| Current product build | The `WITH_TESTS=OFF` product build passed and contains exactly 19 plugin dylibs, including AutomationGateway and DeviceAdapters |
 | Current Simplified Chinese | All EtherCAT translation contexts contain 0 unfinished and 0 empty translations |
 | Current hardware evidence | The generic Start lifecycle and explicit DC lifecycle each passed 3 tests with 0 failures and completed safe cleanup in `SHUTDOWN`/EMPTY with no lease owner or fault |
 | Current FreeRun boundary | Windows `ISSUE-RT-009` separated a successful LRW cycle from the actual failure: `OP_REQUEST` for station `0x1002` returned WKC 0/1 on all four attempts. `cfg812` was not activated and no FreeRun lifecycle ran. Windows continues with `ISSUE-API-016` and the smallest isolated fix |
@@ -3672,3 +3672,26 @@ to a controller.
 | Hardware claim | None; no network/controller session, lease, scan, package, state transition, or process-data operation was performed |
 | Build-system sync | EtherCATData CMake and qbs source lists both include `deviceadapter.h` |
 | Publication | Local `embed-labs` only; no remote publication is authorized |
+
+## XB6 and SV630N Candidate adapter packages
+
+`ISSUE-IDE-DEVICE-ADAPTER-PACKAGES-001` implements the first concrete
+upper-layer packages without widening the controller transport or claiming
+real-hardware control.
+
+| Gate | Result |
+|---|---|
+| Package provider | `EtherCATDeviceAdapters` loads strict versioned JSON packages from `ethercat/adapters/v1` and registers one `DeviceAdapterProvider` |
+| Exact selection | VendorId, ProductCode, full revision interval, exact ESI SHA-256, selected PDO profile, and modular assignments are checked before binding |
+| XB6 scope | Exact revision-1 coupler plus four ModuleIdent profiles for 16-channel PNP/NPN DI and DO modules; slot-relative object and PDO indexes expand only from supplied assignments |
+| XB6 safety | Coupler status is read-only; Coupler Control and all DO channels remain manual-disabled, with no asserted safe output value |
+| SV630N scope | Exact revision `0x00010000`, DC-only CSV Candidate profile using RxPDO `0x1702` and TxPDO `0x1b04`, with finite preparation and stop action plans |
+| SV630N safety | Raw drive units only; every output and action is disabled, no safe motion value or engineering-unit conversion is asserted, and FreeRun is not advertised |
+| Trust gate | Both packages are Candidate, unsigned, and `realHardwareAllowed=false`; a real-hardware resolution request is rejected |
+| Parser failures | Unknown or missing fields, wrong schema, duplicate package identity/version, malformed hashes, ambiguous bindings, unknown modules, duplicate slots, and incomplete required signals fail closed |
+| Focused Qt test | 13 passed, 0 failed, 0 skipped using the offscreen test runner |
+| Core regression | 22 passed, 0 failed, 0 skipped using the offscreen test runner |
+| Product build | Qt 6.11 `WITH_TESTS=OFF` built DeviceAdapters, Core, ProductApi, Workbench, and AutomationGateway; the 19-plugin product inventory includes DeviceAdapters and the adapter resources match the app bundle copies |
+| Build-system sync | The new plugin is present in both CMake and qbs; the shared `ethercat` resource tree carries both packages in both build systems |
+| Explicit exclusions | No Project persistence, Workbench page, runtime resource catalog, process-data mutation, action execution, controller connection, or hardware operation |
+| Publication | Local `embed-labs` only; no fetch, pull, merge, rebase, branch switch, push, PR, or remote publication |
