@@ -59,7 +59,39 @@ bool sampleMatchesBinding(
     return sample.resourceId == binding.resourceId
            && sample.consistencyGroupId == binding.consistencyGroupId
            && sample.value.primitiveType == binding.primitiveType
-           && sample.value.typeIdentity == binding.valueTypeIdentity;
+           && sample.value.typeIdentity == binding.valueTypeIdentity
+           && isSemanticRuntimeValueCompatible(sample.value.value, binding);
+}
+
+SemanticRuntimeValidation validateBindingAgainstContext(
+    const Data::SemanticRuntimeBinding &binding,
+    const Data::SemanticRuntimeContext &context,
+    const QString &subject)
+{
+    const SemanticRuntimeValidation bindingValidation
+        = validateSemanticRuntimeBinding(binding);
+    if (!bindingValidation.accepted())
+        return bindingValidation;
+
+    // SemanticBindingVerification is a value-semantic proof record. A binding must carry the
+    // exact proof published by its context, including the verifier, signed manifest, verification
+    // time, and revocation/detail state. Matching only the independently valid proof state would
+    // allow a binding from another signed context to be spliced into this one.
+    if (binding.verification != context.bindingVerification) {
+        return rejection(
+            SemanticRuntimeValidationError::BindingUnverified,
+            QStringLiteral("%1 binding proof differs from the runtime context.").arg(subject));
+    }
+    if (binding.sessionGeneration != context.sessionGeneration
+        || binding.epoch != context.epoch
+        || !digestsMatch(binding.mappingDigest, context.mappingDigest)
+        || !digestsMatch(
+            binding.controllerMappingDigest, context.controllerMappingDigest)) {
+        return rejection(
+            SemanticRuntimeValidationError::EpochMismatch,
+            QStringLiteral("%1 binding differs from the runtime context.").arg(subject));
+    }
+    return {};
 }
 
 void writeDigest(QDataStream &stream, const Data::SemanticRuntimeDigest &digest)
@@ -355,6 +387,7 @@ SemanticRuntimeValidation validateSemanticOperationRequest(
         || !sha256BytesAreValid(context.contextHash)
         || context.bindingVerification.state
                != Data::SemanticBindingVerificationState::Verified
+        || context.bindingVerification.verifierId.isEmpty()
         || !isCanonicalSha256Digest(context.bindingVerification.signedManifestDigest)) {
         return rejection(
             SemanticRuntimeValidationError::BindingUnverified,
@@ -410,36 +443,37 @@ SemanticRuntimeValidation validateSemanticOperationRequest(
                 SemanticRuntimeValidationError::InvalidTarget,
                 QStringLiteral("Semantic signal is not uniquely bound and ready."));
         }
-        const Data::SemanticRuntimeBinding &binding = *matches.constFirst().binding;
+        const Data::SemanticSignalRuntimeState &state = matches.constFirst();
+        const Data::SemanticRuntimeBinding &binding = *state.binding;
+        if (state.definition.id != state.target.signalId) {
+            return rejection(
+                SemanticRuntimeValidationError::InvalidTarget,
+                QStringLiteral("Semantic signal definition differs from its target."));
+        }
+        if (binding.target != state.target) {
+            return rejection(
+                SemanticRuntimeValidationError::InvalidBinding,
+                QStringLiteral("Semantic signal binding differs from its target."));
+        }
         const SemanticRuntimeValidation bindingValidation
-            = validateSemanticRuntimeBinding(binding);
+            = validateBindingAgainstContext(binding, context, QStringLiteral("Semantic signal"));
         if (!bindingValidation.accepted())
             return bindingValidation;
-        if (binding.sessionGeneration != context.sessionGeneration
-            || binding.epoch != context.epoch
-            || !digestsMatch(binding.mappingDigest, context.mappingDigest)
-            || !digestsMatch(
-                binding.controllerMappingDigest, context.controllerMappingDigest)) {
-            return rejection(
-                SemanticRuntimeValidationError::EpochMismatch,
-                QStringLiteral("Semantic signal binding differs from the runtime context."));
-        }
         if (request.kind == Data::SemanticOperationKind::SetSignalValue
             && ((binding.direction != Data::RuntimeResourceDirection::Output
                  && binding.direction != Data::RuntimeResourceDirection::Bidirectional)
                 || (binding.access != Data::RuntimeResourceAccess::WriteOnly
                     && binding.access != Data::RuntimeResourceAccess::ReadWrite)
                 || !isSemanticRuntimeValueCompatible(request.value, binding)
-                || !matches.constFirst().definition.manualControl.allowed
-                || matches.constFirst().definition.manualControl.commandTimeoutMs == 0
-                || request.ttlMs
-                       > matches.constFirst().definition.manualControl.commandTimeoutMs)) {
+                || !state.definition.manualControl.allowed
+                || state.definition.manualControl.commandTimeoutMs == 0
+                || request.ttlMs > state.definition.manualControl.commandTimeoutMs)) {
             return rejection(
                 SemanticRuntimeValidationError::InvalidRequest,
                 QStringLiteral("Semantic signal is not approved for manual writes."));
         }
         if (request.kind == Data::SemanticOperationKind::ReleaseHold
-            && !matches.constFirst().definition.manualControl.holdToRun) {
+            && !state.definition.manualControl.holdToRun) {
             return rejection(
                 SemanticRuntimeValidationError::InvalidRequest,
                 QStringLiteral("Semantic signal has no hold-to-run operation."));
@@ -463,26 +497,38 @@ SemanticRuntimeValidation validateSemanticOperationRequest(
                 SemanticRuntimeValidationError::InvalidTarget,
                 QStringLiteral("Semantic action is not uniquely bound and ready."));
         }
+        const Data::SemanticActionRuntimeState &state = matches.constFirst();
+        if (state.definition.id != state.target.actionId) {
+            return rejection(
+                SemanticRuntimeValidationError::InvalidTarget,
+                QStringLiteral("Semantic action definition differs from its target."));
+        }
         if (request.kind == Data::SemanticOperationKind::ReleaseHold
-            && !matches.constFirst().holdToRun) {
+            && !state.holdToRun) {
             return rejection(
                 SemanticRuntimeValidationError::InvalidRequest,
                 QStringLiteral("Semantic action has no hold-to-run operation."));
         }
-        for (const Data::SemanticRuntimeBinding &binding : matches.constFirst().bindings) {
+        QList<Data::RuntimeResourceId> resourceIds;
+        QList<Data::SemanticRuntimeTarget> bindingTargets;
+        for (const Data::SemanticRuntimeBinding &binding : state.bindings) {
+            if (binding.target.controllerId != state.target.controllerId
+                || binding.target.scope != state.target.scope
+                || binding.target.deviceId != state.target.deviceId
+                || resourceIds.contains(binding.resourceId)
+                || bindingTargets.contains(binding.target)) {
+                return rejection(
+                    SemanticRuntimeValidationError::InvalidBinding,
+                    QStringLiteral(
+                        "Semantic action contains a mismatched or duplicate binding."));
+            }
+            resourceIds.append(binding.resourceId);
+            bindingTargets.append(binding.target);
             const SemanticRuntimeValidation bindingValidation
-                = validateSemanticRuntimeBinding(binding);
+                = validateBindingAgainstContext(
+                    binding, context, QStringLiteral("Semantic action"));
             if (!bindingValidation.accepted())
                 return bindingValidation;
-            if (binding.sessionGeneration != context.sessionGeneration
-                || binding.epoch != context.epoch
-                || !digestsMatch(binding.mappingDigest, context.mappingDigest)
-                || !digestsMatch(
-                    binding.controllerMappingDigest, context.controllerMappingDigest)) {
-                return rejection(
-                    SemanticRuntimeValidationError::EpochMismatch,
-                    QStringLiteral("Semantic action binding differs from the runtime context."));
-            }
         }
     }
     return {};

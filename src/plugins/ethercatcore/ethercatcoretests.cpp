@@ -1375,6 +1375,30 @@ void EtherCATCoreTests::testSemanticRuntimeReadValidation()
         validateSemanticRuntimeRead(fixture.binding, mismatchedDescriptor, fixture.snapshot)
             .validation.error,
         SemanticRuntimeValidationError::DescriptorMismatch);
+
+    Data::RuntimeResourceSnapshot mismatchedValueType = fixture.snapshot;
+    mismatchedValueType.samples.first().value.value = QVariant::fromValue<qulonglong>(1);
+    QCOMPARE(
+        validateSemanticRuntimeRead(
+            fixture.binding, fixture.catalog, mismatchedValueType)
+            .validation.error,
+        SemanticRuntimeValidationError::SampleValueMismatch);
+
+    Data::SemanticRuntimeBinding mismatchedBitWidth = fixture.binding;
+    mismatchedBitWidth.bitWidth = 8;
+    mismatchedBitWidth.valueTypeIdentity = "ethercat.runtime.value/primitive-1/bits-8";
+    Data::RuntimeResourceCatalog mismatchedBitWidthCatalog = fixture.catalog;
+    mismatchedBitWidthCatalog.resources.first().bitWidth = mismatchedBitWidth.bitWidth;
+    mismatchedBitWidthCatalog.resources.first().valueTypeIdentity
+        = mismatchedBitWidth.valueTypeIdentity;
+    Data::RuntimeResourceSnapshot mismatchedBitWidthSnapshot = fixture.snapshot;
+    mismatchedBitWidthSnapshot.samples.first().value.typeIdentity
+        = mismatchedBitWidth.valueTypeIdentity;
+    QCOMPARE(
+        validateSemanticRuntimeRead(
+            mismatchedBitWidth, mismatchedBitWidthCatalog, mismatchedBitWidthSnapshot)
+            .validation.error,
+        SemanticRuntimeValidationError::SampleValueMismatch);
 }
 
 void EtherCATCoreTests::testSemanticRuntimeOperationContract()
@@ -1499,6 +1523,114 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
     QCOMPARE(
         validateSemanticOperationRequest(fixture.request, incomplete).error,
         SemanticRuntimeValidationError::BindingUnverified);
+
+    Data::SemanticRuntimeContext verifierMissing = fixture.context;
+    verifierMissing.bindingVerification.verifierId.clear();
+    QCOMPARE(
+        validateSemanticOperationRequest(fixture.request, verifierMissing).error,
+        SemanticRuntimeValidationError::BindingUnverified);
+
+    Data::SemanticRuntimeContext definitionMismatch = fixture.context;
+    definitionMismatch.signalStates.first().definition.id
+        = {"urn:example.test:signal/another"};
+    QCOMPARE(
+        validateSemanticOperationRequest(fixture.request, definitionMismatch).error,
+        SemanticRuntimeValidationError::InvalidTarget);
+
+    Data::SemanticRuntimeContext bindingTargetMismatch = fixture.context;
+    bindingTargetMismatch.signalStates.first().binding->target.signalId
+        = {"urn:example.test:signal/another"};
+    QCOMPARE(
+        validateSemanticOperationRequest(fixture.request, bindingTargetMismatch).error,
+        SemanticRuntimeValidationError::InvalidBinding);
+
+    Data::SemanticRuntimeContext duplicateSignal = fixture.context;
+    duplicateSignal.signalStates.append(duplicateSignal.signalStates.constFirst());
+    QCOMPARE(
+        validateSemanticOperationRequest(fixture.request, duplicateSignal).error,
+        SemanticRuntimeValidationError::InvalidTarget);
+
+    Data::SemanticRuntimeContext verifierMismatch = fixture.context;
+    verifierMismatch.signalStates.first().binding->verification.verifierId = "other-verifier";
+    QCOMPARE(
+        validateSemanticOperationRequest(fixture.request, verifierMismatch).error,
+        SemanticRuntimeValidationError::BindingUnverified);
+
+    Data::SemanticRuntimeContext manifestMismatch = fixture.context;
+    manifestMismatch.signalStates.first()
+        .binding->verification.signedManifestDigest.value[0]
+        ^= '\x01';
+    QCOMPARE(
+        validateSemanticOperationRequest(fixture.request, manifestMismatch).error,
+        SemanticRuntimeValidationError::BindingUnverified);
+
+    Data::SemanticRuntimeContext proofRecordMismatch = fixture.context;
+    proofRecordMismatch.signalStates.first().binding->verification.detail = "different proof";
+    QCOMPARE(
+        validateSemanticOperationRequest(fixture.request, proofRecordMismatch).error,
+        SemanticRuntimeValidationError::BindingUnverified);
+
+    Data::SemanticActionRuntimeState action;
+    action.target = fixture.target;
+    action.target.kind = Data::SemanticRuntimeTargetKind::Action;
+    action.target.signalId = {};
+    action.target.actionId = {"urn:example.test:action/manual"};
+    action.definition.id = action.target.actionId;
+    action.definition.enabled = true;
+    action.availability = Data::SemanticActionAvailability::Ready;
+    action.bindings = {fixture.binding};
+    action.requiresApproval = true;
+    action.requiresExclusiveControl = true;
+    action.holdToRun = true;
+    action.maximumTtlMs = 250;
+
+    Data::SemanticOperationRequest actionRequest = fixture.request;
+    actionRequest.kind = Data::SemanticOperationKind::InvokeAction;
+    actionRequest.target = action.target;
+    actionRequest.value = {};
+
+    Data::SemanticRuntimeContext actionContext = fixture.context;
+    actionContext.actionStates = {action};
+    QVERIFY(validateSemanticOperationRequest(actionRequest, actionContext).accepted());
+
+    Data::SemanticRuntimeBinding secondBinding = fixture.binding;
+    secondBinding.target.signalId = {"urn:example.test:signal/velocity"};
+    secondBinding.semanticBindingId = "binding:test:velocity";
+    secondBinding.resourceId = {QByteArray::fromHex("1000000000000002")};
+    secondBinding.consistencyGroupId = {QByteArray::fromHex("3000000000000002")};
+    secondBinding.primitiveType = Data::RuntimeResourcePrimitiveType::SignedInteger;
+    secondBinding.valueTypeIdentity = "ethercat.runtime.value/primitive-7/bits-32";
+    secondBinding.bitWidth = 32;
+    actionContext.actionStates.first().bindings.append(secondBinding);
+    QVERIFY(validateSemanticOperationRequest(actionRequest, actionContext).accepted());
+
+    Data::SemanticRuntimeContext actionDefinitionMismatch = actionContext;
+    actionDefinitionMismatch.actionStates.first().definition.id
+        = {"urn:example.test:action/another"};
+    QCOMPARE(
+        validateSemanticOperationRequest(actionRequest, actionDefinitionMismatch).error,
+        SemanticRuntimeValidationError::InvalidTarget);
+
+    Data::SemanticRuntimeContext actionProofMismatch = actionContext;
+    actionProofMismatch.actionStates.first().bindings[1].verification.verifierId
+        = "other-verifier";
+    QCOMPARE(
+        validateSemanticOperationRequest(actionRequest, actionProofMismatch).error,
+        SemanticRuntimeValidationError::BindingUnverified);
+
+    Data::SemanticRuntimeContext actionBindingTargetMismatch = actionContext;
+    actionBindingTargetMismatch.actionStates.first().bindings[1].target.deviceId
+        = Data::NodeId::create();
+    QCOMPARE(
+        validateSemanticOperationRequest(actionRequest, actionBindingTargetMismatch).error,
+        SemanticRuntimeValidationError::InvalidBinding);
+
+    Data::SemanticRuntimeContext duplicateActionBinding = fixture.context;
+    duplicateActionBinding.actionStates = {action};
+    duplicateActionBinding.actionStates.first().bindings.append(fixture.binding);
+    QCOMPARE(
+        validateSemanticOperationRequest(actionRequest, duplicateActionBinding).error,
+        SemanticRuntimeValidationError::InvalidBinding);
 
     Data::SemanticOperationRecord approvalOperation;
     approvalOperation.request = fixture.request;
