@@ -3,6 +3,7 @@
 #pragma once
 
 #include <ethercatdata/controllerconnection.h>
+#include <ethercatdata/runtimeoutputtransaction.h>
 #include <ethercatdata/runtimeresource.h>
 #include <ethercatdata/semanticmappingattestation.h>
 
@@ -75,6 +76,13 @@ public:
     runtimeSemanticMappingAttestation() const;
     Utils::Result<> requestRuntimeSemanticMappingAttestation(
         const Data::RuntimeSemanticMappingAttestationRequest &request);
+    bool supportsRuntimeOutputTransactions() const;
+    Utils::Result<> requestRuntimeOutputGroupPolicy(
+        const Data::RuntimeOutputGroupPolicyRequest &request);
+    Utils::Result<> requestRuntimeOutputTransactionState(
+        const Data::RuntimeOutputTransactionStateRequest &request);
+    Utils::Result<> applyRuntimeOutputTransaction(
+        const Data::RuntimeOutputTransactionRequest &request);
     bool supportsControlCommand(Data::ControllerControlCommand command) const;
     Utils::Result<> executeControlCommand(const Data::ControllerControlRequest &request);
     bool supportsPackageDeployment() const;
@@ -101,6 +109,15 @@ signals:
     void runtimeSemanticMappingAttestationChanged();
     void runtimeSemanticMappingAttestationRequestFinished(
         const EtherCAT::Data::RuntimeSemanticMappingAttestationResult &result);
+    void runtimeOutputGroupPolicyRequestFinished(
+        const EtherCAT::Data::RuntimeOutputGroupPolicyResult &result);
+    void runtimeOutputTransactionStateChanged(
+        const EtherCAT::Data::RuntimeOutputTransactionState &state);
+    void runtimeOutputTransactionStateInvalidated();
+    void runtimeOutputTransactionStateRequestFinished(
+        const EtherCAT::Data::RuntimeOutputTransactionStateResult &result);
+    void runtimeOutputTransactionFinished(
+        const EtherCAT::Data::RuntimeOutputTransactionResult &result);
 
 private:
     std::unique_ptr<ProductApiSessionPrivate> d;

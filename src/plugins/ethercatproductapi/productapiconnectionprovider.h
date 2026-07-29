@@ -46,6 +46,13 @@ public:
     runtimeSemanticMappingAttestation() const override;
     Utils::Result<> requestRuntimeSemanticMappingAttestation(
         const Data::RuntimeSemanticMappingAttestationRequest &request) override;
+    bool supportsRuntimeOutputTransactions() const override;
+    Utils::Result<> requestRuntimeOutputGroupPolicy(
+        const Data::RuntimeOutputGroupPolicyRequest &request) override;
+    Utils::Result<> requestRuntimeOutputTransactionState(
+        const Data::RuntimeOutputTransactionStateRequest &request) override;
+    Utils::Result<> applyRuntimeOutputTransaction(
+        const Data::RuntimeOutputTransactionRequest &request) override;
     bool supportsControlCommand(Data::ControllerControlCommand command) const override;
     Utils::Result<> executeControlCommand(
         const Data::ControllerControlRequest &request) override;

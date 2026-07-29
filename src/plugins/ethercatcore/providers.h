@@ -317,6 +317,7 @@ signals:
         const EtherCAT::Data::RuntimeOutputGroupPolicyResult &result);
     void runtimeOutputTransactionStateChanged(
         const EtherCAT::Data::RuntimeOutputTransactionState &state);
+    void runtimeOutputTransactionStateInvalidated();
     void runtimeOutputTransactionStateRequestFinished(
         const EtherCAT::Data::RuntimeOutputTransactionStateResult &result);
     void runtimeOutputTransactionFinished(

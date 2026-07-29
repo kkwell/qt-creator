@@ -792,7 +792,8 @@ QByteArray runtimeResourceTablePagePayload(
     const Protocol::RuntimeResourceBinding &binding,
     quint32 cursor,
     quint32 totalCount,
-    quint32 pageSize)
+    quint32 pageSize,
+    bool secondOutputInGroup = false)
 {
     const quint16 count = quint16(std::min(pageSize, totalCount - cursor));
     const bool more = cursor + count < totalCount;
@@ -813,7 +814,7 @@ QByteArray runtimeResourceTablePagePayload(
     for (quint16 record = 0; record < count; ++record) {
         const quint32 index = cursor + record;
         const qsizetype offset = 112 + qsizetype(record) * 64;
-        const bool output = index == 1;
+        const bool output = index == 1 || (secondOutputInGroup && index == 2);
         const quint16 bitWidth = output ? 1 : 16;
         putU64(payload, offset, 0x1000000000000001 + index);
         putU64(payload, offset + 8, 0x2000000000000001 + index);
@@ -833,13 +834,15 @@ QByteArray runtimeResourceTablePagePayload(
         payload[offset + 39] = char(output ? 1 : 2);
         payload[offset + 40] = char(output ? 1 : 0);
         putU16(payload, offset + 42, 0x000f);
-        putU32(payload, offset + 44, index + 1);
+        putU32(payload, offset + 44, output ? 2 : index + 1);
     }
     return payload;
 }
 
 QByteArray runtimeResourceSnapshotPayload(
-    const Protocol::RuntimeResourceBinding &binding, const QList<quint64> &resourceIds)
+    const Protocol::RuntimeResourceBinding &binding,
+    const QList<quint64> &resourceIds,
+    bool secondOutputInGroup = false)
 {
     QByteArray payload(112 + resourceIds.size() * 32, '\0');
     putU16(payload, 0, quint16(Protocol::MessageType::GetResourceSnapshot));
@@ -854,7 +857,8 @@ QByteArray runtimeResourceSnapshotPayload(
     for (qsizetype record = 0; record < resourceIds.size(); ++record) {
         const quint64 resourceId = resourceIds.at(record);
         const qsizetype offset = 112 + record * 32;
-        const bool output = resourceId == 0x1000000000000002;
+        const bool output = resourceId == 0x1000000000000002
+                            || (secondOutputInGroup && resourceId == 0x1000000000000003);
         putU64(payload, offset, resourceId);
         payload[offset + 8] = char(
             output ? Protocol::RuntimeResourcePrimitive::Boolean
@@ -950,6 +954,95 @@ QByteArray semanticBindingAttestationPayload(
     return payload;
 }
 
+QByteArray outputGroupPolicyPayload(
+    const Protocol::RuntimeResourceBinding &binding,
+    const QByteArray &mappingDigest,
+    quint32 groupId,
+    quint64 outputGeneration,
+    quint32 completeResourceCount = 1,
+    qint32 status = 0,
+    Protocol::OutputRecoveryPolicy recoveryPolicy = Protocol::OutputRecoveryPolicy::ReturnTask)
+{
+    QByteArray payload(176, '\0');
+    putU16(payload, 0, quint16(Protocol::MessageType::QueryOutputGroupPolicy));
+    putU16(payload, 2, 176);
+    putI32(payload, 4, status);
+    if (status)
+        return payload;
+    putU32(payload, 8, binding.activeSlot);
+    putU32(payload, 12, quint32(Protocol::OutputGroupPolicyFlag::ManualWrite));
+    putU64(payload, 16, binding.packageGeneration);
+    putU64(payload, 24, binding.configurationId);
+    putU64(payload, 32, binding.topologyGeneration);
+    putU64(payload, 40, binding.runtimeGeneration);
+    putU64(payload, 48, binding.catalogRevision);
+    putU64(payload, 56, binding.topologyIdentity);
+    putU64(payload, 64, binding.bootId);
+    putU32(payload, 72, groupId);
+    putU32(payload, 76, quint32(recoveryPolicy));
+    putU32(payload, 80, 1000);
+    putU32(payload, 84, completeResourceCount);
+    putU64(payload, 88, outputGeneration);
+    payload.replace(96, 32, QByteArray(32, char(0x44)));
+    payload.replace(128, 32, mappingDigest);
+    return payload;
+}
+
+QByteArray outputTransactionRecordPayload(
+    Protocol::MessageType originalType,
+    const Protocol::RuntimeResourceBinding &binding,
+    const QByteArray &mappingDigest,
+    quint64 outputGeneration,
+    const QByteArray &operationId = {},
+    quint32 resultFlags = 0,
+    quint64 detail = 0,
+    qint32 status = 0,
+    qint32 operationResult = 0,
+    Protocol::OutputRecoveryPolicy recoveryPolicy = Protocol::OutputRecoveryPolicy::ReturnTask)
+{
+    QByteArray payload(176, '\0');
+    putU16(payload, 0, quint16(originalType));
+    putU16(payload, 2, 176);
+    putI32(payload, 4, status);
+    putI32(payload, 8, operationResult);
+    payload[12] = char(4);
+    payload[13] = char(1);
+    if (status)
+        return payload;
+    const bool active = operationId.size() == 16;
+    putU16(
+        payload,
+        14,
+        quint16(
+            active ? Protocol::OutputTransactionState::OverrideActive
+                   : Protocol::OutputTransactionState::Idle));
+    putU32(payload, 16, resultFlags);
+    putU32(payload, 20, binding.activeSlot);
+    if (active)
+        payload.replace(24, 16, operationId);
+    putU64(payload, 40, binding.packageGeneration);
+    putU64(payload, 48, binding.configurationId);
+    putU64(payload, 56, binding.topologyGeneration);
+    putU64(payload, 64, binding.runtimeGeneration);
+    putU64(payload, 72, binding.catalogRevision);
+    putU64(payload, 80, binding.topologyIdentity);
+    if (active) {
+        putU64(payload, 88, 100);
+        putU64(payload, 96, 105);
+    }
+    putU64(payload, 104, outputGeneration);
+    if (active) {
+        putU32(payload, 112, 2);
+        putU32(payload, 116, 5);
+        putU32(payload, 120, quint32(recoveryPolicy));
+        putU16(payload, 124, 1);
+    }
+    payload.replace(128, 32, mappingDigest);
+    putU64(payload, 160, detail);
+    putU64(payload, 168, 0x6162636465666768);
+    return payload;
+}
+
 class LoopbackController final : public QObject
 {
     struct Peer;
@@ -974,6 +1067,21 @@ class LoopbackController final : public QObject
         WrongEpoch,
         MalformedPayload,
         WrongResponse,
+    };
+    enum class OutputTransactionFailure {
+        None,
+        PolicyTyped,
+        PolicyBulkStatus,
+        ApplyStage2,
+        ApplyStage3,
+        HoldApplyResult,
+    };
+    enum class OutputStateReport {
+        Current,
+        NoAcceptedOperation,
+        DifferentOperation,
+        ReturnedTask,
+        SafeHold,
     };
 
 public:
@@ -1001,6 +1109,7 @@ public:
         PackageDeployment,
         RuntimeResources,
         SemanticAttestation,
+        OutputTransactions,
     };
 
     explicit LoopbackController(Behavior behavior = Behavior::Normal)
@@ -1012,8 +1121,8 @@ public:
             m_latchedFaults = quint64(1) << 15;
             m_lastAlarmSequence = TestAlarmSequence;
         } else if (
-            m_behavior == Behavior::RuntimeResources
-            || m_behavior == Behavior::SemanticAttestation) {
+            m_behavior == Behavior::RuntimeResources || m_behavior == Behavior::SemanticAttestation
+            || m_behavior == Behavior::OutputTransactions) {
             m_serviceState = 3;
             m_controllerPackageActive = true;
         }
@@ -1098,6 +1207,11 @@ public:
     }
     void setBootId(quint64 bootId) { m_bootId = bootId; }
     void setRuntimeResourceCount(quint32 count) { m_runtimeResourceCount = count; }
+    void includeSecondOutputInPolicyGroup()
+    {
+        m_runtimeResourceCount = 3;
+        m_secondOutputInPolicyGroup = true;
+    }
     void setRuntimeResourcePageSize(quint32 count) { m_runtimeResourcePageSize = count; }
     void setRuntimeSnapshotDelayMs(int delayMs) { m_runtimeSnapshotDelayMs = delayMs; }
     void holdNextRuntimeSnapshot() { m_holdNextRuntimeSnapshot = true; }
@@ -1154,6 +1268,91 @@ public:
     void setSemanticAttestationDelayMs(int delayMs)
     {
         m_semanticAttestationDelayMs = delayMs;
+    }
+    void rejectNextOutputPolicyTyped(qint32 status = -41)
+    {
+        m_nextOutputFailure = OutputTransactionFailure::PolicyTyped;
+        m_nextOutputStatus = status;
+    }
+    void rejectNextOutputPolicyWithBulkStatus(qint32 status = -7)
+    {
+        m_nextOutputFailure = OutputTransactionFailure::PolicyBulkStatus;
+        m_nextOutputStatus = status;
+    }
+    void rejectNextOutputStateTyped(qint32 status = -17) { m_nextOutputStateStatus = status; }
+    void rejectNextOutputApply(quint16 stage, qint32 status, qint32 operationResult)
+    {
+        m_nextOutputFailure = stage == 2 ? OutputTransactionFailure::ApplyStage2
+                                         : OutputTransactionFailure::ApplyStage3;
+        m_nextOutputStatus = status;
+        m_nextOutputOperationResult = operationResult;
+    }
+    void holdNextOutputApplyResult()
+    {
+        m_nextOutputFailure = OutputTransactionFailure::HoldApplyResult;
+    }
+    void holdNextOutputApplyResponseSequence()
+    {
+        m_holdNextOutputApplyResponseSequence = true;
+    }
+    bool hasHeldOutputApplyResponseSequence() const
+    {
+        return m_heldOutputApplyPeer && m_heldOutputApplyRequest.header.requestId;
+    }
+    void releaseHeldOutputApplyResponseSequence()
+    {
+        if (!hasHeldOutputApplyResponseSequence()) {
+            m_violations.append(QStringLiteral("No held output response sequence was available."));
+            return;
+        }
+        Peer *peer = m_heldOutputApplyPeer;
+        const Protocol::Frame request = m_heldOutputApplyRequest;
+        m_heldOutputApplyPeer = nullptr;
+        m_heldOutputApplyRequest = {};
+        handleOutputTransactionRequest(*peer, request);
+    }
+    void holdNextOutputStateResponse() { m_holdNextOutputStateResponse = true; }
+    void reportNextOutputStateWithoutAcceptedOperation()
+    {
+        m_nextOutputStateReport = OutputStateReport::NoAcceptedOperation;
+    }
+    void reportNextOutputStateForDifferentOperation()
+    {
+        m_nextOutputStateReport = OutputStateReport::DifferentOperation;
+    }
+    void reportNextOutputStateAsReturnedTask()
+    {
+        m_nextOutputStateReport = OutputStateReport::ReturnedTask;
+    }
+    void reportNextOutputStateAsSafeHold()
+    {
+        m_nextOutputStateReport = OutputStateReport::SafeHold;
+    }
+    void setNextOutputRecoveryGenerationAdvance(quint64 advance)
+    {
+        m_nextOutputRecoveryGenerationAdvance = advance;
+    }
+    void setOutputRecoveryPolicy(Protocol::OutputRecoveryPolicy policy)
+    {
+        m_outputRecoveryPolicy = policy;
+    }
+    void setOutputGeneration(quint64 generation) { m_outputGeneration = generation; }
+    void setOutputStateReportsReplayed(bool enabled) { m_stateReportsReplayed = enabled; }
+    bool hasHeldOutputResult() const { return m_heldOutputPeer && m_heldOutputRequestId; }
+    void releaseHeldOutputResult()
+    {
+        if (!hasHeldOutputResult()) {
+            m_violations.append(QStringLiteral("No held output result was available."));
+            return;
+        }
+        sendResponse(
+            *m_heldOutputPeer,
+            Protocol::MessageType::OutputTransactionResult,
+            m_heldOutputRequestId,
+            m_heldOutputPayload);
+        m_heldOutputPeer = nullptr;
+        m_heldOutputRequestId = 0;
+        m_heldOutputPayload.clear();
     }
     void rejectNextRuntimeSnapshotTyped(qint32 status = -17)
     {
@@ -1496,6 +1695,11 @@ private:
         case Protocol::MessageType::QuerySemanticBindingAttestation:
             handleSemanticBindingAttestationRequest(peer, frame);
             return;
+        case Protocol::MessageType::QueryOutputGroupPolicy:
+        case Protocol::MessageType::GetOutputTransactionState:
+        case Protocol::MessageType::ApplyOutputTransaction:
+            handleOutputTransactionRequest(peer, frame);
+            return;
         case Protocol::MessageType::ValidatePackage:
         case Protocol::MessageType::ActivatePackage:
         case Protocol::MessageType::RollbackPackage:
@@ -1535,8 +1739,8 @@ private:
 
     void handleRuntimeResourceRequest(Peer &peer, const Protocol::Frame &request)
     {
-        if (m_behavior != Behavior::RuntimeResources
-            && m_behavior != Behavior::SemanticAttestation) {
+        if (m_behavior != Behavior::RuntimeResources && m_behavior != Behavior::SemanticAttestation
+            && m_behavior != Behavior::OutputTransactions) {
             m_violations.append(
                 QStringLiteral("A runtime resource request was emitted outside its test."));
             return;
@@ -1575,9 +1779,12 @@ private:
                 return;
             }
 
-            const QByteArray payload
-                = runtimeResourceTablePagePayload(
-                    binding, cursor, m_runtimeResourceCount, m_runtimeResourcePageSize);
+            const QByteArray payload = runtimeResourceTablePagePayload(
+                binding,
+                cursor,
+                m_runtimeResourceCount,
+                m_runtimeResourcePageSize,
+                m_secondOutputInPolicyGroup);
             const quint32 endCursor
                 = cursor
                   + std::min(m_runtimeResourcePageSize, m_runtimeResourceCount - cursor);
@@ -1697,7 +1904,8 @@ private:
                 {});
             return;
         }
-        QByteArray snapshotPayload = runtimeResourceSnapshotPayload(binding, resourceIds);
+        QByteArray snapshotPayload
+            = runtimeResourceSnapshotPayload(binding, resourceIds, m_secondOutputInPolicyGroup);
         if (failure == RuntimeResourceFailure::MalformedPayload)
             putU32(snapshotPayload, 112 + 12, 1);
         if (failure == RuntimeResourceFailure::WrongSession
@@ -1743,7 +1951,8 @@ private:
     void handleSemanticBindingAttestationRequest(
         Peer &peer, const Protocol::Frame &request)
     {
-        if (m_behavior != Behavior::SemanticAttestation) {
+        if (m_behavior != Behavior::SemanticAttestation
+            && m_behavior != Behavior::OutputTransactions) {
             m_violations.append(
                 QStringLiteral("A semantic attestation request was emitted outside its test."));
             return;
@@ -1768,11 +1977,6 @@ private:
                 QStringLiteral("A semantic attestation request was malformed."));
             return;
         }
-        if (m_leaseOwned) {
-            m_violations.append(
-                QStringLiteral("A semantic attestation query unexpectedly required a lease."));
-        }
-
         const SemanticAttestationFailure failure = m_nextSemanticAttestationFailure;
         m_nextSemanticAttestationFailure = SemanticAttestationFailure::None;
         if (failure == SemanticAttestationFailure::Typed) {
@@ -1857,6 +2061,288 @@ private:
             payload);
     }
 
+    void handleOutputTransactionRequest(Peer &peer, const Protocol::Frame &request)
+    {
+        if (m_behavior != Behavior::OutputTransactions) {
+            m_violations.append(
+                QStringLiteral("An output transaction request was emitted outside its test."));
+            return;
+        }
+        const Protocol::RuntimeResourceBinding binding = currentRuntimeResourceBinding();
+        const QByteArray mappingDigest = m_semanticMappingProof.mappingSha256;
+
+        if (request.header.messageType == Protocol::MessageType::QueryOutputGroupPolicy) {
+            if (peer.role != Protocol::Role::Bulk || request.payload.size() != 104
+                || readU32(request.payload, 0) != binding.activeSlot || readU32(request.payload, 4)
+                || readU64(request.payload, 8) != binding.packageGeneration
+                || readU64(request.payload, 16) != binding.configurationId
+                || readU64(request.payload, 24) != binding.topologyGeneration
+                || readU64(request.payload, 32) != binding.runtimeGeneration
+                || readU64(request.payload, 40) != binding.catalogRevision
+                || readU64(request.payload, 48) != binding.topologyIdentity
+                || readU32(request.payload, 56) != 2 || readU32(request.payload, 60)
+                || request.payload.mid(64, 32) != mappingDigest || readU64(request.payload, 96)) {
+                m_violations.append(QStringLiteral("The output policy request was malformed."));
+                return;
+            }
+            const OutputTransactionFailure failure = m_nextOutputFailure;
+            m_nextOutputFailure = OutputTransactionFailure::None;
+            if (failure == OutputTransactionFailure::PolicyTyped) {
+                const qint32 status = m_nextOutputStatus;
+                m_nextOutputStatus = -41;
+                sendResponse(
+                    peer,
+                    Protocol::MessageType::OutputGroupPolicy,
+                    request.header.requestId,
+                    outputGroupPolicyPayload(
+                        binding,
+                        mappingDigest,
+                        2,
+                        m_outputGeneration,
+                        m_secondOutputInPolicyGroup ? 2 : 1,
+                        status,
+                        m_outputRecoveryPolicy),
+                    Protocol::Flag::Response | Protocol::Flag::Error);
+                return;
+            }
+            if (failure == OutputTransactionFailure::PolicyBulkStatus) {
+                QByteArray payload = bulkStatusPayload(
+                    quint16(Protocol::MessageType::QueryOutputGroupPolicy));
+                putI32(payload, 0, m_nextOutputStatus);
+                putI32(payload, 4, 0);
+                m_nextOutputStatus = -41;
+                sendResponse(
+                    peer,
+                    Protocol::MessageType::BulkStatus,
+                    request.header.requestId,
+                    payload,
+                    Protocol::Flag::Response | Protocol::Flag::Error);
+                return;
+            }
+            sendResponse(
+                peer,
+                Protocol::MessageType::OutputGroupPolicy,
+                request.header.requestId,
+                outputGroupPolicyPayload(
+                    binding,
+                    mappingDigest,
+                    2,
+                    m_outputGeneration,
+                    m_secondOutputInPolicyGroup ? 2 : 1,
+                    0,
+                    m_outputRecoveryPolicy));
+            return;
+        }
+
+        if (request.header.messageType == Protocol::MessageType::GetOutputTransactionState) {
+            if (peer.role != Protocol::Role::Bulk || request.payload.size() != 96
+                || readU32(request.payload, 0) != binding.activeSlot || readU32(request.payload, 4)
+                || readU64(request.payload, 8) != binding.packageGeneration
+                || readU64(request.payload, 16) != binding.configurationId
+                || readU64(request.payload, 24) != binding.topologyGeneration
+                || readU64(request.payload, 32) != binding.runtimeGeneration
+                || readU64(request.payload, 40) != binding.catalogRevision
+                || readU64(request.payload, 48) != binding.topologyIdentity
+                || request.payload.mid(56, 32) != mappingDigest || readU64(request.payload, 88)) {
+                m_violations.append(QStringLiteral("The output state request was malformed."));
+                return;
+            }
+            if (m_holdNextOutputStateResponse) {
+                m_holdNextOutputStateResponse = false;
+                return;
+            }
+            if (m_nextOutputStateStatus) {
+                const qint32 status = m_nextOutputStateStatus;
+                m_nextOutputStateStatus = 0;
+                sendResponse(
+                    peer,
+                    Protocol::MessageType::OutputTransactionState,
+                    request.header.requestId,
+                    outputTransactionRecordPayload(
+                        Protocol::MessageType::GetOutputTransactionState,
+                        binding,
+                        mappingDigest,
+                        0,
+                        {},
+                        0,
+                        0,
+                        status,
+                        status == -14  ? -10
+                        : status == -6 ? -1
+                                       : -2),
+                    Protocol::Flag::Response | Protocol::Flag::Error);
+                return;
+            }
+            const OutputStateReport report = m_nextOutputStateReport;
+            m_nextOutputStateReport = OutputStateReport::Current;
+            const quint64 recoveryGenerationAdvance = m_nextOutputRecoveryGenerationAdvance;
+            m_nextOutputRecoveryGenerationAdvance = 1;
+            QByteArray operationId = m_outputOperationId;
+            quint64 outputGeneration = m_outputGeneration;
+            quint32 flags = operationId.isEmpty()
+                                ? 0
+                                : Protocol::outputTransactionResultFlagValue(
+                                      Protocol::OutputTransactionResultFlag::OverrideActive);
+            quint64 detail = 0;
+            if (report == OutputStateReport::NoAcceptedOperation) {
+                operationId.clear();
+                flags = 0;
+            } else if (report == OutputStateReport::DifferentOperation) {
+                operationId = QByteArray::fromHex("ffeeddccbbaa99887766554433221100");
+            } else if (report == OutputStateReport::ReturnedTask || report == OutputStateReport::SafeHold) {
+                outputGeneration += recoveryGenerationAdvance;
+                m_outputGeneration = outputGeneration;
+                flags = Protocol::outputTransactionResultFlagValue(
+                    report == OutputStateReport::ReturnedTask
+                        ? Protocol::OutputTransactionResultFlag::ReturnedTask
+                        : Protocol::OutputTransactionResultFlag::SafeHold);
+                detail = 105;
+            }
+            if (!operationId.isEmpty() && m_stateReportsReplayed) {
+                flags |= Protocol::outputTransactionResultFlagValue(
+                    Protocol::OutputTransactionResultFlag::Replayed);
+            }
+            QByteArray payload = outputTransactionRecordPayload(
+                Protocol::MessageType::GetOutputTransactionState,
+                binding,
+                mappingDigest,
+                outputGeneration,
+                operationId,
+                flags,
+                detail,
+                0,
+                0,
+                m_outputRecoveryPolicy);
+            if (report == OutputStateReport::ReturnedTask) {
+                putU16(payload, 14, quint16(Protocol::OutputTransactionState::Idle));
+            } else if (report == OutputStateReport::SafeHold) {
+                putU16(payload, 14, quint16(Protocol::OutputTransactionState::SafeHold));
+            }
+            sendResponse(
+                peer,
+                Protocol::MessageType::OutputTransactionState,
+                request.header.requestId,
+                payload);
+            return;
+        }
+
+        if (peer.role != Protocol::Role::Control || request.payload.size() != 160
+            || readU16(request.payload, 0) != 128 || readU16(request.payload, 2) != 32
+            || readU32(request.payload, 4) || readU32(request.payload, 24) != binding.activeSlot
+            || readU16(request.payload, 28) != 1 || readU16(request.payload, 30)
+            || readU64(request.payload, 32) != binding.packageGeneration
+            || readU64(request.payload, 40) != binding.configurationId
+            || readU64(request.payload, 48) != binding.topologyGeneration
+            || readU64(request.payload, 56) != binding.runtimeGeneration
+            || readU64(request.payload, 64) != binding.catalogRevision
+            || readU64(request.payload, 72) != binding.topologyIdentity
+            || readU32(request.payload, 88) != 5 || readU32(request.payload, 92) != 2
+            || request.payload.mid(96, 32) != mappingDigest
+            || readU64(request.payload, 128) != 0x1000000000000002
+            || quint8(request.payload.at(136)) != quint8(Protocol::RuntimeResourcePrimitive::Boolean)
+            || quint8(request.payload.at(137)) != 1 || readU16(request.payload, 138) != 1
+            || readU32(request.payload, 140) || quint8(request.payload.at(159)) > 1) {
+            m_violations.append(QStringLiteral("The output apply request was malformed."));
+            return;
+        }
+        if (!m_leaseOwned || (m_serviceState != 3 && m_serviceState != 4 && m_serviceState != 9)) {
+            m_violations.append(QStringLiteral("The output apply preconditions were invalid."));
+            return;
+        }
+        if (m_holdNextOutputApplyResponseSequence) {
+            m_holdNextOutputApplyResponseSequence = false;
+            m_heldOutputApplyPeer = &peer;
+            m_heldOutputApplyRequest = request;
+            return;
+        }
+        const QByteArray operationId = request.payload.mid(8, 16);
+        const bool exactReplay = operationId == m_outputOperationId
+                                 && request.payload == m_lastOutputApplyPayload;
+        if (!m_outputOperationId.isEmpty() && operationId == m_outputOperationId && !exactReplay) {
+            for (quint16 stage = 1; stage <= 2; ++stage) {
+                sendResponse(
+                    peer,
+                    Protocol::MessageType::CommandStatus,
+                    request.header.requestId,
+                    successfulCommandStatusPayload(
+                        request.header.messageType, stage, m_serviceState, false));
+            }
+            sendResponse(
+                peer,
+                Protocol::MessageType::CommandStatus,
+                request.header.requestId,
+                rejectedCommandStatusPayload(
+                    request.header.messageType, 3, m_serviceState, -36, 0, -7),
+                Protocol::Flag::Response | Protocol::Flag::Error);
+            return;
+        }
+
+        if (!exactReplay && readU64(request.payload, 80) != m_outputGeneration
+            && m_nextOutputFailure == OutputTransactionFailure::None) {
+            m_nextOutputFailure = OutputTransactionFailure::ApplyStage3;
+            m_nextOutputStatus = -37;
+            m_nextOutputOperationResult = -8;
+        }
+        for (quint16 stage = 1; stage <= 3; ++stage) {
+            if ((m_nextOutputFailure == OutputTransactionFailure::ApplyStage2 && stage == 2)
+                || (m_nextOutputFailure == OutputTransactionFailure::ApplyStage3 && stage == 3)) {
+                sendResponse(
+                    peer,
+                    Protocol::MessageType::CommandStatus,
+                    request.header.requestId,
+                    rejectedCommandStatusPayload(
+                        request.header.messageType,
+                        stage,
+                        m_serviceState,
+                        m_nextOutputStatus,
+                        0,
+                        m_nextOutputOperationResult),
+                    Protocol::Flag::Response | Protocol::Flag::Error);
+                m_nextOutputFailure = OutputTransactionFailure::None;
+                m_nextOutputStatus = -41;
+                m_nextOutputOperationResult = -10;
+                return;
+            }
+            sendResponse(
+                peer,
+                Protocol::MessageType::CommandStatus,
+                request.header.requestId,
+                successfulCommandStatusPayload(
+                    request.header.messageType, stage, m_serviceState, false));
+        }
+
+        if (!exactReplay) {
+            ++m_outputGeneration;
+            m_outputOperationId = operationId;
+            m_lastOutputApplyPayload = request.payload;
+        }
+        const quint32 flags = Protocol::outputTransactionResultFlagValue(
+                                  Protocol::OutputTransactionResultFlag::OverrideActive)
+                              | (exactReplay ? Protocol::outputTransactionResultFlagValue(
+                                                   Protocol::OutputTransactionResultFlag::Replayed)
+                                             : 0);
+        const QByteArray payload = outputTransactionRecordPayload(
+            Protocol::MessageType::ApplyOutputTransaction,
+            binding,
+            mappingDigest,
+            m_outputGeneration,
+            operationId,
+            flags,
+            0,
+            0,
+            0,
+            m_outputRecoveryPolicy);
+        if (m_nextOutputFailure == OutputTransactionFailure::HoldApplyResult) {
+            m_nextOutputFailure = OutputTransactionFailure::None;
+            m_heldOutputPeer = &peer;
+            m_heldOutputRequestId = request.header.requestId;
+            m_heldOutputPayload = payload;
+            return;
+        }
+        sendResponse(
+            peer, Protocol::MessageType::OutputTransactionResult, request.header.requestId, payload);
+    }
+
     void sendStateResponse(Peer &peer, const Protocol::Frame &request)
     {
         if (m_nextStateStatus) {
@@ -1892,21 +2378,21 @@ private:
             putU32(payload, 36, 0);
             break;
         default: {
-            QByteArray statePayload
-                = m_behavior == Behavior::ControlLifecycle
-                          || m_behavior == Behavior::FaultReset
-                          || m_behavior == Behavior::PackageDeployment
-                          || m_behavior == Behavior::RuntimeResources
-                          || m_behavior == Behavior::SemanticAttestation
-                      ? lifecycleControllerStatePayload(
-                            m_serviceState,
-                            cycleCount(),
-                            m_currentFaults,
-                            m_latchedFaults,
-                            m_lastAlarmSequence,
-                            m_behavior == Behavior::FaultReset
-                                && m_faultResetSafeCyclicRuntime)
-                      : controllerStatePayload();
+            QByteArray statePayload = m_behavior == Behavior::ControlLifecycle
+                                              || m_behavior == Behavior::FaultReset
+                                              || m_behavior == Behavior::PackageDeployment
+                                              || m_behavior == Behavior::RuntimeResources
+                                              || m_behavior == Behavior::SemanticAttestation
+                                              || m_behavior == Behavior::OutputTransactions
+                                          ? lifecycleControllerStatePayload(
+                                                m_serviceState,
+                                                cycleCount(),
+                                                m_currentFaults,
+                                                m_latchedFaults,
+                                                m_lastAlarmSequence,
+                                                m_behavior == Behavior::FaultReset
+                                                    && m_faultResetSafeCyclicRuntime)
+                                          : controllerStatePayload();
             if (m_behavior == Behavior::FaultReset && m_serviceState == 6
                 && !m_faultResetSafeCyclicRuntime) {
                 putU32(statePayload, 4, 0x19); // READY | SAFE_OUTPUT | FAULT
@@ -1971,8 +2457,8 @@ private:
             return;
         }
         QByteArray payload;
-        if (m_behavior == Behavior::RuntimeResources
-            || m_behavior == Behavior::SemanticAttestation) {
+        if (m_behavior == Behavior::RuntimeResources || m_behavior == Behavior::SemanticAttestation
+            || m_behavior == Behavior::OutputTransactions) {
             payload = packageStatePayload();
             putU64(payload, 40, m_runtimePackageGeneration);
             putU64(payload, 48, m_runtimeConfigurationId);
@@ -2205,9 +2691,9 @@ private:
     void handleControlRequest(Peer &peer, const Protocol::Frame &request)
     {
         if (m_behavior != Behavior::ControlLifecycle && m_behavior != Behavior::FaultReset
-            && m_behavior != Behavior::PackageDeployment
-            && m_behavior != Behavior::RuntimeResources
-            && m_behavior != Behavior::SemanticAttestation) {
+            && m_behavior != Behavior::PackageDeployment && m_behavior != Behavior::RuntimeResources
+            && m_behavior != Behavior::SemanticAttestation
+            && m_behavior != Behavior::OutputTransactions) {
             m_violations.append(
                 QStringLiteral("A control request was emitted outside the lifecycle test."));
             return;
@@ -2734,6 +3220,7 @@ private:
     qint32 m_nextRuntimeBulkStatus = -6;
     quint32 m_runtimeResourceCount = 2;
     quint32 m_runtimeResourcePageSize = 64;
+    bool m_secondOutputInPolicyGroup = false;
     int m_runtimeSnapshotDelayMs = 0;
     bool m_holdNextRuntimeSnapshot = false;
     quint64 m_runtimePackageGeneration = 33;
@@ -2748,6 +3235,25 @@ private:
         = SemanticAttestationFailure::None;
     qint32 m_nextSemanticAttestationStatus = -17;
     int m_semanticAttestationDelayMs = 0;
+    OutputTransactionFailure m_nextOutputFailure = OutputTransactionFailure::None;
+    qint32 m_nextOutputStatus = -41;
+    qint32 m_nextOutputOperationResult = -10;
+    qint32 m_nextOutputStateStatus = 0;
+    quint64 m_outputGeneration = 1;
+    QByteArray m_outputOperationId;
+    QByteArray m_lastOutputApplyPayload;
+    bool m_stateReportsReplayed = false;
+    bool m_holdNextOutputStateResponse = false;
+    bool m_holdNextOutputApplyResponseSequence = false;
+    OutputStateReport m_nextOutputStateReport = OutputStateReport::Current;
+    quint64 m_nextOutputRecoveryGenerationAdvance = 1;
+    Protocol::OutputRecoveryPolicy m_outputRecoveryPolicy
+        = Protocol::OutputRecoveryPolicy::ReturnTask;
+    Peer *m_heldOutputPeer = nullptr;
+    quint64 m_heldOutputRequestId = 0;
+    QByteArray m_heldOutputPayload;
+    Peer *m_heldOutputApplyPeer = nullptr;
+    Protocol::Frame m_heldOutputApplyRequest;
     Protocol::MessageType m_rejectedControlType = Protocol::MessageType::Error;
     Protocol::MessageType m_rejectedDeploymentType = Protocol::MessageType::Error;
     Protocol::MessageType m_rejectedDeploymentPackageStateType = Protocol::MessageType::Error;
@@ -2832,6 +3338,78 @@ Data::RuntimeSemanticMappingAttestationRequest semanticAttestationRequest(
     request.sessionGeneration = snapshot.sessionGeneration;
     request.expectedEpoch = runtimeResourceEpochForTests(binding);
     request.expectedProof = proof;
+    return request;
+}
+
+Data::RuntimeOutputGroupPolicyRequest outputPolicyRequest(
+    const ProductApiConnectionProvider &provider,
+    const QString &correlationId = QStringLiteral("output-policy"))
+{
+    Data::RuntimeOutputGroupPolicyRequest request;
+    const auto catalog = provider.runtimeResourceCatalog();
+    const auto attestation = provider.runtimeSemanticMappingAttestation();
+    if (!catalog || !attestation || catalog->resources.size() < 2)
+        return request;
+    request.correlationId = correlationId;
+    request.scope = catalog->scope;
+    request.sessionGeneration = catalog->sessionGeneration;
+    request.expectedEpoch = catalog->epoch;
+    request.consistencyGroupId = catalog->resources.at(1).consistencyGroupId;
+    request.expectedMappingDigest = attestation->proof.mappingSha256;
+    return request;
+}
+
+Data::RuntimeOutputTransactionStateRequest outputStateRequest(
+    const ProductApiConnectionProvider &provider,
+    const QString &correlationId = QStringLiteral("output-state"))
+{
+    Data::RuntimeOutputTransactionStateRequest request;
+    const auto catalog = provider.runtimeResourceCatalog();
+    const auto attestation = provider.runtimeSemanticMappingAttestation();
+    if (!catalog || !attestation)
+        return request;
+    request.correlationId = correlationId;
+    request.scope = catalog->scope;
+    request.sessionGeneration = catalog->sessionGeneration;
+    request.expectedEpoch = catalog->epoch;
+    request.expectedMappingDigest = attestation->proof.mappingSha256;
+    return request;
+}
+
+Data::RuntimeOutputTransactionRequest outputApplyRequest(
+    const ProductApiConnectionProvider &provider,
+    const QByteArray &operationId = QByteArray::fromHex("00112233445566778899aabbccddeeff"),
+    Data::RuntimeOutputRecoveryPolicy recoveryPolicy = Data::RuntimeOutputRecoveryPolicy::ReturnTask)
+{
+    Data::RuntimeOutputTransactionRequest request;
+    const auto catalog = provider.runtimeResourceCatalog();
+    const auto attestation = provider.runtimeSemanticMappingAttestation();
+    if (!catalog || !attestation || catalog->resources.size() < 2)
+        return request;
+    const Data::RuntimeResourceDescriptor &descriptor = catalog->resources.at(1);
+    request.operationId = {operationId};
+    request.scope = catalog->scope;
+    request.sessionGeneration = catalog->sessionGeneration;
+    request.expectedEpoch = catalog->epoch;
+    request.expectedMappingDigest = attestation->proof.mappingSha256;
+    request.expectedCompleteGroupRecordDigest = QByteArray(32, char(0x44));
+    request.expectedRecoveryPolicy = recoveryPolicy;
+    request.expectedMaximumTtlCycles = 1000;
+    request.expectedOutputGeneration = 1;
+    request.ttlCycles = 5;
+    request.consistencyGroupId = descriptor.consistencyGroupId;
+    for (const Data::RuntimeResourceDescriptor &groupDescriptor : catalog->resources) {
+        if (groupDescriptor.consistencyGroupId != descriptor.consistencyGroupId)
+            continue;
+        Data::RuntimeOutputValueWrite write;
+        write.resourceId = groupDescriptor.id;
+        write.bitWidth = quint16(groupDescriptor.bitWidth);
+        write.value.primitiveType = groupDescriptor.primitiveType;
+        write.value.typeIdentity = groupDescriptor.valueTypeIdentity;
+        write.value.value = true;
+        request.completeGroupWrites.append(write);
+    }
+    request.expectedCompleteResourceCount = quint32(request.completeGroupWrites.size());
     return request;
 }
 
@@ -3415,6 +3993,29 @@ void EtherCATProductApiTests::testSemanticBindingAttestationGoldenFrames()
     }
 }
 
+void EtherCATProductApiTests::testSemanticBindingAttestationFormatV2()
+{
+    const Protocol::SemanticBindingAttestationQuery query
+        = semanticBindingAttestationQuery();
+    QByteArray payload
+        = semanticBindingAttestationGoldenWire().mid(Protocol::HeaderBytes);
+    putU16(payload, 12, 2);
+    Protocol::Frame frame = responseFrame(
+        Protocol::MessageType::SemanticBindingAttestation, payload);
+    frame.header.protocolMinor = Protocol::SemanticBindingAttestationMinor;
+    frame.header.bootId = query.binding.bootId;
+
+    Protocol::Error error;
+    const auto attestation
+        = Protocol::decodeSemanticBindingAttestation(frame, query, &error);
+    QVERIFY(attestation);
+    QVERIFY(!error);
+    QCOMPARE(attestation->formatVersion, quint16(2));
+    QCOMPARE(
+        attestation->semanticMappingSha256,
+        QByteArray(32, char(0x03)));
+}
+
 void EtherCATProductApiTests::testSemanticBindingAttestationRejectsMalformed_data()
 {
     QTest::addColumn<QByteArray>("payload");
@@ -3446,7 +4047,7 @@ void EtherCATProductApiTests::testSemanticBindingAttestationRejectsMalformed_dat
     QTest::newRow("slot") << slot << responseFlag;
 
     QByteArray format = valid;
-    putU16(format, 12, 2);
+    putU16(format, 12, 3);
     QTest::newRow("format") << format << responseFlag;
 
     QByteArray headerReserved = valid;
@@ -10309,6 +10910,1055 @@ void EtherCATProductApiTests::testSemanticAttestationInvalidationAndStaleRespons
     QVERIFY(provider.connectionSnapshot().sessionGeneration > oldGeneration);
     QVERIFY(!provider.runtimeSemanticMappingAttestation());
     QVERIFY(changedSpy.count() >= 4);
+    QVERIFY(controller.violations().isEmpty());
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testOutputTransactionCapabilityGuards_data()
+{
+    QTest::addColumn<int>("protocolMinor");
+    QTest::addColumn<quint32>("controlFeatures");
+    QTest::addColumn<quint32>("bulkFeatures");
+    QTest::addColumn<bool>("expectedSupport");
+
+    QTest::newRow("minor-13") << int(Protocol::OutputTransactionMinor - 1) << quint32(0xffff)
+                              << quint32(0xffff) << false;
+    QTest::newRow("control-feature-missing")
+        << int(Protocol::CurrentMinor) << quint32(0xffff & ~Protocol::OutputTransactionFeature)
+        << quint32(0xffff) << false;
+    QTest::newRow("bulk-feature-missing")
+        << int(Protocol::CurrentMinor) << quint32(0xffff)
+        << quint32(0xffff & ~Protocol::OutputTransactionFeature) << false;
+    QTest::newRow("supported") << int(Protocol::CurrentMinor) << quint32(0xffff) << quint32(0xffff)
+                               << true;
+}
+
+void EtherCATProductApiTests::testOutputTransactionCapabilityGuards()
+{
+    QFETCH(int, protocolMinor);
+    QFETCH(quint32, controlFeatures);
+    QFETCH(quint32, bulkFeatures);
+    QFETCH(bool, expectedSupport);
+
+    LoopbackController controller(LoopbackController::Behavior::OutputTransactions);
+    controller.setProtocolMinor(quint16(protocolMinor));
+    controller.setFeatureBits(controlFeatures);
+    controller.setRoleFeatureBits(Protocol::Role::Bulk, bulkFeatures);
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QCOMPARE(provider.supportsRuntimeOutputTransactions(), expectedSupport);
+    QCOMPARE(provider.connectionSnapshot().capability->runtimeOutputTransactions, expectedSupport);
+
+    Data::RuntimeOutputGroupPolicyRequest request;
+    request.correlationId = QStringLiteral("unsupported-output-policy");
+    request.scope = provider.connectionSnapshot().scope;
+    request.sessionGeneration = provider.connectionSnapshot().sessionGeneration;
+    request.expectedEpoch = runtimeResourceEpochForTests(
+        loopbackRuntimeResourceBinding(TestBootId, 33, 44));
+    request.consistencyGroupId.value.resize(4);
+    qToBigEndian(quint32(2), reinterpret_cast<uchar *>(request.consistencyGroupId.value.data()));
+    request.expectedMappingDigest = runtimeSemanticMappingProof().mappingSha256;
+    QVERIFY(request.isValid());
+    const int before = controller.requestCount(Protocol::MessageType::QueryOutputGroupPolicy);
+    QVERIFY(!provider.requestRuntimeOutputGroupPolicy(request));
+    QCOMPARE(controller.requestCount(Protocol::MessageType::QueryOutputGroupPolicy), before);
+    QVERIFY(controller.violations().isEmpty());
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testOutputTransactionLoopbackLifecycle()
+{
+    LoopbackController controller(LoopbackController::Behavior::OutputTransactions);
+    QVERIFY(controller.start());
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.supportsRuntimeOutputTransactions());
+
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+    QSignalSpy attestationFinished(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeSemanticMappingAttestationRequestFinished);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(semanticAttestationRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(attestationFinished.count(), 1, 1000);
+    QVERIFY(provider.runtimeSemanticMappingAttestation());
+
+    QSignalSpy policyFinished(
+        &provider, &Core::ControllerConnectionProvider::runtimeOutputGroupPolicyRequestFinished);
+    const Data::RuntimeOutputGroupPolicyRequest policyRequest = outputPolicyRequest(provider);
+    QVERIFY(policyRequest.isValid());
+    QVERIFY(provider.requestRuntimeOutputGroupPolicy(policyRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 1, 1000);
+    const auto policyResult = qvariant_cast<Data::RuntimeOutputGroupPolicyResult>(
+        policyFinished.constFirst().constFirst());
+    QVERIFY(policyResult.isValid());
+    QCOMPARE(policyResult.policy->currentOutputGeneration, quint64(1));
+    QCOMPARE(policyResult.policy->completeResourceCount, quint32(1));
+
+    QSignalSpy stateChanged(
+        &provider, &Core::ControllerConnectionProvider::runtimeOutputTransactionStateChanged);
+    QSignalSpy stateInvalidated(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeOutputTransactionStateInvalidated);
+    QSignalSpy stateFinished(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeOutputTransactionStateRequestFinished);
+    const Data::RuntimeOutputTransactionStateRequest stateRequest = outputStateRequest(provider);
+    QVERIFY(provider.requestRuntimeOutputTransactionState(stateRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(stateFinished.count(), 1, 1000);
+    QCOMPARE(stateChanged.count(), 1);
+    auto stateResult = qvariant_cast<Data::RuntimeOutputTransactionStateResult>(
+        stateFinished.constFirst().constFirst());
+    QVERIFY(stateResult.isValid());
+    QCOMPARE(stateResult.state->state, Data::RuntimeOutputState::Idle);
+    QVERIFY(!stateResult.state->operationId);
+    QCOMPARE(stateResult.state->outputGeneration, quint64(1));
+
+    Data::ControllerControlRequest acquire;
+    acquire.command = Data::ControllerControlCommand::AcquireControl;
+    acquire.leaseDurationMs = 30000;
+    QVERIFY(provider.executeControlCommand(acquire));
+    QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().session->ownsControlLease, 1000);
+
+    QSignalSpy applyFinished(
+        &provider, &Core::ControllerConnectionProvider::runtimeOutputTransactionFinished);
+    const Data::RuntimeOutputTransactionRequest applyRequest = outputApplyRequest(provider);
+    QVERIFY(applyRequest.isValid());
+    QVERIFY(provider.applyRuntimeOutputTransaction(applyRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 1, 1000);
+    auto applyResult = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+        applyFinished.constFirst().constFirst());
+    QVERIFY(applyResult.isValid());
+    QCOMPARE(applyResult.outcome, Data::RuntimeOutputTransactionOutcome::Applied);
+    QVERIFY(applyResult.finalResponseObserved);
+    QCOMPARE(applyResult.state->outputGeneration, quint64(2));
+    QCOMPARE(stateChanged.count(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(stateInvalidated.count(), 1, 1000);
+
+    QVERIFY(provider.applyRuntimeOutputTransaction(applyRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 2, 1000);
+    applyResult = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+        applyFinished.constLast().constFirst());
+    QVERIFY(applyResult.isValid());
+    QVERIFY(applyResult.finalResponseObserved);
+    QVERIFY(applyResult.state->resultFlags.testFlag(
+        Data::RuntimeOutputTransactionResultFlag::Replayed));
+
+    controller.setOutputStateReportsReplayed(true);
+    QVERIFY(provider.requestRuntimeOutputTransactionState(stateRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(stateFinished.count(), 2, 1000);
+    stateResult = qvariant_cast<Data::RuntimeOutputTransactionStateResult>(
+        stateFinished.constLast().constFirst());
+    QVERIFY(stateResult.isValid());
+    QVERIFY(stateResult.state->resultFlags.testFlag(
+        Data::RuntimeOutputTransactionResultFlag::Replayed));
+    QCOMPARE(stateResult.state->providerDetail, quint64(0));
+    QVERIFY(stateResult.state->controllerTimestampNs);
+    QCOMPARE(stateChanged.count(), 2);
+    QCOMPARE(stateInvalidated.count(), 1);
+
+    QCOMPARE(controller.requestCount(Protocol::MessageType::QueryOutputGroupPolicy), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ApplyOutputTransaction), 2);
+    QVERIFY(controller.violations().isEmpty());
+    Data::ControllerControlRequest release;
+    release.command = Data::ControllerControlCommand::ReleaseControl;
+    QVERIFY(provider.executeControlCommand(release));
+    QTRY_VERIFY_WITH_TIMEOUT(!provider.connectionSnapshot().session->ownsControlLease, 1000);
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testOutputTransactionFailuresAndGuards()
+{
+    LoopbackController controller(LoopbackController::Behavior::OutputTransactions);
+    QVERIFY(controller.start());
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+    QSignalSpy attestationFinished(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeSemanticMappingAttestationRequestFinished);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(semanticAttestationRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(attestationFinished.count(), 1, 1000);
+
+    QSignalSpy policyFinished(
+        &provider, &Core::ControllerConnectionProvider::runtimeOutputGroupPolicyRequestFinished);
+    const Data::RuntimeOutputGroupPolicyRequest policyRequest = outputPolicyRequest(provider);
+    controller.rejectNextOutputPolicyTyped(-41);
+    QVERIFY(provider.requestRuntimeOutputGroupPolicy(policyRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 1, 1000);
+    auto policyFailure = qvariant_cast<Data::RuntimeOutputGroupPolicyResult>(
+        policyFinished.constLast().constFirst());
+    QVERIFY(policyFailure.isValid());
+    QCOMPARE(policyFailure.error->code, std::optional<qint32>(-41));
+    QCOMPARE(policyFailure.error->codeName, QStringLiteral("OUTPUT_POLICY_UNAVAILABLE"));
+
+    QVERIFY(provider.requestRuntimeOutputGroupPolicy(policyRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 2, 1000);
+    const Data::RuntimeOutputTransactionRequest applyRequest = outputApplyRequest(provider);
+    const int applyBefore = controller.requestCount(Protocol::MessageType::ApplyOutputTransaction);
+    QVERIFY(!provider.applyRuntimeOutputTransaction(applyRequest));
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ApplyOutputTransaction), applyBefore);
+
+    Data::ControllerControlRequest acquire;
+    acquire.command = Data::ControllerControlCommand::AcquireControl;
+    acquire.leaseDurationMs = 30000;
+    QVERIFY(provider.executeControlCommand(acquire));
+    QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().session->ownsControlLease, 1000);
+    QSignalSpy applyFinished(
+        &provider, &Core::ControllerConnectionProvider::runtimeOutputTransactionFinished);
+
+    controller.rejectNextOutputApply(2, -41, -1);
+    QVERIFY(provider.applyRuntimeOutputTransaction(applyRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 1, 1000);
+    auto rejected = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+        applyFinished.constLast().constFirst());
+    QVERIFY(rejected.isValid());
+    QCOMPARE(rejected.outcome, Data::RuntimeOutputTransactionOutcome::Rejected);
+    QCOMPARE(rejected.error->code, std::optional<qint32>(-41));
+
+    controller.rejectNextOutputApply(3, -36, -7);
+    QVERIFY(provider.applyRuntimeOutputTransaction(applyRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 2, 1000);
+    rejected = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+        applyFinished.constLast().constFirst());
+    QVERIFY(rejected.isValid());
+    QCOMPARE(rejected.error->code, std::optional<qint32>(-36));
+    QCOMPARE(rejected.error->codeName, QStringLiteral("OPERATION_CONFLICT"));
+
+    controller.rejectNextOutputApply(3, -37, -8);
+    QVERIFY(provider.applyRuntimeOutputTransaction(applyRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 3, 1000);
+    rejected = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+        applyFinished.constLast().constFirst());
+    QVERIFY(rejected.isValid());
+    QCOMPARE(rejected.error->code, std::optional<qint32>(-37));
+
+    controller.rejectNextOutputApply(3, -40, -6);
+    QVERIFY(provider.applyRuntimeOutputTransaction(applyRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 4, 1000);
+    rejected = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+        applyFinished.constLast().constFirst());
+    QVERIFY(rejected.isValid());
+    QCOMPARE(rejected.error->code, std::optional<qint32>(-40));
+
+    Data::RuntimeOutputTransactionRequest conflicting = applyRequest;
+    conflicting.ttlCycles = 6;
+    const int sentBeforeConflict = controller.requestCount(
+        Protocol::MessageType::ApplyOutputTransaction);
+    QVERIFY(!provider.applyRuntimeOutputTransaction(conflicting));
+    QCOMPARE(
+        controller.requestCount(Protocol::MessageType::ApplyOutputTransaction), sentBeforeConflict);
+
+    QSignalSpy stateFinished(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeOutputTransactionStateRequestFinished);
+    controller.rejectNextOutputStateTyped(-17);
+    QVERIFY(provider.requestRuntimeOutputTransactionState(outputStateRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(stateFinished.count(), 1, 1000);
+    const auto stateFailure = qvariant_cast<Data::RuntimeOutputTransactionStateResult>(
+        stateFinished.constFirst().constFirst());
+    QVERIFY(stateFailure.isValid());
+    QCOMPARE(stateFailure.error->code, std::optional<qint32>(-17));
+    QVERIFY(!provider.runtimeResourceCatalog());
+    QVERIFY(controller.violations().isEmpty());
+    Data::ControllerControlRequest release;
+    release.command = Data::ControllerControlCommand::ReleaseControl;
+    QVERIFY(provider.executeControlCommand(release));
+    QTRY_VERIFY_WITH_TIMEOUT(!provider.connectionSnapshot().session->ownsControlLease, 1000);
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testOutputTransactionCompleteGroupGuards()
+{
+    LoopbackController controller(LoopbackController::Behavior::OutputTransactions);
+    controller.includeSecondOutputInPolicyGroup();
+    QVERIFY(controller.start());
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+    QSignalSpy attestationFinished(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeSemanticMappingAttestationRequestFinished);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(semanticAttestationRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(attestationFinished.count(), 1, 1000);
+    QSignalSpy policyFinished(
+        &provider, &Core::ControllerConnectionProvider::runtimeOutputGroupPolicyRequestFinished);
+    QVERIFY(provider.requestRuntimeOutputGroupPolicy(outputPolicyRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 1, 1000);
+    const auto policyResult = qvariant_cast<Data::RuntimeOutputGroupPolicyResult>(
+        policyFinished.constFirst().constFirst());
+    QVERIFY(policyResult.isValid());
+    QCOMPARE(policyResult.policy->completeResourceCount, quint32(2));
+
+    Data::ControllerControlRequest acquire;
+    acquire.command = Data::ControllerControlCommand::AcquireControl;
+    acquire.leaseDurationMs = 30000;
+    QVERIFY(provider.executeControlCommand(acquire));
+    QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().session->ownsControlLease, 1000);
+
+    const Data::RuntimeOutputTransactionRequest complete = outputApplyRequest(provider);
+    QVERIFY(complete.isValid());
+    QCOMPARE(complete.completeGroupWrites.size(), 2);
+    const int applyBefore = controller.requestCount(Protocol::MessageType::ApplyOutputTransaction);
+
+    Data::RuntimeOutputTransactionRequest differentType = complete;
+    differentType.completeGroupWrites[0].value.typeIdentity.append("-different");
+    QVERIFY(differentType.isValid());
+    QVERIFY(!provider.applyRuntimeOutputTransaction(differentType));
+
+    Data::RuntimeOutputTransactionRequest missing = complete;
+    missing.completeGroupWrites.removeLast();
+    missing.expectedCompleteResourceCount = 1;
+    QVERIFY(missing.isValid());
+    QVERIFY(!provider.applyRuntimeOutputTransaction(missing));
+
+    const auto catalog = provider.runtimeResourceCatalog();
+    QVERIFY(catalog);
+    QVERIFY(catalog->resources.size() >= 3);
+    Data::RuntimeOutputValueWrite substituted;
+    substituted.resourceId = catalog->resources.constFirst().id;
+    substituted.bitWidth = quint16(catalog->resources.constFirst().bitWidth);
+    substituted.value.primitiveType = catalog->resources.constFirst().primitiveType;
+    substituted.value.typeIdentity = catalog->resources.constFirst().valueTypeIdentity;
+    substituted.value.value = QVariant::fromValue<qulonglong>(1);
+    Data::RuntimeOutputTransactionRequest exchanged = complete;
+    exchanged.completeGroupWrites = {substituted, complete.completeGroupWrites.constFirst()};
+    QVERIFY(exchanged.isValid());
+    QVERIFY(!provider.applyRuntimeOutputTransaction(exchanged));
+
+    Data::RuntimeOutputTransactionRequest saturated = complete;
+    saturated.expectedOutputGeneration = std::numeric_limits<quint64>::max();
+    QVERIFY(!saturated.isValid());
+    QVERIFY(!provider.applyRuntimeOutputTransaction(saturated));
+    saturated.expectedOutputGeneration = std::numeric_limits<quint64>::max() - quint64(1);
+    QVERIFY(!saturated.isValid());
+    QVERIFY(!provider.applyRuntimeOutputTransaction(saturated));
+
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ApplyOutputTransaction), applyBefore);
+    QVERIFY(controller.violations().isEmpty());
+    Data::ControllerControlRequest release;
+    release.command = Data::ControllerControlCommand::ReleaseControl;
+    QVERIFY(provider.executeControlCommand(release));
+    QTRY_VERIFY_WITH_TIMEOUT(!provider.connectionSnapshot().session->ownsControlLease, 1000);
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testOutputTransactionTimeoutReconciliation()
+{
+    LoopbackController controller(LoopbackController::Behavior::OutputTransactions);
+    QVERIFY(controller.start());
+    ProductApiSession::Options options = testOptions();
+    options.requestTimeoutMs = 30;
+    ProductApiConnectionProvider provider(controller.endpoints(), options);
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+    QSignalSpy attestationFinished(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeSemanticMappingAttestationRequestFinished);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(semanticAttestationRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(attestationFinished.count(), 1, 1000);
+    QSignalSpy policyFinished(
+        &provider, &Core::ControllerConnectionProvider::runtimeOutputGroupPolicyRequestFinished);
+    QVERIFY(provider.requestRuntimeOutputGroupPolicy(outputPolicyRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 1, 1000);
+    Data::ControllerControlRequest acquire;
+    acquire.command = Data::ControllerControlCommand::AcquireControl;
+    acquire.leaseDurationMs = 30000;
+    QVERIFY(provider.executeControlCommand(acquire));
+    QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().session->ownsControlLease, 1000);
+
+    QSignalSpy applyFinished(
+        &provider, &Core::ControllerConnectionProvider::runtimeOutputTransactionFinished);
+    QSignalSpy stateFinished(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeOutputTransactionStateRequestFinished);
+    controller.setOutputStateReportsReplayed(true);
+    controller.holdNextOutputApplyResult();
+    const Data::RuntimeOutputTransactionRequest request = outputApplyRequest(provider);
+    QVERIFY(provider.applyRuntimeOutputTransaction(request));
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 2, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(stateFinished.count(), 1, 1000);
+    QVERIFY(controller.hasHeldOutputResult());
+
+    const auto unknown = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+        applyFinished.at(0).constFirst());
+    QVERIFY(unknown.isValid());
+    QCOMPARE(unknown.outcome, Data::RuntimeOutputTransactionOutcome::OutcomeUnknown);
+    QVERIFY(!unknown.finalResponseObserved);
+    const auto reconciled = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+        applyFinished.at(1).constFirst());
+    QVERIFY(reconciled.isValid());
+    QCOMPARE(reconciled.outcome, Data::RuntimeOutputTransactionOutcome::Applied);
+    QVERIFY(!reconciled.finalResponseObserved);
+    QCOMPARE(reconciled.request.operationId, request.operationId);
+    QVERIFY(!provider.connectionSnapshot().lastError);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ApplyOutputTransaction), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::GetOutputTransactionState), 1);
+
+    controller.releaseHeldOutputResult();
+    QTest::qWait(80);
+    QCOMPARE(applyFinished.count(), 2);
+    QCOMPARE(provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected);
+
+    controller.holdNextOutputApplyResponseSequence();
+    Data::RuntimeOutputTransactionRequest delayedSequence = outputApplyRequest(
+        provider, QByteArray::fromHex("11112233445566778899aabbccddeeff"));
+    delayedSequence.expectedOutputGeneration = 2;
+    QVERIFY(delayedSequence.isValid());
+    QVERIFY(provider.applyRuntimeOutputTransaction(delayedSequence));
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 3, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(stateFinished.count(), 2, 1000);
+    QVERIFY(controller.hasHeldOutputApplyResponseSequence());
+    const auto sequenceUnknown = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+        applyFinished.constLast().constFirst());
+    QVERIFY(sequenceUnknown.isValid());
+    QCOMPARE(
+        sequenceUnknown.outcome,
+        Data::RuntimeOutputTransactionOutcome::OutcomeUnknown);
+
+    controller.releaseHeldOutputApplyResponseSequence();
+    QTest::qWait(80);
+    QCOMPARE(applyFinished.count(), 3);
+    QCOMPARE(provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected);
+    QVERIFY(provider.applyRuntimeOutputTransaction(delayedSequence));
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 4, 1000);
+    const auto delayedReplay = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+        applyFinished.constLast().constFirst());
+    QVERIFY(delayedReplay.isValid());
+    QCOMPARE(delayedReplay.outcome, Data::RuntimeOutputTransactionOutcome::Applied);
+    QVERIFY(delayedReplay.finalResponseObserved);
+    QCOMPARE(
+        controller.requestCount(Protocol::MessageType::ApplyOutputTransaction),
+        3);
+    QVERIFY(controller.violations().isEmpty());
+    Data::ControllerControlRequest release;
+    release.command = Data::ControllerControlCommand::ReleaseControl;
+    QVERIFY(provider.executeControlCommand(release));
+    QTRY_VERIFY_WITH_TIMEOUT(!provider.connectionSnapshot().session->ownsControlLease, 1000);
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testOutputTransactionControlledStopPreemptsRead()
+{
+    LoopbackController controller(LoopbackController::Behavior::OutputTransactions);
+    QVERIFY(controller.start());
+    ProductApiSession::Options options = testOptions();
+    options.requestTimeoutMs = 30;
+    ProductApiConnectionProvider provider(controller.endpoints(), options);
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+    QSignalSpy attestationFinished(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeSemanticMappingAttestationRequestFinished);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(
+        semanticAttestationRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(attestationFinished.count(), 1, 1000);
+    QSignalSpy policyFinished(
+        &provider, &Core::ControllerConnectionProvider::runtimeOutputGroupPolicyRequestFinished);
+    QVERIFY(provider.requestRuntimeOutputGroupPolicy(outputPolicyRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 1, 1000);
+
+    QSignalSpy rejectedStopStateFinished(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeOutputTransactionStateRequestFinished);
+    controller.holdNextOutputStateResponse();
+    QVERIFY(provider.requestRuntimeOutputTransactionState(outputStateRequest(provider)));
+    Data::ControllerControlRequest ineligibleStop;
+    ineligibleStop.command = Data::ControllerControlCommand::ControlledStop;
+    QVERIFY(!provider.executeControlCommand(ineligibleStop));
+    QVERIFY(!provider.requestRuntimeOutputTransactionState(outputStateRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(rejectedStopStateFinished.count(), 1, 1000);
+
+    Data::ControllerControlRequest acquire;
+    acquire.command = Data::ControllerControlCommand::AcquireControl;
+    acquire.leaseDurationMs = 30000;
+    QVERIFY(provider.executeControlCommand(acquire));
+    QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().session->ownsControlLease, 1000);
+    Data::ControllerControlRequest start;
+    start.command = Data::ControllerControlCommand::Start;
+    QVERIFY(provider.executeControlCommand(start));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().controllerState->serviceState,
+        Data::ControllerServiceState::Running,
+        1000);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(
+        semanticAttestationRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(attestationFinished.count(), 2, 1000);
+    QVERIFY(provider.requestRuntimeOutputGroupPolicy(outputPolicyRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 2, 1000);
+
+    QSignalSpy applyFinished(
+        &provider, &Core::ControllerConnectionProvider::runtimeOutputTransactionFinished);
+    QSignalSpy stateFinished(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeOutputTransactionStateRequestFinished);
+    bool stopAttempted = false;
+    bool stopAccepted = false;
+    QObject::connect(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeOutputTransactionFinished,
+        &provider,
+        [&provider, &stopAttempted, &stopAccepted](
+            const Data::RuntimeOutputTransactionResult &result) {
+            if (result.outcome != Data::RuntimeOutputTransactionOutcome::OutcomeUnknown)
+                return;
+            QTimer::singleShot(0, &provider, [&provider, &stopAttempted, &stopAccepted] {
+                Data::ControllerControlRequest stop;
+                stop.command = Data::ControllerControlCommand::ControlledStop;
+                stopAttempted = true;
+                stopAccepted = bool(provider.executeControlCommand(stop));
+            });
+        });
+
+    controller.holdNextOutputStateResponse();
+    controller.holdNextOutputApplyResult();
+    QVERIFY(provider.applyRuntimeOutputTransaction(outputApplyRequest(provider)));
+    QTRY_VERIFY_WITH_TIMEOUT(stopAttempted, 1000);
+    QVERIFY(stopAccepted);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().controllerState->serviceState,
+        Data::ControllerServiceState::OperationalSafe,
+        1000);
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 1, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(stateFinished.count(), 1, 1000);
+    const auto canceledRead = qvariant_cast<Data::RuntimeOutputTransactionStateResult>(
+        stateFinished.constFirst().constFirst());
+    QVERIFY(canceledRead.isValid());
+    QVERIFY(canceledRead.error);
+    QCOMPARE(canceledRead.error->source, Data::ControllerErrorSource::Network);
+
+    QVERIFY(controller.hasHeldOutputResult());
+    controller.releaseHeldOutputResult();
+    QTest::qWait(80);
+    QCOMPARE(applyFinished.count(), 1);
+    QCOMPARE(provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected);
+    QVERIFY(controller.violations().isEmpty());
+
+    Data::ControllerControlRequest release;
+    release.command = Data::ControllerControlCommand::ReleaseControl;
+    QVERIFY(provider.executeControlCommand(release));
+    QTRY_VERIFY_WITH_TIMEOUT(!provider.connectionSnapshot().session->ownsControlLease, 1000);
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testOutputTransactionReconciliationBoundaries()
+{
+    {
+        LoopbackController controller(LoopbackController::Behavior::OutputTransactions);
+        QVERIFY(controller.start());
+        ProductApiSession::Options options = testOptions();
+        options.requestTimeoutMs = 30;
+        ProductApiConnectionProvider provider(controller.endpoints(), options);
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+        QVERIFY(provider.refreshRuntimeResources());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+        QSignalSpy attestationFinished(
+            &provider,
+            &Core::ControllerConnectionProvider::runtimeSemanticMappingAttestationRequestFinished);
+        QVERIFY(provider.requestRuntimeSemanticMappingAttestation(
+            semanticAttestationRequest(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(attestationFinished.count(), 1, 1000);
+        QSignalSpy policyFinished(
+            &provider, &Core::ControllerConnectionProvider::runtimeOutputGroupPolicyRequestFinished);
+        QVERIFY(provider.requestRuntimeOutputGroupPolicy(outputPolicyRequest(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 1, 1000);
+        Data::ControllerControlRequest acquire;
+        acquire.command = Data::ControllerControlCommand::AcquireControl;
+        acquire.leaseDurationMs = 30000;
+        QVERIFY(provider.executeControlCommand(acquire));
+        QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().session->ownsControlLease, 1000);
+
+        QSignalSpy applyFinished(
+            &provider, &Core::ControllerConnectionProvider::runtimeOutputTransactionFinished);
+        QSignalSpy stateFinished(
+            &provider,
+            &Core::ControllerConnectionProvider::runtimeOutputTransactionStateRequestFinished);
+        QSignalSpy stateChanged(
+            &provider, &Core::ControllerConnectionProvider::runtimeOutputTransactionStateChanged);
+        controller.setOutputStateReportsReplayed(true);
+        controller.reportNextOutputStateAsReturnedTask();
+        controller.holdNextOutputApplyResult();
+        const Data::RuntimeOutputTransactionRequest request = outputApplyRequest(provider);
+        QVERIFY(provider.applyRuntimeOutputTransaction(request));
+        QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 2, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(stateFinished.count(), 1, 1000);
+        QCOMPARE(stateChanged.count(), 1);
+        const auto unknown = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+            applyFinished.constFirst().constFirst());
+        QVERIFY(unknown.isValid());
+        QCOMPARE(unknown.outcome, Data::RuntimeOutputTransactionOutcome::OutcomeUnknown);
+        const auto returned = qvariant_cast<Data::RuntimeOutputTransactionStateResult>(
+            stateFinished.constFirst().constFirst());
+        QVERIFY(returned.isValid());
+        QCOMPARE(returned.state->state, Data::RuntimeOutputState::Idle);
+        QVERIFY(returned.state->resultFlags.testFlag(
+            Data::RuntimeOutputTransactionResultFlag::ReturnedTask));
+        QVERIFY(returned.state->resultFlags.testFlag(
+            Data::RuntimeOutputTransactionResultFlag::Replayed));
+        QCOMPARE(returned.state->providerDetail, quint64(105));
+        const auto recovered = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+            applyFinished.constLast().constFirst());
+        QVERIFY(recovered.isValid());
+        QCOMPARE(recovered.outcome, Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered);
+        QVERIFY(!recovered.finalResponseObserved);
+        QCOMPARE(recovered.state, returned.state);
+        QCOMPARE(stateChanged.count(), 1);
+        controller.releaseHeldOutputResult();
+        QTest::qWait(60);
+        QCOMPARE(applyFinished.count(), 2);
+
+        controller.setOutputRecoveryPolicy(Protocol::OutputRecoveryPolicy::HoldSafe);
+        QVERIFY(provider.requestRuntimeOutputGroupPolicy(outputPolicyRequest(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 2, 1000);
+        controller.setOutputStateReportsReplayed(false);
+        controller.reportNextOutputStateAsSafeHold();
+        controller.holdNextOutputApplyResult();
+        Data::RuntimeOutputTransactionRequest safeHoldRequest = outputApplyRequest(
+            provider,
+            QByteArray::fromHex("10112233445566778899aabbccddeeff"),
+            Data::RuntimeOutputRecoveryPolicy::HoldSafe);
+        safeHoldRequest.expectedOutputGeneration = 3;
+        QVERIFY(safeHoldRequest.isValid());
+        QVERIFY(provider.applyRuntimeOutputTransaction(safeHoldRequest));
+        QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 4, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(stateFinished.count(), 2, 1000);
+        const auto safeRecovered = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+            applyFinished.constLast().constFirst());
+        QVERIFY(safeRecovered.isValid());
+        QCOMPARE(safeRecovered.outcome, Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered);
+        QVERIFY(!safeRecovered.finalResponseObserved);
+        QCOMPARE(safeRecovered.state->state, Data::RuntimeOutputState::SafeHold);
+        QCOMPARE(safeRecovered.state->outputGeneration, quint64(5));
+        controller.releaseHeldOutputResult();
+        QTest::qWait(60);
+        QCOMPARE(applyFinished.count(), 4);
+        QVERIFY2(
+            controller.violations().isEmpty(),
+            qPrintable(controller.violations().join(QStringLiteral("; "))));
+        Data::ControllerControlRequest release;
+        release.command = Data::ControllerControlCommand::ReleaseControl;
+        QVERIFY(provider.executeControlCommand(release));
+        QTRY_VERIFY_WITH_TIMEOUT(!provider.connectionSnapshot().session->ownsControlLease, 1000);
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::OutputTransactions);
+        QVERIFY(controller.start());
+        ProductApiSession::Options options = testOptions();
+        options.requestTimeoutMs = 30;
+        ProductApiConnectionProvider provider(controller.endpoints(), options);
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+        QVERIFY(provider.refreshRuntimeResources());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+        QSignalSpy attestationFinished(
+            &provider,
+            &Core::ControllerConnectionProvider::runtimeSemanticMappingAttestationRequestFinished);
+        QVERIFY(provider.requestRuntimeSemanticMappingAttestation(
+            semanticAttestationRequest(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(attestationFinished.count(), 1, 1000);
+        QSignalSpy policyFinished(
+            &provider, &Core::ControllerConnectionProvider::runtimeOutputGroupPolicyRequestFinished);
+        QVERIFY(provider.requestRuntimeOutputGroupPolicy(outputPolicyRequest(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 1, 1000);
+        Data::ControllerControlRequest acquire;
+        acquire.command = Data::ControllerControlCommand::AcquireControl;
+        acquire.leaseDurationMs = 30000;
+        QVERIFY(provider.executeControlCommand(acquire));
+        QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().session->ownsControlLease, 1000);
+
+        QSignalSpy applyFinished(
+            &provider, &Core::ControllerConnectionProvider::runtimeOutputTransactionFinished);
+        QSignalSpy stateFinished(
+            &provider,
+            &Core::ControllerConnectionProvider::runtimeOutputTransactionStateRequestFinished);
+        controller.setOutputStateReportsReplayed(true);
+        controller.setNextOutputRecoveryGenerationAdvance(0);
+        controller.reportNextOutputStateAsReturnedTask();
+        controller.holdNextOutputApplyResult();
+        const Data::RuntimeOutputTransactionRequest request = outputApplyRequest(provider);
+        QVERIFY(provider.applyRuntimeOutputTransaction(request));
+        QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 1, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(stateFinished.count(), 1, 1000);
+        const auto wrongGeneration = qvariant_cast<Data::RuntimeOutputTransactionStateResult>(
+            stateFinished.constFirst().constFirst());
+        QVERIFY(wrongGeneration.isValid());
+        QCOMPARE(wrongGeneration.state->state, Data::RuntimeOutputState::Idle);
+        QCOMPARE(wrongGeneration.state->outputGeneration, quint64(2));
+        QVERIFY(wrongGeneration.state->resultFlags.testFlag(
+            Data::RuntimeOutputTransactionResultFlag::Replayed));
+        QTest::qWait(60);
+        QCOMPARE(applyFinished.count(), 1);
+        QCOMPARE(
+            qvariant_cast<Data::RuntimeOutputTransactionResult>(
+                applyFinished.constFirst().constFirst())
+                .outcome,
+            Data::RuntimeOutputTransactionOutcome::OutcomeUnknown);
+
+        const Data::RuntimeOutputTransactionRequest differentOperation
+            = outputApplyRequest(provider, QByteArray::fromHex("20112233445566778899aabbccddeeff"));
+        QVERIFY(!provider.applyRuntimeOutputTransaction(differentOperation));
+        QVERIFY(provider.applyRuntimeOutputTransaction(request));
+        QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 2, 1000);
+        const auto directReplay = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+            applyFinished.constLast().constFirst());
+        QCOMPARE(directReplay.outcome, Data::RuntimeOutputTransactionOutcome::Applied);
+        QVERIFY(directReplay.finalResponseObserved);
+        controller.releaseHeldOutputResult();
+        QTest::qWait(60);
+        QCOMPARE(applyFinished.count(), 2);
+
+        controller.setOutputStateReportsReplayed(false);
+        controller.rejectNextOutputStateTyped(-41);
+        controller.holdNextOutputApplyResult();
+        Data::RuntimeOutputTransactionRequest typedFailureRequest
+            = outputApplyRequest(provider, QByteArray::fromHex("30112233445566778899aabbccddeeff"));
+        typedFailureRequest.expectedOutputGeneration = 2;
+        QVERIFY(typedFailureRequest.isValid());
+        QVERIFY(provider.applyRuntimeOutputTransaction(typedFailureRequest));
+        QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 3, 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(stateFinished.count(), 2, 1000);
+        const auto stateFailure = qvariant_cast<Data::RuntimeOutputTransactionStateResult>(
+            stateFinished.constLast().constFirst());
+        QVERIFY(stateFailure.isValid());
+        QCOMPARE(stateFailure.error->code, std::optional<qint32>(-41));
+        QCOMPARE(
+            qvariant_cast<Data::RuntimeOutputTransactionResult>(
+                applyFinished.constLast().constFirst())
+                .outcome,
+            Data::RuntimeOutputTransactionOutcome::OutcomeUnknown);
+
+        Data::ControllerControlRequest configurationMode;
+        configurationMode.command = Data::ControllerControlCommand::EnterConfigurationMode;
+        const int configurationRequests = controller.requestCount(
+            Protocol::MessageType::EnterConfigurationMode);
+        QVERIFY(!provider.executeControlCommand(configurationMode));
+        QCOMPARE(
+            controller.requestCount(Protocol::MessageType::EnterConfigurationMode),
+            configurationRequests);
+
+        controller.rejectNextSemanticAttestationTyped(-6);
+        const Data::RuntimeSemanticMappingAttestationRequest attestationRequest
+            = semanticAttestationRequest(provider);
+        QVERIFY(provider.requestRuntimeSemanticMappingAttestation(attestationRequest));
+        QTRY_COMPARE_WITH_TIMEOUT(attestationFinished.count(), 2, 1000);
+        QVERIFY(!provider.runtimeSemanticMappingAttestation());
+        QVERIFY(provider.requestRuntimeSemanticMappingAttestation(attestationRequest));
+        QTRY_COMPARE_WITH_TIMEOUT(attestationFinished.count(), 3, 1000);
+        QVERIFY(provider.runtimeSemanticMappingAttestation());
+        QVERIFY(provider.requestRuntimeOutputGroupPolicy(outputPolicyRequest(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 2, 1000);
+
+        const Data::RuntimeOutputTransactionRequest nextOperation
+            = outputApplyRequest(provider, QByteArray::fromHex("40112233445566778899aabbccddeeff"));
+        QVERIFY(!provider.applyRuntimeOutputTransaction(nextOperation));
+        QVERIFY(provider.applyRuntimeOutputTransaction(typedFailureRequest));
+        QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 4, 1000);
+        const auto typedReplay = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+            applyFinished.constLast().constFirst());
+        QCOMPARE(typedReplay.outcome, Data::RuntimeOutputTransactionOutcome::Applied);
+        QVERIFY(typedReplay.finalResponseObserved);
+        controller.releaseHeldOutputResult();
+        QTest::qWait(60);
+        QCOMPARE(applyFinished.count(), 4);
+        QVERIFY2(
+            controller.violations().isEmpty(),
+            qPrintable(controller.violations().join(QStringLiteral("; "))));
+        Data::ControllerControlRequest release;
+        release.command = Data::ControllerControlCommand::ReleaseControl;
+        QVERIFY(provider.executeControlCommand(release));
+        QTRY_VERIFY_WITH_TIMEOUT(!provider.connectionSnapshot().session->ownsControlLease, 1000);
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+}
+
+void EtherCATProductApiTests::testOutputTransactionUnknownSurvivesReconnect()
+{
+    LoopbackController controller(LoopbackController::Behavior::OutputTransactions);
+    QVERIFY(controller.start());
+    ProductApiSession::Options options = testOptions();
+    options.requestTimeoutMs = 30;
+    ProductApiConnectionProvider provider(controller.endpoints(), options);
+    const Data::ControllerConnectionRequest connectionRequest = requestFor(provider);
+    QVERIFY(provider.connectToController(connectionRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+
+    QSignalSpy attestationFinished(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeSemanticMappingAttestationRequestFinished);
+    QSignalSpy policyFinished(
+        &provider, &Core::ControllerConnectionProvider::runtimeOutputGroupPolicyRequestFinished);
+    QSignalSpy stateFinished(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeOutputTransactionStateRequestFinished);
+    QSignalSpy applyFinished(
+        &provider, &Core::ControllerConnectionProvider::runtimeOutputTransactionFinished);
+
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(
+        semanticAttestationRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(attestationFinished.count(), 1, 1000);
+    QVERIFY(provider.requestRuntimeOutputGroupPolicy(outputPolicyRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 1, 1000);
+    Data::ControllerControlRequest acquire;
+    acquire.command = Data::ControllerControlCommand::AcquireControl;
+    acquire.leaseDurationMs = 30000;
+    QVERIFY(provider.executeControlCommand(acquire));
+    QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().session->ownsControlLease, 1000);
+
+    controller.holdNextOutputStateResponse();
+    controller.holdNextOutputApplyResult();
+    const Data::RuntimeOutputTransactionRequest original = outputApplyRequest(provider);
+    QVERIFY(provider.applyRuntimeOutputTransaction(original));
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 1, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(stateFinished.count(), 1, 1000);
+    QCOMPARE(
+        qvariant_cast<Data::RuntimeOutputTransactionResult>(
+            applyFinished.constFirst().constFirst())
+            .outcome,
+        Data::RuntimeOutputTransactionOutcome::OutcomeUnknown);
+
+    const quint64 originalSessionGeneration
+        = provider.connectionSnapshot().sessionGeneration;
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    Data::ControllerConnectionRequest reboundConnectionRequest = connectionRequest;
+    reboundConnectionRequest.scope = {
+        Data::NodeId::create(),
+        Data::NodeId::create(),
+    };
+    QVERIFY(reboundConnectionRequest.scope != connectionRequest.scope);
+    QVERIFY(provider.connectToController(reboundConnectionRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.connectionSnapshot().sessionGeneration > originalSessionGeneration);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(
+        semanticAttestationRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(attestationFinished.count(), 2, 1000);
+    QVERIFY(provider.requestRuntimeOutputGroupPolicy(outputPolicyRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 2, 1000);
+    QVERIFY(provider.executeControlCommand(acquire));
+    QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().session->ownsControlLease, 1000);
+
+    Data::RuntimeOutputTransactionRequest newOperation = outputApplyRequest(
+        provider, QByteArray::fromHex("55112233445566778899aabbccddeeff"));
+    newOperation.expectedOutputGeneration = 2;
+    QVERIFY(newOperation.isValid());
+    const int applyRequestsBeforeReconciliation = controller.requestCount(
+        Protocol::MessageType::ApplyOutputTransaction);
+    QVERIFY(!provider.applyRuntimeOutputTransaction(newOperation));
+    QCOMPARE(
+        controller.requestCount(Protocol::MessageType::ApplyOutputTransaction),
+        applyRequestsBeforeReconciliation);
+
+    QVERIFY(provider.requestRuntimeOutputTransactionState(outputStateRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(stateFinished.count(), 2, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 2, 1000);
+    const auto reconciled = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+        applyFinished.constLast().constFirst());
+    QVERIFY(reconciled.isValid());
+    QCOMPARE(reconciled.outcome, Data::RuntimeOutputTransactionOutcome::Applied);
+    QVERIFY(!reconciled.finalResponseObserved);
+    QCOMPARE(
+        reconciled.request.sessionGeneration,
+        provider.connectionSnapshot().sessionGeneration);
+    QCOMPARE(reconciled.request.scope, reboundConnectionRequest.scope);
+
+    QVERIFY(provider.applyRuntimeOutputTransaction(newOperation));
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 3, 1000);
+    const auto applied = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+        applyFinished.constLast().constFirst());
+    QVERIFY(applied.isValid());
+    QCOMPARE(applied.outcome, Data::RuntimeOutputTransactionOutcome::Applied);
+    QVERIFY(applied.finalResponseObserved);
+    QVERIFY(controller.violations().isEmpty());
+
+    Data::ControllerControlRequest release;
+    release.command = Data::ControllerControlCommand::ReleaseControl;
+    QVERIFY(provider.executeControlCommand(release));
+    QTRY_VERIFY_WITH_TIMEOUT(!provider.connectionSnapshot().session->ownsControlLease, 1000);
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testOutputTransactionGenerationRegression()
+{
+    for (const bool policyRegression : {false, true}) {
+        LoopbackController controller(LoopbackController::Behavior::OutputTransactions);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Connected,
+            2000);
+        QVERIFY(provider.refreshRuntimeResources());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+        QSignalSpy attestationFinished(
+            &provider,
+            &Core::ControllerConnectionProvider::
+                runtimeSemanticMappingAttestationRequestFinished);
+        QSignalSpy policyFinished(
+            &provider,
+            &Core::ControllerConnectionProvider::runtimeOutputGroupPolicyRequestFinished);
+        QSignalSpy stateFinished(
+            &provider,
+            &Core::ControllerConnectionProvider::runtimeOutputTransactionStateRequestFinished);
+        QSignalSpy applyFinished(
+            &provider, &Core::ControllerConnectionProvider::runtimeOutputTransactionFinished);
+        QVERIFY(provider.requestRuntimeSemanticMappingAttestation(
+            semanticAttestationRequest(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(attestationFinished.count(), 1, 1000);
+        QVERIFY(provider.requestRuntimeOutputGroupPolicy(outputPolicyRequest(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 1, 1000);
+
+        Data::ControllerControlRequest acquire;
+        acquire.command = Data::ControllerControlCommand::AcquireControl;
+        acquire.leaseDurationMs = 30000;
+        QVERIFY(provider.executeControlCommand(acquire));
+        QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().session->ownsControlLease, 1000);
+        QVERIFY(provider.applyRuntimeOutputTransaction(outputApplyRequest(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 1, 1000);
+        controller.setOutputGeneration(1);
+
+        if (policyRegression) {
+            QVERIFY(provider.requestRuntimeOutputGroupPolicy(outputPolicyRequest(provider)));
+            QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 2, 1000);
+            const auto failure = qvariant_cast<Data::RuntimeOutputGroupPolicyResult>(
+                policyFinished.constLast().constFirst());
+            QVERIFY(failure.isValid());
+            QCOMPARE(failure.error->source, Data::ControllerErrorSource::Protocol);
+        } else {
+            QVERIFY(provider.requestRuntimeOutputTransactionState(
+                outputStateRequest(provider)));
+            QTRY_COMPARE_WITH_TIMEOUT(stateFinished.count(), 1, 1000);
+            const auto failure = qvariant_cast<Data::RuntimeOutputTransactionStateResult>(
+                stateFinished.constLast().constFirst());
+            QVERIFY(failure.isValid());
+            QCOMPARE(failure.error->source, Data::ControllerErrorSource::Protocol);
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Disconnected,
+            1000);
+        QVERIFY(controller.violations().isEmpty());
+    }
+}
+
+void EtherCATProductApiTests::testOutputTransactionReconnectInvalidation()
+{
+    LoopbackController controller(LoopbackController::Behavior::OutputTransactions);
+    QVERIFY(controller.start());
+    ProductApiSession::Options options = testOptions();
+    options.requestTimeoutMs = 30;
+    ProductApiConnectionProvider provider(controller.endpoints(), options);
+    const Data::ControllerConnectionRequest connectionRequest = requestFor(provider);
+    QVERIFY(provider.connectToController(connectionRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 2000);
+    QSignalSpy attestationFinished(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeSemanticMappingAttestationRequestFinished);
+    QVERIFY(provider.requestRuntimeSemanticMappingAttestation(semanticAttestationRequest(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(attestationFinished.count(), 1, 1000);
+    QSignalSpy policyFinished(
+        &provider, &Core::ControllerConnectionProvider::runtimeOutputGroupPolicyRequestFinished);
+    const Data::RuntimeOutputGroupPolicyRequest oldPolicy = outputPolicyRequest(provider);
+    QVERIFY(provider.requestRuntimeOutputGroupPolicy(oldPolicy));
+    QTRY_COMPARE_WITH_TIMEOUT(policyFinished.count(), 1, 1000);
+    Data::ControllerControlRequest acquire;
+    acquire.command = Data::ControllerControlCommand::AcquireControl;
+    acquire.leaseDurationMs = 30000;
+    QVERIFY(provider.executeControlCommand(acquire));
+    QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().session->ownsControlLease, 1000);
+
+    QSignalSpy applyFinished(
+        &provider, &Core::ControllerConnectionProvider::runtimeOutputTransactionFinished);
+    QSignalSpy stateFinished(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeOutputTransactionStateRequestFinished);
+    controller.holdNextOutputStateResponse();
+    controller.holdNextOutputApplyResult();
+    const Data::RuntimeOutputTransactionRequest oldTransaction = outputApplyRequest(provider);
+    QVERIFY(provider.applyRuntimeOutputTransaction(oldTransaction));
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 1, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(stateFinished.count(), 1, 1000);
+    QCOMPARE(
+        qvariant_cast<Data::RuntimeOutputTransactionResult>(applyFinished.constFirst().constFirst())
+            .outcome,
+        Data::RuntimeOutputTransactionOutcome::OutcomeUnknown);
+    const auto stateTimeout = qvariant_cast<Data::RuntimeOutputTransactionStateResult>(
+        stateFinished.constFirst().constFirst());
+    QVERIFY(stateTimeout.isValid());
+    QVERIFY(stateTimeout.error);
+
+    controller.setRuntimeEpoch(7, 10, 11, 0x4142434445464748);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        provider.runtimeResourceCatalog()
+            && provider.runtimeResourceCatalog()->epoch.runtimeGeneration == 10,
+        2000);
+    QTRY_VERIFY_WITH_TIMEOUT(!provider.runtimeSemanticMappingAttestation(), 1000);
+    const int applyBeforeEpochGuard = controller.requestCount(
+        Protocol::MessageType::ApplyOutputTransaction);
+    QVERIFY(!provider.applyRuntimeOutputTransaction(oldTransaction));
+    QCOMPARE(
+        controller.requestCount(Protocol::MessageType::ApplyOutputTransaction),
+        applyBeforeEpochGuard);
+    const quint64 oldGeneration = provider.connectionSnapshot().sessionGeneration;
+
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    QVERIFY(provider.connectToController(connectionRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.connectionSnapshot().sessionGeneration > oldGeneration);
+    const int before = controller.requestCount(Protocol::MessageType::QueryOutputGroupPolicy);
+    QVERIFY(!provider.requestRuntimeOutputGroupPolicy(oldPolicy));
+    QCOMPARE(controller.requestCount(Protocol::MessageType::QueryOutputGroupPolicy), before);
+    QVERIFY(!provider.applyRuntimeOutputTransaction(oldTransaction));
+    QCOMPARE(
+        controller.requestCount(Protocol::MessageType::ApplyOutputTransaction),
+        applyBeforeEpochGuard);
     QVERIFY(controller.violations().isEmpty());
     QVERIFY(provider.disconnectFromController());
     QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);

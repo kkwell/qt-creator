@@ -100,7 +100,7 @@ quint32 requiredFeatureMask(quint16 minor)
 
 QString statusName(qint32 status)
 {
-    static constexpr std::array<const char *, 36> names{
+    static constexpr std::array<const char *, 42> names{
         "OK",
         "BAD_MAGIC",
         "BAD_VERSION",
@@ -137,8 +137,14 @@ QString statusName(qint32 status)
         "FIRMWARE_STORAGE",
         "FIRMWARE_FIT_INVALID",
         "TIMING_MODE_MISMATCH",
+        "OPERATION_CONFLICT",
+        "STALE_OUTPUT",
+        "OUTPUT_GROUP_INVALID",
+        "OUTPUT_VALUE_INVALID",
+        "OUTPUT_TTL_INVALID",
+        "OUTPUT_POLICY_UNAVAILABLE",
     };
-    if (status <= 0 && status >= -35)
+    if (status <= 0 && status >= -41)
         return QString::fromLatin1(names.at(size_t(-status)));
     return QStringLiteral("PRODUCT_API_STATUS_%1").arg(status);
 }
@@ -669,6 +675,169 @@ std::optional<Data::RuntimeResourceDescriptor> runtimeResourceDescriptor(
     return result;
 }
 
+std::optional<quint32> runtimeOutputGroupId(const Data::RuntimeConsistencyGroupId &id)
+{
+    if (id.value.size() != qsizetype(sizeof(quint32)))
+        return {};
+    const quint32 value = qFromBigEndian<quint32>(
+        reinterpret_cast<const uchar *>(id.value.constData()));
+    return value ? std::optional(value) : std::nullopt;
+}
+
+std::optional<quint64> runtimeOutputResourceId(const Data::RuntimeResourceId &id)
+{
+    if (id.value.size() != qsizetype(sizeof(quint64)))
+        return {};
+    const quint64 value = qFromBigEndian<quint64>(
+        reinterpret_cast<const uchar *>(id.value.constData()));
+    return value ? std::optional(value) : std::nullopt;
+}
+
+std::optional<Protocol::RuntimeResourcePrimitive> runtimeOutputPrimitive(
+    Data::RuntimeResourcePrimitiveType primitive, quint16 bitWidth)
+{
+    using DataType = Data::RuntimeResourcePrimitiveType;
+    using ProtocolType = Protocol::RuntimeResourcePrimitive;
+    switch (primitive) {
+    case DataType::Boolean:
+        return bitWidth == 1 ? std::optional(ProtocolType::Boolean) : std::nullopt;
+    case DataType::UnsignedInteger:
+        switch (bitWidth) {
+        case 8:
+            return ProtocolType::Unsigned8;
+        case 16:
+            return ProtocolType::Unsigned16;
+        case 32:
+            return ProtocolType::Unsigned32;
+        case 64:
+            return ProtocolType::Unsigned64;
+        default:
+            return {};
+        }
+    case DataType::SignedInteger:
+        switch (bitWidth) {
+        case 8:
+            return ProtocolType::Signed8;
+        case 16:
+            return ProtocolType::Signed16;
+        case 32:
+            return ProtocolType::Signed32;
+        case 64:
+            return ProtocolType::Signed64;
+        default:
+            return {};
+        }
+    case DataType::ByteArray:
+        return bitWidth && bitWidth <= 128 ? std::optional(ProtocolType::RawBits) : std::nullopt;
+    case DataType::FloatingPoint:
+    case DataType::Opaque:
+    case DataType::Text:
+        return {};
+    }
+    return {};
+}
+
+QByteArray leastSignificantBigEndianBytes(quint64 value, qsizetype byteCount)
+{
+    QByteArray encoded(qsizetype(sizeof(quint64)), '\0');
+    qToBigEndian(value, reinterpret_cast<uchar *>(encoded.data()));
+    return encoded.last(byteCount);
+}
+
+std::optional<QByteArray> runtimeOutputValue(
+    const Data::RuntimeOutputValueWrite &write, Protocol::RuntimeResourcePrimitive primitive)
+{
+    const qsizetype byteCount = (write.bitWidth + 7) / 8;
+    const QVariant &value = write.value.value;
+    using ProtocolType = Protocol::RuntimeResourcePrimitive;
+    switch (primitive) {
+    case ProtocolType::Boolean:
+        return QByteArray(1, value.toBool() ? '\x01' : '\0');
+    case ProtocolType::Unsigned8:
+    case ProtocolType::Unsigned16:
+    case ProtocolType::Unsigned32:
+    case ProtocolType::Unsigned64:
+        return leastSignificantBigEndianBytes(value.toULongLong(), byteCount);
+    case ProtocolType::Signed8:
+    case ProtocolType::Signed16:
+    case ProtocolType::Signed32:
+    case ProtocolType::Signed64:
+        return leastSignificantBigEndianBytes(quint64(value.toLongLong()), byteCount);
+    case ProtocolType::RawBits:
+        return value.toByteArray();
+    case ProtocolType::FixedQ32_32:
+        return {};
+    }
+    return {};
+}
+
+bool sameRuntimeOutputWireIntent(
+    const Data::RuntimeOutputTransactionRequest &left,
+    const Data::RuntimeOutputTransactionRequest &right)
+{
+    Data::RuntimeOutputTransactionRequest rebound = left;
+    rebound.scope = right.scope;
+    rebound.sessionGeneration = right.sessionGeneration;
+    return rebound == right;
+}
+
+std::optional<Data::RuntimeOutputRecoveryPolicy> runtimeOutputRecoveryPolicy(quint32 recoveryPolicy)
+{
+    if (recoveryPolicy == quint32(Protocol::OutputRecoveryPolicy::ReturnTask))
+        return Data::RuntimeOutputRecoveryPolicy::ReturnTask;
+    if (recoveryPolicy == quint32(Protocol::OutputRecoveryPolicy::HoldSafe))
+        return Data::RuntimeOutputRecoveryPolicy::HoldSafe;
+    return {};
+}
+
+std::optional<Data::RuntimeOutputState> runtimeOutputState(Protocol::OutputTransactionState state)
+{
+    switch (state) {
+    case Protocol::OutputTransactionState::Idle:
+        return Data::RuntimeOutputState::Idle;
+    case Protocol::OutputTransactionState::OverrideActive:
+        return Data::RuntimeOutputState::OverrideActive;
+    case Protocol::OutputTransactionState::SafeHold:
+        return Data::RuntimeOutputState::SafeHold;
+    }
+    return {};
+}
+
+std::optional<Data::RuntimeOutputTransactionState> runtimeOutputTransactionState(
+    const Protocol::OutputTransactionRecord &record,
+    const Data::ControllerConnectionScope &scope,
+    quint64 sessionGeneration)
+{
+    const auto state = runtimeOutputState(record.state);
+    if (!state)
+        return {};
+    Data::RuntimeOutputTransactionState result;
+    result.scope = scope;
+    result.sessionGeneration = sessionGeneration;
+    result.epoch = runtimeResourceEpoch(record.binding);
+    result.mappingDigest = record.semanticMappingSha256;
+    result.state = *state;
+    result.resultFlags = Data::RuntimeOutputTransactionResultFlags::fromInt(int(record.resultFlags));
+    if (std::any_of(record.operationId.cbegin(), record.operationId.cend(), [](char byte) {
+            return byte != 0;
+        })) {
+        result.operationId = Data::RuntimeOutputOperationId{record.operationId};
+    }
+    result.appliedCycle = record.appliedCycle;
+    result.expiryCycle = record.expiryCycle;
+    result.outputGeneration = record.outputGeneration;
+    if (record.consistencyGroupId)
+        result.consistencyGroupId = {opaqueBigEndian(record.consistencyGroupId)};
+    result.ttlCycles = record.ttlCycles;
+    result.recoveryPolicy = runtimeOutputRecoveryPolicy(record.recoveryPolicy)
+                                .value_or(Data::RuntimeOutputRecoveryPolicy::Unknown);
+    result.valueCount = record.valueCount;
+    result.providerDetail = record.detail;
+    result.controllerTimestampNs = record.controllerTimestampNs;
+    result.receivedAt = QDateTime::currentDateTimeUtc();
+    return result.isValid() ? std::optional(result) : std::nullopt;
+}
+
 } // namespace
 
 class ProductApiSessionPrivate
@@ -685,6 +854,9 @@ public:
         RuntimeResourceSnapshot,
         RuntimeResourceTargetedSnapshot,
         RuntimeSemanticMappingAttestation,
+        RuntimeOutputGroupPolicy,
+        RuntimeOutputTransactionState,
+        RuntimeOutputTransactionApply,
         ResumeEvents,
         ResumeReplay,
         ControlCommand,
@@ -721,6 +893,13 @@ public:
             semanticMappingAttestationQuery;
         std::optional<Data::RuntimeSemanticMappingAttestationRequest>
             semanticMappingAttestationRequest;
+        std::optional<Protocol::OutputGroupPolicyQuery> outputGroupPolicyQuery;
+        std::optional<Data::RuntimeOutputGroupPolicyRequest> outputGroupPolicyRequest;
+        std::optional<Protocol::OutputTransactionStateQuery> outputTransactionStateQuery;
+        std::optional<Data::RuntimeOutputTransactionStateRequest> outputTransactionStateRequest;
+        std::optional<Protocol::OutputTransactionRequest> outputTransactionProtocolRequest;
+        std::optional<Data::RuntimeOutputTransactionRequest> outputTransactionRequest;
+        std::optional<Data::RuntimeOutputTransactionRequest> outputReconciliationRequest;
         QTimer *timer = nullptr;
     };
 
@@ -923,6 +1102,48 @@ public:
             Qt::QueuedConnection);
     }
 
+    void notifyRuntimeOutputGroupPolicyRequestFinished(
+        const Data::RuntimeOutputGroupPolicyResult &result)
+    {
+        QMetaObject::invokeMethod(
+            q,
+            [q = q, result] { emit q->runtimeOutputGroupPolicyRequestFinished(result); },
+            Qt::QueuedConnection);
+    }
+
+    void notifyRuntimeOutputTransactionStateChanged(const Data::RuntimeOutputTransactionState &state)
+    {
+        QMetaObject::invokeMethod(
+            q,
+            [q = q, state] { emit q->runtimeOutputTransactionStateChanged(state); },
+            Qt::QueuedConnection);
+    }
+
+    void notifyRuntimeOutputTransactionStateInvalidated()
+    {
+        QMetaObject::invokeMethod(
+            q,
+            [q = q] { emit q->runtimeOutputTransactionStateInvalidated(); },
+            Qt::QueuedConnection);
+    }
+
+    void notifyRuntimeOutputTransactionStateRequestFinished(
+        const Data::RuntimeOutputTransactionStateResult &result)
+    {
+        QMetaObject::invokeMethod(
+            q,
+            [q = q, result] { emit q->runtimeOutputTransactionStateRequestFinished(result); },
+            Qt::QueuedConnection);
+    }
+
+    void notifyRuntimeOutputTransactionFinished(const Data::RuntimeOutputTransactionResult &result)
+    {
+        QMetaObject::invokeMethod(
+            q,
+            [q = q, result] { emit q->runtimeOutputTransactionFinished(result); },
+            Qt::QueuedConnection);
+    }
+
     void ignoreLateRuntimeResourceResponse(quint64 requestId)
     {
         constexpr qsizetype maximumIgnoredRequestIds = 64;
@@ -983,6 +1204,7 @@ public:
         if (!semanticMappingAttestation)
             return;
         semanticMappingAttestation.reset();
+        clearRuntimeOutputCache();
         notifyRuntimeSemanticMappingAttestationChanged();
     }
 
@@ -1054,6 +1276,366 @@ public:
             || (runtimeCatalog && runtimeCatalog->epoch != epoch)) {
             clearRuntimeSemanticMappingAttestation();
         }
+    }
+
+    void ignoreLateRuntimeOutputResponse(quint64 requestId, PendingKind kind)
+    {
+        constexpr qsizetype maximumIgnoredRequestIds = 64;
+        if (!requestId || ignoredRuntimeOutputRequestIds.contains(requestId)
+            || ignoredRuntimeOutputRequestIds.size() >= maximumIgnoredRequestIds) {
+            return;
+        }
+        ignoredRuntimeOutputRequestIds.insert(requestId, kind);
+    }
+
+    bool canTrackAnotherLateRuntimeOutputResponse() const
+    {
+        return ignoredRuntimeOutputRequestIds.size() < 64;
+    }
+
+    Data::ControllerOperationError runtimeOutputError(
+        Data::ControllerErrorSource source,
+        Protocol::Role role,
+        Data::ControllerOperation operation,
+        const QString &summary,
+        const QString &detail = {},
+        std::optional<qint32> code = {},
+        std::optional<qint32> operationResult = {},
+        std::optional<quint64> sourceDetail = {},
+        std::optional<quint64> requestId = {}) const
+    {
+        Data::ControllerOperationError error;
+        error.source = source;
+        error.channelId = channelId(role);
+        error.operation = operation;
+        error.code = code;
+        error.operationResult = operationResult;
+        error.sourceDetail = sourceDetail;
+        if (code)
+            error.codeName = statusName(*code);
+        error.requestId = requestId;
+        error.occurredAt = QDateTime::currentDateTimeUtc();
+        error.retryDisposition = code ? retryDisposition(*code)
+                                      : Data::ControllerRetryDisposition::NotRetryable;
+        error.summary = summary;
+        error.detail = detail;
+        return error;
+    }
+
+    void finishRuntimeOutputGroupPolicy(
+        const Data::RuntimeOutputGroupPolicyRequest &request,
+        const std::optional<Data::RuntimeOutputGroupPolicy> &policy,
+        const std::optional<Data::ControllerOperationError> &error,
+        std::optional<quint64> requestId = {})
+    {
+        if (requestId)
+            removePending(*requestId);
+        runtimeOutputOperationInProgress = false;
+        Data::RuntimeOutputGroupPolicyResult result;
+        result.request = request;
+        result.policy = policy;
+        result.error = error;
+        notifyRuntimeOutputGroupPolicyRequestFinished(result);
+    }
+
+    void finishRuntimeOutputState(
+        const Data::RuntimeOutputTransactionStateRequest &request,
+        const std::optional<Data::RuntimeOutputTransactionState> &state,
+        const std::optional<Data::ControllerOperationError> &error,
+        std::optional<quint64> requestId = {})
+    {
+        if (requestId)
+            removePending(*requestId);
+        runtimeOutputOperationInProgress = false;
+        Data::RuntimeOutputTransactionStateResult result;
+        result.request = request;
+        result.state = state;
+        result.error = error;
+        notifyRuntimeOutputTransactionStateRequestFinished(result);
+    }
+
+    void finishRuntimeOutputTransaction(
+        const Data::RuntimeOutputTransactionRequest &request,
+        Data::RuntimeOutputTransactionOutcome outcome,
+        bool finalResponseObserved,
+        const std::optional<Data::RuntimeOutputTransactionState> &state,
+        const std::optional<Data::ControllerOperationError> &error,
+        std::optional<quint64> requestId = {})
+    {
+        if (requestId)
+            removePending(*requestId);
+        runtimeOutputOperationInProgress = false;
+        Data::RuntimeOutputTransactionResult result;
+        result.request = request;
+        result.outcome = outcome;
+        result.finalResponseObserved = finalResponseObserved;
+        result.state = state;
+        result.error = error;
+        notifyRuntimeOutputTransactionFinished(result);
+    }
+
+    void clearRuntimeOutputCache(bool clearOperationJournal = false)
+    {
+        runtimeOutputPolicies.clear();
+        clearRuntimeOutputState();
+        if (clearOperationJournal) {
+            outputOperationJournal.clear();
+            outputOperationJournalOrder.clear();
+        }
+    }
+
+    void clearRuntimeOutputState()
+    {
+        if (!runtimeOutputState)
+            return;
+        runtimeOutputState.reset();
+        notifyRuntimeOutputTransactionStateInvalidated();
+    }
+
+    quint64 knownRuntimeOutputGeneration(
+        const Data::RuntimeResourceCatalogEpoch &epoch, const QByteArray &mappingDigest) const
+    {
+        quint64 known = 0;
+        if (runtimeOutputState && runtimeOutputState->epoch == epoch
+            && runtimeOutputState->mappingDigest == mappingDigest) {
+            known = runtimeOutputState->outputGeneration;
+        }
+        for (const Data::RuntimeOutputGroupPolicy &policy : runtimeOutputPolicies) {
+            if (policy.epoch == epoch && policy.mappingDigest == mappingDigest)
+                known = std::max(known, policy.currentOutputGeneration);
+        }
+        return known;
+    }
+
+    void supersedeUnresolvedRuntimeOutputTransaction(const QString &detail)
+    {
+        if (!unresolvedOutputTransaction)
+            return;
+        const Data::RuntimeOutputTransactionRequest request = *unresolvedOutputTransaction;
+        unresolvedOutputTransaction.reset();
+        finishRuntimeOutputTransaction(
+            request,
+            Data::RuntimeOutputTransactionOutcome::OutcomeUnknown,
+            false,
+            {},
+            runtimeOutputError(
+                Data::ControllerErrorSource::Controller,
+                Protocol::Role::Control,
+                Data::ControllerOperation::ApplyRuntimeOutputTransaction,
+                Tr::tr("An unresolved output transaction was superseded."),
+                detail));
+    }
+
+    void supersedeUnresolvedRuntimeOutputIfContextChanged()
+    {
+        if (!unresolvedOutputTransaction)
+            return;
+        const Data::RuntimeOutputTransactionRequest &request
+            = *unresolvedOutputTransaction;
+        if (bootId && request.expectedEpoch.controllerBootId != bootId) {
+            supersedeUnresolvedRuntimeOutputTransaction(
+                Tr::tr("The controller BootId changed; the historical outcome remains unknown."));
+            return;
+        }
+        if (snapshot.package) {
+            const auto activePackage = activePackageSelector(*snapshot.package);
+            if (!activePackage
+                || request.expectedEpoch.activePackageSlot != activePackage->slot
+                || request.expectedEpoch.activePackageGeneration != activePackage->generation
+                || request.expectedEpoch.configurationId != activePackage->configurationId) {
+                supersedeUnresolvedRuntimeOutputTransaction(
+                    Tr::tr(
+                        "The active package changed; the historical outcome remains unknown."));
+                return;
+            }
+        }
+        if (runtimeCatalog && request.expectedEpoch != runtimeCatalog->epoch) {
+            supersedeUnresolvedRuntimeOutputTransaction(
+                Tr::tr(
+                    "The complete runtime package epoch changed; the historical outcome remains "
+                    "unknown."));
+            return;
+        }
+        if (semanticMappingAttestation
+            && (request.expectedEpoch != semanticMappingAttestation->epoch
+                || request.expectedMappingDigest
+                       != semanticMappingAttestation->proof.mappingSha256)) {
+            supersedeUnresolvedRuntimeOutputTransaction(
+                Tr::tr(
+                    "The verified semantic mapping changed; the historical outcome remains "
+                    "unknown."));
+        }
+    }
+
+    std::optional<Data::RuntimeOutputTransactionRequest>
+    unresolvedRuntimeOutputReboundFor(
+        const Data::RuntimeOutputTransactionStateRequest &request) const
+    {
+        if (!unresolvedOutputTransaction
+            || unresolvedOutputTransaction->expectedEpoch != request.expectedEpoch
+            || unresolvedOutputTransaction->expectedMappingDigest
+                   != request.expectedMappingDigest) {
+            return {};
+        }
+        Data::RuntimeOutputTransactionRequest rebound = *unresolvedOutputTransaction;
+        rebound.scope = request.scope;
+        rebound.sessionGeneration = request.sessionGeneration;
+        return rebound.isValid() ? std::optional(rebound) : std::nullopt;
+    }
+
+    void rememberOutputOperation(const Data::RuntimeOutputTransactionRequest &request)
+    {
+        if (!outputOperationJournal.contains(request.operationId.value))
+            outputOperationJournalOrder.append(request.operationId.value);
+        outputOperationJournal.insert(request.operationId.value, request);
+        constexpr qsizetype maximumJournalEntries = 16;
+        while (outputOperationJournalOrder.size() > maximumJournalEntries) {
+            const QByteArray oldest = outputOperationJournalOrder.takeFirst();
+            outputOperationJournal.remove(oldest);
+        }
+    }
+
+    bool outputContextMatches(
+        const Data::ControllerConnectionScope &scope,
+        quint64 sessionGeneration,
+        const Data::RuntimeResourceCatalogEpoch &epoch,
+        const QByteArray &mappingDigest) const
+    {
+        const auto activePackage = snapshot.package ? activePackageSelector(*snapshot.package)
+                                                    : std::nullopt;
+        return scope == snapshot.scope && sessionGeneration == generation
+               && epoch.controllerBootId == bootId && activePackage
+               && epoch.activePackageSlot == activePackage->slot
+               && epoch.activePackageGeneration == activePackage->generation
+               && epoch.configurationId == activePackage->configurationId
+               && (!runtimeCatalog || runtimeCatalog->epoch == epoch) && semanticMappingAttestation
+               && semanticMappingAttestation->scope == scope
+               && semanticMappingAttestation->sessionGeneration == sessionGeneration
+               && semanticMappingAttestation->epoch == epoch
+               && semanticMappingAttestation->proof.mappingSha256 == mappingDigest;
+    }
+
+    void updateCachedOutputGeneration(
+        const Data::RuntimeResourceCatalogEpoch &epoch,
+        const QByteArray &mappingDigest,
+        quint64 outputGeneration)
+    {
+        for (Data::RuntimeOutputGroupPolicy &policy : runtimeOutputPolicies) {
+            if (policy.epoch == epoch && policy.mappingDigest == mappingDigest)
+                policy.currentOutputGeneration
+                    = std::max(policy.currentOutputGeneration, outputGeneration);
+        }
+    }
+
+    bool hasActiveRuntimeOutputOperation() const
+    {
+        return runtimeOutputOperationInProgress
+               || std::any_of(
+                   pendingRequests.cbegin(),
+                   pendingRequests.cend(),
+                   [](const PendingRequest &request) {
+                       return request.kind == PendingKind::RuntimeOutputGroupPolicy
+                              || request.kind == PendingKind::RuntimeOutputTransactionState
+                              || request.kind == PendingKind::RuntimeOutputTransactionApply;
+                   });
+    }
+
+    bool hasActiveRuntimeOutputMutation() const
+    {
+        return std::any_of(
+            pendingRequests.cbegin(),
+            pendingRequests.cend(),
+            [](const PendingRequest &request) {
+                return request.kind == PendingKind::RuntimeOutputTransactionApply;
+            });
+    }
+
+    bool supportsRuntimeOutputContext() const
+    {
+        return negotiatedMinor >= Protocol::OutputTransactionMinor
+               && (featureBits & Protocol::OutputTransactionFeature)
+               && (bulkFeatureBits & Protocol::OutputTransactionFeature);
+    }
+
+    void cancelRuntimeOutputOperation(const QString &summary)
+    {
+        auto found = std::find_if(
+            pendingRequests.begin(), pendingRequests.end(), [](const PendingRequest &request) {
+                return request.kind == PendingKind::RuntimeOutputGroupPolicy
+                       || request.kind == PendingKind::RuntimeOutputTransactionState
+                       || request.kind == PendingKind::RuntimeOutputTransactionApply;
+            });
+        if (found == pendingRequests.end()) {
+            runtimeOutputOperationInProgress = false;
+            return;
+        }
+
+        const PendingRequest pending = *found;
+        const quint64 requestId = found.key();
+        const Channel &pendingChannel = channel(pending.role);
+        if (pending.generation == generation && pending.channelEpoch == pendingChannel.epoch
+            && pendingChannel.socket) {
+            ignoreLateRuntimeOutputResponse(requestId, pending.kind);
+        }
+
+        if (pending.kind == PendingKind::RuntimeOutputGroupPolicy
+            && pending.outputGroupPolicyRequest) {
+            const auto request = *pending.outputGroupPolicyRequest;
+            const auto error = runtimeOutputError(
+                Data::ControllerErrorSource::Network,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeOutputGroupPolicy,
+                summary,
+                {},
+                {},
+                {},
+                {},
+                requestId);
+            finishRuntimeOutputGroupPolicy(request, {}, error, requestId);
+            return;
+        }
+        if (pending.kind == PendingKind::RuntimeOutputTransactionState
+            && pending.outputTransactionStateRequest) {
+            const auto request = *pending.outputTransactionStateRequest;
+            const auto error = runtimeOutputError(
+                Data::ControllerErrorSource::Network,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeOutputTransactionState,
+                summary,
+                {},
+                {},
+                {},
+                {},
+                requestId);
+            finishRuntimeOutputState(request, {}, error, requestId);
+            return;
+        }
+        if (pending.kind == PendingKind::RuntimeOutputTransactionApply
+            && pending.outputTransactionRequest) {
+            const auto request = *pending.outputTransactionRequest;
+            unresolvedOutputTransaction = request;
+            const auto error = runtimeOutputError(
+                Data::ControllerErrorSource::Network,
+                Protocol::Role::Control,
+                Data::ControllerOperation::ApplyRuntimeOutputTransaction,
+                summary,
+                Tr::tr("The request may have reached the controller. Reconcile or retry only with "
+                       "the same OperationId and identical bytes."),
+                {},
+                {},
+                {},
+                requestId);
+            finishRuntimeOutputTransaction(
+                request,
+                Data::RuntimeOutputTransactionOutcome::OutcomeUnknown,
+                false,
+                {},
+                error,
+                requestId);
+            return;
+        }
+        removePending(requestId);
+        runtimeOutputOperationInProgress = false;
     }
 
     Data::ControllerOperationError runtimeResourceSnapshotError(
@@ -1200,10 +1782,12 @@ public:
             Tr::tr("The targeted runtime resource read was canceled because its catalog changed."));
         resetRuntimeResourceRefresh();
         clearRuntimeResourceCache();
+        clearRuntimeOutputCache();
     }
 
     void invalidateRuntimeResourcesIfBaseChanged()
     {
+        supersedeUnresolvedRuntimeOutputIfContextChanged();
         invalidateRuntimeSemanticMappingAttestationIfContextChanged();
         if (!runtimeCatalog && !runtimeSnapshot)
             return;
@@ -1447,11 +2031,13 @@ public:
     {
         invalidateRuntimeSemanticMappingAttestation(
             Tr::tr("The semantic mapping attestation query ended with the controller session."));
+        clearRuntimeOutputCache(true);
         ++generation;
         if (!generation)
             ++generation;
         ignoredRuntimeResourceRequestIds.clear();
         ignoredSemanticMappingAttestationRequestIds.clear();
+        ignoredRuntimeOutputRequestIds.clear();
         snapshot.sessionGeneration = generation;
     }
 
@@ -1462,6 +2048,7 @@ public:
         invalidateRuntimeResources();
         invalidateRuntimeSemanticMappingAttestation(
             Tr::tr("The semantic mapping attestation query ended with the controller session."));
+        clearRuntimeOutputCache(true);
         heartbeatRequestId = 0;
         liveStatePollingDegraded = false;
         snapshot.readOnly = false;
@@ -1494,6 +2081,8 @@ public:
 
     void clearPendingRequests()
     {
+        cancelRuntimeOutputOperation(
+            Tr::tr("The output transaction operation ended with the controller session."));
         cancelTargetedRuntimeResourceSnapshot(
             Tr::tr("The targeted runtime resource read ended with the controller session."));
         cancelRuntimeSemanticMappingAttestationRequest(
@@ -2139,6 +2728,72 @@ public:
                     publish();
                     return;
                 }
+                if (kind == PendingKind::RuntimeOutputGroupPolicy
+                    && found->outputGroupPolicyRequest) {
+                    const auto request = *found->outputGroupPolicyRequest;
+                    ignoreLateRuntimeOutputResponse(requestId, kind);
+                    const auto error = runtimeOutputError(
+                        Data::ControllerErrorSource::Network,
+                        Protocol::Role::Bulk,
+                        Data::ControllerOperation::QueryRuntimeOutputGroupPolicy,
+                        Tr::tr("The output group policy query timed out."),
+                        {},
+                        {},
+                        {},
+                        {},
+                        requestId);
+                    snapshot.lastError = error;
+                    finishRuntimeOutputGroupPolicy(request, {}, error, requestId);
+                    publish();
+                    return;
+                }
+                if (kind == PendingKind::RuntimeOutputTransactionState
+                    && found->outputTransactionStateRequest) {
+                    const auto request = *found->outputTransactionStateRequest;
+                    ignoreLateRuntimeOutputResponse(requestId, kind);
+                    const auto error = runtimeOutputError(
+                        Data::ControllerErrorSource::Network,
+                        Protocol::Role::Bulk,
+                        Data::ControllerOperation::QueryRuntimeOutputTransactionState,
+                        Tr::tr("The output transaction state query timed out."),
+                        {},
+                        {},
+                        {},
+                        {},
+                        requestId);
+                    snapshot.lastError = error;
+                    finishRuntimeOutputState(request, {}, error, requestId);
+                    publish();
+                    return;
+                }
+                if (kind == PendingKind::RuntimeOutputTransactionApply
+                    && found->outputTransactionRequest) {
+                    const auto request = *found->outputTransactionRequest;
+                    ignoreLateRuntimeOutputResponse(requestId, kind);
+                    unresolvedOutputTransaction = request;
+                    const auto error = runtimeOutputError(
+                        Data::ControllerErrorSource::Network,
+                        Protocol::Role::Control,
+                        Data::ControllerOperation::ApplyRuntimeOutputTransaction,
+                        Tr::tr("The output transaction result timed out."),
+                        Tr::tr("The request may have been applied. The IDE will query state and "
+                               "will only retry with the same OperationId."),
+                        {},
+                        {},
+                        {},
+                        requestId);
+                    snapshot.lastError = error;
+                    finishRuntimeOutputTransaction(
+                        request,
+                        Data::RuntimeOutputTransactionOutcome::OutcomeUnknown,
+                        false,
+                        {},
+                        error,
+                        requestId);
+                    beginRuntimeOutputReconciliation(request);
+                    publish();
+                    return;
+                }
                 if (isRuntimeResourceRequest(kind)) {
                     failRuntimeResourceQuery(
                         Data::ControllerErrorSource::Network,
@@ -2459,6 +3114,181 @@ public:
             return false;
         }
         return true;
+    }
+
+    bool sendRuntimeOutputGroupPolicyQuery(
+        const Data::RuntimeOutputGroupPolicyRequest &policyRequest,
+        const Protocol::OutputGroupPolicyQuery &query)
+    {
+        Channel &bulk = channel(Protocol::Role::Bulk);
+        Protocol::Error codecError;
+        const quint64 requestId = allocateRequestId();
+        const QByteArray wire = Protocol::encodeQueryOutputGroupPolicy(
+            query, sessionId, requestId, ++bulk.sendSequence, negotiatedMinor, &codecError);
+        if (wire.isEmpty()) {
+            const auto error = runtimeOutputError(
+                Data::ControllerErrorSource::ClientConfiguration,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeOutputGroupPolicy,
+                Tr::tr("The output group policy request could not be encoded."),
+                codecError.text,
+                {},
+                {},
+                {},
+                requestId);
+            snapshot.lastError = error;
+            finishRuntimeOutputGroupPolicy(policyRequest, {}, error);
+            publish();
+            return false;
+        }
+        if (!writeFrame(
+                bulk,
+                wire,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeOutputGroupPolicy)) {
+            runtimeOutputOperationInProgress = false;
+            return false;
+        }
+        PendingRequest pending;
+        pending.kind = PendingKind::RuntimeOutputGroupPolicy;
+        pending.role = Protocol::Role::Bulk;
+        pending.operation = Data::ControllerOperation::QueryRuntimeOutputGroupPolicy;
+        pending.generation = generation;
+        pending.channelEpoch = bulk.epoch;
+        pending.requestType = Protocol::MessageType::QueryOutputGroupPolicy;
+        pending.outputGroupPolicyQuery = query;
+        pending.outputGroupPolicyRequest = policyRequest;
+        addPending(requestId, pending, options.requestTimeoutMs);
+        return true;
+    }
+
+    bool sendRuntimeOutputStateQuery(
+        const Data::RuntimeOutputTransactionStateRequest &stateRequest,
+        const Protocol::OutputTransactionStateQuery &query,
+        const std::optional<Data::RuntimeOutputTransactionRequest> &reconciliation = {})
+    {
+        Channel &bulk = channel(Protocol::Role::Bulk);
+        Protocol::Error codecError;
+        const quint64 requestId = allocateRequestId();
+        const QByteArray wire = Protocol::encodeGetOutputTransactionState(
+            query, sessionId, requestId, ++bulk.sendSequence, negotiatedMinor, &codecError);
+        if (wire.isEmpty()) {
+            const auto error = runtimeOutputError(
+                Data::ControllerErrorSource::ClientConfiguration,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeOutputTransactionState,
+                Tr::tr("The output transaction state request could not be encoded."),
+                codecError.text,
+                {},
+                {},
+                {},
+                requestId);
+            snapshot.lastError = error;
+            finishRuntimeOutputState(stateRequest, {}, error);
+            publish();
+            return false;
+        }
+        if (!writeFrame(
+                bulk,
+                wire,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeOutputTransactionState)) {
+            runtimeOutputOperationInProgress = false;
+            return false;
+        }
+        PendingRequest pending;
+        pending.kind = PendingKind::RuntimeOutputTransactionState;
+        pending.role = Protocol::Role::Bulk;
+        pending.operation = Data::ControllerOperation::QueryRuntimeOutputTransactionState;
+        pending.generation = generation;
+        pending.channelEpoch = bulk.epoch;
+        pending.requestType = Protocol::MessageType::GetOutputTransactionState;
+        pending.outputTransactionStateQuery = query;
+        pending.outputTransactionStateRequest = stateRequest;
+        pending.outputReconciliationRequest = reconciliation;
+        addPending(requestId, pending, options.requestTimeoutMs);
+        return true;
+    }
+
+    bool sendRuntimeOutputTransaction(
+        const Data::RuntimeOutputTransactionRequest &transactionRequest,
+        const Protocol::OutputTransactionRequest &protocolRequest)
+    {
+        Channel &control = channel(Protocol::Role::Control);
+        Protocol::Error codecError;
+        const quint64 requestId = allocateRequestId();
+        const QByteArray wire = Protocol::encodeApplyOutputTransaction(
+            protocolRequest,
+            sessionId,
+            requestId,
+            ++control.sendSequence,
+            negotiatedMinor,
+            &codecError);
+        if (wire.isEmpty()) {
+            const auto error = runtimeOutputError(
+                Data::ControllerErrorSource::ClientConfiguration,
+                Protocol::Role::Control,
+                Data::ControllerOperation::ApplyRuntimeOutputTransaction,
+                Tr::tr("The output transaction could not be encoded."),
+                codecError.text,
+                {},
+                {},
+                {},
+                requestId);
+            snapshot.lastError = error;
+            finishRuntimeOutputTransaction(
+                transactionRequest, Data::RuntimeOutputTransactionOutcome::Rejected, true, {}, error);
+            publish();
+            return false;
+        }
+        if (!writeFrame(
+                control,
+                wire,
+                Protocol::Role::Control,
+                Data::ControllerOperation::ApplyRuntimeOutputTransaction)) {
+            runtimeOutputOperationInProgress = false;
+            return false;
+        }
+        clearRuntimeOutputState();
+        rememberOutputOperation(transactionRequest);
+        PendingRequest pending;
+        pending.kind = PendingKind::RuntimeOutputTransactionApply;
+        pending.role = Protocol::Role::Control;
+        pending.operation = Data::ControllerOperation::ApplyRuntimeOutputTransaction;
+        pending.generation = generation;
+        pending.channelEpoch = control.epoch;
+        pending.requestType = Protocol::MessageType::ApplyOutputTransaction;
+        pending.nextExpectedStage = 1;
+        pending.outputTransactionProtocolRequest = protocolRequest;
+        pending.outputTransactionRequest = transactionRequest;
+        addPending(requestId, pending, options.requestTimeoutMs);
+        return true;
+    }
+
+    void beginRuntimeOutputReconciliation(
+        const Data::RuntimeOutputTransactionRequest &transactionRequest)
+    {
+        if (shuttingDown || !supportsRuntimeOutputContext()
+            || !channel(Protocol::Role::Bulk).handshaken || !channel(Protocol::Role::Bulk).socket
+            || runtimeOutputOperationInProgress) {
+            return;
+        }
+        const auto binding = runtimeResourceBinding(transactionRequest.expectedEpoch);
+        if (!binding)
+            return;
+        Data::RuntimeOutputTransactionStateRequest stateRequest;
+        stateRequest.correlationId = QStringLiteral("reconcile-%1")
+                                         .arg(QString::fromLatin1(
+                                             transactionRequest.operationId.value.toHex()));
+        stateRequest.scope = transactionRequest.scope;
+        stateRequest.sessionGeneration = transactionRequest.sessionGeneration;
+        stateRequest.expectedEpoch = transactionRequest.expectedEpoch;
+        stateRequest.expectedMappingDigest = transactionRequest.expectedMappingDigest;
+        Protocol::OutputTransactionStateQuery query;
+        query.binding = *binding;
+        query.semanticMappingSha256 = transactionRequest.expectedMappingDigest;
+        runtimeOutputOperationInProgress = true;
+        sendRuntimeOutputStateQuery(stateRequest, query, transactionRequest);
     }
 
     bool sendTargetedRuntimeResourceSnapshotQuery(
@@ -2922,6 +3752,7 @@ public:
             }
             sessionId = ack->sessionId;
             bootId = ack->bootId;
+            supersedeUnresolvedRuntimeOutputIfContextChanged();
             negotiatedMinor = frame.header.protocolMinor;
             featureBits = ack->featureBits;
 
@@ -4032,6 +4863,7 @@ public:
         const bool hadSnapshot = runtimeSnapshot.has_value();
         publishedRuntimeCatalogBinding = *runtimeCatalogBinding;
         runtimeCatalog = std::move(catalog);
+        supersedeUnresolvedRuntimeOutputIfContextChanged();
         invalidateRuntimeSemanticMappingAttestationIfContextChanged();
         runtimeSnapshot.reset();
         notifyRuntimeResourceCatalogChanged();
@@ -4529,9 +5361,19 @@ public:
             return;
         }
 
+        const bool outputContextChanged
+            = semanticMappingAttestation
+              && (semanticMappingAttestation->scope != attestation.scope
+                  || semanticMappingAttestation->sessionGeneration != attestation.sessionGeneration
+                  || semanticMappingAttestation->epoch != attestation.epoch
+                  || semanticMappingAttestation->proof.mappingSha256
+                         != attestation.proof.mappingSha256);
         const bool changed = !semanticMappingAttestation
                              || *semanticMappingAttestation != attestation;
+        if (outputContextChanged)
+            clearRuntimeOutputCache();
         semanticMappingAttestation = attestation;
+        supersedeUnresolvedRuntimeOutputIfContextChanged();
         if (snapshot.lastError
             && snapshot.lastError->operation
                    == Data::ControllerOperation::QueryRuntimeSemanticMappingAttestation) {
@@ -4542,6 +5384,410 @@ public:
             request, attestation, {}, requestId);
         if (changed)
             notifyRuntimeSemanticMappingAttestationChanged();
+    }
+
+    void failRuntimeOutputProtocol(
+        const PendingRequest &pending,
+        quint64 requestId,
+        const QString &summary,
+        const QString &detail = {})
+    {
+        const auto error = runtimeOutputError(
+            Data::ControllerErrorSource::Protocol,
+            pending.role,
+            pending.operation,
+            summary,
+            detail,
+            {},
+            {},
+            {},
+            requestId);
+        snapshot.lastError = error;
+        if (pending.kind == PendingKind::RuntimeOutputGroupPolicy
+            && pending.outputGroupPolicyRequest) {
+            finishRuntimeOutputGroupPolicy(*pending.outputGroupPolicyRequest, {}, error, requestId);
+        } else if (
+            pending.kind == PendingKind::RuntimeOutputTransactionState
+            && pending.outputTransactionStateRequest) {
+            finishRuntimeOutputState(*pending.outputTransactionStateRequest, {}, error, requestId);
+        } else if (
+            pending.kind == PendingKind::RuntimeOutputTransactionApply
+            && pending.outputTransactionRequest) {
+            unresolvedOutputTransaction = *pending.outputTransactionRequest;
+            finishRuntimeOutputTransaction(
+                *pending.outputTransactionRequest,
+                Data::RuntimeOutputTransactionOutcome::OutcomeUnknown,
+                false,
+                {},
+                error,
+                requestId);
+        } else {
+            removePending(requestId);
+            runtimeOutputOperationInProgress = false;
+        }
+        failProtocol(pending.role, pending.operation, summary, detail, requestId);
+    }
+
+    void finishRuntimeOutputControllerFailure(
+        const PendingRequest &pending,
+        quint64 requestId,
+        qint32 status,
+        std::optional<qint32> operationResult,
+        std::optional<quint64> detail,
+        const QString &summary)
+    {
+        const auto error = runtimeOutputError(
+            Data::ControllerErrorSource::Controller,
+            pending.role,
+            pending.operation,
+            summary,
+            {},
+            status,
+            operationResult,
+            detail,
+            requestId);
+        snapshot.lastError = error;
+        if (invalidatesRuntimeResourceCatalog(status))
+            invalidateRuntimeResources();
+        if (invalidatesControlLease(status) && snapshot.session)
+            snapshot.session->ownsControlLease = false;
+
+        if (pending.kind == PendingKind::RuntimeOutputGroupPolicy
+            && pending.outputGroupPolicyRequest) {
+            runtimeOutputPolicies.remove(pending.outputGroupPolicyRequest->consistencyGroupId.value);
+            finishRuntimeOutputGroupPolicy(*pending.outputGroupPolicyRequest, {}, error, requestId);
+        } else if (
+            pending.kind == PendingKind::RuntimeOutputTransactionState
+            && pending.outputTransactionStateRequest) {
+            finishRuntimeOutputState(*pending.outputTransactionStateRequest, {}, error, requestId);
+        } else if (
+            pending.kind == PendingKind::RuntimeOutputTransactionApply
+            && pending.outputTransactionRequest) {
+            if (unresolvedOutputTransaction
+                && unresolvedOutputTransaction->operationId
+                       == pending.outputTransactionRequest->operationId) {
+                unresolvedOutputTransaction.reset();
+            }
+            finishRuntimeOutputTransaction(
+                *pending.outputTransactionRequest,
+                Data::RuntimeOutputTransactionOutcome::Rejected,
+                true,
+                {},
+                error,
+                requestId);
+        } else {
+            failRuntimeOutputProtocol(
+                pending, requestId, Tr::tr("The output transaction request context is missing."));
+            return;
+        }
+        if (isReconnectStatus(status))
+            scheduleReconnect();
+        else
+            publish();
+    }
+
+    void handleRuntimeOutputBulkStatus(
+        const Protocol::Frame &frame, const PendingRequest &pending, quint64 requestId)
+    {
+        Protocol::Error decodeError;
+        const auto status = Protocol::decodeBulkStatus(frame, &decodeError);
+        if (!status || !status->status || status->originalType != quint16(pending.requestType)
+            || pending.role != Protocol::Role::Bulk) {
+            failRuntimeOutputProtocol(
+                pending,
+                requestId,
+                Tr::tr("The controller returned a malformed output query status."),
+                decodeError.text);
+            return;
+        }
+        finishRuntimeOutputControllerFailure(
+            pending,
+            requestId,
+            status->status,
+            status->operationResult,
+            {},
+            Tr::tr("The controller rejected the output transaction query."));
+    }
+
+    void handleRuntimeOutputGroupPolicy(
+        const Protocol::Frame &frame, const PendingRequest &pending, quint64 requestId)
+    {
+        if (!pending.outputGroupPolicyQuery || !pending.outputGroupPolicyRequest) {
+            failRuntimeOutputProtocol(
+                pending, requestId, Tr::tr("The output group policy request context is missing."));
+            return;
+        }
+        Protocol::Error decodeError;
+        const auto protocolPolicy
+            = Protocol::decodeOutputGroupPolicy(frame, *pending.outputGroupPolicyQuery, &decodeError);
+        if (!protocolPolicy) {
+            failRuntimeOutputProtocol(
+                pending,
+                requestId,
+                Tr::tr("The controller returned an invalid output group policy."),
+                decodeError.text);
+            return;
+        }
+        if (protocolPolicy->status) {
+            finishRuntimeOutputControllerFailure(
+                pending,
+                requestId,
+                protocolPolicy->status,
+                {},
+                {},
+                Tr::tr("The controller rejected the output group policy query."));
+            return;
+        }
+
+        const auto recovery = runtimeOutputRecoveryPolicy(quint32(protocolPolicy->recoveryPolicy));
+        Data::RuntimeOutputGroupPolicy policy;
+        policy.scope = pending.outputGroupPolicyRequest->scope;
+        policy.sessionGeneration = pending.outputGroupPolicyRequest->sessionGeneration;
+        policy.epoch = runtimeResourceEpoch(protocolPolicy->binding);
+        policy.consistencyGroupId = {opaqueBigEndian(protocolPolicy->consistencyGroupId)};
+        policy.mappingDigest = protocolPolicy->semanticMappingSha256;
+        policy.completeGroupRecordDigest = protocolPolicy->completeGroupRecordSha256;
+        policy.recoveryPolicy = recovery.value_or(Data::RuntimeOutputRecoveryPolicy::Unknown);
+        policy.maximumTtlCycles = protocolPolicy->maximumTtlCycles;
+        policy.completeResourceCount = protocolPolicy->completeResourceCount;
+        policy.currentOutputGeneration = protocolPolicy->currentOutputGeneration;
+        policy.manualWriteAllowed = bool(
+            protocolPolicy->policyFlags & quint32(Protocol::OutputGroupPolicyFlag::ManualWrite));
+        policy.receivedAt = QDateTime::currentDateTimeUtc();
+        if (!recovery || !policy.isValid()
+            || !outputContextMatches(
+                policy.scope, policy.sessionGeneration, policy.epoch, policy.mappingDigest)) {
+            failRuntimeOutputProtocol(
+                pending,
+                requestId,
+                Tr::tr("The output group policy does not match the verified package context."));
+            return;
+        }
+        if (policy.currentOutputGeneration
+            < knownRuntimeOutputGeneration(policy.epoch, policy.mappingDigest)) {
+            failRuntimeOutputProtocol(
+                pending,
+                requestId,
+                Tr::tr("The output group policy regressed OutputGeneration."));
+            return;
+        }
+        runtimeOutputPolicies.insert(policy.consistencyGroupId.value, policy);
+        if (snapshot.lastError
+            && snapshot.lastError->operation
+                   == Data::ControllerOperation::QueryRuntimeOutputGroupPolicy) {
+            snapshot.lastError.reset();
+            publish();
+        }
+        finishRuntimeOutputGroupPolicy(*pending.outputGroupPolicyRequest, policy, {}, requestId);
+    }
+
+    std::optional<Data::RuntimeOutputTransactionOutcome> reconcilesRuntimeOutputTransaction(
+        const Data::RuntimeOutputTransactionState &state,
+        const Data::RuntimeOutputTransactionRequest &request) const
+    {
+        if (!state.operationId || *state.operationId != request.operationId
+            || state.scope != request.scope || state.sessionGeneration != request.sessionGeneration
+            || state.epoch != request.expectedEpoch
+            || state.mappingDigest != request.expectedMappingDigest
+            || state.consistencyGroupId != request.consistencyGroupId
+            || state.ttlCycles != request.ttlCycles
+            || state.recoveryPolicy != request.expectedRecoveryPolicy
+            || state.valueCount != quint16(request.completeGroupWrites.size())) {
+            return {};
+        }
+        if (state.state == Data::RuntimeOutputState::OverrideActive
+            && state.outputGeneration == request.expectedOutputGeneration + 1) {
+            return Data::RuntimeOutputTransactionOutcome::Applied;
+        }
+        if (state.outputGeneration != request.expectedOutputGeneration + 2)
+            return {};
+        if (request.expectedRecoveryPolicy == Data::RuntimeOutputRecoveryPolicy::ReturnTask
+            && state.state == Data::RuntimeOutputState::Idle
+            && state.resultFlags.testFlag(Data::RuntimeOutputTransactionResultFlag::ReturnedTask)) {
+            return Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered;
+        }
+        if (request.expectedRecoveryPolicy == Data::RuntimeOutputRecoveryPolicy::HoldSafe
+            && state.state == Data::RuntimeOutputState::SafeHold
+            && state.resultFlags.testFlag(Data::RuntimeOutputTransactionResultFlag::SafeHold)) {
+            return Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered;
+        }
+        return {};
+    }
+
+    void handleRuntimeOutputState(
+        const Protocol::Frame &frame, const PendingRequest &pending, quint64 requestId)
+    {
+        if (!pending.outputTransactionStateQuery || !pending.outputTransactionStateRequest) {
+            failRuntimeOutputProtocol(
+                pending,
+                requestId,
+                Tr::tr("The output transaction state request context is missing."));
+            return;
+        }
+        Protocol::Error decodeError;
+        const auto protocolState = Protocol::decodeOutputTransactionState(
+            frame, *pending.outputTransactionStateQuery, &decodeError);
+        if (!protocolState) {
+            failRuntimeOutputProtocol(
+                pending,
+                requestId,
+                Tr::tr("The controller returned an invalid output transaction state."),
+                decodeError.text);
+            return;
+        }
+        if (protocolState->status) {
+            finishRuntimeOutputControllerFailure(
+                pending,
+                requestId,
+                protocolState->status,
+                protocolState->operationResult,
+                {},
+                Tr::tr("The controller rejected the output transaction state query."));
+            return;
+        }
+        const auto state = runtimeOutputTransactionState(
+            *protocolState,
+            pending.outputTransactionStateRequest->scope,
+            pending.outputTransactionStateRequest->sessionGeneration);
+        if (!state
+            || !outputContextMatches(
+                state->scope, state->sessionGeneration, state->epoch, state->mappingDigest)) {
+            failRuntimeOutputProtocol(
+                pending,
+                requestId,
+                Tr::tr("The output transaction state does not match the verified package."));
+            return;
+        }
+        if (state->outputGeneration
+            < knownRuntimeOutputGeneration(state->epoch, state->mappingDigest)) {
+            failRuntimeOutputProtocol(
+                pending,
+                requestId,
+                Tr::tr("The output transaction state regressed OutputGeneration."));
+            return;
+        }
+        runtimeOutputState = *state;
+        updateCachedOutputGeneration(state->epoch, state->mappingDigest, state->outputGeneration);
+        notifyRuntimeOutputTransactionStateChanged(*state);
+        if (snapshot.lastError
+            && snapshot.lastError->operation
+                   == Data::ControllerOperation::QueryRuntimeOutputTransactionState) {
+            snapshot.lastError.reset();
+            publish();
+        }
+        const auto reconciliation = pending.outputReconciliationRequest;
+        finishRuntimeOutputState(*pending.outputTransactionStateRequest, *state, {}, requestId);
+        if (reconciliation) {
+            const auto outcome = reconcilesRuntimeOutputTransaction(*state, *reconciliation);
+            if (outcome) {
+                unresolvedOutputTransaction.reset();
+                if (snapshot.lastError
+                    && snapshot.lastError->operation
+                           == Data::ControllerOperation::ApplyRuntimeOutputTransaction) {
+                    snapshot.lastError.reset();
+                    publish();
+                }
+                finishRuntimeOutputTransaction(*reconciliation, *outcome, false, *state, {});
+            }
+        }
+    }
+
+    void handleRuntimeOutputApplyStatus(
+        const Protocol::Frame &frame, const PendingRequest &pending, quint64 requestId)
+    {
+        Protocol::Error decodeError;
+        const auto status = Protocol::decodeCommandStatus(frame, &decodeError);
+        if (!status
+            || status->originalType != quint16(Protocol::MessageType::ApplyOutputTransaction)
+            || status->stage != pending.nextExpectedStage || pending.role != Protocol::Role::Control
+            || !pending.outputTransactionRequest || !pending.outputTransactionProtocolRequest) {
+            failRuntimeOutputProtocol(
+                pending,
+                requestId,
+                Tr::tr("The controller returned a malformed output transaction stage."),
+                decodeError.text);
+            return;
+        }
+        if (status->status) {
+            finishRuntimeOutputControllerFailure(
+                pending,
+                requestId,
+                status->status,
+                status->operationResult,
+                status->detail ? std::optional(status->detail) : std::nullopt,
+                Tr::tr("The controller rejected the output transaction."));
+            return;
+        }
+        if (status->final || status->stage > 3) {
+            failRuntimeOutputProtocol(
+                pending, requestId, Tr::tr("The output transaction stage sequence is invalid."));
+            return;
+        }
+        auto found = pendingRequests.find(requestId);
+        if (found == pendingRequests.end())
+            return;
+        found->nextExpectedStage = status->stage + 1;
+        if (found->timer)
+            found->timer->start(found->responseTimeoutMs);
+    }
+
+    void handleRuntimeOutputApplyResult(
+        const Protocol::Frame &frame, const PendingRequest &pending, quint64 requestId)
+    {
+        if (pending.nextExpectedStage != 4 || !pending.outputTransactionRequest
+            || !pending.outputTransactionProtocolRequest) {
+            failRuntimeOutputProtocol(
+                pending,
+                requestId,
+                Tr::tr("The output transaction result arrived before all acceptance stages."));
+            return;
+        }
+        Protocol::Error decodeError;
+        const auto protocolResult = Protocol::decodeOutputTransactionResult(
+            frame, *pending.outputTransactionProtocolRequest, &decodeError);
+        if (!protocolResult) {
+            failRuntimeOutputProtocol(
+                pending,
+                requestId,
+                Tr::tr("The controller returned an invalid output transaction result."),
+                decodeError.text);
+            return;
+        }
+        const auto state = runtimeOutputTransactionState(
+            *protocolResult,
+            pending.outputTransactionRequest->scope,
+            pending.outputTransactionRequest->sessionGeneration);
+        if (!state
+            || reconcilesRuntimeOutputTransaction(*state, *pending.outputTransactionRequest)
+                   != Data::RuntimeOutputTransactionOutcome::Applied
+            || !outputContextMatches(
+                state->scope, state->sessionGeneration, state->epoch, state->mappingDigest)) {
+            failRuntimeOutputProtocol(
+                pending,
+                requestId,
+                Tr::tr("The output transaction result does not match the submitted operation."));
+            return;
+        }
+        unresolvedOutputTransaction.reset();
+        updateCachedOutputGeneration(state->epoch, state->mappingDigest, state->outputGeneration);
+        // OutputTransactionResult is the terminal record for this Apply. It can
+        // arrive after TTL recovery or be a replay of the original record, so it
+        // is never a current-state publication. Only GetOutputTransactionState
+        // may update runtimeOutputState and emit the state-changed signal.
+        clearRuntimeOutputState();
+        if (snapshot.lastError
+            && snapshot.lastError->operation
+                   == Data::ControllerOperation::ApplyRuntimeOutputTransaction) {
+            snapshot.lastError.reset();
+            publish();
+        }
+        finishRuntimeOutputTransaction(
+            *pending.outputTransactionRequest,
+            Data::RuntimeOutputTransactionOutcome::Applied,
+            true,
+            *state,
+            {},
+            requestId);
     }
 
     void dispatchFrame(Channel &value, const Protocol::Frame &frame)
@@ -4558,6 +5804,23 @@ public:
                 return;
             if (ignoredSemanticMappingAttestationRequestIds.remove(requestId))
                 return;
+            auto ignoredRuntimeOutput = ignoredRuntimeOutputRequestIds.find(requestId);
+            if (ignoredRuntimeOutput != ignoredRuntimeOutputRequestIds.end()) {
+                if (ignoredRuntimeOutput.value() != PendingKind::RuntimeOutputTransactionApply) {
+                    ignoredRuntimeOutputRequestIds.erase(ignoredRuntimeOutput);
+                    return;
+                }
+                bool terminal = frame.header.messageType
+                                == Protocol::MessageType::OutputTransactionResult;
+                if (frame.header.messageType == Protocol::MessageType::CommandStatus) {
+                    Protocol::Error ignoredError;
+                    const auto status = Protocol::decodeCommandStatus(frame, &ignoredError);
+                    terminal = status && status->final;
+                }
+                if (terminal)
+                    ignoredRuntimeOutputRequestIds.erase(ignoredRuntimeOutput);
+                return;
+            }
             failProtocol(
                 value.role,
                 Data::ControllerOperation::None,
@@ -4661,6 +5924,42 @@ public:
             }
             return;
         }
+        if (request.kind == PendingKind::RuntimeOutputGroupPolicy) {
+            if (frame.header.messageType == Protocol::MessageType::BulkStatus)
+                handleRuntimeOutputBulkStatus(frame, request, requestId);
+            else if (frame.header.messageType == Protocol::MessageType::OutputGroupPolicy)
+                handleRuntimeOutputGroupPolicy(frame, request, requestId);
+            else
+                failRuntimeOutputProtocol(
+                    request,
+                    requestId,
+                    Tr::tr("The controller returned the wrong output policy response type."));
+            return;
+        }
+        if (request.kind == PendingKind::RuntimeOutputTransactionState) {
+            if (frame.header.messageType == Protocol::MessageType::BulkStatus)
+                handleRuntimeOutputBulkStatus(frame, request, requestId);
+            else if (frame.header.messageType == Protocol::MessageType::OutputTransactionState)
+                handleRuntimeOutputState(frame, request, requestId);
+            else
+                failRuntimeOutputProtocol(
+                    request,
+                    requestId,
+                    Tr::tr("The controller returned the wrong output state response type."));
+            return;
+        }
+        if (request.kind == PendingKind::RuntimeOutputTransactionApply) {
+            if (frame.header.messageType == Protocol::MessageType::CommandStatus)
+                handleRuntimeOutputApplyStatus(frame, request, requestId);
+            else if (frame.header.messageType == Protocol::MessageType::OutputTransactionResult)
+                handleRuntimeOutputApplyResult(frame, request, requestId);
+            else
+                failRuntimeOutputProtocol(
+                    request,
+                    requestId,
+                    Tr::tr("The controller returned the wrong output transaction response type."));
+            return;
+        }
         const bool statefulRequest = request.kind == PendingKind::ControlCommand
                                      || request.kind == PendingKind::Topology
                                      || request.kind == PendingKind::RestorePackage
@@ -4738,6 +6037,10 @@ public:
                 = negotiatedMinor >= Protocol::SemanticBindingAttestationMinor
                   && (featureBits & Protocol::SemanticBindingAttestationFeature)
                   && (bulkFeatureBits & Protocol::SemanticBindingAttestationFeature);
+            capability->runtimeOutputTransactions
+                = negotiatedMinor >= Protocol::OutputTransactionMinor
+                  && (featureBits & Protocol::OutputTransactionFeature)
+                  && (bulkFeatureBits & Protocol::OutputTransactionFeature);
             snapshot.capability = *capability;
             if (!capability->semanticMappingAttestation) {
                 invalidateRuntimeSemanticMappingAttestation(
@@ -4747,6 +6050,8 @@ public:
             } else {
                 invalidateRuntimeSemanticMappingAttestationIfContextChanged();
             }
+            if (!capability->runtimeOutputTransactions)
+                clearRuntimeOutputCache();
             capabilityReceived = true;
             removePending(requestId);
             finishRefreshIfReady();
@@ -4797,6 +6102,10 @@ public:
             return;
         case PendingKind::RuntimeSemanticMappingAttestation:
             handleRuntimeSemanticMappingAttestation(frame, request, requestId);
+            return;
+        case PendingKind::RuntimeOutputGroupPolicy:
+        case PendingKind::RuntimeOutputTransactionState:
+        case PendingKind::RuntimeOutputTransactionApply:
             return;
         case PendingKind::ResumeEvents:
             handleResumeResult(value, frame, requestId, &decodeError);
@@ -5399,7 +6708,7 @@ public:
     void sendLiveStateQuery()
     {
         if (shuttingDown || userDisconnecting || refreshInProgress || hasActiveControlOperation()
-            || hasActiveDeployment() || !sessionId
+            || hasActiveRuntimeOutputOperation() || hasActiveDeployment() || !sessionId
             || (snapshot.state != Data::ControllerConnectionState::Connected
                 && snapshot.state != Data::ControllerConnectionState::Degraded)) {
             return;
@@ -5607,6 +6916,7 @@ public:
     QHash<quint64, PendingRequest> pendingRequests;
     QSet<quint64> ignoredRuntimeResourceRequestIds;
     QSet<quint64> ignoredSemanticMappingAttestationRequestIds;
+    QHash<quint64, PendingKind> ignoredRuntimeOutputRequestIds;
     QTimer *reconnectTimer = nullptr;
     QTimer *heartbeatTimer = nullptr;
     QTimer *liveStateTimer = nullptr;
@@ -5618,6 +6928,11 @@ public:
     std::optional<Protocol::RuntimeResourceBinding> runtimeCatalogBinding;
     std::optional<Protocol::RuntimeResourceBinding> publishedRuntimeCatalogBinding;
     std::optional<Data::RuntimeSemanticMappingAttestation> semanticMappingAttestation;
+    QHash<QByteArray, Data::RuntimeOutputGroupPolicy> runtimeOutputPolicies;
+    std::optional<Data::RuntimeOutputTransactionState> runtimeOutputState;
+    std::optional<Data::RuntimeOutputTransactionRequest> unresolvedOutputTransaction;
+    QHash<QByteArray, Data::RuntimeOutputTransactionRequest> outputOperationJournal;
+    QList<QByteArray> outputOperationJournalOrder;
     std::optional<PersistentPackageSelector> persistentPackageSelector;
     std::optional<FaultResetConfirmation> faultResetConfirmation;
     quint64 generation = 0;
@@ -5646,6 +6961,7 @@ public:
     bool runtimeRefreshInProgress = false;
     bool targetedRuntimeSnapshotInProgress = false;
     bool semanticMappingAttestationInProgress = false;
+    bool runtimeOutputOperationInProgress = false;
     quint32 runtimeCatalogTotalCount = 0;
     QElapsedTimer runtimeResourceRefreshTimer;
     bool alarmCheckpointEstablished = false;
@@ -5818,6 +7134,8 @@ Utils::Result<> ProductApiSession::disconnectFromController()
         return {};
     if (d->hasActiveControlOperation())
         return Utils::ResultError(Tr::tr("Wait for the active controller operation to finish."));
+    if (d->hasActiveRuntimeOutputOperation())
+        return Utils::ResultError(Tr::tr("Wait for the runtime output operation to finish."));
     if (d->hasActiveDeployment())
         return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
     d->cancelTargetedRuntimeResourceSnapshot(
@@ -5870,6 +7188,8 @@ Utils::Result<> ProductApiSession::refreshController()
     }
     if (d->runtimeRefreshInProgress)
         return Utils::ResultError(Tr::tr("Wait for the runtime resource refresh to finish."));
+    if (d->hasActiveRuntimeOutputOperation())
+        return Utils::ResultError(Tr::tr("Wait for the runtime output operation to finish."));
     if (d->refreshInProgress || !d->pendingRequests.isEmpty())
         return Utils::ResultError(Tr::tr("A controller refresh is already active."));
     if (d->hasActiveDeployment())
@@ -5920,6 +7240,8 @@ Utils::Result<> ProductApiSession::refreshRuntimeResources()
         return Utils::ResultError(Tr::tr("Wait for the controller refresh to finish."));
     if (d->hasActiveControlOperation())
         return Utils::ResultError(Tr::tr("Wait for the controller operation to finish."));
+    if (d->hasActiveRuntimeOutputOperation())
+        return Utils::ResultError(Tr::tr("Wait for the runtime output operation to finish."));
     if (d->hasActiveDeployment())
         return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
     if (!d->channel(Protocol::Role::Bulk).handshaken || !d->channel(Protocol::Role::Bulk).socket) {
@@ -5971,6 +7293,8 @@ Utils::Result<> ProductApiSession::requestRuntimeResourceSnapshot(
         return Utils::ResultError(Tr::tr("Wait for the controller refresh to finish."));
     if (d->hasActiveControlOperation())
         return Utils::ResultError(Tr::tr("Wait for the controller operation to finish."));
+    if (d->hasActiveRuntimeOutputOperation())
+        return Utils::ResultError(Tr::tr("Wait for the runtime output operation to finish."));
     if (d->hasActiveDeployment())
         return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
     if (!d->channel(Protocol::Role::Bulk).handshaken
@@ -6072,6 +7396,8 @@ Utils::Result<> ProductApiSession::requestRuntimeSemanticMappingAttestation(
     }
     if (d->hasActiveControlOperation())
         return Utils::ResultError(Tr::tr("Wait for the controller operation to finish."));
+    if (d->hasActiveRuntimeOutputOperation())
+        return Utils::ResultError(Tr::tr("Wait for the runtime output operation to finish."));
     if (d->hasActiveDeployment())
         return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
     if (!d->sessionId || !d->bootId || !d->snapshot.session) {
@@ -6118,6 +7444,278 @@ Utils::Result<> ProductApiSession::requestRuntimeSemanticMappingAttestation(
         d->publish();
     }
     d->sendRuntimeSemanticMappingAttestationQuery(request, query);
+    return {};
+}
+
+bool ProductApiSession::supportsRuntimeOutputTransactions() const
+{
+    return d->supportsRuntimeOutputContext();
+}
+
+Utils::Result<> ProductApiSession::requestRuntimeOutputGroupPolicy(
+    const Data::RuntimeOutputGroupPolicyRequest &request)
+{
+    if (d->shuttingDown)
+        return Utils::ResultError(Tr::tr("The controller session is shutting down."));
+    if (!request.isValid())
+        return Utils::ResultError(Tr::tr("The output group policy request is incomplete."));
+    if (d->snapshot.state != Data::ControllerConnectionState::Connected
+        && d->snapshot.state != Data::ControllerConnectionState::Degraded) {
+        return Utils::ResultError(
+            Tr::tr("Connect to the controller before querying output policy."));
+    }
+    if (!supportsRuntimeOutputTransactions()) {
+        return Utils::ResultError(
+            Tr::tr("UNSUPPORTED (-14): output transactions require Product API v1.14 and feature "
+                   "bit 15 on the joined Control and Bulk sessions; no request was sent."));
+    }
+    if (d->hasActiveRuntimeOutputOperation())
+        return Utils::ResultError(Tr::tr("Another runtime output operation is already active."));
+    if (!d->canTrackAnotherLateRuntimeOutputResponse()) {
+        return Utils::ResultError(
+            Tr::tr("Reconnect before sending more output requests with pending late responses."));
+    }
+    if (d->refreshInProgress || d->runtimeRefreshInProgress || d->targetedRuntimeSnapshotInProgress
+        || d->semanticMappingAttestationInProgress || d->hasActiveControlOperation()
+        || d->hasActiveDeployment()) {
+        return Utils::ResultError(
+            Tr::tr("Wait for the active controller operation before querying output policy."));
+    }
+    if (!d->channel(Protocol::Role::Bulk).handshaken || !d->channel(Protocol::Role::Bulk).socket) {
+        return Utils::ResultError(Tr::tr("The controller Bulk channel is not connected."));
+    }
+    if (!d->outputContextMatches(
+            request.scope,
+            request.sessionGeneration,
+            request.expectedEpoch,
+            request.expectedMappingDigest)) {
+        return Utils::ResultError(
+            Tr::tr("The output policy request does not match the verified package mapping."));
+    }
+    const auto binding = runtimeResourceBinding(request.expectedEpoch);
+    const auto groupId = runtimeOutputGroupId(request.consistencyGroupId);
+    if (!binding || !groupId) {
+        return Utils::ResultError(
+            Tr::tr("Product API output epochs and group IDs must use exact wire identities."));
+    }
+
+    Protocol::OutputGroupPolicyQuery query;
+    query.binding = *binding;
+    query.consistencyGroupId = *groupId;
+    query.semanticMappingSha256 = request.expectedMappingDigest;
+    d->runtimeOutputOperationInProgress = true;
+    if (!d->sendRuntimeOutputGroupPolicyQuery(request, query))
+        return Utils::ResultError(Tr::tr("The output group policy request could not be sent."));
+    return {};
+}
+
+Utils::Result<> ProductApiSession::requestRuntimeOutputTransactionState(
+    const Data::RuntimeOutputTransactionStateRequest &request)
+{
+    if (d->shuttingDown)
+        return Utils::ResultError(Tr::tr("The controller session is shutting down."));
+    if (!request.isValid())
+        return Utils::ResultError(Tr::tr("The output transaction state request is incomplete."));
+    if (d->snapshot.state != Data::ControllerConnectionState::Connected
+        && d->snapshot.state != Data::ControllerConnectionState::Degraded) {
+        return Utils::ResultError(
+            Tr::tr("Connect to the controller before reading output transaction state."));
+    }
+    if (!supportsRuntimeOutputTransactions()) {
+        return Utils::ResultError(
+            Tr::tr("UNSUPPORTED (-14): output transactions require Product API v1.14 and feature "
+                   "bit 15 on the joined Control and Bulk sessions; no request was sent."));
+    }
+    if (d->hasActiveRuntimeOutputOperation())
+        return Utils::ResultError(Tr::tr("Another runtime output operation is already active."));
+    if (!d->canTrackAnotherLateRuntimeOutputResponse()) {
+        return Utils::ResultError(
+            Tr::tr("Reconnect before sending more output requests with pending late responses."));
+    }
+    if (d->refreshInProgress || d->runtimeRefreshInProgress || d->targetedRuntimeSnapshotInProgress
+        || d->semanticMappingAttestationInProgress || d->hasActiveControlOperation()
+        || d->hasActiveDeployment()) {
+        return Utils::ResultError(
+            Tr::tr("Wait for the active controller operation before reading output state."));
+    }
+    if (!d->channel(Protocol::Role::Bulk).handshaken || !d->channel(Protocol::Role::Bulk).socket) {
+        return Utils::ResultError(Tr::tr("The controller Bulk channel is not connected."));
+    }
+    if (!d->outputContextMatches(
+            request.scope,
+            request.sessionGeneration,
+            request.expectedEpoch,
+            request.expectedMappingDigest)) {
+        return Utils::ResultError(
+            Tr::tr("The output state request does not match the verified package mapping."));
+    }
+    const auto binding = runtimeResourceBinding(request.expectedEpoch);
+    if (!binding)
+        return Utils::ResultError(Tr::tr("The output state epoch cannot be encoded."));
+
+    Protocol::OutputTransactionStateQuery query;
+    query.binding = *binding;
+    query.semanticMappingSha256 = request.expectedMappingDigest;
+    const auto reconciliation = d->unresolvedRuntimeOutputReboundFor(request);
+    d->runtimeOutputOperationInProgress = true;
+    if (!d->sendRuntimeOutputStateQuery(request, query, reconciliation))
+        return Utils::ResultError(Tr::tr("The output state request could not be sent."));
+    return {};
+}
+
+Utils::Result<> ProductApiSession::applyRuntimeOutputTransaction(
+    const Data::RuntimeOutputTransactionRequest &request)
+{
+    using ServiceState = Data::ControllerServiceState;
+    if (d->shuttingDown)
+        return Utils::ResultError(Tr::tr("The controller session is shutting down."));
+    if (!request.isValid())
+        return Utils::ResultError(Tr::tr("The output transaction request is incomplete."));
+    if (d->snapshot.state != Data::ControllerConnectionState::Connected
+        && d->snapshot.state != Data::ControllerConnectionState::Degraded) {
+        return Utils::ResultError(
+            Tr::tr("Connect to the controller before applying output values."));
+    }
+    if (!supportsRuntimeOutputTransactions()) {
+        return Utils::ResultError(
+            Tr::tr("UNSUPPORTED (-14): output transactions require Product API v1.14 and feature "
+                   "bit 15; no request was sent."));
+    }
+    if (d->hasActiveRuntimeOutputOperation())
+        return Utils::ResultError(Tr::tr("Another runtime output operation is already active."));
+    if (!d->canTrackAnotherLateRuntimeOutputResponse()) {
+        return Utils::ResultError(
+            Tr::tr("Reconnect before sending more output requests with pending late responses."));
+    }
+    if (d->refreshInProgress || d->runtimeRefreshInProgress || d->targetedRuntimeSnapshotInProgress
+        || d->semanticMappingAttestationInProgress || d->hasActiveControlOperation()
+        || d->hasActiveDeployment()) {
+        return Utils::ResultError(
+            Tr::tr("Wait for the active controller operation before applying outputs."));
+    }
+    if (!d->snapshot.session || !d->snapshot.session->ownsControlLease)
+        return Utils::ResultError(Tr::tr("Acquire the control lease before applying outputs."));
+    if (!d->snapshot.controllerState) {
+        return Utils::ResultError(
+            Tr::tr("Refresh controller state before applying output values."));
+    }
+    const ServiceState serviceState = d->snapshot.controllerState->serviceState;
+    if (serviceState != ServiceState::OperationalSafe && serviceState != ServiceState::Running
+        && serviceState != ServiceState::Paused) {
+        return Utils::ResultError(
+            Tr::tr("Outputs may only be applied in OP_SAFE, RUNNING, or PAUSED."));
+    }
+    if (!d->channel(Protocol::Role::Control).handshaken
+        || !d->channel(Protocol::Role::Control).socket) {
+        return Utils::ResultError(Tr::tr("The controller Control channel is not connected."));
+    }
+    if (!d->outputContextMatches(
+            request.scope,
+            request.sessionGeneration,
+            request.expectedEpoch,
+            request.expectedMappingDigest)) {
+        return Utils::ResultError(
+            Tr::tr("The output request does not match the verified package mapping."));
+    }
+    if (!d->runtimeCatalog || d->runtimeCatalog->scope != request.scope
+        || d->runtimeCatalog->sessionGeneration != request.sessionGeneration
+        || d->runtimeCatalog->epoch != request.expectedEpoch) {
+        return Utils::ResultError(
+            Tr::tr("Refresh the runtime resource catalog before applying outputs."));
+    }
+
+    const auto journalEntry = d->outputOperationJournal.constFind(request.operationId.value);
+    const bool journalReplay = journalEntry != d->outputOperationJournal.cend();
+    if (journalReplay && !sameRuntimeOutputWireIntent(*journalEntry, request)) {
+        return Utils::ResultError(
+            Tr::tr("OperationId is already bound to different output transaction bytes."));
+    }
+    const bool unresolvedReplay = d->unresolvedOutputTransaction
+                                  && sameRuntimeOutputWireIntent(
+                                      *d->unresolvedOutputTransaction, request);
+    if (d->unresolvedOutputTransaction && !unresolvedReplay) {
+        return Utils::ResultError(
+            Tr::tr("Reconcile or retry the unresolved output transaction with its original "
+                   "OperationId before starting another write."));
+    }
+    const bool exactReplay = journalReplay || unresolvedReplay;
+
+    const auto policy = d->runtimeOutputPolicies.constFind(request.consistencyGroupId.value);
+    if (policy == d->runtimeOutputPolicies.cend() || policy->scope != request.scope
+        || policy->sessionGeneration != request.sessionGeneration
+        || policy->epoch != request.expectedEpoch
+        || policy->mappingDigest != request.expectedMappingDigest
+        || policy->completeGroupRecordDigest != request.expectedCompleteGroupRecordDigest
+        || policy->completeResourceCount != request.expectedCompleteResourceCount
+        || policy->recoveryPolicy != request.expectedRecoveryPolicy
+        || policy->maximumTtlCycles != request.expectedMaximumTtlCycles
+        || (!exactReplay && policy->currentOutputGeneration != request.expectedOutputGeneration)
+        || !policy->manualWriteAllowed) {
+        return Utils::ResultError(
+            Tr::tr("Query the exact signed output group policy before applying outputs."));
+    }
+
+    const auto binding = runtimeResourceBinding(request.expectedEpoch);
+    const auto groupId = runtimeOutputGroupId(request.consistencyGroupId);
+    if (!binding || !groupId)
+        return Utils::ResultError(Tr::tr("The output transaction wire identity is invalid."));
+
+    QList<QByteArray> catalogGroupResourceIds;
+    for (const Data::RuntimeResourceDescriptor &descriptor : d->runtimeCatalog->resources) {
+        if (descriptor.consistencyGroupId == request.consistencyGroupId)
+            catalogGroupResourceIds.append(descriptor.id.value);
+    }
+    std::sort(catalogGroupResourceIds.begin(), catalogGroupResourceIds.end());
+    QList<QByteArray> requestedGroupResourceIds;
+    requestedGroupResourceIds.reserve(request.completeGroupWrites.size());
+    for (const Data::RuntimeOutputValueWrite &write : request.completeGroupWrites)
+        requestedGroupResourceIds.append(write.resourceId.value);
+    if (quint32(catalogGroupResourceIds.size()) != request.expectedCompleteResourceCount
+        || catalogGroupResourceIds != requestedGroupResourceIds) {
+        return Utils::ResultError(
+            Tr::tr("The output transaction must contain the complete catalog resource group."));
+    }
+
+    Protocol::OutputTransactionRequest protocolRequest;
+    protocolRequest.binding = *binding;
+    protocolRequest.operationId = request.operationId.value;
+    protocolRequest.expectedCurrentOutputGeneration = request.expectedOutputGeneration;
+    protocolRequest.ttlCycles = request.ttlCycles;
+    protocolRequest.consistencyGroupId = *groupId;
+    protocolRequest.semanticMappingSha256 = request.expectedMappingDigest;
+    protocolRequest.values.reserve(request.completeGroupWrites.size());
+    for (const Data::RuntimeOutputValueWrite &write : request.completeGroupWrites) {
+        const auto descriptor = std::find_if(
+            d->runtimeCatalog->resources.cbegin(),
+            d->runtimeCatalog->resources.cend(),
+            [&write](const Data::RuntimeResourceDescriptor &candidate) {
+                return candidate.id == write.resourceId;
+            });
+        const auto resourceId = runtimeOutputResourceId(write.resourceId);
+        if (descriptor == d->runtimeCatalog->resources.cend() || !resourceId
+            || descriptor->consistencyGroupId != request.consistencyGroupId
+            || descriptor->direction != Data::RuntimeResourceDirection::Output
+            || descriptor->access != Data::RuntimeResourceAccess::ReadWrite
+            || descriptor->bitWidth != write.bitWidth
+            || descriptor->primitiveType != write.value.primitiveType
+            || descriptor->valueTypeIdentity != write.value.typeIdentity
+            || !descriptor->safeValue) {
+            return Utils::ResultError(
+                Tr::tr("The output group contains a resource not writable by this package."));
+        }
+        const auto primitive
+            = runtimeOutputPrimitive(descriptor->primitiveType, quint16(descriptor->bitWidth));
+        const auto value = primitive ? runtimeOutputValue(write, *primitive) : std::nullopt;
+        if (!primitive || !value) {
+            return Utils::ResultError(
+                Tr::tr("An output value cannot be represented by Product API v1.14."));
+        }
+        protocolRequest.values.append({*resourceId, *primitive, write.bitWidth, *value});
+    }
+
+    d->runtimeOutputOperationInProgress = true;
+    if (!d->sendRuntimeOutputTransaction(request, protocolRequest))
+        return Utils::ResultError(Tr::tr("The output transaction could not be sent."));
     return {};
 }
 
@@ -6195,6 +7793,18 @@ Utils::Result<> ProductApiSession::executeControlCommand(
         return Utils::ResultError(Tr::tr("Wait for the controller refresh to finish."));
     if (d->hasActiveControlOperation())
         return Utils::ResultError(Tr::tr("Another controller operation is already active."));
+    if (d->hasActiveRuntimeOutputOperation()
+        && (request.command != Command::ControlledStop
+            || d->hasActiveRuntimeOutputMutation())) {
+        return Utils::ResultError(Tr::tr("Wait for the runtime output operation to finish."));
+    }
+    if (d->unresolvedOutputTransaction
+        && request.command != Command::AcquireControl
+        && request.command != Command::ReleaseControl
+        && request.command != Command::ControlledStop) {
+        return Utils::ResultError(
+            Tr::tr("Reconcile or retry the unresolved output transaction before this operation."));
+    }
     if (d->hasActiveDeployment())
         return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
 
@@ -6379,6 +7989,11 @@ Utils::Result<> ProductApiSession::executeControlCommand(
         break;
     }
 
+    if (request.command == Command::ControlledStop && d->hasActiveRuntimeOutputOperation()) {
+        d->cancelRuntimeOutputOperation(
+            Tr::tr("The output read was canceled so the controller could stop."));
+    }
+
     QByteArray payload;
     const auto appendU16 = [&payload](quint16 value) {
         const qsizetype offset = payload.size();
@@ -6551,6 +8166,12 @@ Utils::Result<> ProductApiSession::deployPackage(
     }
     if (d->hasActiveControlOperation())
         return Utils::ResultError(Tr::tr("Another controller operation is already active."));
+    if (d->hasActiveRuntimeOutputOperation())
+        return Utils::ResultError(Tr::tr("Wait for the runtime output operation to finish."));
+    if (d->unresolvedOutputTransaction) {
+        return Utils::ResultError(
+            Tr::tr("Reconcile or retry the unresolved output transaction before deployment."));
+    }
     if (d->hasActiveDeployment())
         return Utils::ResultError(Tr::tr("Another package deployment is already active."));
 

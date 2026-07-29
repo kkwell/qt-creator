@@ -121,6 +121,31 @@ ProductApiConnectionProvider::ProductApiConnectionProvider(
         &ProductApiSession::runtimeSemanticMappingAttestationRequestFinished,
         this,
         &ProductApiConnectionProvider::runtimeSemanticMappingAttestationRequestFinished);
+    connect(
+        m_session,
+        &ProductApiSession::runtimeOutputGroupPolicyRequestFinished,
+        this,
+        &ProductApiConnectionProvider::runtimeOutputGroupPolicyRequestFinished);
+    connect(
+        m_session,
+        &ProductApiSession::runtimeOutputTransactionStateChanged,
+        this,
+        &ProductApiConnectionProvider::runtimeOutputTransactionStateChanged);
+    connect(
+        m_session,
+        &ProductApiSession::runtimeOutputTransactionStateInvalidated,
+        this,
+        &ProductApiConnectionProvider::runtimeOutputTransactionStateInvalidated);
+    connect(
+        m_session,
+        &ProductApiSession::runtimeOutputTransactionStateRequestFinished,
+        this,
+        &ProductApiConnectionProvider::runtimeOutputTransactionStateRequestFinished);
+    connect(
+        m_session,
+        &ProductApiSession::runtimeOutputTransactionFinished,
+        this,
+        &ProductApiConnectionProvider::runtimeOutputTransactionFinished);
     setAvailable(endpoints.isValid() && options.isValid());
 }
 
@@ -280,6 +305,35 @@ Utils::Result<> ProductApiConnectionProvider::requestRuntimeSemanticMappingAttes
     if (!isAvailable())
         return Utils::ResultError(Tr::tr("The Embed Labs controller provider is unavailable."));
     return m_session->requestRuntimeSemanticMappingAttestation(request);
+}
+
+bool ProductApiConnectionProvider::supportsRuntimeOutputTransactions() const
+{
+    return isAvailable() && m_session->supportsRuntimeOutputTransactions();
+}
+
+Utils::Result<> ProductApiConnectionProvider::requestRuntimeOutputGroupPolicy(
+    const Data::RuntimeOutputGroupPolicyRequest &request)
+{
+    if (!isAvailable())
+        return Utils::ResultError(Tr::tr("The Embed Labs controller provider is unavailable."));
+    return m_session->requestRuntimeOutputGroupPolicy(request);
+}
+
+Utils::Result<> ProductApiConnectionProvider::requestRuntimeOutputTransactionState(
+    const Data::RuntimeOutputTransactionStateRequest &request)
+{
+    if (!isAvailable())
+        return Utils::ResultError(Tr::tr("The Embed Labs controller provider is unavailable."));
+    return m_session->requestRuntimeOutputTransactionState(request);
+}
+
+Utils::Result<> ProductApiConnectionProvider::applyRuntimeOutputTransaction(
+    const Data::RuntimeOutputTransactionRequest &request)
+{
+    if (!isAvailable())
+        return Utils::ResultError(Tr::tr("The Embed Labs controller provider is unavailable."));
+    return m_session->applyRuntimeOutputTransaction(request);
 }
 
 bool ProductApiConnectionProvider::supportsControlCommand(

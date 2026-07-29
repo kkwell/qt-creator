@@ -3451,7 +3451,8 @@ std::optional<SemanticBindingAttestation> decodeSemanticBindingAttestation(
     };
     if (frame.header.flags != flagValue(Flag::Response)
         || !runtimeResourceBindingsEqual(binding, query.binding)
-        || binding.bootId != frame.header.bootId || formatVersion != 1
+        || binding.bootId != frame.header.bootId
+        || (formatVersion != 1 && formatVersion != 2)
         || readBigEndian<quint16>(payload, 14)
         || securityFlags & ~SemanticBindingSecurityKnownMask
         || (securityFlags & SemanticBindingSecurityRequiredMask)

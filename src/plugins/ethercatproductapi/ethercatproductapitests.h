@@ -22,6 +22,7 @@ private slots:
     void testRuntimeResourceCodecRejectsMalformed_data();
     void testRuntimeResourceCodecRejectsMalformed();
     void testSemanticBindingAttestationGoldenFrames();
+    void testSemanticBindingAttestationFormatV2();
     void testSemanticBindingAttestationRejectsMalformed_data();
     void testSemanticBindingAttestationRejectsMalformed();
     void testOutputTransactionGoldenFrames();
@@ -91,6 +92,17 @@ private slots:
     void testSemanticAttestationProtocolFailures_data();
     void testSemanticAttestationProtocolFailures();
     void testSemanticAttestationInvalidationAndStaleResponse();
+    void testOutputTransactionCapabilityGuards_data();
+    void testOutputTransactionCapabilityGuards();
+    void testOutputTransactionLoopbackLifecycle();
+    void testOutputTransactionFailuresAndGuards();
+    void testOutputTransactionCompleteGroupGuards();
+    void testOutputTransactionTimeoutReconciliation();
+    void testOutputTransactionControlledStopPreemptsRead();
+    void testOutputTransactionReconciliationBoundaries();
+    void testOutputTransactionUnknownSurvivesReconnect();
+    void testOutputTransactionGenerationRegression();
+    void testOutputTransactionReconnectInvalidation();
 };
 
 } // namespace EtherCAT::ProductApi::Internal
