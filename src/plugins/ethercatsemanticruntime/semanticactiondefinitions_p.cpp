@@ -640,6 +640,8 @@ bool compareActionProjection(
     const VerifiedSemanticAction &action,
     const StrictJson &definition,
     const VerifiedSemanticBindingArtifact &artifact,
+    QHash<QString, quint32> *numericGroupByLocalGroup,
+    QHash<quint32, QString> *localGroupByNumericGroup,
     QString *error)
 {
     const QString path = QString::fromLatin1("$.actions[%1]").arg(action.actionBindingId);
@@ -730,8 +732,6 @@ bool compareActionProjection(
         *error = QString::fromLatin1("%1 step count differs from its signed definition").arg(path);
         return false;
     }
-    QHash<QString, quint32> numericGroupByLocalGroup;
-    QHash<quint32, QString> localGroupByNumericGroup;
     for (qsizetype index = 0; index < action.steps.size(); ++index) {
         const VerifiedSemanticActionStep &actionStep = action.steps[index];
         const StrictJson &definitionStep = steps[std::size_t(index)];
@@ -742,20 +742,20 @@ bool compareActionProjection(
                 return false;
             }
             const QString localGroup = jsonString(definitionStep.at("consistency_group"));
-            const auto numericGroup = numericGroupByLocalGroup.constFind(localGroup);
-            const auto mappedLocalGroup = localGroupByNumericGroup.constFind(
+            const auto numericGroup = numericGroupByLocalGroup->constFind(localGroup);
+            const auto mappedLocalGroup = localGroupByNumericGroup->constFind(
                 actionStep.consistencyGroupId);
-            if ((numericGroup != numericGroupByLocalGroup.cend()
+            if ((numericGroup != numericGroupByLocalGroup->cend()
                  && *numericGroup != actionStep.consistencyGroupId)
-                || (mappedLocalGroup != localGroupByNumericGroup.cend()
+                || (mappedLocalGroup != localGroupByNumericGroup->cend()
                     && *mappedLocalGroup != localGroup)) {
                 *error = QString::fromLatin1("%1 step %2 group projection differs")
                              .arg(path)
                              .arg(index);
                 return false;
             }
-            numericGroupByLocalGroup.insert(localGroup, actionStep.consistencyGroupId);
-            localGroupByNumericGroup.insert(actionStep.consistencyGroupId, localGroup);
+            numericGroupByLocalGroup->insert(localGroup, actionStep.consistencyGroupId);
+            localGroupByNumericGroup->insert(actionStep.consistencyGroupId, localGroup);
             QMap<QString, const VerifiedSemanticActionAssignment *> actionAssignments;
             for (const VerifiedSemanticActionAssignment &assignment : actionStep.assignments) {
                 const auto definitionIterator = definitionByBinding.constFind(
@@ -993,11 +993,15 @@ Utils::Result<VerifiedSemanticActionDefinitions> verifySemanticActionDefinitions
         return definitionsError(
             QString::fromLatin1("the artifact actions and companion definitions are not closed"));
     }
+    QHash<QString, QHash<QString, quint32>> numericGroupByDeviceAndLocalGroup;
+    QHash<QString, QHash<quint32, QString>> localGroupByDeviceAndNumericGroup;
     for (const VerifiedSemanticAction &action : artifact.actions) {
         if (!compareActionProjection(
                 action,
                 definitionRecords.value(action.actionDefinitionId)->at("definition"),
                 artifact,
+                &numericGroupByDeviceAndLocalGroup[action.projectDeviceId],
+                &localGroupByDeviceAndNumericGroup[action.projectDeviceId],
                 &validationError)) {
             return definitionsError(validationError);
         }

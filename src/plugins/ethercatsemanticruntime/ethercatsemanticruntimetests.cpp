@@ -2539,6 +2539,14 @@ void EtherCATSemanticRuntimeTests::testSemanticActionDefinitionsRejectsMismatche
     QVERIFY_RESULT(resignDefinition(changedLocalGroup, 0, &changedLocalGroupArtifact));
     QVERIFY(!rebuild(std::move(changedLocalGroup), true, &changedLocalGroupArtifact));
 
+    StrictJson changedCrossActionGroup = *originalCompanion;
+    VerifiedSemanticBindingArtifact changedCrossActionGroupArtifact
+        = evidence->semanticBindingArtifact();
+    changedCrossActionGroup["definitions"][3]["definition"]["steps"][0]["consistency_group"]
+        = "different_group";
+    QVERIFY_RESULT(resignDefinition(changedCrossActionGroup, 3, &changedCrossActionGroupArtifact));
+    QVERIFY(!rebuild(std::move(changedCrossActionGroup), true, &changedCrossActionGroupArtifact));
+
     StrictJson changedStepKind = *originalCompanion;
     VerifiedSemanticBindingArtifact changedStepKindArtifact = evidence->semanticBindingArtifact();
     StrictJson &waitStep = changedStepKind["definitions"][0]["definition"]["steps"][1];
