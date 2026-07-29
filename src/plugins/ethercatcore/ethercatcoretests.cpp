@@ -2013,6 +2013,27 @@ void EtherCATCoreTests::testSemanticRuntimeReadValidation()
     QVERIFY(good.sample);
     QCOMPARE(good.sample->value.value.toBool(), true);
 
+    Data::SemanticRuntimeBinding outputBinding = fixture.binding;
+    outputBinding.direction = Data::RuntimeResourceDirection::Output;
+    outputBinding.access = Data::RuntimeResourceAccess::ReadWrite;
+    Data::RuntimeResourceCatalog outputCatalog = fixture.catalog;
+    outputCatalog.resources.first().direction = outputBinding.direction;
+    outputCatalog.resources.first().access = outputBinding.access;
+    const SemanticRuntimeReadValidation outputRead
+        = validateSemanticRuntimeRead(outputBinding, outputCatalog, fixture.snapshot);
+    QVERIFY(outputRead.validation.accepted());
+    QVERIFY(outputRead.sample);
+
+    Data::SemanticRuntimeBinding writeOnlyBinding = outputBinding;
+    writeOnlyBinding.access = Data::RuntimeResourceAccess::WriteOnly;
+    Data::RuntimeResourceCatalog writeOnlyCatalog = outputCatalog;
+    writeOnlyCatalog.resources.first().access = writeOnlyBinding.access;
+    QCOMPARE(
+        validateSemanticRuntimeRead(
+            writeOnlyBinding, writeOnlyCatalog, fixture.snapshot)
+            .validation.error,
+        SemanticRuntimeValidationError::InvalidBinding);
+
     Data::RuntimeResourceSnapshot incomplete = fixture.snapshot;
     incomplete.complete = false;
     QCOMPARE(

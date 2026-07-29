@@ -640,10 +640,11 @@ SemanticRuntimeReadValidation validateSemanticRuntimeRead(
             std::nullopt,
         };
     }
-    if ((binding.direction != Data::RuntimeResourceDirection::Input
-         && binding.direction != Data::RuntimeResourceDirection::Bidirectional)
-        || (binding.access != Data::RuntimeResourceAccess::ReadOnly
-            && binding.access != Data::RuntimeResourceAccess::ReadWrite)) {
+    // Process-image direction describes where the value is exchanged, not
+    // whether the runtime catalog may expose its current image. Output
+    // resources with READ|WRITE access are readable snapshots too.
+    if (binding.access != Data::RuntimeResourceAccess::ReadOnly
+        && binding.access != Data::RuntimeResourceAccess::ReadWrite) {
         return {
             rejection(
                 SemanticRuntimeValidationError::InvalidBinding,
