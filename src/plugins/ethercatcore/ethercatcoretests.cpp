@@ -30,6 +30,7 @@
 #include <ethercatdata/semanticmappingattestation.h>
 #include <ethercatdata/semanticruntime.h>
 
+#include <QCryptographicHash>
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QStringList>
@@ -214,7 +215,6 @@ struct SemanticRuntimeFixture
         request.expectedControllerMappingDigest = digest;
         request.expectedContextHash = context.contextHash;
         request.value = true;
-        request.parameters.insert("mode", "manual");
         request.ttlMs = 250;
         request.reason = "test";
     }
@@ -1853,8 +1853,7 @@ void EtherCATCoreTests::testRuntimeOutputTransactionContract()
     Data::RuntimeOutputTransactionRequest saturatedGeneration = fixture.transactionRequest;
     saturatedGeneration.expectedOutputGeneration = std::numeric_limits<quint64>::max();
     QVERIFY(!saturatedGeneration.isValid());
-    saturatedGeneration.expectedOutputGeneration
-        = std::numeric_limits<quint64>::max() - quint64(1);
+    saturatedGeneration.expectedOutputGeneration = std::numeric_limits<quint64>::max() - quint64(1);
     QVERIFY(!saturatedGeneration.isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimeOutputOperationId>().isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimeOutputGroupPolicyResult>().isValid());
@@ -1886,18 +1885,23 @@ void EtherCATCoreTests::testSemanticRuntimeValueSemantics()
     action.target.actionId = {"urn:example.test:action/controlled-stop"};
     action.definition.id = action.target.actionId;
     action.definition.displayName = "Controlled stop";
+    action.actionBindingId = action.target.actionId.value;
+    action.actionDefinitionDigest = {"sha256", QByteArray(32, '\x71')};
+    action.qualification = Data::SemanticActionQualification::Qualified;
     action.availability = Data::SemanticActionAvailability::AwaitingApproval;
     action.bindings = {fixture.binding};
     action.requiresApproval = true;
     action.requiresExclusiveControl = true;
     action.holdToRun = true;
     action.maximumTtlMs = 250;
+    action.maximumTtlCycles = 2000;
     QCOMPARE(action.definition.id, action.target.actionId);
 
     Data::SemanticOperationApproval approval;
     approval.request.operationId = fixture.request.operationId;
     approval.request.decision = Data::SemanticApprovalDecision::Approved;
     approval.request.challenge = QByteArray(32, '\x4d');
+    approval.request.expectedRequestDigest = QByteArray(32, '\x7c');
     approval.request.expectedContextHash = fixture.context.contextHash;
     approval.actor = fixture.actor;
     approval.decidedAt = QDateTime::currentDateTimeUtc();
@@ -1929,10 +1933,14 @@ void EtherCATCoreTests::testSemanticRuntimeValueSemantics()
     QVERIFY(QMetaType::fromType<Data::SemanticRuntimeTarget>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticRuntimeBinding>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticSignalRuntimeState>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticActionQualification>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticActionParameterRuntimeDefinition>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticActionRuntimeState>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticRuntimeContext>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticOperationRequest>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticOperationApprovalRequest>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticOperationSignalObservation>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticOperationSnapshot>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticOperationRecord>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticRuntimeAuditEvent>().isValid());
 }
@@ -2078,8 +2086,7 @@ void EtherCATCoreTests::testSemanticRuntimeReadValidation()
     Data::RuntimeResourceSnapshot mismatchedValueType = fixture.snapshot;
     mismatchedValueType.samples.first().value.value = QVariant::fromValue<qulonglong>(1);
     QCOMPARE(
-        validateSemanticRuntimeRead(
-            fixture.binding, fixture.catalog, mismatchedValueType)
+        validateSemanticRuntimeRead(fixture.binding, fixture.catalog, mismatchedValueType)
             .validation.error,
         SemanticRuntimeValidationError::SampleValueMismatch);
 
@@ -2173,6 +2180,7 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
     releaseHold.kind = Data::SemanticOperationKind::ReleaseHold;
     releaseHold.value = {};
     releaseHold.parameters.clear();
+    releaseHold.ttlMs = 0;
     QVERIFY(validateSemanticOperationRequest(releaseHold, fixture.context).accepted());
 
     Data::SemanticOperationRequest resourceInjection = fixture.request;
@@ -2230,15 +2238,14 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
         SemanticRuntimeValidationError::BindingUnverified);
 
     Data::SemanticRuntimeContext definitionMismatch = fixture.context;
-    definitionMismatch.signalStates.first().definition.id
-        = {"urn:example.test:signal/another"};
+    definitionMismatch.signalStates.first().definition.id = {"urn:example.test:signal/another"};
     QCOMPARE(
         validateSemanticOperationRequest(fixture.request, definitionMismatch).error,
         SemanticRuntimeValidationError::InvalidTarget);
 
     Data::SemanticRuntimeContext bindingTargetMismatch = fixture.context;
-    bindingTargetMismatch.signalStates.first().binding->target.signalId
-        = {"urn:example.test:signal/another"};
+    bindingTargetMismatch.signalStates.first().binding->target.signalId = {
+        "urn:example.test:signal/another"};
     QCOMPARE(
         validateSemanticOperationRequest(fixture.request, bindingTargetMismatch).error,
         SemanticRuntimeValidationError::InvalidBinding);
@@ -2256,8 +2263,7 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
         SemanticRuntimeValidationError::BindingUnverified);
 
     Data::SemanticRuntimeContext manifestMismatch = fixture.context;
-    manifestMismatch.signalStates.first()
-        .binding->verification.signedManifestDigest.value[0]
+    manifestMismatch.signalStates.first().binding->verification.signedManifestDigest.value[0]
         ^= '\x01';
     QCOMPARE(
         validateSemanticOperationRequest(fixture.request, manifestMismatch).error,
@@ -2276,21 +2282,55 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
     action.target.actionId = {"urn:example.test:action/manual"};
     action.definition.id = action.target.actionId;
     action.definition.enabled = true;
+    action.actionBindingId = action.target.actionId.value;
+    action.actionDefinitionDigest = {"sha256", QByteArray(32, '\x72')};
+    action.qualification = Data::SemanticActionQualification::Qualified;
     action.availability = Data::SemanticActionAvailability::Ready;
     action.bindings = {fixture.binding};
     action.requiresApproval = true;
     action.requiresExclusiveControl = true;
     action.holdToRun = true;
     action.maximumTtlMs = 250;
+    action.maximumTtlCycles = 2000;
+    Data::SemanticActionParameterRuntimeDefinition actionParameter;
+    actionParameter.id = "enable";
+    actionParameter.primitiveType = Data::RuntimeResourcePrimitiveType::Boolean;
+    actionParameter.minimum = false;
+    actionParameter.maximum = true;
+    action.parameters = {actionParameter};
 
     Data::SemanticOperationRequest actionRequest = fixture.request;
     actionRequest.kind = Data::SemanticOperationKind::InvokeAction;
     actionRequest.target = action.target;
     actionRequest.value = {};
+    actionRequest.ttlMs = 0;
+    actionRequest.ttlCycles = 1000;
+    actionRequest.parameters = {{"enable", true}};
 
     Data::SemanticRuntimeContext actionContext = fixture.context;
     actionContext.actionStates = {action};
     QVERIFY(validateSemanticOperationRequest(actionRequest, actionContext).accepted());
+
+    Data::SemanticOperationRequest missingActionParameter = actionRequest;
+    missingActionParameter.parameters.clear();
+    QCOMPARE(
+        validateSemanticOperationRequest(missingActionParameter, actionContext).error,
+        SemanticRuntimeValidationError::InvalidRequest);
+    Data::SemanticOperationRequest extraActionParameter = actionRequest;
+    extraActionParameter.parameters.insert("unexpected", true);
+    QCOMPARE(
+        validateSemanticOperationRequest(extraActionParameter, actionContext).error,
+        SemanticRuntimeValidationError::InvalidRequest);
+    Data::SemanticOperationRequest wrongActionParameterType = actionRequest;
+    wrongActionParameterType.parameters["enable"] = QVariant::fromValue<qulonglong>(1);
+    QCOMPARE(
+        validateSemanticOperationRequest(wrongActionParameterType, actionContext).error,
+        SemanticRuntimeValidationError::InvalidRequest);
+    Data::SemanticOperationRequest excessiveActionTtl = actionRequest;
+    excessiveActionTtl.ttlCycles = action.maximumTtlCycles + 1;
+    QCOMPARE(
+        validateSemanticOperationRequest(excessiveActionTtl, actionContext).error,
+        SemanticRuntimeValidationError::InvalidRequest);
 
     Data::SemanticRuntimeBinding secondBinding = fixture.binding;
     secondBinding.target.signalId = {"urn:example.test:signal/velocity"};
@@ -2304,15 +2344,14 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
     QVERIFY(validateSemanticOperationRequest(actionRequest, actionContext).accepted());
 
     Data::SemanticRuntimeContext actionDefinitionMismatch = actionContext;
-    actionDefinitionMismatch.actionStates.first().definition.id
-        = {"urn:example.test:action/another"};
+    actionDefinitionMismatch.actionStates.first().definition.id = {
+        "urn:example.test:action/another"};
     QCOMPARE(
         validateSemanticOperationRequest(actionRequest, actionDefinitionMismatch).error,
         SemanticRuntimeValidationError::InvalidTarget);
 
     Data::SemanticRuntimeContext actionProofMismatch = actionContext;
-    actionProofMismatch.actionStates.first().bindings[1].verification.verifierId
-        = "other-verifier";
+    actionProofMismatch.actionStates.first().bindings[1].verification.verifierId = "other-verifier";
     QCOMPARE(
         validateSemanticOperationRequest(actionRequest, actionProofMismatch).error,
         SemanticRuntimeValidationError::BindingUnverified);
@@ -2335,12 +2374,15 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
     approvalOperation.request = fixture.request;
     approvalOperation.actor = fixture.actor;
     approvalOperation.state = Data::SemanticOperationState::ApprovalRequired;
+    approvalOperation.canonicalRequestDigest = QCryptographicHash::hash(
+        canonicalSemanticOperationRequest(approvalOperation.request), QCryptographicHash::Sha256);
     approvalOperation.approvalChallenge = QByteArray(32, '\x2a');
 
     Data::SemanticOperationApprovalRequest approval;
     approval.operationId = fixture.request.operationId;
     approval.decision = Data::SemanticApprovalDecision::Approved;
     approval.challenge = approvalOperation.approvalChallenge;
+    approval.expectedRequestDigest = approvalOperation.canonicalRequestDigest;
     approval.expectedContextHash = fixture.context.contextHash;
     QVERIFY(
         validateSemanticOperationApproval(approval, fixture.actor, approvalOperation, fixture.context)
@@ -2358,6 +2400,14 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
     QCOMPARE(
         validateSemanticOperationApproval(
             wrongChallenge, fixture.actor, approvalOperation, fixture.context)
+            .error,
+        SemanticRuntimeValidationError::ApprovalChallengeMismatch);
+
+    Data::SemanticOperationApprovalRequest wrongRequestDigest = approval;
+    wrongRequestDigest.expectedRequestDigest[0] ^= '\x01';
+    QCOMPARE(
+        validateSemanticOperationApproval(
+            wrongRequestDigest, fixture.actor, approvalOperation, fixture.context)
             .error,
         SemanticRuntimeValidationError::ApprovalChallengeMismatch);
 

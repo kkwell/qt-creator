@@ -61,8 +61,8 @@ struct ETHERCATDATA_EXPORT SemanticBindingVerification
     QDateTime verifiedAt;
     QString detail;
 
-    friend bool operator==(
-        const SemanticBindingVerification &, const SemanticBindingVerification &) = default;
+    friend bool operator==(const SemanticBindingVerification &, const SemanticBindingVerification &)
+        = default;
 };
 
 struct ETHERCATDATA_EXPORT SemanticRuntimeBinding
@@ -89,8 +89,7 @@ struct ETHERCATDATA_EXPORT SemanticRuntimeBinding
     RuntimeResourceDirection direction = RuntimeResourceDirection::Unknown;
     RuntimeResourceAccess access = RuntimeResourceAccess::Unknown;
 
-    friend bool operator==(
-        const SemanticRuntimeBinding &, const SemanticRuntimeBinding &) = default;
+    friend bool operator==(const SemanticRuntimeBinding &, const SemanticRuntimeBinding &) = default;
 };
 
 enum class SemanticSignalAvailability {
@@ -114,8 +113,8 @@ struct ETHERCATDATA_EXPORT SemanticSignalRuntimeState
     quint64 controllerTimestampNs = 0;
     QString detail;
 
-    friend bool operator==(
-        const SemanticSignalRuntimeState &, const SemanticSignalRuntimeState &) = default;
+    friend bool operator==(const SemanticSignalRuntimeState &, const SemanticSignalRuntimeState &)
+        = default;
 };
 
 enum class SemanticActionAvailability {
@@ -127,20 +126,47 @@ enum class SemanticActionAvailability {
     Rejected,
 };
 
+enum class SemanticActionQualification {
+    Qualified,
+    Unqualified,
+};
+
+struct ETHERCATDATA_EXPORT SemanticActionParameterRuntimeDefinition
+{
+    QString id;
+    RuntimeResourcePrimitiveType primitiveType = RuntimeResourcePrimitiveType::Opaque;
+    QString unit;
+    QVariant minimum;
+    QVariant maximum;
+    bool required = true;
+
+    friend bool operator==(
+        const SemanticActionParameterRuntimeDefinition &,
+        const SemanticActionParameterRuntimeDefinition &)
+        = default;
+};
+
 struct ETHERCATDATA_EXPORT SemanticActionRuntimeState
 {
     SemanticRuntimeTarget target;
     DeviceControlAction definition;
+    QString actionBindingId;
+    SemanticRuntimeDigest actionDefinitionDigest;
+    SemanticActionQualification qualification = SemanticActionQualification::Unqualified;
+    QString disabledReason;
     SemanticActionAvailability availability = SemanticActionAvailability::Unavailable;
     QList<SemanticRuntimeBinding> bindings;
+    QList<SemanticActionParameterRuntimeDefinition> parameters;
     bool requiresApproval = true;
     bool requiresExclusiveControl = true;
+    bool requiresDc = false;
     bool holdToRun = false;
     quint32 maximumTtlMs = 0;
+    quint32 maximumTtlCycles = 0;
     QString detail;
 
-    friend bool operator==(
-        const SemanticActionRuntimeState &, const SemanticActionRuntimeState &) = default;
+    friend bool operator==(const SemanticActionRuntimeState &, const SemanticActionRuntimeState &)
+        = default;
 };
 
 struct ETHERCATDATA_EXPORT SemanticRuntimeContext
@@ -159,8 +185,7 @@ struct ETHERCATDATA_EXPORT SemanticRuntimeContext
     bool mock = false;
     QString detail;
 
-    friend bool operator==(
-        const SemanticRuntimeContext &, const SemanticRuntimeContext &) = default;
+    friend bool operator==(const SemanticRuntimeContext &, const SemanticRuntimeContext &) = default;
 };
 
 enum class SemanticRuntimeActorKind {
@@ -212,6 +237,7 @@ struct ETHERCATDATA_EXPORT SemanticOperationRequest
     QVariant value;
     QMap<QString, QVariant> parameters;
     quint32 ttlMs = 0;
+    quint32 ttlCycles = 0;
     QString reason;
 
     friend bool operator==(const SemanticOperationRequest &, const SemanticOperationRequest &)
@@ -243,6 +269,7 @@ struct ETHERCATDATA_EXPORT SemanticOperationApprovalRequest
     SemanticOperationId operationId;
     SemanticApprovalDecision decision = SemanticApprovalDecision::Pending;
     QByteArray challenge;
+    QByteArray expectedRequestDigest;
     QByteArray expectedContextHash;
     QString detail;
 
@@ -261,6 +288,30 @@ struct ETHERCATDATA_EXPORT SemanticOperationApproval
         = default;
 };
 
+struct ETHERCATDATA_EXPORT SemanticOperationSignalObservation
+{
+    SemanticRuntimeTarget target;
+    RuntimeResourceTypedValue value;
+    RuntimeResourceQuality quality;
+    quint64 controllerTimestampNs = 0;
+
+    friend bool operator==(
+        const SemanticOperationSignalObservation &, const SemanticOperationSignalObservation &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT SemanticOperationSnapshot
+{
+    QByteArray digest;
+    quint64 captureCycle = 0;
+    quint64 controllerTimestampNs = 0;
+    bool complete = false;
+    QList<SemanticOperationSignalObservation> observations;
+
+    friend bool operator==(const SemanticOperationSnapshot &, const SemanticOperationSnapshot &)
+        = default;
+};
+
 struct ETHERCATDATA_EXPORT SemanticOperationRecord
 {
     SemanticOperationRequest request;
@@ -274,6 +325,12 @@ struct ETHERCATDATA_EXPORT SemanticOperationRecord
     QString resultCode;
     QString detail;
     bool executionAttempted = false;
+    quint32 currentStep = 0;
+    quint32 totalSteps = 0;
+    quint32 failedStep = 0;
+    std::optional<SemanticOperationSnapshot> beforeSnapshot;
+    std::optional<SemanticOperationSnapshot> afterSnapshot;
+    std::optional<ControllerOperationError> controllerError;
     quint64 appliedCycle = 0;
     quint64 appliedRuntimeGeneration = 0;
 
@@ -285,8 +342,10 @@ enum class SemanticAuditEventKind {
     Submitted,
     ApprovalRecorded,
     StateChanged,
+    ExecutionStep,
     Rejected,
     ExecutionResult,
+    OutcomeReconciled,
 };
 
 struct ETHERCATDATA_EXPORT SemanticRuntimeAuditEvent
@@ -295,15 +354,21 @@ struct ETHERCATDATA_EXPORT SemanticRuntimeAuditEvent
     QString controllerId;
     SemanticOperationId operationId;
     SemanticAuditEventKind kind = SemanticAuditEventKind::Rejected;
+    SemanticOperationState previousState = SemanticOperationState::Rejected;
     SemanticOperationState state = SemanticOperationState::Rejected;
     SemanticRuntimeActor actor;
     QByteArray canonicalRequestDigest;
+    quint32 stepIndex = 0;
+    QByteArray beforeSnapshotDigest;
+    QByteArray afterSnapshotDigest;
+    quint64 appliedCycle = 0;
+    std::optional<ControllerOperationError> controllerError;
     QDateTime occurredAt;
     QString code;
     QString detail;
 
-    friend bool operator==(
-        const SemanticRuntimeAuditEvent &, const SemanticRuntimeAuditEvent &) = default;
+    friend bool operator==(const SemanticRuntimeAuditEvent &, const SemanticRuntimeAuditEvent &)
+        = default;
 };
 
 } // namespace EtherCAT::Data
@@ -317,6 +382,8 @@ Q_DECLARE_METATYPE(EtherCAT::Data::SemanticRuntimeBinding)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticSignalAvailability)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticSignalRuntimeState)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticActionAvailability)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticActionQualification)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticActionParameterRuntimeDefinition)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticActionRuntimeState)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticRuntimeContext)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticRuntimeActorKind)
@@ -328,6 +395,8 @@ Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationState)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticApprovalDecision)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationApprovalRequest)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationApproval)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationSignalObservation)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationSnapshot)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationRecord)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticAuditEventKind)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticRuntimeAuditEvent)
