@@ -13,6 +13,7 @@ add_qtc_plugin(EtherCATAutomationGateway
   PLUGIN_DEPENDS
     Core
     EtherCATCore
+    EtherCATSemanticRuntime
     EtherCATWorkbench
     ProjectExplorer
   SOURCES

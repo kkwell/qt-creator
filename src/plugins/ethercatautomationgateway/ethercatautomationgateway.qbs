@@ -10,6 +10,7 @@ QtcPlugin {
     Depends { name: "Utils" }
     Depends { name: "Core" }
     Depends { name: "EtherCATCore" }
+    Depends { name: "EtherCATSemanticRuntime" }
     Depends { name: "EtherCATWorkbench" }
     Depends { name: "ProjectExplorer" }
 
