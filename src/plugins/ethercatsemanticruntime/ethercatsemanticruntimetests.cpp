@@ -6,6 +6,7 @@
 #include "ecfgconfiguration_p.h"
 #include "ecpkgcontainer.h"
 #include "ed25519verifier.h"
+#include "semanticbindingartifact_p.h"
 #include "semanticruntimeexecutor.h"
 #include "signedecpkgmanifest_p.h"
 #include "verifiedecpkgstore_p.h"
@@ -1437,6 +1438,187 @@ void EtherCATSemanticRuntimeTests::testSignedEcpkgTransferredPackages()
 
     if (!foundFixture)
         QSKIP("Transferred API-035/API-036 ECPKG fixtures are not present");
+}
+
+void EtherCATSemanticRuntimeTests::testSemanticBindingTransferredPackages()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureRoot(
+        repositoryRoot.absoluteFilePath("build/vendor_api_036_handoff"));
+    const QByteArray publicKey = fromHex(
+        "bd51c2d7cb14eeabac5de51ca5feb5f3"
+        "6d3d87986b77f19d056a7da4845f7063");
+    const QList<EcpkgTrustedPublicKey> trust{
+        {publicKey, EcpkgTrustClass::Production},
+    };
+
+    struct Fixture
+    {
+        QString directory;
+        QString packageName;
+        QByteArray mappingSha256;
+    };
+    const std::array<Fixture, 2> fixtures{
+        Fixture{
+            "api035",
+            "three-slave-xb6-sv630n-semantic-binding-cfg3501.ecpkg",
+            fromHex("1b9b8d93222fb199a2b0f767e22a4ed53dd8898c09cc2260a1c1e929f551c64f"),
+        },
+        Fixture{
+            "api036",
+            "three-slave-output-transaction-cfg3501.ecpkg",
+            fromHex("d4143cbbae9ac312181b12210d107db46957fb3b84a2d7d8082e929e96c26f2e"),
+        },
+    };
+
+    bool foundFixture = false;
+    for (const Fixture &fixture : fixtures) {
+        const QDir directory(fixtureRoot.absoluteFilePath(fixture.directory));
+        const QByteArray packageBytes
+            = readFile(directory.absoluteFilePath(fixture.packageName));
+        if (packageBytes.isEmpty())
+            continue;
+        foundFixture = true;
+
+        const Utils::Result<EcpkgContainer> container
+            = parseCanonicalEcpkgContainer(packageBytes);
+        QVERIFY_RESULT(container);
+        const Utils::Result<VerifiedSignedEcpkgManifest> manifest
+            = verifySignedEcpkgManifest(*container, trust);
+        QVERIFY_RESULT(manifest);
+        const Utils::Result<EcfgConfiguration> configuration
+            = parseStrictEcfgConfiguration(container->configurationEcfg);
+        QVERIFY_RESULT(configuration);
+        const Utils::Result<VerifiedSemanticBindingArtifact> artifact
+            = verifySemanticBindingArtifact(*container, *manifest, *configuration);
+        QVERIFY_RESULT(artifact);
+
+        QCOMPARE(artifact->trust, EcpkgTrustClass::Production);
+        QCOMPARE(artifact->artifactSha256, fixture.mappingSha256);
+        QCOMPARE(
+            artifact->canonicalArtifact,
+            readFile(directory.absoluteFilePath("semantic-binding-v1.json")));
+        QCOMPARE(artifact->bindings.size(), qsizetype(56));
+        QCOMPARE(artifact->topologyInstances.size(), qsizetype(3));
+        QCOMPARE(artifact->configurationId, quint64(3501));
+        QCOMPARE(artifact->catalogRevision, configuration->catalogRevision);
+        QCOMPARE(artifact->topologyIdentity, configuration->topologyIdentity);
+
+        const VerifiedSemanticBinding *axis0Controlword
+            = artifact->findBySemanticSignalId(
+                u"embedlabs:fixture:axis0:command:controlword");
+        QVERIFY(axis0Controlword);
+        QCOMPARE(axis0Controlword->resourceId, quint64(0x0997885c279b0862ULL));
+        QCOMPARE(axis0Controlword->componentInstanceId, quint64(0xcbe141c7c6c9c773ULL));
+        QCOMPARE(artifact->findByResourceId(axis0Controlword->resourceId), axis0Controlword);
+        QVERIFY(!artifact->findBySemanticSignalId(u"embedlabs:fixture:missing"));
+        QVERIFY(!artifact->findByResourceId(0));
+    }
+
+    if (!foundFixture)
+        QSKIP("Transferred API-035/API-036 ECPKG fixtures are not present");
+}
+
+void EtherCATSemanticRuntimeTests::testSemanticBindingRejectsMismatches()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureDirectory(
+        repositoryRoot.absoluteFilePath("build/vendor_api_036_handoff/api035"));
+    const QByteArray packageBytes = readFile(
+        fixtureDirectory.absoluteFilePath(
+            "three-slave-xb6-sv630n-semantic-binding-cfg3501.ecpkg"));
+    if (packageBytes.isEmpty())
+        QSKIP("Transferred API-035 ECPKG fixture is not present");
+
+    const QByteArray publicKey = fromHex(
+        "bd51c2d7cb14eeabac5de51ca5feb5f3"
+        "6d3d87986b77f19d056a7da4845f7063");
+    const Utils::Result<EcpkgContainer> container
+        = parseCanonicalEcpkgContainer(packageBytes);
+    QVERIFY_RESULT(container);
+    const Utils::Result<VerifiedSignedEcpkgManifest> manifest
+        = verifySignedEcpkgManifest(
+            *container, {{publicKey, EcpkgTrustClass::Production}});
+    QVERIFY_RESULT(manifest);
+    const Utils::Result<EcfgConfiguration> configuration
+        = parseStrictEcfgConfiguration(container->configurationEcfg);
+    QVERIFY_RESULT(configuration);
+    QVERIFY_RESULT(verifySemanticBindingArtifact(*container, *manifest, *configuration));
+
+    EcpkgContainer wrongPackage = *container;
+    wrongPackage.packageSha256[0] ^= 1;
+    QVERIFY(!verifySemanticBindingArtifact(wrongPackage, *manifest, *configuration));
+
+    VerifiedSignedEcpkgManifest wrongMapping = *manifest;
+    wrongMapping.semanticBinding->mappingSha256[0] ^= 1;
+    QVERIFY(!verifySemanticBindingArtifact(*container, wrongMapping, *configuration));
+
+    EcfgConfiguration missingResource = *configuration;
+    missingResource.resources.removeLast();
+    QVERIFY(!verifySemanticBindingArtifact(*container, *manifest, missingResource));
+
+    EcfgConfiguration wrongResourceType = *configuration;
+    wrongResourceType.resources[0].bitWidth += 1;
+    QVERIFY(!verifySemanticBindingArtifact(*container, *manifest, wrongResourceType));
+
+    EcpkgContainer changedReport = *container;
+    changedReport.compileReportJson[0] ^= 1;
+    QVERIFY(!verifySemanticBindingArtifact(changedReport, *manifest, *configuration));
+
+    const Utils::Result<StrictJson> parsedReport
+        = parseStrictJson(container->compileReportJson, container->compileReportJson.size());
+    QVERIFY_RESULT(parsedReport);
+
+    const auto rebuildReportEvidence =
+        [&container, &manifest](StrictJson report) {
+            VerifiedSignedEcpkgManifest rebuiltManifest = *manifest;
+            const Utils::Result<QByteArray> canonicalArtifact = serializeCanonicalJson(
+                report.at("semantic_binding_manifest"),
+                defaultMaximumSemanticArtifactBytes);
+            if (!canonicalArtifact)
+                return std::optional<std::pair<EcpkgContainer, VerifiedSignedEcpkgManifest>>();
+            const QByteArray mappingSha256 = QCryptographicHash::hash(
+                *canonicalArtifact, QCryptographicHash::Sha256);
+            report["semantic_binding_manifest_sha256"]
+                = mappingSha256.toHex().toStdString();
+            std::string reportText = report.dump(2);
+            reportText.push_back('\n');
+
+            EcpkgContainer rebuiltContainer = *container;
+            rebuiltContainer.compileReportJson = QByteArray(
+                reportText.data(), qsizetype(reportText.size()));
+            rebuiltManifest.compileReport.bytes
+                = quint32(rebuiltContainer.compileReportJson.size());
+            rebuiltManifest.compileReport.sha256 = QCryptographicHash::hash(
+                rebuiltContainer.compileReportJson, QCryptographicHash::Sha256);
+            rebuiltManifest.semanticBinding->mappingSha256 = mappingSha256;
+            return std::optional(std::pair(
+                std::move(rebuiltContainer), std::move(rebuiltManifest)));
+        };
+
+    StrictJson wrongSymbol = *parsedReport;
+    wrongSymbol["semantic_symbols"][0]["data_type"] = "s16";
+    const auto wrongSymbolEvidence = rebuildReportEvidence(std::move(wrongSymbol));
+    QVERIFY(wrongSymbolEvidence);
+    QVERIFY(!verifySemanticBindingArtifact(
+        wrongSymbolEvidence->first, wrongSymbolEvidence->second, *configuration));
+
+    StrictJson duplicateBinding = *parsedReport;
+    duplicateBinding["semantic_binding_manifest"]["bindings"][1]["semantic_signal_id"]
+        = duplicateBinding["semantic_binding_manifest"]["bindings"][0]["semantic_signal_id"];
+    const auto duplicateEvidence = rebuildReportEvidence(std::move(duplicateBinding));
+    QVERIFY(duplicateEvidence);
+    QVERIFY(!verifySemanticBindingArtifact(
+        duplicateEvidence->first, duplicateEvidence->second, *configuration));
+
+    StrictJson unknownField = *parsedReport;
+    unknownField["semantic_binding_manifest"]["unexpected"] = 0;
+    const auto unknownEvidence = rebuildReportEvidence(std::move(unknownField));
+    QVERIFY(unknownEvidence);
+    QVERIFY(!verifySemanticBindingArtifact(
+        unknownEvidence->first, unknownEvidence->second, *configuration));
 }
 
 void EtherCATSemanticRuntimeTests::testVerifiedEcpkgStore()

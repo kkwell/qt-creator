@@ -24,6 +24,8 @@ private slots:
     void testEd25519RejectsInvalidInputs();
     void testEd25519TransferredManifests();
     void testSignedEcpkgTransferredPackages();
+    void testSemanticBindingTransferredPackages();
+    void testSemanticBindingRejectsMismatches();
     void testVerifiedEcpkgStore();
     void testVerifiedEcpkgStoreRejectsTampering();
     void testPublishesOneProductionService();

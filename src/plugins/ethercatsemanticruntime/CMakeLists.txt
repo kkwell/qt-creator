@@ -14,6 +14,8 @@ add_qtc_plugin(EtherCATSemanticRuntime
     ed25519verifier.cpp
     ed25519verifier.h
     ethercatsemanticruntimeplugin.cpp
+    semanticbindingartifact_p.cpp
+    semanticbindingartifact_p.h
     semanticruntimeexecutor.cpp
     semanticruntimeexecutor.h
     signedecpkgmanifest_p.cpp
