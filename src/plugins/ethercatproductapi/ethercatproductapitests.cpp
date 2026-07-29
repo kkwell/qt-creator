@@ -3188,6 +3188,11 @@ void EtherCATProductApiTests::testOutputTransactionCodecRejectsMalformed_data()
     QTest::newRow("state-partial")
         << 1 << statePartial << Protocol::flagValue(Protocol::Flag::Response);
 
+    QByteArray stateTimestamp = statePayload;
+    putU64(stateTimestamp, 168, 0);
+    QTest::newRow("state-zero-timestamp")
+        << 1 << stateTimestamp << Protocol::flagValue(Protocol::Flag::Response);
+
     QByteArray stateFailure(176, '\0');
     putU16(stateFailure, 0, quint16(Protocol::MessageType::GetOutputTransactionState));
     putU16(stateFailure, 2, 176);
@@ -3213,6 +3218,11 @@ void EtherCATProductApiTests::testOutputTransactionCodecRejectsMalformed_data()
     putU32(resultFlags, 16, 0x4);
     QTest::newRow("result-state-flags")
         << 2 << resultFlags << Protocol::flagValue(Protocol::Flag::Response);
+
+    QByteArray resultTimestamp = resultPayload;
+    putU64(resultTimestamp, 168, 0);
+    QTest::newRow("result-zero-timestamp")
+        << 2 << resultTimestamp << Protocol::flagValue(Protocol::Flag::Response);
 }
 
 void EtherCATProductApiTests::testOutputTransactionCodecRejectsMalformed()
@@ -3343,6 +3353,99 @@ void EtherCATProductApiTests::testOutputTransactionCodecRejectsMalformed()
         QVERIFY(!error);
         QVERIFY(!status->final);
     }
+
+    struct Stage2Pair
+    {
+        qint32 status;
+        qint32 operationResult;
+        quint16 protocolMinor = Protocol::OutputTransactionMinor;
+    };
+    const std::array stage2Allowed{
+        Stage2Pair{-14, -10, Protocol::OutputTransactionMinor - 1},
+        Stage2Pair{-8, -3},
+        Stage2Pair{-7, -2},
+        Stage2Pair{-9, -2},
+        Stage2Pair{-11, -2},
+        Stage2Pair{-13, -2},
+        Stage2Pair{-6, -2},
+        Stage2Pair{-15, -2},
+        Stage2Pair{-6, -1},
+        Stage2Pair{-14, -1},
+        Stage2Pair{-16, -1},
+        Stage2Pair{-17, -1},
+        Stage2Pair{-18, -1},
+        Stage2Pair{-21, -1},
+        Stage2Pair{-22, -1},
+        Stage2Pair{-23, -1},
+        Stage2Pair{-24, -1},
+        Stage2Pair{-38, -1},
+        Stage2Pair{-39, -1},
+        Stage2Pair{-40, -1},
+        Stage2Pair{-41, -1},
+    };
+    for (const Stage2Pair &pair : stage2Allowed) {
+        Protocol::Frame frame = responseFrame(
+            Protocol::MessageType::CommandStatus,
+            rejectedCommandStatusPayload(
+                Protocol::MessageType::ApplyOutputTransaction,
+                2,
+                3,
+                pair.status,
+                0,
+                pair.operationResult),
+            1,
+            Protocol::Flag::Response | Protocol::Flag::Error);
+        frame.header.protocolMinor = pair.protocolMinor;
+        error = {};
+        QVERIFY2(
+            Protocol::decodeCommandStatus(frame, &error),
+            qPrintable(
+                QString::fromLatin1("stage2 status=%1 result=%2 minor=%3")
+                    .arg(pair.status)
+                    .arg(pair.operationResult)
+                    .arg(pair.protocolMinor)));
+        QVERIFY(!error);
+    }
+
+    const std::array stage2Rejected{
+        Stage2Pair{-14, -10},
+        Stage2Pair{-14, -2},
+        Stage2Pair{-8, -2},
+        Stage2Pair{-13, -1},
+        Stage2Pair{-15, -1},
+        Stage2Pair{-38, -2},
+        Stage2Pair{-36, -7},
+        Stage2Pair{-37, -8},
+        Stage2Pair{-6, -10},
+    };
+    for (const Stage2Pair &pair : stage2Rejected) {
+        Protocol::Frame frame = responseFrame(
+            Protocol::MessageType::CommandStatus,
+            rejectedCommandStatusPayload(
+                Protocol::MessageType::ApplyOutputTransaction,
+                2,
+                3,
+                pair.status,
+                0,
+                pair.operationResult),
+            1,
+            Protocol::Flag::Response | Protocol::Flag::Error);
+        frame.header.protocolMinor = pair.protocolMinor;
+        error = {};
+        QVERIFY(!Protocol::decodeCommandStatus(frame, &error));
+        QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+    }
+
+    Protocol::Frame nonLegacyMinor = responseFrame(
+        Protocol::MessageType::CommandStatus,
+        rejectedCommandStatusPayload(
+            Protocol::MessageType::ApplyOutputTransaction, 2, 3, -8, 0, -3),
+        1,
+        Protocol::Flag::Response | Protocol::Flag::Error);
+    nonLegacyMinor.header.protocolMinor = Protocol::OutputTransactionMinor - 1;
+    error = {};
+    QVERIFY(!Protocol::decodeCommandStatus(nonLegacyMinor, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::IncompatibleVersion);
 
     QByteArray cpu1Reject = rejectedCommandStatusPayload(
         Protocol::MessageType::ApplyOutputTransaction, 3, 3, -38, 0, -4);

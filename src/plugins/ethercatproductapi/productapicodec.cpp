@@ -780,6 +780,7 @@ bool commandStatusAllowed(qint32 status)
     case -10:
     case -11:
     case -12:
+    case -13:
     case -14:
     case -15:
     case -16:
@@ -802,6 +803,49 @@ bool commandStatusAllowed(qint32 status)
     default:
         return false;
     }
+}
+
+bool applyOutputStage2RejectionAllowed(
+    qint32 status, qint32 operationResult, quint16 protocolMinor)
+{
+    if (status == -14 && operationResult == -10)
+        return protocolMinor < OutputTransactionMinor;
+    if (status == -8 && operationResult == -3)
+        return true;
+    if (operationResult == -2) {
+        switch (status) {
+        case -7:
+        case -9:
+        case -11:
+        case -13:
+        case -6:
+        case -15:
+            return true;
+        default:
+            return false;
+        }
+    }
+    if (operationResult == -1) {
+        switch (status) {
+        case -6:
+        case -14:
+        case -16:
+        case -17:
+        case -18:
+        case -21:
+        case -22:
+        case -23:
+        case -24:
+        case -38:
+        case -39:
+        case -40:
+        case -41:
+            return true;
+        default:
+            return false;
+        }
+    }
+    return false;
 }
 
 bool bulkStatusAllowed(qint32 status)
@@ -1033,7 +1077,8 @@ std::optional<OutputTransactionRecord> decodeOutputTransactionRecord(
         || !state || resultFlags & ~OutputTransactionResultFlagKnownMask
         || !validRuntimeResourceSlot(activeSlot) || !outputGeneration
         || readBigEndian<quint16>(payload, 126)
-        || !validOutputTransactionMapping(semanticMappingSha256)) {
+        || !validOutputTransactionMapping(semanticMappingSha256)
+        || !readBigEndian<quint64>(payload, 168)) {
         setError(
             error,
             ErrorCategory::InvalidPayload,
@@ -1977,6 +2022,13 @@ std::optional<CommandStatus> decodeCommandStatus(const Frame &frame, Error *erro
             QStringLiteral("CommandStatus has an invalid original request type."));
         return {};
     }
+    if (status == -13 && originalType != quint16(MessageType::ApplyOutputTransaction)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("BACKPRESSURE is not valid for this CommandStatus request type."));
+        return {};
+    }
     if (stage < 1 || stage > 4 || serviceState > 9 || finalValue > 1 || (status && !finalValue)
         || (!status && operationResult) || (!status && finalValue && stage != 4)) {
         setError(
@@ -2055,7 +2107,9 @@ std::optional<CommandStatus> decodeCommandStatus(const Frame &frame, Error *erro
         }
     }
     if (originalType == quint16(MessageType::ApplyOutputTransaction)) {
-        if (frame.header.protocolMinor < OutputTransactionMinor) {
+        const bool legacyUnsupported
+            = status == -14 && operationResult == -10 && stage == 2 && finalValue;
+        if (frame.header.protocolMinor < OutputTransactionMinor && !legacyUnsupported) {
             setError(
                 error,
                 ErrorCategory::IncompatibleVersion,
@@ -2080,7 +2134,17 @@ std::optional<CommandStatus> decodeCommandStatus(const Frame &frame, Error *erro
                         "ApplyOutputTransaction rejection stage violates the v1.14 contract."));
                 return {};
             }
-            if (stage == 3) {
+            if (stage == 2) {
+                if (!applyOutputStage2RejectionAllowed(
+                        status, operationResult, frame.header.protocolMinor)) {
+                    setError(
+                        error,
+                        ErrorCategory::InvalidPayload,
+                        QStringLiteral(
+                            "ApplyOutputTransaction CPU0 result mapping is invalid."));
+                    return {};
+                }
+            } else {
                 qint32 expectedStatus = std::numeric_limits<qint32>::max();
                 switch (operationResult) {
                 case -1:
