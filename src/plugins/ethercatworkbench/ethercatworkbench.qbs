@@ -11,6 +11,7 @@ QtcPlugin {
     Depends { name: "EtherCATCore" }
     Depends { name: "EtherCATDevices" }
     Depends { name: "EtherCATProject" }
+    Depends { name: "EtherCATSemanticRuntime" }
     Depends { name: "ProjectExplorer" }
 
     files: [
@@ -43,6 +44,8 @@ QtcPlugin {
         "generalpage.h",
         "processdatapage.cpp",
         "processdatapage.h",
+        "semanticcontrolpage.cpp",
+        "semanticcontrolpage.h",
         "startuppage.cpp",
         "startuppage.h",
         "workbenchcontroller.cpp",

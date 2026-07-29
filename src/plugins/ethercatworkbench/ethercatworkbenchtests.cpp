@@ -13,6 +13,7 @@
 #include "ethercatworkbenchconstants.h"
 #include "ethercatworkbenchtr.h"
 #include "generalpage.h"
+#include "semanticcontrolpage.h"
 #include "workbenchcontroller.h"
 #include "workbenchnavigation.h"
 #include "workbenchstatuswidget.h"
@@ -35,6 +36,7 @@
 
 #include <ethercatcore/providerregistry.h>
 #include <ethercatcore/selectionservice.h>
+#include <ethercatcore/semanticruntimeservice.h>
 #include <ethercatcore/stateservice.h>
 
 #include <extensionsystem/pluginmanager.h>
@@ -869,6 +871,21 @@ private:
     std::optional<QByteArray> m_resolvedContentSha256Override;
 };
 
+class TestSemanticRuntimeService final : public Core::SemanticRuntimeService
+{
+public:
+    QList<Data::SemanticRuntimeContext> contexts() const final { return m_contexts; }
+
+    void publish(const QList<Data::SemanticRuntimeContext> &contexts)
+    {
+        m_contexts = contexts;
+        emit contextsChanged();
+    }
+
+private:
+    QList<Data::SemanticRuntimeContext> m_contexts;
+};
+
 static AdapterTreeFixture adapterTreeFixture(const TestDeviceAdapterProvider &provider)
 {
     AdapterTreeFixture result;
@@ -1424,6 +1441,7 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
     QVERIFY(hasDependency("ethercatcore"));
     QVERIFY(hasDependency("ethercatdevices"));
     QVERIFY(hasDependency("ethercatproject"));
+    QVERIFY(hasDependency("ethercatsemanticruntime"));
     QVERIFY(hasDependency("projectexplorer"));
 
     Core::ProviderRegistry *registry
@@ -3217,6 +3235,488 @@ void EtherCATWorkbenchTests::testDeviceAdapterSelectionBuildsModuleChannelTree()
 
     model.setProjects({});
     QCOMPARE(model.rowCount(), 0);
+}
+
+void EtherCATWorkbenchTests::testSemanticControlPageFailsClosed()
+{
+    TestDeviceAdapterProvider adapterProvider;
+    const AdapterTreeFixture fixture = adapterTreeFixture(adapterProvider);
+    WorkbenchController controller;
+    controller.treeModel()->setDeviceAdapterProviders({&adapterProvider});
+    controller.treeModel()->setProjects({fixture.project});
+
+    const QModelIndex configuredSlave = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    QVERIFY(configuredSlave.isValid());
+    const QModelIndex modules = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Modules, configuredSlave);
+    QVERIFY(modules.isValid());
+    const QModelIndex outputModule = controller.treeModel()->index(0, 0, modules);
+    const QModelIndex outputChannel = findByDisplayText(
+        controller.treeModel(), "Digital output 1", outputModule);
+    QVERIFY(outputModule.isValid());
+    QVERIFY(outputChannel.isValid());
+
+    const Core::PropertyPageContext moduleContext
+        = controller.treeModel()->contextForIndex(outputModule);
+    const Core::PropertyPageContext channelContext
+        = controller.treeModel()->contextForIndex(outputChannel);
+    const Core::PropertyPageContext slaveContext
+        = controller.treeModel()->contextForIndex(configuredSlave);
+    const std::optional<SemanticControlSelection> selection
+        = controller.treeModel()->semanticControlSelection(
+            outputChannel.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
+    QVERIFY(selection);
+
+    TestSemanticRuntimeService runtime;
+    Data::SemanticRuntimeContext unavailableContext;
+    unavailableContext.controllerId = "hidden-controller-id";
+    unavailableContext.scope = selection->scope;
+    unavailableContext.detail
+        = "semantic-binding-proof-unavailable: hidden-resource-id and process-image offset";
+    runtime.publish({unavailableContext});
+
+    BuiltinPropertyPageProvider pages(&controller, nullptr, &runtime);
+    const QList<Core::PropertyPageDescriptor> modulePages = pages.pages(moduleContext);
+    const QList<Core::PropertyPageDescriptor> channelPages = pages.pages(channelContext);
+    QCOMPARE(modulePages.size(), 2);
+    QCOMPARE(channelPages.size(), 2);
+    QCOMPARE(modulePages.at(0).id, Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID));
+    QCOMPARE(modulePages.at(0).priority, 50);
+    QCOMPARE(modulePages.at(1).id, Utils::Id(Constants::GENERAL_PAGE_ID));
+    QCOMPARE(channelPages.at(0).id, Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID));
+    const QList<Core::PropertyPageDescriptor> slavePages = pages.pages(slaveContext);
+    QVERIFY(std::none_of(
+        slavePages.cbegin(),
+        slavePages.cend(),
+        [](const Core::PropertyPageDescriptor &descriptor) {
+            return descriptor.id == Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID);
+        }));
+
+    std::unique_ptr<QWidget> page(
+        pages.createPage(Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID), nullptr));
+    QVERIFY(page);
+    QVERIFY(qobject_cast<SemanticControlPage *>(page.get()));
+    pages.updatePage(
+        Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID), page.get(), channelContext);
+
+    QLabel *status = page->findChild<QLabel *>("EtherCATSemanticControlStatus");
+    QTreeWidget *signalTree = page->findChild<QTreeWidget *>("EtherCATSemanticControlSignals");
+    QLineEdit *requestedValue
+        = page->findChild<QLineEdit *>("EtherCATSemanticControlRequestedValue");
+    QPushButton *apply = page->findChild<QPushButton *>("EtherCATSemanticControlApply");
+    QVERIFY(status);
+    QVERIFY(signalTree);
+    QVERIFY(requestedValue);
+    QVERIFY(apply);
+    QCOMPARE(status->text(), Tr::tr("Signed semantic binding proof is unavailable."));
+    QCOMPARE(signalTree->topLevelItemCount(), 0);
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+    for (int column = 0; column < signalTree->columnCount(); ++column)
+        QCOMPARE(signalTree->header()->sectionResizeMode(column), QHeaderView::Interactive);
+
+    const Data::SemanticRuntimeDigest mappingDigest{"sha256", QByteArray(32, '\x61')};
+    const Data::SemanticRuntimeDigest signedManifestDigest{
+        "sha256", QByteArray(32, '\x62')};
+    Data::RuntimeResourceCatalogEpoch epoch;
+    epoch.controllerBootId = 1;
+    epoch.activePackageSlot = Data::ControllerSlot::A;
+    epoch.activePackageGeneration = 2;
+    epoch.configurationId = 3;
+    epoch.topologyGeneration = 4;
+    epoch.runtimeGeneration = 5;
+    epoch.catalogRevision = 6;
+    epoch.topologyIdentity = QByteArrayLiteral("hidden-topology-identity");
+
+    Data::SemanticRuntimeTarget target;
+    target.controllerId = unavailableContext.controllerId;
+    target.scope = selection->scope;
+    target.deviceId = selection->deviceId;
+    target.kind = Data::SemanticRuntimeTargetKind::Signal;
+    target.signalId = selection->signalIds.constFirst();
+
+    Data::SemanticRuntimeBinding binding;
+    binding.target = target;
+    binding.semanticBindingId = "hidden-semantic-binding";
+    binding.componentBindingId = "hidden-component-binding";
+    binding.adapterId = {"forbidden.vendor.adapter"};
+    binding.adapterVersion = "1.0";
+    binding.adapterContentSha256 = QByteArray(32, '\x63');
+    binding.esiSha256 = QByteArray(32, '\x64');
+    binding.bindingArtifactSha256 = QByteArray(32, '\x65');
+    binding.sessionGeneration = 7;
+    binding.epoch = epoch;
+    binding.mappingDigest = mappingDigest;
+    binding.controllerMappingDigest = mappingDigest;
+    binding.verification.state = Data::SemanticBindingVerificationState::Verified;
+    binding.verification.verifierId = "test-verifier";
+    binding.verification.signedManifestDigest = signedManifestDigest;
+    binding.verification.verifiedAt
+        = QDateTime::fromString("2026-07-30T01:02:03Z", Qt::ISODate);
+    binding.verification.detail = "verified-test-proof";
+    binding.resourceId = {QByteArrayLiteral("hidden-resource-id")};
+    binding.componentInstanceId = {QByteArrayLiteral("hidden-component-id")};
+    binding.consistencyGroupId = {QByteArrayLiteral("hidden-group-id")};
+    binding.primitiveType = Data::RuntimeResourcePrimitiveType::Boolean;
+    binding.valueTypeIdentity = QByteArrayLiteral("BOOL");
+    binding.bitWidth = 1;
+    binding.direction = Data::RuntimeResourceDirection::Output;
+    binding.access = Data::RuntimeResourceAccess::ReadWrite;
+
+    Data::SemanticSignalRuntimeState signalState;
+    signalState.target = target;
+    signalState.definition.id = target.signalId;
+    signalState.definition.displayName = "Digital output 1";
+    signalState.definition.description = "ForbiddenVendor physical output at 0x7010";
+    signalState.definition.valueMetadata.unit = "wrong-raw-unit";
+    Data::EngineeringTransform engineeringTransform;
+    engineeringTransform.unit = "state";
+    engineeringTransform.rounding = Data::EngineeringRounding::RejectInexact;
+    signalState.definition.engineeringTransform = engineeringTransform;
+    signalState.availability = Data::SemanticSignalAvailability::Ready;
+    signalState.binding = binding;
+    Data::RuntimeResourceTypedValue value;
+    value.primitiveType = Data::RuntimeResourcePrimitiveType::Boolean;
+    value.value = true;
+    value.typeIdentity = QByteArrayLiteral("BOOL");
+    signalState.value = value;
+    signalState.quality.state = Data::RuntimeResourceQualityState::Good;
+    signalState.quality.detail = "hidden-resource-id";
+    signalState.snapshotComplete = true;
+    signalState.captureCycle = 4242;
+    signalState.controllerTimestampNs = 8181;
+
+    Data::SemanticRuntimeContext readyContext;
+    readyContext.controllerId = target.controllerId;
+    readyContext.scope = target.scope;
+    readyContext.sessionGeneration = binding.sessionGeneration;
+    readyContext.epoch = epoch;
+    readyContext.mappingDigest = mappingDigest;
+    readyContext.controllerMappingDigest = mappingDigest;
+    readyContext.bindingVerification = binding.verification;
+    readyContext.contextHash = QByteArray(32, '\x66');
+    readyContext.signalStates = {signalState};
+    readyContext.complete = true;
+    const Data::SemanticSignalRuntimeState baselineSignalState = signalState;
+    const Data::SemanticRuntimeContext baselineContext = readyContext;
+    runtime.publish({readyContext});
+
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 1);
+    QTRY_VERIFY(!signalTree->isHidden());
+    QTreeWidgetItem *signalItem = signalTree->topLevelItem(0);
+    QVERIFY(signalItem);
+    QCOMPARE(signalItem->text(0), QString("Digital output 1"));
+    QCOMPARE(signalItem->text(1), Tr::tr("On"));
+    QCOMPARE(signalItem->text(2), QString("state"));
+    QCOMPARE(signalItem->text(3), Tr::tr("Good"));
+    QCOMPARE(signalItem->text(4), QString("4242"));
+    QCOMPARE(signalItem->text(5), Tr::tr("Ready"));
+    QCOMPARE(
+        status->text(),
+        Tr::tr("Live values are available. Manual output is not enabled yet."));
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    const int userColumnWidth = signalTree->header()->sectionSize(0)
+                                + Utils::StyleHelper::SpacingTokens::GapHM;
+    signalTree->header()->resizeSection(0, userColumnWidth);
+    QCOMPARE(signalTree->header()->sectionSize(0), userColumnWidth);
+
+    QString visibleText = status->text() + requestedValue->placeholderText();
+    for (int column = 0; column < signalTree->columnCount(); ++column) {
+        visibleText += signalTree->headerItem()->text(column);
+        visibleText += signalItem->text(column);
+    }
+    for (const QString &forbidden :
+         {QString("hidden-resource-id"),
+          QString("hidden-controller-id"),
+          QString("hidden-topology-identity"),
+          QString("forbidden.vendor"),
+          QString("0x7010"),
+          QString("process-image"),
+          QString("wrong-raw-unit")}) {
+        QVERIFY2(
+            !visibleText.contains(forbidden, Qt::CaseInsensitive),
+            qPrintable(QString("Leaked physical identifier: %1").arg(forbidden)));
+    }
+
+    Data::SemanticSignalRuntimeState noTransformState = baselineSignalState;
+    noTransformState.definition.engineeringTransform.reset();
+    readyContext = baselineContext;
+    readyContext.signalStates = {noTransformState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 1);
+    QCOMPARE(signalTree->header()->sectionSize(0), userColumnWidth);
+    for (int column = 0; column < signalTree->columnCount(); ++column)
+        QCOMPARE(signalTree->header()->sectionResizeMode(column), QHeaderView::Interactive);
+    signalItem = signalTree->topLevelItem(0);
+    QVERIFY(signalItem);
+    QCOMPARE(signalItem->text(1), Tr::tr("Raw: On"));
+    QCOMPARE(signalItem->text(2), QString());
+    QCOMPARE(signalItem->text(5), Tr::tr("Ready"));
+    QCOMPARE(
+        status->text(),
+        Tr::tr("Live values are available. Manual output is not enabled yet."));
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::SemanticSignalRuntimeState badQualityState = baselineSignalState;
+    badQualityState.quality.state = Data::RuntimeResourceQualityState::Bad;
+    readyContext = baselineContext;
+    readyContext.signalStates = {badQualityState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 1);
+    signalItem = signalTree->topLevelItem(0);
+    QVERIFY(signalItem);
+    QCOMPARE(signalItem->text(1), Tr::tr("Unavailable"));
+    QCOMPARE(signalItem->text(2), QString());
+    QCOMPARE(signalItem->text(5), Tr::tr("Unavailable"));
+    QTRY_COMPARE(
+        status->text(),
+        Tr::tr("Some live values are unavailable. Manual output is disabled."));
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::EngineeringTransform invalidTransform;
+    invalidTransform.scale = {0, 1};
+    invalidTransform.unit = "must-not-be-shown";
+    invalidTransform.rounding = Data::EngineeringRounding::RejectInexact;
+    Data::SemanticSignalRuntimeState invalidTransformState = baselineSignalState;
+    invalidTransformState.definition.engineeringTransform = invalidTransform;
+    readyContext = baselineContext;
+    readyContext.signalStates = {invalidTransformState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 1);
+    signalItem = signalTree->topLevelItem(0);
+    QVERIFY(signalItem);
+    QCOMPARE(signalItem->text(1), Tr::tr("Unavailable"));
+    QCOMPARE(signalItem->text(2), QString());
+    QCOMPARE(signalItem->text(5), Tr::tr("Unavailable"));
+    QCOMPARE(
+        status->text(),
+        Tr::tr("Some live values are unavailable. Manual output is disabled."));
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::SemanticSignalRuntimeState heterogeneousValueState = baselineSignalState;
+    heterogeneousValueState.value->value = QVariant::fromValue<qint64>(1);
+    readyContext = baselineContext;
+    readyContext.signalStates = {heterogeneousValueState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 1);
+    signalItem = signalTree->topLevelItem(0);
+    QVERIFY(signalItem);
+    QCOMPARE(signalItem->text(1), Tr::tr("Unavailable"));
+    QCOMPARE(signalItem->text(2), QString());
+    QCOMPARE(signalItem->text(5), Tr::tr("Unavailable"));
+    QTRY_COMPARE(
+        status->text(),
+        Tr::tr("Some live values are unavailable. Manual output is disabled."));
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::SemanticSignalRuntimeState overflowValueState = baselineSignalState;
+    overflowValueState.binding->primitiveType
+        = Data::RuntimeResourcePrimitiveType::SignedInteger;
+    overflowValueState.binding->valueTypeIdentity = QByteArrayLiteral("S8");
+    overflowValueState.binding->bitWidth = 8;
+    overflowValueState.value->primitiveType
+        = Data::RuntimeResourcePrimitiveType::SignedInteger;
+    overflowValueState.value->typeIdentity = QByteArrayLiteral("S8");
+    overflowValueState.value->value = QVariant::fromValue<qint64>(128);
+    readyContext = baselineContext;
+    readyContext.signalStates = {overflowValueState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 1);
+    signalItem = signalTree->topLevelItem(0);
+    QVERIFY(signalItem);
+    QCOMPARE(signalItem->text(1), Tr::tr("Unavailable"));
+    QCOMPARE(signalItem->text(2), QString());
+    QCOMPARE(signalItem->text(5), Tr::tr("Unavailable"));
+    QTRY_COMPARE(
+        status->text(),
+        Tr::tr("Some live values are unavailable. Manual output is disabled."));
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::SemanticSignalRuntimeState incompleteSnapshotState = baselineSignalState;
+    incompleteSnapshotState.snapshotComplete = false;
+    readyContext = baselineContext;
+    readyContext.signalStates = {incompleteSnapshotState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 1);
+    signalItem = signalTree->topLevelItem(0);
+    QVERIFY(signalItem);
+    QCOMPARE(signalItem->text(1), Tr::tr("Unavailable"));
+    QCOMPARE(signalItem->text(2), QString());
+    QCOMPARE(signalItem->text(5), Tr::tr("Unavailable"));
+    QTRY_COMPARE(
+        status->text(),
+        Tr::tr("Some live values are unavailable. Manual output is disabled."));
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::SemanticSignalRuntimeState zeroCaptureCycleState = baselineSignalState;
+    zeroCaptureCycleState.captureCycle = 0;
+    readyContext = baselineContext;
+    readyContext.signalStates = {zeroCaptureCycleState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 1);
+    signalItem = signalTree->topLevelItem(0);
+    QVERIFY(signalItem);
+    QCOMPARE(signalItem->text(1), Tr::tr("Unavailable"));
+    QCOMPARE(signalItem->text(2), QString());
+    QCOMPARE(signalItem->text(4), QString("0"));
+    QCOMPARE(signalItem->text(5), Tr::tr("Unavailable"));
+    QTRY_COMPARE(
+        status->text(),
+        Tr::tr("Some live values are unavailable. Manual output is disabled."));
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    runtime.publish({baselineContext, baselineContext});
+    QTRY_COMPARE(status->text(), Tr::tr("Runtime context is ambiguous."));
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 0);
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    readyContext = baselineContext;
+    readyContext.signalStates = {baselineSignalState, baselineSignalState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(status->text(), Tr::tr("Runtime signal set is incomplete."));
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 0);
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::SemanticSignalRuntimeState deviceMismatchState = baselineSignalState;
+    deviceMismatchState.target.deviceId = Data::NodeId::create();
+    deviceMismatchState.binding->target = deviceMismatchState.target;
+    readyContext = baselineContext;
+    readyContext.signalStates = {deviceMismatchState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(status->text(), Tr::tr("Runtime signal set is incomplete."));
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 0);
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::SemanticSignalRuntimeState scopeMismatchState = baselineSignalState;
+    scopeMismatchState.target.scope.masterId = Data::NodeId::create();
+    scopeMismatchState.binding->target = scopeMismatchState.target;
+    readyContext = baselineContext;
+    readyContext.signalStates = {scopeMismatchState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(status->text(), Tr::tr("Runtime signal set is incomplete."));
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 0);
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::SemanticSignalRuntimeState definitionMismatchState = baselineSignalState;
+    definitionMismatchState.definition.id = {"different-semantic-signal"};
+    readyContext = baselineContext;
+    readyContext.signalStates = {definitionMismatchState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(status->text(), Tr::tr("Runtime signal binding is not verified."));
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 0);
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::SemanticSignalRuntimeState epochMismatchState = baselineSignalState;
+    ++epochMismatchState.binding->epoch.runtimeGeneration;
+    readyContext = baselineContext;
+    readyContext.signalStates = {epochMismatchState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(status->text(), Tr::tr("Runtime signal binding is not verified."));
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 0);
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    const Data::SemanticRuntimeDigest differentMappingDigest{
+        "sha256", QByteArray(32, '\x67')};
+    Data::SemanticSignalRuntimeState mappingMismatchState = baselineSignalState;
+    mappingMismatchState.binding->mappingDigest = differentMappingDigest;
+    mappingMismatchState.binding->controllerMappingDigest = differentMappingDigest;
+    readyContext = baselineContext;
+    readyContext.signalStates = {mappingMismatchState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(status->text(), Tr::tr("Runtime signal binding is not verified."));
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 0);
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::SemanticSignalRuntimeState verifierMismatchState = baselineSignalState;
+    verifierMismatchState.binding->verification.verifierId = "different-verifier";
+    readyContext = baselineContext;
+    readyContext.signalStates = {verifierMismatchState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(status->text(), Tr::tr("Runtime signal binding is not verified."));
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 0);
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::SemanticSignalRuntimeState manifestMismatchState = baselineSignalState;
+    manifestMismatchState.binding->verification.signedManifestDigest
+        = {"sha256", QByteArray(32, '\x68')};
+    readyContext = baselineContext;
+    readyContext.signalStates = {manifestMismatchState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(status->text(), Tr::tr("Runtime signal binding is not verified."));
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 0);
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::SemanticSignalRuntimeState verificationTimeMismatchState = baselineSignalState;
+    verificationTimeMismatchState.binding->verification.verifiedAt
+        = binding.verification.verifiedAt.addSecs(1);
+    readyContext = baselineContext;
+    readyContext.signalStates = {verificationTimeMismatchState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(status->text(), Tr::tr("Runtime signal binding is not verified."));
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 0);
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::SemanticSignalRuntimeState verificationDetailMismatchState = baselineSignalState;
+    verificationDetailMismatchState.binding->verification.detail
+        = "different-verification-detail";
+    readyContext = baselineContext;
+    readyContext.signalStates = {verificationDetailMismatchState};
+    runtime.publish({readyContext});
+    QTRY_COMPARE(status->text(), Tr::tr("Runtime signal binding is not verified."));
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 0);
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    readyContext = baselineContext;
+    readyContext.controllerMappingDigest = differentMappingDigest;
+    runtime.publish({readyContext});
+    QTRY_COMPARE(status->text(), Tr::tr("Runtime context is incomplete."));
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 0);
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    readyContext = baselineContext;
+    readyContext.complete = false;
+    readyContext.detail
+        = "runtime-resource-catalog-stale: hidden-resource-id at process-image offset 12";
+    runtime.publish({readyContext});
+    QTRY_COMPARE(status->text(), Tr::tr("Runtime resource catalog is stale."));
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 0);
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(!requestedValue->isEnabled());
+    QVERIFY(!apply->isEnabled());
 }
 
 void EtherCATWorkbenchTests::testDeviceAdapterTreeFailsClosed()

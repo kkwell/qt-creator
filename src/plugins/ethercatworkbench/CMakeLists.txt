@@ -1,6 +1,7 @@
 add_qtc_plugin(EtherCATWorkbench
   DEPENDS EtherCATData Qt::Widgets Utils
-  PLUGIN_DEPENDS Core Debugger EtherCATCore EtherCATDevices EtherCATProject ProjectExplorer
+  PLUGIN_DEPENDS Core Debugger EtherCATCore EtherCATDevices EtherCATProject
+    EtherCATSemanticRuntime ProjectExplorer
   SOURCES
     builtinpropertypages.cpp
     builtinpropertypages.h
@@ -31,6 +32,8 @@ add_qtc_plugin(EtherCATWorkbench
     generalpage.h
     processdatapage.cpp
     processdatapage.h
+    semanticcontrolpage.cpp
+    semanticcontrolpage.h
     startuppage.cpp
     startuppage.h
     workbenchcontroller.cpp

@@ -12,8 +12,13 @@
 #include "esirepositorypage.h"
 #include "generalpage.h"
 #include "processdatapage.h"
+#include "semanticcontrolpage.h"
 #include "startuppage.h"
 #include "workbenchcontroller.h"
+
+#include <ethercatcore/semanticruntimeservice.h>
+
+#include <extensionsystem/pluginmanager.h>
 
 #include <utils/stylehelper.h>
 
@@ -88,10 +93,16 @@ static bool shouldExposeDiagnosticsFallback(WorkbenchController *controller)
 }
 
 BuiltinPropertyPageProvider::BuiltinPropertyPageProvider(
-    WorkbenchController *controller, QObject *parent)
+    WorkbenchController *controller,
+    QObject *parent,
+    Core::SemanticRuntimeService *runtimeService)
     : Core::PropertyPageProvider(
           Constants::BUILTIN_PAGE_PROVIDER_ID, Tr::tr("Built-in EtherCAT pages"), parent)
     , m_controller(controller)
+    , m_runtimeService(
+          runtimeService
+              ? runtimeService
+              : ExtensionSystem::PluginManager::getObject<Core::SemanticRuntimeService>())
 {
     setAvailable(true);
 }
@@ -148,9 +159,13 @@ QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
     case Kind::PdoEntry:
         return {{Utils::Id(Constants::PROCESS_DATA_PAGE_ID), Tr::tr("Process Data"), 300}};
     case Kind::Modules:
+        return {{Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100}};
     case Kind::Module:
     case Kind::Channel:
-        return {{Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100}};
+        return {
+            {Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID), Tr::tr("Control"), 50},
+            {Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100},
+        };
     case Kind::Diagnostics:
         if (m_controller && m_controller->diagnosticsAvailable())
             return {};
@@ -181,6 +196,7 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
         Constants::ESI_REPOSITORY_PAGE_ID,
         Constants::ONLINE_PAGE_ID,
         Constants::DIAGNOSTICS_PAGE_ID,
+        Constants::SEMANTIC_CONTROL_PAGE_ID,
     };
     if (!knownPages.contains(pageId))
         return nullptr;
@@ -227,6 +243,11 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
     if (pageId == Utils::Id(Constants::ESI_REPOSITORY_PAGE_ID)) {
         auto page = new EsiRepositoryPage(
             m_controller ? m_controller->deviceRepository() : nullptr, parent);
+        page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
+        return page;
+    }
+    if (pageId == Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID)) {
+        auto page = new SemanticControlPage(m_controller, m_runtimeService, parent);
         page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
         return page;
     }
@@ -281,6 +302,11 @@ void BuiltinPropertyPageProvider::updatePage(
     if (pageId == Utils::Id(Constants::ESI_REPOSITORY_PAGE_ID)) {
         if (page)
             static_cast<EsiRepositoryPage *>(page)->refresh();
+        return;
+    }
+    if (pageId == Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID)) {
+        if (auto semanticControlPage = qobject_cast<SemanticControlPage *>(page))
+            semanticControlPage->setContext(context);
         return;
     }
     BuiltinPageWidget *widget = pageWidget(page);

@@ -6,6 +6,10 @@
 
 #include <QPointer>
 
+namespace EtherCAT::Core {
+class SemanticRuntimeService;
+}
+
 namespace EtherCAT::Workbench::Internal {
 
 class WorkbenchController;
@@ -16,7 +20,9 @@ class BuiltinPropertyPageProvider final : public Core::PropertyPageProvider
 
 public:
     explicit BuiltinPropertyPageProvider(
-        WorkbenchController *controller, QObject *parent = nullptr);
+        WorkbenchController *controller,
+        QObject *parent = nullptr,
+        Core::SemanticRuntimeService *runtimeService = nullptr);
 
     QList<Core::PropertyPageDescriptor> pages(
         const Core::PropertyPageContext &context) const final;
@@ -26,6 +32,7 @@ public:
 
 private:
     QPointer<WorkbenchController> m_controller;
+    QPointer<Core::SemanticRuntimeService> m_runtimeService;
 };
 
 } // namespace EtherCAT::Workbench::Internal
