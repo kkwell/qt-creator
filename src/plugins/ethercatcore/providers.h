@@ -282,12 +282,16 @@ public:
     virtual std::optional<Data::RuntimeResourceCatalog> runtimeResourceCatalog() const;
     virtual std::optional<Data::RuntimeResourceSnapshot> runtimeResourceSnapshot() const;
     virtual Utils::Result<> refreshRuntimeResources();
+    virtual Utils::Result<> requestRuntimeResourceSnapshot(
+        const Data::RuntimeResourceSnapshotRequest &request);
 
 signals:
     void connectionProfilesChanged();
     void connectionSnapshotChanged();
     void runtimeResourceCatalogChanged();
     void runtimeResourceSnapshotChanged();
+    void runtimeResourceSnapshotRequestFinished(
+        const EtherCAT::Data::RuntimeResourceSnapshotResult &result);
 };
 
 class ETHERCATCORE_EXPORT ScanProvider : public Provider

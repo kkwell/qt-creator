@@ -178,6 +178,11 @@ bool isReconnectStatus(qint32 status)
     return retryDisposition(status) == Data::ControllerRetryDisposition::Reconnect;
 }
 
+bool invalidatesRuntimeResourceCatalog(qint32 status)
+{
+    return status == -17 || status == -18 || status == -21;
+}
+
 bool invalidatesControlLease(qint32 status)
 {
     return status == -7 || status == -8 || status == -9 || status == -11;
@@ -658,6 +663,7 @@ public:
         Firmware,
         RuntimeResourceCatalog,
         RuntimeResourceSnapshot,
+        RuntimeResourceTargetedSnapshot,
         ResumeEvents,
         ResumeReplay,
         ControlCommand,
@@ -689,13 +695,15 @@ public:
         bool terminalCommandStatus = false;
         std::optional<Protocol::RuntimeResourceTableQuery> runtimeResourceTableQuery;
         std::optional<Protocol::RuntimeResourceSnapshotQuery> runtimeResourceSnapshotQuery;
+        std::optional<Data::RuntimeResourceSnapshotRequest> targetedRuntimeResourceRequest;
         QTimer *timer = nullptr;
     };
 
     static bool isRuntimeResourceRequest(PendingKind kind)
     {
         return kind == PendingKind::RuntimeResourceCatalog
-               || kind == PendingKind::RuntimeResourceSnapshot;
+               || kind == PendingKind::RuntimeResourceSnapshot
+               || kind == PendingKind::RuntimeResourceTargetedSnapshot;
     }
 
     struct PersistentPackageSelector
@@ -862,12 +870,152 @@ public:
             q, [this] { emit q->runtimeResourceSnapshotChanged(); }, Qt::QueuedConnection);
     }
 
+    void notifyRuntimeResourceSnapshotRequestFinished(
+        const Data::RuntimeResourceSnapshotResult &result)
+    {
+        QMetaObject::invokeMethod(
+            q,
+            [q = q, result] { emit q->runtimeResourceSnapshotRequestFinished(result); },
+            Qt::QueuedConnection);
+    }
+
+    void ignoreLateRuntimeResourceResponse(quint64 requestId)
+    {
+        constexpr qsizetype maximumIgnoredRequestIds = 64;
+        if (!requestId || ignoredRuntimeResourceRequestIds.contains(requestId))
+            return;
+        if (ignoredRuntimeResourceRequestIds.size() >= maximumIgnoredRequestIds)
+            return;
+        ignoredRuntimeResourceRequestIds.insert(requestId);
+    }
+
+    bool canTrackAnotherLateRuntimeResourceResponse() const
+    {
+        return ignoredRuntimeResourceRequestIds.size() < 64;
+    }
+
+    Data::ControllerOperationError runtimeResourceSnapshotError(
+        Data::ControllerErrorSource source,
+        const QString &summary,
+        const QString &detail = {},
+        std::optional<qint32> code = {},
+        std::optional<qint32> operationResult = {},
+        std::optional<quint64> requestId = {}) const
+    {
+        Data::ControllerOperationError error;
+        error.source = source;
+        error.channelId = channelId(Protocol::Role::Bulk);
+        error.operation = Data::ControllerOperation::QueryRuntimeResourceSnapshot;
+        error.code = code;
+        error.operationResult = operationResult;
+        if (code)
+            error.codeName = statusName(*code);
+        error.requestId = requestId;
+        error.occurredAt = QDateTime::currentDateTimeUtc();
+        error.retryDisposition
+            = code ? retryDisposition(*code) : Data::ControllerRetryDisposition::NotRetryable;
+        error.summary = summary;
+        error.detail = detail;
+        return error;
+    }
+
+    void finishTargetedRuntimeResourceSnapshot(
+        const Data::RuntimeResourceSnapshotRequest &request,
+        const std::optional<Data::RuntimeResourceSnapshot> &result,
+        const std::optional<Data::ControllerOperationError> &error,
+        std::optional<quint64> requestId = {})
+    {
+        if (requestId)
+            removePending(*requestId);
+        targetedRuntimeSnapshotInProgress = false;
+        Data::RuntimeResourceSnapshotResult finished;
+        finished.request = request;
+        finished.snapshot = result;
+        finished.error = error;
+        notifyRuntimeResourceSnapshotRequestFinished(finished);
+    }
+
+    void cancelTargetedRuntimeResourceSnapshot(const QString &summary)
+    {
+        auto found = std::find_if(
+            pendingRequests.cbegin(),
+            pendingRequests.cend(),
+            [](const PendingRequest &request) {
+                return request.kind == PendingKind::RuntimeResourceTargetedSnapshot
+                       && request.targetedRuntimeResourceRequest;
+            });
+        if (found == pendingRequests.cend()) {
+            targetedRuntimeSnapshotInProgress = false;
+            return;
+        }
+
+        const quint64 requestId = found.key();
+        const Data::RuntimeResourceSnapshotRequest request = *found->targetedRuntimeResourceRequest;
+        const Channel &pendingChannel = channel(found->role);
+        if (found->generation == generation && found->channelEpoch == pendingChannel.epoch
+            && pendingChannel.socket) {
+            ignoreLateRuntimeResourceResponse(requestId);
+        }
+        finishTargetedRuntimeResourceSnapshot(
+            request,
+            {},
+            runtimeResourceSnapshotError(
+                Data::ControllerErrorSource::Network, summary, {}, {}, {}, requestId),
+            requestId);
+    }
+
+    void failTargetedRuntimeResourceSnapshotProtocol(
+        const QString &summary,
+        const QString &detail,
+        std::optional<quint64> requestId)
+    {
+        auto found = pendingRequests.end();
+        if (requestId) {
+            const auto candidate = pendingRequests.find(*requestId);
+            if (candidate != pendingRequests.end()
+                && candidate->kind == PendingKind::RuntimeResourceTargetedSnapshot
+                && candidate->targetedRuntimeResourceRequest) {
+                found = candidate;
+            }
+        }
+        if (found == pendingRequests.end()) {
+            found = std::find_if(
+                pendingRequests.begin(),
+                pendingRequests.end(),
+                [](const PendingRequest &request) {
+                    return request.kind == PendingKind::RuntimeResourceTargetedSnapshot
+                           && request.targetedRuntimeResourceRequest;
+                });
+        }
+        if (found == pendingRequests.end()
+            || found->kind != PendingKind::RuntimeResourceTargetedSnapshot
+            || !found->targetedRuntimeResourceRequest) {
+            return;
+        }
+
+        const quint64 targetedRequestId = found.key();
+        const Data::RuntimeResourceSnapshotRequest request
+            = *found->targetedRuntimeResourceRequest;
+        finishTargetedRuntimeResourceSnapshot(
+            request,
+            {},
+            runtimeResourceSnapshotError(
+                Data::ControllerErrorSource::Protocol,
+                summary,
+                detail,
+                {},
+                {},
+                targetedRequestId),
+            targetedRequestId);
+    }
+
     void clearRuntimeResourceCache()
     {
         const bool hadCatalog = runtimeCatalog.has_value();
         const bool hadSnapshot = runtimeSnapshot.has_value();
         runtimeCatalog.reset();
         runtimeSnapshot.reset();
+        publishedRuntimeCatalogBinding.reset();
         if (hadCatalog)
             notifyRuntimeResourceCatalogChanged();
         if (hadSnapshot)
@@ -886,6 +1034,8 @@ public:
 
     void invalidateRuntimeResources()
     {
+        cancelTargetedRuntimeResourceSnapshot(
+            Tr::tr("The targeted runtime resource read was canceled because its catalog changed."));
         resetRuntimeResourceRefresh();
         clearRuntimeResourceCache();
     }
@@ -1135,6 +1285,7 @@ public:
         ++generation;
         if (!generation)
             ++generation;
+        ignoredRuntimeResourceRequestIds.clear();
         snapshot.sessionGeneration = generation;
     }
 
@@ -1175,6 +1326,8 @@ public:
 
     void clearPendingRequests()
     {
+        cancelTargetedRuntimeResourceSnapshot(
+            Tr::tr("The targeted runtime resource read ended with the controller session."));
         if (snapshot.controlProgress.state == Data::ControllerControlState::Pending) {
             snapshot.controlProgress.state = Data::ControllerControlState::Failed;
             snapshot.controlProgress.final = false;
@@ -1437,6 +1590,7 @@ public:
         std::optional<quint64> requestId = {},
         bool requestMayHaveReachedController = true)
     {
+        failTargetedRuntimeResourceSnapshotProtocol(summary, detail, requestId);
         if (operationIsPackageDeployment(operation) || hasActiveDeployment()) {
             if (requestMayHaveReachedController) {
                 markDeploymentOutcomeUnknown(
@@ -1777,6 +1931,24 @@ public:
                     || found->channelEpoch != expectedEpoch || generation != expectedGeneration) {
                     return;
                 }
+                if (kind == PendingKind::RuntimeResourceTargetedSnapshot
+                    && found->targetedRuntimeResourceRequest) {
+                    const Data::RuntimeResourceSnapshotRequest request
+                        = *found->targetedRuntimeResourceRequest;
+                    ignoreLateRuntimeResourceResponse(requestId);
+                    finishTargetedRuntimeResourceSnapshot(
+                        request,
+                        {},
+                        runtimeResourceSnapshotError(
+                            Data::ControllerErrorSource::Network,
+                            Tr::tr("The targeted runtime resource read timed out."),
+                            {},
+                            {},
+                            {},
+                            requestId),
+                        requestId);
+                    return;
+                }
                 if (isRuntimeResourceRequest(kind)) {
                     failRuntimeResourceQuery(
                         Data::ControllerErrorSource::Network,
@@ -2031,6 +2203,59 @@ public:
             requestId,
             request,
             int(std::min<qint64>(options.requestTimeoutMs, remainingMs)));
+        if (!writeFrame(
+                bulk,
+                wire,
+                Protocol::Role::Bulk,
+                Data::ControllerOperation::QueryRuntimeResourceSnapshot)) {
+            return false;
+        }
+        return true;
+    }
+
+    bool sendTargetedRuntimeResourceSnapshotQuery(
+        const Data::RuntimeResourceSnapshotRequest &targetedRequest,
+        const Protocol::RuntimeResourceSnapshotQuery &query)
+    {
+        Channel &bulk = channel(Protocol::Role::Bulk);
+        if (!bulk.handshaken || !bulk.socket) {
+            finishTargetedRuntimeResourceSnapshot(
+                targetedRequest,
+                {},
+                runtimeResourceSnapshotError(
+                    Data::ControllerErrorSource::Network,
+                    Tr::tr("The controller Bulk channel is not connected.")));
+            return false;
+        }
+
+        Protocol::Error codecError;
+        const quint64 requestId = allocateRequestId();
+        const QByteArray wire = Protocol::encodeGetResourceSnapshot(
+            query, sessionId, requestId, ++bulk.sendSequence, negotiatedMinor, &codecError);
+        if (wire.isEmpty()) {
+            finishTargetedRuntimeResourceSnapshot(
+                targetedRequest,
+                {},
+                runtimeResourceSnapshotError(
+                    Data::ControllerErrorSource::ClientConfiguration,
+                    Tr::tr("The targeted runtime resource request could not be encoded."),
+                    codecError.text,
+                    {},
+                    {},
+                    requestId));
+            return false;
+        }
+
+        PendingRequest request;
+        request.kind = PendingKind::RuntimeResourceTargetedSnapshot;
+        request.role = Protocol::Role::Bulk;
+        request.operation = Data::ControllerOperation::QueryRuntimeResourceSnapshot;
+        request.generation = generation;
+        request.channelEpoch = bulk.epoch;
+        request.requestType = Protocol::MessageType::GetResourceSnapshot;
+        request.runtimeResourceSnapshotQuery = query;
+        request.targetedRuntimeResourceRequest = targetedRequest;
+        addPending(requestId, request, options.requestTimeoutMs);
         if (!writeFrame(
                 bulk,
                 wire,
@@ -3334,12 +3559,46 @@ public:
         const auto status = Protocol::decodeBulkStatus(frame, &decodeError);
         if (!status || !status->status || status->originalType != quint16(request.requestType)
             || request.role != Protocol::Role::Bulk) {
+            if (request.kind == PendingKind::RuntimeResourceTargetedSnapshot
+                && request.targetedRuntimeResourceRequest) {
+                finishTargetedRuntimeResourceSnapshot(
+                    *request.targetedRuntimeResourceRequest,
+                    {},
+                    runtimeResourceSnapshotError(
+                        Data::ControllerErrorSource::Protocol,
+                        Tr::tr("The controller returned a malformed runtime resource status."),
+                        decodeError.text,
+                        {},
+                        {},
+                        requestId),
+                    requestId);
+            }
             failProtocol(
                 request.role,
                 request.operation,
                 Tr::tr("The controller returned a malformed runtime resource status."),
                 decodeError.text,
                 requestId);
+            return;
+        }
+        if (request.kind == PendingKind::RuntimeResourceTargetedSnapshot
+            && request.targetedRuntimeResourceRequest) {
+            finishTargetedRuntimeResourceSnapshot(
+                *request.targetedRuntimeResourceRequest,
+                {},
+                runtimeResourceSnapshotError(
+                    Data::ControllerErrorSource::Controller,
+                    Tr::tr("The controller rejected the targeted runtime resource read."),
+                    {},
+                    status->status,
+                    status->operationResult,
+                    requestId),
+                requestId);
+            if (isReconnectStatus(status->status)) {
+                scheduleReconnect();
+            } else if (invalidatesRuntimeResourceCatalog(status->status)) {
+                clearRuntimeResourceCache();
+            }
             return;
         }
         failRuntimeResourceQuery(
@@ -3507,6 +3766,7 @@ public:
         catalog.resources = runtimeCatalogResources;
 
         const bool hadSnapshot = runtimeSnapshot.has_value();
+        publishedRuntimeCatalogBinding = *runtimeCatalogBinding;
         runtimeCatalog = std::move(catalog);
         runtimeSnapshot.reset();
         notifyRuntimeResourceCatalogChanged();
@@ -3532,6 +3792,60 @@ public:
                 qFromBigEndian<quint64>(reinterpret_cast<const uchar *>(id.constData())));
         }
         sendRuntimeResourceSnapshotQuery(snapshotQuery);
+    }
+
+    std::optional<Data::RuntimeResourceSnapshot> materializeRuntimeResourceSnapshot(
+        const Protocol::RuntimeResourceSnapshot &protocolSnapshot,
+        const Data::RuntimeResourceCatalog &catalog,
+        bool complete,
+        QString *errorDetail) const
+    {
+        Data::RuntimeResourceSnapshot result;
+        result.scope = catalog.scope;
+        result.sessionGeneration = catalog.sessionGeneration;
+        result.epoch = catalog.epoch;
+        result.snapshotSequence = protocolSnapshot.snapshotSequence;
+        result.captureCycle = protocolSnapshot.captureCycle;
+        result.controllerTimestampNs = protocolSnapshot.controllerTimestampNs;
+        result.receivedAt = QDateTime::currentDateTimeUtc();
+        result.complete = protocolSnapshot.complete && complete;
+        result.samples.reserve(protocolSnapshot.samples.size());
+
+        for (const Protocol::RuntimeResourceSample &protocolSample : protocolSnapshot.samples) {
+            const QByteArray id = opaqueBigEndian(protocolSample.resourceId);
+            const auto descriptor = std::find_if(
+                catalog.resources.cbegin(),
+                catalog.resources.cend(),
+                [&id](const Data::RuntimeResourceDescriptor &candidate) {
+                    return candidate.id.value == id;
+                });
+            const auto primitiveType = runtimeResourcePrimitiveType(protocolSample.primitive);
+            const auto direction = runtimeResourceDirection(protocolSample.direction);
+            const auto value = runtimeResourceTypedValue(
+                protocolSample.primitive, protocolSample.bitWidth, protocolSample.value);
+            const auto quality = runtimeResourceQuality(protocolSample.quality);
+            if (descriptor == catalog.resources.cend() || !primitiveType || !direction || !value
+                || !quality || descriptor->primitiveType != *primitiveType
+                || descriptor->direction != *direction
+                || descriptor->bitWidth != protocolSample.bitWidth) {
+                if (errorDetail) {
+                    *errorDetail
+                        = Tr::tr(
+                            "The runtime resource sample does not match its catalog descriptor.");
+                }
+                return {};
+            }
+
+            Data::RuntimeResourceSample sample;
+            sample.resourceId = descriptor->id;
+            sample.consistencyGroupId = descriptor->consistencyGroupId;
+            sample.value = *value;
+            sample.quality = *quality;
+            sample.valueSequence = protocolSnapshot.snapshotSequence;
+            sample.controllerTimestampNs = protocolSnapshot.controllerTimestampNs;
+            result.samples.append(std::move(sample));
+        }
+        return result;
     }
 
     void handleRuntimeResourceSnapshot(
@@ -3600,58 +3914,168 @@ public:
             return;
         }
 
-        Data::RuntimeResourceSnapshot result;
-        result.scope = runtimeCatalog->scope;
-        result.sessionGeneration = runtimeCatalog->sessionGeneration;
-        result.epoch = runtimeCatalog->epoch;
-        result.snapshotSequence = protocolSnapshot->snapshotSequence;
-        result.captureCycle = protocolSnapshot->captureCycle;
-        result.controllerTimestampNs = protocolSnapshot->controllerTimestampNs;
-        result.receivedAt = QDateTime::currentDateTimeUtc();
-        result.complete = protocolSnapshot->complete && runtimeCatalog->resources.size() <= 64
-                          && protocolSnapshot->samples.size() == runtimeCatalog->resources.size();
-        result.samples.reserve(protocolSnapshot->samples.size());
-
-        for (const Protocol::RuntimeResourceSample &protocolSample : protocolSnapshot->samples) {
-            const QByteArray id = opaqueBigEndian(protocolSample.resourceId);
-            const auto descriptor = std::find_if(
-                runtimeCatalog->resources.cbegin(),
-                runtimeCatalog->resources.cend(),
-                [&id](const Data::RuntimeResourceDescriptor &candidate) {
-                    return candidate.id.value == id;
-                });
-            const auto primitiveType = runtimeResourcePrimitiveType(protocolSample.primitive);
-            const auto direction = runtimeResourceDirection(protocolSample.direction);
-            const auto value = runtimeResourceTypedValue(
-                protocolSample.primitive, protocolSample.bitWidth, protocolSample.value);
-            const auto quality = runtimeResourceQuality(protocolSample.quality);
-            if (descriptor == runtimeCatalog->resources.cend() || !primitiveType || !direction
-                || !value || !quality || descriptor->primitiveType != *primitiveType
-                || descriptor->direction != *direction
-                || descriptor->bitWidth != protocolSample.bitWidth) {
-                failProtocol(
-                    request.role,
-                    request.operation,
-                    Tr::tr("The runtime resource sample does not match its catalog descriptor."),
-                    {},
-                    requestId);
-                return;
-            }
-
-            Data::RuntimeResourceSample sample;
-            sample.resourceId = descriptor->id;
-            sample.consistencyGroupId = descriptor->consistencyGroupId;
-            sample.value = *value;
-            sample.quality = *quality;
-            sample.valueSequence = protocolSnapshot->snapshotSequence;
-            sample.controllerTimestampNs = protocolSnapshot->controllerTimestampNs;
-            result.samples.append(std::move(sample));
+        QString materializeError;
+        const auto result = materializeRuntimeResourceSnapshot(
+            *protocolSnapshot,
+            *runtimeCatalog,
+            runtimeCatalog->resources.size() <= 64
+                && protocolSnapshot->samples.size() == runtimeCatalog->resources.size(),
+            &materializeError);
+        if (!result) {
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The runtime resource snapshot is inconsistent with its catalog."),
+                materializeError,
+                requestId);
+            return;
         }
 
         removePending(requestId);
-        runtimeSnapshot = std::move(result);
+        runtimeSnapshot = *result;
         resetRuntimeResourceRefresh();
         notifyRuntimeResourceSnapshotChanged();
+    }
+
+    void handleTargetedRuntimeResourceSnapshot(
+        const Protocol::Frame &frame, const PendingRequest &request, quint64 requestId)
+    {
+        if (!targetedRuntimeSnapshotInProgress || !request.runtimeResourceSnapshotQuery
+            || !request.targetedRuntimeResourceRequest || !runtimeCatalog
+            || !publishedRuntimeCatalogBinding) {
+            if (request.targetedRuntimeResourceRequest) {
+                finishTargetedRuntimeResourceSnapshot(
+                    *request.targetedRuntimeResourceRequest,
+                    {},
+                    runtimeResourceSnapshotError(
+                        Data::ControllerErrorSource::Protocol,
+                        Tr::tr("The targeted runtime resource request context is missing."),
+                        {},
+                        {},
+                        {},
+                        requestId),
+                    requestId);
+            }
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The targeted runtime resource request context is missing."),
+                {},
+                requestId);
+            return;
+        }
+
+        const Data::RuntimeResourceSnapshotRequest targetedRequest
+            = *request.targetedRuntimeResourceRequest;
+        Protocol::Error decodeError;
+        const auto protocolSnapshot = Protocol::decodeResourceSnapshot(
+            frame, *request.runtimeResourceSnapshotQuery, &decodeError);
+        if (!protocolSnapshot) {
+            finishTargetedRuntimeResourceSnapshot(
+                targetedRequest,
+                {},
+                runtimeResourceSnapshotError(
+                    Data::ControllerErrorSource::Protocol,
+                    Tr::tr("The controller returned an invalid targeted resource snapshot."),
+                    decodeError.text,
+                    {},
+                    {},
+                    requestId),
+                requestId);
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The controller returned an invalid targeted resource snapshot."),
+                decodeError.text,
+                requestId);
+            return;
+        }
+        if (protocolSnapshot->status) {
+            finishTargetedRuntimeResourceSnapshot(
+                targetedRequest,
+                {},
+                runtimeResourceSnapshotError(
+                    Data::ControllerErrorSource::Controller,
+                    Tr::tr("The controller rejected the targeted runtime resource read."),
+                    {},
+                    protocolSnapshot->status,
+                    {},
+                    requestId),
+                requestId);
+            if (isReconnectStatus(protocolSnapshot->status)) {
+                scheduleReconnect();
+            } else if (invalidatesRuntimeResourceCatalog(protocolSnapshot->status)) {
+                clearRuntimeResourceCache();
+            }
+            return;
+        }
+        if (!sameRuntimeResourceBinding(
+                protocolSnapshot->binding, *publishedRuntimeCatalogBinding)
+            || !runtimeResourceBindingMatchesBase(
+                protocolSnapshot->binding, bootId, snapshot.package)
+            || runtimeCatalog->scope != targetedRequest.scope
+            || runtimeCatalog->sessionGeneration != targetedRequest.sessionGeneration
+            || runtimeCatalog->epoch != targetedRequest.expectedEpoch
+            || targetedRequest.expectedEpoch
+                   != runtimeResourceEpoch(protocolSnapshot->binding)) {
+            finishTargetedRuntimeResourceSnapshot(
+                targetedRequest,
+                {},
+                runtimeResourceSnapshotError(
+                    Data::ControllerErrorSource::Protocol,
+                    Tr::tr("The targeted runtime resource binding changed before publication."),
+                    {},
+                    {},
+                    {},
+                    requestId),
+                requestId);
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The targeted runtime resource binding changed before publication."),
+                {},
+                requestId);
+            return;
+        }
+
+        QString materializeError;
+        const auto result = materializeRuntimeResourceSnapshot(
+            *protocolSnapshot,
+            *runtimeCatalog,
+            protocolSnapshot->samples.size() == targetedRequest.resourceIds.size(),
+            &materializeError);
+        bool exactIds = result && result->complete;
+        if (exactIds) {
+            for (qsizetype index = 0; index < targetedRequest.resourceIds.size(); ++index) {
+                if (result->samples.at(index).resourceId
+                    != targetedRequest.resourceIds.at(index)) {
+                    exactIds = false;
+                    break;
+                }
+            }
+        }
+        if (!exactIds) {
+            finishTargetedRuntimeResourceSnapshot(
+                targetedRequest,
+                {},
+                runtimeResourceSnapshotError(
+                    Data::ControllerErrorSource::Protocol,
+                    Tr::tr("The targeted runtime resource snapshot is incomplete."),
+                    materializeError,
+                    {},
+                    {},
+                    requestId),
+                requestId);
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The targeted runtime resource snapshot is incomplete."),
+                materializeError,
+                requestId);
+            return;
+        }
+
+        finishTargetedRuntimeResourceSnapshot(targetedRequest, *result, {}, requestId);
     }
 
     void dispatchFrame(Channel &value, const Protocol::Frame &frame)
@@ -3664,6 +4088,8 @@ public:
 
         auto found = pendingRequests.find(requestId);
         if (found == pendingRequests.end()) {
+            if (ignoredRuntimeResourceRequestIds.remove(requestId))
+                return;
             failProtocol(
                 value.role,
                 Data::ControllerOperation::None,
@@ -3864,6 +4290,9 @@ public:
             return;
         case PendingKind::RuntimeResourceSnapshot:
             handleRuntimeResourceSnapshot(frame, request, requestId);
+            return;
+        case PendingKind::RuntimeResourceTargetedSnapshot:
+            handleTargetedRuntimeResourceSnapshot(frame, request, requestId);
             return;
         case PendingKind::ResumeEvents:
             handleResumeResult(value, frame, requestId, &decodeError);
@@ -4652,6 +5081,7 @@ public:
     Data::ControllerConnectionSnapshot snapshot;
     std::array<Channel, 3> channels;
     QHash<quint64, PendingRequest> pendingRequests;
+    QSet<quint64> ignoredRuntimeResourceRequestIds;
     QTimer *reconnectTimer = nullptr;
     QTimer *heartbeatTimer = nullptr;
     QTimer *liveStateTimer = nullptr;
@@ -4661,6 +5091,7 @@ public:
     QList<Data::RuntimeResourceDescriptor> runtimeCatalogResources;
     QSet<QByteArray> runtimeCatalogIds;
     std::optional<Protocol::RuntimeResourceBinding> runtimeCatalogBinding;
+    std::optional<Protocol::RuntimeResourceBinding> publishedRuntimeCatalogBinding;
     std::optional<PersistentPackageSelector> persistentPackageSelector;
     std::optional<FaultResetConfirmation> faultResetConfirmation;
     quint64 generation = 0;
@@ -4687,6 +5118,7 @@ public:
     bool subscriptionReceived = false;
     bool subscriptionDegraded = false;
     bool runtimeRefreshInProgress = false;
+    bool targetedRuntimeSnapshotInProgress = false;
     quint32 runtimeCatalogTotalCount = 0;
     QElapsedTimer runtimeResourceRefreshTimer;
     bool alarmCheckpointEstablished = false;
@@ -4861,6 +5293,8 @@ Utils::Result<> ProductApiSession::disconnectFromController()
         return Utils::ResultError(Tr::tr("Wait for the active controller operation to finish."));
     if (d->hasActiveDeployment())
         return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
+    d->cancelTargetedRuntimeResourceSnapshot(
+        Tr::tr("The targeted runtime resource read was canceled by disconnect."));
     if (d->snapshot.session) {
         const Data::ControllerSessionSummary &session = *d->snapshot.session;
         if (session.controlLeaseOwnerSessionId
@@ -4951,6 +5385,10 @@ Utils::Result<> ProductApiSession::refreshRuntimeResources()
     }
     if (d->runtimeRefreshInProgress)
         return Utils::ResultError(Tr::tr("A runtime resource refresh is already active."));
+    if (d->targetedRuntimeSnapshotInProgress) {
+        return Utils::ResultError(
+            Tr::tr("Wait for the targeted runtime resource read to finish."));
+    }
     if (d->refreshInProgress)
         return Utils::ResultError(Tr::tr("Wait for the controller refresh to finish."));
     if (d->hasActiveControlOperation())
@@ -4967,6 +5405,92 @@ Utils::Result<> ProductApiSession::refreshRuntimeResources()
     }
     if (!d->beginRuntimeResourceRefresh())
         return Utils::ResultError(Tr::tr("The runtime resource query could not be sent."));
+    return {};
+}
+
+Utils::Result<> ProductApiSession::requestRuntimeResourceSnapshot(
+    const Data::RuntimeResourceSnapshotRequest &request)
+{
+    if (d->shuttingDown)
+        return Utils::ResultError(Tr::tr("The controller session is shutting down."));
+    if (!request.isValid()) {
+        return Utils::ResultError(
+            Tr::tr("The targeted runtime resource request is incomplete or not canonical."));
+    }
+    if (d->snapshot.state != Data::ControllerConnectionState::Connected
+        && d->snapshot.state != Data::ControllerConnectionState::Degraded) {
+        return Utils::ResultError(
+            Tr::tr("Connect to the controller before reading runtime resources."));
+    }
+    if (!supportsRuntimeResources()) {
+        return Utils::ResultError(
+            Tr::tr(
+                "Runtime resources require Product API v1.12 and feature bit 13; no controller "
+                "request was sent."));
+    }
+    if (d->runtimeRefreshInProgress)
+        return Utils::ResultError(Tr::tr("Wait for the runtime resource refresh to finish."));
+    if (d->targetedRuntimeSnapshotInProgress) {
+        return Utils::ResultError(
+            Tr::tr("A targeted runtime resource read is already active."));
+    }
+    if (!d->canTrackAnotherLateRuntimeResourceResponse()) {
+        return Utils::ResultError(
+            Tr::tr(
+                "Reconnect the controller before starting more targeted reads; 64 timed-out "
+                "responses are still being discarded."));
+    }
+    if (d->refreshInProgress)
+        return Utils::ResultError(Tr::tr("Wait for the controller refresh to finish."));
+    if (d->hasActiveControlOperation())
+        return Utils::ResultError(Tr::tr("Wait for the controller operation to finish."));
+    if (d->hasActiveDeployment())
+        return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
+    if (!d->channel(Protocol::Role::Bulk).handshaken
+        || !d->channel(Protocol::Role::Bulk).socket) {
+        return Utils::ResultError(Tr::tr("The controller Bulk channel is not connected."));
+    }
+    if (!d->runtimeCatalog || !d->publishedRuntimeCatalogBinding) {
+        return Utils::ResultError(
+            Tr::tr("Refresh the runtime resource catalog before reading selected resources."));
+    }
+    if (request.scope != d->snapshot.scope || request.scope != d->runtimeCatalog->scope
+        || request.sessionGeneration != d->generation
+        || request.sessionGeneration != d->runtimeCatalog->sessionGeneration
+        || request.expectedEpoch != d->runtimeCatalog->epoch
+        || request.expectedEpoch
+               != runtimeResourceEpoch(*d->publishedRuntimeCatalogBinding)
+        || !runtimeResourceBindingMatchesBase(
+            *d->publishedRuntimeCatalogBinding, d->bootId, d->snapshot.package)) {
+        return Utils::ResultError(
+            Tr::tr("The targeted runtime resource request uses a stale catalog binding."));
+    }
+
+    Protocol::RuntimeResourceSnapshotQuery query;
+    query.binding = *d->publishedRuntimeCatalogBinding;
+    query.resourceIds.reserve(request.resourceIds.size());
+    for (const Data::RuntimeResourceId &id : request.resourceIds) {
+        if (id.value.size() != qsizetype(sizeof(quint64))) {
+            return Utils::ResultError(
+                Tr::tr("Product API runtime resource IDs must contain exactly eight bytes."));
+        }
+        const quint64 protocolId = qFromBigEndian<quint64>(
+            reinterpret_cast<const uchar *>(id.value.constData()));
+        const auto descriptor = std::find_if(
+            d->runtimeCatalog->resources.cbegin(),
+            d->runtimeCatalog->resources.cend(),
+            [&id](const Data::RuntimeResourceDescriptor &candidate) {
+                return candidate.id == id;
+            });
+        if (!protocolId || descriptor == d->runtimeCatalog->resources.cend()) {
+            return Utils::ResultError(
+                Tr::tr("The targeted runtime resource request contains an unknown resource ID."));
+        }
+        query.resourceIds.append(protocolId);
+    }
+
+    d->targetedRuntimeSnapshotInProgress = true;
+    d->sendTargetedRuntimeResourceSnapshotQuery(request, query);
     return {};
 }
 
@@ -5279,6 +5803,11 @@ Utils::Result<> ProductApiSession::executeControlCommand(
         = request.command == Command::AcquireControl || request.command == Command::ReleaseControl
               ? 4
               : 1;
+    if (d->targetedRuntimeSnapshotInProgress
+        && request.command != Command::AcquireControl
+        && request.command != Command::ReleaseControl) {
+        d->invalidateRuntimeResources();
+    }
     d->beginControlProgress(request.command);
     if (request.command == Command::ResetFault) {
         const Data::ControllerStateSummary &controllerState = *d->snapshot.controllerState;
@@ -5389,6 +5918,10 @@ Utils::Result<> ProductApiSession::deployPackage(
         return Utils::ResultError(Tr::tr("Wait for the controller refresh to finish."));
     if (d->runtimeRefreshInProgress)
         return Utils::ResultError(Tr::tr("Wait for the runtime resource refresh to finish."));
+    if (d->targetedRuntimeSnapshotInProgress) {
+        return Utils::ResultError(
+            Tr::tr("Wait for the targeted runtime resource read to finish."));
+    }
     if (d->hasActiveControlOperation())
         return Utils::ResultError(Tr::tr("Another controller operation is already active."));
     if (d->hasActiveDeployment())
@@ -5466,7 +5999,7 @@ bool ProductApiSession::isIdleForTests() const
 {
     return activeSocketCountForTests() == 0 && pendingRequestCountForTests() == 0
            && !d->reconnectTimer->isActive() && !d->refreshInProgress
-           && !d->runtimeRefreshInProgress;
+           && !d->runtimeRefreshInProgress && !d->targetedRuntimeSnapshotInProgress;
 }
 
 bool ProductApiSession::refreshInProgressForTests() const
@@ -5484,6 +6017,11 @@ int ProductApiSession::activeSocketCountForTests() const
 int ProductApiSession::pendingRequestCountForTests() const
 {
     return d->pendingRequests.size();
+}
+
+int ProductApiSession::ignoredRuntimeResourceRequestCountForTests() const
+{
+    return d->ignoredRuntimeResourceRequestIds.size();
 }
 
 void ProductApiSession::failNextWriteForTests()

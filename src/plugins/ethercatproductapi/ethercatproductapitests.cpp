@@ -740,6 +740,8 @@ class LoopbackController final : public QObject
         WrongBoot,
         MalformedPayload,
         WrongResponse,
+        CommandStatusResponse,
+        FirmwareStatusResponse,
         BulkStatusNonzeroOperationResult,
     };
 
@@ -895,6 +897,14 @@ public:
     void sendWrongNextRuntimeSnapshotResponse()
     {
         m_nextRuntimeResourceFailure = RuntimeResourceFailure::WrongResponse;
+    }
+    void sendNextRuntimeCommandStatusResponse()
+    {
+        m_nextRuntimeResourceFailure = RuntimeResourceFailure::CommandStatusResponse;
+    }
+    void sendNextRuntimeFirmwareStatusResponse()
+    {
+        m_nextRuntimeResourceFailure = RuntimeResourceFailure::FirmwareStatusResponse;
     }
     void sendNextRuntimeBulkStatusWithOperationResult()
     {
@@ -1241,8 +1251,6 @@ private:
         }
         if (peer.role != Protocol::Role::Bulk)
             m_violations.append(QStringLiteral("A runtime resource request used the wrong channel."));
-        if (m_leaseOwned)
-            m_violations.append(QStringLiteral("A runtime resource query acquired a lease."));
 
         const Protocol::RuntimeResourceBinding binding = currentRuntimeResourceBinding();
         if (request.header.messageType == Protocol::MessageType::QueryResourceTable) {
@@ -1377,6 +1385,22 @@ private:
             sendResponse(
                 peer,
                 Protocol::MessageType::ResourceTablePage,
+                request.header.requestId,
+                {});
+            return;
+        }
+        if (failure == RuntimeResourceFailure::CommandStatusResponse) {
+            sendResponse(
+                peer,
+                Protocol::MessageType::CommandStatus,
+                request.header.requestId,
+                {});
+            return;
+        }
+        if (failure == RuntimeResourceFailure::FirmwareStatusResponse) {
+            sendResponse(
+                peer,
+                Protocol::MessageType::FirmwareStatus,
                 request.header.requestId,
                 {});
             return;
@@ -2346,6 +2370,27 @@ Data::ControllerConnectionRequest requestFor(ProductApiConnectionProvider &provi
     if (profiles.isEmpty())
         return {};
     return {scope, profiles.constFirst().id};
+}
+
+Data::RuntimeResourceSnapshotRequest targetedSnapshotRequest(
+    const ProductApiConnectionProvider &provider,
+    const QList<qsizetype> &catalogIndexes,
+    const QString &correlationId = QStringLiteral("targeted-runtime-read"))
+{
+    Data::RuntimeResourceSnapshotRequest request;
+    const auto catalog = provider.runtimeResourceCatalog();
+    if (!catalog)
+        return request;
+    request.correlationId = correlationId;
+    request.scope = catalog->scope;
+    request.sessionGeneration = catalog->sessionGeneration;
+    request.expectedEpoch = catalog->epoch;
+    request.resourceIds.reserve(catalogIndexes.size());
+    for (const qsizetype index : catalogIndexes) {
+        if (index >= 0 && index < catalog->resources.size())
+            request.resourceIds.append(catalog->resources.at(index).id);
+    }
+    return request;
 }
 
 template<typename Predicate>
@@ -8009,6 +8054,510 @@ void EtherCATProductApiTests::testRuntimeResourceIncompleteSnapshot()
 
     QVERIFY(provider.disconnectFromController());
     QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testTargetedRuntimeResourceSnapshotLifecycle()
+{
+    LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+    controller.setRuntimeResourceCount(65);
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 3000);
+    const Data::RuntimeResourceSnapshot preview = *provider.runtimeResourceSnapshot();
+    QVERIFY(!preview.complete);
+    QCOMPARE(preview.samples.size(), 64);
+
+    QSignalSpy finishedSpy(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished);
+    const Data::RuntimeResourceSnapshotRequest sixtyFifth
+        = targetedSnapshotRequest(provider, {64}, "resource-65");
+    QVERIFY(sixtyFifth.isValid());
+    QVERIFY(provider.requestRuntimeResourceSnapshot(sixtyFifth));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 1000);
+    const Data::RuntimeResourceSnapshotResult sixtyFifthResult
+        = qvariant_cast<Data::RuntimeResourceSnapshotResult>(
+            finishedSpy.at(0).constFirst());
+    QVERIFY(sixtyFifthResult.isValid());
+    QVERIFY(sixtyFifthResult.snapshot);
+    QVERIFY(sixtyFifthResult.snapshot->complete);
+    QCOMPARE(sixtyFifthResult.snapshot->samples.size(), 1);
+    QCOMPARE(
+        sixtyFifthResult.snapshot->samples.constFirst().resourceId,
+        sixtyFifth.resourceIds.constFirst());
+    QCOMPARE(provider.runtimeResourceSnapshot(), std::optional(preview));
+
+    const Data::RuntimeResourceSnapshotRequest oneOfFirst64
+        = targetedSnapshotRequest(provider, {10}, "resource-11");
+    QVERIFY(provider.requestRuntimeResourceSnapshot(oneOfFirst64));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 2, 1000);
+    const Data::RuntimeResourceSnapshotResult first64Result
+        = qvariant_cast<Data::RuntimeResourceSnapshotResult>(
+            finishedSpy.at(1).constFirst());
+    QVERIFY(first64Result.isValid());
+    QCOMPARE(
+        first64Result.snapshot->samples.constFirst().resourceId,
+        oneOfFirst64.resourceIds.constFirst());
+
+    QList<qsizetype> indexes;
+    indexes.reserve(64);
+    for (qsizetype index = 0; index < 64; ++index)
+        indexes.append(index);
+    const Data::RuntimeResourceSnapshotRequest maximumBatch
+        = targetedSnapshotRequest(provider, indexes, "resources-1-through-64");
+    QVERIFY(provider.requestRuntimeResourceSnapshot(maximumBatch));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 3, 1000);
+    const Data::RuntimeResourceSnapshotResult maximumResult
+        = qvariant_cast<Data::RuntimeResourceSnapshotResult>(
+            finishedSpy.at(2).constFirst());
+    QVERIFY(maximumResult.isValid());
+    QCOMPARE(maximumResult.snapshot->samples.size(), 64);
+    QCOMPARE(provider.runtimeResourceSnapshot(), std::optional(preview));
+
+    QCOMPARE(controller.requestCount(Protocol::MessageType::GetResourceSnapshot), 4);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::AcquireControl), 0);
+    QVERIFY(!controller.leaseOwned());
+    QVERIFY(controller.violations().isEmpty());
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testTargetedRuntimeResourceSnapshotLocalGuards()
+{
+    LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+    controller.setRuntimeResourceCount(65);
+    QVERIFY(controller.start());
+
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 3000);
+    QSignalSpy finishedSpy(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished);
+    const int baselineRequests
+        = controller.requestCount(Protocol::MessageType::GetResourceSnapshot);
+    const auto rejectLocally = [&](const Data::RuntimeResourceSnapshotRequest &request) {
+        QVERIFY(!provider.requestRuntimeResourceSnapshot(request));
+        QCOMPARE(
+            controller.requestCount(Protocol::MessageType::GetResourceSnapshot),
+            baselineRequests);
+        QCOMPARE(finishedSpy.count(), 0);
+    };
+
+    const Data::RuntimeResourceSnapshotRequest valid
+        = targetedSnapshotRequest(provider, {0, 1}, "valid-local-guard");
+    Data::RuntimeResourceSnapshotRequest invalid = valid;
+    invalid.resourceIds.clear();
+    rejectLocally(invalid);
+    invalid = targetedSnapshotRequest(provider, {}, "empty");
+    rejectLocally(invalid);
+    invalid = valid;
+    invalid.resourceIds.append(invalid.resourceIds.constLast());
+    rejectLocally(invalid);
+    invalid = valid;
+    std::swap(invalid.resourceIds[0], invalid.resourceIds[1]);
+    rejectLocally(invalid);
+
+    QList<qsizetype> allIndexes;
+    for (qsizetype index = 0; index < 65; ++index)
+        allIndexes.append(index);
+    rejectLocally(targetedSnapshotRequest(provider, allIndexes, "too-many"));
+
+    invalid = valid;
+    invalid.resourceIds = {{QByteArray::fromHex("ffffffffffffffff")}};
+    rejectLocally(invalid);
+    invalid = valid;
+    ++invalid.expectedEpoch.catalogRevision;
+    rejectLocally(invalid);
+    invalid = valid;
+    ++invalid.sessionGeneration;
+    rejectLocally(invalid);
+    invalid = valid;
+    invalid.scope.masterId = Data::NodeId::create();
+    rejectLocally(invalid);
+    invalid = valid;
+    invalid.resourceIds = {{QByteArray::fromHex("01020304050607")}};
+    rejectLocally(invalid);
+    invalid = valid;
+    invalid.correlationId = QStringLiteral("bad\ncorrelation");
+    rejectLocally(invalid);
+
+    controller.setRuntimeSnapshotDelayMs(100);
+    QVERIFY(provider.requestRuntimeResourceSnapshot(valid));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        controller.requestCount(Protocol::MessageType::GetResourceSnapshot),
+        baselineRequests + 1,
+        500);
+    QVERIFY(!provider.requestRuntimeResourceSnapshot(valid));
+    QVERIFY(!provider.refreshRuntimeResources());
+    QVERIFY(!provider.refreshController());
+    QCOMPARE(
+        controller.requestCount(Protocol::MessageType::GetResourceSnapshot),
+        baselineRequests + 1);
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 1000);
+    QVERIFY(
+        qvariant_cast<Data::RuntimeResourceSnapshotResult>(
+            finishedSpy.constFirst().constFirst())
+            .isValid());
+    provider.sessionForTests()->failNextWriteForTests();
+    QVERIFY(provider.requestRuntimeResourceSnapshot(valid));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 2, 1000);
+    const Data::RuntimeResourceSnapshotResult writeFailure
+        = qvariant_cast<Data::RuntimeResourceSnapshotResult>(
+            finishedSpy.at(1).constFirst());
+    QVERIFY(writeFailure.isValid());
+    QCOMPARE(writeFailure.error->source, Data::ControllerErrorSource::Network);
+    QCOMPARE(
+        controller.requestCount(Protocol::MessageType::GetResourceSnapshot),
+        baselineRequests + 1);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Connected,
+        3000);
+    QCOMPARE(provider.sessionForTests()->ignoredRuntimeResourceRequestCountForTests(), 0);
+    QCOMPARE(finishedSpy.count(), 2);
+    QVERIFY(controller.violations().isEmpty());
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testTargetedRuntimeResourceSnapshotFailures()
+{
+    LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+    controller.setRuntimeResourceCount(65);
+    QVERIFY(controller.start());
+
+    ProductApiSession::Options options = testOptions();
+    options.requestTimeoutMs = 50;
+    ProductApiConnectionProvider provider(controller.endpoints(), options);
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 3000);
+    QSignalSpy finishedSpy(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished);
+    const Data::RuntimeResourceSnapshotRequest request
+        = targetedSnapshotRequest(provider, {64}, "failure-path");
+    const Data::RuntimeResourceCatalog catalog = *provider.runtimeResourceCatalog();
+    const Data::RuntimeResourceSnapshot preview = *provider.runtimeResourceSnapshot();
+
+    controller.rejectNextRuntimeSnapshotTyped(-6);
+    QVERIFY(provider.requestRuntimeResourceSnapshot(request));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 1000);
+    Data::RuntimeResourceSnapshotResult result
+        = qvariant_cast<Data::RuntimeResourceSnapshotResult>(
+            finishedSpy.at(0).constFirst());
+    QVERIFY(result.isValid());
+    QCOMPARE(result.error->source, Data::ControllerErrorSource::Controller);
+    QCOMPARE(result.error->code, std::optional<qint32>(-6));
+    QCOMPARE(provider.runtimeResourceCatalog(), std::optional(catalog));
+    QCOMPARE(provider.runtimeResourceSnapshot(), std::optional(preview));
+
+    controller.rejectNextRuntimeSnapshotWithBulkStatus(-6);
+    QVERIFY(provider.requestRuntimeResourceSnapshot(request));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 2, 1000);
+    result = qvariant_cast<Data::RuntimeResourceSnapshotResult>(
+        finishedSpy.at(1).constFirst());
+    QVERIFY(result.isValid());
+    QCOMPARE(result.error->code, std::optional<qint32>(-6));
+    QCOMPARE(result.error->operationResult, std::optional<qint32>(0));
+    QCOMPARE(provider.runtimeResourceCatalog(), std::optional(catalog));
+    QCOMPARE(provider.runtimeResourceSnapshot(), std::optional(preview));
+
+    controller.setRuntimeSnapshotDelayMs(150);
+    QVERIFY(provider.requestRuntimeResourceSnapshot(request));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 3, 500);
+    result = qvariant_cast<Data::RuntimeResourceSnapshotResult>(
+        finishedSpy.at(2).constFirst());
+    QVERIFY(result.isValid());
+    QCOMPARE(result.error->source, Data::ControllerErrorSource::Network);
+    QCOMPARE(provider.runtimeResourceCatalog(), std::optional(catalog));
+    QCOMPARE(provider.runtimeResourceSnapshot(), std::optional(preview));
+    QVERIFY(provider.sessionForTests()->ignoredRuntimeResourceRequestCountForTests() <= 64);
+    QTest::qWait(200);
+    QCOMPARE(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected);
+    QCOMPARE(provider.sessionForTests()->ignoredRuntimeResourceRequestCountForTests(), 0);
+    QCOMPARE(finishedSpy.count(), 3);
+
+    controller.setRuntimeSnapshotDelayMs(0);
+    int expectedFinished = 3;
+    for (const qint32 status : {-17, -18, -21}) {
+        if (!provider.runtimeResourceCatalog()) {
+            QVERIFY(provider.refreshRuntimeResources());
+            QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 3000);
+        }
+        const Data::RuntimeResourceSnapshotRequest staleRequest
+            = targetedSnapshotRequest(
+                provider,
+                {64},
+                QStringLiteral("invalidating-status-%1").arg(-status));
+        controller.rejectNextRuntimeSnapshotTyped(status);
+        QVERIFY(provider.requestRuntimeResourceSnapshot(staleRequest));
+        ++expectedFinished;
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), expectedFinished, 1000);
+        result = qvariant_cast<Data::RuntimeResourceSnapshotResult>(
+            finishedSpy.at(expectedFinished - 1).constFirst());
+        QVERIFY(result.isValid());
+        QCOMPARE(result.error->code, std::optional<qint32>(status));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !provider.runtimeResourceCatalog() && !provider.runtimeResourceSnapshot(), 1000);
+    }
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 3000);
+    const Data::RuntimeResourceSnapshotRequest bulkStaleRequest
+        = targetedSnapshotRequest(provider, {64}, "bulk-status-stale");
+    controller.rejectNextRuntimeSnapshotWithBulkStatus(-17);
+    QVERIFY(provider.requestRuntimeResourceSnapshot(bulkStaleRequest));
+    ++expectedFinished;
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), expectedFinished, 1000);
+    result = qvariant_cast<Data::RuntimeResourceSnapshotResult>(
+        finishedSpy.at(expectedFinished - 1).constFirst());
+    QVERIFY(result.isValid());
+    // API-034 permits STALE_PACKAGE only in the typed ResourceSnapshot failure. A
+    // pre-dispatch BulkStatus carrying it is protocol corruption, not a typed rejection.
+    QCOMPARE(result.error->source, Data::ControllerErrorSource::Protocol);
+    QVERIFY(!result.error->code);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !provider.runtimeResourceCatalog() && !provider.runtimeResourceSnapshot(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        1000);
+
+    QVERIFY(controller.violations().isEmpty());
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+}
+
+void EtherCATProductApiTests::testTargetedRuntimeResourceProtocolFailures_data()
+{
+    QTest::addColumn<int>("failure");
+
+    QTest::newRow("wrong-session-id") << 0;
+    QTest::newRow("wrong-boot-id") << 1;
+    QTest::newRow("malformed-payload") << 2;
+    QTest::newRow("wrong-response-type") << 3;
+    QTest::newRow("malformed-bulk-status") << 4;
+    QTest::newRow("command-status-response") << 5;
+    QTest::newRow("firmware-status-response") << 6;
+}
+
+void EtherCATProductApiTests::testTargetedRuntimeResourceProtocolFailures()
+{
+    QFETCH(int, failure);
+
+    LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+    controller.setRuntimeResourceCount(65);
+    QVERIFY(controller.start());
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 3000);
+
+    switch (failure) {
+    case 0:
+        controller.corruptNextRuntimeSnapshotSessionId();
+        break;
+    case 1:
+        controller.corruptNextRuntimeSnapshotBootId();
+        break;
+    case 2:
+        controller.corruptNextRuntimeSnapshotPayload();
+        break;
+    case 3:
+        controller.sendWrongNextRuntimeSnapshotResponse();
+        break;
+    case 4:
+        controller.sendNextRuntimeBulkStatusWithOperationResult();
+        break;
+    case 5:
+        controller.sendNextRuntimeCommandStatusResponse();
+        break;
+    case 6:
+        controller.sendNextRuntimeFirmwareStatusResponse();
+        break;
+    default:
+        QFAIL("Unknown targeted runtime resource protocol failure.");
+    }
+
+    QSignalSpy finishedSpy(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished);
+    const Data::RuntimeResourceSnapshotRequest request
+        = targetedSnapshotRequest(provider, {64}, "protocol-failure");
+    QVERIFY(provider.requestRuntimeResourceSnapshot(request));
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 1000);
+    const Data::RuntimeResourceSnapshotResult result
+        = qvariant_cast<Data::RuntimeResourceSnapshotResult>(
+            finishedSpy.constFirst().constFirst());
+    QVERIFY(result.isValid());
+    QCOMPARE(result.request, request);
+    QCOMPARE(result.error->source, Data::ControllerErrorSource::Protocol);
+    QCOMPARE(
+        result.error->operation,
+        Data::ControllerOperation::QueryRuntimeResourceSnapshot);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        3000);
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    QCOMPARE(finishedSpy.count(), 1);
+    QVERIFY(!provider.runtimeResourceCatalog());
+    QVERIFY(!provider.runtimeResourceSnapshot());
+    QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testTargetedRuntimeResourceDisconnectAndControlInvalidation()
+{
+    {
+        LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+        controller.setRuntimeResourceCount(65);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Connected,
+            2000);
+        QVERIFY(provider.refreshRuntimeResources());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 3000);
+
+        controller.holdNextRuntimeSnapshot();
+        QSignalSpy finishedSpy(
+            &provider,
+            &Core::ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished);
+        const Data::RuntimeResourceSnapshotRequest request
+            = targetedSnapshotRequest(provider, {64}, "disconnect-cancel");
+        QVERIFY(provider.requestRuntimeResourceSnapshot(request));
+        QVERIFY(provider.disconnectFromController());
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 1000);
+        const Data::RuntimeResourceSnapshotResult result
+            = qvariant_cast<Data::RuntimeResourceSnapshotResult>(
+                finishedSpy.constFirst().constFirst());
+        QVERIFY(result.isValid());
+        QCOMPARE(result.request, request);
+        QCOMPARE(result.error->source, Data::ControllerErrorSource::Network);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Disconnected,
+            1000);
+        QCOMPARE(provider.sessionForTests()->ignoredRuntimeResourceRequestCountForTests(), 0);
+        QCOMPARE(finishedSpy.count(), 1);
+        QVERIFY(controller.violations().isEmpty());
+    }
+
+    {
+        LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+        controller.setRuntimeResourceCount(65);
+        QVERIFY(controller.start());
+        ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+        QVERIFY(provider.connectToController(requestFor(provider)));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Connected,
+            2000);
+        Data::ControllerControlRequest acquire;
+        acquire.command = Data::ControllerControlCommand::AcquireControl;
+        QVERIFY(provider.executeControlCommand(acquire));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            2000);
+        QVERIFY(provider.refreshRuntimeResources());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 3000);
+
+        controller.holdNextRuntimeSnapshot();
+        QSignalSpy finishedSpy(
+            &provider,
+            &Core::ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished);
+        const Data::RuntimeResourceSnapshotRequest request
+            = targetedSnapshotRequest(provider, {64}, "control-invalidation");
+        QVERIFY(provider.requestRuntimeResourceSnapshot(request));
+        Data::ControllerControlRequest start;
+        start.command = Data::ControllerControlCommand::Start;
+        QVERIFY(provider.executeControlCommand(start));
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 1000);
+        const Data::RuntimeResourceSnapshotResult result
+            = qvariant_cast<Data::RuntimeResourceSnapshotResult>(
+                finishedSpy.constFirst().constFirst());
+        QVERIFY(result.isValid());
+        QCOMPARE(result.request, request);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !provider.runtimeResourceCatalog() && !provider.runtimeResourceSnapshot(), 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            2000);
+        QCOMPARE(finishedSpy.count(), 1);
+        QVERIFY(controller.violations().isEmpty());
+        QVERIFY(provider.disconnectFromController());
+        QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    }
+}
+
+void EtherCATProductApiTests::testTargetedRuntimeResourceIgnoredRequestBound()
+{
+    LoopbackController controller(LoopbackController::Behavior::RuntimeResources);
+    controller.setRuntimeResourceCount(65);
+    QVERIFY(controller.start());
+
+    ProductApiSession::Options options = testOptions();
+    options.requestTimeoutMs = 20;
+    ProductApiConnectionProvider provider(controller.endpoints(), options);
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.refreshRuntimeResources());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.runtimeResourceSnapshot().has_value(), 3000);
+    const Data::RuntimeResourceCatalog catalog = *provider.runtimeResourceCatalog();
+    const Data::RuntimeResourceSnapshot preview = *provider.runtimeResourceSnapshot();
+
+    QSignalSpy finishedSpy(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished);
+    for (int index = 0; index < 64; ++index) {
+        controller.holdNextRuntimeSnapshot();
+        const Data::RuntimeResourceSnapshotRequest request
+            = targetedSnapshotRequest(
+                provider, {64}, QStringLiteral("timeout-%1").arg(index));
+        QVERIFY(provider.requestRuntimeResourceSnapshot(request));
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), index + 1, 500);
+        const Data::RuntimeResourceSnapshotResult result
+            = qvariant_cast<Data::RuntimeResourceSnapshotResult>(
+                finishedSpy.at(index).constFirst());
+        QVERIFY(result.isValid());
+        QCOMPARE(result.error->source, Data::ControllerErrorSource::Network);
+        QVERIFY(provider.sessionForTests()->ignoredRuntimeResourceRequestCountForTests() <= 64);
+    }
+    QCOMPARE(provider.sessionForTests()->ignoredRuntimeResourceRequestCountForTests(), 64);
+    const int sentRequests
+        = controller.requestCount(Protocol::MessageType::GetResourceSnapshot);
+    const Data::RuntimeResourceSnapshotRequest capacityRequest
+        = targetedSnapshotRequest(provider, {64}, "timeout-capacity");
+    QVERIFY(!provider.requestRuntimeResourceSnapshot(capacityRequest));
+    QCOMPARE(
+        controller.requestCount(Protocol::MessageType::GetResourceSnapshot),
+        sentRequests);
+    QCOMPARE(finishedSpy.count(), 64);
+    QCOMPARE(provider.runtimeResourceCatalog(), std::optional(catalog));
+    QCOMPARE(provider.runtimeResourceSnapshot(), std::optional(preview));
+    QVERIFY(controller.violations().isEmpty());
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    QCOMPARE(provider.sessionForTests()->ignoredRuntimeResourceRequestCountForTests(), 0);
 }
 
 } // namespace EtherCAT::ProductApi::Internal

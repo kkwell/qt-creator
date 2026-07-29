@@ -39,6 +39,8 @@ public:
     std::optional<Data::RuntimeResourceCatalog> runtimeResourceCatalog() const override;
     std::optional<Data::RuntimeResourceSnapshot> runtimeResourceSnapshot() const override;
     Utils::Result<> refreshRuntimeResources() override;
+    Utils::Result<> requestRuntimeResourceSnapshot(
+        const Data::RuntimeResourceSnapshotRequest &request) override;
     bool supportsControlCommand(Data::ControllerControlCommand command) const override;
     Utils::Result<> executeControlCommand(
         const Data::ControllerControlRequest &request) override;

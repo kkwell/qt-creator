@@ -67,6 +67,8 @@ public:
     std::optional<Data::RuntimeResourceCatalog> runtimeResourceCatalog() const;
     std::optional<Data::RuntimeResourceSnapshot> runtimeResourceSnapshot() const;
     Utils::Result<> refreshRuntimeResources();
+    Utils::Result<> requestRuntimeResourceSnapshot(
+        const Data::RuntimeResourceSnapshotRequest &request);
     bool supportsControlCommand(Data::ControllerControlCommand command) const;
     Utils::Result<> executeControlCommand(const Data::ControllerControlRequest &request);
     bool supportsPackageDeployment() const;
@@ -80,6 +82,7 @@ public:
     bool refreshInProgressForTests() const;
     int activeSocketCountForTests() const;
     int pendingRequestCountForTests() const;
+    int ignoredRuntimeResourceRequestCountForTests() const;
     void failNextWriteForTests();
 #endif
 
@@ -87,6 +90,8 @@ signals:
     void snapshotChanged();
     void runtimeResourceCatalogChanged();
     void runtimeResourceSnapshotChanged();
+    void runtimeResourceSnapshotRequestFinished(
+        const EtherCAT::Data::RuntimeResourceSnapshotResult &result);
 
 private:
     std::unique_ptr<ProductApiSessionPrivate> d;

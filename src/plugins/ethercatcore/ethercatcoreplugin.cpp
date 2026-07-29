@@ -17,6 +17,7 @@
 #include <extensionsystem/pluginmanager.h>
 
 #include <ethercatdata/controllerconnection.h>
+#include <ethercatdata/runtimeresource.h>
 
 #include <memory>
 
@@ -57,6 +58,8 @@ void EtherCATCorePlugin::initialize()
     qRegisterMetaType<Data::ControllerConnectionSnapshot>();
     qRegisterMetaType<Data::ControllerConnectionState>();
     qRegisterMetaType<Data::ControllerOperationError>();
+    qRegisterMetaType<Data::RuntimeResourceSnapshotRequest>();
+    qRegisterMetaType<Data::RuntimeResourceSnapshotResult>();
     qRegisterMetaType<Data::NodeId>();
     qRegisterMetaType<Data::DeviceDescription>();
     qRegisterMetaType<Data::DeviceImportResult>();

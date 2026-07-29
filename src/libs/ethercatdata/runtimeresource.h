@@ -201,6 +201,84 @@ struct ETHERCATDATA_EXPORT RuntimeResourceSnapshot
         = default;
 };
 
+// Requests an exact, provider-neutral subset from one immutable runtime capture. Callers must use
+// IDs from the catalog identified by expectedEpoch; they must never infer IDs from names or
+// process-image coordinates.
+struct ETHERCATDATA_EXPORT RuntimeResourceSnapshotRequest
+{
+    QString correlationId;
+    ControllerConnectionScope scope;
+    quint64 sessionGeneration = 0;
+    RuntimeResourceCatalogEpoch expectedEpoch;
+    QList<RuntimeResourceId> resourceIds;
+
+    bool isValid() const
+    {
+        if (correlationId.isEmpty() || correlationId.size() > 128
+            || correlationId != correlationId.trimmed() || scope.projectId.isNull()
+            || scope.masterId.isNull()
+            || !sessionGeneration || !expectedEpoch.controllerBootId
+            || (expectedEpoch.activePackageSlot != ControllerSlot::A
+                && expectedEpoch.activePackageSlot != ControllerSlot::B)
+            || !expectedEpoch.activePackageGeneration || !expectedEpoch.configurationId
+            || !expectedEpoch.topologyGeneration || !expectedEpoch.runtimeGeneration
+            || !expectedEpoch.catalogRevision || expectedEpoch.topologyIdentity.isEmpty()
+            || resourceIds.isEmpty() || resourceIds.size() > 64) {
+            return false;
+        }
+        for (const QChar character : correlationId) {
+            if (character.category() == QChar::Other_Control)
+                return false;
+        }
+
+        QByteArray previous;
+        for (const RuntimeResourceId &id : resourceIds) {
+            if (!id.isValid() || (!previous.isEmpty() && id.value <= previous))
+                return false;
+            previous = id.value;
+        }
+        return true;
+    }
+
+    friend bool operator==(
+        const RuntimeResourceSnapshotRequest &, const RuntimeResourceSnapshotRequest &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT RuntimeResourceSnapshotResult
+{
+    RuntimeResourceSnapshotRequest request;
+    std::optional<RuntimeResourceSnapshot> snapshot;
+    std::optional<ControllerOperationError> error;
+
+    bool isValid() const
+    {
+        if (!request.isValid() || snapshot.has_value() == error.has_value())
+            return false;
+        if (error) {
+            return error->operation
+                   == ControllerOperation::QueryRuntimeResourceSnapshot;
+        }
+        if (!snapshot->complete || snapshot->scope != request.scope
+            || snapshot->sessionGeneration != request.sessionGeneration
+            || snapshot->epoch != request.expectedEpoch
+            || snapshot->samples.size() != request.resourceIds.size()) {
+            return false;
+        }
+        for (qsizetype index = 0; index < request.resourceIds.size(); ++index) {
+            if (snapshot->samples.at(index).resourceId
+                != request.resourceIds.at(index)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    friend bool operator==(
+        const RuntimeResourceSnapshotResult &, const RuntimeResourceSnapshotResult &)
+        = default;
+};
+
 } // namespace EtherCAT::Data
 
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimeResourceId)
@@ -217,3 +295,5 @@ Q_DECLARE_METATYPE(EtherCAT::Data::RuntimeResourceQuality)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimeResourceSample)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimeResourceCatalog)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimeResourceSnapshot)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimeResourceSnapshotRequest)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimeResourceSnapshotResult)

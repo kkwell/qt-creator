@@ -106,6 +106,11 @@ ProductApiConnectionProvider::ProductApiConnectionProvider(
         &ProductApiSession::runtimeResourceSnapshotChanged,
         this,
         &ProductApiConnectionProvider::runtimeResourceSnapshotChanged);
+    connect(
+        m_session,
+        &ProductApiSession::runtimeResourceSnapshotRequestFinished,
+        this,
+        &ProductApiConnectionProvider::runtimeResourceSnapshotRequestFinished);
     setAvailable(endpoints.isValid() && options.isValid());
 }
 
@@ -238,6 +243,14 @@ Utils::Result<> ProductApiConnectionProvider::refreshRuntimeResources()
     if (!isAvailable())
         return Utils::ResultError(Tr::tr("The Embed Labs controller provider is unavailable."));
     return m_session->refreshRuntimeResources();
+}
+
+Utils::Result<> ProductApiConnectionProvider::requestRuntimeResourceSnapshot(
+    const Data::RuntimeResourceSnapshotRequest &request)
+{
+    if (!isAvailable())
+        return Utils::ResultError(Tr::tr("The Embed Labs controller provider is unavailable."));
+    return m_session->requestRuntimeResourceSnapshot(request);
 }
 
 bool ProductApiConnectionProvider::supportsControlCommand(

@@ -71,6 +71,13 @@ private slots:
     void testRuntimeResourceBounds();
     void testRuntimeResourceControlInvalidation();
     void testRuntimeResourceIncompleteSnapshot();
+    void testTargetedRuntimeResourceSnapshotLifecycle();
+    void testTargetedRuntimeResourceSnapshotLocalGuards();
+    void testTargetedRuntimeResourceSnapshotFailures();
+    void testTargetedRuntimeResourceProtocolFailures_data();
+    void testTargetedRuntimeResourceProtocolFailures();
+    void testTargetedRuntimeResourceDisconnectAndControlInvalidation();
+    void testTargetedRuntimeResourceIgnoredRequestBound();
 };
 
 } // namespace EtherCAT::ProductApi::Internal

@@ -209,6 +209,13 @@ Utils::Result<> ControllerConnectionProvider::refreshRuntimeResources()
         Tr::tr("This controller provider does not support runtime resources."));
 }
 
+Utils::Result<> ControllerConnectionProvider::requestRuntimeResourceSnapshot(
+    const Data::RuntimeResourceSnapshotRequest &)
+{
+    return Utils::ResultError(
+        Tr::tr("This controller provider does not support targeted runtime resource snapshots."));
+}
+
 ScanProvider::ScanProvider(Utils::Id id, const QString &displayName, QObject *parent)
     : Provider(ProviderKind::Scan, id, displayName, parent)
 {}

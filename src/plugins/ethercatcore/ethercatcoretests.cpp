@@ -1107,6 +1107,97 @@ void EtherCATCoreTests::testRuntimeResourceValueSemantics()
     QVERIFY(QMetaType::fromType<Data::RuntimeResourceSnapshot>().isValid());
 }
 
+void EtherCATCoreTests::testRuntimeResourceSnapshotRequestContract()
+{
+    Data::RuntimeResourceSnapshotRequest request;
+    request.correlationId = "targeted-read-1";
+    request.scope = {Data::NodeId::create(), Data::NodeId::create()};
+    request.sessionGeneration = 7;
+    request.expectedEpoch.controllerBootId = 11;
+    request.expectedEpoch.activePackageSlot = Data::ControllerSlot::B;
+    request.expectedEpoch.activePackageGeneration = 12;
+    request.expectedEpoch.configurationId = 13;
+    request.expectedEpoch.topologyGeneration = 14;
+    request.expectedEpoch.runtimeGeneration = 15;
+    request.expectedEpoch.catalogRevision = 16;
+    request.expectedEpoch.topologyIdentity = QByteArray::fromHex("0102030405060708");
+    request.resourceIds = {
+        {QByteArray::fromHex("1000000000000001")},
+        {QByteArray::fromHex("1000000000000041")},
+    };
+    QVERIFY(request.isValid());
+    QCOMPARE(Data::RuntimeResourceSnapshotRequest(request), request);
+
+    Data::RuntimeResourceSnapshotResult success;
+    success.request = request;
+    Data::RuntimeResourceSnapshot snapshot;
+    snapshot.scope = request.scope;
+    snapshot.sessionGeneration = request.sessionGeneration;
+    snapshot.epoch = request.expectedEpoch;
+    snapshot.complete = true;
+    Data::RuntimeResourceSample firstSample;
+    firstSample.resourceId = request.resourceIds.at(0);
+    Data::RuntimeResourceSample secondSample;
+    secondSample.resourceId = request.resourceIds.at(1);
+    snapshot.samples = {firstSample, secondSample};
+    success.snapshot = snapshot;
+    QVERIFY(success.isValid());
+    QCOMPARE(Data::RuntimeResourceSnapshotResult(success), success);
+    Data::RuntimeResourceSnapshotResult invalidSuccess = success;
+    invalidSuccess.snapshot->complete = false;
+    QVERIFY(!invalidSuccess.isValid());
+    invalidSuccess = success;
+    invalidSuccess.snapshot->scope.masterId = Data::NodeId::create();
+    QVERIFY(!invalidSuccess.isValid());
+    invalidSuccess = success;
+    std::swap(
+        invalidSuccess.snapshot->samples[0],
+        invalidSuccess.snapshot->samples[1]);
+    QVERIFY(!invalidSuccess.isValid());
+
+    Data::RuntimeResourceSnapshotResult failure;
+    failure.request = request;
+    Data::ControllerOperationError error;
+    error.operation = Data::ControllerOperation::QueryRuntimeResourceSnapshot;
+    failure.error = error;
+    QVERIFY(failure.isValid());
+    Data::RuntimeResourceSnapshotResult invalidFailure = failure;
+    invalidFailure.error->operation = Data::ControllerOperation::Refresh;
+    QVERIFY(!invalidFailure.isValid());
+    failure.snapshot = Data::RuntimeResourceSnapshot{};
+    QVERIFY(!failure.isValid());
+
+    Data::RuntimeResourceSnapshotRequest invalid = request;
+    invalid.correlationId.clear();
+    QVERIFY(!invalid.isValid());
+    invalid = request;
+    invalid.resourceIds.clear();
+    QVERIFY(!invalid.isValid());
+    invalid = request;
+    invalid.resourceIds.append(
+        {QByteArray::fromHex("1000000000000042")});
+    for (int index = invalid.resourceIds.size(); index < 65; ++index) {
+        invalid.resourceIds.append(
+            {QByteArray::number(index).rightJustified(8, '\0')});
+    }
+    QVERIFY(!invalid.isValid());
+    invalid = request;
+    std::swap(invalid.resourceIds[0], invalid.resourceIds[1]);
+    QVERIFY(!invalid.isValid());
+    invalid = request;
+    invalid.resourceIds[1] = invalid.resourceIds[0];
+    QVERIFY(!invalid.isValid());
+    invalid = request;
+    invalid.correlationId = QStringLiteral("targeted\nread");
+    QVERIFY(!invalid.isValid());
+    invalid = request;
+    invalid.correlationId = QString(129, QLatin1Char('a'));
+    QVERIFY(!invalid.isValid());
+
+    QVERIFY(QMetaType::fromType<Data::RuntimeResourceSnapshotRequest>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimeResourceSnapshotResult>().isValid());
+}
+
 void EtherCATCoreTests::testSemanticRuntimeValueSemantics()
 {
     SemanticRuntimeFixture fixture;
@@ -2071,6 +2162,17 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
     QCOMPARE(
         unsupportedRuntimeRefresh.error(),
         Tr::tr("This controller provider does not support runtime resources."));
+    QSignalSpy targetedFinishedSpy(
+        &provider,
+        &ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished);
+    const Utils::Result<> unsupportedTargetedRead
+        = provider.requestRuntimeResourceSnapshot({});
+    QVERIFY(!unsupportedTargetedRead);
+    QCOMPARE(
+        unsupportedTargetedRead.error(),
+        Tr::tr(
+            "This controller provider does not support targeted runtime resource snapshots."));
+    QCOMPARE(targetedFinishedSpy.count(), 0);
 
     Data::ControllerPackageDeploymentProgress deploymentProgress;
     deploymentProgress.operationId = deploymentRequest.operationId;
