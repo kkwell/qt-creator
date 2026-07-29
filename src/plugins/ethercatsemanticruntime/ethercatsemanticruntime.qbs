@@ -25,6 +25,8 @@ QtcPlugin {
         "semanticruntimeexecutor.h",
         "signedecpkgmanifest_p.cpp",
         "signedecpkgmanifest_p.h",
+        "verifiedecpkgstore_p.cpp",
+        "verifiedecpkgstore_p.h",
     ]
 
     QtcTestFiles {

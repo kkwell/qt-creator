@@ -18,6 +18,8 @@ add_qtc_plugin(EtherCATSemanticRuntime
     semanticruntimeexecutor.h
     signedecpkgmanifest_p.cpp
     signedecpkgmanifest_p.h
+    verifiedecpkgstore_p.cpp
+    verifiedecpkgstore_p.h
 )
 
 extend_qtc_plugin(EtherCATSemanticRuntime

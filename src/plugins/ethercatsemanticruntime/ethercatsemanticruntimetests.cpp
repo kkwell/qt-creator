@@ -8,6 +8,7 @@
 #include "ed25519verifier.h"
 #include "semanticruntimeexecutor.h"
 #include "signedecpkgmanifest_p.h"
+#include "verifiedecpkgstore_p.h"
 
 #include <extensionsystem/pluginmanager.h>
 
@@ -16,10 +17,12 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <algorithm>
 #include <array>
+#include <future>
 #include <limits>
 
 namespace EtherCAT::SemanticRuntime::Internal {
@@ -1434,6 +1437,165 @@ void EtherCATSemanticRuntimeTests::testSignedEcpkgTransferredPackages()
 
     if (!foundFixture)
         QSKIP("Transferred API-035/API-036 ECPKG fixtures are not present");
+}
+
+void EtherCATSemanticRuntimeTests::testVerifiedEcpkgStore()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureRoot(
+        repositoryRoot.absoluteFilePath("build/vendor_api_036_handoff"));
+    const QDir api035(fixtureRoot.absoluteFilePath("api035"));
+    const QDir api036(fixtureRoot.absoluteFilePath("api036"));
+    const QByteArray package035 = readFile(
+        api035.absoluteFilePath(
+            "three-slave-xb6-sv630n-semantic-binding-cfg3501.ecpkg"));
+    const QByteArray project035 = readFile(api035.absoluteFilePath("project.json"));
+    const QByteArray package036 = readFile(
+        api036.absoluteFilePath("three-slave-output-transaction-cfg3501.ecpkg"));
+    const QByteArray project036 = readFile(api036.absoluteFilePath("project.json"));
+    if (package035.isEmpty() || project035.isEmpty() || package036.isEmpty()
+        || project036.isEmpty()) {
+        QSKIP("Transferred API-035/API-036 ECPKG fixtures are not present");
+    }
+
+    const QByteArray publicKey = fromHex(
+        "bd51c2d7cb14eeabac5de51ca5feb5f3"
+        "6d3d87986b77f19d056a7da4845f7063");
+    const QList<EcpkgTrustedPublicKey> trust{
+        {publicKey, EcpkgTrustClass::Production},
+    };
+    const QByteArray package035Sha256
+        = fromHex("b41d1fe06960c94df6730ca36a5c7505c30f905f155c47f00228c5f5eaf13dee");
+    const QByteArray mapping035
+        = fromHex("1b9b8d93222fb199a2b0f767e22a4ed53dd8898c09cc2260a1c1e929f551c64f");
+
+    const Utils::Result<VerifiedEcpkgPackage> verified035
+        = verifyProductionEcpkg(package035, trust, project035);
+    QVERIFY_RESULT(verified035);
+    QCOMPARE(verified035->manifest.packageSha256, package035Sha256);
+    const Utils::Result<VerifiedEcpkgPackage> verified036
+        = verifyProductionEcpkg(package036, trust, project036);
+    QVERIFY_RESULT(verified036);
+    QVERIFY(verified036->manifest.packageSha256 != verified035->manifest.packageSha256);
+
+    QByteArray wrongKey = publicKey;
+    wrongKey[0] ^= 1;
+    QVERIFY(!verifyProductionEcpkg(
+        package035, {{wrongKey, EcpkgTrustClass::Production}}, project035));
+    QVERIFY(!verifyProductionEcpkg(
+        package035, {{publicKey, EcpkgTrustClass::Engineering}}, project035));
+    QByteArray wrongProject = project035;
+    wrongProject[0] ^= 1;
+    QVERIFY(!verifyProductionEcpkg(package035, trust, wrongProject));
+
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString storeRoot = QDir(temporary.path()).absoluteFilePath("packages");
+    const Utils::Result<VerifiedEcpkgPackage> imported
+        = importVerifiedEcpkg(storeRoot, package035, trust, project035);
+    QVERIFY_RESULT(imported);
+    QVERIFY(QFileInfo::exists(imported->storedFilePath));
+    QVERIFY(imported->storedFilePath.endsWith(
+        QString::fromLatin1(package035Sha256.toHex()) + ".ecpkg"));
+
+    const Utils::Result<VerifiedEcpkgPackage> repeated
+        = importVerifiedEcpkg(storeRoot, package035, trust, project035);
+    QVERIFY_RESULT(repeated);
+    QCOMPARE(repeated->storedFilePath, imported->storedFilePath);
+    QCOMPARE(repeated->packageBytes, package035);
+
+    const Utils::Result<VerifiedEcpkgPackage> loaded
+        = loadVerifiedEcpkgByPackageSha256(
+            storeRoot, package035Sha256, trust, project035);
+    QVERIFY_RESULT(loaded);
+    QCOMPARE(loaded->storedFilePath, imported->storedFilePath);
+    const Utils::Result<VerifiedEcpkgPackage> found
+        = findVerifiedEcpkgBySemanticMapping(
+            storeRoot, mapping035, trust, project035);
+    QVERIFY_RESULT(found);
+    QCOMPARE(found->manifest.packageSha256, package035Sha256);
+
+    QTemporaryDir concurrentTemporary;
+    QVERIFY(concurrentTemporary.isValid());
+    const QString concurrentRoot
+        = QDir(concurrentTemporary.path()).absoluteFilePath("packages");
+    const auto importConcurrent = [&] {
+        const Utils::Result<VerifiedEcpkgPackage> result
+            = importVerifiedEcpkg(concurrentRoot, package035, trust, project035);
+        return result ? result->storedFilePath : QString();
+    };
+    std::future<QString> first
+        = std::async(std::launch::async, importConcurrent);
+    std::future<QString> second
+        = std::async(std::launch::async, importConcurrent);
+    const QString firstPath = first.get();
+    const QString secondPath = second.get();
+    QVERIFY(!firstPath.isEmpty());
+    QCOMPARE(secondPath, firstPath);
+    QCOMPARE(
+        QDir(QDir(concurrentRoot).filePath("sha256"))
+            .entryList({"*.ecpkg"}, QDir::Files)
+            .size(),
+        qsizetype(1));
+}
+
+void EtherCATSemanticRuntimeTests::testVerifiedEcpkgStoreRejectsTampering()
+{
+    const QDir sourceDir(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    const QDir repositoryRoot(sourceDir.absoluteFilePath("../../.."));
+    const QDir fixtureDirectory(
+        repositoryRoot.absoluteFilePath("build/vendor_api_036_handoff/api035"));
+    const QByteArray package = readFile(
+        fixtureDirectory.absoluteFilePath(
+            "three-slave-xb6-sv630n-semantic-binding-cfg3501.ecpkg"));
+    const QByteArray project = readFile(fixtureDirectory.absoluteFilePath("project.json"));
+    if (package.isEmpty() || project.isEmpty())
+        QSKIP("Transferred API-035 ECPKG fixture is not present");
+
+    const QByteArray publicKey = fromHex(
+        "bd51c2d7cb14eeabac5de51ca5feb5f3"
+        "6d3d87986b77f19d056a7da4845f7063");
+    const QList<EcpkgTrustedPublicKey> trust{
+        {publicKey, EcpkgTrustClass::Production},
+    };
+    const QByteArray packageSha256
+        = fromHex("b41d1fe06960c94df6730ca36a5c7505c30f905f155c47f00228c5f5eaf13dee");
+
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString storeRoot = QDir(temporary.path()).absoluteFilePath("packages");
+    const Utils::Result<VerifiedEcpkgPackage> imported
+        = importVerifiedEcpkg(storeRoot, package, trust, project);
+    QVERIFY_RESULT(imported);
+
+    QFile stored(imported->storedFilePath);
+    QVERIFY(stored.open(QIODevice::ReadWrite));
+    const QByteArray firstByte = stored.read(1);
+    QCOMPARE(firstByte.size(), qsizetype(1));
+    QVERIFY(stored.seek(0));
+    QCOMPARE(stored.write(QByteArray(1, char(firstByte.at(0) ^ 1))), qint64(1));
+    stored.close();
+    QVERIFY(!loadVerifiedEcpkgByPackageSha256(
+        storeRoot, packageSha256, trust, project));
+
+    QTemporaryDir malformedTemporary;
+    QVERIFY(malformedTemporary.isValid());
+    const QString malformedRoot
+        = QDir(malformedTemporary.path()).absoluteFilePath("packages");
+    const Utils::Result<VerifiedEcpkgPackage> valid
+        = importVerifiedEcpkg(malformedRoot, package, trust, project);
+    QVERIFY_RESULT(valid);
+    QFile unexpected(
+        QDir(QDir(malformedRoot).filePath("sha256")).filePath("unexpected"));
+    QVERIFY(unexpected.open(QIODevice::WriteOnly));
+    QCOMPARE(unexpected.write("x"), qint64(1));
+    unexpected.close();
+    QVERIFY(!findVerifiedEcpkgBySemanticMapping(
+        malformedRoot,
+        fromHex("1b9b8d93222fb199a2b0f767e22a4ed53dd8898c09cc2260a1c1e929f551c64f"),
+        trust,
+        project));
 }
 
 void EtherCATSemanticRuntimeTests::testPublishesOneProductionService()
