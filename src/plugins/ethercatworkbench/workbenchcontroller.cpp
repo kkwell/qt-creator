@@ -1389,7 +1389,9 @@ WorkbenchController::WorkbenchController(QObject *parent)
         this,
         [this](Core::Provider *provider) {
             watchOptionalProvider(provider);
+            watchDeviceAdapterProvider(provider);
             watchControllerConnectionProvider(provider);
+            refreshDeviceAdapterProviders();
             refreshOptionalProviders();
             if (provider && provider->kind() == Core::ProviderKind::ControllerConnection)
                 handleControllerConnectionChanged();
@@ -1399,6 +1401,8 @@ WorkbenchController::WorkbenchController(QObject *parent)
         &Core::ProviderRegistry::providerAboutToBeRemoved,
         this,
         [this](Core::Provider *provider) {
+            if (provider && provider->kind() == Core::ProviderKind::DeviceAdapter)
+                refreshDeviceAdapterProvidersExcluding(provider);
             refreshOptionalProviders(provider);
             if (provider && provider->kind() == Core::ProviderKind::ControllerConnection) {
                 if (auto connectionProvider = qobject_cast<Core::ControllerConnectionProvider *>(
@@ -1430,8 +1434,10 @@ WorkbenchController::WorkbenchController(QObject *parent)
         }));
     for (Core::Provider *provider : m_providerRegistry->providers()) {
         watchOptionalProvider(provider);
+        watchDeviceAdapterProvider(provider);
         watchControllerConnectionProvider(provider);
     }
+    refreshDeviceAdapterProviders();
     refreshOptionalProviders();
     refresh();
 }
@@ -2904,6 +2910,7 @@ void WorkbenchController::refresh()
 {
     if (m_shuttingDown)
         return;
+    refreshDeviceAdapterProviders();
     refreshProjects();
     refreshDevices();
     refreshControllerConnectionPresentation();
@@ -2938,7 +2945,7 @@ void WorkbenchController::refreshProjects()
     const std::optional<ActiveMasterContext> active = activeMasterContext(m_projectService);
     m_treeModel.setDropTargetMasterId(active ? active->masterId : Data::NodeId());
     if (m_selectionService && !selectedId.isNull()
-        && !m_treeModel.indexForNodeId(selectedId).isValid()) {
+        && m_treeModel.contextForNodeId(selectedId).nodeId.isNull()) {
         m_selectionService->clear();
     }
 }
@@ -2951,11 +2958,56 @@ void WorkbenchController::refreshDevices()
                                                        : Data::NodeId();
     m_treeModel.syncDevices(m_deviceRepository->devices());
     if (m_selectionService && !selectedId.isNull()
-        && !m_treeModel.indexForNodeId(selectedId).isValid()) {
+        && m_treeModel.contextForNodeId(selectedId).nodeId.isNull()) {
         m_selectionService->clear();
     }
     m_topologyCapabilityFingerprints.clear();
     handleControllerConnectionChanged();
+}
+
+void WorkbenchController::refreshDeviceAdapterProviders()
+{
+    refreshDeviceAdapterProvidersExcluding(nullptr);
+}
+
+void WorkbenchController::refreshDeviceAdapterProvidersExcluding(Core::Provider *excludedProvider)
+{
+    if (m_shuttingDown || !m_providerRegistry)
+        return;
+    QList<Core::DeviceAdapterProvider *> providers;
+    for (Core::Provider *provider :
+         m_providerRegistry->providers(Core::ProviderKind::DeviceAdapter)) {
+        if (provider == excludedProvider)
+            continue;
+        if (auto adapter = qobject_cast<Core::DeviceAdapterProvider *>(provider);
+            adapter && adapter->isAvailable()) {
+            providers.append(adapter);
+        }
+    }
+    m_treeModel.setDeviceAdapterProviders(providers);
+}
+
+void WorkbenchController::watchDeviceAdapterProvider(Core::Provider *provider)
+{
+    auto adapter = qobject_cast<Core::DeviceAdapterProvider *>(provider);
+    if (!adapter)
+        return;
+    for (const QMetaObject::Connection &connection :
+         {connect(
+              adapter,
+              &Core::Provider::availabilityChanged,
+              this,
+              &WorkbenchController::refreshDeviceAdapterProviders,
+              Qt::UniqueConnection),
+          connect(
+              adapter,
+              &Core::DeviceAdapterProvider::adapterManifestsChanged,
+              &m_treeModel,
+              &WorkbenchTreeModel::invalidateDeviceAdapterProviders,
+              Qt::UniqueConnection)}) {
+        if (connection)
+            m_connections.append(connection);
+    }
 }
 
 void WorkbenchController::watchOptionalProvider(Core::Provider *provider)
@@ -3207,6 +3259,13 @@ void WorkbenchController::handleProjectAboutToBeRemoved(const Data::NodeId &proj
 {
     if (m_shuttingDown || projectId.isNull())
         return;
+
+    if (m_selectionService) {
+        const Core::PropertyPageContext selected
+            = m_treeModel.contextForNodeId(m_selectionService->currentNodeId());
+        if (selected.projectId == projectId)
+            m_selectionService->clear();
+    }
 
     const QScopedValueRollback suppressChanges(m_suppressControllerConnectionChanges, true);
     bool changed = false;

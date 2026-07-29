@@ -5,6 +5,7 @@
 #include <ethercatcore/providers.h>
 
 #include <QAbstractItemModel>
+#include <QPointer>
 
 #include <functional>
 #include <memory>
@@ -27,6 +28,16 @@ struct OptionalProviderPresentation
 
 QString optionalProviderDisplayName(
     const OptionalProviderPresentation &provider, Core::ProviderKind kind);
+
+struct SemanticControlSelection
+{
+    Data::ControllerConnectionScope scope;
+    Data::NodeId deviceId;
+    QList<Data::SemanticSignalId> signalIds;
+
+    friend bool operator==(const SemanticControlSelection &, const SemanticControlSelection &)
+        = default;
+};
 
 class WorkbenchTreeModel final : public QAbstractItemModel
 {
@@ -79,6 +90,8 @@ public:
     void setActiveProjectId(const Data::NodeId &projectId);
     void setDropTargetMasterId(const Data::NodeId &masterId);
     void setDeviceDropHandler(DeviceDropHandler handler);
+    void setDeviceAdapterProviders(const QList<Core::DeviceAdapterProvider *> &providers);
+    void invalidateDeviceAdapterProviders();
     void syncDevices(const QList<Data::DeviceSummary> &devices);
     void setProviderPresentations(
         const OptionalProviderPresentation &scanProvider,
@@ -98,6 +111,8 @@ public:
     QModelIndex diagnosticsForProject(const Data::NodeId &projectId) const;
     Core::PropertyPageContext contextForIndex(const QModelIndex &index) const;
     Core::PropertyPageContext contextForNodeId(const Data::NodeId &nodeId) const;
+    std::optional<SemanticControlSelection> semanticControlSelection(
+        const Data::NodeId &nodeId) const;
     Data::NodeId sourceNodeId(const QModelIndex &index) const;
     Data::NodeId sourceNodeId(const Data::NodeId &nodeId) const;
     std::optional<Data::OfflineSlaveConfiguration> offlineSlave(
@@ -125,6 +140,7 @@ private:
     Data::NodeId m_activeProjectId;
     Data::NodeId m_dropTargetMasterId;
     DeviceDropHandler m_deviceDropHandler;
+    QList<QPointer<Core::DeviceAdapterProvider>> m_deviceAdapterProviders;
     OptionalProviderPresentation m_scanProvider;
     OptionalProviderPresentation m_diagnosticsProvider;
     std::optional<Data::ScanResult> m_scanResult;

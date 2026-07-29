@@ -21,6 +21,7 @@ namespace EtherCAT::Workbench::Internal {
 static constexpr char deviceMimeType[] = "application/x-embed-labs-ethercat-esi-device";
 
 enum class StateMarker { None, Healthy, Information, Warning, Error };
+enum class SemanticNodeFunction { None, Input, Output, Bidirectional };
 
 struct WorkbenchTreeModel::Node
 {
@@ -34,13 +35,18 @@ struct WorkbenchTreeModel::Node
     QString compactStatus;
     QStringList presentationStatus;
     QStringList presentationCompactStatus;
+    QStringList basePresentationDetails;
     QStringList presentationDetails;
     Data::DeviceSummary device;
     std::optional<Data::ControllerTopologySlave> controllerTopologySlave;
     Data::NodeId ownerSlaveId;
     Data::NodeId sourceId;
+    QList<Data::SemanticSignalId> semanticSignalIds;
+    StateMarker baseMarker = StateMarker::None;
     StateMarker marker = StateMarker::None;
+    SemanticNodeFunction semanticFunction = SemanticNodeFunction::None;
     bool topologyDifference = false;
+    bool baseIssue = false;
     bool issue = false;
     int differenceOrder = std::numeric_limits<int>::max();
     Node *parent = nullptr;
@@ -241,6 +247,21 @@ static QIcon deviceFunctionIcon(const WorkbenchTreeModel::Node *node)
     return ::Core::Icons::DESKTOP_DEVICE_SMALL.icon();
 }
 
+static QIcon semanticFunctionIcon(SemanticNodeFunction function)
+{
+    switch (function) {
+    case SemanticNodeFunction::Input:
+        return Utils::Icons::ARROW_DOWN.icon();
+    case SemanticNodeFunction::Output:
+        return Utils::Icons::ARROW_UP.icon();
+    case SemanticNodeFunction::Bidirectional:
+        return Utils::Icons::SNAPSHOT.icon();
+    case SemanticNodeFunction::None:
+        return {};
+    }
+    return {};
+}
+
 static void raiseMarker(WorkbenchTreeModel::Node *node, StateMarker marker)
 {
     if (node && markerPriority(marker) > markerPriority(node->marker))
@@ -261,6 +282,15 @@ static void appendPresentationDetail(WorkbenchTreeModel::Node *node, const QStri
 {
     if (node && !detail.isEmpty() && !node->presentationDetails.contains(detail))
         node->presentationDetails.append(detail);
+}
+
+static void appendBasePresentationDetail(WorkbenchTreeModel::Node *node, const QString &detail)
+{
+    if (!node || detail.isEmpty())
+        return;
+    if (!node->basePresentationDetails.contains(detail))
+        node->basePresentationDetails.append(detail);
+    appendPresentationDetail(node, detail);
 }
 
 static void applyInvalidProjectPresentation(
@@ -736,8 +766,400 @@ static void appendPdoBranch(
     }
 }
 
+static bool adapterSelectionIsEmpty(const Data::DeviceAdapterProjectSelection &selection)
+{
+    return selection.adapterId.value.isEmpty() && selection.adapterVersion.isEmpty()
+           && selection.adapterContentSha256.isEmpty()
+           && selection.processDataProfileId.isEmpty()
+           && selection.moduleAssignments.isEmpty();
+}
+
+struct AdapterTreeResolution
+{
+    std::optional<Data::DeviceAdapterManifest> manifest;
+    std::optional<Data::ResolvedDeviceModel> model;
+    QString error;
+};
+
+static AdapterTreeResolution resolveSelectedAdapter(
+    const Data::OfflineSlaveConfiguration &slave,
+    const Data::ConfigurationValidation &configuration,
+    const QList<Core::DeviceAdapterProvider *> &providers)
+{
+    AdapterTreeResolution resolution;
+    const Data::DeviceAdapterProjectSelection &selection = slave.adapterSelection;
+    if (adapterSelectionIsEmpty(selection))
+        return resolution;
+    if (selection.adapterId.value.isEmpty() || selection.adapterVersion.isEmpty()
+        || selection.adapterContentSha256.size() != 32
+        || selection.processDataProfileId.isEmpty() || slave.esiSha256.size() != 32) {
+        resolution.error = Tr::tr("The saved device-adapter selection is incomplete.");
+        return resolution;
+    }
+    if (configuration.hasErrors()) {
+        resolution.error = configuration.issues.isEmpty()
+                               ? Tr::tr("The saved process-data configuration is invalid.")
+                               : configuration.issues.constFirst().message;
+        return resolution;
+    }
+
+    Core::DeviceAdapterProvider *selectedProvider = nullptr;
+    std::optional<Data::DeviceAdapterManifest> selectedManifest;
+    bool contentMismatch = false;
+    for (Core::DeviceAdapterProvider *provider : providers) {
+        if (!provider || !provider->isAvailable())
+            continue;
+        const std::optional<Data::DeviceAdapterManifest> manifest
+            = provider->adapterManifest(selection.adapterId, selection.adapterVersion);
+        if (!manifest)
+            continue;
+        if (manifest->contentSha256 != selection.adapterContentSha256) {
+            contentMismatch = true;
+            continue;
+        }
+        if (selectedProvider) {
+            resolution.error = Tr::tr("More than one device-adapter provider matches this project.");
+            return resolution;
+        }
+        selectedProvider = provider;
+        selectedManifest = manifest;
+    }
+    if (!selectedProvider || !selectedManifest) {
+        resolution.error
+            = contentMismatch
+                  ? Tr::tr("The installed device-adapter package differs from the saved package.")
+                  : Tr::tr("The saved device-adapter package is not available.");
+        return resolution;
+    }
+
+    Data::DeviceAdapterResolutionRequest request;
+    request.slaveId = slave.id;
+    request.device.summary.id = slave.deviceDescriptionId;
+    request.device.summary.identity = slave.identity;
+    request.device.sourceSha256 = slave.esiSha256;
+    request.processImage = configuration.processImage;
+    request.expectedAdapterId = selection.adapterId;
+    request.expectedAdapterVersion = selection.adapterVersion;
+    request.expectedAdapterContentSha256 = selection.adapterContentSha256;
+    request.processDataProfileId = selection.processDataProfileId;
+    request.moduleAssignments = selection.moduleAssignments;
+    // Candidate packages may describe offline configuration semantics. This never crosses the
+    // separate real-hardware or verified-runtime-binding gates.
+    request.allowCandidate = true;
+
+    const Data::DeviceAdapterResolutionResult result = selectedProvider->resolveDevice(request);
+    if (!result.resolved) {
+        resolution.error = result.error.isEmpty()
+                               ? Tr::tr("The device-adapter package could not resolve this slave.")
+                               : result.error;
+        return resolution;
+    }
+    if (result.model.slaveId != slave.id || result.model.identity != slave.identity
+        || result.model.adapterId != selection.adapterId
+        || result.model.adapterVersion != selection.adapterVersion
+        || result.model.adapterContentSha256 != selection.adapterContentSha256
+        || result.model.esiSha256 != slave.esiSha256
+        || result.model.processDataProfileId != selection.processDataProfileId
+        || result.model.moduleAssignments != selection.moduleAssignments) {
+        resolution.error = Tr::tr("The resolved device-adapter model does not match the project.");
+        return resolution;
+    }
+    if (!result.model.complete) {
+        resolution.error = result.model.warnings.isEmpty()
+                               ? Tr::tr("The resolved device-adapter model is incomplete.")
+                               : result.model.warnings.join(QStringLiteral(" "));
+        return resolution;
+    }
+
+    resolution.manifest = *selectedManifest;
+    resolution.model = result.model;
+    return resolution;
+}
+
+static QString qualificationName(Data::DeviceAdapterQualification qualification)
+{
+    switch (qualification) {
+    case Data::DeviceAdapterQualification::Candidate:
+        return Tr::tr("Candidate");
+    case Data::DeviceAdapterQualification::Qualified:
+        return Tr::tr("Qualified");
+    case Data::DeviceAdapterQualification::MockOnly:
+        return Tr::tr("Mock only");
+    case Data::DeviceAdapterQualification::Revoked:
+        return Tr::tr("Revoked");
+    case Data::DeviceAdapterQualification::Unqualified:
+        return Tr::tr("Unqualified");
+    }
+    return Tr::tr("Unqualified");
+}
+
+static SemanticNodeFunction semanticFunction(Data::SemanticSignalDirection direction)
+{
+    switch (direction) {
+    case Data::SemanticSignalDirection::Input:
+        return SemanticNodeFunction::Input;
+    case Data::SemanticSignalDirection::Output:
+        return SemanticNodeFunction::Output;
+    case Data::SemanticSignalDirection::Bidirectional:
+        return SemanticNodeFunction::Bidirectional;
+    }
+    return SemanticNodeFunction::None;
+}
+
+static SemanticNodeFunction combinedSemanticFunction(
+    const QList<Data::BoundSemanticSignal> &boundSignals)
+{
+    bool hasInput = false;
+    bool hasOutput = false;
+    for (const Data::BoundSemanticSignal &signal : boundSignals) {
+        switch (signal.definition.direction) {
+        case Data::SemanticSignalDirection::Input:
+            hasInput = true;
+            break;
+        case Data::SemanticSignalDirection::Output:
+            hasOutput = true;
+            break;
+        case Data::SemanticSignalDirection::Bidirectional:
+            hasInput = true;
+            hasOutput = true;
+            break;
+        }
+    }
+    if (hasInput && hasOutput)
+        return SemanticNodeFunction::Bidirectional;
+    if (hasInput)
+        return SemanticNodeFunction::Input;
+    if (hasOutput)
+        return SemanticNodeFunction::Output;
+    return SemanticNodeFunction::None;
+}
+
+static QString signalDirectionName(Data::SemanticSignalDirection direction)
+{
+    switch (direction) {
+    case Data::SemanticSignalDirection::Input:
+        return Tr::tr("Input");
+    case Data::SemanticSignalDirection::Output:
+        return Tr::tr("Output");
+    case Data::SemanticSignalDirection::Bidirectional:
+        return Tr::tr("Input / output");
+    }
+    return {};
+}
+
+static QString moduleSignalSummary(const QList<Data::BoundSemanticSignal> &boundSignals)
+{
+    int inputs = 0;
+    int outputs = 0;
+    for (const Data::BoundSemanticSignal &signal : boundSignals) {
+        if (signal.definition.direction == Data::SemanticSignalDirection::Input
+            || signal.definition.direction == Data::SemanticSignalDirection::Bidirectional) {
+            ++inputs;
+        }
+        if (signal.definition.direction == Data::SemanticSignalDirection::Output
+            || signal.definition.direction == Data::SemanticSignalDirection::Bidirectional) {
+            ++outputs;
+        }
+    }
+    QStringList parts;
+    if (inputs)
+        parts.append(Tr::tr("%n input(s)", nullptr, inputs));
+    if (outputs)
+        parts.append(Tr::tr("%n output(s)", nullptr, outputs));
+    return parts.join(Tr::tr(", "));
+}
+
+static void appendSemanticChannels(
+    WorkbenchTreeModel::Node *parent,
+    const Data::OfflineSlaveConfiguration &slave,
+    const Data::ResolvedDeviceModel &model,
+    QList<Data::BoundSemanticSignal> boundSignals,
+    const QString &keyPrefix)
+{
+    std::sort(
+        boundSignals.begin(),
+        boundSignals.end(),
+        [](const Data::BoundSemanticSignal &left, const Data::BoundSemanticSignal &right) {
+            if (left.processImageBitOffset != right.processImageBitOffset)
+                return left.processImageBitOffset < right.processImageBitOffset;
+            return left.definition.id.value < right.definition.id.value;
+        });
+    for (const Data::BoundSemanticSignal &signal : std::as_const(boundSignals)) {
+        const QString name = signal.definition.displayName.isEmpty()
+                                 ? signal.definition.id.value
+                                 : signal.definition.displayName;
+        const QString type = dataTypeName(signal.binding.physicalType);
+        const QString direction = signalDirectionName(signal.definition.direction);
+        const bool writable
+            = signal.definition.access != Data::SemanticSignalAccess::ReadOnly;
+        const QString status
+            = writable
+                  ? Tr::tr("%1 | %2, %3 bit(s) | Control unavailable")
+                        .arg(direction, type)
+                        .arg(signal.binding.bitWidth)
+                  : Tr::tr("%1 | %2, %3 bit(s) | Configuration only")
+                        .arg(direction, type)
+                        .arg(signal.binding.bitWidth);
+        const QString compactStatus
+            = writable ? Tr::tr("%1 · Control unavailable").arg(direction)
+                       : Tr::tr("%1 · Configuration only").arg(direction);
+        auto channel = makeSlaveChild(
+            parent,
+            slave,
+            Core::WorkbenchNodeKind::Channel,
+            keyPrefix + ":signal:" + signal.definition.id.value,
+            name,
+            status,
+            signal.processImageEntryId,
+            compactStatus);
+        channel->semanticFunction = semanticFunction(signal.definition.direction);
+        channel->semanticSignalIds = {signal.definition.id};
+        appendBasePresentationDetail(
+            channel.get(),
+            Tr::tr("Semantic signal: %1").arg(signal.definition.id.value));
+        appendBasePresentationDetail(
+            channel.get(),
+            Tr::tr("Adapter: %1 %2").arg(model.adapterId.value, model.adapterVersion));
+        appendBasePresentationDetail(
+            channel.get(),
+            Tr::tr(
+                "Configuration semantics only. No verified runtime binding is available, so this "
+                "channel cannot read or control hardware."));
+        parent->children.push_back(std::move(channel));
+    }
+}
+
+static void appendAdapterModules(
+    WorkbenchTreeModel::Node *modulesNode,
+    const Data::OfflineSlaveConfiguration &slave,
+    const QList<Core::DeviceAdapterProvider *> &providers,
+    const Data::ConfigurationValidation &configuration)
+{
+    const AdapterTreeResolution resolution
+        = resolveSelectedAdapter(slave, configuration, providers);
+    if (!resolution.error.isEmpty()) {
+        modulesNode->baseStatus = Tr::tr("Adapter unavailable");
+        modulesNode->baseCompactStatus = Tr::tr("Unavailable");
+        modulesNode->status = modulesNode->baseStatus;
+        modulesNode->compactStatus = modulesNode->baseCompactStatus;
+        raiseMarker(modulesNode, StateMarker::Warning);
+        modulesNode->baseMarker = StateMarker::Warning;
+        modulesNode->issue = true;
+        modulesNode->baseIssue = true;
+        appendBasePresentationDetail(modulesNode, resolution.error);
+        appendEmptyState(
+            modulesNode,
+            slave,
+            "modules:adapter-unavailable",
+            Tr::tr("Adapter configuration unavailable"),
+            resolution.error,
+            Tr::tr("Unavailable"));
+        return;
+    }
+    if (!resolution.model || !resolution.manifest) {
+        appendEmptyState(
+            modulesNode,
+            slave,
+            "modules:empty",
+            Tr::tr("No module or channel data"),
+            Tr::tr("No device adapter is selected in this project"),
+            Tr::tr("No adapter selected"));
+        return;
+    }
+
+    const Data::ResolvedDeviceModel &model = *resolution.model;
+    const Data::DeviceAdapterManifest &manifest = *resolution.manifest;
+    modulesNode->baseStatus = Tr::tr("Configuration semantics | %1")
+                                  .arg(qualificationName(model.qualification));
+    modulesNode->baseCompactStatus = Tr::tr("Configuration only");
+    modulesNode->status = modulesNode->baseStatus;
+    modulesNode->compactStatus = modulesNode->baseCompactStatus;
+    appendBasePresentationDetail(
+        modulesNode,
+        Tr::tr(
+            "The project adapter is resolved, but no verified runtime binding is available. "
+            "Hardware values and controls remain unavailable."));
+
+    if (model.moduleAssignments.isEmpty()) {
+        appendSemanticChannels(
+            modulesNode, slave, model, model.boundSignals, QStringLiteral("modules:device"));
+        if (modulesNode->children.empty()) {
+            appendEmptyState(
+                modulesNode,
+                slave,
+                "modules:signals-empty",
+                Tr::tr("No semantic channels"),
+                Tr::tr("The selected adapter resolved no configured signals"),
+                Tr::tr("No channels"));
+        }
+        return;
+    }
+
+    QList<Data::DeviceModuleAssignment> assignments = model.moduleAssignments;
+    std::sort(
+        assignments.begin(),
+        assignments.end(),
+        [](const Data::DeviceModuleAssignment &left,
+           const Data::DeviceModuleAssignment &right) { return left.slot < right.slot; });
+    for (const Data::DeviceModuleAssignment &assignment : std::as_const(assignments)) {
+        const auto profile = std::find_if(
+            manifest.moduleProfiles.cbegin(),
+            manifest.moduleProfiles.cend(),
+            [&assignment](const Data::DeviceModuleProfile &candidate) {
+                return candidate.moduleIdent == assignment.moduleIdent;
+            });
+        if (profile == manifest.moduleProfiles.cend())
+            continue;
+
+        QList<Data::BoundSemanticSignal> boundSignals;
+        for (const Data::BoundSemanticSignal &signal : model.boundSignals) {
+            if (signal.slot == assignment.slot && signal.moduleIdent == assignment.moduleIdent)
+                boundSignals.append(signal);
+        }
+        const QString typeName = profile->typeName.isEmpty() ? profile->id : profile->typeName;
+        const QString key = QString("modules:slot:%1:ident:%2")
+                                .arg(assignment.slot)
+                                .arg(assignment.moduleIdent);
+        auto module = makeSlaveChild(
+            modulesNode,
+            slave,
+            Core::WorkbenchNodeKind::Module,
+            key,
+            Tr::tr("Slot %1 · %2").arg(assignment.slot).arg(typeName),
+            Tr::tr("%1 | Configuration only").arg(moduleSignalSummary(boundSignals)),
+            {},
+            moduleSignalSummary(boundSignals));
+        module->semanticFunction = combinedSemanticFunction(boundSignals);
+        for (const Data::BoundSemanticSignal &signal : std::as_const(boundSignals))
+            module->semanticSignalIds.append(signal.definition.id);
+        appendBasePresentationDetail(
+            module.get(),
+            Tr::tr("ModuleIdent: 0x%1")
+                .arg(assignment.moduleIdent, 8, 16, QLatin1Char('0')));
+        appendBasePresentationDetail(
+            module.get(),
+            Tr::tr(
+                "Configuration semantics only. No verified runtime binding is available, so "
+                "module controls remain unavailable."));
+        WorkbenchTreeModel::Node *modulePointer = module.get();
+        modulesNode->children.push_back(std::move(module));
+        appendSemanticChannels(modulePointer, slave, model, boundSignals, key);
+        if (modulePointer->children.empty()) {
+            appendEmptyState(
+                modulePointer,
+                slave,
+                key + ":empty",
+                Tr::tr("No semantic channels"),
+                Tr::tr("The selected module resolved no configured signals"),
+                Tr::tr("No channels"));
+        }
+    }
+}
+
 static void appendConfiguredSlaveChildren(
-    WorkbenchTreeModel::Node *slaveNode, const Data::OfflineSlaveConfiguration &slave)
+    WorkbenchTreeModel::Node *slaveNode,
+    const Data::OfflineSlaveConfiguration &slave,
+    const QList<Core::DeviceAdapterProvider *> &adapterProviders)
 {
     const Data::ConfigurationValidation validation = Data::validateProcessDataConfiguration(
         slave.processData);
@@ -785,13 +1207,7 @@ static void appendConfiguredSlaveChildren(
         Tr::tr("No modular data"));
     WorkbenchTreeModel::Node *modulesPointer = modules.get();
     slaveNode->children.push_back(std::move(modules));
-    appendEmptyState(
-        modulesPointer,
-        slave,
-        "modules:empty",
-        Tr::tr("No module or channel data"),
-        Tr::tr("No modular profile is stored in this project"),
-        Tr::tr("No modular data"));
+    appendAdapterModules(modulesPointer, slave, adapterProviders, validation);
 }
 
 WorkbenchTreeModel::WorkbenchTreeModel(QObject *parent)
@@ -950,12 +1366,17 @@ QVariant WorkbenchTreeModel::data(const QModelIndex &index, int role) const
         case Core::WorkbenchNodeKind::Pdo:
             return Utils::Icons::SETTINGS.icon();
         case Core::WorkbenchNodeKind::PdoEntry:
-        case Core::WorkbenchNodeKind::Channel:
             return Utils::Icons::LINK.icon();
+        case Core::WorkbenchNodeKind::Channel: {
+            const QIcon icon = semanticFunctionIcon(node->semanticFunction);
+            return icon.isNull() ? Utils::Icons::LINK.icon() : icon;
+        }
         case Core::WorkbenchNodeKind::Modules:
             return Utils::Icons::DIR.icon();
-        case Core::WorkbenchNodeKind::Module:
-            return deviceFunctionIcon(node);
+        case Core::WorkbenchNodeKind::Module: {
+            const QIcon icon = semanticFunctionIcon(node->semanticFunction);
+            return icon.isNull() ? deviceFunctionIcon(node) : icon;
+        }
         case Core::WorkbenchNodeKind::Placeholder:
             return Utils::Icons::NOTLOADED.icon();
         default:
@@ -1135,6 +1556,26 @@ void WorkbenchTreeModel::setDeviceDropHandler(DeviceDropHandler handler)
     m_deviceDropHandler = std::move(handler);
 }
 
+void WorkbenchTreeModel::setDeviceAdapterProviders(
+    const QList<Core::DeviceAdapterProvider *> &providers)
+{
+    QList<QPointer<Core::DeviceAdapterProvider>> desired;
+    desired.reserve(providers.size());
+    for (Core::DeviceAdapterProvider *provider : providers) {
+        if (provider)
+            desired.append(provider);
+    }
+    if (m_deviceAdapterProviders == desired)
+        return;
+    m_deviceAdapterProviders = desired;
+    rebuild();
+}
+
+void WorkbenchTreeModel::invalidateDeviceAdapterProviders()
+{
+    rebuild();
+}
+
 void WorkbenchTreeModel::syncDevices(const QList<Data::DeviceSummary> &devices)
 {
     QList<Data::DeviceSummary> desired = devices;
@@ -1310,6 +1751,7 @@ void WorkbenchTreeModel::clear()
 {
     m_projects.clear();
     m_devices.clear();
+    m_deviceAdapterProviders.clear();
     m_activeProjectId = {};
     m_dropTargetMasterId = {};
     m_controllerConnections.clear();
@@ -1433,7 +1875,105 @@ Core::PropertyPageContext WorkbenchTreeModel::contextForIndex(const QModelIndex 
 Core::PropertyPageContext WorkbenchTreeModel::contextForNodeId(
     const Data::NodeId &nodeId) const
 {
-    return contextForIndex(indexForNodeId(nodeId));
+    const Core::PropertyPageContext visible = contextForIndex(indexForNodeId(nodeId));
+    if (!visible.nodeId.isNull())
+        return visible;
+
+    for (const Data::ProjectSnapshot &project : m_projects) {
+        const auto snapshot = std::find_if(
+            project.nodes.cbegin(),
+            project.nodes.cend(),
+            [&nodeId](const Data::ProjectNodeSnapshot &candidate) {
+                return candidate.id == nodeId;
+            });
+        if (snapshot != project.nodes.cend()) {
+            return {
+                project.id,
+                snapshot->id,
+                workbenchKind(snapshot->kind),
+                snapshot->name,
+            };
+        }
+    }
+    const auto device = std::find_if(
+        m_devices.cbegin(),
+        m_devices.cend(),
+        [&nodeId](const Data::DeviceSummary &candidate) {
+            return candidate.id == nodeId;
+        });
+    if (device != m_devices.cend()) {
+        return {
+            {},
+            device->id,
+            Core::WorkbenchNodeKind::Device,
+            device->name,
+        };
+    }
+    return {};
+}
+
+std::optional<SemanticControlSelection> WorkbenchTreeModel::semanticControlSelection(
+    const Data::NodeId &nodeId) const
+{
+    const Node *node = findNode(nodeId);
+    if (!node
+        || (node->kind != Core::WorkbenchNodeKind::Channel
+            && node->kind != Core::WorkbenchNodeKind::Module)
+        || node->projectId.isNull() || node->ownerSlaveId.isNull()) {
+        return std::nullopt;
+    }
+
+    QList<Data::SemanticSignalId> signalIds = node->semanticSignalIds;
+    if ((node->kind == Core::WorkbenchNodeKind::Channel && signalIds.size() != 1)
+        || (node->kind == Core::WorkbenchNodeKind::Module && signalIds.isEmpty())) {
+        return std::nullopt;
+    }
+    QSet<QString> uniqueSignalIds;
+    for (const Data::SemanticSignalId &signalId : std::as_const(signalIds)) {
+        if (signalId.value.isEmpty() || signalId.value != signalId.value.trimmed()
+            || uniqueSignalIds.contains(signalId.value)) {
+            return std::nullopt;
+        }
+        uniqueSignalIds.insert(signalId.value);
+    }
+    std::sort(
+        signalIds.begin(),
+        signalIds.end(),
+        [](const Data::SemanticSignalId &left, const Data::SemanticSignalId &right) {
+            return left.value < right.value;
+        });
+
+    const auto project = std::find_if(
+        m_projects.cbegin(),
+        m_projects.cend(),
+        [node](const Data::ProjectSnapshot &candidate) {
+            return candidate.id == node->projectId;
+        });
+    if (project == m_projects.cend() || !project->valid)
+        return std::nullopt;
+    const auto slave = std::find_if(
+        project->slaves.cbegin(),
+        project->slaves.cend(),
+        [node](const Data::OfflineSlaveConfiguration &candidate) {
+            return candidate.id == node->ownerSlaveId;
+        });
+    if (slave == project->slaves.cend() || slave->masterId.isNull())
+        return std::nullopt;
+    const bool masterExists = std::any_of(
+        project->nodes.cbegin(),
+        project->nodes.cend(),
+        [slave](const Data::ProjectNodeSnapshot &candidate) {
+            return candidate.id == slave->masterId
+                   && candidate.kind == Data::ProjectNodeKind::Master;
+        });
+    if (!masterExists)
+        return std::nullopt;
+
+    return SemanticControlSelection{
+        {project->id, slave->masterId},
+        slave->id,
+        signalIds,
+    };
 }
 
 Data::NodeId WorkbenchTreeModel::sourceNodeId(const QModelIndex &index) const
@@ -1595,10 +2135,10 @@ void WorkbenchTreeModel::updateProviderPresentation()
             child->compactStatus = child->baseCompactStatus;
             child->presentationStatus.clear();
             child->presentationCompactStatus.clear();
-            child->presentationDetails.clear();
-            child->marker = StateMarker::None;
+            child->presentationDetails = child->basePresentationDetails;
+            child->marker = child->baseMarker;
             child->topologyDifference = false;
-            child->issue = false;
+            child->issue = child->baseIssue;
             child->differenceOrder = std::numeric_limits<int>::max();
             self(self, child.get());
         }
@@ -2049,6 +2589,11 @@ void WorkbenchTreeModel::rebuild()
     std::sort(projects.begin(), projects.end(), [](const auto &left, const auto &right) {
         return left.name.compare(right.name, Qt::CaseInsensitive) < 0;
     });
+    QList<Core::DeviceAdapterProvider *> adapterProviders;
+    for (const QPointer<Core::DeviceAdapterProvider> &provider : m_deviceAdapterProviders) {
+        if (provider)
+            adapterProviders.append(provider.data());
+    }
 
     for (const Data::ProjectSnapshot &project : std::as_const(projects)) {
         if (!project.valid) {
@@ -2081,10 +2626,9 @@ void WorkbenchTreeModel::rebuild()
         for (const Data::OfflineSlaveConfiguration &slave : project.slaves)
             configuredSlavePositions.insert(slave.id, slave.position);
 
-        const auto appendChildren = [this, &project, &snapshots, &configuredSlavePositions](
-                                        const auto &self,
-                                        Node *parent,
-                                        const Data::NodeId &parentId) -> void {
+        const auto appendChildren =
+            [this, &project, &snapshots, &configuredSlavePositions, &adapterProviders](
+                const auto &self, Node *parent, const Data::NodeId &parentId) -> void {
             QList<const Data::ProjectNodeSnapshot *> children;
             for (const Data::ProjectNodeSnapshot *candidate : snapshots) {
                 if (candidate->parentId == parentId)
@@ -2155,7 +2699,8 @@ void WorkbenchTreeModel::rebuild()
                         project.slaves.cend(),
                         [snapshot](const auto &slave) { return slave.id == snapshot->id; });
                     if (offlineSlave != project.slaves.cend())
-                        appendConfiguredSlaveChildren(nodePointer, *offlineSlave);
+                        appendConfiguredSlaveChildren(
+                            nodePointer, *offlineSlave, adapterProviders);
                 }
                 if (kind == Core::WorkbenchNodeKind::Master) {
                     const int slaveCount = int(std::count_if(

@@ -19,6 +19,9 @@ private slots:
     void testOfflineTopologyEditingWorkflow();
     void testOfflineSlaveRemovalConfirmationInvalidationLifecycle();
     void testConfiguredSlaveTreePhysicalOrder();
+    void testDeviceAdapterSelectionBuildsModuleChannelTree();
+    void testDeviceAdapterTreeFailsClosed();
+    void testDeviceAdapterProviderRemovalInvalidatesTree();
     void testTwinCatInsertDeviceWorkflow();
     void testEsiDeviceSelectionRevisionTogglePreservesSelection();
     void testEsiDeviceSelectionCellAccessibility();

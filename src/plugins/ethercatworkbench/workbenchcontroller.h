@@ -328,7 +328,10 @@ private:
 
     void refreshProjects();
     void refreshDevices();
+    void refreshDeviceAdapterProviders();
+    void refreshDeviceAdapterProvidersExcluding(Core::Provider *provider);
     void watchOptionalProvider(Core::Provider *provider);
+    void watchDeviceAdapterProvider(Core::Provider *provider);
     void watchControllerConnectionProvider(Core::Provider *provider);
     void refreshOptionalProviders(Core::Provider *excluding = nullptr);
     void handleOptionalAvailabilityChanged();

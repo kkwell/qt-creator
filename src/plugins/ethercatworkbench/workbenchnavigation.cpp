@@ -74,16 +74,41 @@ protected:
         case Core::WorkbenchNodeKind::Master:
         case Core::WorkbenchNodeKind::ConfiguredSlave:
             break;
-        case Core::WorkbenchNodeKind::Module:
+        case Core::WorkbenchNodeKind::Modules:
             if (sourceParent.data(WorkbenchTreeModel::NodeKindRole)
                     .value<Core::WorkbenchNodeKind>()
-                != Core::WorkbenchNodeKind::Master) {
+                != Core::WorkbenchNodeKind::ConfiguredSlave) {
+                return false;
+            }
+            break;
+        case Core::WorkbenchNodeKind::Module:
+            if (const Core::WorkbenchNodeKind parentKind
+                = sourceParent.data(WorkbenchTreeModel::NodeKindRole)
+                      .value<Core::WorkbenchNodeKind>();
+                parentKind != Core::WorkbenchNodeKind::Master
+                && parentKind != Core::WorkbenchNodeKind::Modules) {
+                return false;
+            }
+            break;
+        case Core::WorkbenchNodeKind::Channel:
+            if (const Core::WorkbenchNodeKind parentKind
+                = sourceParent.data(WorkbenchTreeModel::NodeKindRole)
+                      .value<Core::WorkbenchNodeKind>();
+                parentKind != Core::WorkbenchNodeKind::Modules
+                && parentKind != Core::WorkbenchNodeKind::Module) {
                 return false;
             }
             break;
         case Core::WorkbenchNodeKind::Placeholder:
-            if (sourceParent.isValid())
+            if (sourceParent.isValid()
+                && sourceParent.data(WorkbenchTreeModel::NodeKindRole)
+                       .value<Core::WorkbenchNodeKind>()
+                       != Core::WorkbenchNodeKind::Modules
+                && sourceParent.data(WorkbenchTreeModel::NodeKindRole)
+                       .value<Core::WorkbenchNodeKind>()
+                       != Core::WorkbenchNodeKind::Module) {
                 return false;
+            }
             break;
         default:
             return false;
@@ -674,8 +699,11 @@ void WorkbenchNavigationWidget::selectNode(const Data::NodeId &nodeId, bool sele
     const QModelIndex sourceIndex = m_sourceModel->indexForNodeId(nodeId);
     QModelIndex proxyIndex = m_proxyModel->mapFromSource(sourceIndex);
     if (!proxyIndex.isValid() && sourceIndex.isValid() && !m_filterEdit->text().isEmpty()) {
+        const QString previousFilter = m_filterEdit->text();
         m_filterEdit->clear();
         proxyIndex = m_proxyModel->mapFromSource(sourceIndex);
+        if (!proxyIndex.isValid())
+            m_filterEdit->setText(previousFilter);
     }
     if (!proxyIndex.isValid()) {
         const QSignalBlocker blocker(m_treeView->selectionModel());
@@ -740,7 +768,12 @@ void WorkbenchNavigationWidget::openDiagnostics()
     const Core::PropertyPageContext current = m_sourceModel->contextForNodeId(currentNodeId);
     if (!currentNodeId.isNull() && current.nodeId.isNull())
         return;
-    selectSourceIndex(m_sourceModel->diagnosticsForProject(current.projectId));
+    const QModelIndex diagnostics = m_sourceModel->diagnosticsForProject(current.projectId);
+    if (!diagnostics.isValid())
+        return;
+    const Core::PropertyPageContext context = m_sourceModel->contextForIndex(diagnostics);
+    selectionService->setCurrentNodeId(context.nodeId);
+    selectSourceIndex(diagnostics);
 }
 
 void WorkbenchNavigationWidget::showContextMenu(const QPoint &position, bool mouseTriggered)

@@ -122,7 +122,7 @@ static Data::ProjectSnapshot projectSnapshot(const QString &name = "Packaging Li
     return {
         projectId,
         name,
-        1,
+        4,
         "Workbench Test",
         {{projectId, {}, Data::ProjectNodeKind::Project, name},
          {targetId, projectId, Data::ProjectNodeKind::Target, "Offline Controller"},
@@ -130,6 +130,7 @@ static Data::ProjectSnapshot projectSnapshot(const QString &name = "Packaging Li
         false,
         true,
         false,
+        {},
         {},
         {},
         {}};
@@ -259,12 +260,26 @@ static ProcessTreeFixture processTreeFixture()
          {},
          processData,
          {},
+         {},
+         {},
          {}},
     };
     result.project.nodes.append(
         {result.slaveId, master, Data::ProjectNodeKind::Slave, "Configured Servo"});
     return result;
 }
+
+struct AdapterTreeFixture
+{
+    Data::ProjectSnapshot project;
+    Data::NodeId slaveId;
+    Data::NodeId outputEntryId;
+    Data::NodeId secondOutputEntryId;
+    Data::NodeId inputEntryId;
+};
+
+class TestDeviceAdapterProvider;
+static AdapterTreeFixture adapterTreeFixture(const TestDeviceAdapterProvider &provider);
 
 struct TestProjectFile
 {
@@ -326,7 +341,7 @@ static TestProjectFile writeProjectWithSlave(
          QJsonObject{{"processData", processData}, {"startup", startup}, {"dc", dc}}}};
     const QJsonObject root{
         {"format", "ethercat-project"},
-        {"formatVersion", 3},
+        {"formatVersion", 4},
         {"project",
          QJsonObject{
              {"id", result.projectId.toString()},
@@ -695,6 +710,268 @@ private:
     const QString m_pageObjectName;
     const int m_priority;
 };
+
+class TestDeviceAdapterProvider final : public Core::DeviceAdapterProvider
+{
+public:
+    TestDeviceAdapterProvider()
+        : DeviceAdapterProvider("EtherCAT.Workbench.TestAdapter", "Test adapter")
+    {
+        m_manifest.id = {"org.embedlabs.test.adapter"};
+        m_manifest.version = "1.0.0";
+        m_manifest.displayName = "Test modular adapter";
+        m_manifest.qualification = Data::DeviceAdapterQualification::Candidate;
+        m_manifest.match = {0x00884443, 0x000000b6, 1, 1, QByteArray(32, '\x45')};
+        m_manifest.contentSha256 = QByteArray(32, '\x46');
+
+        Data::ProcessDataProfile processDataProfile;
+        processDataProfile.id = "org.embedlabs.test.default";
+        processDataProfile.rxPdoIndices = {0x1601};
+        processDataProfile.txPdoIndices = {0x1a02};
+        m_manifest.processDataProfiles = {processDataProfile};
+
+        Data::DeviceModuleProfile output;
+        output.id = "org.embedlabs.test.do16";
+        output.moduleIdent = 0x00000625;
+        output.typeName = "DO16";
+        output.moduleClass = "digital-output";
+        output.capabilities = {{"org.embedlabs.io.digital-output"}};
+        Data::DeviceModuleProfile input;
+        input.id = "org.embedlabs.test.di16";
+        input.moduleIdent = 0x00000629;
+        input.typeName = "DI16";
+        input.moduleClass = "digital-input";
+        input.capabilities = {{"org.embedlabs.io.digital-input"}};
+        m_manifest.moduleProfiles = {output, input};
+        m_newerManifest = m_manifest;
+        m_newerManifest.version = "2.0.0";
+        m_newerManifest.displayName = "Test modular adapter v2";
+        m_newerManifest.contentSha256 = QByteArray(32, '\x47');
+        setAvailable(true);
+    }
+
+    QList<Data::DeviceAdapterManifest> adapterManifests() const final
+    {
+        return {m_manifest, m_newerManifest};
+    }
+
+    std::optional<Data::DeviceAdapterManifest> adapterManifest(
+        const Data::DeviceAdapterId &adapterId, const QString &version) const final
+    {
+        if (adapterId == m_manifest.id && version == m_manifest.version)
+            return m_manifest;
+        if (adapterId == m_newerManifest.id && version == m_newerManifest.version)
+            return m_newerManifest;
+        return std::nullopt;
+    }
+
+    Data::DeviceAdapterResolutionResult resolveDevice(
+        const Data::DeviceAdapterResolutionRequest &request) const final
+    {
+        ++resolveCalls;
+        lastRequest = request;
+
+        const QList<Data::DeviceAdapterManifest> manifests = adapterManifests();
+        const auto selectedManifest = std::find_if(
+            manifests.cbegin(),
+            manifests.cend(),
+            [&request](const Data::DeviceAdapterManifest &manifest) {
+                return request.hasValidExpectedAdapterSelection()
+                       && manifest.id == request.expectedAdapterId
+                       && manifest.version == request.expectedAdapterVersion
+                       && manifest.contentSha256 == request.expectedAdapterContentSha256;
+            });
+        if (selectedManifest == manifests.cend())
+            return {false, {}, "The requested adapter package is unavailable."};
+
+        Data::ResolvedDeviceModel model;
+        model.slaveId = request.slaveId;
+        model.identity = request.device.summary.identity;
+        model.esiSha256 = request.device.sourceSha256;
+        model.adapterId = selectedManifest->id;
+        model.adapterVersion = selectedManifest->version;
+        model.adapterContentSha256
+            = m_resolvedContentSha256Override.value_or(selectedManifest->contentSha256);
+        model.qualification = selectedManifest->qualification;
+        model.processDataProfileId = request.processDataProfileId;
+        model.moduleAssignments = request.moduleAssignments;
+        model.complete = true;
+
+        const auto appendSignal =
+            [&model](
+                const Data::ProcessImageEntry &entry,
+                int slot,
+                quint32 moduleIdent,
+                Data::SemanticSignalDirection direction,
+                Data::SemanticSignalAccess access,
+                const QString &id,
+                const QString &name) {
+                Data::BoundSemanticSignal signal;
+                signal.definition.id = {id};
+                signal.definition.displayName = name;
+                signal.definition.direction = direction;
+                signal.definition.access = access;
+                signal.definition.manualControl.allowed = false;
+                signal.binding.pdoDirection = entry.direction;
+                signal.binding.pdoIndex = entry.pdoIndex;
+                signal.binding.objectIndex = entry.index;
+                signal.binding.objectSubIndex = entry.subIndex;
+                signal.binding.physicalType = entry.dataType;
+                signal.binding.bitWidth = entry.bitLength;
+                signal.processImageEntryId = entry.entryId;
+                signal.processImageBitOffset = entry.bitOffset;
+                signal.processImageBitLength = entry.bitLength;
+                signal.slot = slot;
+                signal.moduleIdent = moduleIdent;
+                model.boundSignals.append(signal);
+            };
+        int channel = 1;
+        for (const Data::ProcessImageEntry &entry : request.processImage.outputs.entries) {
+            appendSignal(
+                entry,
+                1,
+                0x00000625,
+                Data::SemanticSignalDirection::Output,
+                Data::SemanticSignalAccess::WriteOnly,
+                QString("org.embedlabs.test.slot.1.digital-output.channel.%1").arg(channel),
+                QString("Digital output %1").arg(channel));
+            ++channel;
+        }
+        channel = 1;
+        for (const Data::ProcessImageEntry &entry : request.processImage.inputs.entries) {
+            appendSignal(
+                entry,
+                2,
+                0x00000629,
+                Data::SemanticSignalDirection::Input,
+                Data::SemanticSignalAccess::ReadOnly,
+                QString("org.embedlabs.test.slot.2.digital-input.channel.%1").arg(channel),
+                QString("Digital input %1").arg(channel));
+            ++channel;
+        }
+        return {true, model, {}};
+    }
+
+    Data::DeviceAdapterManifest manifest() const { return m_manifest; }
+    Data::DeviceAdapterManifest newerManifest() const { return m_newerManifest; }
+    void setResolvedContentSha256Override(const std::optional<QByteArray> &contentSha256)
+    {
+        m_resolvedContentSha256Override = contentSha256;
+    }
+    void notifyManifestsChanged() { emit adapterManifestsChanged(); }
+
+    mutable int resolveCalls = 0;
+    mutable Data::DeviceAdapterResolutionRequest lastRequest;
+
+private:
+    Data::DeviceAdapterManifest m_manifest;
+    Data::DeviceAdapterManifest m_newerManifest;
+    std::optional<QByteArray> m_resolvedContentSha256Override;
+};
+
+static AdapterTreeFixture adapterTreeFixture(const TestDeviceAdapterProvider &provider)
+{
+    AdapterTreeFixture result;
+    result.project = projectSnapshot("Adapter Tree");
+    result.slaveId = Data::NodeId::create();
+    result.outputEntryId = Data::NodeId::create();
+    result.secondOutputEntryId = Data::NodeId::create();
+    result.inputEntryId = Data::NodeId::create();
+
+    Data::ProcessDataConfiguration processData;
+    processData.syncManagers = {
+        {Data::NodeId::create(),
+         2,
+         "Outputs",
+         Data::SyncManagerDirection::MasterToSlave,
+         true,
+         1},
+        {Data::NodeId::create(),
+         3,
+         "Inputs",
+         Data::SyncManagerDirection::SlaveToMaster,
+         true,
+         1},
+    };
+    processData.pdos = {
+        {Data::NodeId::create(),
+         0x1601,
+         "Digital outputs",
+         Data::PdoDirection::Rx,
+         2,
+         true,
+         true,
+         true,
+         true,
+         true,
+         {},
+         {{result.outputEntryId,
+           0x7010,
+           1,
+           "Digital output 1",
+           1,
+           Data::EtherCATDataType::Boolean,
+           "BOOL",
+           -1,
+           true,
+           false},
+          {result.secondOutputEntryId,
+           0x7010,
+           2,
+           "Digital output 2",
+           1,
+           Data::EtherCATDataType::Boolean,
+           "BOOL",
+           -1,
+           true,
+           false}}},
+        {Data::NodeId::create(),
+         0x1a02,
+         "Digital inputs",
+         Data::PdoDirection::Tx,
+         3,
+         true,
+         true,
+         true,
+         true,
+         true,
+         {},
+         {{result.inputEntryId,
+           0x6020,
+           1,
+           "Digital input 1",
+           1,
+           Data::EtherCATDataType::Boolean,
+           "BOOL",
+           -1,
+           true,
+           false}}},
+    };
+
+    const Data::DeviceAdapterManifest manifest = provider.manifest();
+    Data::OfflineSlaveConfiguration slave;
+    slave.id = result.slaveId;
+    slave.masterId = masterId(result.project);
+    slave.position = 0;
+    slave.identity = {manifest.match.vendorId,
+                      manifest.match.productCode,
+                      manifest.match.minimumRevision};
+    slave.name = "Configured XB6";
+    slave.processData = processData;
+    slave.esiSha256 = manifest.match.exactEsiSha256;
+    slave.adapterSelection.adapterId = manifest.id;
+    slave.adapterSelection.adapterVersion = manifest.version;
+    slave.adapterSelection.adapterContentSha256 = manifest.contentSha256;
+    slave.adapterSelection.processDataProfileId = "org.embedlabs.test.default";
+    slave.adapterSelection.moduleAssignments = {
+        {1, 0x00000625, 0x0010, 0x0001},
+        {2, 0x00000629, 0x0020, 0x0002},
+    };
+    result.project.slaves = {slave};
+    result.project.nodes.append(
+        {slave.id, slave.masterId, Data::ProjectNodeKind::Slave, slave.name});
+    return result;
+}
 
 class ControlledDeviceImportJob final : public Core::DeviceImportJob
 {
@@ -1726,6 +2003,8 @@ void EtherCATWorkbenchTests::testNavigationCommandsUseActionManager()
          devices.first().id,
          {},
          {},
+         {},
+         {},
          {}},
     };
     project.nodes.append(
@@ -2054,7 +2333,14 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
         selectionActionPopupSeen = true;
         selectionActionPresent = popup->actions().contains(openDiagnosticsCommand->action());
         selectionActionEnabled = openDiagnosticsCommand->action()->isEnabled();
-        openDiagnosticsCommand->action()->trigger();
+        const QRect actionGeometry = popup->actionGeometry(openDiagnosticsCommand->action());
+        if (actionGeometry.isValid()) {
+            QTest::mouseClick(
+                popup,
+                Qt::LeftButton,
+                Qt::NoModifier,
+                actionGeometry.center());
+        }
         selectionActionClosedPopup = !popup->isVisible();
         if (popup->isVisible())
             popup->close();
@@ -2065,12 +2351,7 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     QVERIFY(selectionActionEnabled);
     QVERIFY(selectionActionClosedPopup);
     QTRY_COMPARE(controller.selectionService()->currentNodeId(), diagnosticsNodeId);
-    QTRY_COMPARE(
-        navigation.treeView()
-            ->currentIndex()
-            .data(WorkbenchTreeModel::NodeIdRole)
-            .value<Data::NodeId>(),
-        diagnosticsNodeId);
+    QVERIFY(!navigation.treeView()->currentIndex().isValid());
 
     controller.selectionService()->setCurrentNodeId(addedId);
     QTRY_COMPARE(
@@ -2367,9 +2648,11 @@ void EtherCATWorkbenchTests::testOfflineTopologyEditingWorkflow()
     });
     emit navigation.treeView()->customContextMenuRequested(QPoint(-1, -1));
     QVERIFY(quickAddRenderSaved);
-    QVERIFY(deviceMenuActions.contains(addCommand->action()));
+    QVERIFY(!findById(navigation.treeView()->model(), device->id).isValid());
+    QVERIFY(!deviceMenuActions.contains(addCommand->action()));
     QCOMPARE(addCommand->action()->text(), expectedQuickAddText);
     QVERIFY(!deviceMenuActions.contains(removeCommand->action()));
+    QTRY_VERIFY(addCommand->action()->isEnabled());
 
     controller.selectionService()->setCurrentNodeId(addedId);
     QList<QAction *> slaveMenuActions;
@@ -2644,6 +2927,8 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreePhysicalOrder()
          {},
          {},
          {},
+         {},
+         {},
          {}},
         {physicalSecondId,
          master,
@@ -2652,6 +2937,8 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreePhysicalOrder()
          12,
          0,
          "Alpha Physical Second",
+         {},
+         {},
          {},
          {},
          {},
@@ -2787,6 +3074,318 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreePhysicalOrder()
     QCOMPARE(controller.selectionService()->currentNodeId(), physicalFirstId);
 }
 
+void EtherCATWorkbenchTests::testDeviceAdapterSelectionBuildsModuleChannelTree()
+{
+    TestDeviceAdapterProvider provider;
+    QCOMPARE(provider.adapterManifests().size(), 2);
+    QCOMPARE(provider.newerManifest().version, QString("2.0.0"));
+    const AdapterTreeFixture fixture = adapterTreeFixture(provider);
+    WorkbenchTreeModel model;
+    QAbstractItemModelTester modelTester(
+        &model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+
+    QCOMPARE(model.rowCount(), 0);
+    model.setDeviceAdapterProviders({&provider});
+    model.setProjects({fixture.project});
+
+    QCOMPARE(provider.resolveCalls, 1);
+    QCOMPARE(provider.lastRequest.slaveId, fixture.slaveId);
+    QCOMPARE(
+        provider.lastRequest.device.summary.identity,
+        fixture.project.slaves.constFirst().identity);
+    QCOMPARE(
+        provider.lastRequest.device.sourceSha256,
+        fixture.project.slaves.constFirst().esiSha256);
+    QCOMPARE(
+        provider.lastRequest.expectedAdapterId,
+        fixture.project.slaves.constFirst().adapterSelection.adapterId);
+    QCOMPARE(
+        provider.lastRequest.expectedAdapterVersion,
+        fixture.project.slaves.constFirst().adapterSelection.adapterVersion);
+    QCOMPARE(
+        provider.lastRequest.expectedAdapterContentSha256,
+        fixture.project.slaves.constFirst().adapterSelection.adapterContentSha256);
+    QCOMPARE(
+        provider.lastRequest.processDataProfileId,
+        fixture.project.slaves.constFirst().adapterSelection.processDataProfileId);
+    QCOMPARE(
+        provider.lastRequest.moduleAssignments,
+        fixture.project.slaves.constFirst().adapterSelection.moduleAssignments);
+    QVERIFY(provider.lastRequest.allowCandidate);
+    QVERIFY(!provider.lastRequest.allowMock);
+    QVERIFY(!provider.lastRequest.requireRealHardwareQualification);
+
+    const QModelIndex configuredSlave = model.indexForNodeId(fixture.slaveId);
+    QVERIFY(configuredSlave.isValid());
+    const QModelIndex modules = directChildByKind(
+        &model, Core::WorkbenchNodeKind::Modules, configuredSlave);
+    QVERIFY(modules.isValid());
+    QCOMPARE(model.rowCount(modules), 2);
+    QCOMPARE(
+        modules.data(WorkbenchTreeModel::StatusRole).toString(),
+        QString("Configuration semantics | Candidate"));
+
+    const QModelIndex outputModule = model.index(0, 0, modules);
+    const QModelIndex inputModule = model.index(1, 0, modules);
+    QCOMPARE(outputModule.data().toString(), QString("Slot 1 · DO16"));
+    QCOMPARE(inputModule.data().toString(), QString("Slot 2 · DI16"));
+    QCOMPARE(
+        outputModule.data(WorkbenchTreeModel::NodeKindRole)
+            .value<Core::WorkbenchNodeKind>(),
+        Core::WorkbenchNodeKind::Module);
+    QCOMPARE(
+        inputModule.data(WorkbenchTreeModel::NodeKindRole)
+            .value<Core::WorkbenchNodeKind>(),
+        Core::WorkbenchNodeKind::Module);
+
+    const QModelIndex outputChannel = findByDisplayText(
+        &model, "Digital output 1", outputModule);
+    const QModelIndex secondOutputChannel = findByDisplayText(
+        &model, "Digital output 2", outputModule);
+    const QModelIndex inputChannel = findByDisplayText(
+        &model, "Digital input 1", inputModule);
+    QVERIFY(outputChannel.isValid());
+    QVERIFY(secondOutputChannel.isValid());
+    QVERIFY(inputChannel.isValid());
+    QCOMPARE(
+        outputChannel.data(WorkbenchTreeModel::NodeKindRole)
+            .value<Core::WorkbenchNodeKind>(),
+        Core::WorkbenchNodeKind::Channel);
+    QCOMPARE(
+        inputChannel.data(WorkbenchTreeModel::NodeKindRole)
+            .value<Core::WorkbenchNodeKind>(),
+        Core::WorkbenchNodeKind::Channel);
+    QCOMPARE(model.sourceNodeId(outputChannel), fixture.outputEntryId);
+    QCOMPARE(model.sourceNodeId(secondOutputChannel), fixture.secondOutputEntryId);
+    QCOMPARE(model.sourceNodeId(inputChannel), fixture.inputEntryId);
+    QVERIFY(outputChannel.data(WorkbenchTreeModel::StatusRole)
+                .toString()
+                .contains("Control unavailable"));
+    QVERIFY(inputChannel.data(WorkbenchTreeModel::StatusRole)
+                .toString()
+                .contains("Configuration only"));
+
+    const QString outputDetails = outputChannel.data(Qt::ToolTipRole).toString();
+    const QString inputDetails = inputChannel.data(Qt::ToolTipRole).toString();
+    QVERIFY2(
+        outputDetails.contains("verified runtime binding", Qt::CaseInsensitive),
+        qPrintable(outputDetails));
+    QVERIFY2(
+        inputDetails.contains("verified runtime binding", Qt::CaseInsensitive),
+        qPrintable(inputDetails));
+    QVERIFY(!outputDetails.contains("ResourceId", Qt::CaseInsensitive));
+    QVERIFY(!inputDetails.contains("process-image offset", Qt::CaseInsensitive));
+    QVERIFY(outputDetails.contains("1.0.0"));
+    QVERIFY(!outputDetails.contains(provider.newerManifest().version));
+
+    const Data::NodeId outputModuleId
+        = outputModule.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    const Data::NodeId outputChannelId
+        = outputChannel.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    const std::optional<SemanticControlSelection> moduleSelection
+        = model.semanticControlSelection(outputModuleId);
+    const std::optional<SemanticControlSelection> channelSelection
+        = model.semanticControlSelection(outputChannelId);
+    QVERIFY(moduleSelection);
+    QVERIFY(channelSelection);
+    const Data::ControllerConnectionScope expectedScope{
+        fixture.project.id,
+        masterId(fixture.project),
+    };
+    QCOMPARE(moduleSelection->scope, expectedScope);
+    QCOMPARE(moduleSelection->deviceId, fixture.slaveId);
+    const QList<Data::SemanticSignalId> expectedModuleSignals{
+        {"org.embedlabs.test.slot.1.digital-output.channel.1"},
+        {"org.embedlabs.test.slot.1.digital-output.channel.2"},
+    };
+    QCOMPARE(moduleSelection->signalIds, expectedModuleSignals);
+    QCOMPARE(channelSelection->scope, expectedScope);
+    QCOMPARE(channelSelection->deviceId, fixture.slaveId);
+    const QList<Data::SemanticSignalId> expectedChannelSignals{
+        {"org.embedlabs.test.slot.1.digital-output.channel.1"},
+    };
+    QCOMPARE(channelSelection->signalIds, expectedChannelSignals);
+    QVERIFY(!model.semanticControlSelection(
+        modules.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>()));
+    QVERIFY(!model.semanticControlSelection(fixture.slaveId));
+
+    const QIcon outputIcon = outputChannel.data(Qt::DecorationRole).value<QIcon>();
+    const QIcon inputIcon = inputChannel.data(Qt::DecorationRole).value<QIcon>();
+    QVERIFY(!outputIcon.isNull());
+    QVERIFY(!inputIcon.isNull());
+    QVERIFY(outputIcon.cacheKey() != inputIcon.cacheKey());
+
+    model.setProjects({});
+    QCOMPARE(model.rowCount(), 0);
+}
+
+void EtherCATWorkbenchTests::testDeviceAdapterTreeFailsClosed()
+{
+    TestDeviceAdapterProvider provider;
+    AdapterTreeFixture fixture = adapterTreeFixture(provider);
+    fixture.project.slaves.first().adapterSelection.adapterContentSha256[0] ^= 1;
+
+    WorkbenchTreeModel model;
+    QAbstractItemModelTester modelTester(
+        &model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    model.setDeviceAdapterProviders({&provider});
+    model.setProjects({fixture.project});
+
+    QCOMPARE(provider.resolveCalls, 0);
+    const QModelIndex configuredSlave = model.indexForNodeId(fixture.slaveId);
+    QVERIFY(configuredSlave.isValid());
+    QModelIndex modules = directChildByKind(
+        &model, Core::WorkbenchNodeKind::Modules, configuredSlave);
+    QVERIFY(modules.isValid());
+    QCOMPARE(model.rowCount(modules), 1);
+    QCOMPARE(
+        modules.data(WorkbenchTreeModel::StatusRole).toString(),
+        QString("Adapter unavailable"));
+    QModelIndex placeholder = directChildByKind(
+        &model, Core::WorkbenchNodeKind::Placeholder, modules);
+    QVERIFY(placeholder.isValid());
+    QVERIFY(placeholder.data(WorkbenchTreeModel::StatusRole)
+                .toString()
+                .contains("differs from the saved package"));
+    QVERIFY(!findByKind(&model, Core::WorkbenchNodeKind::Channel, modules).isValid());
+
+    fixture.project.slaves.first().adapterSelection.adapterContentSha256
+        = provider.manifest().contentSha256;
+    provider.setResolvedContentSha256Override(QByteArray(32, '\x55'));
+    model.setProjects({fixture.project});
+    QCOMPARE(provider.resolveCalls, 1);
+    modules = directChildByKind(
+        &model,
+        Core::WorkbenchNodeKind::Modules,
+        model.indexForNodeId(fixture.slaveId));
+    QVERIFY(modules.isValid());
+    QCOMPARE(
+        modules.data(WorkbenchTreeModel::StatusRole).toString(),
+        QString("Adapter unavailable"));
+    placeholder = directChildByKind(
+        &model, Core::WorkbenchNodeKind::Placeholder, modules);
+    QVERIFY(placeholder.isValid());
+    QVERIFY(placeholder.data(WorkbenchTreeModel::StatusRole)
+                .toString()
+                .contains("does not match the project"));
+    QVERIFY(!findByKind(&model, Core::WorkbenchNodeKind::Channel, modules).isValid());
+    QVERIFY(!model.semanticControlSelection(
+        placeholder.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>()));
+
+    provider.setResolvedContentSha256Override(std::nullopt);
+    model.invalidateDeviceAdapterProviders();
+    QCOMPARE(provider.resolveCalls, 2);
+    modules = directChildByKind(
+        &model,
+        Core::WorkbenchNodeKind::Modules,
+        model.indexForNodeId(fixture.slaveId));
+    QVERIFY(findByKind(&model, Core::WorkbenchNodeKind::Channel, modules).isValid());
+
+    fixture.project.slaves.first().adapterSelection = {};
+    model.setProjects({fixture.project});
+    QCOMPARE(provider.resolveCalls, 2);
+    modules = directChildByKind(
+        &model,
+        Core::WorkbenchNodeKind::Modules,
+        model.indexForNodeId(fixture.slaveId));
+    QVERIFY(modules.isValid());
+    QCOMPARE(model.rowCount(modules), 1);
+    placeholder = directChildByKind(
+        &model, Core::WorkbenchNodeKind::Placeholder, modules);
+    QVERIFY(placeholder.isValid());
+    QCOMPARE(
+        placeholder.siblingAtColumn(1).data().toString(),
+        QString("No adapter selected"));
+    QVERIFY(!findByKind(&model, Core::WorkbenchNodeKind::Channel, modules).isValid());
+}
+
+void EtherCATWorkbenchTests::testDeviceAdapterProviderRemovalInvalidatesTree()
+{
+    TestDeviceAdapterProvider provider;
+    const AdapterTreeFixture fixture = adapterTreeFixture(provider);
+    bool providerRegistered = false;
+    const QScopeGuard removeProvider([&] {
+        if (providerRegistered)
+            ExtensionSystem::PluginManager::removeObject(&provider);
+    });
+    ExtensionSystem::PluginManager::addObject(&provider);
+    providerRegistered = true;
+
+    WorkbenchController controller;
+    QAbstractItemModelTester modelTester(
+        controller.treeModel(), QAbstractItemModelTester::FailureReportingMode::QtTest);
+    WorkbenchNavigationWidget navigation(&controller);
+    const int initialResolveCalls = provider.resolveCalls;
+    controller.treeModel()->setProjects({fixture.project});
+    QTRY_COMPARE(provider.resolveCalls, initialResolveCalls + 1);
+
+    QModelIndex configuredSlave = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    QVERIFY(configuredSlave.isValid());
+    QModelIndex modules = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Modules, configuredSlave);
+    QVERIFY(modules.isValid());
+    QTRY_VERIFY(findByKind(
+                    controller.treeModel(), Core::WorkbenchNodeKind::Channel, modules)
+                    .isValid());
+    QTRY_VERIFY(findByDisplayText(
+                    navigation.treeView()->model(), QString("Digital output 1"))
+                    .isValid());
+
+    const int resolveCallsBeforeManifestChange = provider.resolveCalls;
+    provider.notifyManifestsChanged();
+    QTRY_COMPARE(provider.resolveCalls, resolveCallsBeforeManifestChange + 1);
+
+    provider.setAvailable(false);
+    configuredSlave = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    modules = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Modules, configuredSlave);
+    QTRY_COMPARE(
+        modules.data(WorkbenchTreeModel::StatusRole).toString(),
+        QString("Adapter unavailable"));
+    QTRY_VERIFY(!findByKind(
+                     controller.treeModel(), Core::WorkbenchNodeKind::Channel, modules)
+                     .isValid());
+    QTRY_VERIFY(!findByDisplayText(
+                     navigation.treeView()->model(), QString("Digital output 1"))
+                     .isValid());
+
+    const int resolveCallsBeforeRestore = provider.resolveCalls;
+    provider.setAvailable(true);
+    QTRY_COMPARE(provider.resolveCalls, resolveCallsBeforeRestore + 1);
+    configuredSlave = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    modules = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Modules, configuredSlave);
+    QTRY_VERIFY(findByKind(
+                    controller.treeModel(), Core::WorkbenchNodeKind::Channel, modules)
+                    .isValid());
+    QTRY_VERIFY(findByDisplayText(
+                    navigation.treeView()->model(), QString("Digital output 1"))
+                    .isValid());
+
+    ExtensionSystem::PluginManager::removeObject(&provider);
+    providerRegistered = false;
+    configuredSlave = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    QVERIFY(configuredSlave.isValid());
+    modules = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Modules, configuredSlave);
+    QVERIFY(modules.isValid());
+    QTRY_COMPARE(
+        modules.data(WorkbenchTreeModel::StatusRole).toString(),
+        QString("Adapter unavailable"));
+    QTRY_VERIFY(!findByKind(
+                     controller.treeModel(), Core::WorkbenchNodeKind::Channel, modules)
+                     .isValid());
+    QTRY_VERIFY(!findByDisplayText(
+                     navigation.treeView()->model(), QString("Digital output 1"))
+                     .isValid());
+    const QModelIndex placeholder = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Placeholder, modules);
+    QVERIFY(placeholder.isValid());
+    QVERIFY(placeholder.data(WorkbenchTreeModel::StatusRole)
+                .toString()
+                .contains("not available"));
+}
+
 void EtherCATWorkbenchTests::testTwinCatInsertDeviceWorkflow()
 {
     ::Core::ModeManager::activateMode(Constants::MODE_ID);
@@ -2870,6 +3469,13 @@ void EtherCATWorkbenchTests::testTwinCatInsertDeviceWorkflow()
     const ProjectExplorer::OpenProjectResult opened
         = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
     QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const QScopeGuard projectCleanup([&] {
+        controller.selectionService()->clear();
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
     QTRY_VERIFY(projectService->project(file.projectId).has_value());
     QVERIFY_RESULT(projectService->activateProject(file.projectId));
     QTRY_COMPARE(projectService->activeProjectId(), file.projectId);
@@ -3507,8 +4113,9 @@ void EtherCATWorkbenchTests::testEsiDeviceDragDropWorkflow()
     navigation.show();
     QTRY_VERIFY(navigation.isVisible());
     QTreeView *tree = navigation.treeView();
-    QAbstractItemModel *model = tree->model();
-    QVERIFY(tree->accessibleDescription().contains("drag", Qt::CaseInsensitive));
+    QAbstractItemModel *navigationModel = tree->model();
+    WorkbenchTreeModel *model = controller.treeModel();
+    QVERIFY(tree->accessibleDescription().contains("right panel", Qt::CaseInsensitive));
     QVERIFY(tree->dragEnabled());
     QVERIFY(tree->viewport()->acceptDrops());
     QVERIFY(tree->showDropIndicator());
@@ -3516,6 +4123,8 @@ void EtherCATWorkbenchTests::testEsiDeviceDragDropWorkflow()
     QCOMPARE(tree->defaultDropAction(), Qt::CopyAction);
     QCOMPARE(model->supportedDragActions(), Qt::CopyAction);
     QCOMPARE(model->supportedDropActions(), Qt::CopyAction);
+    QVERIFY(!findById(navigationModel, supported->id).isValid());
+    QVERIFY(!findById(navigationModel, limited->id).isValid());
 
     const QModelIndex supportedIndex = findById(model, supported->id);
     const QModelIndex limitedIndex = findById(model, limited->id);
@@ -3970,8 +4579,8 @@ void EtherCATWorkbenchTests::testGeneralPropertyTreeAccessibility()
     QTreeWidget *propertyTree
         = generalPage->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
     QVERIFY(propertyTree);
-    const QStringList offlineBoundaries = {
-        "read-only", "offline", "controller", "network", "hardware"};
+    const QStringList readOnlyBoundaries = {
+        "read-only", "controller", "operation"};
 
     const auto verifyPropertyTree = [&](const QModelIndex &contextIndex) -> QString {
         pages.updatePage(
@@ -3985,7 +4594,7 @@ void EtherCATWorkbenchTests::testGeneralPropertyTreeAccessibility()
         const QString treeDescription = propertyTree->accessibleDescription();
         if (treeDescription.isEmpty())
             return "General property tree accessible description is empty";
-        for (const QString &boundary : offlineBoundaries) {
+        for (const QString &boundary : readOnlyBoundaries) {
             if (!treeDescription.contains(boundary, Qt::CaseInsensitive))
                 return "General property tree description misses boundary: " + boundary;
         }
@@ -4019,7 +4628,7 @@ void EtherCATWorkbenchTests::testGeneralPropertyTreeAccessibility()
                     return cell + " description misses the property name";
                 if (!value.isEmpty() && !cellDescription.contains(value))
                     return cell + " description misses the complete value";
-                for (const QString &boundary : offlineBoundaries) {
+                for (const QString &boundary : readOnlyBoundaries) {
                     if (!cellDescription.contains(boundary, Qt::CaseInsensitive))
                         return cell + " description misses boundary: " + boundary;
                 }
@@ -4134,7 +4743,7 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
     QCOMPARE(name->text(), QString("Process Data Workflow"));
     QCOMPARE(id->text(), file.projectId.toString());
     QCOMPARE(type->text(), Tr::tr("Offline EtherCAT Engineering Project"));
-    QCOMPARE(formatVersion->text(), QString("3"));
+    QCOMPARE(formatVersion->text(), QString("4"));
     QCOMPARE(createdBy->text(), QString("Workbench Test"));
     QCOMPARE(validity->text(), Tr::tr("Valid"));
     QCOMPARE(migration->text(), Tr::tr("Current format"));
@@ -4530,7 +5139,9 @@ void EtherCATWorkbenchTests::testEsiDeviceGeneralWorkflow()
     QVERIFY(!device->summary.supported);
     QCOMPARE(device->warnings.size(), 1);
     QCOMPARE(device->unsupportedFeatures.size(), 1);
-    QTRY_VERIFY(findById(controller.treeModel(), deviceId).isValid());
+    QTRY_COMPARE(
+        controller.treeModel()->contextForNodeId(deviceId).nodeKind,
+        Core::WorkbenchNodeKind::Device);
     controller.selectionService()->setCurrentNodeId(deviceId);
 
     DetailsView details(&controller);
@@ -4696,8 +5307,18 @@ void EtherCATWorkbenchTests::testEditableTargetGeneralWorkflow()
     const ProjectExplorer::OpenProjectResult opened
         = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
     QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const QScopeGuard projectCleanup([&] {
+        controller.selectionService()->clear();
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
     QTRY_VERIFY(projectService->project(file.projectId).has_value());
-    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.targetId).isValid());
+    QVERIFY(!controller.treeModel()->indexForNodeId(file.targetId).isValid());
+    QCOMPARE(
+        controller.treeModel()->contextForNodeId(file.targetId).nodeKind,
+        Core::WorkbenchNodeKind::Target);
 
     controller.selectionService()->setCurrentNodeId(file.targetId);
     DetailsView details(&controller);
@@ -4743,7 +5364,7 @@ void EtherCATWorkbenchTests::testEditableTargetGeneralWorkflow()
     QVERIFY(!engineering->text().isEmpty());
     QCOMPARE(targetRuntime->text(), QString("Not assigned (offline)"));
     QCOMPARE(localRuntime->text(), QString("Not available (phase 1)"));
-    QCOMPARE(projectVersion->text(), QString("Format 2 · Workbench Test"));
+    QCOMPARE(projectVersion->text(), QString("Format 4 · Workbench Test"));
     QVERIFY(!pinVersion->isEnabled());
     QVERIFY(!pinVersion->accessibleDescription().isEmpty());
     QVERIFY(!name->accessibleName().isEmpty());
@@ -4771,7 +5392,9 @@ void EtherCATWorkbenchTests::testEditableTargetGeneralWorkflow()
     name->setText("  " + renamed + "  ");
     QVERIFY(QMetaObject::invokeMethod(name, "editingFinished"));
     QTRY_COMPARE(currentTargetName(), renamed);
-    QTRY_COMPARE(controller.treeModel()->indexForNodeId(file.targetId).data().toString(), renamed);
+    QTRY_COMPARE(
+        controller.treeModel()->contextForNodeId(file.targetId).displayName,
+        renamed);
     QTRY_COMPARE(title->text(), renamed);
     QTRY_COMPARE(name->text(), renamed);
     QCOMPARE(controller.selectionService()->currentNodeId(), file.targetId);
@@ -5740,6 +6363,8 @@ void EtherCATWorkbenchTests::testEtherCATSyncManagerCellAccessibility()
          device->id,
          {},
          {},
+         {},
+         {},
          {}}};
     project.nodes.append(
         {slaveId, master, Data::ProjectNodeKind::Slave, "Configured accessibility servo"});
@@ -5998,7 +6623,9 @@ void EtherCATWorkbenchTests::testEtherCATRepositoryEmptyState()
 
     for (const Data::NodeId &deviceId :
          {supportedEmptyId, unsupportedEmptyId, supportedPopulatedId, unsupportedPopulatedId}) {
-        QTRY_VERIFY(controller.treeModel()->indexForNodeId(deviceId).isValid());
+        QTRY_COMPARE(
+            controller.treeModel()->contextForNodeId(deviceId).nodeKind,
+            Core::WorkbenchNodeKind::Device);
     }
 
     BuiltinPropertyPageProvider pages(&controller);
@@ -6012,10 +6639,11 @@ void EtherCATWorkbenchTests::testEtherCATRepositoryEmptyState()
     QVERIFY(slaveForm);
 
     const auto showDevice = [&](const Data::NodeId &deviceId) {
-        const QModelIndex index = controller.treeModel()->indexForNodeId(deviceId);
-        QVERIFY(index.isValid());
+        const Core::PropertyPageContext context
+            = controller.treeModel()->contextForNodeId(deviceId);
+        QCOMPARE(context.nodeKind, Core::WorkbenchNodeKind::Device);
         pages.updatePage(
-            Constants::ETHERCAT_PAGE_ID, page.get(), controller.treeModel()->contextForIndex(index));
+            Constants::ETHERCAT_PAGE_ID, page.get(), context);
     };
     const auto verifySummaryMetadata = [summary]() {
         QVERIFY(!summary->accessibleName().isEmpty());
@@ -6670,6 +7298,8 @@ void EtherCATWorkbenchTests::testConfiguredSlaveStateIcon()
          Data::NodeId::create(),
          {},
          {},
+         {},
+         {},
          {}}};
     project.nodes.append({slaveId, master, Data::ProjectNodeKind::Slave, "Configured Servo"});
     model.setProjects({project});
@@ -6800,6 +7430,8 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
          18,
          0,
          "Configured I/O",
+         {},
+         {},
          {},
          {},
          {},
@@ -7005,7 +7637,7 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
     const QModelIndex proxyDiagnostics = findByKind(
         navigation.treeView()->model(), Core::WorkbenchNodeKind::Diagnostics);
     QVERIFY(proxyMissing.isValid());
-    QVERIFY(proxyDiagnostics.isValid());
+    QVERIFY(!proxyDiagnostics.isValid());
     QTRY_COMPARE(
         missing.siblingAtColumn(1).data().toString(),
         QString::fromUtf8("MOCK SAFEOP · Error · MOCK · Missing"));
@@ -7064,11 +7696,9 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
         fixture.slaveId);
     emit controller.openDiagnosticsRequested();
     QTRY_COMPARE(
-        navigation.treeView()
-            ->currentIndex()
-            .data(WorkbenchTreeModel::NodeKindRole)
-            .value<Core::WorkbenchNodeKind>(),
-        Core::WorkbenchNodeKind::Diagnostics);
+        controller.selectionService()->currentNodeId(),
+        diagnosticsNode.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
+    QVERIFY(!navigation.treeView()->currentIndex().isValid());
     diagnostics.setStreamState(Data::DiagnosticsStreamState::Stopped);
     QTRY_VERIFY(master.data(WorkbenchTreeModel::StatusRole).toString().contains("last"));
     QTRY_COMPARE(
@@ -7086,9 +7716,6 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
     providersRegistered = false;
     QTRY_VERIFY(missing.siblingAtColumn(1).data().toString().contains("Offline"));
     QTRY_VERIFY(diagnosticsNode.data(Qt::AccessibleDescriptionRole)
-                    .toString()
-                    .contains("No Diagnostics Provider registered"));
-    QTRY_VERIFY(proxyDiagnostics.data(Qt::AccessibleDescriptionRole)
                     .toString()
                     .contains("No Diagnostics Provider registered"));
     QVERIFY(diagnosticsNode.data(Qt::AccessibleDescriptionRole)
@@ -7248,44 +7875,7 @@ void EtherCATWorkbenchTests::testProjectScopedLocateNavigation()
     QVERIFY(betaMasterProxy.isValid());
     const QModelIndex betaPlaceholderProxy = directChildByKind(
         navigation.treeView()->model(), Core::WorkbenchNodeKind::Placeholder, betaMasterProxy);
-    QVERIFY(betaPlaceholderProxy.isValid());
-    QCOMPARE(
-        betaPlaceholderProxy.data(WorkbenchTreeModel::NodeKindRole)
-            .value<Core::WorkbenchNodeKind>(),
-        Core::WorkbenchNodeKind::Placeholder);
-    navigation.treeView()->scrollTo(betaPlaceholderProxy);
-    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    bool placeholderPopupSeen = false;
-    bool placeholderDifferenceEnabled = true;
-    bool placeholderIssueEnabled = true;
-    QTimer::singleShot(
-        0,
-        &navigation,
-        [&placeholderPopupSeen,
-         &placeholderDifferenceEnabled,
-         &placeholderIssueEnabled,
-         locateDifferenceCommand,
-         locateIssueCommand] {
-            auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
-            if (!popup)
-                return;
-            placeholderPopupSeen = true;
-            placeholderDifferenceEnabled = locateDifferenceCommand->action()->isEnabled();
-            placeholderIssueEnabled = locateIssueCommand->action()->isEnabled();
-            popup->close();
-        });
-    emit navigation.treeView()->customContextMenuRequested(
-        navigation.treeView()->visualRect(betaPlaceholderProxy).center());
-    QVERIFY(placeholderPopupSeen);
-    QVERIFY(!placeholderDifferenceEnabled);
-    QVERIFY(!placeholderIssueEnabled);
-    QTRY_COMPARE(controller.selectionService()->currentNodeId(), alpha.projectId);
-    QTRY_COMPARE(
-        navigation.treeView()
-            ->currentIndex()
-            .data(WorkbenchTreeModel::NodeIdRole)
-            .value<Data::NodeId>(),
-        alpha.projectId);
+    QVERIFY(!betaPlaceholderProxy.isValid());
     QTRY_VERIFY(locateDifferenceCommand->action()->isEnabled());
     QTRY_VERIFY(locateIssueCommand->action()->isEnabled());
 
@@ -7317,9 +7907,12 @@ void EtherCATWorkbenchTests::testProjectScopedLocateNavigation()
 
     const QModelIndex repositoryProxy = findByKind(
         navigation.treeView()->model(), Core::WorkbenchNodeKind::DeviceRepository);
-    QVERIFY(repositoryProxy.isValid());
+    QVERIFY(!repositoryProxy.isValid());
+    const QModelIndex sourceRepository = findByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::DeviceRepository);
+    QVERIFY(sourceRepository.isValid());
     const Data::NodeId repositoryId
-        = repositoryProxy.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+        = sourceRepository.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
     QVERIFY(!repositoryId.isNull());
     controller.selectionService()->setCurrentNodeId(repositoryId);
     QTRY_VERIFY(locateDifferenceCommand->action()->isEnabled());
@@ -7352,30 +7945,22 @@ void EtherCATWorkbenchTests::testNavigationSelectionAndFiltering()
 
     WorkbenchNavigationWidget navigation(&controller);
     controller.selectionService()->setCurrentNodeId(devices.at(42).id);
-    QTRY_COMPARE(
-        navigation.treeView()
-            ->currentIndex()
-            .data(WorkbenchTreeModel::NodeIdRole)
-            .value<Data::NodeId>(),
-        devices.at(42).id);
+    QTRY_VERIFY(!navigation.treeView()->currentIndex().isValid());
 
     navigation.filterEdit()->setText("Device 0042");
-    QTRY_VERIFY(findById(navigation.treeView()->model(), devices.at(42).id).isValid());
+    QTRY_COMPARE(navigation.treeView()->model()->rowCount(), 0);
+    QVERIFY(!findById(navigation.treeView()->model(), devices.at(42).id).isValid());
     QVERIFY(!findById(navigation.treeView()->model(), devices.at(7).id).isValid());
 
     controller.selectionService()->setCurrentNodeId(devices.at(7).id);
-    QTRY_VERIFY(navigation.filterEdit()->text().isEmpty());
-    QTRY_COMPARE(
-        navigation.treeView()
-            ->currentIndex()
-            .data(WorkbenchTreeModel::NodeIdRole)
-            .value<Data::NodeId>(),
-        devices.at(7).id);
+    QCOMPARE(navigation.filterEdit()->text(), QString("Device 0042"));
+    QTRY_VERIFY(!navigation.treeView()->currentIndex().isValid());
 
-    const QModelIndex proxyIndex = findById(navigation.treeView()->model(), devices.at(7).id);
+    navigation.filterEdit()->clear();
+    const QModelIndex proxyIndex = findById(navigation.treeView()->model(), masterId(project));
     QVERIFY(proxyIndex.isValid());
     navigation.treeView()->setCurrentIndex(proxyIndex);
-    QCOMPARE(controller.selectionService()->currentNodeId(), devices.at(7).id);
+    QCOMPARE(controller.selectionService()->currentNodeId(), masterId(project));
     controller.selectionService()->clear();
 }
 
@@ -7438,18 +8023,14 @@ void EtherCATWorkbenchTests::testNavigationVisibleIdentityFiltering()
     controller.selectionService()->setCurrentNodeId(device.id);
     navigation.filterEdit()->setText(visibleProductIdentity);
 
-    QTRY_VERIFY(findById(navigation.treeView()->model(), device.id).isValid());
-    QVERIFY(findByKind(
-                navigation.treeView()->model(), Core::WorkbenchNodeKind::DeviceRepository)
-                .isValid());
+    QTRY_COMPARE(navigation.treeView()->model()->rowCount(), 0);
+    QVERIFY(!findById(navigation.treeView()->model(), device.id).isValid());
+    QVERIFY(!findByKind(
+                 navigation.treeView()->model(), Core::WorkbenchNodeKind::DeviceRepository)
+                 .isValid());
     QVERIFY(!findById(navigation.treeView()->model(), devices.at(7).id).isValid());
     QCOMPARE(controller.selectionService()->currentNodeId(), device.id);
-    QCOMPARE(
-        navigation.treeView()
-            ->currentIndex()
-            .data(WorkbenchTreeModel::NodeIdRole)
-            .value<Data::NodeId>(),
-        device.id);
+    QVERIFY(!navigation.treeView()->currentIndex().isValid());
     QCOMPARE(controller.treeModel()->contextForNodeId(project.id), projectBefore);
 
     const QString searchText = sourceDevice.data(WorkbenchTreeModel::SearchTextRole).toString();
@@ -7458,7 +8039,8 @@ void EtherCATWorkbenchTests::testNavigationVisibleIdentityFiltering()
     QVERIFY(searchText.contains(visibleIdentity));
     QVERIFY(searchText.contains(legacyIdentity));
     navigation.filterEdit()->setText(legacyIdentity);
-    QTRY_VERIFY(findById(navigation.treeView()->model(), device.id).isValid());
+    QTRY_COMPARE(navigation.treeView()->model()->rowCount(), 0);
+    QVERIFY(!findById(navigation.treeView()->model(), device.id).isValid());
     QVERIFY(!findById(navigation.treeView()->model(), devices.at(7).id).isValid());
     controller.selectionService()->clear();
 }
@@ -7467,7 +8049,9 @@ void EtherCATWorkbenchTests::testNavigationExpansionStateLifecycle()
 {
     WorkbenchController controller;
     const Data::ProjectSnapshot alpha = projectSnapshot("Alpha EtherCAT Project");
-    const ProcessTreeFixture fixture = processTreeFixture();
+    TestDeviceAdapterProvider provider;
+    const AdapterTreeFixture fixture = adapterTreeFixture(provider);
+    controller.treeModel()->setDeviceAdapterProviders({&provider});
     controller.treeModel()->setProjects({alpha, fixture.project});
 
     WorkbenchNavigationWidget navigation(&controller);
@@ -7476,15 +8060,23 @@ void EtherCATWorkbenchTests::testNavigationExpansionStateLifecycle()
 
     const Data::NodeId targetId = fixture.project.nodes.at(1).id;
     const Data::NodeId master = masterId(fixture.project);
-    const QModelIndex sourceRxPdo
-        = findBySourceId(controller.treeModel(), fixture.rxPdoId);
-    QVERIFY(sourceRxPdo.isValid());
-    const Data::NodeId rxPdoViewId
-        = sourceRxPdo.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
-    const QModelIndex sourceRxPdoGroup = sourceRxPdo.parent();
-    QVERIFY(sourceRxPdoGroup.isValid());
-    const Data::NodeId rxPdoGroupViewId
-        = sourceRxPdoGroup.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    const QModelIndex sourceSlave = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    QVERIFY(sourceSlave.isValid());
+    const QModelIndex sourceModules = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Modules, sourceSlave);
+    QVERIFY(sourceModules.isValid());
+    const Data::NodeId modulesId
+        = sourceModules.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    const QModelIndex sourceModule = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Module, sourceModules);
+    QVERIFY(sourceModule.isValid());
+    const Data::NodeId moduleId
+        = sourceModule.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    const QModelIndex sourceChannel = findByDisplayText(
+        controller.treeModel(), QString("Digital output 1"), sourceModule);
+    QVERIFY(sourceChannel.isValid());
+    const Data::NodeId channelId
+        = sourceChannel.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
 
     const auto indexForId = [model](const Data::NodeId &id) { return findById(model, id); };
     const auto expand = [tree, &indexForId](const Data::NodeId &id) {
@@ -7495,34 +8087,35 @@ void EtherCATWorkbenchTests::testNavigationExpansionStateLifecycle()
 
     tree->collapseAll();
     expand(fixture.project.id);
-    expand(targetId);
     expand(master);
     expand(fixture.slaveId);
-    expand(rxPdoGroupViewId);
-    expand(rxPdoViewId);
+    expand(modulesId);
+    expand(moduleId);
+    QVERIFY(!indexForId(targetId).isValid());
+    QVERIFY(indexForId(channelId).isValid());
     controller.selectionService()->setCurrentNodeId(master);
     QTRY_COMPARE(
         tree->currentIndex().data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>(),
         master);
     QVERIFY(!tree->isExpanded(indexForId(alpha.id)));
-    QVERIFY(tree->isExpanded(indexForId(rxPdoGroupViewId)));
-    QVERIFY(tree->isExpanded(indexForId(rxPdoViewId)));
+    QVERIFY(tree->isExpanded(indexForId(modulesId)));
+    QVERIFY(tree->isExpanded(indexForId(moduleId)));
 
     Data::ProjectSnapshot renamed = fixture.project;
     renamed.name = "Renamed Process Tree";
     controller.treeModel()->setProjects({alpha, renamed});
 
     QTRY_VERIFY(indexForId(alpha.id).isValid());
-    QTRY_VERIFY(indexForId(rxPdoViewId).isValid());
+    QTRY_VERIFY(indexForId(channelId).isValid());
     QVERIFY2(
         !tree->isExpanded(indexForId(alpha.id)),
         "An unrelated collapsed project must remain collapsed after a model reset");
     QVERIFY2(
-        tree->isExpanded(indexForId(rxPdoGroupViewId)),
-        "A surviving expanded process-data group must remain expanded after a model reset");
+        tree->isExpanded(indexForId(modulesId)),
+        "A surviving expanded module group must remain expanded after a model reset");
     QVERIFY2(
-        tree->isExpanded(indexForId(rxPdoViewId)),
-        "A surviving expanded PDO must remain expanded after a model reset");
+        tree->isExpanded(indexForId(moduleId)),
+        "A surviving expanded module must remain expanded after a model reset");
     QCOMPARE(controller.selectionService()->currentNodeId(), master);
     QCOMPARE(
         tree->currentIndex().data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>(),
@@ -7530,16 +8123,16 @@ void EtherCATWorkbenchTests::testNavigationExpansionStateLifecycle()
 
     tree->collapse(indexForId(renamed.id));
     QVERIFY(!tree->isExpanded(indexForId(renamed.id)));
-    navigation.filterEdit()->setText("Drive Command");
-    QTRY_VERIFY(indexForId(rxPdoViewId).isValid());
+    navigation.filterEdit()->setText("Digital output 1");
+    QTRY_VERIFY(indexForId(channelId).isValid());
     QTRY_VERIFY(tree->isExpanded(indexForId(renamed.id)));
     navigation.filterEdit()->clear();
     QTRY_VERIFY(indexForId(renamed.id).isValid());
     QVERIFY2(
-        !tree->isExpanded(indexForId(renamed.id)),
-        "Clearing a transient filter must restore the pre-filter collapsed state");
-    QVERIFY(tree->isExpanded(indexForId(rxPdoGroupViewId)));
-    QVERIFY(tree->isExpanded(indexForId(rxPdoViewId)));
+        tree->isExpanded(indexForId(renamed.id)),
+        "The project containing the current selection must remain visible after filtering");
+    QVERIFY(tree->isExpanded(indexForId(modulesId)));
+    QVERIFY(tree->isExpanded(indexForId(moduleId)));
 
     const Data::ProjectSnapshot added = projectSnapshot("Zulu EtherCAT Project");
     const Data::NodeId addedTargetId = added.nodes.at(1).id;
@@ -7547,7 +8140,7 @@ void EtherCATWorkbenchTests::testNavigationExpansionStateLifecycle()
     controller.treeModel()->setProjects({alpha, renamed, added});
     QTRY_VERIFY(indexForId(added.id).isValid());
     QVERIFY(tree->isExpanded(indexForId(added.id)));
-    QVERIFY(tree->isExpanded(indexForId(addedTargetId)));
+    QVERIFY(!indexForId(addedTargetId).isValid());
     QVERIFY(tree->isExpanded(indexForId(addedMasterId)));
     QCOMPARE(controller.selectionService()->currentNodeId(), master);
     QCOMPARE(
@@ -7557,13 +8150,14 @@ void EtherCATWorkbenchTests::testNavigationExpansionStateLifecycle()
     tree->collapse(indexForId(renamed.id));
     navigation.filterEdit()->setText("No matching navigation node");
     QTRY_COMPARE(model->rowCount(), 0);
-    controller.selectionService()->setCurrentNodeId(rxPdoViewId);
+    controller.selectionService()->setCurrentNodeId(channelId);
     QTRY_VERIFY(navigation.filterEdit()->text().isEmpty());
     QTRY_COMPARE(
         tree->currentIndex().data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>(),
-        rxPdoViewId);
+        channelId);
     QVERIFY(tree->isExpanded(indexForId(renamed.id)));
-    QVERIFY(tree->isExpanded(indexForId(rxPdoGroupViewId)));
+    QVERIFY(tree->isExpanded(indexForId(modulesId)));
+    QVERIFY(tree->isExpanded(indexForId(moduleId)));
 }
 
 void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
@@ -7587,9 +8181,25 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
     const ProjectExplorer::OpenProjectResult firstOpened
         = ProjectExplorer::ProjectExplorerPlugin::openProject(first.path, false);
     QVERIFY2(firstOpened, qPrintable(firstOpened.errorMessage()));
+    QPointer<ProjectExplorer::Project> firstProjectObject = firstOpened.project();
+    QPointer<ProjectExplorer::Project> secondProjectObject;
+    const QScopeGuard projectCleanup([&] {
+        controller.selectionService()->clear();
+        if (secondProjectObject
+            && ProjectExplorer::ProjectManager::hasProject(secondProjectObject.data())) {
+            ProjectExplorer::ProjectManager::removeProject(secondProjectObject.data());
+        }
+        if (firstProjectObject
+            && ProjectExplorer::ProjectManager::hasProject(firstProjectObject.data())) {
+            ProjectExplorer::ProjectManager::removeProject(firstProjectObject.data());
+        }
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
     const ProjectExplorer::OpenProjectResult secondOpened
         = ProjectExplorer::ProjectExplorerPlugin::openProject(second.path, false);
     QVERIFY2(secondOpened, qPrintable(secondOpened.errorMessage()));
+    secondProjectObject = secondOpened.project();
     QTRY_COMPARE(projectService->projects().size(), 2);
     QVERIFY_RESULT(projectService->activateProject(first.projectId));
     QTRY_COMPARE(projectService->activeProjectId(), first.projectId);
@@ -7800,8 +8410,9 @@ void EtherCATWorkbenchTests::testNavigationActiveProjectLifecycle()
     QTRY_VERIFY(!projectService->project(second.projectId).has_value());
     QTRY_COMPARE(projectService->activeProjectId(), first.projectId);
     QTRY_VERIFY(!controller.treeModel()->indexForNodeId(second.projectId).isValid());
-    QTRY_VERIFY(controller.selectionService()->currentNodeId().isNull());
-    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), first.masterId);
+    QTRY_COMPARE(details.currentContext().nodeId, first.masterId);
+    QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::Master);
     QTRY_COMPARE(
         projectStatus(first.projectId), QString::fromUtf8("Active · Offline"));
     QTRY_VERIFY(controller.treeModel()->flags(controller.treeModel()->indexForNodeId(first.masterId))
@@ -8016,26 +8627,7 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QVERIFY(invalidRootProxy.isValid());
     const QModelIndex recoveryProxy
         = navigation.treeView()->model()->index(0, 0, invalidRootProxy);
-    QVERIFY(recoveryProxy.isValid());
-    navigation.treeView()->scrollTo(recoveryProxy);
-    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    bool placeholderPopupSeen = false;
-    bool placeholderDiagnosticsEnabled = true;
-    QTimer::singleShot(
-        0,
-        &navigation,
-        [&placeholderPopupSeen, &placeholderDiagnosticsEnabled, openDiagnosticsCommand] {
-            auto popup = qobject_cast<QMenu *>(QApplication::activePopupWidget());
-            if (!popup)
-                return;
-            placeholderPopupSeen = true;
-            placeholderDiagnosticsEnabled = openDiagnosticsCommand->action()->isEnabled();
-            popup->close();
-        });
-    emit navigation.treeView()->customContextMenuRequested(
-        navigation.treeView()->visualRect(recoveryProxy).center());
-    QVERIFY(placeholderPopupSeen);
-    QVERIFY(!placeholderDiagnosticsEnabled);
+    QVERIFY(!recoveryProxy.isValid());
     QTRY_VERIFY(openDiagnosticsCommand->action()->isEnabled());
     QTRY_VERIFY(openDiagnosticsContextAction->isEnabled());
     QTRY_VERIFY(copyCommand->action()->isEnabled());
@@ -8079,17 +8671,16 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
             .data(WorkbenchTreeModel::NodeIdRole)
             .value<Data::NodeId>(),
         invalid.id);
-    QTRY_VERIFY(!copyCommand->action()->isEnabled());
-    QTRY_VERIFY(!copyContextAction->isEnabled());
+    QTRY_VERIFY(copyCommand->action()->isEnabled());
+    QTRY_VERIFY(copyContextAction->isEnabled());
     QTRY_VERIFY(!openDiagnosticsCommand->action()->isEnabled());
     QTRY_VERIFY(!openDiagnosticsContextAction->isEnabled());
     QTRY_VERIFY(!setActiveCommand->action()->isEnabled());
     QTRY_VERIFY(!setActiveContextAction->isEnabled());
-    QVERIFY(!controller.canCopyNodeId(invalid.id));
+    QVERIFY(controller.canCopyNodeId(invalid.id));
     QApplication::clipboard()->setText("unchanged-invalid-project-clipboard");
     emit controller.copyCurrentNodeIdRequested();
-    QTRY_COMPARE(
-        QApplication::clipboard()->text(), QString("unchanged-invalid-project-clipboard"));
+    QTRY_COMPARE(QApplication::clipboard()->text(), invalid.id.toString());
     QList<QAction *> invalidPopupActions;
     bool invalidPopupSeen = false;
     QTimer::singleShot(0, &navigation, [&invalidPopupActions, &invalidPopupSeen] {
@@ -8102,7 +8693,7 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     });
     emit navigation.treeView()->customContextMenuRequested(QPoint(-1, -1));
     QVERIFY(invalidPopupSeen);
-    QVERIFY(!invalidPopupActions.contains(copyCommand->action()));
+    QVERIFY(invalidPopupActions.contains(copyCommand->action()));
     QVERIFY(!invalidPopupActions.contains(setActiveCommand->action()));
     QVERIFY(invalidPopupActions.contains(openDiagnosticsCommand->action()));
     QVERIFY(!openDiagnosticsCommand->action()->isEnabled());
@@ -8195,7 +8786,7 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QTRY_COMPARE(name->text(), QString("Valid EtherCAT Project"));
     QVERIFY(!name->isReadOnly());
     QCOMPARE(id->text(), valid.projectId.toString());
-    QCOMPARE(formatVersion->text(), QString("3"));
+    QCOMPARE(formatVersion->text(), QString("4"));
     QCOMPARE(validity->text(), QString("Valid"));
     QCOMPARE(target->text(), QString("Offline Controller"));
     QCOMPARE(master->text(), QString("EtherCAT Master"));
@@ -8218,7 +8809,7 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QVERIFY(name->isReadOnly());
     QCOMPARE(id->text(), unavailable);
     QCOMPARE(validity->text(), QString("Invalid: %1").arg(invalid.error));
-    QVERIFY(!controller.canCopyNodeId(invalid.id));
+    QVERIFY(controller.canCopyNodeId(invalid.id));
 
     ProjectExplorer::ProjectManager::setStartupProject(invalidOpened.project());
     QTRY_COMPARE(projectService->activeProjectId(), invalid.id);
@@ -8270,8 +8861,9 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QTRY_VERIFY(!projectService->project(invalid.id).has_value());
     QTRY_COMPARE(projectService->activeProjectId(), valid.projectId);
     QTRY_VERIFY(!controller.treeModel()->indexForNodeId(invalid.id).isValid());
-    QTRY_VERIFY(controller.selectionService()->currentNodeId().isNull());
-    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::None);
+    QTRY_COMPARE(controller.selectionService()->currentNodeId(), valid.masterId);
+    QTRY_COMPARE(details.currentContext().nodeId, valid.masterId);
+    QCOMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::Master);
     QCOMPARE(
         controller.treeModel()->indexForNodeId(valid.projectId, 1).data().toString(),
         QString::fromUtf8("Active · Offline"));
@@ -8752,6 +9344,10 @@ void EtherCATWorkbenchTests::testProjectScopedDetailsRefreshPreservesGeneralDraf
     QTRY_VERIFY(projectService->project(beta.projectId).has_value());
     QTRY_VERIFY(controller.treeModel()->indexForNodeId(alpha.projectId).isValid());
     QTRY_VERIFY(controller.treeModel()->indexForNodeId(beta.projectId).isValid());
+    QVERIFY_RESULT(projectService->activateProject(alpha.projectId));
+    QTRY_COMPARE(projectService->activeProjectId(), alpha.projectId);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 
     controller.selectionService()->setCurrentNodeId(alpha.projectId);
     DetailsView details(&controller);
@@ -8760,18 +9356,24 @@ void EtherCATWorkbenchTests::testProjectScopedDetailsRefreshPreservesGeneralDraf
     QTRY_VERIFY(details.isVisible());
     QTRY_COMPARE(details.currentContext().nodeId, alpha.projectId);
 
-    QWidget *page = details.findChild<QWidget *>(
+    QPointer<QWidget> page = details.findChild<QWidget *>(
         "EtherCATWorkbenchPropertyPage_" + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
     QLabel *title = details.findChild<QLabel *>("EtherCATWorkbenchDetailsTitle");
     QVERIFY(page);
     QVERIFY(title);
-    QLineEdit *name = page->findChild<QLineEdit *>("EtherCATProjectGeneralName");
-    QVERIFY(name);
+    details.activateWindow();
+    details.tabWidget()->setCurrentWidget(page);
+    QTRY_VERIFY(page->isVisible());
+    QPointer<QLineEdit> name;
+    QTRY_VERIFY(
+        (name = details.findChild<QLineEdit *>("EtherCATProjectGeneralName"))
+        && name->isVisible());
     QCOMPARE(name->text(), QString("Details Draft Alpha"));
 
     const QString draft = QString::fromUtf8("Alpha pending draft %1 / 未保存草稿");
+    details.activateWindow();
     name->setFocus(Qt::OtherFocusReason);
-    QTRY_COMPARE(QApplication::focusWidget(), name);
+    QTRY_VERIFY(name && name->hasFocus());
     name->setText(draft);
     name->setModified(true);
 
@@ -8784,7 +9386,7 @@ void EtherCATWorkbenchTests::testProjectScopedDetailsRefreshPreservesGeneralDraf
     QCOMPARE(details.currentContext().nodeId, alpha.projectId);
     QCOMPARE(name->text(), draft);
     QVERIFY(name->isModified());
-    QCOMPARE(QApplication::focusWidget(), name);
+    QVERIFY(name->hasFocus());
     QCOMPARE(title->text(), QString("Details Draft Alpha"));
 
     const QString renamedAlpha = QString::fromUtf8("Details Draft Alpha / 已持久化");
@@ -9589,27 +10191,24 @@ void EtherCATWorkbenchTests::testNavigationFilterEmptyState()
 {
     WorkbenchController controller;
     const Data::ProjectSnapshot project = projectSnapshot("Filter empty state");
-    QList<Data::DeviceSummary> devices = deviceSummaries(2);
     controller.treeModel()->setProjects({project});
-    controller.treeModel()->syncDevices(devices);
 
     WorkbenchNavigationWidget navigation(&controller);
     navigation.resize(420, 480);
     navigation.show();
     QTRY_VERIFY(navigation.isVisible());
-    controller.selectionService()->setCurrentNodeId(devices.first().id);
+    const Data::NodeId selectedId = masterId(project);
+    controller.selectionService()->setCurrentNodeId(selectedId);
     QTRY_COMPARE(
         navigation.treeView()
             ->currentIndex()
             .data(WorkbenchTreeModel::NodeIdRole)
             .value<Data::NodeId>(),
-        devices.first().id);
+        selectedId);
 
-    const QModelIndex repositoryIndex = findByKind(
-        navigation.treeView()->model(), Core::WorkbenchNodeKind::DeviceRepository);
-    QVERIFY(repositoryIndex.isValid());
-    navigation.treeView()->collapse(repositoryIndex);
-    QVERIFY(!navigation.treeView()->isExpanded(repositoryIndex));
+    QVERIFY(!findByKind(
+                 navigation.treeView()->model(), Core::WorkbenchNodeKind::DeviceRepository)
+                 .isValid());
 
     QWidget *emptyState
         = navigation.findChild<QWidget *>("EtherCATWorkbenchFilterEmptyState");
@@ -9629,7 +10228,6 @@ void EtherCATWorkbenchTests::testNavigationFilterEmptyState()
     QVERIFY(navigation.treeView()->isVisible());
     QVERIFY(!emptyState->isVisible());
 
-    const Data::NodeId selectedId = devices.first().id;
     const QString missingQuery
         = QString::fromUtf8("未匹配的超长 EtherCAT 设备 Ω — filter remains local and offline");
     navigation.filterEdit()->setText(missingQuery);
@@ -9653,32 +10251,24 @@ void EtherCATWorkbenchTests::testNavigationFilterEmptyState()
     QTRY_VERIFY(navigation.treeView()->isVisible());
     QVERIFY(!emptyState->isVisible());
     QCOMPARE(navigation.focusProxy(), navigation.treeView());
-    QTRY_COMPARE(
-        navigation.treeView()
-            ->currentIndex()
-            .data(WorkbenchTreeModel::NodeIdRole)
-            .value<Data::NodeId>(),
-        selectedId);
     QTRY_COMPARE(QApplication::focusWidget(), navigation.treeView());
 
     navigation.filterEdit()->setText(missingQuery);
     QTRY_VERIFY(emptyState->isVisible());
-    Data::DeviceSummary lateMatch = deviceSummaries(1).first();
-    lateMatch.name = missingQuery;
-    devices.append(lateMatch);
-    controller.treeModel()->syncDevices(devices);
+    controller.selectionService()->clear();
+    const Data::ProjectSnapshot lateMatch = projectSnapshot(missingQuery);
+    controller.treeModel()->setProjects({project, lateMatch});
     QTRY_VERIFY(navigation.treeView()->isVisible());
     QVERIFY(!emptyState->isVisible());
-    const QModelIndex lateMatchIndex = findById(navigation.treeView()->model(), lateMatch.id);
+    const QModelIndex lateMatchIndex = findById(
+        navigation.treeView()->model(), lateMatch.id);
     QVERIFY(lateMatchIndex.isValid());
-    QTRY_VERIFY(navigation.treeView()->isExpanded(lateMatchIndex.parent()));
     QVERIFY(!navigation.treeView()->visualRect(lateMatchIndex).isEmpty());
-    QCOMPARE(controller.selectionService()->currentNodeId(), selectedId);
+    QVERIFY(controller.selectionService()->currentNodeId().isNull());
 
-    devices.removeLast();
-    controller.treeModel()->syncDevices(devices);
+    controller.treeModel()->setProjects({project});
     QTRY_VERIFY(emptyState->isVisible());
-    const Data::NodeId externallySelectedId = devices.last().id;
+    const Data::NodeId externallySelectedId = project.id;
     controller.selectionService()->setCurrentNodeId(externallySelectedId);
     QTRY_VERIFY(navigation.filterEdit()->text().isEmpty());
     QTRY_VERIFY(navigation.treeView()->isVisible());
@@ -9716,7 +10306,7 @@ void EtherCATWorkbenchTests::testNavigationKeyboardFocus()
                                        ->currentIndex()
                                        .data(WorkbenchTreeModel::NodeIdRole)
                                        .value<Data::NodeId>();
-    QCOMPARE(currentId, project.nodes.at(1).id);
+    QCOMPARE(currentId, masterId(project));
     QCOMPARE(controller.selectionService()->currentNodeId(), currentId);
     controller.selectionService()->clear();
 }
@@ -9725,9 +10315,9 @@ void EtherCATWorkbenchTests::testNavigationNativeFindIntegration()
 {
     WorkbenchController controller;
     const Data::ProjectSnapshot project = projectSnapshot("Native Find Project");
-    const QList<Data::DeviceSummary> devices = deviceSummaries(2);
-    controller.treeModel()->setProjects({project});
-    controller.treeModel()->syncDevices(devices);
+    const Data::ProjectSnapshot firstProject = projectSnapshot("Device 0000");
+    const Data::ProjectSnapshot secondProject = projectSnapshot("Device 0001");
+    controller.treeModel()->setProjects({project, firstProject, secondProject});
     controller.selectionService()->clear();
 
     QPointer<::Core::IFindSupport> findGuard;
@@ -9776,44 +10366,39 @@ void EtherCATWorkbenchTests::testNavigationNativeFindIntegration()
 
         const Core::PropertyPageContext projectBefore
             = controller.treeModel()->contextForNodeId(project.id);
-        const QModelIndex diagnostics
-            = findByKind(tree->model(), Core::WorkbenchNodeKind::Diagnostics);
-        QVERIFY(diagnostics.isValid());
-        const Data::NodeId diagnosticsId
-            = diagnostics.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+        const QModelIndex nativeProject = findById(tree->model(), project.id);
+        QVERIFY(nativeProject.isValid());
+        tree->setCurrentIndex(nativeProject);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), project.id);
         QCOMPARE(
-            findSupport->findStep("Diagnostics Provider registered", {}),
+            findSupport->findStep("Not configured", {}),
             ::Core::IFindSupport::Found);
-        QTRY_COMPARE(controller.selectionService()->currentNodeId(), diagnosticsId);
-        QCOMPARE(
-            findSupport->findStep(QString::fromUtf8("No provider · Mock only"), {}),
-            ::Core::IFindSupport::Found);
-        QTRY_COMPARE(controller.selectionService()->currentNodeId(), diagnosticsId);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), masterId(project));
 
-        const QModelIndex firstDevice = findById(tree->model(), devices.first().id);
-        QVERIFY(firstDevice.isValid());
-        tree->setCurrentIndex(firstDevice);
-        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.first().id);
+        const QModelIndex firstProjectIndex = findById(tree->model(), firstProject.id);
+        QVERIFY(firstProjectIndex.isValid());
+        tree->setCurrentIndex(firstProjectIndex);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), firstProject.id);
 
         QCOMPARE(
             findSupport->findStep("Device 0001", {}),
             ::Core::IFindSupport::Found);
-        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.last().id);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), secondProject.id);
         QCOMPARE(tree->currentIndex().column(), 0);
 
         QCOMPARE(
             findSupport->findStep("Device 0000", Utils::FindBackward),
             ::Core::IFindSupport::Found);
-        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.first().id);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), firstProject.id);
 
         navigation.filterEdit()->setText("Device 0000");
-        QTRY_VERIFY(findById(tree->model(), devices.first().id).isValid());
-        QVERIFY(!findById(tree->model(), devices.last().id).isValid());
+        QTRY_VERIFY(findById(tree->model(), firstProject.id).isValid());
+        QVERIFY(!findById(tree->model(), secondProject.id).isValid());
         QCOMPARE(
             findSupport->findStep("Device 0001", {}),
             ::Core::IFindSupport::NotFound);
         QCOMPARE(navigation.filterEdit()->text(), QString("Device 0000"));
-        QCOMPARE(controller.selectionService()->currentNodeId(), devices.first().id);
+        QCOMPARE(controller.selectionService()->currentNodeId(), firstProject.id);
         QCOMPARE(controller.treeModel()->contextForNodeId(project.id), projectBefore);
 
         navigation.filterEdit()->clear();
@@ -9823,46 +10408,50 @@ void EtherCATWorkbenchTests::testNavigationNativeFindIntegration()
         QCOMPARE(
             findSupport->findStep("Device 0001", {}),
             ::Core::IFindSupport::Found);
-        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.last().id);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), secondProject.id);
 
         QCOMPARE(
             findSupport->findIncremental("Device 0001", {}),
             ::Core::IFindSupport::Found);
-        QList<Data::DeviceSummary> refreshedDevices = devices;
-        refreshedDevices.last().name = "Refreshed Device";
-        controller.treeModel()->syncDevices(refreshedDevices);
+        Data::ProjectSnapshot refreshedSecondProject = secondProject;
+        refreshedSecondProject.name = "Refreshed Device";
+        refreshedSecondProject.nodes.front().name = refreshedSecondProject.name;
+        controller.treeModel()->setProjects({project, firstProject, refreshedSecondProject});
+        findSupport->resetIncrementalSearch();
         QCOMPARE(
-            findSupport->findIncremental("Refreshed Device", {}),
+            findSupport->findStep("Refreshed Device", {}),
             ::Core::IFindSupport::Found);
-        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.last().id);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), secondProject.id);
 
-        QList<Data::DeviceSummary> anchorDevices = refreshedDevices;
-        anchorDevices.first().name = "Alpha Match";
-        anchorDevices.last().name = "Beta Anchor";
-        Data::DeviceSummary gammaDevice = deviceSummaries(1).first();
-        gammaDevice.name = "Gamma Match";
-        anchorDevices.append(gammaDevice);
-        controller.treeModel()->syncDevices(anchorDevices);
-        controller.selectionService()->setCurrentNodeId(devices.last().id);
-        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.last().id);
+        Data::ProjectSnapshot alphaProject = firstProject;
+        alphaProject.name = "Alpha Match";
+        alphaProject.nodes.front().name = alphaProject.name;
+        Data::ProjectSnapshot betaProject = refreshedSecondProject;
+        betaProject.name = "Beta Anchor";
+        betaProject.nodes.front().name = betaProject.name;
+        const Data::ProjectSnapshot gammaProject = projectSnapshot("Gamma Match");
+        controller.treeModel()->setProjects({project, alphaProject, betaProject, gammaProject});
+        controller.selectionService()->setCurrentNodeId(secondProject.id);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), secondProject.id);
         findSupport->resetIncrementalSearch();
         QCOMPARE(
             findSupport->findIncremental("Beta Anchor", {}),
             ::Core::IFindSupport::Found);
 
-        QSignalSpy rowsMoved(controller.treeModel(), &QAbstractItemModel::rowsMoved);
-        QList<Data::DeviceSummary> movedDevices = anchorDevices;
-        movedDevices[1].name = "Zulu Anchor";
-        controller.treeModel()->syncDevices(movedDevices);
-        QCOMPARE(rowsMoved.count(), 1);
+        QSignalSpy modelReset(controller.treeModel(), &QAbstractItemModel::modelReset);
+        betaProject.name = "Zulu Anchor";
+        betaProject.nodes.front().name = betaProject.name;
+        controller.treeModel()->setProjects({project, alphaProject, betaProject, gammaProject});
+        QCOMPARE(modelReset.count(), 1);
+        findSupport->resetIncrementalSearch();
         QCOMPARE(
-            findSupport->findIncremental("Match", {}),
+            findSupport->findStep("Match", {}),
             ::Core::IFindSupport::Found);
-        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.first().id);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), firstProject.id);
         QCOMPARE(
             findSupport->findStep("Zulu Anchor", Utils::FindBackward),
             ::Core::IFindSupport::Found);
-        QTRY_COMPARE(controller.selectionService()->currentNodeId(), devices.last().id);
+        QTRY_COMPARE(controller.selectionService()->currentNodeId(), secondProject.id);
         QCOMPARE(controller.treeModel()->contextForNodeId(project.id), projectBefore);
     }
 
@@ -10277,7 +10866,19 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
     const Data::NodeId master = masterId(project);
     const Data::NodeId slaveId = Data::NodeId::create();
     project.slaves = {
-        {slaveId, master, 0, found->identity, 17, 3, "Configured Servo", found->id, {}, {}, {}}};
+        {slaveId,
+         master,
+         0,
+         found->identity,
+         17,
+         3,
+         "Configured Servo",
+         found->id,
+         {},
+         {},
+         {},
+         {},
+         {}}};
     project.nodes.append({slaveId, master, Data::ProjectNodeKind::Slave, "Configured Servo"});
     controller.treeModel()->setProjects({project});
 
@@ -10331,7 +10932,19 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
 
     const Data::NodeId secondSlaveId = Data::NodeId::create();
     project.slaves.append(
-        {secondSlaveId, master, 1, found->identity, 18, 4, "Configured I/O", found->id, {}, {}, {}});
+        {secondSlaveId,
+         master,
+         1,
+         found->identity,
+         18,
+         4,
+         "Configured I/O",
+         found->id,
+         {},
+         {},
+         {},
+         {},
+         {}});
     project.nodes.append({secondSlaveId, master, Data::ProjectNodeKind::Slave, "Configured I/O"});
     controller.treeModel()->setProjects({project});
     const QModelIndex secondSlave = controller.treeModel()->indexForNodeId(secondSlaveId);
@@ -10548,14 +11161,13 @@ void EtherCATWorkbenchTests::testTwinCatProcessDataTree()
         > navigation.treeView()->header()->sectionSize(0));
     QVERIFY(compactSlave.data(Qt::ToolTipRole).toString().contains(longSlaveName));
     navigation.filterEdit()->setText("Controlword");
-    QTRY_VERIFY(findById(navigation.treeView()->model(), outputEntryViewId).isValid());
+    QTRY_VERIFY(!findById(navigation.treeView()->model(), outputEntryViewId).isValid());
     controller.selectionService()->setCurrentNodeId(outputEntryViewId);
-    QTRY_COMPARE(
-        navigation.treeView()
-            ->currentIndex()
-            .data(WorkbenchTreeModel::NodeIdRole)
-            .value<Data::NodeId>(),
-        outputEntryViewId);
+    QTRY_VERIFY(!navigation.treeView()->currentIndex().isValid());
+    QCOMPARE(controller.selectionService()->currentNodeId(), outputEntryViewId);
+    QCOMPARE(controller.treeModel()->contextForNodeId(outputEntryViewId).nodeId,
+             outputEntryViewId);
+    navigation.filterEdit()->clear();
 
     Data::ProjectSnapshot renamed = fixture.project;
     renamed.slaves.first().processData.pdos.first().name = "Renamed Command";
@@ -10901,7 +11513,9 @@ void EtherCATWorkbenchTests::testProcessDataRepositoryEmptyState()
                                          unsupportedPopulatedId,
                                          supportedInvalidId,
                                          unsupportedInvalidId}) {
-        QTRY_VERIFY(controller.treeModel()->indexForNodeId(deviceId).isValid());
+        QTRY_COMPARE(controller.treeModel()->contextForNodeId(deviceId).nodeId, deviceId);
+        QCOMPARE(controller.treeModel()->contextForNodeId(deviceId).nodeKind,
+                 Core::WorkbenchNodeKind::Device);
     }
 
     BuiltinPropertyPageProvider pages(&controller);
@@ -10973,12 +11587,10 @@ void EtherCATWorkbenchTests::testProcessDataRepositoryEmptyState()
         return inspectedCell ? QString() : QString("No repository table cell was inspected");
     };
 
-    const QModelIndex supportedEmptyIndex
-        = controller.treeModel()->indexForNodeId(supportedEmptyId);
     pages.updatePage(
         Constants::PROCESS_DATA_PAGE_ID,
         page.get(),
-        controller.treeModel()->contextForIndex(supportedEmptyIndex));
+        controller.treeModel()->contextForNodeId(supportedEmptyId));
     for (QTableView *table : tables)
         QCOMPARE(table->model()->rowCount(), 0);
     QVERIFY(summary->text().contains("No ESI Process Data mapping", Qt::CaseInsensitive));
@@ -11001,12 +11613,10 @@ void EtherCATWorkbenchTests::testProcessDataRepositoryEmptyState()
         QCOMPARE(table->toolTip(), table->accessibleDescription());
     }
 
-    const QModelIndex unsupportedEmptyIndex
-        = controller.treeModel()->indexForNodeId(unsupportedEmptyId);
     pages.updatePage(
         Constants::PROCESS_DATA_PAGE_ID,
         page.get(),
-        controller.treeModel()->contextForIndex(unsupportedEmptyIndex));
+        controller.treeModel()->contextForNodeId(unsupportedEmptyId));
     for (QTableView *table : tables)
         QCOMPARE(table->model()->rowCount(), 0);
     QVERIFY(summary->text().contains("No ESI Process Data mapping", Qt::CaseInsensitive));
@@ -11023,12 +11633,10 @@ void EtherCATWorkbenchTests::testProcessDataRepositoryEmptyState()
         QCOMPARE(table->toolTip(), table->accessibleDescription());
     }
 
-    const QModelIndex unsupportedPopulatedIndex
-        = controller.treeModel()->indexForNodeId(unsupportedPopulatedId);
     pages.updatePage(
         Constants::PROCESS_DATA_PAGE_ID,
         page.get(),
-        controller.treeModel()->contextForIndex(unsupportedPopulatedIndex));
+        controller.treeModel()->contextForNodeId(unsupportedPopulatedId));
     QCOMPARE(tables.first()->model()->rowCount(), 2);
     QVERIFY(tables.at(2)->model()->rowCount() > 0);
     QVERIFY(summary->text().contains("read-only preview", Qt::CaseInsensitive));
@@ -11047,12 +11655,10 @@ void EtherCATWorkbenchTests::testProcessDataRepositoryEmptyState()
     QString mutationFailure = repositoryTableMutationFailure();
     QVERIFY2(mutationFailure.isEmpty(), qPrintable(mutationFailure));
 
-    const QModelIndex supportedInvalidIndex
-        = controller.treeModel()->indexForNodeId(supportedInvalidId);
     pages.updatePage(
         Constants::PROCESS_DATA_PAGE_ID,
         page.get(),
-        controller.treeModel()->contextForIndex(supportedInvalidIndex));
+        controller.treeModel()->contextForNodeId(supportedInvalidId));
     QVERIFY(summary->text().contains("validation error", Qt::CaseInsensitive));
     QVERIFY(summary->text().contains("cannot be added", Qt::CaseInsensitive));
     QVERIFY(summary->text().contains("Device Repository", Qt::CaseInsensitive));
@@ -11073,12 +11679,10 @@ void EtherCATWorkbenchTests::testProcessDataRepositoryEmptyState()
     mutationFailure = repositoryTableMutationFailure();
     QVERIFY2(mutationFailure.isEmpty(), qPrintable(mutationFailure));
 
-    const QModelIndex unsupportedInvalidIndex
-        = controller.treeModel()->indexForNodeId(unsupportedInvalidId);
     pages.updatePage(
         Constants::PROCESS_DATA_PAGE_ID,
         page.get(),
-        controller.treeModel()->contextForIndex(unsupportedInvalidIndex));
+        controller.treeModel()->contextForNodeId(unsupportedInvalidId));
     QVERIFY(summary->text().contains("validation error", Qt::CaseInsensitive));
     QVERIFY(summary->text().contains("unsupported ESI", Qt::CaseInsensitive));
     QVERIFY(summary->text().contains("cannot be added", Qt::CaseInsensitive));
@@ -11118,12 +11722,10 @@ void EtherCATWorkbenchTests::testProcessDataRepositoryEmptyState()
         QCOMPARE(table->toolTip(), table->accessibleDescription());
     }
 
-    const QModelIndex supportedPopulatedIndex
-        = controller.treeModel()->indexForNodeId(supportedPopulatedId);
     pages.updatePage(
         Constants::PROCESS_DATA_PAGE_ID,
         page.get(),
-        controller.treeModel()->contextForIndex(supportedPopulatedIndex));
+        controller.treeModel()->contextForNodeId(supportedPopulatedId));
     QCOMPARE(tables.first()->model()->rowCount(), 2);
     QVERIFY(tables.at(2)->model()->rowCount() > 0);
     QVERIFY(summary->text().contains("Select a Sync Manager", Qt::CaseInsensitive));
@@ -11176,13 +11778,13 @@ void EtherCATWorkbenchTests::testProcessDataRepositoryEmptyState()
                                                    unsupportedEmptyId,
                                                    supportedInvalidId,
                                                    supportedPopulatedId}) {
-        const QModelIndex repositoryIndex
-            = controller.treeModel()->indexForNodeId(repositoryDeviceId);
-        QVERIFY(repositoryIndex.isValid());
+        const Core::PropertyPageContext repositoryContext
+            = controller.treeModel()->contextForNodeId(repositoryDeviceId);
+        QCOMPARE(repositoryContext.nodeId, repositoryDeviceId);
         pages.updatePage(
             Constants::PROCESS_DATA_PAGE_ID,
             page.get(),
-            controller.treeModel()->contextForIndex(repositoryIndex));
+            repositoryContext);
     }
     QCOMPARE(*projectService->project(recoveryProject.projectId), beforeRecovery);
     QCOMPARE(projectService->activeProjectId(), activeProjectBeforeBrowsing);
@@ -14499,7 +15101,9 @@ void EtherCATWorkbenchTests::testCoeAdvancedDialogRepositoryRefresh()
         return entry.typeName == "EL-COE-REFRESH";
     });
     QVERIFY(device != devices.cend());
-    QTRY_VERIFY(controller.treeModel()->indexForNodeId(device->id).isValid());
+    QTRY_COMPARE(controller.treeModel()->contextForNodeId(device->id).nodeId, device->id);
+    QCOMPARE(controller.treeModel()->contextForNodeId(device->id).nodeKind,
+             Core::WorkbenchNodeKind::Device);
 
     controller.selectionService()->setCurrentNodeId(device->id);
     DetailsView details(&controller);
@@ -15106,7 +15710,9 @@ void EtherCATWorkbenchTests::testStartupRepositoryEmptyState()
           unsupportedPopulatedId,
           supportedInvalidId,
           unsupportedInvalidId}) {
-        QTRY_VERIFY(controller.treeModel()->indexForNodeId(deviceId).isValid());
+        QTRY_COMPARE(controller.treeModel()->contextForNodeId(deviceId).nodeId, deviceId);
+        QCOMPARE(controller.treeModel()->contextForNodeId(deviceId).nodeKind,
+                 Core::WorkbenchNodeKind::Device);
     }
 
     BuiltinPropertyPageProvider pages(&controller);
@@ -15179,11 +15785,10 @@ void EtherCATWorkbenchTests::testStartupRepositoryEmptyState()
         return {};
     };
 
-    const QModelIndex supportedEmptyIndex = controller.treeModel()->indexForNodeId(supportedEmptyId);
     pages.updatePage(
         Constants::STARTUP_PAGE_ID,
         page.get(),
-        controller.treeModel()->contextForIndex(supportedEmptyIndex));
+        controller.treeModel()->contextForNodeId(supportedEmptyId));
     QCOMPARE(table->model()->rowCount(), 0);
     QVERIFY(!table->currentIndex().isValid());
     QVERIFY(summary->text().contains("No ESI Startup", Qt::CaseInsensitive));
@@ -15203,12 +15808,10 @@ void EtherCATWorkbenchTests::testStartupRepositoryEmptyState()
     QString controlFailure = verifyRepositoryControls();
     QVERIFY2(controlFailure.isEmpty(), qPrintable(controlFailure));
 
-    const QModelIndex unsupportedEmptyIndex = controller.treeModel()->indexForNodeId(
-        unsupportedEmptyId);
     pages.updatePage(
         Constants::STARTUP_PAGE_ID,
         page.get(),
-        controller.treeModel()->contextForIndex(unsupportedEmptyIndex));
+        controller.treeModel()->contextForNodeId(unsupportedEmptyId));
     QCOMPARE(table->model()->rowCount(), 0);
     QVERIFY(summary->text().contains("No ESI Startup", Qt::CaseInsensitive));
     QVERIFY(summary->text().contains("unsupported ESI", Qt::CaseInsensitive));
@@ -15225,12 +15828,10 @@ void EtherCATWorkbenchTests::testStartupRepositoryEmptyState()
     controlFailure = verifyRepositoryControls();
     QVERIFY2(controlFailure.isEmpty(), qPrintable(controlFailure));
 
-    const QModelIndex unsupportedPopulatedIndex = controller.treeModel()->indexForNodeId(
-        unsupportedPopulatedId);
     pages.updatePage(
         Constants::STARTUP_PAGE_ID,
         page.get(),
-        controller.treeModel()->contextForIndex(unsupportedPopulatedIndex));
+        controller.treeModel()->contextForNodeId(unsupportedPopulatedId));
     QCOMPARE(table->model()->rowCount(), 3);
     QVERIFY(summary->text().contains("read-only preview", Qt::CaseInsensitive));
     QVERIFY(summary->text().contains("unsupported ESI", Qt::CaseInsensitive));
@@ -15248,12 +15849,10 @@ void EtherCATWorkbenchTests::testStartupRepositoryEmptyState()
     QString mutationFailure = repositoryTableMutationFailure();
     QVERIFY2(mutationFailure.isEmpty(), qPrintable(mutationFailure));
 
-    const QModelIndex supportedInvalidIndex = controller.treeModel()->indexForNodeId(
-        supportedInvalidId);
     pages.updatePage(
         Constants::STARTUP_PAGE_ID,
         page.get(),
-        controller.treeModel()->contextForIndex(supportedInvalidIndex));
+        controller.treeModel()->contextForNodeId(supportedInvalidId));
     QCOMPARE(table->model()->rowCount(), 3);
     QVERIFY(summary->text().contains("validation error", Qt::CaseInsensitive));
     QVERIFY(summary->text().contains("cannot be added", Qt::CaseInsensitive));
@@ -15274,12 +15873,10 @@ void EtherCATWorkbenchTests::testStartupRepositoryEmptyState()
     mutationFailure = repositoryTableMutationFailure();
     QVERIFY2(mutationFailure.isEmpty(), qPrintable(mutationFailure));
 
-    const QModelIndex unsupportedInvalidIndex = controller.treeModel()->indexForNodeId(
-        unsupportedInvalidId);
     pages.updatePage(
         Constants::STARTUP_PAGE_ID,
         page.get(),
-        controller.treeModel()->contextForIndex(unsupportedInvalidIndex));
+        controller.treeModel()->contextForNodeId(unsupportedInvalidId));
     QCOMPARE(table->model()->rowCount(), 3);
     QVERIFY(summary->text().contains("validation error", Qt::CaseInsensitive));
     QVERIFY(summary->text().contains("unsupported ESI", Qt::CaseInsensitive));
@@ -15316,12 +15913,10 @@ void EtherCATWorkbenchTests::testStartupRepositoryEmptyState()
     QVERIFY(table->accessibleDescription().contains("Device Repository", Qt::CaseInsensitive));
     QCOMPARE(table->toolTip(), table->accessibleDescription());
 
-    const QModelIndex supportedPopulatedIndex = controller.treeModel()->indexForNodeId(
-        supportedPopulatedId);
     pages.updatePage(
         Constants::STARTUP_PAGE_ID,
         page.get(),
-        controller.treeModel()->contextForIndex(supportedPopulatedIndex));
+        controller.treeModel()->contextForNodeId(supportedPopulatedId));
     QCOMPARE(table->model()->rowCount(), 3);
     QVERIFY(summary->text().contains("ESI Startup requests", Qt::CaseInsensitive));
     QVERIFY(summary->text().contains("Add the device", Qt::CaseInsensitive));
@@ -15378,13 +15973,13 @@ void EtherCATWorkbenchTests::testStartupRepositoryEmptyState()
           unsupportedPopulatedId,
           supportedInvalidId,
           unsupportedInvalidId}) {
-        const QModelIndex repositoryIndex = controller.treeModel()->indexForNodeId(
-            repositoryDeviceId);
-        QVERIFY(repositoryIndex.isValid());
+        const Core::PropertyPageContext repositoryContext
+            = controller.treeModel()->contextForNodeId(repositoryDeviceId);
+        QCOMPARE(repositoryContext.nodeId, repositoryDeviceId);
         pages.updatePage(
             Constants::STARTUP_PAGE_ID,
             page.get(),
-            controller.treeModel()->contextForIndex(repositoryIndex));
+            repositoryContext);
     }
     QCOMPARE(*projectService->project(recoveryProject.projectId), beforeRecovery);
     QCOMPARE(projectService->activeProjectId(), activeProjectBeforeBrowsing);
@@ -16994,7 +17589,9 @@ void EtherCATWorkbenchTests::testDcRepositoryModePreview()
     QVERIFY(supportedPreviewDevice);
     QVERIFY(supportedPreviewDevice->summary.supported);
     QCOMPARE(supportedPreviewDevice->dcModes.size(), 2);
-    QTRY_VERIFY(controller.treeModel()->indexForNodeId(deviceId).isValid());
+    QTRY_COMPARE(controller.treeModel()->contextForNodeId(deviceId).nodeId, deviceId);
+    QCOMPARE(controller.treeModel()->contextForNodeId(deviceId).nodeKind,
+             Core::WorkbenchNodeKind::Device);
     controller.selectionService()->setCurrentNodeId(deviceId);
 
     DetailsView details(&controller);
@@ -17122,7 +17719,9 @@ void EtherCATWorkbenchTests::testDcRepositoryModeEmptyState()
     QVERIFY(supportedEmptyDevice);
     QVERIFY(supportedEmptyDevice->summary.supported);
     QVERIFY(supportedEmptyDevice->dcModes.isEmpty());
-    QTRY_VERIFY(controller.treeModel()->indexForNodeId(deviceId).isValid());
+    QTRY_COMPARE(controller.treeModel()->contextForNodeId(deviceId).nodeId, deviceId);
+    QCOMPARE(controller.treeModel()->contextForNodeId(deviceId).nodeKind,
+             Core::WorkbenchNodeKind::Device);
     controller.selectionService()->setCurrentNodeId(deviceId);
 
     DetailsView details(&controller);
@@ -20985,7 +21584,13 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
         QVERIFY(
             kind == Core::WorkbenchNodeKind::ConfiguredSlave
             || kind == Core::WorkbenchNodeKind::Module);
-        QCOMPARE(navigationModel->rowCount(visibleDevice), 0);
+        if (kind == Core::WorkbenchNodeKind::ConfiguredSlave) {
+            const QModelIndex modules = directChildByKind(
+                navigationModel, Core::WorkbenchNodeKind::Modules, visibleDevice);
+            QVERIFY(modules.isValid());
+        } else {
+            QCOMPARE(navigationModel->rowCount(visibleDevice), 0);
+        }
     }
 
     GeneralPage generalPage(&controller);
@@ -22479,7 +23084,7 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
 
     BuiltinPropertyPageProvider pages(&controller);
     const Core::PropertyPageContext masterContext = controller.treeModel()->contextForIndex(master);
-    QCOMPARE(pages.pages(masterContext).size(), 5);
+    QCOMPARE(pages.pages(masterContext).size(), 7);
 
     AvailableScanProvider scan;
     AvailableDiagnosticsProvider diagnosticsProvider;
@@ -22499,7 +23104,7 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
     QCOMPARE(compactStatus(diagnostics), QString("Available"));
     QCOMPARE(
         compactStatus(controller.treeModel()->index(1, 0, master)), QString("Available"));
-    QCOMPARE(pages.pages(masterContext).size(), 3);
+    QCOMPARE(pages.pages(masterContext).size(), 5);
 
     diagnosticsProvider.setAvailable(false);
     QTRY_VERIFY(!controller.diagnosticsAvailable());
@@ -22507,7 +23112,7 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
         fullStatus(diagnostics),
         QString("Local Mock test diagnostics unavailable"));
     QCOMPARE(compactStatus(diagnostics), QString("Unavailable"));
-    QCOMPARE(pages.pages(masterContext).size(), 5);
+    QCOMPARE(pages.pages(masterContext).size(), 7);
     diagnosticsProvider.setAvailable(true);
     QTRY_VERIFY(controller.diagnosticsAvailable());
 
