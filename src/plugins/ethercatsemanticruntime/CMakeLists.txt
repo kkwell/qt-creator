@@ -22,6 +22,8 @@ add_qtc_plugin(EtherCATSemanticRuntime
     runtimepackageevidence_p.h
     runtimepackageevidencerepository_p.cpp
     runtimepackageevidencerepository_p.h
+    semanticactiondefinitions_p.cpp
+    semanticactiondefinitions_p.h
     semanticbindingartifact_p.cpp
     semanticbindingartifact_p.h
     semanticruntimeexecutor.cpp
@@ -41,4 +43,9 @@ extend_qtc_plugin(EtherCATSemanticRuntime
     ethercatsemanticruntimetests.h
     testdata/api035-manifest.json
     testdata/api036-manifest.json
+    testdata/api038/eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub
+    testdata/api038/project.json
+    testdata/api038/semantic-action-definitions-v1.json
+    testdata/api038/semantic-binding-v2.json
+    testdata/api038/three-slave-manual-control-cfg3701.ecpkg
 )

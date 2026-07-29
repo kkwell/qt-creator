@@ -46,10 +46,14 @@ struct SignedEcpkgSemanticBindingSummary
     QByteArray resourceRecordsSha256;
     QByteArray resourceSectionSha256;
     QByteArray topologySha256;
+    quint16 actionDefinitionsFormatVersion = 0;
+    quint32 actionDefinitionCount = 0;
+    QByteArray actionDefinitionsSha256;
 };
 
 struct VerifiedSignedEcpkgManifest
 {
+    quint16 formatVersion = 0;
     EcpkgTrustClass trust = EcpkgTrustClass::Engineering;
     quint64 configurationId = 0;
     QByteArray packageSha256;
@@ -59,6 +63,7 @@ struct VerifiedSignedEcpkgManifest
     EcpkgDigestRecord configuration;
     EcpkgDigestRecord runtime;
     EcpkgDigestRecord compileReport;
+    std::optional<EcpkgDigestRecord> actionDefinitions;
     EcpkgDigestRecord compiledProjectSource;
     // This is only the signed manifest summary. The semantic artifact and ECFG resource
     // section still require independent verification before constructing a mapping proof.

@@ -83,6 +83,18 @@ Utils::Result<> validateEvidence(const VerifiedRuntimePackageEvidence &evidence)
         return evidenceError(
             QString::fromLatin1("the local proof differs from its verified semantic artifact"));
     }
+    if (evidence.actionDefinitions()) {
+        const VerifiedSemanticActionDefinitions &definitions
+            = *evidence.actionDefinitions();
+        if (!definitions.isValid()
+            || definitions.semanticBindingArtifactSha256 != artifact.artifactSha256
+            || definitions.definitionCount == 0
+            || definitions.actionCount != quint32(artifact.actions.size())) {
+            return evidenceError(
+                QString::fromLatin1(
+                    "the verified action definitions differ from the semantic artifact"));
+        }
+    }
     return Utils::ResultOk;
 }
 
@@ -171,7 +183,7 @@ bool VerifiedRuntimePackageEvidence::permitsWritableActions() const
 {
     return isValid() && m_semanticMappingProof.formatVersion == 2
            && m_semanticMappingProof.trust == Data::RuntimeSemanticMappingTrust::Production
-           && m_actionDefinitionsVerified
+           && m_actionDefinitions
            && m_semanticBindingArtifact.permitsWritableActions();
 }
 
@@ -194,11 +206,11 @@ VerifiedRuntimePackageEvidence::VerifiedRuntimePackageEvidence(
     VerifiedSemanticBindingArtifact artifact,
     Data::RuntimeSemanticMappingProof proof,
     QByteArray projectConfigurationSha256,
-    bool actionDefinitionsVerified)
+    std::optional<VerifiedSemanticActionDefinitions> actionDefinitions)
     : m_semanticBindingArtifact(std::move(artifact))
     , m_semanticMappingProof(std::move(proof))
     , m_projectConfigurationSha256(std::move(projectConfigurationSha256))
-    , m_actionDefinitionsVerified(actionDefinitionsVerified)
+    , m_actionDefinitions(std::move(actionDefinitions))
 {}
 
 const VerifiedSemanticBindingArtifact &
@@ -218,6 +230,12 @@ const QByteArray &VerifiedRuntimePackageEvidence::projectConfigurationSha256() c
     return m_projectConfigurationSha256;
 }
 
+const std::optional<VerifiedSemanticActionDefinitions> &
+VerifiedRuntimePackageEvidence::actionDefinitions() const
+{
+    return m_actionDefinitions;
+}
+
 Utils::Result<VerifiedRuntimePackageEvidence> verifyRuntimePackageEvidence(
     const VerifiedEcpkgPackage &package)
 {
@@ -234,6 +252,16 @@ Utils::Result<VerifiedRuntimePackageEvidence> verifyRuntimePackageEvidence(
     const Utils::Result<> identityResult = validatePackageAndArtifact(package, *artifact);
     if (!identityResult)
         return evidenceError(identityResult.error());
+
+    std::optional<VerifiedSemanticActionDefinitions> actionDefinitions;
+    if (package.manifest.formatVersion == 2) {
+        Utils::Result<VerifiedSemanticActionDefinitions> verifiedDefinitions
+            = verifySemanticActionDefinitions(
+                package.container, package.manifest, *artifact);
+        if (!verifiedDefinitions)
+            return evidenceError(verifiedDefinitions.error());
+        actionDefinitions = std::move(*verifiedDefinitions);
+    }
 
     const SignedEcpkgSemanticBindingSummary &summary = *package.manifest.semanticBinding;
     Data::RuntimeSemanticMappingProof proof;
@@ -257,11 +285,7 @@ Utils::Result<VerifiedRuntimePackageEvidence> verifyRuntimePackageEvidence(
         std::move(*artifact),
         std::move(proof),
         package.manifest.compiledProjectSource.sha256,
-        // Semantic binding v2 carries action-definition digests, but the
-        // current signed package does not carry the canonical definition
-        // projection needed to recompute those digests independently. Keep
-        // writes fail closed until that companion evidence is verified.
-        false,
+        std::move(actionDefinitions),
     };
     const Utils::Result<> resultValidation = validateEvidence(result);
     if (!resultValidation)

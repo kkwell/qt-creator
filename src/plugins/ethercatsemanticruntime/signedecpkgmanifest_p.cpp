@@ -26,6 +26,11 @@ constexpr qsizetype maximumCompileReportBytes = 8 * 1024 * 1024;
 constexpr qsizetype maximumSourceBytes = 16 * 1024 * 1024;
 constexpr qsizetype publicKeyBytes = 32;
 constexpr qsizetype signatureBytes = 64;
+constexpr quint16 ecpkgManifestFormatVersion2 = 2;
+constexpr std::string_view actionDefinitionsPayloadName
+    = "semantic-action-definitions-v1.json";
+constexpr std::string_view actionDefinitionsPayloadMediaType
+    = "application/vnd.kvell.ethercat.semantic-action-definitions-v1+json";
 
 constexpr std::array<std::string_view, 4> payloadNames{
     "capability.bin",
@@ -51,10 +56,12 @@ constexpr std::array<std::string_view, 5> sourceNames{
 
 struct ParsedManifest
 {
+    quint16 formatVersion = 0;
     bool production = false;
     quint64 configurationId = 0;
     QByteArray signingKeyId;
     std::array<EcpkgDigestRecord, payloadNames.size()> payloads;
+    std::optional<EcpkgDigestRecord> actionDefinitions;
     std::array<EcpkgDigestRecord, sourceNames.size()> sources;
     std::optional<SignedEcpkgSemanticBindingSummary> semanticBinding;
 };
@@ -748,8 +755,14 @@ bool validateSources(const StrictJson &value, ParsedManifest *result, QString *e
 bool validatePayloads(const StrictJson &value, ParsedManifest *result, QString *error)
 {
     const QString path = QString::fromLatin1("$.payloads");
-    if (!value.is_array() || value.size() != payloadNames.size()) {
-        *error = QString::fromLatin1("%1 must contain exactly four payload records").arg(path);
+    const std::size_t expectedCount
+        = result->formatVersion == ecpkgManifestFormatVersion2
+              ? payloadNames.size() + 1
+              : payloadNames.size();
+    if (!value.is_array() || value.size() != expectedCount) {
+        *error = QString::fromLatin1("%1 must contain exactly %2 payload records")
+                     .arg(path)
+                     .arg(qulonglong(expectedCount));
         return false;
     }
 
@@ -781,27 +794,84 @@ bool validatePayloads(const StrictJson &value, ParsedManifest *result, QString *
         readUnsigned(record.at("bytes"), std::numeric_limits<quint32>::max(), &bytes);
         result->payloads[index].bytes = quint32(bytes);
     }
+
+    if (result->formatVersion == ecpkgManifestFormatVersion2) {
+        const StrictJson &record = value[payloadNames.size()];
+        const QString itemPath
+            = path + QString::fromLatin1("[%1]").arg(qulonglong(payloadNames.size()));
+        EcpkgDigestRecord actionDefinitions;
+        if (!hasExactFields(
+                record, itemPath, {"name", "bytes", "sha256", "media_type"}, error)
+            || !validateConstantString(
+                record.at("name"),
+                actionDefinitionsPayloadName,
+                itemPath + ".name",
+                error)
+            || !validateUnsigned(
+                record.at("bytes"),
+                1,
+                std::numeric_limits<quint32>::max(),
+                itemPath + ".bytes",
+                error)
+            || !readSha256(
+                record.at("sha256"),
+                itemPath + ".sha256",
+                &actionDefinitions.sha256,
+                error)
+            || !validateConstantString(
+                record.at("media_type"),
+                actionDefinitionsPayloadMediaType,
+                itemPath + ".media_type",
+                error)) {
+            return false;
+        }
+        quint64 bytes = 0;
+        readUnsigned(record.at("bytes"), std::numeric_limits<quint32>::max(), &bytes);
+        actionDefinitions.bytes = quint32(bytes);
+        result->actionDefinitions = std::move(actionDefinitions);
+    }
     return true;
 }
 
 bool validateSemanticBinding(
     const StrictJson &value,
+    quint16 manifestFormatVersion,
     SignedEcpkgSemanticBindingSummary *result,
     QString *error)
 {
     const QString path = QString::fromLatin1("$.semantic_binding");
-    if (!hasExactFields(
-            value,
-            path,
-            {"format_version",
-             "binding_count",
-             "catalog_revision",
-             "topology_identity",
-             "artifact_sha256",
-             "resource_records_sha256",
-             "resource_section_sha256",
-             "topology_sha256"},
-            error)
+    const bool actionDefinitionsRequired
+        = manifestFormatVersion == ecpkgManifestFormatVersion2;
+    const bool fieldsValid
+        = actionDefinitionsRequired
+              ? hasExactFields(
+                  value,
+                  path,
+                  {"format_version",
+                   "binding_count",
+                   "catalog_revision",
+                   "topology_identity",
+                   "artifact_sha256",
+                   "resource_records_sha256",
+                   "resource_section_sha256",
+                   "topology_sha256",
+                   "action_definitions_format_version",
+                   "action_definition_count",
+                   "action_definitions_sha256"},
+                  error)
+              : hasExactFields(
+                  value,
+                  path,
+                  {"format_version",
+                   "binding_count",
+                   "catalog_revision",
+                   "topology_identity",
+                   "artifact_sha256",
+                   "resource_records_sha256",
+                   "resource_section_sha256",
+                   "topology_sha256"},
+                  error);
+    if (!fieldsValid
         || !validateUnsigned(value.at("format_version"), 1, 2, path + ".format_version", error)
         || !validateUnsigned(
             value.at("binding_count"), 1, 8192, path + ".binding_count", error)
@@ -854,6 +924,44 @@ bool validateSemanticBinding(
         &result->topologyIdentity);
     result->formatVersion = quint16(formatVersion);
     result->bindingCount = quint32(bindingCount);
+
+    if (actionDefinitionsRequired) {
+        quint64 actionDefinitionsFormatVersion = 0;
+        quint64 actionDefinitionCount = 0;
+        if (result->formatVersion != 2
+            || !validateUnsigned(
+                value.at("action_definitions_format_version"),
+                1,
+                1,
+                path + ".action_definitions_format_version",
+                error)
+            || !validateUnsigned(
+                value.at("action_definition_count"),
+                1,
+                4096,
+                path + ".action_definition_count",
+                error)
+            || !readSha256(
+                value.at("action_definitions_sha256"),
+                path + ".action_definitions_sha256",
+                &result->actionDefinitionsSha256,
+                error)) {
+            if (error->isEmpty()) {
+                *error = QString::fromLatin1(
+                             "%1 must describe semantic binding format 2 action definitions")
+                             .arg(path);
+            }
+            return false;
+        }
+        readUnsigned(
+            value.at("action_definitions_format_version"),
+            1,
+            &actionDefinitionsFormatVersion);
+        readUnsigned(value.at("action_definition_count"), 4096, &actionDefinitionCount);
+        result->actionDefinitionsFormatVersion
+            = quint16(actionDefinitionsFormatVersion);
+        result->actionDefinitionCount = quint32(actionDefinitionCount);
+    }
     return true;
 }
 
@@ -873,6 +981,7 @@ bool validateSignature(const StrictJson &value, ParsedManifest *result, QString 
 bool validateManifestSchema(
     const StrictJson &manifest, ParsedManifest *result, QString *error)
 {
+    quint64 formatVersion = 0;
     if (!hasExactFields(
             manifest,
             QString::fromLatin1("$"),
@@ -892,10 +1001,17 @@ bool validateManifestSchema(
         || !validateConstantString(
             manifest.at("format"), "ethercat-ecpkg", QString::fromLatin1("$.format"), error)
         || !validateUnsigned(
-            manifest.at("format_version"), 1, 1, QString::fromLatin1("$.format_version"), error)
+            manifest.at("format_version"), 1, 2, QString::fromLatin1("$.format_version"), error)
         || !readBoolean(manifest.at("production"), &result->production)) {
         if (error->isEmpty())
             *error = QString::fromLatin1("$.production must be boolean");
+        return false;
+    }
+    readUnsigned(manifest.at("format_version"), 2, &formatVersion);
+    result->formatVersion = quint16(formatVersion);
+    if (result->formatVersion == ecpkgManifestFormatVersion2 && !result->production) {
+        *error = QString::fromLatin1(
+            "$.production must be true for ECPKG manifest format 2");
         return false;
     }
 
@@ -912,9 +1028,26 @@ bool validateManifestSchema(
 
     if (containsField(manifest, "semantic_binding")) {
         SignedEcpkgSemanticBindingSummary semanticBinding;
-        if (!validateSemanticBinding(manifest.at("semantic_binding"), &semanticBinding, error))
+        if (!validateSemanticBinding(
+                manifest.at("semantic_binding"),
+                result->formatVersion,
+                &semanticBinding,
+                error)) {
             return false;
+        }
         result->semanticBinding = std::move(semanticBinding);
+    }
+    if (result->formatVersion == ecpkgManifestFormatVersion2) {
+        if (!result->semanticBinding || !result->actionDefinitions
+            || result->semanticBinding->formatVersion != 2
+            || result->semanticBinding->actionDefinitionsFormatVersion != 1
+            || !result->semanticBinding->actionDefinitionCount
+            || result->semanticBinding->actionDefinitionsSha256
+                   != result->actionDefinitions->sha256) {
+            *error = QString::fromLatin1(
+                "ECPKG manifest format 2 has inconsistent semantic action definitions");
+            return false;
+        }
     }
     return true;
 }
@@ -1018,6 +1151,37 @@ bool validateSourceBindings(
     } else if (reportHasSemanticArtifact || reportHasSemanticDigest) {
         *error = QString::fromLatin1(
             "$.compile_report declares semantic bindings absent from the signed manifest");
+        return false;
+    }
+
+    const bool reportHasActionDefinitions
+        = containsField(report, "semantic_action_definitions_manifest");
+    const bool reportHasActionDefinitionsDigest
+        = containsField(report, "semantic_action_definitions_sha256");
+    if (manifest.formatVersion == ecpkgManifestFormatVersion2) {
+        QByteArray reportDigest;
+        if (!manifest.semanticBinding || !manifest.actionDefinitions
+            || !reportHasActionDefinitions
+            || !report.at("semantic_action_definitions_manifest").is_object()
+            || !reportHasActionDefinitionsDigest
+            || !readSha256(
+                report.at("semantic_action_definitions_sha256"),
+                QString::fromLatin1(
+                    "$.compile_report.semantic_action_definitions_sha256"),
+                &reportDigest,
+                error)
+            || reportDigest != manifest.actionDefinitions->sha256
+            || reportDigest != manifest.semanticBinding->actionDefinitionsSha256) {
+            if (error->isEmpty()) {
+                *error = QString::fromLatin1(
+                    "$.compile_report semantic action definitions differ from the signed "
+                    "manifest summary");
+            }
+            return false;
+        }
+    } else if (reportHasActionDefinitions || reportHasActionDefinitionsDigest) {
+        *error = QString::fromLatin1(
+            "$.compile_report declares semantic action definitions in ECPKG format 1");
         return false;
     }
     return true;
@@ -1184,6 +1348,11 @@ bool validateContainerFields(const EcpkgContainer &container, QString *error)
         *error = QString::fromLatin1("compile_report.json has an invalid size");
         return false;
     }
+    if (container.semanticActionDefinitionsJson.size() > maximumCompileReportBytes) {
+        *error = QString::fromLatin1(
+            "semantic-action-definitions-v1.json exceeds its size limit");
+        return false;
+    }
     if (container.manifestSignature.size() != signatureBytes) {
         *error = QString::fromLatin1("manifest.sig is not exactly 64 bytes");
         return false;
@@ -1209,6 +1378,15 @@ Utils::Result<VerifiedSignedEcpkgManifest> verifySignedEcpkgManifest(
     if (!validateManifestSchema(*manifest, &parsed, &validationError))
         return invalidManifest(validationError);
 
+    const bool containerHasActionDefinitions
+        = !container.semanticActionDefinitionsJson.isEmpty();
+    if (containerHasActionDefinitions
+        != (parsed.formatVersion == ecpkgManifestFormatVersion2)) {
+        return invalidManifest(
+            QString::fromLatin1(
+                "the canonical container shape does not match the manifest format version"));
+    }
+
     const std::array<QByteArrayView, 4> payloads{
         container.capabilityBin,
         container.configurationEcfg,
@@ -1220,6 +1398,14 @@ Utils::Result<VerifiedSignedEcpkgManifest> verifySignedEcpkgManifest(
                 parsed.payloads[index], payloads[index], payloadNames[index], &validationError)) {
             return invalidManifest(validationError);
         }
+    }
+    if (parsed.actionDefinitions
+        && !validatePayloadRecord(
+            *parsed.actionDefinitions,
+            container.semanticActionDefinitionsJson,
+            actionDefinitionsPayloadName,
+            &validationError)) {
+        return invalidManifest(validationError);
     }
 
     Utils::Result<StrictJson> report
@@ -1247,6 +1433,7 @@ Utils::Result<VerifiedSignedEcpkgManifest> verifySignedEcpkgManifest(
     }
 
     VerifiedSignedEcpkgManifest result;
+    result.formatVersion = parsed.formatVersion;
     result.trust = trust;
     result.configurationId = parsed.configurationId;
     result.packageSha256 = container.packageSha256;
@@ -1257,6 +1444,7 @@ Utils::Result<VerifiedSignedEcpkgManifest> verifySignedEcpkgManifest(
     result.configuration = parsed.payloads[1];
     result.runtime = parsed.payloads[2];
     result.compileReport = parsed.payloads[3];
+    result.actionDefinitions = std::move(parsed.actionDefinitions);
     result.compiledProjectSource = parsed.sources[4];
     result.semanticBinding = std::move(parsed.semanticBinding);
     return result;

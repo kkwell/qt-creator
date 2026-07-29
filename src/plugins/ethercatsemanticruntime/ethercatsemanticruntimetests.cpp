@@ -10,6 +10,7 @@
 #include "readonlysemanticbindingfactory_p.h"
 #include "runtimepackageevidence_p.h"
 #include "runtimepackageevidencerepository_p.h"
+#include "semanticactiondefinitions_p.h"
 #include "semanticbindingartifact_p.h"
 #include "semanticruntimeexecutor.h"
 #include "signedecpkgmanifest_p.h"
@@ -2351,6 +2352,243 @@ void EtherCATSemanticRuntimeTests::testSemanticBindingV2ParserGuards()
     QVERIFY(!isValidSemanticMaskedWaitCondition(0, 0, 8));
     QVERIFY(!isValidSemanticMaskedWaitCondition(0x0f, 0x10, 8));
     QVERIFY(!isValidSemanticMaskedWaitCondition(0x10, 0, 4));
+}
+
+void EtherCATSemanticRuntimeTests::testSemanticActionDefinitionsProductionPackage()
+{
+    const QByteArray packageBytes = readTestData(
+        "testdata/api038/three-slave-manual-control-cfg3701.ecpkg");
+    const QByteArray projectBytes = readTestData("testdata/api038/project.json");
+    const QByteArray companionBytes = readTestData(
+        "testdata/api038/semantic-action-definitions-v1.json");
+    const QByteArray artifactBytes = readTestData(
+        "testdata/api038/semantic-binding-v2.json");
+    const QByteArray publicKey = readTestData(
+        "testdata/api038/"
+        "eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub");
+    QVERIFY(!packageBytes.isEmpty());
+    QVERIFY(!projectBytes.isEmpty());
+    QVERIFY(!companionBytes.isEmpty());
+    QVERIFY(!artifactBytes.isEmpty());
+    QCOMPARE(publicKey.size(), qsizetype(32));
+    QCOMPARE(packageBytes.size(), qsizetype(391667));
+    QCOMPARE(
+        QCryptographicHash::hash(packageBytes, QCryptographicHash::Sha256),
+        fromHex("d0b8edd70b5ecec53252ac4b09dc9665ac82b91178d18e2d94222b9a538165d0"));
+    QCOMPARE(
+        QCryptographicHash::hash(companionBytes, QCryptographicHash::Sha256),
+        fromHex("f056912152f5c97e8306c5391118938fce93aee6768c7d35af2350533c72c210"));
+    QCOMPARE(
+        QCryptographicHash::hash(artifactBytes, QCryptographicHash::Sha256),
+        fromHex("a24a040d96a876fd4ac2753219aaa071d9fbbfb0a7db80d3adcb83872ec1f6e2"));
+
+    const Utils::Result<EcpkgContainer> container
+        = parseCanonicalEcpkgContainer(packageBytes);
+    QVERIFY_RESULT(container);
+    QCOMPARE(container->semanticActionDefinitionsJson, companionBytes);
+
+    const QList<EcpkgTrustedPublicKey> trust{
+        {publicKey, EcpkgTrustClass::Production},
+    };
+    const Utils::Result<VerifiedSignedEcpkgManifest> manifest
+        = verifySignedEcpkgManifest(*container, trust);
+    QVERIFY_RESULT(manifest);
+    QCOMPARE(manifest->formatVersion, quint16(2));
+    QCOMPARE(
+        manifest->manifestSha256,
+        fromHex("930da674dd20f2d6d14dc37a39eff3d163687d330cfd898b8f36769d334729f7"));
+    QVERIFY(manifest->actionDefinitions.has_value());
+    QVERIFY(manifest->semanticBinding.has_value());
+    QCOMPARE(manifest->semanticBinding->actionDefinitionsFormatVersion, quint16(1));
+    QCOMPARE(manifest->semanticBinding->actionDefinitionCount, quint32(5));
+    QCOMPARE(
+        manifest->semanticBinding->actionDefinitionsSha256,
+        fromHex("f056912152f5c97e8306c5391118938fce93aee6768c7d35af2350533c72c210"));
+
+    const Utils::Result<VerifiedEcpkgPackage> package
+        = verifyProductionEcpkg(packageBytes, trust, projectBytes);
+    QVERIFY_RESULT(package);
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidence
+        = verifyRuntimePackageEvidence(*package);
+    QVERIFY_RESULT(evidence);
+    QVERIFY(evidence->isValid());
+    QVERIFY(evidence->actionDefinitions().has_value());
+    QVERIFY(evidence->actionDefinitions()->isValid());
+    QCOMPARE(evidence->actionDefinitions()->definitionCount, quint32(5));
+    QCOMPARE(evidence->actionDefinitions()->actionCount, quint32(8));
+    QVERIFY(evidence->permitsWritableActions());
+
+    QVERIFY(evidence->invocableAction(
+        u"embedlabs:project:action:xb6:set-outputs", false));
+    QVERIFY(evidence->invocableAction(
+        u"embedlabs:project:action:xb6:clear-outputs", false));
+    QVERIFY(!evidence->invocableAction(
+        u"embedlabs:project:action:axis0:prepare-csv", true));
+    QVERIFY(!evidence->invocableAction(
+        u"embedlabs:project:action:axis0:set-csv-velocity", true));
+    QVERIFY(!evidence->invocableAction(
+        u"embedlabs:project:action:axis1:stop-csv", true));
+}
+
+void EtherCATSemanticRuntimeTests::testSemanticActionDefinitionsRejectsMismatches()
+{
+    const QByteArray packageBytes = readTestData(
+        "testdata/api038/three-slave-manual-control-cfg3701.ecpkg");
+    const QByteArray projectBytes = readTestData("testdata/api038/project.json");
+    const QByteArray publicKey = readTestData(
+        "testdata/api038/"
+        "eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub");
+    const QList<EcpkgTrustedPublicKey> trust{
+        {publicKey, EcpkgTrustClass::Production},
+    };
+    const Utils::Result<VerifiedEcpkgPackage> package
+        = verifyProductionEcpkg(packageBytes, trust, projectBytes);
+    QVERIFY_RESULT(package);
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidence
+        = verifyRuntimePackageEvidence(*package);
+    QVERIFY_RESULT(evidence);
+
+    const Utils::Result<StrictJson> originalCompanion = parseCanonicalJson(
+        package->container.semanticActionDefinitionsJson,
+        defaultMaximumSemanticActionDefinitionsBytes);
+    const Utils::Result<StrictJson> originalReport = parseStrictJson(
+        package->container.compileReportJson,
+        defaultMaximumSemanticCompileReportBytes);
+    QVERIFY_RESULT(originalCompanion);
+    QVERIFY_RESULT(originalReport);
+
+    const auto rebuild = [&package, &evidence, &originalReport](
+                             StrictJson companion,
+                             bool updateReport = true,
+                             const VerifiedSemanticBindingArtifact *artifact
+                             = nullptr) -> Utils::Result<VerifiedSemanticActionDefinitions> {
+        const Utils::Result<QByteArray> canonical
+            = serializeCanonicalJson(companion, defaultMaximumSemanticActionDefinitionsBytes);
+        if (!canonical)
+            return Utils::ResultError(canonical.error());
+
+        EcpkgContainer container = package->container;
+        container.semanticActionDefinitionsJson = *canonical;
+        VerifiedSignedEcpkgManifest manifest = package->manifest;
+        const QByteArray digest = QCryptographicHash::hash(*canonical, QCryptographicHash::Sha256);
+        manifest.actionDefinitions->bytes = quint32(canonical->size());
+        manifest.actionDefinitions->sha256 = digest;
+        manifest.semanticBinding->actionDefinitionsSha256 = digest;
+        const StrictJson &count = companion.at("definition_count");
+        const quint64 definitionCount = count.is_number_unsigned() ? count.get<quint64>()
+                                                                   : quint64(count.get<qint64>());
+        manifest.semanticBinding->actionDefinitionCount = quint32(definitionCount);
+
+        if (updateReport) {
+            StrictJson report = *originalReport;
+            report["semantic_action_definitions_manifest"] = companion;
+            report["semantic_action_definitions_sha256"] = digest.toHex().toStdString();
+            std::string reportText = report.dump(2);
+            reportText.push_back('\n');
+            container.compileReportJson
+                = QByteArray(reportText.data(), qsizetype(reportText.size()));
+        }
+        return verifySemanticActionDefinitions(
+            container, manifest, artifact ? *artifact : evidence->semanticBindingArtifact());
+    };
+    const auto resignDefinition = [](StrictJson &companion,
+                                     std::size_t definitionIndex,
+                                     VerifiedSemanticBindingArtifact *artifact) {
+        StrictJson &record = companion["definitions"][definitionIndex];
+        const Utils::Result<QByteArray> canonical = serializeCanonicalJson(
+            record["definition"], defaultMaximumSemanticActionDefinitionsBytes);
+        if (!canonical)
+            return canonical;
+        const QByteArray digest = QCryptographicHash::hash(*canonical, QCryptographicHash::Sha256);
+        record["action_definition_sha256"] = digest.toHex().toStdString();
+        const QString definitionId = QString::fromStdString(
+            record["action_definition_id"].get<std::string>());
+        for (VerifiedSemanticAction &action : artifact->actions) {
+            if (action.actionDefinitionId == definitionId)
+                action.actionDefinitionSha256 = digest;
+        }
+        return canonical;
+    };
+
+    StrictJson staleConstant = *originalCompanion;
+    staleConstant["definitions"][4]["definition"]["steps"][0]["assignments"][0]["value_source"]
+                 ["value"]
+        = 1;
+    QVERIFY(!rebuild(std::move(staleConstant)));
+
+    StrictJson resignedConstant = *originalCompanion;
+    StrictJson &changedConstantDefinition = resignedConstant["definitions"][4]["definition"];
+    changedConstantDefinition["steps"][0]["assignments"][0]["value_source"]["value"] = 1;
+    const Utils::Result<QByteArray> changedConstantCanonical = serializeCanonicalJson(
+        changedConstantDefinition, defaultMaximumSemanticActionDefinitionsBytes);
+    QVERIFY_RESULT(changedConstantCanonical);
+    resignedConstant["definitions"][4]["action_definition_sha256"]
+        = QCryptographicHash::hash(*changedConstantCanonical, QCryptographicHash::Sha256)
+              .toHex()
+              .toStdString();
+    QVERIFY(!rebuild(std::move(resignedConstant)));
+
+    VerifiedSemanticBindingArtifact wrongPdoProfile = evidence->semanticBindingArtifact();
+    wrongPdoProfile.topologyInstances[0].pdoProfile = QStringLiteral("different_profile");
+    QVERIFY(!rebuild(*originalCompanion, true, &wrongPdoProfile));
+
+    StrictJson changedLocalGroup = *originalCompanion;
+    VerifiedSemanticBindingArtifact changedLocalGroupArtifact = evidence->semanticBindingArtifact();
+    changedLocalGroup["definitions"][0]["definition"]["steps"][2]["consistency_group"]
+        = "different_group";
+    QVERIFY_RESULT(resignDefinition(changedLocalGroup, 0, &changedLocalGroupArtifact));
+    QVERIFY(!rebuild(std::move(changedLocalGroup), true, &changedLocalGroupArtifact));
+
+    StrictJson changedStepKind = *originalCompanion;
+    VerifiedSemanticBindingArtifact changedStepKindArtifact = evidence->semanticBindingArtifact();
+    StrictJson &waitStep = changedStepKind["definitions"][0]["definition"]["steps"][1];
+    waitStep.erase("mask");
+    waitStep.erase("value");
+    waitStep["kind"] = "wait_absolute_limit";
+    waitStep["limit"] = 10;
+    QVERIFY_RESULT(resignDefinition(changedStepKind, 0, &changedStepKindArtifact));
+    QVERIFY(!rebuild(std::move(changedStepKind), true, &changedStepKindArtifact));
+
+    StrictJson duplicateDefinition = *originalCompanion;
+    duplicateDefinition["definitions"][1]["action_definition_id"]
+        = duplicateDefinition["definitions"][0]["action_definition_id"];
+    duplicateDefinition["definitions"][1]["definition"]["definition_id"]
+        = duplicateDefinition["definitions"][0]["definition"]["definition_id"];
+    QVERIFY(!rebuild(std::move(duplicateDefinition)));
+
+    StrictJson missingDefinition = *originalCompanion;
+    missingDefinition["definitions"].erase(missingDefinition["definitions"].begin());
+    missingDefinition["definition_count"] = missingDefinition["definitions"].size();
+    QVERIFY(!rebuild(std::move(missingDefinition)));
+
+    StrictJson differentArtifact = *originalCompanion;
+    differentArtifact["semantic_binding_artifact_sha256"] = std::string(64, '0');
+    QVERIFY(!rebuild(std::move(differentArtifact)));
+
+    EcpkgContainer mismatchedReportContainer = package->container;
+    StrictJson mismatchedReport = *originalReport;
+    mismatchedReport["semantic_action_definitions_manifest"]["action_count"] = 7;
+    std::string mismatchedReportText = mismatchedReport.dump(2);
+    mismatchedReportText.push_back('\n');
+    mismatchedReportContainer.compileReportJson
+        = QByteArray(mismatchedReportText.data(), qsizetype(mismatchedReportText.size()));
+    QVERIFY(!verifySemanticActionDefinitions(
+        mismatchedReportContainer, package->manifest, evidence->semanticBindingArtifact()));
+
+    EcpkgContainer noncanonicalContainer = package->container;
+    QByteArray noncanonical = noncanonicalContainer.semanticActionDefinitionsJson;
+    noncanonical.insert(1, ' ');
+    noncanonicalContainer.semanticActionDefinitionsJson = noncanonical;
+    VerifiedSignedEcpkgManifest noncanonicalManifest = package->manifest;
+    const QByteArray noncanonicalDigest
+        = QCryptographicHash::hash(noncanonical, QCryptographicHash::Sha256);
+    noncanonicalManifest.actionDefinitions->bytes = quint32(noncanonical.size());
+    noncanonicalManifest.actionDefinitions->sha256 = noncanonicalDigest;
+    noncanonicalManifest.semanticBinding->actionDefinitionsSha256 = noncanonicalDigest;
+    QVERIFY(!verifySemanticActionDefinitions(
+        noncanonicalContainer,
+        noncanonicalManifest,
+        evidence->semanticBindingArtifact()));
 }
 
 void EtherCATSemanticRuntimeTests::testVerifiedEcpkgStore()

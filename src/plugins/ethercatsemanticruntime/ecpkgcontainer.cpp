@@ -29,21 +29,26 @@ constexpr qsizetype manifestMaximumBytes = 1024 * 1024;
 constexpr qsizetype innerPayloadMaximumBytes = 2 * 1024 * 1024;
 constexpr qsizetype compileReportMaximumBytes = 8 * 1024 * 1024;
 constexpr qsizetype signatureBytes = 64;
+constexpr std::size_t v1EntryCount = 6;
+constexpr std::size_t v2EntryCount = 7;
+constexpr std::size_t signatureEntryIndex = 6;
 
-constexpr std::array<std::string_view, 6> entryNames{
+constexpr std::array<std::string_view, v2EntryCount> entryNames{
     "manifest.json",
     "capability.bin",
     "configuration.ecfg",
     "runtime.erun",
     "compile_report.json",
+    "semantic-action-definitions-v1.json",
     "manifest.sig",
 };
 
-constexpr std::array<qsizetype, 6> entryMaximumBytes{
+constexpr std::array<qsizetype, v2EntryCount> entryMaximumBytes{
     manifestMaximumBytes,
     innerPayloadMaximumBytes,
     innerPayloadMaximumBytes,
     innerPayloadMaximumBytes,
+    compileReportMaximumBytes,
     compileReportMaximumBytes,
     signatureBytes,
 };
@@ -88,8 +93,7 @@ quint32 zipCrc32(QByteArrayView bytes)
 
 Utils::ResultError invalidContainer(const char *detail)
 {
-    return Utils::ResultError(
-        QString::fromLatin1("Invalid canonical ECPKG container: %1")
+    return Utils::ResultError(QString::fromLatin1("Invalid canonical ECPKG container: %1")
             .arg(QString::fromLatin1(detail)));
 }
 
@@ -119,10 +123,11 @@ Utils::Result<EcpkgContainer> parseCanonicalEcpkgContainer(
         return invalidContainer("the end-of-central-directory record is truncated");
 
     const quint64 endOffset = packageBytes - endOfCentralDirectoryBytes;
+    const quint16 entryCount = readLe16(package, endOffset + 8);
     if (readLe32(package, endOffset) != endOfCentralDirectoryMagic
         || readLe16(package, endOffset + 4) != 0 || readLe16(package, endOffset + 6) != 0
-        || readLe16(package, endOffset + 8) != entryNames.size()
-        || readLe16(package, endOffset + 10) != entryNames.size()
+        || (entryCount != v1EntryCount && entryCount != v2EntryCount)
+        || readLe16(package, endOffset + 10) != entryCount
         || readLe16(package, endOffset + 20) != 0) {
         return invalidContainer("the end-of-central-directory record is noncanonical");
     }
@@ -136,12 +141,15 @@ Utils::Result<EcpkgContainer> parseCanonicalEcpkgContainer(
         return invalidContainer("the central-directory range is invalid");
     }
 
-    std::array<QByteArray, entryNames.size()> payloads;
+    std::array<QByteArray, v2EntryCount> payloads;
     quint64 centralCursor = centralOffset;
     quint64 expectedLocalOffset = 0;
 
-    for (std::size_t index = 0; index < entryNames.size(); ++index) {
-        const std::string_view expectedName = entryNames[index];
+    for (std::size_t index = 0; index < entryCount; ++index) {
+        const std::size_t entryIndex = entryCount == v1EntryCount && index == v1EntryCount - 1
+                                           ? signatureEntryIndex
+                                           : index;
+        const std::string_view expectedName = entryNames[entryIndex];
         if (!containsRange(endOffset, centralCursor, centralHeaderBytes))
             return invalidContainer("a central-directory header is truncated");
 
@@ -174,9 +182,9 @@ Utils::Result<EcpkgContainer> parseCanonicalEcpkgContainer(
             || !bytesEqual(package, centralCursor + centralHeaderBytes, expectedName)) {
             return invalidContainer("the central-directory entry name or order is invalid");
         }
-        if (centralUncompressedBytes > entryMaximumBytes[index])
+        if (centralUncompressedBytes > entryMaximumBytes[entryIndex])
             return invalidContainer("an entry exceeds its canonical size limit");
-        if (index == entryNames.size() - 1 && centralUncompressedBytes != signatureBytes)
+        if (entryIndex == signatureEntryIndex && centralUncompressedBytes != signatureBytes)
             return invalidContainer("manifest.sig is not exactly 64 bytes");
         if (localOffset != expectedLocalOffset
             || !containsRange(centralOffset, localOffset, localHeaderBytes + centralNameBytes)) {
@@ -211,7 +219,7 @@ Utils::Result<EcpkgContainer> parseCanonicalEcpkgContainer(
         if (zipCrc32(payload) != centralCrc)
             return invalidContainer("an entry payload CRC32 is invalid");
 
-        payloads[index] = copyRange(package, dataOffset, centralUncompressedBytes);
+        payloads[entryIndex] = copyRange(package, dataOffset, centralUncompressedBytes);
         expectedLocalOffset = dataOffset + centralUncompressedBytes;
         centralCursor += centralHeaderBytes + centralNameBytes;
     }
@@ -228,7 +236,8 @@ Utils::Result<EcpkgContainer> parseCanonicalEcpkgContainer(
     result.configurationEcfg = std::move(payloads[2]);
     result.runtimeErun = std::move(payloads[3]);
     result.compileReportJson = std::move(payloads[4]);
-    result.manifestSignature = std::move(payloads[5]);
+    result.semanticActionDefinitionsJson = std::move(payloads[5]);
+    result.manifestSignature = std::move(payloads[6]);
     return result;
 }
 

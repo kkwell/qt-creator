@@ -31,6 +31,8 @@ private slots:
     void testSemanticBindingV2TransferredPackage();
     void testSemanticBindingV2RejectsDeepMutations();
     void testSemanticBindingV2ParserGuards();
+    void testSemanticActionDefinitionsProductionPackage();
+    void testSemanticActionDefinitionsRejectsMismatches();
     void testVerifiedEcpkgStore();
     void testVerifiedEcpkgStoreRejectsTampering();
     void testRuntimePackageEvidenceTransferredPackages();

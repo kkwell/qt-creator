@@ -19,6 +19,7 @@ struct EcpkgContainer
     QByteArray configurationEcfg;
     QByteArray runtimeErun;
     QByteArray compileReportJson;
+    QByteArray semanticActionDefinitionsJson;
     QByteArray manifestSignature;
 };
 

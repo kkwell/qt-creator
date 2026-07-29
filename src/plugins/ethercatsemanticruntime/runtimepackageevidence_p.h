@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "semanticactiondefinitions_p.h"
 #include "semanticbindingartifact_p.h"
 #include "verifiedecpkgstore_p.h"
 
@@ -20,6 +21,7 @@ public:
     const VerifiedSemanticBindingArtifact &semanticBindingArtifact() const;
     const Data::RuntimeSemanticMappingProof &semanticMappingProof() const;
     const QByteArray &projectConfigurationSha256() const;
+    const std::optional<VerifiedSemanticActionDefinitions> &actionDefinitions() const;
 
     bool isValid() const;
     bool permitsWritableActions() const;
@@ -31,12 +33,12 @@ private:
         VerifiedSemanticBindingArtifact artifact,
         Data::RuntimeSemanticMappingProof proof,
         QByteArray projectConfigurationSha256,
-        bool actionDefinitionsVerified);
+        std::optional<VerifiedSemanticActionDefinitions> actionDefinitions);
 
     VerifiedSemanticBindingArtifact m_semanticBindingArtifact;
     Data::RuntimeSemanticMappingProof m_semanticMappingProof;
     QByteArray m_projectConfigurationSha256;
-    bool m_actionDefinitionsVerified = false;
+    std::optional<VerifiedSemanticActionDefinitions> m_actionDefinitions;
 
     friend Utils::Result<VerifiedRuntimePackageEvidence> verifyRuntimePackageEvidence(
         const VerifiedEcpkgPackage &package);
