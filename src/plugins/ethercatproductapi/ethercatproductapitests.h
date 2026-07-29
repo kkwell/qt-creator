@@ -21,6 +21,9 @@ private slots:
     void testRuntimeResourceGoldenFrames();
     void testRuntimeResourceCodecRejectsMalformed_data();
     void testRuntimeResourceCodecRejectsMalformed();
+    void testOutputTransactionGoldenFrames();
+    void testOutputTransactionCodecRejectsMalformed_data();
+    void testOutputTransactionCodecRejectsMalformed();
     void testSupportedRequestPolicy();
     void testPackageDeploymentRequestPolicy();
     void testConnectionProfileEndpointConfiguration_data();

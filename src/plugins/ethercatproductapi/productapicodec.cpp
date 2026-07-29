@@ -31,6 +31,9 @@ constexpr quint32 StructuredHelloErrorFeature = 1U << 9;
 constexpr quint32 FirmwareUpdateFeature = 1U << 10;
 constexpr quint32 ExplicitTimingModeStartFeature = 1U << 11;
 constexpr quint32 ControlledFaultResetFeature = 1U << 12;
+constexpr quint32 OutputTransactionPolicyFlagKnownMask
+    = quint32(OutputGroupPolicyFlag::ManualWrite);
+constexpr quint32 OutputTransactionResultFlagKnownMask = 0xf;
 constexpr quint32 ControllerStatusKnownMask = 0x000001ff;
 constexpr quint64 ControllerFaultKnownMask = Data::ControllerFaultKnownMask;
 static_assert(ControllerFaultKnownMask == 0x000000000001ffff);
@@ -126,6 +129,11 @@ bool bytesAreZero(QByteArrayView bytes, qsizetype offset, qsizetype count)
             return false;
     }
     return true;
+}
+
+bool bytesAreNonzero(QByteArrayView bytes)
+{
+    return !bytes.isEmpty() && !bytesAreZero(bytes, 0, bytes.size());
 }
 
 bool validRuntimeResourceBinding(const RuntimeResourceBinding &binding)
@@ -242,6 +250,26 @@ bool runtimeResourceStatusAllowed(qint32 status)
     }
 }
 
+bool outputTransactionTypedStatusAllowed(qint32 status)
+{
+    switch (status) {
+    case 0:
+    case -6:
+    case -14:
+    case -16:
+    case -17:
+    case -18:
+    case -21:
+    case -22:
+    case -23:
+    case -24:
+    case -41:
+        return true;
+    default:
+        return false;
+    }
+}
+
 std::optional<RuntimeResourcePrimitive> decodeRuntimeResourcePrimitive(
     quint8 value, quint16 bitWidth)
 {
@@ -305,6 +333,149 @@ std::optional<RuntimeResourceQuality> decodeRuntimeResourceQuality(quint32 value
 }
 
 bool validRightAlignedValue(
+    QByteArrayView payload, qsizetype valueOffset, quint8 valueBytes, quint16 bitWidth);
+
+bool validOutputTransactionMapping(QByteArrayView value)
+{
+    return value.size() == 32 && bytesAreNonzero(value);
+}
+
+bool validOutputOperationId(QByteArrayView value)
+{
+    return value.size() == 16 && bytesAreNonzero(value);
+}
+
+bool validOutputTransactionValue(const OutputTransactionValue &value)
+{
+    const auto primitive = decodeRuntimeResourcePrimitive(quint8(value.primitive), value.bitWidth);
+    const qsizetype valueBytes = (value.bitWidth + 7) / 8;
+    if (!value.resourceId || !primitive || *primitive != value.primitive
+        || value.value.size() != valueBytes) {
+        return false;
+    }
+    if (value.primitive == RuntimeResourcePrimitive::Boolean
+        && quint8(value.value.at(0)) > 1) {
+        return false;
+    }
+    const quint8 unusedBits = quint8(valueBytes * 8 - value.bitWidth);
+    if (!unusedBits)
+        return true;
+    const quint8 allowedMask = quint8((1U << (8 - unusedBits)) - 1U);
+    return !(quint8(value.value.at(0)) & ~allowedMask);
+}
+
+bool validOutputGroupPolicyQuery(const OutputGroupPolicyQuery &query)
+{
+    return validRuntimeResourceBinding(query.binding) && query.consistencyGroupId
+           && validOutputTransactionMapping(query.semanticMappingSha256);
+}
+
+bool validOutputTransactionStateQuery(const OutputTransactionStateQuery &query)
+{
+    return validRuntimeResourceBinding(query.binding)
+           && validOutputTransactionMapping(query.semanticMappingSha256);
+}
+
+bool validOutputTransactionRequest(const OutputTransactionRequest &request)
+{
+    if (!validRuntimeResourceBinding(request.binding)
+        || !validOutputOperationId(request.operationId)
+        || !request.expectedCurrentOutputGeneration || !request.ttlCycles
+        || request.ttlCycles > OutputTransactionMaximumTtlCycles
+        || !request.consistencyGroupId
+        || !validOutputTransactionMapping(request.semanticMappingSha256)
+        || request.values.isEmpty() || request.values.size() > 64) {
+        return false;
+    }
+    quint64 previousResourceId = 0;
+    for (const OutputTransactionValue &value : request.values) {
+        if (!validOutputTransactionValue(value) || value.resourceId <= previousResourceId)
+            return false;
+        previousResourceId = value.resourceId;
+    }
+    return true;
+}
+
+bool validOutputGroupPolicyQueryPayload(QByteArrayView payload)
+{
+    return payload.size() == 104
+           && validRuntimeResourceSlot(readBigEndian<quint32>(payload, 0))
+           && !readBigEndian<quint32>(payload, 4)
+           && readBigEndian<quint64>(payload, 8)
+           && readBigEndian<quint64>(payload, 16)
+           && readBigEndian<quint64>(payload, 24)
+           && readBigEndian<quint64>(payload, 32)
+           && readBigEndian<quint64>(payload, 40)
+           && readBigEndian<quint64>(payload, 48)
+           && readBigEndian<quint32>(payload, 56)
+           && !readBigEndian<quint32>(payload, 60)
+           && validOutputTransactionMapping(payload.sliced(64, 32))
+           && bytesAreZero(payload, 96, 8);
+}
+
+bool validOutputTransactionStateQueryPayload(QByteArrayView payload)
+{
+    return payload.size() == 96
+           && validRuntimeResourceSlot(readBigEndian<quint32>(payload, 0))
+           && !readBigEndian<quint32>(payload, 4)
+           && readBigEndian<quint64>(payload, 8)
+           && readBigEndian<quint64>(payload, 16)
+           && readBigEndian<quint64>(payload, 24)
+           && readBigEndian<quint64>(payload, 32)
+           && readBigEndian<quint64>(payload, 40)
+           && readBigEndian<quint64>(payload, 48)
+           && validOutputTransactionMapping(payload.sliced(56, 32))
+           && bytesAreZero(payload, 88, 8);
+}
+
+bool validApplyOutputTransactionPayload(QByteArrayView payload)
+{
+    if (payload.size() < 160 || readBigEndian<quint16>(payload, 0) != 128
+        || readBigEndian<quint16>(payload, 2) != 32
+        || readBigEndian<quint32>(payload, 4)
+        || !validOutputOperationId(payload.sliced(8, 16))
+        || !validRuntimeResourceSlot(readBigEndian<quint32>(payload, 24))) {
+        return false;
+    }
+    const quint16 count = readBigEndian<quint16>(payload, 28);
+    if (count < 1 || count > 64 || payload.size() != 128 + qsizetype(count) * 32
+        || readBigEndian<quint16>(payload, 30)
+        || !readBigEndian<quint64>(payload, 32)
+        || !readBigEndian<quint64>(payload, 40)
+        || !readBigEndian<quint64>(payload, 48)
+        || !readBigEndian<quint64>(payload, 56)
+        || !readBigEndian<quint64>(payload, 64)
+        || !readBigEndian<quint64>(payload, 72)
+        || !readBigEndian<quint64>(payload, 80)
+        || !readBigEndian<quint32>(payload, 88)
+        || readBigEndian<quint32>(payload, 88) > OutputTransactionMaximumTtlCycles
+        || !readBigEndian<quint32>(payload, 92)
+        || !validOutputTransactionMapping(payload.sliced(96, 32))) {
+        return false;
+    }
+
+    quint64 previousResourceId = 0;
+    for (quint16 index = 0; index < count; ++index) {
+        const qsizetype offset = 128 + qsizetype(index) * 32;
+        const quint64 resourceId = readBigEndian<quint64>(payload, offset);
+        const quint8 primitiveValue = quint8(payload.at(offset + 8));
+        const quint8 valueBytes = quint8(payload.at(offset + 9));
+        const quint16 bitWidth = readBigEndian<quint16>(payload, offset + 10);
+        const auto primitive = decodeRuntimeResourcePrimitive(primitiveValue, bitWidth);
+        if (!resourceId || resourceId <= previousResourceId || !primitive
+            || valueBytes != (bitWidth + 7) / 8
+            || readBigEndian<quint32>(payload, offset + 12)
+            || !validRightAlignedValue(payload, offset + 16, valueBytes, bitWidth)
+            || (*primitive == RuntimeResourcePrimitive::Boolean
+                && quint8(payload.at(offset + 31)) > 1)) {
+            return false;
+        }
+        previousResourceId = resourceId;
+    }
+    return true;
+}
+
+bool validRightAlignedValue(
     QByteArrayView payload, qsizetype valueOffset, quint8 valueBytes, quint16 bitWidth)
 {
     if (!valueBytes || valueBytes > 16 || bitWidth < 1 || bitWidth > 128
@@ -350,6 +521,7 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
                    || type == MessageType::EnterConfigurationMode
                    || type == MessageType::GetCapability
                    || type == MessageType::DiscoverTopology
+                   || type == MessageType::ApplyOutputTransaction
                    || type == MessageType::GetPackageState
                    || type == MessageType::ValidatePackage
                    || type == MessageType::ActivatePackage
@@ -364,7 +536,9 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
                    || type == MessageType::BulkChunk || type == MessageType::BulkCommit
                    || type == MessageType::BulkAbort
                    || type == MessageType::QueryResourceTable
-                   || type == MessageType::GetResourceSnapshot);
+                   || type == MessageType::GetResourceSnapshot
+                   || type == MessageType::QueryOutputGroupPolicy
+                   || type == MessageType::GetOutputTransactionState);
     }
 
     if (type == MessageType::HelloAck || type == MessageType::Error)
@@ -372,7 +546,8 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
     if (role == Role::Control) {
         return type == MessageType::CommandStatus || type == MessageType::ControllerState
                || type == MessageType::Capability || type == MessageType::TopologyResult
-               || type == MessageType::PackageState || type == MessageType::FirmwareState;
+               || type == MessageType::PackageState || type == MessageType::FirmwareState
+               || type == MessageType::OutputTransactionResult;
     }
     if (role == Role::Push) {
         return type == MessageType::CommandStatus || type == MessageType::ControllerState
@@ -384,7 +559,9 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
            && (type == MessageType::BulkStatus || type == MessageType::Capability
                || type == MessageType::FirmwareStatus
                || type == MessageType::ResourceTablePage
-               || type == MessageType::ResourceSnapshot);
+               || type == MessageType::ResourceSnapshot
+               || type == MessageType::OutputGroupPolicy
+               || type == MessageType::OutputTransactionState);
 }
 
 quint32 requiredFeatureMask(quint16 minor)
@@ -607,6 +784,7 @@ bool commandStatusAllowed(qint32 status)
     case -15:
     case -16:
     case -17:
+    case -18:
     case -19:
     case -20:
     case -21:
@@ -614,6 +792,12 @@ bool commandStatusAllowed(qint32 status)
     case -23:
     case -24:
     case -35:
+    case -36:
+    case -37:
+    case -38:
+    case -39:
+    case -40:
+    case -41:
         return true;
     default:
         return false;
@@ -693,6 +877,7 @@ bool commandStatusOriginalAllowed(quint16 originalType)
     case MessageType::ActivatePackage:
     case MessageType::RollbackPackage:
     case MessageType::RestoreActivePackage:
+    case MessageType::ApplyOutputTransaction:
         return true;
     default:
         return false;
@@ -703,7 +888,9 @@ bool bulkStatusOriginalAllowed(quint16 originalType)
 {
     return (originalType >= 0x0300 && originalType <= 0x0303) || originalType == 0x0400
            || originalType == quint16(MessageType::QueryResourceTable)
-           || originalType == quint16(MessageType::GetResourceSnapshot);
+           || originalType == quint16(MessageType::GetResourceSnapshot)
+           || originalType == quint16(MessageType::QueryOutputGroupPolicy)
+           || originalType == quint16(MessageType::GetOutputTransactionState);
 }
 
 bool firmwareStatusOriginalAllowed(quint16 originalType)
@@ -722,6 +909,234 @@ bool validateStatusFlags(const Frame &frame, qint32 status, Error *error)
         ErrorCategory::InvalidFlags,
         QStringLiteral("Status flags disagree with the Product API status."));
     return false;
+}
+
+std::optional<OutputTransactionState> decodeOutputTransactionStateValue(quint16 value)
+{
+    switch (value) {
+    case 0:
+        return OutputTransactionState::Idle;
+    case 1:
+        return OutputTransactionState::OverrideActive;
+    case 2:
+        return OutputTransactionState::SafeHold;
+    default:
+        return {};
+    }
+}
+
+std::optional<OutputRecoveryPolicy> decodeOutputRecoveryPolicy(quint32 value)
+{
+    switch (value) {
+    case 1:
+        return OutputRecoveryPolicy::ReturnTask;
+    case 2:
+        return OutputRecoveryPolicy::HoldSafe;
+    default:
+        return {};
+    }
+}
+
+qint32 outputTransactionQueryOperationResult(qint32 status)
+{
+    if (status == -14)
+        return -10;
+    if (status == -6)
+        return -1;
+    return -2;
+}
+
+std::optional<OutputTransactionRecord> decodeOutputTransactionRecord(
+    const Frame &frame,
+    MessageType expectedType,
+    MessageType expectedOriginalType,
+    Error *error)
+{
+    clearError(error);
+    if (frame.header.protocolMajor != CurrentMajor
+        || frame.header.protocolMinor < OutputTransactionMinor
+        || frame.header.protocolMinor > CurrentMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            QStringLiteral("Output transactions require Product API v1.14."));
+        return {};
+    }
+    if (frame.header.messageType != expectedType || frame.payload.size() != 176) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Expected exact 176-byte output transaction record."));
+        return {};
+    }
+    if (!frame.header.requestId) {
+        setError(
+            error,
+            ErrorCategory::InvalidEnvelope,
+            QStringLiteral("Output transaction records require a nonzero RequestId."));
+        return {};
+    }
+
+    const QByteArrayView payload(frame.payload);
+    const quint16 originalType = readBigEndian<quint16>(payload, 0);
+    const qint32 status = readBigEndian<qint32>(payload, 4);
+    const qint32 operationResult = readBigEndian<qint32>(payload, 8);
+    const quint8 stage = quint8(payload.at(12));
+    const quint8 final = quint8(payload.at(13));
+    const quint16 stateValue = readBigEndian<quint16>(payload, 14);
+    if (originalType != quint16(expectedOriginalType)
+        || readBigEndian<quint16>(payload, 2) != 176 || final != 1) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Output transaction record header is invalid."));
+        return {};
+    }
+
+    OutputTransactionRecord record;
+    record.originalType = originalType;
+    record.status = status;
+    record.operationResult = operationResult;
+    record.stage = stage;
+    record.final = true;
+    if (status) {
+        if (expectedType != MessageType::OutputTransactionState
+            || !outputTransactionTypedStatusAllowed(status)
+            || frame.header.flags != (Flag::Response | Flag::Error)
+            || operationResult != outputTransactionQueryOperationResult(status)
+            || stage != 4 || stateValue || !bytesAreZero(payload, 16, 160)) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                QStringLiteral("Output transaction state failure is malformed."));
+            return {};
+        }
+        return record;
+    }
+
+    const auto state = decodeOutputTransactionStateValue(stateValue);
+    const quint32 resultFlags = readBigEndian<quint32>(payload, 16);
+    const quint32 activeSlot = readBigEndian<quint32>(payload, 20);
+    const QByteArray operationId = frame.payload.mid(24, 16);
+    const bool hasOperationId = bytesAreNonzero(operationId);
+    const quint64 appliedCycle = readBigEndian<quint64>(payload, 88);
+    const quint64 expiryCycle = readBigEndian<quint64>(payload, 96);
+    const quint64 outputGeneration = readBigEndian<quint64>(payload, 104);
+    const quint32 consistencyGroupId = readBigEndian<quint32>(payload, 112);
+    const quint32 ttlCycles = readBigEndian<quint32>(payload, 116);
+    const quint32 recoveryPolicyValue = readBigEndian<quint32>(payload, 120);
+    const quint16 valueCount = readBigEndian<quint16>(payload, 124);
+    const QByteArray semanticMappingSha256 = frame.payload.mid(128, 32);
+    const quint64 detail = readBigEndian<quint64>(payload, 160);
+    const auto recoveryPolicy = decodeOutputRecoveryPolicy(recoveryPolicyValue);
+    if (frame.header.flags != flagValue(Flag::Response) || operationResult || stage != 4
+        || !state || resultFlags & ~OutputTransactionResultFlagKnownMask
+        || !validRuntimeResourceSlot(activeSlot) || !outputGeneration
+        || readBigEndian<quint16>(payload, 126)
+        || !validOutputTransactionMapping(semanticMappingSha256)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Output transaction success fields are invalid."));
+        return {};
+    }
+
+    RuntimeResourceBinding binding{
+        frame.header.bootId,
+        activeSlot,
+        readBigEndian<quint64>(payload, 40),
+        readBigEndian<quint64>(payload, 48),
+        readBigEndian<quint64>(payload, 56),
+        readBigEndian<quint64>(payload, 64),
+        readBigEndian<quint64>(payload, 72),
+        readBigEndian<quint64>(payload, 80),
+    };
+    if (!validRuntimeResourceBinding(binding)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Output transaction epoch is invalid."));
+        return {};
+    }
+
+    const bool overrideActive = resultFlags
+                                & outputTransactionResultFlagValue(
+                                    OutputTransactionResultFlag::OverrideActive);
+    const bool safeHold = resultFlags
+                          & outputTransactionResultFlagValue(OutputTransactionResultFlag::SafeHold);
+    const bool returnedTask
+        = resultFlags & outputTransactionResultFlagValue(OutputTransactionResultFlag::ReturnedTask);
+    if (!hasOperationId) {
+        if (*state != OutputTransactionState::Idle || resultFlags || appliedCycle || expiryCycle
+            || consistencyGroupId || ttlCycles || recoveryPolicyValue || valueCount) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                QStringLiteral("Idle output transaction state has partial transaction fields."));
+            return {};
+        }
+    } else {
+        const bool cycleRangeValid
+            = appliedCycle && ttlCycles
+              && ttlCycles <= OutputTransactionMaximumTtlCycles
+              && appliedCycle <= std::numeric_limits<quint64>::max() - ttlCycles
+              && expiryCycle == appliedCycle + ttlCycles;
+        if (!cycleRangeValid || !consistencyGroupId || !recoveryPolicy || valueCount < 1
+            || valueCount > 64) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                QStringLiteral("Output transaction lifetime or group is invalid."));
+            return {};
+        }
+        switch (*state) {
+        case OutputTransactionState::Idle:
+            if (overrideActive || safeHold || !returnedTask
+                || *recoveryPolicy != OutputRecoveryPolicy::ReturnTask) {
+                setError(
+                    error,
+                    ErrorCategory::InvalidPayload,
+                    QStringLiteral("Returned-task output state flags are inconsistent."));
+                return {};
+            }
+            break;
+        case OutputTransactionState::OverrideActive:
+            if (!overrideActive || safeHold || returnedTask) {
+                setError(
+                    error,
+                    ErrorCategory::InvalidPayload,
+                    QStringLiteral("Active output override flags are inconsistent."));
+                return {};
+            }
+            break;
+        case OutputTransactionState::SafeHold:
+            if (overrideActive || !safeHold || returnedTask
+                || *recoveryPolicy != OutputRecoveryPolicy::HoldSafe) {
+                setError(
+                    error,
+                    ErrorCategory::InvalidPayload,
+                    QStringLiteral("Safe-hold output flags are inconsistent."));
+                return {};
+            }
+            break;
+        }
+    }
+
+    record.state = *state;
+    record.resultFlags = resultFlags;
+    record.binding = binding;
+    record.operationId = operationId;
+    record.appliedCycle = appliedCycle;
+    record.expiryCycle = expiryCycle;
+    record.outputGeneration = outputGeneration;
+    record.consistencyGroupId = consistencyGroupId;
+    record.ttlCycles = ttlCycles;
+    record.recoveryPolicy = recoveryPolicyValue;
+    record.valueCount = valueCount;
+    record.semanticMappingSha256 = semanticMappingSha256;
+    record.detail = detail;
+    record.controllerTimestampNs = readBigEndian<quint64>(payload, 168);
+    return record;
 }
 
 quint32 alarmSequenceDistance(quint32 after, quint32 latest)
@@ -905,7 +1320,9 @@ bool isReadOnlyRequest(MessageType type)
     return type == MessageType::GetState || type == MessageType::GetCapability
            || type == MessageType::GetPackageState || type == MessageType::GetFirmwareState
            || type == MessageType::ResumeEvents || type == MessageType::QueryResourceTable
-           || type == MessageType::GetResourceSnapshot;
+           || type == MessageType::GetResourceSnapshot
+           || type == MessageType::QueryOutputGroupPolicy
+           || type == MessageType::GetOutputTransactionState;
 }
 
 bool isPackageDeploymentRequest(MessageType type)
@@ -927,6 +1344,7 @@ bool isSupportedRequest(MessageType type)
            || type == MessageType::ResetFault || type == MessageType::Heartbeat
            || type == MessageType::EnterConfigurationMode
            || type == MessageType::DiscoverTopology
+           || type == MessageType::ApplyOutputTransaction
            || isPackageDeploymentRequest(type);
 }
 
@@ -1020,6 +1438,17 @@ QByteArray encodeRequest(
             -14);
         return {};
     }
+    if ((type == MessageType::QueryOutputGroupPolicy
+         || type == MessageType::GetOutputTransactionState
+         || type == MessageType::ApplyOutputTransaction)
+        && protocolMinor < OutputTransactionMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            Tr::tr("Output transactions require protocol v1.14."),
+            -14);
+        return {};
+    }
     bool payloadValid = false;
     if (type == MessageType::Hello) {
         payloadValid = payload.size() == 24;
@@ -1051,6 +1480,12 @@ QByteArray encodeRequest(
         payloadValid = validResourceTableQueryPayload(payload);
     } else if (type == MessageType::GetResourceSnapshot) {
         payloadValid = validResourceSnapshotQueryPayload(payload);
+    } else if (type == MessageType::QueryOutputGroupPolicy) {
+        payloadValid = validOutputGroupPolicyQueryPayload(payload);
+    } else if (type == MessageType::GetOutputTransactionState) {
+        payloadValid = validOutputTransactionStateQueryPayload(payload);
+    } else if (type == MessageType::ApplyOutputTransaction) {
+        payloadValid = validApplyOutputTransactionPayload(payload);
     } else if (
         type == MessageType::ValidatePackage || type == MessageType::ActivatePackage
         || type == MessageType::RollbackPackage
@@ -1242,6 +1677,135 @@ QByteArray encodeGetResourceSnapshot(
         requestId,
         sequence,
         query.binding.bootId,
+        protocolMinor,
+        error);
+}
+
+QByteArray encodeQueryOutputGroupPolicy(
+    const OutputGroupPolicyQuery &query,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint16 protocolMinor,
+    Error *error)
+{
+    clearError(error);
+    if (!validOutputGroupPolicyQuery(query)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Output group policy query is invalid."));
+        return {};
+    }
+
+    QByteArray payload(104, '\0');
+    writeBigEndian(payload, 0, query.binding.activeSlot);
+    writeBigEndian(payload, 8, query.binding.packageGeneration);
+    writeBigEndian(payload, 16, query.binding.configurationId);
+    writeBigEndian(payload, 24, query.binding.topologyGeneration);
+    writeBigEndian(payload, 32, query.binding.runtimeGeneration);
+    writeBigEndian(payload, 40, query.binding.catalogRevision);
+    writeBigEndian(payload, 48, query.binding.topologyIdentity);
+    writeBigEndian(payload, 56, query.consistencyGroupId);
+    payload.replace(64, 32, query.semanticMappingSha256);
+    return encodeRequest(
+        MessageType::QueryOutputGroupPolicy,
+        payload,
+        sessionId,
+        requestId,
+        sequence,
+        query.binding.bootId,
+        protocolMinor,
+        error);
+}
+
+QByteArray encodeGetOutputTransactionState(
+    const OutputTransactionStateQuery &query,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint16 protocolMinor,
+    Error *error)
+{
+    clearError(error);
+    if (!validOutputTransactionStateQuery(query)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Output transaction state query is invalid."));
+        return {};
+    }
+
+    QByteArray payload(96, '\0');
+    writeBigEndian(payload, 0, query.binding.activeSlot);
+    writeBigEndian(payload, 8, query.binding.packageGeneration);
+    writeBigEndian(payload, 16, query.binding.configurationId);
+    writeBigEndian(payload, 24, query.binding.topologyGeneration);
+    writeBigEndian(payload, 32, query.binding.runtimeGeneration);
+    writeBigEndian(payload, 40, query.binding.catalogRevision);
+    writeBigEndian(payload, 48, query.binding.topologyIdentity);
+    payload.replace(56, 32, query.semanticMappingSha256);
+    return encodeRequest(
+        MessageType::GetOutputTransactionState,
+        payload,
+        sessionId,
+        requestId,
+        sequence,
+        query.binding.bootId,
+        protocolMinor,
+        error);
+}
+
+QByteArray encodeApplyOutputTransaction(
+    const OutputTransactionRequest &request,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint16 protocolMinor,
+    Error *error)
+{
+    clearError(error);
+    if (!validOutputTransactionRequest(request)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Output transaction request is invalid."));
+        return {};
+    }
+
+    QByteArray payload(128 + request.values.size() * 32, '\0');
+    writeBigEndian(payload, 0, quint16(128));
+    writeBigEndian(payload, 2, quint16(32));
+    payload.replace(8, 16, request.operationId);
+    writeBigEndian(payload, 24, request.binding.activeSlot);
+    writeBigEndian(payload, 28, quint16(request.values.size()));
+    writeBigEndian(payload, 32, request.binding.packageGeneration);
+    writeBigEndian(payload, 40, request.binding.configurationId);
+    writeBigEndian(payload, 48, request.binding.topologyGeneration);
+    writeBigEndian(payload, 56, request.binding.runtimeGeneration);
+    writeBigEndian(payload, 64, request.binding.catalogRevision);
+    writeBigEndian(payload, 72, request.binding.topologyIdentity);
+    writeBigEndian(payload, 80, request.expectedCurrentOutputGeneration);
+    writeBigEndian(payload, 88, request.ttlCycles);
+    writeBigEndian(payload, 92, request.consistencyGroupId);
+    payload.replace(96, 32, request.semanticMappingSha256);
+
+    for (qsizetype index = 0; index < request.values.size(); ++index) {
+        const OutputTransactionValue &value = request.values.at(index);
+        const qsizetype offset = 128 + index * 32;
+        writeBigEndian(payload, offset, value.resourceId);
+        payload[offset + 8] = char(value.primitive);
+        payload[offset + 9] = char(value.value.size());
+        writeBigEndian(payload, offset + 10, value.bitWidth);
+        payload.replace(offset + 32 - value.value.size(), value.value.size(), value.value);
+    }
+    return encodeRequest(
+        MessageType::ApplyOutputTransaction,
+        payload,
+        sessionId,
+        requestId,
+        sequence,
+        request.binding.bootId,
         protocolMinor,
         error);
 }
@@ -1490,6 +2054,81 @@ std::optional<CommandStatus> decodeCommandStatus(const Frame &frame, Error *erro
             }
         }
     }
+    if (originalType == quint16(MessageType::ApplyOutputTransaction)) {
+        if (frame.header.protocolMinor < OutputTransactionMinor) {
+            setError(
+                error,
+                ErrorCategory::IncompatibleVersion,
+                QStringLiteral("Output transactions require Product API v1.14."));
+            return {};
+        }
+        if (!status) {
+            if (stage < 1 || stage > 3 || finalValue || detail) {
+                setError(
+                    error,
+                    ErrorCategory::InvalidPayload,
+                    QStringLiteral(
+                        "ApplyOutputTransaction success stages violate the v1.14 contract."));
+                return {};
+            }
+        } else {
+            if ((stage != 2 && stage != 3) || !finalValue) {
+                setError(
+                    error,
+                    ErrorCategory::InvalidPayload,
+                    QStringLiteral(
+                        "ApplyOutputTransaction rejection stage violates the v1.14 contract."));
+                return {};
+            }
+            if (stage == 3) {
+                qint32 expectedStatus = std::numeric_limits<qint32>::max();
+                switch (operationResult) {
+                case -1:
+                    expectedStatus = -6;
+                    break;
+                case -2:
+                    expectedStatus = -15;
+                    break;
+                case -3:
+                    expectedStatus = -17;
+                    break;
+                case -4:
+                    expectedStatus = -38;
+                    break;
+                case -5:
+                    expectedStatus = -39;
+                    break;
+                case -6:
+                    expectedStatus = -40;
+                    break;
+                case -7:
+                    expectedStatus = -36;
+                    break;
+                case -8:
+                    expectedStatus = -37;
+                    break;
+                case -9:
+                    expectedStatus = -16;
+                    break;
+                case -10:
+                    expectedStatus = -41;
+                    break;
+                default:
+                    if (operationResult)
+                        expectedStatus = -16;
+                    break;
+                }
+                if (status != expectedStatus) {
+                    setError(
+                        error,
+                        ErrorCategory::InvalidPayload,
+                        QStringLiteral(
+                            "ApplyOutputTransaction CPU1 result mapping is invalid."));
+                    return {};
+                }
+            }
+        }
+    }
 
     return CommandStatus{
         originalType,
@@ -1534,7 +2173,9 @@ std::optional<BulkStatus> decodeBulkStatus(const Frame &frame, Error *error)
     const quint16 originalType = readBigEndian<quint16>(payload, 38);
     const bool runtimeResourcePreDispatch
         = originalType == quint16(MessageType::QueryResourceTable)
-          || originalType == quint16(MessageType::GetResourceSnapshot);
+          || originalType == quint16(MessageType::GetResourceSnapshot)
+          || originalType == quint16(MessageType::QueryOutputGroupPolicy)
+          || originalType == quint16(MessageType::GetOutputTransactionState);
     const bool runtimeResourcePreDispatchStatus
         = status == -6 || status == -7 || status == -8 || status == -12;
     if (!validateStatusFlags(frame, status, error))
@@ -2093,6 +2734,7 @@ std::optional<Data::ControllerCapabilitySummary> decodeCapability(
     result.explicitTimingModeStart = featureBits & ExplicitTimingModeStartFeature;
     result.faultReset = featureBits & ControlledFaultResetFeature;
     result.runtimeResources = featureBits & RuntimeResourceFeature;
+    result.runtimeOutputTransactions = featureBits & OutputTransactionFeature;
     return result;
 }
 
@@ -2548,6 +3190,206 @@ std::optional<RuntimeResourceSnapshot> decodeResourceSnapshot(
     }
     snapshot.complete = true;
     return snapshot;
+}
+
+std::optional<OutputGroupPolicy> decodeOutputGroupPolicy(
+    const Frame &frame, const OutputGroupPolicyQuery &query, Error *error)
+{
+    clearError(error);
+    if (frame.header.protocolMajor != CurrentMajor
+        || frame.header.protocolMinor < OutputTransactionMinor
+        || frame.header.protocolMinor > CurrentMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            QStringLiteral("Output group policy requires Product API v1.14."));
+        return {};
+    }
+    if (!validOutputGroupPolicyQuery(query)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Expected output group policy query is invalid."));
+        return {};
+    }
+    if (frame.header.messageType != MessageType::OutputGroupPolicy
+        || frame.payload.size() != 176) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Expected exact 176-byte OutputGroupPolicy."));
+        return {};
+    }
+    if (!frame.header.requestId || frame.header.bootId != query.binding.bootId) {
+        setError(
+            error,
+            ErrorCategory::IdentityMismatch,
+            QStringLiteral("OutputGroupPolicy response identity is invalid."));
+        return {};
+    }
+
+    const QByteArrayView payload(frame.payload);
+    const qint32 status = readBigEndian<qint32>(payload, 4);
+    if (readBigEndian<quint16>(payload, 0)
+            != quint16(MessageType::QueryOutputGroupPolicy)
+        || readBigEndian<quint16>(payload, 2) != 176
+        || !outputTransactionTypedStatusAllowed(status)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("OutputGroupPolicy header is invalid."));
+        return {};
+    }
+
+    OutputGroupPolicy policy;
+    policy.status = status;
+    if (status) {
+        if (frame.header.flags != (Flag::Response | Flag::Error)
+            || !bytesAreZero(payload, 8, 168)) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                QStringLiteral("OutputGroupPolicy failure fields must be zero."));
+            return {};
+        }
+        return policy;
+    }
+
+    const auto recoveryPolicy
+        = decodeOutputRecoveryPolicy(readBigEndian<quint32>(payload, 76));
+    RuntimeResourceBinding binding{
+        readBigEndian<quint64>(payload, 64),
+        readBigEndian<quint32>(payload, 8),
+        readBigEndian<quint64>(payload, 16),
+        readBigEndian<quint64>(payload, 24),
+        readBigEndian<quint64>(payload, 32),
+        readBigEndian<quint64>(payload, 40),
+        readBigEndian<quint64>(payload, 48),
+        readBigEndian<quint64>(payload, 56),
+    };
+    const quint32 policyFlags = readBigEndian<quint32>(payload, 12);
+    const quint32 consistencyGroupId = readBigEndian<quint32>(payload, 72);
+    const quint32 maximumTtlCycles = readBigEndian<quint32>(payload, 80);
+    const quint32 completeResourceCount = readBigEndian<quint32>(payload, 84);
+    const quint64 outputGeneration = readBigEndian<quint64>(payload, 88);
+    const QByteArray completeGroupRecordSha256 = frame.payload.mid(96, 32);
+    const QByteArray semanticMappingSha256 = frame.payload.mid(128, 32);
+    if (frame.header.flags != flagValue(Flag::Response)
+        || policyFlags != OutputTransactionPolicyFlagKnownMask
+        || !runtimeResourceBindingsEqual(binding, query.binding)
+        || binding.bootId != frame.header.bootId
+        || consistencyGroupId != query.consistencyGroupId || !recoveryPolicy
+        || maximumTtlCycles < 1
+        || maximumTtlCycles > OutputTransactionMaximumTtlCycles
+        || completeResourceCount < 1 || completeResourceCount > 64
+        || !outputGeneration
+        || !validOutputTransactionMapping(completeGroupRecordSha256)
+        || semanticMappingSha256 != query.semanticMappingSha256
+        || !bytesAreZero(payload, 160, 16)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("OutputGroupPolicy success fields violate the v1.14 contract."));
+        return {};
+    }
+
+    policy.binding = binding;
+    policy.policyFlags = policyFlags;
+    policy.consistencyGroupId = consistencyGroupId;
+    policy.recoveryPolicy = *recoveryPolicy;
+    policy.maximumTtlCycles = maximumTtlCycles;
+    policy.completeResourceCount = completeResourceCount;
+    policy.currentOutputGeneration = outputGeneration;
+    policy.completeGroupRecordSha256 = completeGroupRecordSha256;
+    policy.semanticMappingSha256 = semanticMappingSha256;
+    return policy;
+}
+
+std::optional<OutputTransactionRecord> decodeOutputTransactionState(
+    const Frame &frame, const OutputTransactionStateQuery &query, Error *error)
+{
+    clearError(error);
+    if (!validOutputTransactionStateQuery(query)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Expected output transaction state query is invalid."));
+        return {};
+    }
+    if (frame.header.bootId != query.binding.bootId) {
+        setError(
+            error,
+            ErrorCategory::IdentityMismatch,
+            QStringLiteral("OutputTransactionState BootId is stale."));
+        return {};
+    }
+    auto record = decodeOutputTransactionRecord(
+        frame,
+        MessageType::OutputTransactionState,
+        MessageType::GetOutputTransactionState,
+        error);
+    if (!record || record->status)
+        return record;
+    if (!runtimeResourceBindingsEqual(record->binding, query.binding)
+        || record->semanticMappingSha256 != query.semanticMappingSha256) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("OutputTransactionState binding or flags are invalid."));
+        return {};
+    }
+    return record;
+}
+
+std::optional<OutputTransactionRecord> decodeOutputTransactionResult(
+    const Frame &frame, const OutputTransactionRequest &request, Error *error)
+{
+    clearError(error);
+    if (!validOutputTransactionRequest(request)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("Expected output transaction request is invalid."));
+        return {};
+    }
+    if (frame.header.bootId != request.binding.bootId) {
+        setError(
+            error,
+            ErrorCategory::IdentityMismatch,
+            QStringLiteral("OutputTransactionResult BootId is stale."));
+        return {};
+    }
+    auto record = decodeOutputTransactionRecord(
+        frame,
+        MessageType::OutputTransactionResult,
+        MessageType::ApplyOutputTransaction,
+        error);
+    if (!record)
+        return {};
+    const quint32 requiredStateFlag
+        = outputTransactionResultFlagValue(OutputTransactionResultFlag::OverrideActive);
+    const quint32 allowedFlags
+        = requiredStateFlag
+          | outputTransactionResultFlagValue(OutputTransactionResultFlag::Replayed);
+    if (record->status || record->state != OutputTransactionState::OverrideActive
+        || (record->resultFlags & requiredStateFlag) == 0
+        || record->resultFlags & ~allowedFlags
+        || !runtimeResourceBindingsEqual(record->binding, request.binding)
+        || record->operationId != request.operationId
+        || request.expectedCurrentOutputGeneration
+               == std::numeric_limits<quint64>::max()
+        || record->outputGeneration != request.expectedCurrentOutputGeneration + 1
+        || record->consistencyGroupId != request.consistencyGroupId
+        || record->ttlCycles != request.ttlCycles
+        || record->valueCount != request.values.size()
+        || record->semanticMappingSha256 != request.semanticMappingSha256) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            QStringLiteral("OutputTransactionResult does not match the submitted transaction."));
+        return {};
+    }
+    return record;
 }
 
 std::optional<Data::ControllerFirmwareSummary> decodeFirmwareState(const Frame &frame, Error *error)

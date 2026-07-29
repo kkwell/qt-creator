@@ -591,6 +591,80 @@ QByteArray runtimeResourceSnapshotFailureGoldenWire()
         "00000000000000000000000000000000");
 }
 
+QByteArray outputGroupPolicyQueryGoldenWire()
+{
+    return QByteArray::fromHex(
+        "454341500001000e0040040e0000000000000068010203040506070841424344"
+        "454647480000000000000004212223242526272800000000000000007e381a1c"
+        "0000004100000000000000000000000700000000000001000000000000000009"
+        "000000000000000b000000000000000d60000000000000010000005500000000"
+        "3333333333333333333333333333333333333333333333333333333333333333"
+        "0000000000000000");
+}
+
+QByteArray outputGroupPolicyGoldenWire()
+{
+    return QByteArray::fromHex(
+        "454341500001000e0040048a00000001000000b0010203040506070841424344"
+        "45464748000000000000000521222324252627286162636465666768e17ff16b"
+        "040e00b000000000000000410000000100000000000000070000000000000100"
+        "0000000000000009000000000000000b000000000000000d6000000000000001"
+        "21222324252627280000005500000001000003e8000000020000000000000009"
+        "4444444444444444444444444444444444444444444444444444444444444444"
+        "3333333333333333333333333333333333333333333333333333333333333333"
+        "00000000000000000000000000000000");
+}
+
+QByteArray outputTransactionStateQueryGoldenWire()
+{
+    return QByteArray::fromHex(
+        "454341500001000e0040040f0000000000000060010203040506070841424344"
+        "454647480000000000000006212223242526272800000000000000005d5ace9a"
+        "0000004100000000000000000000000700000000000001000000000000000009"
+        "000000000000000b000000000000000d6000000000000001"
+        "3333333333333333333333333333333333333333333333333333333333333333"
+        "0000000000000000");
+}
+
+QByteArray outputTransactionStateGoldenWire()
+{
+    return QByteArray::fromHex(
+        "454341500001000e0040048b00000001000000b0010203040506070841424344"
+        "45464748000000000000000721222324252627286162636465666768add66a39"
+        "040f00b000000000000000000401000000000000000000410000000000000000"
+        "0000000000000000000000000000000700000000000001000000000000000009"
+        "000000000000000b000000000000000d60000000000000010000000000000000"
+        "0000000000000000000000000000000100000000000000000000000000000000"
+        "3333333333333333333333333333333333333333333333333333333333333333"
+        "00000000000000006162636465666768");
+}
+
+QByteArray applyOutputTransactionGoldenWire()
+{
+    return QByteArray::fromHex(
+        "454341500001000e0040010e00000000000000c0010203040506070841424344"
+        "45464748000000000000000821222324252627280000000000000000205a29e4"
+        "008000200000000000112233445566778899aabbccddeeff0000004100020000"
+        "000000000000000700000000000001000000000000000009000000000000000b"
+        "000000000000000d600000000000000100000000000000010000000500000055"
+        "3333333333333333333333333333333333333333333333333333333333333333"
+        "0000000000001001020100080000000000000000000000000000000000000001"
+        "0000000000001002020100080000000000000000000000000000000000000002");
+}
+
+QByteArray outputTransactionResultGoldenWire()
+{
+    return QByteArray::fromHex(
+        "454341500001000e0040018100000001000000b0010203040506070841424344"
+        "45464748000000000000000921222324252627286162636465666768f59c32f5"
+        "010e00b000000000000000000401000100000002000000410011223344556677"
+        "8899aabbccddeeff000000000000000700000000000001000000000000000009"
+        "000000000000000b000000000000000d60000000000000010000000000000064"
+        "0000000000000069000000000000000200000055000000050000000100020000"
+        "3333333333333333333333333333333333333333333333333333333333333333"
+        "00000000000000006162636465666768");
+}
+
 Protocol::RuntimeResourceBinding runtimeResourceBinding()
 {
     Protocol::RuntimeResourceBinding binding;
@@ -603,6 +677,53 @@ Protocol::RuntimeResourceBinding runtimeResourceBinding()
     binding.catalogRevision = 0x1111222233334444;
     binding.topologyIdentity = 0x5555666677778888;
     return binding;
+}
+
+Protocol::RuntimeResourceBinding outputTransactionBinding()
+{
+    Protocol::RuntimeResourceBinding binding;
+    binding.bootId = 0x2122232425262728;
+    binding.activeSlot = quint32('A');
+    binding.packageGeneration = 7;
+    binding.configurationId = 0x100;
+    binding.topologyGeneration = 9;
+    binding.runtimeGeneration = 0xb;
+    binding.catalogRevision = 0xd;
+    binding.topologyIdentity = 0x6000000000000001;
+    return binding;
+}
+
+Protocol::OutputGroupPolicyQuery outputGroupPolicyQuery()
+{
+    Protocol::OutputGroupPolicyQuery query;
+    query.binding = outputTransactionBinding();
+    query.consistencyGroupId = 0x55;
+    query.semanticMappingSha256 = QByteArray(32, char(0x33));
+    return query;
+}
+
+Protocol::OutputTransactionStateQuery outputTransactionStateQuery()
+{
+    Protocol::OutputTransactionStateQuery query;
+    query.binding = outputTransactionBinding();
+    query.semanticMappingSha256 = QByteArray(32, char(0x33));
+    return query;
+}
+
+Protocol::OutputTransactionRequest outputTransactionRequest()
+{
+    Protocol::OutputTransactionRequest request;
+    request.binding = outputTransactionBinding();
+    request.operationId = QByteArray::fromHex("00112233445566778899aabbccddeeff");
+    request.expectedCurrentOutputGeneration = 1;
+    request.ttlCycles = 5;
+    request.consistencyGroupId = 0x55;
+    request.semanticMappingSha256 = QByteArray(32, char(0x33));
+    request.values = {
+        {0x1001, Protocol::RuntimeResourcePrimitive::Unsigned8, 8, QByteArray(1, char(1))},
+        {0x1002, Protocol::RuntimeResourcePrimitive::Unsigned8, 8, QByteArray(1, char(2))},
+    };
+    return request;
 }
 
 Protocol::RuntimeResourceBinding loopbackRuntimeResourceBinding(
@@ -2834,6 +2955,456 @@ void EtherCATProductApiTests::testRuntimeResourceCodecRejectsMalformed()
     QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
 }
 
+void EtherCATProductApiTests::testOutputTransactionGoldenFrames()
+{
+    constexpr quint64 sessionId = 0x0102030405060708;
+    constexpr quint64 requestId = 0x4142434445464748;
+
+    Protocol::Error error;
+    const Protocol::OutputGroupPolicyQuery policyQuery = outputGroupPolicyQuery();
+    const QByteArray policyRequest = Protocol::encodeQueryOutputGroupPolicy(
+        policyQuery,
+        sessionId,
+        requestId,
+        4,
+        Protocol::OutputTransactionMinor,
+        &error);
+    QVERIFY(!error);
+    QCOMPARE(policyRequest.size(), 168);
+    QCOMPARE(readU32(policyRequest, 60), quint32(0x7e381a1c));
+    QCOMPARE(policyRequest, outputGroupPolicyQueryGoldenWire());
+
+    Protocol::FrameParser policyParser(Protocol::Role::Bulk);
+    const Protocol::ParseResult policyParse
+        = policyParser.append(outputGroupPolicyGoldenWire());
+    QVERIFY(!policyParse.error);
+    QCOMPARE(policyParse.frames.size(), 1);
+    error = {};
+    const auto policy
+        = Protocol::decodeOutputGroupPolicy(policyParse.frames.constFirst(), policyQuery, &error);
+    QVERIFY(policy);
+    QVERIFY(!error);
+    QCOMPARE(policy->status, 0);
+    QCOMPARE(policy->binding.packageGeneration, quint64(7));
+    QCOMPARE(policy->binding.configurationId, quint64(0x100));
+    QCOMPARE(policy->consistencyGroupId, quint32(0x55));
+    QCOMPARE(policy->recoveryPolicy, Protocol::OutputRecoveryPolicy::ReturnTask);
+    QCOMPARE(policy->maximumTtlCycles, quint32(1000));
+    QCOMPARE(policy->completeResourceCount, quint32(2));
+    QCOMPARE(policy->currentOutputGeneration, quint64(9));
+    QCOMPARE(policy->completeGroupRecordSha256, QByteArray(32, char(0x44)));
+    QCOMPARE(policy->semanticMappingSha256, QByteArray(32, char(0x33)));
+
+    const Protocol::OutputTransactionStateQuery stateQuery = outputTransactionStateQuery();
+    error = {};
+    const QByteArray stateRequest = Protocol::encodeGetOutputTransactionState(
+        stateQuery,
+        sessionId,
+        requestId,
+        6,
+        Protocol::OutputTransactionMinor,
+        &error);
+    QVERIFY(!error);
+    QCOMPARE(stateRequest.size(), 160);
+    QCOMPARE(readU32(stateRequest, 60), quint32(0x5d5ace9a));
+    QCOMPARE(stateRequest, outputTransactionStateQueryGoldenWire());
+
+    Protocol::FrameParser stateParser(Protocol::Role::Bulk);
+    const Protocol::ParseResult stateParse
+        = stateParser.append(outputTransactionStateGoldenWire());
+    QVERIFY(!stateParse.error);
+    QCOMPARE(stateParse.frames.size(), 1);
+    error = {};
+    const auto state = Protocol::decodeOutputTransactionState(
+        stateParse.frames.constFirst(), stateQuery, &error);
+    QVERIFY(state);
+    QVERIFY(!error);
+    QCOMPARE(state->status, 0);
+    QCOMPARE(state->state, Protocol::OutputTransactionState::Idle);
+    QCOMPARE(state->binding.bootId, stateQuery.binding.bootId);
+    QCOMPARE(state->binding.activeSlot, stateQuery.binding.activeSlot);
+    QCOMPARE(state->binding.packageGeneration, stateQuery.binding.packageGeneration);
+    QCOMPARE(state->binding.configurationId, stateQuery.binding.configurationId);
+    QCOMPARE(state->binding.topologyGeneration, stateQuery.binding.topologyGeneration);
+    QCOMPARE(state->binding.runtimeGeneration, stateQuery.binding.runtimeGeneration);
+    QCOMPARE(state->binding.catalogRevision, stateQuery.binding.catalogRevision);
+    QCOMPARE(state->binding.topologyIdentity, stateQuery.binding.topologyIdentity);
+    QCOMPARE(state->outputGeneration, quint64(1));
+    QCOMPARE(state->operationId, QByteArray(16, '\0'));
+    QCOMPARE(state->semanticMappingSha256, QByteArray(32, char(0x33)));
+
+    const Protocol::OutputTransactionRequest transaction = outputTransactionRequest();
+    error = {};
+    const QByteArray applyRequest = Protocol::encodeApplyOutputTransaction(
+        transaction,
+        sessionId,
+        requestId,
+        8,
+        Protocol::OutputTransactionMinor,
+        &error);
+    QVERIFY(!error);
+    QCOMPARE(applyRequest.size(), 256);
+    QCOMPARE(readU32(applyRequest, 60), quint32(0x205a29e4));
+    QCOMPARE(applyRequest, applyOutputTransactionGoldenWire());
+
+    Protocol::FrameParser resultParser(Protocol::Role::Control);
+    const Protocol::ParseResult resultParse
+        = resultParser.append(outputTransactionResultGoldenWire());
+    QVERIFY(!resultParse.error);
+    QCOMPARE(resultParse.frames.size(), 1);
+    error = {};
+    const auto result = Protocol::decodeOutputTransactionResult(
+        resultParse.frames.constFirst(), transaction, &error);
+    QVERIFY(result);
+    QVERIFY(!error);
+    QCOMPARE(result->state, Protocol::OutputTransactionState::OverrideActive);
+    QCOMPARE(
+        result->resultFlags,
+        Protocol::outputTransactionResultFlagValue(
+            Protocol::OutputTransactionResultFlag::OverrideActive));
+    QCOMPARE(result->operationId, transaction.operationId);
+    QCOMPARE(result->appliedCycle, quint64(100));
+    QCOMPARE(result->expiryCycle, quint64(105));
+    QCOMPARE(result->outputGeneration, quint64(2));
+    QCOMPARE(result->consistencyGroupId, quint32(0x55));
+    QCOMPARE(result->ttlCycles, quint32(5));
+    QCOMPARE(result->recoveryPolicy, quint32(Protocol::OutputRecoveryPolicy::ReturnTask));
+    QCOMPARE(result->valueCount, quint16(2));
+    QCOMPARE(result->controllerTimestampNs, quint64(0x6162636465666768));
+
+    QByteArray replayedPayload
+        = outputTransactionResultGoldenWire().mid(Protocol::HeaderBytes);
+    putU32(
+        replayedPayload,
+        16,
+        Protocol::outputTransactionResultFlagValue(
+            Protocol::OutputTransactionResultFlag::Replayed)
+            | Protocol::outputTransactionResultFlagValue(
+                Protocol::OutputTransactionResultFlag::OverrideActive));
+    putU64(replayedPayload, 160, 0x1122334455667788);
+    Protocol::Frame replayedFrame = responseFrame(
+        Protocol::MessageType::OutputTransactionResult, replayedPayload);
+    replayedFrame.header.bootId = transaction.binding.bootId;
+    error = {};
+    const auto replayedResult = Protocol::decodeOutputTransactionResult(
+        replayedFrame, transaction, &error);
+    QVERIFY(replayedResult);
+    QVERIFY(!error);
+    QCOMPARE(replayedResult->detail, quint64(0x1122334455667788));
+
+    QByteArray replayedStatePayload = replayedPayload;
+    putU16(
+        replayedStatePayload, 0, quint16(Protocol::MessageType::GetOutputTransactionState));
+    Protocol::Frame replayedStateFrame = responseFrame(
+        Protocol::MessageType::OutputTransactionState, replayedStatePayload);
+    replayedStateFrame.header.bootId = stateQuery.binding.bootId;
+    error = {};
+    const auto replayedState = Protocol::decodeOutputTransactionState(
+        replayedStateFrame, stateQuery, &error);
+    QVERIFY(replayedState);
+    QVERIFY(!error);
+    QCOMPARE(replayedState->state, Protocol::OutputTransactionState::OverrideActive);
+    QCOMPARE(
+        replayedState->resultFlags,
+        Protocol::outputTransactionResultFlagValue(
+            Protocol::OutputTransactionResultFlag::Replayed)
+            | Protocol::outputTransactionResultFlagValue(
+                Protocol::OutputTransactionResultFlag::OverrideActive));
+    QCOMPARE(replayedState->detail, quint64(0x1122334455667788));
+
+    QByteArray safeHoldPayload
+        = outputTransactionResultGoldenWire().mid(Protocol::HeaderBytes);
+    putU16(safeHoldPayload, 0, quint16(Protocol::MessageType::GetOutputTransactionState));
+    putU16(safeHoldPayload, 14, quint16(Protocol::OutputTransactionState::SafeHold));
+    putU32(
+        safeHoldPayload,
+        16,
+        Protocol::outputTransactionResultFlagValue(
+            Protocol::OutputTransactionResultFlag::SafeHold));
+    putU32(safeHoldPayload, 120, quint32(Protocol::OutputRecoveryPolicy::HoldSafe));
+    Protocol::Frame safeHoldFrame = responseFrame(
+        Protocol::MessageType::OutputTransactionState, safeHoldPayload);
+    safeHoldFrame.header.bootId = stateQuery.binding.bootId;
+    error = {};
+    const auto safeHold = Protocol::decodeOutputTransactionState(
+        safeHoldFrame, stateQuery, &error);
+    QVERIFY(safeHold);
+    QVERIFY(!error);
+    QCOMPARE(safeHold->state, Protocol::OutputTransactionState::SafeHold);
+
+    QByteArray returnedTaskPayload = safeHoldPayload;
+    putU16(returnedTaskPayload, 14, quint16(Protocol::OutputTransactionState::Idle));
+    putU32(
+        returnedTaskPayload,
+        16,
+        Protocol::outputTransactionResultFlagValue(
+            Protocol::OutputTransactionResultFlag::ReturnedTask));
+    putU32(returnedTaskPayload, 120, quint32(Protocol::OutputRecoveryPolicy::ReturnTask));
+    Protocol::Frame returnedTaskFrame = responseFrame(
+        Protocol::MessageType::OutputTransactionState, returnedTaskPayload);
+    returnedTaskFrame.header.bootId = stateQuery.binding.bootId;
+    error = {};
+    const auto returnedTask = Protocol::decodeOutputTransactionState(
+        returnedTaskFrame, stateQuery, &error);
+    QVERIFY(returnedTask);
+    QVERIFY(!error);
+    QCOMPARE(returnedTask->state, Protocol::OutputTransactionState::Idle);
+}
+
+void EtherCATProductApiTests::testOutputTransactionCodecRejectsMalformed_data()
+{
+    QTest::addColumn<int>("kind");
+    QTest::addColumn<QByteArray>("payload");
+    QTest::addColumn<quint32>("flags");
+
+    const QByteArray policyPayload
+        = outputGroupPolicyGoldenWire().mid(Protocol::HeaderBytes);
+    const QByteArray statePayload
+        = outputTransactionStateGoldenWire().mid(Protocol::HeaderBytes);
+    const QByteArray resultPayload
+        = outputTransactionResultGoldenWire().mid(Protocol::HeaderBytes);
+
+    QByteArray policyReserved = policyPayload;
+    policyReserved[175] = 1;
+    QTest::newRow("policy-reserved")
+        << 0 << policyReserved << Protocol::flagValue(Protocol::Flag::Response);
+
+    QByteArray policyMapping = policyPayload;
+    policyMapping[128] ^= 1;
+    QTest::newRow("policy-mapping")
+        << 0 << policyMapping << Protocol::flagValue(Protocol::Flag::Response);
+
+    QTest::newRow("policy-flags")
+        << 0 << policyPayload
+        << quint32(Protocol::Flag::Response | Protocol::Flag::Error);
+
+    QByteArray stateReplayed = statePayload;
+    putU32(stateReplayed, 16, 1);
+    QTest::newRow("state-replayed-without-operation")
+        << 1 << stateReplayed << Protocol::flagValue(Protocol::Flag::Response);
+
+    QByteArray statePartial = statePayload;
+    putU32(statePartial, 112, 0x55);
+    QTest::newRow("state-partial")
+        << 1 << statePartial << Protocol::flagValue(Protocol::Flag::Response);
+
+    QByteArray stateFailure(176, '\0');
+    putU16(stateFailure, 0, quint16(Protocol::MessageType::GetOutputTransactionState));
+    putU16(stateFailure, 2, 176);
+    putI32(stateFailure, 4, -17);
+    putI32(stateFailure, 8, -1);
+    stateFailure[12] = 4;
+    stateFailure[13] = 1;
+    QTest::newRow("state-failure-result")
+        << 1 << stateFailure
+        << quint32(Protocol::Flag::Response | Protocol::Flag::Error);
+
+    QByteArray resultOperation = resultPayload;
+    resultOperation[24] ^= 1;
+    QTest::newRow("result-operation-id")
+        << 2 << resultOperation << Protocol::flagValue(Protocol::Flag::Response);
+
+    QByteArray resultGeneration = resultPayload;
+    putU64(resultGeneration, 104, 3);
+    QTest::newRow("result-generation")
+        << 2 << resultGeneration << Protocol::flagValue(Protocol::Flag::Response);
+
+    QByteArray resultFlags = resultPayload;
+    putU32(resultFlags, 16, 0x4);
+    QTest::newRow("result-state-flags")
+        << 2 << resultFlags << Protocol::flagValue(Protocol::Flag::Response);
+}
+
+void EtherCATProductApiTests::testOutputTransactionCodecRejectsMalformed()
+{
+    Protocol::Error error;
+    Protocol::OutputGroupPolicyQuery policyQuery = outputGroupPolicyQuery();
+    QVERIFY(Protocol::encodeQueryOutputGroupPolicy(
+                policyQuery,
+                TestSessionId,
+                1,
+                1,
+                Protocol::OutputTransactionMinor - 1,
+                &error)
+                .isEmpty());
+    QCOMPARE(error.category, Protocol::ErrorCategory::IncompatibleVersion);
+    QCOMPARE(error.status, std::optional<qint32>(-14));
+
+    policyQuery.semanticMappingSha256.fill('\0');
+    error = {};
+    QVERIFY(Protocol::encodeQueryOutputGroupPolicy(
+                policyQuery, TestSessionId, 1, 1, Protocol::CurrentMinor, &error)
+                .isEmpty());
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    Protocol::OutputTransactionRequest transaction = outputTransactionRequest();
+    std::swap(transaction.values[0], transaction.values[1]);
+    error = {};
+    QVERIFY(Protocol::encodeApplyOutputTransaction(
+                transaction, TestSessionId, 1, 1, Protocol::CurrentMinor, &error)
+                .isEmpty());
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    transaction = outputTransactionRequest();
+    transaction.expectedCurrentOutputGeneration = std::numeric_limits<quint64>::max();
+    error = {};
+    QVERIFY(!Protocol::encodeApplyOutputTransaction(
+                 transaction, TestSessionId, 1, 1, Protocol::CurrentMinor, &error)
+                 .isEmpty());
+    QVERIFY(!error);
+
+    transaction = outputTransactionRequest();
+    transaction.values = {
+        {0x1001,
+         Protocol::RuntimeResourcePrimitive::FixedQ32_32,
+         64,
+         QByteArray::fromHex("0102030405060708")},
+        {0x1002,
+         Protocol::RuntimeResourcePrimitive::RawBits,
+         9,
+         QByteArray::fromHex("01ff")},
+    };
+    error = {};
+    const QByteArray genericValues = Protocol::encodeApplyOutputTransaction(
+        transaction, TestSessionId, 1, 1, Protocol::CurrentMinor, &error);
+    QVERIFY(!genericValues.isEmpty());
+    QVERIFY(!error);
+    const QByteArray genericPayload = genericValues.mid(Protocol::HeaderBytes);
+    QCOMPARE(genericPayload.mid(128 + 16, 8), QByteArray(8, '\0'));
+    QCOMPARE(genericPayload.mid(128 + 24, 8), QByteArray::fromHex("0102030405060708"));
+    QCOMPARE(genericPayload.mid(160 + 16, 14), QByteArray(14, '\0'));
+    QCOMPARE(genericPayload.mid(160 + 30, 2), QByteArray::fromHex("01ff"));
+
+    transaction.values[1].value = QByteArray::fromHex("02ff");
+    error = {};
+    QVERIFY(Protocol::encodeApplyOutputTransaction(
+                transaction, TestSessionId, 1, 1, Protocol::CurrentMinor, &error)
+                .isEmpty());
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    transaction = outputTransactionRequest();
+    transaction.values[0].primitive = Protocol::RuntimeResourcePrimitive::Boolean;
+    transaction.values[0].bitWidth = 1;
+    transaction.values[0].value = QByteArray(1, char(2));
+    error = {};
+    QVERIFY(Protocol::encodeApplyOutputTransaction(
+                transaction, TestSessionId, 1, 1, Protocol::CurrentMinor, &error)
+                .isEmpty());
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    QByteArray rawApply = applyOutputTransactionGoldenWire().mid(Protocol::HeaderBytes);
+    putU32(rawApply, 4, 1);
+    error = {};
+    QVERIFY(Protocol::encodeRequest(
+                Protocol::MessageType::ApplyOutputTransaction,
+                rawApply,
+                TestSessionId,
+                1,
+                1,
+                outputTransactionBinding().bootId,
+                Protocol::CurrentMinor,
+                &error)
+                .isEmpty());
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    Protocol::FrameParser wrongPolicyRole(Protocol::Role::Control);
+    const Protocol::ParseResult policyRole
+        = wrongPolicyRole.append(outputGroupPolicyGoldenWire());
+    QVERIFY(policyRole.error);
+    QCOMPARE(policyRole.error->category, Protocol::ErrorCategory::UnsupportedMessage);
+
+    for (const qint32 status : std::array<qint32, 4>{-6, -7, -8, -12}) {
+        QByteArray preDispatch
+            = bulkStatusPayload(quint16(Protocol::MessageType::QueryOutputGroupPolicy));
+        putI32(preDispatch, 0, status);
+        putI32(preDispatch, 4, 0);
+        error = {};
+        const auto bulkStatus = Protocol::decodeBulkStatus(
+            responseFrame(
+                Protocol::MessageType::BulkStatus,
+                preDispatch,
+                1,
+                Protocol::Flag::Response | Protocol::Flag::Error),
+            &error);
+        QVERIFY(bulkStatus);
+        QVERIFY(!error);
+        QCOMPARE(bulkStatus->status, status);
+    }
+
+    for (quint16 stage = 1; stage <= 3; ++stage) {
+        Protocol::Frame frame = responseFrame(
+            Protocol::MessageType::CommandStatus,
+            successfulCommandStatusPayload(
+                Protocol::MessageType::ApplyOutputTransaction, stage, 3, false));
+        frame.header.protocolMinor = Protocol::OutputTransactionMinor;
+        error = {};
+        const auto status = Protocol::decodeCommandStatus(frame, &error);
+        QVERIFY(status);
+        QVERIFY(!error);
+        QVERIFY(!status->final);
+    }
+
+    QByteArray cpu1Reject = rejectedCommandStatusPayload(
+        Protocol::MessageType::ApplyOutputTransaction, 3, 3, -38, 0, -4);
+    Protocol::Frame cpu1RejectFrame = responseFrame(
+        Protocol::MessageType::CommandStatus,
+        cpu1Reject,
+        1,
+        Protocol::Flag::Response | Protocol::Flag::Error);
+    cpu1RejectFrame.header.protocolMinor = Protocol::OutputTransactionMinor;
+    error = {};
+    QVERIFY(Protocol::decodeCommandStatus(cpu1RejectFrame, &error));
+    QVERIFY(!error);
+    putI32(cpu1RejectFrame.payload, 4, -39);
+    error = {};
+    QVERIFY(!Protocol::decodeCommandStatus(cpu1RejectFrame, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    QByteArray unknownCpu1 = rejectedCommandStatusPayload(
+        Protocol::MessageType::ApplyOutputTransaction, 3, 3, -16, 0, -99);
+    Protocol::Frame unknownCpu1Frame = responseFrame(
+        Protocol::MessageType::CommandStatus,
+        unknownCpu1,
+        1,
+        Protocol::Flag::Response | Protocol::Flag::Error);
+    unknownCpu1Frame.header.protocolMinor = Protocol::OutputTransactionMinor;
+    error = {};
+    QVERIFY(Protocol::decodeCommandStatus(unknownCpu1Frame, &error));
+    QVERIFY(!error);
+    putI32(unknownCpu1Frame.payload, 4, -38);
+    error = {};
+    QVERIFY(!Protocol::decodeCommandStatus(unknownCpu1Frame, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+    putI32(unknownCpu1Frame.payload, 4, -16);
+    putI32(unknownCpu1Frame.payload, 8, 0);
+    error = {};
+    QVERIFY(!Protocol::decodeCommandStatus(unknownCpu1Frame, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    QFETCH(int, kind);
+    QFETCH(QByteArray, payload);
+    QFETCH(quint32, flags);
+
+    const Protocol::MessageType type
+        = kind == 0 ? Protocol::MessageType::OutputGroupPolicy
+                    : kind == 1 ? Protocol::MessageType::OutputTransactionState
+                                : Protocol::MessageType::OutputTransactionResult;
+    Protocol::Frame frame = responseFrame(type, payload, 1, flags);
+    frame.header.protocolMinor = Protocol::OutputTransactionMinor;
+    frame.header.bootId = outputTransactionBinding().bootId;
+    error = {};
+    if (kind == 0) {
+        QVERIFY(!Protocol::decodeOutputGroupPolicy(frame, outputGroupPolicyQuery(), &error));
+    } else if (kind == 1) {
+        QVERIFY(!Protocol::decodeOutputTransactionState(
+            frame, outputTransactionStateQuery(), &error));
+    } else {
+        QVERIFY(!Protocol::decodeOutputTransactionResult(
+            frame, outputTransactionRequest(), &error));
+    }
+    QVERIFY(error);
+}
+
 void EtherCATProductApiTests::testFrameStreamFragmentationAndCoalescing()
 {
     const QByteArray firstWire = encodedResponse(
@@ -3039,6 +3610,15 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
     QVERIFY(capability->firmwareUpdate);
     QVERIFY(capability->explicitTimingModeStart);
     QVERIFY(capability->faultReset);
+    QVERIFY(!capability->runtimeOutputTransactions);
+
+    error = {};
+    const auto outputCapability = Protocol::decodeCapability(
+        responseFrame(Protocol::MessageType::Capability, descriptor), 0xffff, &error);
+    QVERIFY(outputCapability);
+    QVERIFY(!error);
+    QVERIFY(outputCapability->runtimeResources);
+    QVERIFY(outputCapability->runtimeOutputTransactions);
 
     error = {};
     const auto package = Protocol::decodePackageState(

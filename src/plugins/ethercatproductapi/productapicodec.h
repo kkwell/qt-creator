@@ -21,8 +21,11 @@ inline constexpr quint16 FirmwareMinor = 9;
 inline constexpr quint16 ExplicitTimingModeMinor = 10;
 inline constexpr quint16 ControlledFaultResetMinor = 11;
 inline constexpr quint16 RuntimeResourceMinor = 12;
-inline constexpr quint16 CurrentMinor = RuntimeResourceMinor;
+inline constexpr quint16 OutputTransactionMinor = 14;
+inline constexpr quint16 CurrentMinor = OutputTransactionMinor;
 inline constexpr quint32 RuntimeResourceFeature = 1U << 13;
+inline constexpr quint32 OutputTransactionFeature = 1U << 15;
+inline constexpr quint32 OutputTransactionMaximumTtlCycles = 65535;
 inline constexpr quint32 ControlMaximumPayloadBytes = 4096;
 inline constexpr quint32 PushMaximumPayloadBytes = 65536;
 inline constexpr quint32 BulkMaximumPayloadBytes = 65536;
@@ -54,7 +57,9 @@ enum class MessageType : quint16 {
     EnterConfigurationMode = 0x010b,
     StartFreeRun = 0x010c,
     StartDc = 0x010d,
+    ApplyOutputTransaction = 0x010e,
     CommandStatus = 0x0180,
+    OutputTransactionResult = 0x0181,
     ControllerState = 0x0200,
     AlarmRaised = 0x0207,
     AlarmCleared = 0x0208,
@@ -77,11 +82,15 @@ enum class MessageType : quint16 {
     RestoreActivePackage = 0x0407,
     QueryResourceTable = 0x040b,
     GetResourceSnapshot = 0x040c,
+    QueryOutputGroupPolicy = 0x040e,
+    GetOutputTransactionState = 0x040f,
     Capability = 0x0480,
     TopologyResult = 0x0481,
     PackageState = 0x0483,
     ResourceTablePage = 0x0487,
     ResourceSnapshot = 0x0488,
+    OutputGroupPolicy = 0x048a,
+    OutputTransactionState = 0x048b,
     GetFirmwareState = 0x0504,
     FirmwareStatus = 0x0580,
     FirmwareState = 0x0581,
@@ -395,6 +404,126 @@ struct RuntimeResourceSnapshot
     QList<RuntimeResourceSample> samples;
 };
 
+enum class OutputTransactionApiStatus : qint32 {
+    Ok = 0,
+    OperationConflict = -36,
+    StaleOutput = -37,
+    OutputGroupInvalid = -38,
+    OutputValueInvalid = -39,
+    OutputTtlInvalid = -40,
+    OutputPolicyUnavailable = -41,
+};
+
+enum class OutputTransactionOperationResult : qint32 {
+    Ok = 0,
+    Argument = -1,
+    State = -2,
+    Epoch = -3,
+    Group = -4,
+    Value = -5,
+    Ttl = -6,
+    Conflict = -7,
+    StaleOutput = -8,
+    Abi = -9,
+    Policy = -10,
+};
+
+enum class OutputGroupPolicyFlag : quint32 {
+    ManualWrite = 1U << 0,
+};
+
+enum class OutputTransactionState : quint16 {
+    Idle = 0,
+    OverrideActive = 1,
+    SafeHold = 2,
+};
+
+enum class OutputRecoveryPolicy : quint32 {
+    ReturnTask = 1,
+    HoldSafe = 2,
+};
+
+enum class OutputTransactionResultFlag : quint32 {
+    Replayed = 1U << 0,
+    OverrideActive = 1U << 1,
+    SafeHold = 1U << 2,
+    ReturnedTask = 1U << 3,
+};
+
+constexpr quint32 outputTransactionResultFlagValue(OutputTransactionResultFlag flag)
+{
+    return static_cast<quint32>(flag);
+}
+
+struct OutputGroupPolicyQuery
+{
+    RuntimeResourceBinding binding;
+    quint32 consistencyGroupId = 0;
+    QByteArray semanticMappingSha256;
+};
+
+struct OutputGroupPolicy
+{
+    qint32 status = 0;
+    RuntimeResourceBinding binding;
+    quint32 policyFlags = 0;
+    quint32 consistencyGroupId = 0;
+    OutputRecoveryPolicy recoveryPolicy = OutputRecoveryPolicy::ReturnTask;
+    quint32 maximumTtlCycles = 0;
+    quint32 completeResourceCount = 0;
+    quint64 currentOutputGeneration = 0;
+    QByteArray completeGroupRecordSha256;
+    QByteArray semanticMappingSha256;
+};
+
+struct OutputTransactionStateQuery
+{
+    RuntimeResourceBinding binding;
+    QByteArray semanticMappingSha256;
+};
+
+struct OutputTransactionValue
+{
+    quint64 resourceId = 0;
+    RuntimeResourcePrimitive primitive = RuntimeResourcePrimitive::Boolean;
+    quint16 bitWidth = 0;
+    QByteArray value;
+};
+
+struct OutputTransactionRequest
+{
+    RuntimeResourceBinding binding;
+    QByteArray operationId;
+    quint64 expectedCurrentOutputGeneration = 0;
+    quint32 ttlCycles = 0;
+    quint32 consistencyGroupId = 0;
+    QByteArray semanticMappingSha256;
+    QList<OutputTransactionValue> values;
+};
+
+struct OutputTransactionRecord
+{
+    quint16 originalType = 0;
+    qint32 status = 0;
+    qint32 operationResult = 0;
+    quint8 stage = 0;
+    bool final = false;
+    OutputTransactionState state = OutputTransactionState::Idle;
+    quint32 resultFlags = 0;
+    RuntimeResourceBinding binding;
+    QByteArray operationId;
+    quint64 appliedCycle = 0;
+    quint64 expiryCycle = 0;
+    quint64 outputGeneration = 0;
+    quint32 consistencyGroupId = 0;
+    quint32 ttlCycles = 0;
+    quint32 recoveryPolicy = 0;
+    quint16 valueCount = 0;
+    QByteArray semanticMappingSha256;
+    quint64 detail = 0;
+    quint64 controllerTimestampNs = 0;
+};
+
 quint32 maximumPayloadBytes(Role role);
 bool isReadOnlyRequest(MessageType type);
 bool isPackageDeploymentRequest(MessageType type);
@@ -441,6 +570,27 @@ QByteArray encodeGetResourceSnapshot(
     quint64 sequence,
     quint16 protocolMinor = CurrentMinor,
     Error *error = nullptr);
+QByteArray encodeQueryOutputGroupPolicy(
+    const OutputGroupPolicyQuery &query,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint16 protocolMinor = CurrentMinor,
+    Error *error = nullptr);
+QByteArray encodeGetOutputTransactionState(
+    const OutputTransactionStateQuery &query,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint16 protocolMinor = CurrentMinor,
+    Error *error = nullptr);
+QByteArray encodeApplyOutputTransaction(
+    const OutputTransactionRequest &request,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint16 protocolMinor = CurrentMinor,
+    Error *error = nullptr);
 
 std::optional<HelloAck> decodeHelloAck(
     const Frame &frame,
@@ -470,6 +620,12 @@ std::optional<RuntimeResourceTablePage> decodeResourceTablePage(
     const Frame &frame, const RuntimeResourceTableQuery &query, Error *error = nullptr);
 std::optional<RuntimeResourceSnapshot> decodeResourceSnapshot(
     const Frame &frame, const RuntimeResourceSnapshotQuery &query, Error *error = nullptr);
+std::optional<OutputGroupPolicy> decodeOutputGroupPolicy(
+    const Frame &frame, const OutputGroupPolicyQuery &query, Error *error = nullptr);
+std::optional<OutputTransactionRecord> decodeOutputTransactionState(
+    const Frame &frame, const OutputTransactionStateQuery &query, Error *error = nullptr);
+std::optional<OutputTransactionRecord> decodeOutputTransactionResult(
+    const Frame &frame, const OutputTransactionRequest &request, Error *error = nullptr);
 std::optional<Data::ControllerFirmwareSummary> decodeFirmwareState(
     const Frame &frame, Error *error = nullptr);
 std::optional<ResumeEventsResult> decodeResumeEventsResult(
