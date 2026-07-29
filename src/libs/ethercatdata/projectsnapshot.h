@@ -5,6 +5,7 @@
 #include "deviceadapterselection.h"
 #include "devicedescription.h"
 #include "ethercatdata_global.h"
+#include "manualcontrol.h"
 #include "nodeid.h"
 #include "offlineconfiguration.h"
 
@@ -31,6 +32,7 @@ struct ETHERCATDATA_EXPORT OfflineSlaveConfiguration
     DcConfiguration dc;
     QByteArray esiSha256;
     DeviceAdapterProjectSelection adapterSelection;
+    ManualControlEnvelope manualControlEnvelope = {};
 
     friend bool operator==(const OfflineSlaveConfiguration &, const OfflineSlaveConfiguration &)
         = default;

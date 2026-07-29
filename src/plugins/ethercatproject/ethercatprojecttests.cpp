@@ -201,6 +201,57 @@ static Data::SemanticBindingArtifactReference bindingArtifact()
     };
 }
 
+static Data::EngineeringConstraint booleanConstraint()
+{
+    return {
+        Data::ExactRational{0, 1},
+        Data::ExactRational{1, 1},
+        Data::ExactRational{1, 1},
+        Data::ExactRational{0, 1},
+        {},
+    };
+}
+
+static Data::ManualControlEnvelope manualControlEnvelope()
+{
+    Data::ManualSignalEnvelope output0;
+    output0.signalId = {"io.output.0"};
+    output0.enabled = true;
+    output0.timing.commandTtlMs = 250;
+    output0.allowedRange = booleanConstraint();
+    output0.safeValue = Data::EngineeringValue::fromBoolean(false);
+    output0.consistencyGroupSafeValues = {
+        {Data::SemanticSignalId{"io.output.1"}, Data::EngineeringValue::fromBoolean(false)},
+    };
+
+    Data::ManualSignalEnvelope output1;
+    output1.signalId = {"io.output.1"};
+    output1.allowedRange = booleanConstraint();
+    output1.safeValue = Data::EngineeringValue::fromBoolean(false);
+
+    Data::ManualActionParameterEnvelope speed;
+    speed.parameterId = "speed";
+    speed.allowedRange = {
+        Data::ExactRational{-1000, 1},
+        Data::ExactRational{1000, 1},
+        Data::ExactRational{1, 2},
+        Data::ExactRational{0, 1},
+        {},
+    };
+    speed.defaultValue
+        = Data::EngineeringValue::fromExactRational(Data::ExactRational{1, 2});
+
+    Data::ManualActionEnvelope jog;
+    jog.actionId = {"motion.jog"};
+    jog.holdToRun = true;
+    jog.parameters = {speed};
+    jog.releaseActionId = {"motion.stop.release"};
+    jog.timeoutActionId = {"motion.stop.timeout"};
+    jog.failureActionId = {"motion.stop.failure"};
+
+    return {true, {output0, output1}, {jog}};
+}
+
 void EtherCATProjectTests::testMetadataAndService()
 {
     const ExtensionSystem::PluginSpec *spec = ExtensionSystem::PluginManager::specById(
@@ -564,7 +615,7 @@ void EtherCATProjectTests::testOfflineConfigurationPersistenceAndUndo()
     const Utils::Result<QByteArray> savedContents = projectFile.fileContents();
     QVERIFY_RESULT(savedContents);
     const QJsonObject root = QJsonDocument::fromJson(*savedContents).object();
-    QCOMPARE(root.value("formatVersion").toInt(), 4);
+    QCOMPARE(root.value("formatVersion").toInt(), Constants::CURRENT_FORMAT_VERSION);
     const QJsonArray savedSlaves = root.value("master").toObject().value("slaves").toArray();
     QVERIFY(savedSlaves.first().toObject().value("configuration").isObject());
 
@@ -590,6 +641,13 @@ void EtherCATProjectTests::testAdapterSelectionPersistenceAndUndo()
     QVERIFY_RESULT(document.replaceOfflineSlaves(master, slaves));
     const Data::NodeId slaveId = document.snapshot().slaves.first().id;
     const QByteArray esiSha256(32, '\x49');
+
+    const int beforeAdapterCommandCount = document.undoStack()->count();
+    QVERIFY(!document.setManualControlEnvelope(slaveId, manualControlEnvelope()));
+    QCOMPARE(document.undoStack()->count(), beforeAdapterCommandCount);
+    QCOMPARE(
+        document.snapshot().slaves.first().manualControlEnvelope,
+        Data::ManualControlEnvelope());
 
     Data::DeviceAdapterProjectSelection selection = adapterSelection();
     QVERIFY_RESULT(document.setDeviceAdapterSelection(slaveId, esiSha256, selection));
@@ -659,6 +717,189 @@ void EtherCATProjectTests::testAdapterSelectionPersistenceAndUndo()
     QVERIFY(!savedContents->contains("runtimeGeneration"));
 }
 
+void EtherCATProjectTests::testManualControlEnvelopePersistenceAndUndo()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath projectFile
+        = temporaryFilePath(directory, "manual-control-envelope.ecatproject");
+    Data::ProjectSnapshot source = createProjectSnapshot("Manual Control", "Test");
+    const Data::NodeId master = masterId(source);
+    Data::OfflineSlaveConfiguration slave = offlineSlaves(master).first();
+    slave.esiSha256 = QByteArray(32, '\x49');
+    slave.adapterSelection = adapterSelection();
+    std::sort(
+        slave.adapterSelection.moduleAssignments.begin(),
+        slave.adapterSelection.moduleAssignments.end(),
+        [](const auto &left, const auto &right) { return left.slot < right.slot; });
+    source.slaves = {slave};
+    source.nodes.append({slave.id, master, Data::ProjectNodeKind::Slave, slave.name});
+    source.masterBindingArtifact = bindingArtifact();
+    QVERIFY_RESULT(projectFile.writeFileContents(serializeProject(source)));
+
+    EtherCATProjectDocument document;
+    QVERIFY_RESULT(document.load(projectFile));
+    const Data::ManualControlEnvelope envelope = manualControlEnvelope();
+    QVERIFY_RESULT(document.setManualControlEnvelope(slave.id, envelope));
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    QCOMPARE(document.undoStack()->undoText(), Tr::tr("Configure EtherCAT manual control"));
+
+    document.undoStack()->undo();
+    QCOMPARE(
+        document.snapshot().slaves.first().manualControlEnvelope,
+        Data::ManualControlEnvelope());
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    document.undoStack()->redo();
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+
+    QVERIFY_RESULT(document.setMasterBindingArtifact(bindingArtifact()));
+    QVERIFY_RESULT(document.renameProject("Manual Control Display"));
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    document.undoStack()->undo();
+
+    QVERIFY_RESULT(document.renameStructuralNode(master, "Manual Master"));
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    document.undoStack()->undo();
+
+    QVERIFY_RESULT(document.setMasterConfiguration(
+        master, {Data::MasterTimingMode::DistributedClocks, 125000}));
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+
+    const Utils::Result<> processDataResult
+        = document.setProcessDataConfiguration(slave.id, processDataConfiguration());
+    QVERIFY_RESULT(processDataResult);
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    QCOMPARE(document.undoStack()->undoText(), Tr::tr("Configure EtherCAT Process Data"));
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact.artifactId,
+        bindingArtifact().artifactId);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact.artifactSha256,
+        bindingArtifact().artifactSha256);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact.projectConfigurationSha256,
+        bindingArtifact().projectConfigurationSha256);
+
+    const Utils::Result<> startupResult
+        = document.setStartupConfiguration(slave.id, startupConfiguration());
+    QVERIFY_RESULT(startupResult);
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+
+    const Utils::Result<> dcResult = document.setDcConfiguration(slave.id, dcConfiguration());
+    QVERIFY_RESULT(dcResult);
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+
+    Data::ManualControlEnvelope invalidOrder = envelope;
+    std::reverse(
+        invalidOrder.signalEnvelopes.begin(), invalidOrder.signalEnvelopes.end());
+    const int commandCount = document.undoStack()->count();
+    const int commandIndex = document.undoStack()->index();
+    QVERIFY(!document.setManualControlEnvelope(slave.id, invalidOrder));
+    QCOMPARE(document.undoStack()->count(), commandCount);
+    QCOMPARE(document.undoStack()->index(), commandIndex);
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+
+    Data::DeviceAdapterProjectSelection reorderedSelection = slave.adapterSelection;
+    std::reverse(
+        reorderedSelection.moduleAssignments.begin(),
+        reorderedSelection.moduleAssignments.end());
+    const int beforeReorderedCount = document.undoStack()->count();
+    const int beforeReorderedIndex = document.undoStack()->index();
+    const Utils::Result<> reorderedResult = document.setDeviceAdapterSelection(
+        slave.id, slave.esiSha256, reorderedSelection);
+    QVERIFY_RESULT(reorderedResult);
+    QCOMPARE(document.undoStack()->count(), beforeReorderedCount);
+    QCOMPARE(document.undoStack()->index(), beforeReorderedIndex);
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+
+    Data::DeviceAdapterProjectSelection changedSelection = slave.adapterSelection;
+    changedSelection.processDataProfileId = "dc-alternate";
+    QVERIFY_RESULT(document.setDeviceAdapterSelection(
+        slave.id, slave.esiSha256, changedSelection));
+    QCOMPARE(
+        document.snapshot().slaves.first().manualControlEnvelope,
+        Data::ManualControlEnvelope());
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+
+    QVERIFY_RESULT(document.setDeviceAdapterSelection(
+        slave.id, QByteArray(32, '\x50'), slave.adapterSelection));
+    QCOMPARE(
+        document.snapshot().slaves.first().manualControlEnvelope,
+        Data::ManualControlEnvelope());
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+
+    Data::DeviceAdapterProjectSelection changedModules = slave.adapterSelection;
+    changedModules.moduleAssignments[0].moduleIdent += 1;
+    QVERIFY_RESULT(document.setDeviceAdapterSelection(
+        slave.id, slave.esiSha256, changedModules));
+    QCOMPARE(
+        document.snapshot().slaves.first().manualControlEnvelope,
+        Data::ManualControlEnvelope());
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, envelope);
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+
+    QVERIFY_RESULT(document.save());
+    EtherCATProjectDocument reloaded;
+    QVERIFY_RESULT(reloaded.load(projectFile));
+    QCOMPARE(reloaded.snapshot().slaves.first().manualControlEnvelope, envelope);
+    QCOMPARE(reloaded.snapshot().masterBindingArtifact, bindingArtifact());
+
+    const Utils::Result<QByteArray> savedContents = projectFile.fileContents();
+    QVERIFY_RESULT(savedContents);
+    const QJsonObject root = QJsonDocument::fromJson(*savedContents).object();
+    QCOMPARE(root.value("formatVersion").toInt(), Constants::CURRENT_FORMAT_VERSION);
+    const QJsonObject savedSlave
+        = root.value("master").toObject().value("slaves").toArray().first().toObject();
+    QVERIFY(savedSlave.value("manualControlEnvelope").isObject());
+    const QJsonObject savedEnvelope = savedSlave.value("manualControlEnvelope").toObject();
+    const QJsonObject firstRange = savedEnvelope.value("signalEnvelopes")
+                                       .toArray()
+                                       .first()
+                                       .toObject()
+                                       .value("allowedRange")
+                                       .toObject();
+    QCOMPARE(
+        firstRange.value("minimum").toObject().value("numerator").toString(),
+        QString("0"));
+    QVERIFY(firstRange.value("minimum").toObject().value("numerator").isString());
+    QCOMPARE(
+        firstRange.value("minimum").toObject().value("denominator").toString(),
+        QString("1"));
+}
+
 void EtherCATProjectTests::testBindingArtifactInvalidationAndUndo()
 {
     QTemporaryDir directory;
@@ -674,6 +915,7 @@ void EtherCATProjectTests::testBindingArtifactInvalidationAndUndo()
         slave.adapterSelection.moduleAssignments.begin(),
         slave.adapterSelection.moduleAssignments.end(),
         [](const auto &left, const auto &right) { return left.slot < right.slot; });
+    slave.manualControlEnvelope = manualControlEnvelope();
     source.slaves = {slave};
     source.nodes.append({slave.id, master, Data::ProjectNodeKind::Slave, slave.name});
     source.masterBindingArtifact = bindingArtifact();
@@ -693,6 +935,15 @@ void EtherCATProjectTests::testBindingArtifactInvalidationAndUndo()
     QVERIFY_RESULT(renameMasterResult);
     QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
     document.undoStack()->undo();
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+
+    Data::OfflineSlaveConfiguration renamedSlave = slave;
+    renamedSlave.name = "Display Slave Only";
+    QVERIFY_RESULT(document.replaceOfflineSlaves(master, {renamedSlave}));
+    QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, manualControlEnvelope());
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().slaves.first(), slave);
     QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
 
     QVERIFY_RESULT(document.setMasterConfiguration(
@@ -891,6 +1142,71 @@ void EtherCATProjectTests::testVersionThreeAdapterMigration()
     const Utils::Result<QByteArray> backup = document.migrationBackupPath().fileContents();
     QVERIFY_RESULT(backup);
     QCOMPARE(*backup, versionThreeContents);
+}
+
+void EtherCATProjectTests::testVersionFourManualControlMigration()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath projectFile
+        = temporaryFilePath(directory, "version-four.ecatproject");
+    Data::ProjectSnapshot source = createProjectSnapshot("Version Four", "Test");
+    const Data::NodeId master = masterId(source);
+    Data::OfflineSlaveConfiguration slave = offlineSlaves(master).first();
+    slave.esiSha256 = QByteArray(32, '\x49');
+    slave.adapterSelection = adapterSelection();
+    std::sort(
+        slave.adapterSelection.moduleAssignments.begin(),
+        slave.adapterSelection.moduleAssignments.end(),
+        [](const auto &left, const auto &right) { return left.slot < right.slot; });
+    slave.manualControlEnvelope = manualControlEnvelope();
+    source.slaves = {slave};
+    source.nodes.append({slave.id, master, Data::ProjectNodeKind::Slave, slave.name});
+    source.masterBindingArtifact = bindingArtifact();
+
+    QJsonObject root = QJsonDocument::fromJson(serializeProject(source)).object();
+    root.insert("formatVersion", 4);
+    QJsonObject masterObject = root.value("master").toObject();
+    QJsonArray slaves = masterObject.value("slaves").toArray();
+    QJsonObject versionFourSlave = slaves.first().toObject();
+    versionFourSlave.remove("manualControlEnvelope");
+    slaves[0] = versionFourSlave;
+    masterObject.insert("slaves", slaves);
+    root.insert("master", masterObject);
+    const QByteArray versionFourContents = QJsonDocument(root).toJson();
+    QVERIFY_RESULT(projectFile.writeFileContents(versionFourContents));
+
+    EtherCATProjectDocument document;
+    QVERIFY_RESULT(document.load(projectFile));
+    QVERIFY(document.snapshot().migrated);
+    QVERIFY(document.isModified());
+    QCOMPARE(document.snapshot().formatVersion, Constants::CURRENT_FORMAT_VERSION);
+    QCOMPARE(document.snapshot().slaves.first().esiSha256, slave.esiSha256);
+    QCOMPARE(
+        document.snapshot().slaves.first().adapterSelection,
+        slave.adapterSelection);
+    QCOMPARE(
+        document.snapshot().slaves.first().manualControlEnvelope,
+        Data::ManualControlEnvelope());
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+
+    QVERIFY_RESULT(document.save());
+    QVERIFY(document.migrationBackupPath().toUrlishString().contains(".v4.bak"));
+    const Utils::Result<QByteArray> backup = document.migrationBackupPath().fileContents();
+    QVERIFY_RESULT(backup);
+    QCOMPARE(*backup, versionFourContents);
+    const Utils::Result<LoadedProject> current
+        = parseProject(*projectFile.fileContents(), "Fallback");
+    QVERIFY_RESULT(current);
+    QCOMPARE(current->snapshot.formatVersion, Constants::CURRENT_FORMAT_VERSION);
+    QCOMPARE(
+        current->snapshot.slaves.first().manualControlEnvelope,
+        Data::ManualControlEnvelope());
+    QCOMPARE(
+        current->snapshot.masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
 }
 
 void EtherCATProjectTests::testOfflineConfigurationCorruption()
@@ -1129,6 +1445,102 @@ void EtherCATProjectTests::testAdapterSelectionCorruption()
     }));
 }
 
+void EtherCATProjectTests::testManualControlEnvelopeCorruption()
+{
+    Data::ProjectSnapshot source = createProjectSnapshot("Manual Corruption", "Test");
+    const Data::NodeId master = masterId(source);
+    Data::OfflineSlaveConfiguration slave = offlineSlaves(master).first();
+    slave.esiSha256 = QByteArray(32, '\x49');
+    slave.adapterSelection = adapterSelection();
+    std::sort(
+        slave.adapterSelection.moduleAssignments.begin(),
+        slave.adapterSelection.moduleAssignments.end(),
+        [](const auto &left, const auto &right) { return left.slot < right.slot; });
+    slave.manualControlEnvelope = manualControlEnvelope();
+    source.slaves = {slave};
+    source.nodes.append({slave.id, master, Data::ProjectNodeKind::Slave, slave.name});
+    const QJsonObject validRoot = QJsonDocument::fromJson(serializeProject(source)).object();
+    QVERIFY_RESULT(parseProject(QJsonDocument(validRoot).toJson(), "Fallback"));
+
+    const auto rejectEnvelopeMutation = [&validRoot](const auto &mutate) {
+        QJsonObject root = validRoot;
+        QJsonObject masterObject = root.value("master").toObject();
+        QJsonArray slaves = masterObject.value("slaves").toArray();
+        QJsonObject slaveObject = slaves.first().toObject();
+        QJsonObject envelope = slaveObject.value("manualControlEnvelope").toObject();
+        mutate(envelope);
+        slaveObject.insert("manualControlEnvelope", envelope);
+        slaves[0] = slaveObject;
+        masterObject.insert("slaves", slaves);
+        root.insert("master", masterObject);
+        return parseProject(QJsonDocument(root).toJson(), "Fallback");
+    };
+
+    QVERIFY(!rejectEnvelopeMutation([](QJsonObject &envelope) {
+        envelope.insert("runtimeResourceId", "1");
+    }));
+    QVERIFY(!rejectEnvelopeMutation([](QJsonObject &envelope) {
+        QJsonArray signalArray = envelope.value("signalEnvelopes").toArray();
+        const QJsonValue first = signalArray.at(0);
+        signalArray[0] = signalArray.at(1);
+        signalArray[1] = first;
+        envelope.insert("signalEnvelopes", signalArray);
+    }));
+    QVERIFY(!rejectEnvelopeMutation([](QJsonObject &envelope) {
+        QJsonArray signalArray = envelope.value("signalEnvelopes").toArray();
+        QJsonObject signal = signalArray.first().toObject();
+        QJsonObject range = signal.value("allowedRange").toObject();
+        QJsonObject minimum = range.value("minimum").toObject();
+        minimum.insert("numerator", "00");
+        range.insert("minimum", minimum);
+        signal.insert("allowedRange", range);
+        signalArray[0] = signal;
+        envelope.insert("signalEnvelopes", signalArray);
+    }));
+    QVERIFY(!rejectEnvelopeMutation([](QJsonObject &envelope) {
+        QJsonArray actions = envelope.value("actionEnvelopes").toArray();
+        QJsonObject action = actions.first().toObject();
+        QJsonArray parameters = action.value("parameters").toArray();
+        QJsonObject parameter = parameters.first().toObject();
+        QJsonObject range = parameter.value("allowedRange").toObject();
+        QJsonObject step = range.value("step").toObject();
+        step.insert("denominator", 2);
+        range.insert("step", step);
+        parameter.insert("allowedRange", range);
+        parameters[0] = parameter;
+        action.insert("parameters", parameters);
+        actions[0] = action;
+        envelope.insert("actionEnvelopes", actions);
+    }));
+    QVERIFY(!rejectEnvelopeMutation([](QJsonObject &envelope) {
+        QJsonArray actions = envelope.value("actionEnvelopes").toArray();
+        QJsonObject action = actions.first().toObject();
+        action.remove("failureActionId");
+        actions[0] = action;
+        envelope.insert("actionEnvelopes", actions);
+    }));
+
+    QJsonObject missingRoot = validRoot;
+    QJsonObject masterObject = missingRoot.value("master").toObject();
+    QJsonArray slaves = masterObject.value("slaves").toArray();
+    QJsonObject slaveObject = slaves.first().toObject();
+    slaveObject.remove("manualControlEnvelope");
+    slaves[0] = slaveObject;
+    masterObject.insert("slaves", slaves);
+    missingRoot.insert("master", masterObject);
+    QVERIFY(!parseProject(QJsonDocument(missingRoot).toJson(), "Fallback"));
+
+    QJsonObject missingAdapterRoot = validRoot;
+    masterObject = missingAdapterRoot.value("master").toObject();
+    slaves = masterObject.value("slaves").toArray();
+    slaveObject = slaves.first().toObject();
+    slaveObject.remove("adapterSelection");
+    slaves[0] = slaveObject;
+    masterObject.insert("slaves", slaves);
+    missingAdapterRoot.insert("master", masterObject);
+    QVERIFY(!parseProject(QJsonDocument(missingAdapterRoot).toJson(), "Fallback"));
+}
+
 void EtherCATProjectTests::testMigrationCreatesRecoveryBackup()
 {
     QTemporaryDir directory;
@@ -1260,6 +1672,17 @@ void EtherCATProjectTests::testProjectExplorerMultiProjectLifecycle()
     QCOMPARE(
         secondProject->document()->undoStack()->undoText(),
         Tr::tr("Select EtherCAT device adapter"));
+    const Utils::Result<> serviceManualResult = service->setManualControlEnvelope(
+        secondProject->snapshot().id, configuredSlaveId, manualControlEnvelope());
+    QVERIFY_RESULT(serviceManualResult);
+    QCOMPARE(
+        secondProject->document()->undoStack()->undoText(),
+        Tr::tr("Configure EtherCAT manual control"));
+    QCOMPARE(
+        service->project(secondProject->snapshot().id)
+            ->slaves.first()
+            .manualControlEnvelope,
+        manualControlEnvelope());
     const Utils::Result<> serviceBindingResult
         = service->setMasterBindingArtifact(secondProject->snapshot().id, bindingArtifact());
     QVERIFY_RESULT(serviceBindingResult);
@@ -1274,10 +1697,21 @@ void EtherCATProjectTests::testProjectExplorerMultiProjectLifecycle()
     QVERIFY_RESULT(undoBindingResult);
     QCOMPARE(
         secondProject->document()->undoStack()->undoText(),
-        Tr::tr("Select EtherCAT device adapter"));
+        Tr::tr("Configure EtherCAT manual control"));
     QCOMPARE(
         service->project(secondProject->snapshot().id)->masterBindingArtifact,
         Data::SemanticBindingArtifactReference());
+    const Utils::Result<> undoManualResult
+        = service->undoProject(secondProject->snapshot().id);
+    QVERIFY_RESULT(undoManualResult);
+    QCOMPARE(
+        secondProject->document()->undoStack()->undoText(),
+        Tr::tr("Select EtherCAT device adapter"));
+    QCOMPARE(
+        service->project(secondProject->snapshot().id)
+            ->slaves.first()
+            .manualControlEnvelope,
+        Data::ManualControlEnvelope());
     const Utils::Result<> undoAdapterResult
         = service->undoProject(secondProject->snapshot().id);
     QVERIFY_RESULT(undoAdapterResult);

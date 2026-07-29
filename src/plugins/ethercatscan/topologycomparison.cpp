@@ -289,6 +289,8 @@ QList<Data::OfflineSlaveConfiguration> offlineConfigurationFromScan(
                 break;
             }
         }
+        const bool sameAdapterIdentity
+            = matchedConfiguration && matchedConfiguration->identity == slave.identity;
         result.append(
             {acceptedId,
              snapshot.masterId,
@@ -301,7 +303,12 @@ QList<Data::OfflineSlaveConfiguration> offlineConfigurationFromScan(
              matchedConfiguration ? matchedConfiguration->processData
                                   : Data::ProcessDataConfiguration{},
              matchedConfiguration ? matchedConfiguration->startup : Data::StartupConfiguration{},
-             matchedConfiguration ? matchedConfiguration->dc : Data::DcConfiguration{}});
+             matchedConfiguration ? matchedConfiguration->dc : Data::DcConfiguration{},
+             sameAdapterIdentity ? matchedConfiguration->esiSha256 : QByteArray{},
+             sameAdapterIdentity ? matchedConfiguration->adapterSelection
+                                 : Data::DeviceAdapterProjectSelection{},
+             sameAdapterIdentity ? matchedConfiguration->manualControlEnvelope
+                                 : Data::ManualControlEnvelope{}});
     }
     std::sort(result.begin(), result.end(), [](const auto &left, const auto &right) {
         return left.position < right.position;

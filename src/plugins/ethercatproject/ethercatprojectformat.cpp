@@ -5,6 +5,8 @@
 #include "ethercatprojectconstants.h"
 #include "ethercatprojecttr.h"
 
+#include <ethercatcore/manualcontrolcontract.h>
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -152,6 +154,555 @@ static bool hasOnlyKeys(const QJsonObject &object, const QSet<QString> &allowedK
             return false;
     }
     return true;
+}
+
+static bool isCanonicalIdentifier(const QString &value)
+{
+    if (value.isEmpty() || value != value.trimmed() || value.size() > 256)
+        return false;
+    return std::none_of(value.cbegin(), value.cend(), [](QChar character) {
+        return character.category() == QChar::Other_Control;
+    });
+}
+
+static Utils::Result<qint64> parseCanonicalSignedString(
+    const QJsonObject &object, const QString &key, const QString &objectName)
+{
+    const auto text = parseString(object, key, objectName);
+    if (!text)
+        return Utils::ResultError(text.error());
+    bool ok = false;
+    const qint64 value = text->toLongLong(&ok, 10);
+    if (!ok || *text != QString::number(value)) {
+        return Utils::ResultError(
+            Tr::tr("%1 has a non-canonical '%2' decimal integer.").arg(objectName, key));
+    }
+    return value;
+}
+
+static Utils::Result<quint64> parseCanonicalUnsignedString(
+    const QJsonObject &object, const QString &key, const QString &objectName)
+{
+    const auto text = parseString(object, key, objectName);
+    if (!text)
+        return Utils::ResultError(text.error());
+    bool ok = false;
+    const quint64 value = text->toULongLong(&ok, 10);
+    if (!ok || *text != QString::number(value)) {
+        return Utils::ResultError(
+            Tr::tr("%1 has a non-canonical '%2' decimal integer.").arg(objectName, key));
+    }
+    return value;
+}
+
+static Utils::Result<Data::ExactRational> parseExactRational(
+    const QJsonValue &value, const QString &objectName)
+{
+    if (!value.isObject())
+        return Utils::ResultError(Tr::tr("%1 must be an exact-rational object.").arg(objectName));
+    const QJsonObject object = value.toObject();
+    static const QSet<QString> keys{"numerator", "denominator"};
+    if (object.size() != keys.size() || !hasOnlyKeys(object, keys))
+        return Utils::ResultError(Tr::tr("%1 has an invalid exact-rational shape.").arg(objectName));
+    const auto numerator = parseCanonicalSignedString(object, "numerator", objectName);
+    const auto denominator = parseCanonicalSignedString(object, "denominator", objectName);
+    if (!numerator || !denominator) {
+        return Utils::ResultError(!numerator ? numerator.error() : denominator.error());
+    }
+    const Data::ExactRational rational{*numerator, *denominator};
+    if (!EtherCAT::Core::validateExactRational(rational).accepted()) {
+        return Utils::ResultError(
+            Tr::tr("%1 is not a canonical exact rational.").arg(objectName));
+    }
+    return rational;
+}
+
+static Utils::Result<Data::EngineeringValue> parseEngineeringValue(
+    const QJsonValue &value, const QString &objectName)
+{
+    if (!value.isObject())
+        return Utils::ResultError(Tr::tr("%1 must be an engineering-value object.").arg(objectName));
+    const QJsonObject object = value.toObject();
+    const auto kind = parseString(object, "kind", objectName);
+    if (!kind)
+        return Utils::ResultError(kind.error());
+
+    Data::EngineeringValue result;
+    if (*kind == "boolean") {
+        static const QSet<QString> keys{"kind", "boolean"};
+        if (object.size() != keys.size() || !hasOnlyKeys(object, keys))
+            return Utils::ResultError(Tr::tr("%1 has an invalid Boolean value.").arg(objectName));
+        const auto parsed = parseBool(object, "boolean", objectName);
+        if (!parsed)
+            return Utils::ResultError(parsed.error());
+        result = Data::EngineeringValue::fromBoolean(*parsed);
+    } else if (*kind == "signed-integer") {
+        static const QSet<QString> keys{"kind", "signedInteger"};
+        if (object.size() != keys.size() || !hasOnlyKeys(object, keys)) {
+            return Utils::ResultError(
+                Tr::tr("%1 has an invalid signed-integer value.").arg(objectName));
+        }
+        const auto parsed = parseCanonicalSignedString(object, "signedInteger", objectName);
+        if (!parsed)
+            return Utils::ResultError(parsed.error());
+        result = Data::EngineeringValue::fromSignedInteger(*parsed);
+    } else if (*kind == "unsigned-integer") {
+        static const QSet<QString> keys{"kind", "unsignedInteger"};
+        if (object.size() != keys.size() || !hasOnlyKeys(object, keys)) {
+            return Utils::ResultError(
+                Tr::tr("%1 has an invalid unsigned-integer value.").arg(objectName));
+        }
+        const auto parsed = parseCanonicalUnsignedString(object, "unsignedInteger", objectName);
+        if (!parsed)
+            return Utils::ResultError(parsed.error());
+        result = Data::EngineeringValue::fromUnsignedInteger(*parsed);
+    } else if (*kind == "exact-rational") {
+        static const QSet<QString> keys{"kind", "exactRational"};
+        if (object.size() != keys.size() || !hasOnlyKeys(object, keys)) {
+            return Utils::ResultError(
+                Tr::tr("%1 has an invalid exact-rational value.").arg(objectName));
+        }
+        const auto parsed = parseExactRational(
+            object.value("exactRational"), objectName + Tr::tr(" exact rational"));
+        if (!parsed)
+            return Utils::ResultError(parsed.error());
+        result = Data::EngineeringValue::fromExactRational(*parsed);
+    } else if (*kind == "enumeration") {
+        static const QSet<QString> keys{"kind", "enumerationName"};
+        if (object.size() != keys.size() || !hasOnlyKeys(object, keys)) {
+            return Utils::ResultError(
+                Tr::tr("%1 has an invalid enumeration value.").arg(objectName));
+        }
+        const auto parsed = parseString(object, "enumerationName", objectName);
+        if (!parsed)
+            return Utils::ResultError(parsed.error());
+        if (!isCanonicalIdentifier(*parsed)) {
+            return Utils::ResultError(
+                Tr::tr("%1 has an invalid enumeration identifier.").arg(objectName));
+        }
+        result = Data::EngineeringValue::fromEnumeration(*parsed);
+    } else {
+        return Utils::ResultError(
+            Tr::tr("%1 has an unsupported engineering-value kind.").arg(objectName));
+    }
+
+    if (!EtherCAT::Core::validateEngineeringValue(result).accepted())
+        return Utils::ResultError(Tr::tr("%1 is not canonical.").arg(objectName));
+    return result;
+}
+
+static Utils::Result<std::optional<Data::ExactRational>> parseOptionalRational(
+    const QJsonObject &object, const QString &key, const QString &objectName)
+{
+    const QJsonValue value = object.value(key);
+    if (value.isNull())
+        return std::optional<Data::ExactRational>();
+    const auto parsed = parseExactRational(value, objectName + " " + key);
+    if (!parsed)
+        return Utils::ResultError(parsed.error());
+    return std::optional<Data::ExactRational>(*parsed);
+}
+
+static Utils::Result<std::optional<Data::EngineeringValue>> parseOptionalEngineeringValue(
+    const QJsonObject &object, const QString &key, const QString &objectName)
+{
+    const QJsonValue value = object.value(key);
+    if (value.isNull())
+        return std::optional<Data::EngineeringValue>();
+    const auto parsed = parseEngineeringValue(value, objectName + " " + key);
+    if (!parsed)
+        return Utils::ResultError(parsed.error());
+    return std::optional<Data::EngineeringValue>(*parsed);
+}
+
+static Utils::Result<Data::EngineeringConstraint> parseEngineeringConstraint(
+    const QJsonValue &value, const QString &objectName)
+{
+    if (!value.isObject())
+        return Utils::ResultError(Tr::tr("%1 must be a constraint object.").arg(objectName));
+    const QJsonObject object = value.toObject();
+    static const QSet<QString> keys{
+        "minimum",
+        "maximum",
+        "step",
+        "stepOrigin",
+        "enumeration",
+    };
+    if (object.size() != keys.size() || !hasOnlyKeys(object, keys))
+        return Utils::ResultError(Tr::tr("%1 has an invalid constraint shape.").arg(objectName));
+
+    const auto minimum = parseOptionalRational(object, "minimum", objectName);
+    const auto maximum = parseOptionalRational(object, "maximum", objectName);
+    const auto step = parseOptionalRational(object, "step", objectName);
+    const auto stepOrigin = parseOptionalRational(object, "stepOrigin", objectName);
+    const auto enumeration = parseArray(object, "enumeration", objectName);
+    if (!minimum || !maximum || !step || !stepOrigin || !enumeration) {
+        const QString error = !minimum      ? minimum.error()
+                              : !maximum   ? maximum.error()
+                              : !step      ? step.error()
+                              : !stepOrigin ? stepOrigin.error()
+                                           : enumeration.error();
+        return Utils::ResultError(error);
+    }
+
+    QList<Data::EngineeringEnumerationValue> entries;
+    entries.reserve(enumeration->size());
+    QString previousId;
+    static const QSet<QString> entryKeys{"id", "displayName", "value"};
+    for (qsizetype index = 0; index < enumeration->size(); ++index) {
+        if (!enumeration->at(index).isObject()) {
+            return Utils::ResultError(
+                Tr::tr("%1 enumeration entry %2 must be an object.").arg(objectName).arg(index));
+        }
+        const QJsonObject entryObject = enumeration->at(index).toObject();
+        const QString entryName = Tr::tr("%1 enumeration entry %2").arg(objectName).arg(index);
+        if (entryObject.size() != entryKeys.size()
+            || !hasOnlyKeys(entryObject, entryKeys)) {
+            return Utils::ResultError(Tr::tr("%1 has an invalid shape.").arg(entryName));
+        }
+        const auto id = parseString(entryObject, "id", entryName);
+        const auto displayName = parseString(entryObject, "displayName", entryName);
+        const auto exact = parseExactRational(entryObject.value("value"), entryName + " value");
+        if (!id || !displayName || !exact) {
+            const QString error = !id ? id.error() : !displayName ? displayName.error() : exact.error();
+            return Utils::ResultError(error);
+        }
+        if (!isCanonicalIdentifier(*id)
+            || (!previousId.isEmpty() && *id <= previousId)) {
+            return Utils::ResultError(
+                Tr::tr("%1 enumeration entries are not in canonical ID order.").arg(objectName));
+        }
+        previousId = *id;
+        entries.append({*id, *displayName, *exact});
+    }
+
+    const Data::EngineeringConstraint constraint{
+        *minimum,
+        *maximum,
+        *step,
+        *stepOrigin,
+        entries,
+    };
+    if (!EtherCAT::Core::validateEngineeringConstraint(constraint).accepted())
+        return Utils::ResultError(Tr::tr("%1 is not a valid exact constraint.").arg(objectName));
+    return constraint;
+}
+
+static Utils::Result<Data::ManualCommandTiming> parseManualCommandTiming(
+    const QJsonValue &value, const QString &objectName)
+{
+    if (!value.isObject())
+        return Utils::ResultError(Tr::tr("%1 must be a timing object.").arg(objectName));
+    const QJsonObject object = value.toObject();
+    static const QSet<QString> keys{
+        "commandTtlMs",
+        "refreshTimeoutMs",
+        "maxContinuousHoldMs",
+    };
+    if (object.size() != keys.size() || !hasOnlyKeys(object, keys))
+        return Utils::ResultError(Tr::tr("%1 has an invalid timing shape.").arg(objectName));
+    const auto commandTtl = parseUnsigned(object, "commandTtlMs", objectName);
+    const auto refresh = parseUnsigned(object, "refreshTimeoutMs", objectName);
+    const auto maximumHold = parseUnsigned(object, "maxContinuousHoldMs", objectName);
+    if (!commandTtl || !refresh || !maximumHold) {
+        const QString error = !commandTtl ? commandTtl.error()
+                              : !refresh  ? refresh.error()
+                                          : maximumHold.error();
+        return Utils::ResultError(error);
+    }
+    return Data::ManualCommandTiming{*commandTtl, *refresh, *maximumHold};
+}
+
+Utils::Result<> validateManualControlEnvelopeStructure(
+    const Data::ManualControlEnvelope &envelope)
+{
+    QString previousSignalId;
+    bool enabledOperation = false;
+    for (const Data::ManualSignalEnvelope &signal : envelope.signalEnvelopes) {
+        if (!isCanonicalIdentifier(signal.signalId.value)
+            || (!previousSignalId.isEmpty() && signal.signalId.value <= previousSignalId)) {
+            return Utils::ResultError(
+                Tr::tr("Manual signal envelopes must use unique canonical ID order."));
+        }
+        previousSignalId = signal.signalId.value;
+        enabledOperation = enabledOperation || signal.enabled;
+        if (signal.enabled
+            && (signal.timing.commandTtlMs == 0
+                || (signal.holdToRun
+                    && (signal.timing.refreshTimeoutMs == 0
+                        || signal.timing.maxContinuousHoldMs == 0
+                        || signal.timing.refreshTimeoutMs
+                               > signal.timing.maxContinuousHoldMs))
+                || (!signal.holdToRun
+                    && (signal.timing.refreshTimeoutMs != 0
+                        || signal.timing.maxContinuousHoldMs != 0)))) {
+            return Utils::ResultError(Tr::tr("Manual signal timing is invalid."));
+        }
+        if (!EtherCAT::Core::validateEngineeringConstraint(signal.allowedRange).accepted()) {
+            return Utils::ResultError(Tr::tr("Manual signal range is invalid."));
+        }
+        if (signal.enabled && !signal.safeValue) {
+            return Utils::ResultError(
+                Tr::tr("Enabled manual signals require an exact safe value."));
+        }
+        if (signal.safeValue
+            && !EtherCAT::Core::validateEngineeringValueAgainstConstraint(
+                    *signal.safeValue, signal.allowedRange)
+                    .accepted()) {
+            return Utils::ResultError(Tr::tr("Manual signal safe value is invalid."));
+        }
+        QString previousPeerId;
+        for (const Data::ManualSignalSafeValue &peer : signal.consistencyGroupSafeValues) {
+            if (!isCanonicalIdentifier(peer.signalId.value)
+                || peer.signalId == signal.signalId
+                || (!previousPeerId.isEmpty() && peer.signalId.value <= previousPeerId)
+                || !EtherCAT::Core::validateEngineeringValue(peer.value).accepted()) {
+                return Utils::ResultError(
+                    Tr::tr("Manual consistency-group safe values are not canonical."));
+            }
+            previousPeerId = peer.signalId.value;
+        }
+    }
+
+    QString previousActionId;
+    for (const Data::ManualActionEnvelope &action : envelope.actionEnvelopes) {
+        if (!isCanonicalIdentifier(action.actionId.value)
+            || (!previousActionId.isEmpty() && action.actionId.value <= previousActionId)) {
+            return Utils::ResultError(
+                Tr::tr("Manual action envelopes must use unique canonical ID order."));
+        }
+        previousActionId = action.actionId.value;
+        enabledOperation = enabledOperation || action.enabled;
+        if (action.enabled
+            && (action.timing.commandTtlMs == 0
+                || (action.holdToRun
+                    && (action.timing.refreshTimeoutMs == 0
+                        || action.timing.maxContinuousHoldMs == 0
+                        || action.timing.refreshTimeoutMs
+                               > action.timing.maxContinuousHoldMs))
+                || (!action.holdToRun
+                    && (action.timing.refreshTimeoutMs != 0
+                        || action.timing.maxContinuousHoldMs != 0)))) {
+            return Utils::ResultError(Tr::tr("Manual action timing is invalid."));
+        }
+        if (!isCanonicalIdentifier(action.releaseActionId.value)
+            || !isCanonicalIdentifier(action.timeoutActionId.value)
+            || !isCanonicalIdentifier(action.failureActionId.value)
+            || action.releaseActionId == action.actionId
+            || action.timeoutActionId == action.actionId
+            || action.failureActionId == action.actionId) {
+            return Utils::ResultError(Tr::tr("Manual action fallbacks are incomplete."));
+        }
+
+        QString previousParameterId;
+        for (const Data::ManualActionParameterEnvelope &parameter : action.parameters) {
+            if (!isCanonicalIdentifier(parameter.parameterId)
+                || (!previousParameterId.isEmpty()
+                    && parameter.parameterId <= previousParameterId)
+                || !EtherCAT::Core::validateEngineeringConstraint(parameter.allowedRange)
+                        .accepted()
+                || (parameter.defaultValue
+                    && !EtherCAT::Core::validateEngineeringValueAgainstConstraint(
+                            *parameter.defaultValue, parameter.allowedRange)
+                            .accepted())) {
+                return Utils::ResultError(
+                    Tr::tr("Manual action parameter envelopes are not canonical."));
+            }
+            previousParameterId = parameter.parameterId;
+        }
+    }
+
+    if (envelope.enabled && !enabledOperation) {
+        return Utils::ResultError(
+            Tr::tr("Enabled manual control requires at least one enabled operation."));
+    }
+    return Utils::ResultOk;
+}
+
+static Utils::Result<Data::ManualControlEnvelope> parseManualControlEnvelope(
+    const QJsonObject &slaveObject, const QString &objectName)
+{
+    const auto object = parseObject(slaveObject, "manualControlEnvelope", objectName);
+    if (!object)
+        return Utils::ResultError(object.error());
+    static const QSet<QString> envelopeKeys{"enabled", "signalEnvelopes", "actionEnvelopes"};
+    if (object->size() != envelopeKeys.size() || !hasOnlyKeys(*object, envelopeKeys)) {
+        return Utils::ResultError(
+            Tr::tr("%1 has an invalid manual-control envelope shape.").arg(objectName));
+    }
+    const auto enabled = parseBool(*object, "enabled", objectName);
+    const auto signalArray = parseArray(*object, "signalEnvelopes", objectName);
+    const auto actions = parseArray(*object, "actionEnvelopes", objectName);
+    if (!enabled || !signalArray || !actions) {
+        const QString error
+            = !enabled ? enabled.error() : !signalArray ? signalArray.error() : actions.error();
+        return Utils::ResultError(error);
+    }
+
+    QList<Data::ManualSignalEnvelope> signalEnvelopes;
+    signalEnvelopes.reserve(signalArray->size());
+    static const QSet<QString> signalKeys{
+        "signalId",
+        "enabled",
+        "holdToRun",
+        "timing",
+        "allowedRange",
+        "safeValue",
+        "consistencyGroupSafeValues",
+    };
+    static const QSet<QString> peerKeys{"signalId", "value"};
+    for (qsizetype index = 0; index < signalArray->size(); ++index) {
+        if (!signalArray->at(index).isObject()) {
+            return Utils::ResultError(
+                Tr::tr("Manual signal envelope %1 must be an object.").arg(index));
+        }
+        const QJsonObject signalObject = signalArray->at(index).toObject();
+        const QString signalName = Tr::tr("Manual signal envelope %1").arg(index);
+        if (signalObject.size() != signalKeys.size()
+            || !hasOnlyKeys(signalObject, signalKeys)) {
+            return Utils::ResultError(Tr::tr("%1 has an invalid shape.").arg(signalName));
+        }
+        const auto signalId = parseString(signalObject, "signalId", signalName);
+        const auto signalEnabled = parseBool(signalObject, "enabled", signalName);
+        const auto holdToRun = parseBool(signalObject, "holdToRun", signalName);
+        const auto timing = parseManualCommandTiming(signalObject.value("timing"), signalName);
+        const auto allowedRange
+            = parseEngineeringConstraint(signalObject.value("allowedRange"), signalName);
+        const auto safeValue
+            = parseOptionalEngineeringValue(signalObject, "safeValue", signalName);
+        const auto peers = parseArray(signalObject, "consistencyGroupSafeValues", signalName);
+        if (!signalId || !signalEnabled || !holdToRun || !timing || !allowedRange || !safeValue
+            || !peers) {
+            const QString error = !signalId      ? signalId.error()
+                                  : !signalEnabled ? signalEnabled.error()
+                                  : !holdToRun   ? holdToRun.error()
+                                  : !timing      ? timing.error()
+                                  : !allowedRange ? allowedRange.error()
+                                  : !safeValue   ? safeValue.error()
+                                                 : peers.error();
+            return Utils::ResultError(error);
+        }
+        QList<Data::ManualSignalSafeValue> groupValues;
+        groupValues.reserve(peers->size());
+        for (qsizetype peerIndex = 0; peerIndex < peers->size(); ++peerIndex) {
+            if (!peers->at(peerIndex).isObject()) {
+                return Utils::ResultError(
+                    Tr::tr("%1 consistency peer %2 must be an object.")
+                        .arg(signalName)
+                        .arg(peerIndex));
+            }
+            const QJsonObject peerObject = peers->at(peerIndex).toObject();
+            const QString peerName
+                = Tr::tr("%1 consistency peer %2").arg(signalName).arg(peerIndex);
+            if (peerObject.size() != peerKeys.size() || !hasOnlyKeys(peerObject, peerKeys))
+                return Utils::ResultError(Tr::tr("%1 has an invalid shape.").arg(peerName));
+            const auto peerId = parseString(peerObject, "signalId", peerName);
+            const auto peerValue = parseEngineeringValue(peerObject.value("value"), peerName);
+            if (!peerId || !peerValue)
+                return Utils::ResultError(!peerId ? peerId.error() : peerValue.error());
+            groupValues.append({Data::SemanticSignalId{*peerId}, *peerValue});
+        }
+        signalEnvelopes.append(
+            {Data::SemanticSignalId{*signalId},
+             *signalEnabled,
+             *holdToRun,
+             *timing,
+             *allowedRange,
+             *safeValue,
+             groupValues});
+    }
+
+    QList<Data::ManualActionEnvelope> actionEnvelopes;
+    actionEnvelopes.reserve(actions->size());
+    static const QSet<QString> actionKeys{
+        "actionId",
+        "enabled",
+        "holdToRun",
+        "timing",
+        "parameters",
+        "releaseActionId",
+        "timeoutActionId",
+        "failureActionId",
+    };
+    static const QSet<QString> parameterKeys{"parameterId", "allowedRange", "defaultValue"};
+    for (qsizetype index = 0; index < actions->size(); ++index) {
+        if (!actions->at(index).isObject()) {
+            return Utils::ResultError(
+                Tr::tr("Manual action envelope %1 must be an object.").arg(index));
+        }
+        const QJsonObject actionObject = actions->at(index).toObject();
+        const QString actionName = Tr::tr("Manual action envelope %1").arg(index);
+        if (actionObject.size() != actionKeys.size()
+            || !hasOnlyKeys(actionObject, actionKeys)) {
+            return Utils::ResultError(Tr::tr("%1 has an invalid shape.").arg(actionName));
+        }
+        const auto actionId = parseString(actionObject, "actionId", actionName);
+        const auto actionEnabled = parseBool(actionObject, "enabled", actionName);
+        const auto holdToRun = parseBool(actionObject, "holdToRun", actionName);
+        const auto timing = parseManualCommandTiming(actionObject.value("timing"), actionName);
+        const auto parameters = parseArray(actionObject, "parameters", actionName);
+        const auto releaseActionId = parseString(actionObject, "releaseActionId", actionName);
+        const auto timeoutActionId = parseString(actionObject, "timeoutActionId", actionName);
+        const auto failureActionId = parseString(actionObject, "failureActionId", actionName);
+        if (!actionId || !actionEnabled || !holdToRun || !timing || !parameters
+            || !releaseActionId || !timeoutActionId || !failureActionId) {
+            const QString error = !actionId        ? actionId.error()
+                                  : !actionEnabled ? actionEnabled.error()
+                                  : !holdToRun     ? holdToRun.error()
+                                  : !timing        ? timing.error()
+                                  : !parameters    ? parameters.error()
+                                  : !releaseActionId ? releaseActionId.error()
+                                  : !timeoutActionId ? timeoutActionId.error()
+                                                     : failureActionId.error();
+            return Utils::ResultError(error);
+        }
+        QList<Data::ManualActionParameterEnvelope> parameterEnvelopes;
+        parameterEnvelopes.reserve(parameters->size());
+        for (qsizetype parameterIndex = 0; parameterIndex < parameters->size();
+             ++parameterIndex) {
+            if (!parameters->at(parameterIndex).isObject()) {
+                return Utils::ResultError(
+                    Tr::tr("%1 parameter %2 must be an object.")
+                        .arg(actionName)
+                        .arg(parameterIndex));
+            }
+            const QJsonObject parameterObject = parameters->at(parameterIndex).toObject();
+            const QString parameterName
+                = Tr::tr("%1 parameter %2").arg(actionName).arg(parameterIndex);
+            if (parameterObject.size() != parameterKeys.size()
+                || !hasOnlyKeys(parameterObject, parameterKeys)) {
+                return Utils::ResultError(Tr::tr("%1 has an invalid shape.").arg(parameterName));
+            }
+            const auto parameterId = parseString(parameterObject, "parameterId", parameterName);
+            const auto allowedRange
+                = parseEngineeringConstraint(parameterObject.value("allowedRange"), parameterName);
+            const auto defaultValue
+                = parseOptionalEngineeringValue(parameterObject, "defaultValue", parameterName);
+            if (!parameterId || !allowedRange || !defaultValue) {
+                const QString error = !parameterId   ? parameterId.error()
+                                      : !allowedRange ? allowedRange.error()
+                                                      : defaultValue.error();
+                return Utils::ResultError(error);
+            }
+            parameterEnvelopes.append({*parameterId, *allowedRange, *defaultValue});
+        }
+        actionEnvelopes.append(
+            {Data::SemanticActionId{*actionId},
+             *actionEnabled,
+             *holdToRun,
+             *timing,
+             parameterEnvelopes,
+             Data::SemanticActionId{*releaseActionId},
+             Data::SemanticActionId{*timeoutActionId},
+             Data::SemanticActionId{*failureActionId}});
+    }
+
+    Data::ManualControlEnvelope envelope{*enabled, signalEnvelopes, actionEnvelopes};
+    if (const Utils::Result<> validation = validateManualControlEnvelopeStructure(envelope);
+        !validation) {
+        return Utils::ResultError(validation.error());
+    }
+    return envelope;
 }
 
 static Utils::Result<Data::DeviceAdapterProjectSelection> parseAdapterSelection(
@@ -840,7 +1391,8 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
     const Data::NodeId &masterId,
     QSet<Data::NodeId> *uniqueIds,
     bool parseConfiguration,
-    bool parseAdapterData)
+    bool parseAdapterData,
+    bool parseManualControl)
 {
     const QJsonValue slavesValue = masterObject.value("slaves");
     if (slavesValue.isUndefined() && !parseConfiguration)
@@ -945,6 +1497,27 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
             adapterSelection = *parsedSelection;
         }
 
+        Data::ManualControlEnvelope manualControlEnvelope;
+        if (parseManualControl) {
+            const auto parsedEnvelope = parseManualControlEnvelope(object, objectName);
+            if (!parsedEnvelope)
+                return Utils::ResultError(parsedEnvelope.error());
+            manualControlEnvelope = *parsedEnvelope;
+            const bool hasManualControl = manualControlEnvelope.enabled
+                                          || !manualControlEnvelope.signalEnvelopes.isEmpty()
+                                          || !manualControlEnvelope.actionEnvelopes.isEmpty();
+            const bool hasAdapterSelection = !adapterSelection.adapterId.value.isEmpty()
+                                             || !adapterSelection.adapterVersion.isEmpty()
+                                             || !adapterSelection.adapterContentSha256.isEmpty()
+                                             || !adapterSelection.processDataProfileId.isEmpty()
+                                             || !adapterSelection.moduleAssignments.isEmpty();
+            if (hasManualControl && !hasAdapterSelection) {
+                return Utils::ResultError(
+                    Tr::tr("%1 manual control requires an exact adapter selection.")
+                        .arg(objectName));
+            }
+        }
+
         positions.insert(int(*position));
         slaves.append(
             {*id,
@@ -959,7 +1532,8 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
              startup,
              dc,
              esiSha256,
-             adapterSelection});
+             adapterSelection,
+             manualControlEnvelope});
     }
     std::sort(slaves.begin(), slaves.end(), [](const auto &left, const auto &right) {
         return left.position < right.position;
@@ -1032,7 +1606,7 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
     const int version = root.value("formatVersion").toInt(root.value("version").toInt(-1));
     if (version == 0)
         return parseVersionZero(root, fallbackName);
-    if (version != 1 && version != 2 && version != 3
+    if (version != 1 && version != 2 && version != 3 && version != 4
         && version != Constants::CURRENT_FORMAT_VERSION) {
         return Utils::ResultError(
             Tr::tr("Unsupported EtherCAT project format version %1.").arg(version));
@@ -1074,8 +1648,13 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
         masterConfiguration = *parsedMasterConfiguration;
     }
 
-    const auto slaves
-        = parseOfflineSlaves(masterObject, *masterId, &uniqueIds, version >= 2, version >= 4);
+    const auto slaves = parseOfflineSlaves(
+        masterObject,
+        *masterId,
+        &uniqueIds,
+        version >= 2,
+        version >= 4,
+        version >= 5);
     if (!slaves)
         return Utils::ResultError(slaves.error());
 
@@ -1084,7 +1663,8 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
         const auto parsedBindingArtifact = parseBindingArtifact(masterObject);
         if (!parsedBindingArtifact)
             return Utils::ResultError(parsedBindingArtifact.error());
-        bindingArtifact = *parsedBindingArtifact;
+        if (version >= 5)
+            bindingArtifact = *parsedBindingArtifact;
     }
 
     const bool migrationRequired = version != Constants::CURRENT_FORMAT_VERSION;
@@ -1241,6 +1821,166 @@ static QJsonObject serializeAdapterSelection(
     return object;
 }
 
+static QJsonObject serializeExactRational(const Data::ExactRational &rational)
+{
+    QJsonObject object;
+    object.insert("numerator", QString::number(rational.numerator));
+    object.insert("denominator", QString::number(rational.denominator));
+    return object;
+}
+
+static QJsonObject serializeEngineeringValue(const Data::EngineeringValue &value)
+{
+    QJsonObject object;
+    switch (value.kind) {
+    case Data::EngineeringValueKind::Boolean:
+        object.insert("kind", "boolean");
+        object.insert("boolean", value.boolean);
+        break;
+    case Data::EngineeringValueKind::SignedInteger:
+        object.insert("kind", "signed-integer");
+        object.insert("signedInteger", QString::number(value.signedInteger));
+        break;
+    case Data::EngineeringValueKind::UnsignedInteger:
+        object.insert("kind", "unsigned-integer");
+        object.insert("unsignedInteger", QString::number(value.unsignedInteger));
+        break;
+    case Data::EngineeringValueKind::ExactRational:
+        object.insert("kind", "exact-rational");
+        object.insert("exactRational", serializeExactRational(value.rational));
+        break;
+    case Data::EngineeringValueKind::Enumeration:
+        object.insert("kind", "enumeration");
+        object.insert("enumerationName", value.enumerationName);
+        break;
+    case Data::EngineeringValueKind::Invalid:
+        break;
+    }
+    return object;
+}
+
+static QJsonValue serializeOptionalEngineeringValue(
+    const std::optional<Data::EngineeringValue> &value)
+{
+    return value ? QJsonValue(serializeEngineeringValue(*value))
+                 : QJsonValue(QJsonValue::Null);
+}
+
+static QJsonValue serializeOptionalRational(const std::optional<Data::ExactRational> &value)
+{
+    return value ? QJsonValue(serializeExactRational(*value))
+                 : QJsonValue(QJsonValue::Null);
+}
+
+static QJsonObject serializeEngineeringConstraint(
+    const Data::EngineeringConstraint &constraint)
+{
+    QJsonArray enumeration;
+    QList<Data::EngineeringEnumerationValue> sortedEntries = constraint.enumeration;
+    std::sort(
+        sortedEntries.begin(), sortedEntries.end(), [](const auto &left, const auto &right) {
+            return left.id < right.id;
+        });
+    for (const Data::EngineeringEnumerationValue &entry : std::as_const(sortedEntries)) {
+        QJsonObject object;
+        object.insert("id", entry.id);
+        object.insert("displayName", entry.displayName);
+        object.insert("value", serializeExactRational(entry.value));
+        enumeration.append(object);
+    }
+
+    QJsonObject object;
+    object.insert("minimum", serializeOptionalRational(constraint.minimum));
+    object.insert("maximum", serializeOptionalRational(constraint.maximum));
+    object.insert("step", serializeOptionalRational(constraint.step));
+    object.insert("stepOrigin", serializeOptionalRational(constraint.stepOrigin));
+    object.insert("enumeration", enumeration);
+    return object;
+}
+
+static QJsonObject serializeManualTiming(const Data::ManualCommandTiming &timing)
+{
+    QJsonObject object;
+    object.insert("commandTtlMs", double(timing.commandTtlMs));
+    object.insert("refreshTimeoutMs", double(timing.refreshTimeoutMs));
+    object.insert("maxContinuousHoldMs", double(timing.maxContinuousHoldMs));
+    return object;
+}
+
+static QJsonObject serializeManualControlEnvelope(
+    const Data::ManualControlEnvelope &envelope)
+{
+    QJsonArray signalArray;
+    QList<Data::ManualSignalEnvelope> sortedSignals = envelope.signalEnvelopes;
+    std::sort(sortedSignals.begin(), sortedSignals.end(), [](const auto &left, const auto &right) {
+        return left.signalId.value < right.signalId.value;
+    });
+    for (const Data::ManualSignalEnvelope &signal : std::as_const(sortedSignals)) {
+        QJsonArray peers;
+        QList<Data::ManualSignalSafeValue> sortedPeers = signal.consistencyGroupSafeValues;
+        std::sort(sortedPeers.begin(), sortedPeers.end(), [](const auto &left, const auto &right) {
+            return left.signalId.value < right.signalId.value;
+        });
+        for (const Data::ManualSignalSafeValue &peer : std::as_const(sortedPeers)) {
+            QJsonObject peerObject;
+            peerObject.insert("signalId", peer.signalId.value);
+            peerObject.insert("value", serializeEngineeringValue(peer.value));
+            peers.append(peerObject);
+        }
+
+        QJsonObject object;
+        object.insert("signalId", signal.signalId.value);
+        object.insert("enabled", signal.enabled);
+        object.insert("holdToRun", signal.holdToRun);
+        object.insert("timing", serializeManualTiming(signal.timing));
+        object.insert("allowedRange", serializeEngineeringConstraint(signal.allowedRange));
+        object.insert("safeValue", serializeOptionalEngineeringValue(signal.safeValue));
+        object.insert("consistencyGroupSafeValues", peers);
+        signalArray.append(object);
+    }
+
+    QJsonArray actions;
+    QList<Data::ManualActionEnvelope> sortedActions = envelope.actionEnvelopes;
+    std::sort(sortedActions.begin(), sortedActions.end(), [](const auto &left, const auto &right) {
+        return left.actionId.value < right.actionId.value;
+    });
+    for (const Data::ManualActionEnvelope &action : std::as_const(sortedActions)) {
+        QJsonArray parameters;
+        QList<Data::ManualActionParameterEnvelope> sortedParameters = action.parameters;
+        std::sort(
+            sortedParameters.begin(), sortedParameters.end(), [](const auto &left, const auto &right) {
+                return left.parameterId < right.parameterId;
+            });
+        for (const Data::ManualActionParameterEnvelope &parameter :
+             std::as_const(sortedParameters)) {
+            QJsonObject parameterObject;
+            parameterObject.insert("parameterId", parameter.parameterId);
+            parameterObject.insert(
+                "allowedRange", serializeEngineeringConstraint(parameter.allowedRange));
+            parameterObject.insert(
+                "defaultValue", serializeOptionalEngineeringValue(parameter.defaultValue));
+            parameters.append(parameterObject);
+        }
+
+        QJsonObject object;
+        object.insert("actionId", action.actionId.value);
+        object.insert("enabled", action.enabled);
+        object.insert("holdToRun", action.holdToRun);
+        object.insert("timing", serializeManualTiming(action.timing));
+        object.insert("parameters", parameters);
+        object.insert("releaseActionId", action.releaseActionId.value);
+        object.insert("timeoutActionId", action.timeoutActionId.value);
+        object.insert("failureActionId", action.failureActionId.value);
+        actions.append(object);
+    }
+
+    QJsonObject object;
+    object.insert("enabled", envelope.enabled);
+    object.insert("signalEnvelopes", signalArray);
+    object.insert("actionEnvelopes", actions);
+    return object;
+}
+
 static bool bindingArtifactIsEmpty(
     const Data::SemanticBindingArtifactReference &reference)
 {
@@ -1300,6 +2040,9 @@ QByteArray serializeProject(const Data::ProjectSnapshot &snapshot)
             object.insert("esiSha256", QString::fromLatin1(slave.esiSha256.toHex()));
         if (!adapterSelectionIsEmpty(slave.adapterSelection))
             object.insert("adapterSelection", serializeAdapterSelection(slave.adapterSelection));
+        object.insert(
+            "manualControlEnvelope",
+            serializeManualControlEnvelope(slave.manualControlEnvelope));
         QJsonObject configuration;
         configuration.insert("processData", serializeProcessData(slave.processData));
         configuration.insert("startup", serializeStartup(slave.startup));

@@ -60,6 +60,10 @@ public:
         const Data::NodeId &slaveId,
         const QByteArray &esiSha256,
         const Data::DeviceAdapterProjectSelection &selection) final;
+    Utils::Result<> setManualControlEnvelope(
+        const Data::NodeId &projectId,
+        const Data::NodeId &slaveId,
+        const Data::ManualControlEnvelope &envelope) final;
     Utils::Result<> setMasterBindingArtifact(
         const Data::NodeId &projectId,
         const Data::SemanticBindingArtifactReference &reference) final;

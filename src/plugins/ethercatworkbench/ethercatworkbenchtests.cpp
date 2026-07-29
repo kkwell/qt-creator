@@ -329,6 +329,11 @@ static TestProjectFile writeProjectWithSlave(
            {"sync0", QJsonObject{{"enabled", false}, {"cycleTimeNs", 0}, {"shiftTimeNs", 0}}},
            {"sync1", QJsonObject{{"enabled", false}, {"cycleTimeNs", 0}, {"shiftTimeNs", 0}}},
            {"potentialReferenceClock", false}};
+    const QJsonObject manualControlEnvelope{
+        {"enabled", false},
+        {"signalEnvelopes", QJsonArray()},
+        {"actionEnvelopes", QJsonArray()},
+    };
     const QJsonObject slave{
         {"id", result.slaveId.toString()},
         {"name", "Configured Servo"},
@@ -339,11 +344,12 @@ static TestProjectFile writeProjectWithSlave(
         {"serialNumber", 17},
         {"alias", 3},
         {"deviceDescriptionId", device.id.toString()},
+        {"manualControlEnvelope", manualControlEnvelope},
         {"configuration",
          QJsonObject{{"processData", processData}, {"startup", startup}, {"dc", dc}}}};
     const QJsonObject root{
         {"format", "ethercat-project"},
-        {"formatVersion", 4},
+        {"formatVersion", 5},
         {"project",
          QJsonObject{
              {"id", result.projectId.toString()},
@@ -5243,7 +5249,7 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
     QCOMPARE(name->text(), QString("Process Data Workflow"));
     QCOMPARE(id->text(), file.projectId.toString());
     QCOMPARE(type->text(), Tr::tr("Offline EtherCAT Engineering Project"));
-    QCOMPARE(formatVersion->text(), QString("4"));
+    QCOMPARE(formatVersion->text(), QString("5"));
     QCOMPARE(createdBy->text(), QString("Workbench Test"));
     QCOMPARE(validity->text(), Tr::tr("Valid"));
     QCOMPARE(migration->text(), Tr::tr("Current format"));
@@ -5864,7 +5870,7 @@ void EtherCATWorkbenchTests::testEditableTargetGeneralWorkflow()
     QVERIFY(!engineering->text().isEmpty());
     QCOMPARE(targetRuntime->text(), QString("Not assigned (offline)"));
     QCOMPARE(localRuntime->text(), QString("Not available (phase 1)"));
-    QCOMPARE(projectVersion->text(), QString("Format 4 · Workbench Test"));
+    QCOMPARE(projectVersion->text(), QString("Format 5 · Workbench Test"));
     QVERIFY(!pinVersion->isEnabled());
     QVERIFY(!pinVersion->accessibleDescription().isEmpty());
     QVERIFY(!name->accessibleName().isEmpty());
@@ -9286,7 +9292,7 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QTRY_COMPARE(name->text(), QString("Valid EtherCAT Project"));
     QVERIFY(!name->isReadOnly());
     QCOMPARE(id->text(), valid.projectId.toString());
-    QCOMPARE(formatVersion->text(), QString("4"));
+    QCOMPARE(formatVersion->text(), QString("5"));
     QCOMPARE(validity->text(), QString("Valid"));
     QCOMPARE(target->text(), QString("Offline Controller"));
     QCOMPARE(master->text(), QString("EtherCAT Master"));

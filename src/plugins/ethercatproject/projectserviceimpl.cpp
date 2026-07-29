@@ -196,6 +196,18 @@ Utils::Result<> ProjectServiceImpl::setDeviceAdapterSelection(
     return project->document()->setDeviceAdapterSelection(slaveId, esiSha256, selection);
 }
 
+Utils::Result<> ProjectServiceImpl::setManualControlEnvelope(
+    const Data::NodeId &projectId,
+    const Data::NodeId &slaveId,
+    const Data::ManualControlEnvelope &envelope)
+{
+    QTC_ASSERT(isGuiThread(), return Utils::ResultError(Tr::tr("Project service thread error.")));
+    EtherCATProject *project = findProject(projectId);
+    if (!project)
+        return Utils::ResultError(Tr::tr("The requested EtherCAT project is not open."));
+    return project->document()->setManualControlEnvelope(slaveId, envelope);
+}
+
 Utils::Result<> ProjectServiceImpl::setMasterBindingArtifact(
     const Data::NodeId &projectId,
     const Data::SemanticBindingArtifactReference &reference)

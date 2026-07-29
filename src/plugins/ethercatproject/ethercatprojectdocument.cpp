@@ -129,12 +129,14 @@ public:
         const Data::NodeId &masterId,
         const QList<Data::OfflineSlaveConfiguration> &oldSlaves,
         const QList<Data::OfflineSlaveConfiguration> &newSlaves,
-        const Data::SemanticBindingArtifactReference &oldBindingArtifact)
+        const Data::SemanticBindingArtifactReference &oldBindingArtifact,
+        const Data::SemanticBindingArtifactReference &newBindingArtifact)
         : m_document(document)
         , m_masterId(masterId)
         , m_oldSlaves(oldSlaves)
         , m_newSlaves(newSlaves)
         , m_oldBindingArtifact(oldBindingArtifact)
+        , m_newBindingArtifact(newBindingArtifact)
     {
         setText(Tr::tr("Replace offline EtherCAT slaves"));
     }
@@ -147,7 +149,7 @@ public:
     void redo() final
     {
         m_document->applyOfflineSlaves(m_masterId, m_newSlaves);
-        m_document->applyMasterBindingArtifact({});
+        m_document->applyMasterBindingArtifact(m_newBindingArtifact);
     }
 
 private:
@@ -156,6 +158,7 @@ private:
     QList<Data::OfflineSlaveConfiguration> m_oldSlaves;
     QList<Data::OfflineSlaveConfiguration> m_newSlaves;
     Data::SemanticBindingArtifactReference m_oldBindingArtifact;
+    Data::SemanticBindingArtifactReference m_newBindingArtifact;
 };
 
 class UpdateOfflineSlaveCommand final : public QUndoCommand
@@ -224,6 +227,21 @@ static void applyOfflineSlavesToSnapshot(
     for (const Data::OfflineSlaveConfiguration &slave : std::as_const(snapshot.slaves)) {
         snapshot.nodes.append({slave.id, slave.masterId, Data::ProjectNodeKind::Slave, slave.name});
     }
+}
+
+static bool offlineSlavesDifferOnlyByName(
+    const QList<Data::OfflineSlaveConfiguration> &oldSlaves,
+    const QList<Data::OfflineSlaveConfiguration> &newSlaves)
+{
+    if (oldSlaves.size() != newSlaves.size())
+        return false;
+    for (qsizetype index = 0; index < oldSlaves.size(); ++index) {
+        Data::OfflineSlaveConfiguration renamed = oldSlaves.at(index);
+        renamed.name = newSlaves.at(index).name;
+        if (renamed != newSlaves.at(index))
+            return false;
+    }
+    return true;
 }
 
 static Utils::Result<> insertConfigurationId(
@@ -344,6 +362,18 @@ static Utils::Result<> validateProjectConfigurations(const Data::ProjectSnapshot
         if (*normalizedSelection != slave.adapterSelection) {
             return Utils::ResultError(
                 Tr::tr("Device adapter module assignments must use canonical slot order."));
+        }
+        const bool hasManualControl = slave.manualControlEnvelope.enabled
+                                      || !slave.manualControlEnvelope.signalEnvelopes.isEmpty()
+                                      || !slave.manualControlEnvelope.actionEnvelopes.isEmpty();
+        if (hasManualControl && adapterSelectionIsEmpty(slave.adapterSelection)) {
+            return Utils::ResultError(
+                Tr::tr("Manual control requires an exact device adapter selection."));
+        }
+        if (const Utils::Result<> validation
+            = validateManualControlEnvelopeStructure(slave.manualControlEnvelope);
+            !validation) {
+            return validation;
         }
 
         constexpr qint64 maximumExactJsonInteger = qint64(1) << 53;
@@ -614,6 +644,17 @@ Utils::Result<> EtherCATProjectDocument::replaceOfflineSlaves(
         if (!normalizedSelection)
             return Utils::ResultError(normalizedSelection.error());
         slave.adapterSelection = *normalizedSelection;
+        const auto existing = std::find_if(
+            m_snapshot.slaves.cbegin(),
+            m_snapshot.slaves.cend(),
+            [&slave](const Data::OfflineSlaveConfiguration &candidate) {
+                return candidate.id == slave.id;
+            });
+        if (existing != m_snapshot.slaves.cend()
+            && (existing->esiSha256 != slave.esiSha256
+                || existing->adapterSelection != slave.adapterSelection)) {
+            slave.manualControlEnvelope = {};
+        }
         ids.insert(slave.id);
         positions.insert(slave.position);
     }
@@ -626,14 +667,23 @@ Utils::Result<> EtherCATProjectDocument::replaceOfflineSlaves(
         return Utils::ResultOk;
     const Data::SemanticBindingArtifactReference oldBindingArtifact
         = m_snapshot.masterBindingArtifact;
+    const Data::SemanticBindingArtifactReference newBindingArtifact
+        = offlineSlavesDifferOnlyByName(oldSlaves, normalized)
+              ? oldBindingArtifact
+              : Data::SemanticBindingArtifactReference{};
     Data::ProjectSnapshot candidate = m_snapshot;
     applyOfflineSlavesToSnapshot(candidate, masterId, normalized);
-    candidate.masterBindingArtifact = {};
+    candidate.masterBindingArtifact = newBindingArtifact;
     if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
         return validation;
 
     m_undoStack.push(new ReplaceOfflineSlavesCommand(
-        this, masterId, oldSlaves, normalized, oldBindingArtifact));
+        this,
+        masterId,
+        oldSlaves,
+        normalized,
+        oldBindingArtifact,
+        newBindingArtifact));
     return Utils::ResultOk;
 }
 
@@ -775,6 +825,7 @@ Utils::Result<> EtherCATProjectDocument::setDeviceAdapterSelection(
     Data::OfflineSlaveConfiguration updated = oldSlave;
     updated.esiSha256 = esiSha256;
     updated.adapterSelection = *normalizedSelection;
+    updated.manualControlEnvelope = {};
     Data::ProjectSnapshot candidate = m_snapshot;
     *std::find_if(candidate.slaves.begin(), candidate.slaves.end(), [&slaveId](const auto &entry) {
         return entry.id == slaveId;
@@ -789,6 +840,46 @@ Utils::Result<> EtherCATProjectDocument::setDeviceAdapterSelection(
         updated,
         oldBindingArtifact,
         Tr::tr("Select EtherCAT device adapter")));
+    return Utils::ResultOk;
+}
+
+Utils::Result<> EtherCATProjectDocument::setManualControlEnvelope(
+    const Data::NodeId &slaveId, const Data::ManualControlEnvelope &envelope)
+{
+    if (!m_snapshot.valid)
+        return Utils::ResultError(Tr::tr("Cannot edit an invalid EtherCAT project."));
+    const auto slave = std::find_if(
+        m_snapshot.slaves.cbegin(), m_snapshot.slaves.cend(), [&slaveId](const auto &entry) {
+            return entry.id == slaveId;
+        });
+    if (slave == m_snapshot.slaves.cend())
+        return Utils::ResultError(Tr::tr("The requested offline slave does not exist."));
+    if (const Utils::Result<> validation = validateManualControlEnvelopeStructure(envelope);
+        !validation) {
+        return validation;
+    }
+    if (slave->manualControlEnvelope == envelope)
+        return Utils::ResultOk;
+
+    const Data::OfflineSlaveConfiguration oldSlave = *slave;
+    const Data::SemanticBindingArtifactReference oldBindingArtifact
+        = m_snapshot.masterBindingArtifact;
+    Data::OfflineSlaveConfiguration updated = oldSlave;
+    updated.manualControlEnvelope = envelope;
+    Data::ProjectSnapshot candidate = m_snapshot;
+    *std::find_if(candidate.slaves.begin(), candidate.slaves.end(), [&slaveId](const auto &entry) {
+        return entry.id == slaveId;
+    }) = updated;
+    candidate.masterBindingArtifact = {};
+    if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
+        return validation;
+
+    m_undoStack.push(new UpdateOfflineSlaveCommand(
+        this,
+        oldSlave,
+        updated,
+        oldBindingArtifact,
+        Tr::tr("Configure EtherCAT manual control")));
     return Utils::ResultOk;
 }
 

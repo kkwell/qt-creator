@@ -18,6 +18,8 @@ struct LoadedProject
 };
 
 Data::ProjectSnapshot createProjectSnapshot(const QString &name, const QString &createdBy);
+Utils::Result<> validateManualControlEnvelopeStructure(
+    const Data::ManualControlEnvelope &envelope);
 Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QString &fallbackName);
 QByteArray serializeProject(const Data::ProjectSnapshot &snapshot);
 

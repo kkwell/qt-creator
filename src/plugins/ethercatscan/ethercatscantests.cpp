@@ -130,6 +130,23 @@ static Data::ScanSnapshot scanSnapshot(
             {}};
 }
 
+static Data::ManualControlEnvelope manualControlEnvelope()
+{
+    Data::ManualSignalEnvelope signal;
+    signal.signalId = {"io.output.0"};
+    signal.enabled = true;
+    signal.timing.commandTtlMs = 250;
+    signal.allowedRange = {
+        Data::ExactRational{0, 1},
+        Data::ExactRational{1, 1},
+        Data::ExactRational{1, 1},
+        Data::ExactRational{0, 1},
+        {},
+    };
+    signal.safeValue = Data::EngineeringValue::fromBoolean(false);
+    return {true, {signal}, {}};
+}
+
 static int differenceCount(
     const Data::TopologyComparison &comparison, Data::TopologyDifferenceKind kind)
 {
@@ -336,6 +353,68 @@ void EtherCATScanTests::testBlockingIdentityAndDuplicateDifferences()
     QCOMPARE(
         differenceCount(duplicateResult, Data::TopologyDifferenceKind::DuplicateDevice), 1);
     QVERIFY(!duplicateResult.acceptAllowed);
+}
+
+void EtherCATScanTests::testScanPreservesManualConfigurationByIdentity()
+{
+    const Data::NodeId projectId = Data::NodeId::create();
+    const Data::NodeId masterId = Data::NodeId::create();
+    Data::OfflineSlaveConfiguration configured
+        = offlineSlave(masterId, 0, 0x1000, 1, 101);
+    configured.esiSha256 = QByteArray(32, '\x31');
+    configured.adapterSelection = {
+        Data::DeviceAdapterId{"com.embedlabs.test.io"},
+        "2.0.0",
+        QByteArray(32, '\x32'),
+        "default",
+        {{0, 0x10000001, 0, 0}},
+    };
+    configured.manualControlEnvelope = manualControlEnvelope();
+    const Data::ProjectSnapshot project
+        = projectSnapshot(projectId, masterId, {configured});
+
+    const Data::ScannedSlave sameDevice
+        = scannedSlave(2, configured.identity.productCode, 1, configured.serialNumber);
+    const QList<Data::OfflineSlaveConfiguration> preserved = offlineConfigurationFromScan(
+        project, masterId, scanSnapshot(projectId, masterId, {sameDevice}));
+    QCOMPARE(preserved.size(), 1);
+    QCOMPARE(preserved.first().id, configured.id);
+    QCOMPARE(preserved.first().position, 2);
+    QCOMPARE(preserved.first().identity, sameDevice.identity);
+    QCOMPARE(preserved.first().esiSha256, configured.esiSha256);
+    QCOMPARE(preserved.first().adapterSelection, configured.adapterSelection);
+    QCOMPARE(
+        preserved.first().manualControlEnvelope,
+        configured.manualControlEnvelope);
+
+    const Data::ScannedSlave revisedDevice
+        = scannedSlave(1, configured.identity.productCode, 2, configured.serialNumber);
+    const QList<Data::OfflineSlaveConfiguration> revised = offlineConfigurationFromScan(
+        project, masterId, scanSnapshot(projectId, masterId, {revisedDevice}));
+    QCOMPARE(revised.size(), 1);
+    QCOMPARE(revised.first().id, configured.id);
+    QCOMPARE(revised.first().identity, revisedDevice.identity);
+    QVERIFY(revised.first().esiSha256.isEmpty());
+    QCOMPARE(
+        revised.first().adapterSelection,
+        Data::DeviceAdapterProjectSelection());
+    QCOMPARE(
+        revised.first().manualControlEnvelope,
+        Data::ManualControlEnvelope());
+
+    const Data::ScannedSlave replacement
+        = scannedSlave(0, configured.identity.productCode + 1, 1, configured.serialNumber);
+    const QList<Data::OfflineSlaveConfiguration> reset = offlineConfigurationFromScan(
+        project, masterId, scanSnapshot(projectId, masterId, {replacement}));
+    QCOMPARE(reset.size(), 1);
+    QCOMPARE(reset.first().id, replacement.id);
+    QVERIFY(reset.first().esiSha256.isEmpty());
+    QCOMPARE(
+        reset.first().adapterSelection,
+        Data::DeviceAdapterProjectSelection());
+    QCOMPARE(
+        reset.first().manualControlEnvelope,
+        Data::ManualControlEnvelope());
 }
 
 void EtherCATScanTests::testMockProviderStateCancellationAndFailure()

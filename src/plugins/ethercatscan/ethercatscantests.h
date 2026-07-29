@@ -14,6 +14,7 @@ private slots:
     void testMetadataProvidersActionsAndPage();
     void testTopologyComparison();
     void testBlockingIdentityAndDuplicateDifferences();
+    void testScanPreservesManualConfigurationByIdentity();
     void testMockProviderStateCancellationAndFailure();
     void testProjectCloseClearsOwnedScanLifecycle_data();
     void testProjectCloseClearsOwnedScanLifecycle();

@@ -20,12 +20,15 @@ private slots:
     void testMasterConfigurationPersistenceAndUndo();
     void testOfflineConfigurationPersistenceAndUndo();
     void testAdapterSelectionPersistenceAndUndo();
+    void testManualControlEnvelopePersistenceAndUndo();
     void testBindingArtifactInvalidationAndUndo();
     void testVersionOneConfigurationMigration();
     void testVersionTwoMasterConfigurationMigration();
     void testVersionThreeAdapterMigration();
+    void testVersionFourManualControlMigration();
     void testOfflineConfigurationCorruption();
     void testAdapterSelectionCorruption();
+    void testManualControlEnvelopeCorruption();
     void testMigrationCreatesRecoveryBackup();
     void testProjectExplorerMultiProjectLifecycle();
     void testDuplicateProjectIdCannotOwnStartupContext();

@@ -109,6 +109,12 @@ public:
         return unsupported();
     }
 
+    Utils::Result<> setManualControlEnvelope(
+        const Data::NodeId &, const Data::NodeId &, const Data::ManualControlEnvelope &) final
+    {
+        return unsupported();
+    }
+
     Utils::Result<> setMasterBindingArtifact(
         const Data::NodeId &, const Data::SemanticBindingArtifactReference &) final
     {
