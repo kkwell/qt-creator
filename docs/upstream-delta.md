@@ -2379,3 +2379,27 @@ Qt 6.11 offscreen suite passed 13 tests with no failures, and the complete
 Core suite passed 22 tests. The `WITH_TESTS=OFF` product targets built with
 the new plugin and copied packages present in the app resource tree. No
 visible GUI or controller connection was used.
+
+## Provider-neutral Runtime Resource contract delta
+
+`EtherCATData` now defines a transport-independent, read-only Runtime Resource
+catalog and snapshot. Opaque resource/component/parent/consistency-group IDs
+are bound to a complete epoch containing BootId, active package selector,
+configuration identity, topology/runtime generations, catalog revision, and
+opaque topology identity. Descriptors retain primitive type, bit width,
+direction, access, internal process-image coordinates, quality mask, and an
+optional typed safe value. Snapshots retain capture cycle, controller
+timestamp, typed values and quality, including opaque representations for
+unknown future types.
+
+`ControllerConnectionProvider` gains an optional catalog/snapshot/refresh
+surface and two change signals. Its default remains fail-closed:
+`supportsRuntimeResources()` is false, values are absent, and refresh returns
+an explicit unsupported error. No output transaction, manual-control command,
+Product API message, Workbench page, semantic adapter join, or hardware path
+is added in this delta. Names, ordinals, process-image offsets, and vendor
+identity are explicitly not valid semantic binding keys.
+
+The Qt 6.11 offscreen Core suite passed 23 tests with no failures. CMake and
+qbs source lists remain synchronized. No visible GUI or controller connection
+was used.

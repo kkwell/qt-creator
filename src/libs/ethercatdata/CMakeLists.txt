@@ -11,5 +11,6 @@ add_qtc_library(EtherCATData
     offlineconfiguration.cpp
     offlineconfiguration.h
     projectsnapshot.h
+    runtimeresource.h
     scansnapshot.h
 )

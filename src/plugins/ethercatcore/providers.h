@@ -9,6 +9,7 @@
 #include <ethercatdata/devicedescription.h>
 #include <ethercatdata/diagnosticssnapshot.h>
 #include <ethercatdata/projectsnapshot.h>
+#include <ethercatdata/runtimeresource.h>
 #include <ethercatdata/scansnapshot.h>
 
 #include <utils/filepath.h>
@@ -269,10 +270,16 @@ public:
     virtual bool supportsPackageDeployment() const;
     virtual Utils::Result<> deployPackage(const Data::ControllerPackageDeploymentRequest &request);
     virtual Utils::Result<> cancelPackageDeployment(const QString &operationId);
+    virtual bool supportsRuntimeResources() const;
+    virtual std::optional<Data::RuntimeResourceCatalog> runtimeResourceCatalog() const;
+    virtual std::optional<Data::RuntimeResourceSnapshot> runtimeResourceSnapshot() const;
+    virtual Utils::Result<> refreshRuntimeResources();
 
 signals:
     void connectionProfilesChanged();
     void connectionSnapshotChanged();
+    void runtimeResourceCatalogChanged();
+    void runtimeResourceSnapshotChanged();
 };
 
 class ETHERCATCORE_EXPORT ScanProvider : public Provider

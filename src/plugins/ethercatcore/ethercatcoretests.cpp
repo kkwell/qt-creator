@@ -21,6 +21,7 @@
 #include <ethercatdata/nodeid.h>
 #include <ethercatdata/offlineconfiguration.h>
 #include <ethercatdata/projectsnapshot.h>
+#include <ethercatdata/runtimeresource.h>
 
 #include <QSignalSpy>
 #include <QScopeGuard>
@@ -808,6 +809,114 @@ void EtherCATCoreTests::testProjectSnapshotValueSemantics()
     QVERIFY(copy != snapshot);
 }
 
+void EtherCATCoreTests::testRuntimeResourceValueSemantics()
+{
+    const Data::ControllerConnectionScope scope{
+        Data::NodeId::create(),
+        Data::NodeId::create(),
+    };
+    const Data::RuntimeResourceId resourceId{QByteArray::fromHex("1020304050607080")};
+    const Data::RuntimeComponentInstanceId componentId{
+        QByteArray::fromHex("90a0b0c0d0e0f000")};
+    const Data::RuntimeComponentInstanceId parentId{
+        QByteArray::fromHex("1011121314151617")};
+    const Data::RuntimeConsistencyGroupId groupId{QByteArray::fromHex("0102030405060708")};
+    QVERIFY(resourceId.isValid());
+    QVERIFY(componentId.isValid());
+    QVERIFY(groupId.isValid());
+    QCOMPARE(qHash(Data::RuntimeResourceId(resourceId)), qHash(resourceId));
+
+    Data::RuntimeResourceDescriptor descriptor;
+    descriptor.id = resourceId;
+    descriptor.componentInstanceId = componentId;
+    descriptor.parentInstanceId = parentId;
+    descriptor.instanceOrdinal = 3;
+    descriptor.consistencyGroupId = groupId;
+    descriptor.displayName = "Primary sample";
+    descriptor.description = "Provider-neutral runtime value";
+    descriptor.primitiveType = Data::RuntimeResourcePrimitiveType::Opaque;
+    descriptor.valueTypeIdentity = "org.example.runtime/custom-u24";
+    descriptor.bitWidth = 24;
+    descriptor.direction = Data::RuntimeResourceDirection::Input;
+    descriptor.access = Data::RuntimeResourceAccess::ReadOnly;
+    descriptor.processImageBitOffset = 72;
+    descriptor.processImageBitLength = 24;
+    descriptor.qualityMask = 0x000f;
+    descriptor.unit = "unit";
+
+    Data::RuntimeResourceTypedValue safeValue;
+    safeValue.primitiveType = Data::RuntimeResourcePrimitiveType::UnsignedInteger;
+    safeValue.value = QVariant::fromValue<qulonglong>(0);
+    descriptor.safeValue = safeValue;
+
+    Data::RuntimeResourceCatalogEpoch epoch;
+    epoch.controllerBootId = 41;
+    epoch.activePackageSlot = Data::ControllerSlot::B;
+    epoch.activePackageGeneration = 79;
+    epoch.configurationId = 83;
+    epoch.topologyGeneration = 2;
+    epoch.runtimeGeneration = 4;
+    epoch.catalogRevision = 5;
+    epoch.topologyIdentity = QByteArray::fromHex("abcdef0123456789");
+
+    Data::RuntimeResourceCatalog catalog;
+    catalog.scope = scope;
+    catalog.sessionGeneration = 7;
+    catalog.epoch = epoch;
+    catalog.receivedAt = QDateTime::currentDateTimeUtc();
+    catalog.resources = {descriptor};
+    const Data::RuntimeResourceCatalog catalogCopy = catalog;
+    QCOMPARE(catalogCopy, catalog);
+
+    Data::RuntimeResourceTypedValue opaqueValue;
+    opaqueValue.primitiveType = Data::RuntimeResourcePrimitiveType::Opaque;
+    opaqueValue.typeIdentity = descriptor.valueTypeIdentity;
+    opaqueValue.opaqueRepresentation = QByteArray::fromHex("123456");
+
+    Data::RuntimeResourceQuality quality;
+    quality.state = Data::RuntimeResourceQualityState::Uncertain;
+    quality.flags = 0x0005;
+    quality.opaqueCode = QByteArray::fromHex("8001");
+    quality.detail = "Provider quality retained";
+
+    Data::RuntimeResourceSample sample;
+    sample.resourceId = resourceId;
+    sample.consistencyGroupId = groupId;
+    sample.value = opaqueValue;
+    sample.quality = quality;
+    sample.valueSequence = 9;
+    sample.controllerTimestampNs = 123456789;
+
+    Data::RuntimeResourceSnapshot snapshot;
+    snapshot.scope = scope;
+    snapshot.sessionGeneration = catalog.sessionGeneration;
+    snapshot.epoch = catalog.epoch;
+    snapshot.snapshotSequence = 11;
+    snapshot.captureCycle = 101;
+    snapshot.controllerTimestampNs = sample.controllerTimestampNs;
+    snapshot.receivedAt = catalog.receivedAt;
+    snapshot.complete = true;
+    snapshot.samples = {sample};
+
+    const Data::RuntimeResourceSnapshot snapshotCopy = snapshot;
+    QCOMPARE(snapshotCopy, snapshot);
+    QCOMPARE(
+        snapshotCopy.samples.constFirst().value.opaqueRepresentation,
+        QByteArray::fromHex("123456"));
+    QCOMPARE(
+        snapshotCopy.samples.constFirst().quality.opaqueCode,
+        QByteArray::fromHex("8001"));
+
+    snapshot.samples.first().value.primitiveType
+        = Data::RuntimeResourcePrimitiveType::UnsignedInteger;
+    snapshot.samples.first().value.value = QVariant::fromValue<qulonglong>(0x123456);
+    snapshot.samples.first().value.opaqueRepresentation.clear();
+    QVERIFY(snapshot != snapshotCopy);
+
+    QVERIFY(QMetaType::fromType<Data::RuntimeResourceCatalog>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimeResourceSnapshot>().isValid());
+}
+
 void EtherCATCoreTests::testProcessDataConfigurationPreview()
 {
     Data::ProcessDataConfiguration configuration;
@@ -1350,6 +1459,14 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
     QCOMPARE(
         unsupportedCancel.error(),
         Tr::tr("This controller provider does not support canceling package deployment."));
+    QVERIFY(!provider.supportsRuntimeResources());
+    QVERIFY(!provider.runtimeResourceCatalog());
+    QVERIFY(!provider.runtimeResourceSnapshot());
+    const Utils::Result<> unsupportedRuntimeRefresh = provider.refreshRuntimeResources();
+    QVERIFY(!unsupportedRuntimeRefresh);
+    QCOMPARE(
+        unsupportedRuntimeRefresh.error(),
+        Tr::tr("This controller provider does not support runtime resources."));
 
     Data::ControllerPackageDeploymentProgress deploymentProgress;
     deploymentProgress.operationId = deploymentRequest.operationId;
@@ -1399,6 +1516,11 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
 
     QSignalSpy profilesSpy(&provider, &ControllerConnectionProvider::connectionProfilesChanged);
     QSignalSpy snapshotSpy(&provider, &ControllerConnectionProvider::connectionSnapshotChanged);
+    QSignalSpy catalogSpy(&provider, &ControllerConnectionProvider::runtimeResourceCatalogChanged);
+    QSignalSpy runtimeSnapshotSpy(
+        &provider, &ControllerConnectionProvider::runtimeResourceSnapshotChanged);
+    QCOMPARE(catalogSpy.count(), 0);
+    QCOMPARE(runtimeSnapshotSpy.count(), 0);
     QVERIFY(!provider.isAvailable());
     QVERIFY(!provider.connectToController(request));
     QCOMPARE(snapshotSpy.count(), 0);

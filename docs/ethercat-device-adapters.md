@@ -146,6 +146,24 @@ feedback checks. Before they can be enabled, a project must supply a qualified
 motion envelope and the new process-data package must pass real DC, WKC,
 hold-to-run, TTL-expiry, disconnect, fault, and controlled-stop testing.
 
+## Runtime binding boundary
+
+The provider-neutral Runtime Resource catalog supplies current-epoch opaque
+handles and typed read-only values. It does not yet prove which resource
+implements an adapter package's semantic signal. The IDE must not join these
+models by display name, ordinal, vendor/model branch, object index, or
+process-image offset.
+
+A later deterministic compiler issue must generate an immutable binding
+manifest with stable semantic/component binding IDs, the resolved signal ID,
+adapter identity/version/content hash, ESI hash, selected profile and module
+assignment, canonical value type, and a layout digest. The controller catalog
+must return a verifiable binding identity or mapping digest before Workbench
+can label an opaque resource as an XB6 or SV630N signal. The join must also
+match the complete runtime catalog epoch. Until then, a Product API adapter may
+expose only unmapped read-only resources; it cannot authorize output control
+or execute Candidate actions.
+
 ## Qualification boundary
 
 The bundled packages are offline Candidate artifacts. They do not qualify:

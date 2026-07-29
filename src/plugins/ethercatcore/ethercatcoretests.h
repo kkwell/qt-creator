@@ -16,6 +16,7 @@ private slots:
     void testMockUiVisibility();
     void testNodeIdRoundTrip();
     void testProjectSnapshotValueSemantics();
+    void testRuntimeResourceValueSemantics();
     void testProcessDataConfigurationPreview();
     void testProcessDataConfigurationValidation();
     void testStartupAndDcConfigurationValidation();

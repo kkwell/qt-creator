@@ -186,6 +186,29 @@ Utils::Result<> ControllerConnectionProvider::cancelPackageDeployment(const QStr
         Tr::tr("This controller provider does not support canceling package deployment."));
 }
 
+bool ControllerConnectionProvider::supportsRuntimeResources() const
+{
+    return false;
+}
+
+std::optional<Data::RuntimeResourceCatalog>
+ControllerConnectionProvider::runtimeResourceCatalog() const
+{
+    return std::nullopt;
+}
+
+std::optional<Data::RuntimeResourceSnapshot>
+ControllerConnectionProvider::runtimeResourceSnapshot() const
+{
+    return std::nullopt;
+}
+
+Utils::Result<> ControllerConnectionProvider::refreshRuntimeResources()
+{
+    return Utils::ResultError(
+        Tr::tr("This controller provider does not support runtime resources."));
+}
+
 ScanProvider::ScanProvider(Utils::Id id, const QString &displayName, QObject *parent)
     : Provider(ProviderKind::Scan, id, displayName, parent)
 {}

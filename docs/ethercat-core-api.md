@@ -359,6 +359,28 @@ and status tables remain private to the independent, headless
 `EtherCATProductApi` plugin documented in `docs/ethercat-product-api.md` and
 `docs/ethercat-online-controller.md`.
 
+The Runtime Resource extension is another optional, read-only part of the same
+Provider. `EtherCATData` carries an immutable catalog and value snapshot with:
+
+- provider-owned opaque resource, component, parent, and consistency-group
+  identities;
+- a complete catalog epoch covering controller BootId, active package
+  selector, configuration, topology/runtime generations, catalog revision,
+  and opaque topology identity;
+- primitive type, bit width, direction, access, internal process-image
+  coordinates, quality mask, and an optional provider-decoded safe value; and
+- capture cycle, controller timestamp, typed value, quality, and retained
+  opaque representations for forward-compatible fields.
+
+The generic contract deliberately has no output transaction. A consumer may
+compare opaque IDs only inside the matching scope, session generation, and
+complete catalog epoch. Names, ordinals, vendor identities, object indexes,
+and process-image offsets are not semantic binding keys. Providers that do not
+opt in return no catalog or snapshot and reject refresh explicitly. A later
+vendor adapter may implement the wire query, but it must use the same
+connection/session state and publish a complete consistent value only after
+all provider-specific validation succeeds.
+
 Workbench, not Core, performs one automatic Acquire attempt after an
 authoritative connected snapshot identifies the exact
 Provider/profile/scope/session generation. The controller remains the lease
