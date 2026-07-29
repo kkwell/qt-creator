@@ -198,7 +198,25 @@ static Data::SemanticBindingArtifactReference bindingArtifact()
         "binding/com.embedlabs.test/1",
         QByteArray(32, '\x6b'),
         QByteArray(32, '\x7c'),
+        {},
     };
+}
+
+static Data::SemanticBindingArtifactReference bindingArtifact(
+    const QList<Data::OfflineSlaveConfiguration> &slaves)
+{
+    Data::SemanticBindingArtifactReference reference = bindingArtifact();
+    for (const Data::OfflineSlaveConfiguration &slave : slaves) {
+        reference.projectDeviceBindings.append(
+            {slave.id, QString("embedlabs:test:project-device:%1").arg(slave.position)});
+    }
+    std::sort(
+        reference.projectDeviceBindings.begin(),
+        reference.projectDeviceBindings.end(),
+        [](const auto &left, const auto &right) {
+            return left.slaveId.toString() < right.slaveId.toString();
+        });
+    return reference;
 }
 
 static Data::EngineeringConstraint booleanConstraint()
@@ -657,7 +675,8 @@ void EtherCATProjectTests::testAdapterSelectionPersistenceAndUndo()
     };
     QCOMPARE(document.snapshot().slaves.first().adapterSelection, selection);
 
-    const Data::SemanticBindingArtifactReference reference = bindingArtifact();
+    const Data::SemanticBindingArtifactReference reference
+        = bindingArtifact(document.snapshot().slaves);
     QVERIFY_RESULT(document.setMasterBindingArtifact(reference));
     QCOMPARE(document.snapshot().masterBindingArtifact, reference);
 
@@ -676,6 +695,12 @@ void EtherCATProjectTests::testAdapterSelectionPersistenceAndUndo()
     Data::SemanticBindingArtifactReference partialReference = reference;
     partialReference.projectConfigurationSha256.clear();
     QVERIFY(!document.setMasterBindingArtifact(partialReference));
+    Data::SemanticBindingArtifactReference unknownSlaveReference = reference;
+    unknownSlaveReference.projectDeviceBindings.first().slaveId = Data::NodeId::create();
+    QVERIFY(!document.setMasterBindingArtifact(unknownSlaveReference));
+    Data::SemanticBindingArtifactReference untrimmedDeviceReference = reference;
+    untrimmedDeviceReference.projectDeviceBindings.first().projectDeviceId.append(u' ');
+    QVERIFY(!document.setMasterBindingArtifact(untrimmedDeviceReference));
     QCOMPARE(document.undoStack()->count(), commandCount);
     QCOMPARE(document.snapshot().slaves.first().adapterSelection, selection);
     QCOMPARE(document.snapshot().masterBindingArtifact, reference);
@@ -918,33 +943,34 @@ void EtherCATProjectTests::testBindingArtifactInvalidationAndUndo()
     slave.manualControlEnvelope = manualControlEnvelope();
     source.slaves = {slave};
     source.nodes.append({slave.id, master, Data::ProjectNodeKind::Slave, slave.name});
-    source.masterBindingArtifact = bindingArtifact();
+    const Data::SemanticBindingArtifactReference reference = bindingArtifact(source.slaves);
+    source.masterBindingArtifact = reference;
     QVERIFY_RESULT(projectFile.writeFileContents(serializeProject(source)));
 
     EtherCATProjectDocument document;
     QVERIFY_RESULT(document.load(projectFile));
-    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
 
     QVERIFY_RESULT(document.renameProject("Display Name Only"));
-    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
     document.undoStack()->undo();
-    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
 
     const Utils::Result<> renameMasterResult
         = document.renameStructuralNode(master, "Display Master Only");
     QVERIFY_RESULT(renameMasterResult);
-    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
     document.undoStack()->undo();
-    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
 
     Data::OfflineSlaveConfiguration renamedSlave = slave;
     renamedSlave.name = "Display Slave Only";
     QVERIFY_RESULT(document.replaceOfflineSlaves(master, {renamedSlave}));
     QCOMPARE(document.snapshot().slaves.first().manualControlEnvelope, manualControlEnvelope());
-    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
     document.undoStack()->undo();
     QCOMPARE(document.snapshot().slaves.first(), slave);
-    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
 
     QVERIFY_RESULT(document.setMasterConfiguration(
         master, {Data::MasterTimingMode::DistributedClocks, 125000}));
@@ -955,13 +981,16 @@ void EtherCATProjectTests::testBindingArtifactInvalidationAndUndo()
     document.undoStack()->undo();
     QCOMPARE(
         document.snapshot().masterBindingArtifact.artifactId,
-        bindingArtifact().artifactId);
+        reference.artifactId);
     QCOMPARE(
         document.snapshot().masterBindingArtifact.artifactSha256,
-        bindingArtifact().artifactSha256);
+        reference.artifactSha256);
     QCOMPARE(
         document.snapshot().masterBindingArtifact.projectConfigurationSha256,
-        bindingArtifact().projectConfigurationSha256);
+        reference.projectConfigurationSha256);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact.projectDeviceBindings,
+        reference.projectDeviceBindings);
     QCOMPARE(document.snapshot().masterConfiguration, Data::MasterConfiguration());
 
     const Data::ProcessDataConfiguration changedProcessData = processDataConfiguration();
@@ -973,7 +1002,7 @@ void EtherCATProjectTests::testBindingArtifactInvalidationAndUndo()
         Data::SemanticBindingArtifactReference());
     QCOMPARE(document.undoStack()->undoText(), Tr::tr("Configure EtherCAT Process Data"));
     document.undoStack()->undo();
-    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
     QCOMPARE(
         document.snapshot().slaves.first().processData,
         Data::ProcessDataConfiguration());
@@ -986,7 +1015,7 @@ void EtherCATProjectTests::testBindingArtifactInvalidationAndUndo()
         document.snapshot().masterBindingArtifact,
         Data::SemanticBindingArtifactReference());
     document.undoStack()->undo();
-    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
 
     const Utils::Result<> dcResult = document.setDcConfiguration(slave.id, dcConfiguration());
     QVERIFY_RESULT(dcResult);
@@ -994,7 +1023,7 @@ void EtherCATProjectTests::testBindingArtifactInvalidationAndUndo()
         document.snapshot().masterBindingArtifact,
         Data::SemanticBindingArtifactReference());
     document.undoStack()->undo();
-    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
 
     Data::DeviceAdapterProjectSelection changedSelection = slave.adapterSelection;
     changedSelection.adapterVersion = "1.2.4";
@@ -1005,7 +1034,7 @@ void EtherCATProjectTests::testBindingArtifactInvalidationAndUndo()
         document.snapshot().masterBindingArtifact,
         Data::SemanticBindingArtifactReference());
     document.undoStack()->undo();
-    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
     QCOMPARE(document.snapshot().slaves.first().adapterSelection, slave.adapterSelection);
 
     Data::OfflineSlaveConfiguration changedSlave = slave;
@@ -1016,9 +1045,106 @@ void EtherCATProjectTests::testBindingArtifactInvalidationAndUndo()
         document.snapshot().masterBindingArtifact,
         Data::SemanticBindingArtifactReference());
     document.undoStack()->undo();
-    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
     QCOMPARE(document.snapshot().slaves.first(), slave);
     QVERIFY(!document.isModified());
+}
+
+void EtherCATProjectTests::testProjectDeviceBindingPersistenceAndValidation()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath projectFile
+        = temporaryFilePath(directory, "project-device-bindings.ecatproject");
+    Data::ProjectSnapshot source = createProjectSnapshot("Device Identities", "Test");
+    const Data::NodeId master = masterId(source);
+    source.slaves = offlineSlaves(master);
+    for (const Data::OfflineSlaveConfiguration &slave : std::as_const(source.slaves))
+        source.nodes.append({slave.id, master, Data::ProjectNodeKind::Slave, slave.name});
+    QVERIFY_RESULT(projectFile.writeFileContents(serializeProject(source)));
+
+    EtherCATProjectDocument document;
+    QVERIFY_RESULT(document.load(projectFile));
+    const Data::SemanticBindingArtifactReference reference = bindingArtifact(source.slaves);
+    QCOMPARE(reference.projectDeviceBindings.size(), 2);
+    QVERIFY_RESULT(document.setMasterBindingArtifact(reference));
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
+
+    document.undoStack()->undo();
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    document.undoStack()->redo();
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
+
+    const int commandCount = document.undoStack()->count();
+    Data::SemanticBindingArtifactReference unsorted = reference;
+    std::reverse(
+        unsorted.projectDeviceBindings.begin(), unsorted.projectDeviceBindings.end());
+    QVERIFY(!document.setMasterBindingArtifact(unsorted));
+
+    Data::SemanticBindingArtifactReference duplicateSlave = reference;
+    duplicateSlave.projectDeviceBindings[1].slaveId
+        = duplicateSlave.projectDeviceBindings[0].slaveId;
+    QVERIFY(!document.setMasterBindingArtifact(duplicateSlave));
+
+    Data::SemanticBindingArtifactReference duplicateProjectDevice = reference;
+    duplicateProjectDevice.projectDeviceBindings[1].projectDeviceId
+        = duplicateProjectDevice.projectDeviceBindings[0].projectDeviceId;
+    QVERIFY(!document.setMasterBindingArtifact(duplicateProjectDevice));
+
+    Data::SemanticBindingArtifactReference nullSlave = reference;
+    nullSlave.projectDeviceBindings[0].slaveId = {};
+    QVERIFY(!document.setMasterBindingArtifact(nullSlave));
+
+    Data::SemanticBindingArtifactReference unknownSlave = reference;
+    unknownSlave.projectDeviceBindings[0].slaveId = Data::NodeId::create();
+    std::sort(
+        unknownSlave.projectDeviceBindings.begin(),
+        unknownSlave.projectDeviceBindings.end(),
+        [](const auto &left, const auto &right) {
+            return left.slaveId.toString() < right.slaveId.toString();
+        });
+    QVERIFY(!document.setMasterBindingArtifact(unknownSlave));
+
+    Data::SemanticBindingArtifactReference emptyProjectDevice = reference;
+    emptyProjectDevice.projectDeviceBindings[0].projectDeviceId.clear();
+    QVERIFY(!document.setMasterBindingArtifact(emptyProjectDevice));
+
+    Data::SemanticBindingArtifactReference untrimmedProjectDevice = reference;
+    untrimmedProjectDevice.projectDeviceBindings[0].projectDeviceId.prepend(u' ');
+    QVERIFY(!document.setMasterBindingArtifact(untrimmedProjectDevice));
+
+    Data::SemanticBindingArtifactReference mappingWithoutArtifact;
+    mappingWithoutArtifact.projectDeviceBindings = reference.projectDeviceBindings;
+    QVERIFY(!document.setMasterBindingArtifact(mappingWithoutArtifact));
+    QCOMPARE(document.undoStack()->count(), commandCount);
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
+
+    QVERIFY_RESULT(document.save());
+    const Utils::Result<QByteArray> contents = projectFile.fileContents();
+    QVERIFY_RESULT(contents);
+    const QJsonObject root = QJsonDocument::fromJson(*contents).object();
+    const QJsonArray bindings = root.value("master")
+                                    .toObject()
+                                    .value("semanticBindingArtifact")
+                                    .toObject()
+                                    .value("projectDeviceBindings")
+                                    .toArray();
+    QCOMPARE(bindings.size(), 2);
+    const QString firstSlaveId = bindings[0].toObject().value("slaveId").toString();
+    const QString secondSlaveId = bindings[1].toObject().value("slaveId").toString();
+    QVERIFY(firstSlaveId < secondSlaveId);
+
+    EtherCATProjectDocument reloaded;
+    QVERIFY_RESULT(reloaded.load(projectFile));
+    QCOMPARE(reloaded.snapshot().masterBindingArtifact, reference);
+
+    const Data::SemanticBindingArtifactReference legacyReference = bindingArtifact();
+    QVERIFY_RESULT(reloaded.setMasterBindingArtifact(legacyReference));
+    QCOMPARE(reloaded.snapshot().masterBindingArtifact, legacyReference);
+    reloaded.undoStack()->undo();
+    QCOMPARE(reloaded.snapshot().masterBindingArtifact, reference);
 }
 
 void EtherCATProjectTests::testVersionOneConfigurationMigration()
@@ -1167,6 +1293,10 @@ void EtherCATProjectTests::testVersionFourManualControlMigration()
     QJsonObject root = QJsonDocument::fromJson(serializeProject(source)).object();
     root.insert("formatVersion", 4);
     QJsonObject masterObject = root.value("master").toObject();
+    QJsonObject referenceObject
+        = masterObject.value("semanticBindingArtifact").toObject();
+    referenceObject.remove("projectDeviceBindings");
+    masterObject.insert("semanticBindingArtifact", referenceObject);
     QJsonArray slaves = masterObject.value("slaves").toArray();
     QJsonObject versionFourSlave = slaves.first().toObject();
     versionFourSlave.remove("manualControlEnvelope");
@@ -1207,6 +1337,61 @@ void EtherCATProjectTests::testVersionFourManualControlMigration()
     QCOMPARE(
         current->snapshot.masterBindingArtifact,
         Data::SemanticBindingArtifactReference());
+}
+
+void EtherCATProjectTests::testVersionFiveBindingArtifactMigration()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath projectFile
+        = temporaryFilePath(directory, "version-five.ecatproject");
+    Data::ProjectSnapshot source = createProjectSnapshot("Version Five", "Test");
+    const Data::NodeId master = masterId(source);
+    source.slaves = {offlineSlaves(master).first()};
+    source.nodes.append(
+        {source.slaves.first().id, master, Data::ProjectNodeKind::Slave, source.slaves.first().name});
+    source.masterBindingArtifact = bindingArtifact(source.slaves);
+
+    QJsonObject root = QJsonDocument::fromJson(serializeProject(source)).object();
+    root.insert("formatVersion", 5);
+    QJsonObject masterObject = root.value("master").toObject();
+    QJsonObject referenceObject
+        = masterObject.value("semanticBindingArtifact").toObject();
+    referenceObject.remove("projectDeviceBindings");
+    masterObject.insert("semanticBindingArtifact", referenceObject);
+    root.insert("master", masterObject);
+    const QByteArray versionFiveContents = QJsonDocument(root).toJson();
+    QVERIFY_RESULT(projectFile.writeFileContents(versionFiveContents));
+
+    EtherCATProjectDocument document;
+    QVERIFY_RESULT(document.load(projectFile));
+    QVERIFY(document.snapshot().migrated);
+    QVERIFY(document.isModified());
+    QCOMPARE(document.snapshot().formatVersion, Constants::CURRENT_FORMAT_VERSION);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact.artifactId,
+        source.masterBindingArtifact.artifactId);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact.artifactSha256,
+        source.masterBindingArtifact.artifactSha256);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact.projectConfigurationSha256,
+        source.masterBindingArtifact.projectConfigurationSha256);
+    QVERIFY(document.snapshot().masterBindingArtifact.projectDeviceBindings.isEmpty());
+
+    QVERIFY_RESULT(document.save());
+    QVERIFY(document.migrationBackupPath().toUrlishString().contains(".v5.bak"));
+    const Utils::Result<QByteArray> backup = document.migrationBackupPath().fileContents();
+    QVERIFY_RESULT(backup);
+    QCOMPARE(*backup, versionFiveContents);
+    const QJsonObject savedRoot
+        = QJsonDocument::fromJson(*projectFile.fileContents()).object();
+    const QJsonObject savedReference = savedRoot.value("master")
+                                           .toObject()
+                                           .value("semanticBindingArtifact")
+                                           .toObject();
+    QVERIFY(savedReference.value("projectDeviceBindings").isArray());
+    QVERIFY(savedReference.value("projectDeviceBindings").toArray().isEmpty());
 }
 
 void EtherCATProjectTests::testOfflineConfigurationCorruption()
@@ -1352,7 +1537,7 @@ void EtherCATProjectTests::testAdapterSelectionCorruption()
         [](const auto &left, const auto &right) { return left.slot < right.slot; });
     source.slaves = {slave};
     source.nodes.append({slave.id, master, Data::ProjectNodeKind::Slave, slave.name});
-    source.masterBindingArtifact = bindingArtifact();
+    source.masterBindingArtifact = bindingArtifact(source.slaves);
 
     const QJsonObject validRoot = QJsonDocument::fromJson(serializeProject(source)).object();
     QVERIFY_RESULT(parseProject(QJsonDocument(validRoot).toJson(), "Fallback"));
@@ -1442,6 +1627,35 @@ void EtherCATProjectTests::testAdapterSelectionCorruption()
     }));
     QVERIFY(!rejectArtifactMutation([](QJsonObject &reference) {
         reference.insert("runtimeGeneration", 1);
+    }));
+    QVERIFY(!rejectArtifactMutation([](QJsonObject &reference) {
+        reference.remove("projectDeviceBindings");
+    }));
+    QVERIFY(!rejectArtifactMutation([](QJsonObject &reference) {
+        QJsonArray bindings = reference.value("projectDeviceBindings").toArray();
+        QJsonObject binding = bindings.first().toObject();
+        binding.insert("slaveId", Data::NodeId::create().toString());
+        bindings[0] = binding;
+        reference.insert("projectDeviceBindings", bindings);
+    }));
+    QVERIFY(!rejectArtifactMutation([](QJsonObject &reference) {
+        QJsonArray bindings = reference.value("projectDeviceBindings").toArray();
+        QJsonObject binding = bindings.first().toObject();
+        binding.insert("projectDeviceId", " invalid");
+        bindings[0] = binding;
+        reference.insert("projectDeviceBindings", bindings);
+    }));
+    QVERIFY(!rejectArtifactMutation([](QJsonObject &reference) {
+        QJsonArray bindings = reference.value("projectDeviceBindings").toArray();
+        bindings.append(bindings.first());
+        reference.insert("projectDeviceBindings", bindings);
+    }));
+    QVERIFY(!rejectArtifactMutation([](QJsonObject &reference) {
+        QJsonArray bindings = reference.value("projectDeviceBindings").toArray();
+        QJsonObject binding = bindings.first().toObject();
+        binding.insert("position", 0);
+        bindings[0] = binding;
+        reference.insert("projectDeviceBindings", bindings);
     }));
 }
 

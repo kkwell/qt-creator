@@ -1059,6 +1059,7 @@ void EtherCATCoreTests::testProjectSnapshotValueSemantics()
 
     const Data::NodeId projectId = Data::NodeId::create();
     const Data::NodeId targetId = Data::NodeId::create();
+    const Data::NodeId slaveId = Data::NodeId::create();
     Data::ProjectSnapshot snapshot{
         projectId,
         "Line 1",
@@ -1072,7 +1073,10 @@ void EtherCATCoreTests::testProjectSnapshotValueSemantics()
         {},
         {},
         {},
-        {"binding/test", QByteArray(32, '\x31'), QByteArray(32, '\x32')},
+        {"binding/test",
+         QByteArray(32, '\x31'),
+         QByteArray(32, '\x32'),
+         {{slaveId, "embedlabs:project:device:test"}}},
     };
 
     const Data::ProjectSnapshot copy = snapshot;
@@ -1080,9 +1084,15 @@ void EtherCATCoreTests::testProjectSnapshotValueSemantics()
     snapshot.nodes[1].name = "Offline Target";
     QVERIFY(copy != snapshot);
     QCOMPARE(copy.nodes[1].parentId, projectId);
+    QCOMPARE(
+        copy.masterBindingArtifact.projectDeviceBindings.first().slaveId,
+        slaveId);
+    QCOMPARE(
+        copy.masterBindingArtifact.projectDeviceBindings.first().projectDeviceId,
+        QString("embedlabs:project:device:test"));
 
     Data::OfflineSlaveConfiguration slave;
-    slave.id = Data::NodeId::create();
+    slave.id = slaveId;
     slave.masterId = targetId;
     slave.position = 0;
     slave.identity = {2, 0x1234, 1};
@@ -1379,7 +1389,7 @@ void EtherCATCoreTests::testRuntimeSemanticMappingAttestationContract()
     QVERIFY(!failure.isValid());
 
     Data::RuntimeSemanticMappingProof invalidProof = proof;
-    invalidProof.formatVersion = 2;
+    invalidProof.formatVersion = 3;
     QVERIFY(!invalidProof.isValid());
     invalidProof = proof;
     invalidProof.bindingCount = 0;

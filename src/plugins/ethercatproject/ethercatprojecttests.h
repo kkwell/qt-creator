@@ -22,10 +22,12 @@ private slots:
     void testAdapterSelectionPersistenceAndUndo();
     void testManualControlEnvelopePersistenceAndUndo();
     void testBindingArtifactInvalidationAndUndo();
+    void testProjectDeviceBindingPersistenceAndValidation();
     void testVersionOneConfigurationMigration();
     void testVersionTwoMasterConfigurationMigration();
     void testVersionThreeAdapterMigration();
     void testVersionFourManualControlMigration();
+    void testVersionFiveBindingArtifactMigration();
     void testOfflineConfigurationCorruption();
     void testAdapterSelectionCorruption();
     void testManualControlEnvelopeCorruption();

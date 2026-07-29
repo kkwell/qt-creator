@@ -827,7 +827,10 @@ static Utils::Result<Data::DeviceAdapterProjectSelection> parseAdapterSelection(
 }
 
 static Utils::Result<Data::SemanticBindingArtifactReference> parseBindingArtifact(
-    const QJsonObject &masterObject)
+    const QJsonObject &masterObject,
+    const QList<Data::OfflineSlaveConfiguration> &slaves,
+    const Data::NodeId &masterId,
+    bool requireProjectDeviceBindings)
 {
     const QJsonValue referenceValue = masterObject.value("semanticBindingArtifact");
     if (referenceValue.isUndefined())
@@ -842,9 +845,14 @@ static Utils::Result<Data::SemanticBindingArtifactReference> parseBindingArtifac
         "artifactId",
         "artifactSha256",
         "projectConfigurationSha256",
+        "projectDeviceBindings",
     };
-    if (referenceObject.size() != referenceKeys.size()
-        || !hasOnlyKeys(referenceObject, referenceKeys)) {
+    const qsizetype requiredKeyCount = requireProjectDeviceBindings ? referenceKeys.size()
+                                                                   : referenceKeys.size() - 1;
+    if (referenceObject.size() != requiredKeyCount
+        || !hasOnlyKeys(referenceObject, referenceKeys)
+        || (requireProjectDeviceBindings
+            && !referenceObject.contains("projectDeviceBindings"))) {
         return Utils::ResultError(Tr::tr("Master has an incomplete binding artifact reference."));
     }
 
@@ -862,10 +870,69 @@ static Utils::Result<Data::SemanticBindingArtifactReference> parseBindingArtifac
     if (artifactId->isEmpty() || *artifactId != artifactId->trimmed()) {
         return Utils::ResultError(Tr::tr("Master has an invalid binding artifact ID."));
     }
+
+    QList<Data::SemanticProjectDeviceBinding> projectDeviceBindings;
+    if (requireProjectDeviceBindings) {
+        const auto bindings
+            = parseArray(referenceObject, "projectDeviceBindings", Tr::tr("Master"));
+        if (!bindings)
+            return Utils::ResultError(bindings.error());
+
+        QSet<Data::NodeId> slaveIds;
+        QSet<QString> projectDeviceIds;
+        QString previousSlaveId;
+        static const QSet<QString> bindingKeys{"slaveId", "projectDeviceId"};
+        for (qsizetype index = 0; index < bindings->size(); ++index) {
+            if (!bindings->at(index).isObject()) {
+                return Utils::ResultError(
+                    Tr::tr("Project device binding %1 must be an object.").arg(index));
+            }
+            const QJsonObject bindingObject = bindings->at(index).toObject();
+            if (bindingObject.size() != bindingKeys.size()
+                || !hasOnlyKeys(bindingObject, bindingKeys)) {
+                return Utils::ResultError(
+                    Tr::tr("Project device binding %1 is incomplete.").arg(index));
+            }
+            const QString bindingName = Tr::tr("Project device binding %1").arg(index);
+            const auto slaveId = parseRequiredId(bindingObject, "slaveId", bindingName);
+            const auto projectDeviceId
+                = parseString(bindingObject, "projectDeviceId", bindingName);
+            if (!slaveId || !projectDeviceId) {
+                return Utils::ResultError(
+                    !slaveId ? slaveId.error() : projectDeviceId.error());
+            }
+            if (projectDeviceId->isEmpty() || *projectDeviceId != projectDeviceId->trimmed()) {
+                return Utils::ResultError(
+                    Tr::tr("%1 has an invalid project device ID.").arg(bindingName));
+            }
+            const QString canonicalSlaveId = slaveId->toString();
+            if (!previousSlaveId.isEmpty() && previousSlaveId >= canonicalSlaveId) {
+                return Utils::ResultError(
+                    Tr::tr("Project device bindings must use unique canonical slave ID order."));
+            }
+            const auto slave = std::find_if(
+                slaves.cbegin(), slaves.cend(), [&slaveId, &masterId](const auto &entry) {
+                    return entry.id == *slaveId && entry.masterId == masterId;
+                });
+            if (slave == slaves.cend()) {
+                return Utils::ResultError(
+                    Tr::tr("A project device binding refers to a slave outside this master."));
+            }
+            if (slaveIds.contains(*slaveId) || projectDeviceIds.contains(*projectDeviceId)) {
+                return Utils::ResultError(
+                    Tr::tr("Project device bindings must use unique slave and project device IDs."));
+            }
+            slaveIds.insert(*slaveId);
+            projectDeviceIds.insert(*projectDeviceId);
+            previousSlaveId = canonicalSlaveId;
+            projectDeviceBindings.append({*slaveId, *projectDeviceId});
+        }
+    }
     return Data::SemanticBindingArtifactReference{
         *artifactId,
         *artifactSha256,
         *projectSha256,
+        projectDeviceBindings,
     };
 }
 
@@ -1606,7 +1673,7 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
     const int version = root.value("formatVersion").toInt(root.value("version").toInt(-1));
     if (version == 0)
         return parseVersionZero(root, fallbackName);
-    if (version != 1 && version != 2 && version != 3 && version != 4
+    if (version != 1 && version != 2 && version != 3 && version != 4 && version != 5
         && version != Constants::CURRENT_FORMAT_VERSION) {
         return Utils::ResultError(
             Tr::tr("Unsupported EtherCAT project format version %1.").arg(version));
@@ -1660,7 +1727,8 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
 
     Data::SemanticBindingArtifactReference bindingArtifact;
     if (version >= 4) {
-        const auto parsedBindingArtifact = parseBindingArtifact(masterObject);
+        const auto parsedBindingArtifact = parseBindingArtifact(
+            masterObject, *slaves, *masterId, version >= 6);
         if (!parsedBindingArtifact)
             return Utils::ResultError(parsedBindingArtifact.error());
         if (version >= 5)
@@ -1985,7 +2053,8 @@ static bool bindingArtifactIsEmpty(
     const Data::SemanticBindingArtifactReference &reference)
 {
     return reference.artifactId.isEmpty() && reference.artifactSha256.isEmpty()
-           && reference.projectConfigurationSha256.isEmpty();
+           && reference.projectConfigurationSha256.isEmpty()
+           && reference.projectDeviceBindings.isEmpty();
 }
 
 static QJsonObject serializeBindingArtifact(
@@ -1997,6 +2066,18 @@ static QJsonObject serializeBindingArtifact(
     object.insert(
         "projectConfigurationSha256",
         QString::fromLatin1(reference.projectConfigurationSha256.toHex()));
+    QList<Data::SemanticProjectDeviceBinding> bindings = reference.projectDeviceBindings;
+    std::sort(bindings.begin(), bindings.end(), [](const auto &left, const auto &right) {
+        return left.slaveId.toString() < right.slaveId.toString();
+    });
+    QJsonArray bindingArray;
+    for (const Data::SemanticProjectDeviceBinding &binding : std::as_const(bindings)) {
+        QJsonObject bindingObject;
+        bindingObject.insert("slaveId", binding.slaveId.toString());
+        bindingObject.insert("projectDeviceId", binding.projectDeviceId);
+        bindingArray.append(bindingObject);
+    }
+    object.insert("projectDeviceBindings", bindingArray);
     return object;
 }
 

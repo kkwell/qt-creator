@@ -312,11 +312,13 @@ static bool bindingArtifactIsEmpty(
     const Data::SemanticBindingArtifactReference &reference)
 {
     return reference.artifactId.isEmpty() && reference.artifactSha256.isEmpty()
-           && reference.projectConfigurationSha256.isEmpty();
+           && reference.projectConfigurationSha256.isEmpty()
+           && reference.projectDeviceBindings.isEmpty();
 }
 
 static Utils::Result<> validateBindingArtifact(
-    const Data::SemanticBindingArtifactReference &reference)
+    const Data::SemanticBindingArtifactReference &reference,
+    const Data::ProjectSnapshot &snapshot)
 {
     if (bindingArtifactIsEmpty(reference))
         return Utils::ResultOk;
@@ -325,6 +327,51 @@ static Utils::Result<> validateBindingArtifact(
         || reference.projectConfigurationSha256.size() != 32) {
         return Utils::ResultError(
             Tr::tr("The semantic binding artifact reference is incomplete or invalid."));
+    }
+
+    const auto master = std::find_if(
+        snapshot.nodes.cbegin(), snapshot.nodes.cend(), [](const auto &node) {
+            return node.kind == Data::ProjectNodeKind::Master;
+        });
+    if (master == snapshot.nodes.cend()) {
+        return Utils::ResultError(
+            Tr::tr("The semantic binding artifact requires an EtherCAT master."));
+    }
+
+    QSet<Data::NodeId> slaveIds;
+    QSet<QString> projectDeviceIds;
+    QString previousSlaveId;
+    for (const Data::SemanticProjectDeviceBinding &binding : reference.projectDeviceBindings) {
+        if (binding.slaveId.isNull() || binding.projectDeviceId.isEmpty()
+            || binding.projectDeviceId != binding.projectDeviceId.trimmed()) {
+            return Utils::ResultError(
+                Tr::tr("A semantic project device binding is incomplete or invalid."));
+        }
+        const QString canonicalSlaveId = binding.slaveId.toString();
+        if (!previousSlaveId.isEmpty() && previousSlaveId >= canonicalSlaveId) {
+            return Utils::ResultError(
+                Tr::tr("Semantic project device bindings must use canonical slave ID order."));
+        }
+        const auto slave = std::find_if(
+            snapshot.slaves.cbegin(),
+            snapshot.slaves.cend(),
+            [&binding, &master](const Data::OfflineSlaveConfiguration &entry) {
+                return entry.id == binding.slaveId && entry.masterId == master->id;
+            });
+        if (slave == snapshot.slaves.cend()) {
+            return Utils::ResultError(
+                Tr::tr("A semantic project device binding refers to a slave outside this "
+                       "project."));
+        }
+        if (slaveIds.contains(binding.slaveId)
+            || projectDeviceIds.contains(binding.projectDeviceId)) {
+            return Utils::ResultError(
+                Tr::tr("Semantic project device bindings require unique slave and project device "
+                       "IDs."));
+        }
+        slaveIds.insert(binding.slaveId);
+        projectDeviceIds.insert(binding.projectDeviceId);
+        previousSlaveId = canonicalSlaveId;
     }
     return Utils::ResultOk;
 }
@@ -454,7 +501,7 @@ static Utils::Result<> validateProjectConfigurations(const Data::ProjectSnapshot
             }
         }
     }
-    return validateBindingArtifact(snapshot.masterBindingArtifact);
+    return validateBindingArtifact(snapshot.masterBindingArtifact, snapshot);
 }
 
 EtherCATProjectDocument::EtherCATProjectDocument(QObject *parent)
@@ -888,8 +935,6 @@ Utils::Result<> EtherCATProjectDocument::setMasterBindingArtifact(
 {
     if (!m_snapshot.valid)
         return Utils::ResultError(Tr::tr("Cannot edit an invalid EtherCAT project."));
-    if (const Utils::Result<> validation = validateBindingArtifact(reference); !validation)
-        return validation;
     if (m_snapshot.masterBindingArtifact == reference)
         return Utils::ResultOk;
 
