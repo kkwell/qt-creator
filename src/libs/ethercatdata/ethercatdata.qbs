@@ -10,6 +10,7 @@ QtcLibrary {
     files: [
         "controllerconnection.h",
         "deviceadapter.h",
+        "deviceadapterselection.h",
         "diagnosticssnapshot.h",
         "devicedescription.h",
         "ethercatdata_global.h",

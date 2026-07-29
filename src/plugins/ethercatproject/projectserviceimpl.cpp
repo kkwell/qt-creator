@@ -183,6 +183,30 @@ Utils::Result<> ProjectServiceImpl::setDcConfiguration(
     return project->document()->setDcConfiguration(slaveId, configuration);
 }
 
+Utils::Result<> ProjectServiceImpl::setDeviceAdapterSelection(
+    const Data::NodeId &projectId,
+    const Data::NodeId &slaveId,
+    const QByteArray &esiSha256,
+    const Data::DeviceAdapterProjectSelection &selection)
+{
+    QTC_ASSERT(isGuiThread(), return Utils::ResultError(Tr::tr("Project service thread error.")));
+    EtherCATProject *project = findProject(projectId);
+    if (!project)
+        return Utils::ResultError(Tr::tr("The requested EtherCAT project is not open."));
+    return project->document()->setDeviceAdapterSelection(slaveId, esiSha256, selection);
+}
+
+Utils::Result<> ProjectServiceImpl::setMasterBindingArtifact(
+    const Data::NodeId &projectId,
+    const Data::SemanticBindingArtifactReference &reference)
+{
+    QTC_ASSERT(isGuiThread(), return Utils::ResultError(Tr::tr("Project service thread error.")));
+    EtherCATProject *project = findProject(projectId);
+    if (!project)
+        return Utils::ResultError(Tr::tr("The requested EtherCAT project is not open."));
+    return project->document()->setMasterBindingArtifact(reference);
+}
+
 bool ProjectServiceImpl::canUndoProject(const Data::NodeId &projectId) const
 {
     QTC_ASSERT(isGuiThread(), return false);

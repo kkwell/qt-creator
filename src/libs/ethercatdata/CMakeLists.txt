@@ -3,6 +3,7 @@ add_qtc_library(EtherCATData
   SOURCES
     controllerconnection.h
     deviceadapter.h
+    deviceadapterselection.h
     diagnosticssnapshot.h
     devicedescription.h
     ethercatdata_global.h

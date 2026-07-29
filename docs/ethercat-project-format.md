@@ -22,21 +22,23 @@ All Project objects are GUI-thread-owned. This plugin has no worker thread,
 timer, future, or cancellation path. Document signals are disconnected before
 the document and undo stack are destroyed.
 
-## Version 3 format
+## Version 4 format
 
 The current file is indented UTF-8 JSON with MIME type
 `application/x-ethercat-project`, format name `ethercat-project`, and
-`formatVersion` 3. Version 2 added per-slave Process Data, Startup, and DC
+`formatVersion` 4. Version 2 added per-slave Process Data, Startup, and DC
 configuration. Version 3 adds the provider-neutral master timing mode and
-cycle period needed to build a controller package. It is local editor data,
-not ECPKG, ECFG, ETIR, a network message, or a TwinCAT project file.
+cycle period needed to build a controller package. Version 4 adds reproducible
+ESI/device-adapter selection and one compiler-produced semantic-binding
+artifact reference. It is local editor data, not ECPKG, ECFG, ETIR, a network
+message, or a TwinCAT project file.
 
 The top-level shape is:
 
 ```json
 {
     "format": "ethercat-project",
-    "formatVersion": 3,
+    "formatVersion": 4,
     "project": {
         "id": "lowercase-uuid-without-braces",
         "name": "Packaging Line",
@@ -52,6 +54,11 @@ The top-level shape is:
         "configuration": {
             "timingMode": "unassigned",
             "cyclePeriodNs": 0
+        },
+        "semanticBindingArtifact": {
+            "artifactId": "binding/com.embedlabs.line/1",
+            "artifactSha256": "64-lowercase-hex-characters",
+            "projectConfigurationSha256": "64-lowercase-hex-characters"
         },
         "slaves": []
     }
@@ -77,6 +84,21 @@ Every slave has this structural data plus one required `configuration` object:
     "serialNumber": 101,
     "alias": 0,
     "deviceDescriptionId": "optional-esi-device-node-id",
+    "esiSha256": "64-lowercase-hex-characters",
+    "adapterSelection": {
+        "adapterId": "com.embedlabs.vendor.device",
+        "adapterVersion": "1.2.3",
+        "adapterContentSha256": "64-lowercase-hex-characters",
+        "processDataProfileId": "default",
+        "moduleAssignments": [
+            {
+                "slot": 0,
+                "moduleIdent": 4097,
+                "objectIndexOffset": 0,
+                "pdoIndexOffset": 0
+            }
+        ]
+    },
     "configuration": {
         "processData": {
             "syncManagers": [],
@@ -110,6 +132,22 @@ are required, non-null, and unique across the project. Display names never act
 as identity. Slave positions are non-negative and unique. Vendor ID and
 Product Code are non-zero. Revision, Serial Number, Alias, indexes, subindexes,
 and sizes are range-checked before conversion to their C++ value types.
+
+`esiSha256` and `adapterSelection` are optional, but a non-empty adapter
+selection requires the ESI digest. Adapter ID, version, content digest, and
+Process Data profile are an all-or-nothing value. Every SHA-256 string is
+exactly 64 lowercase hexadecimal characters. Module slots are non-negative
+and unique, `moduleIdent` is non-zero, and both index offsets fit unsigned
+16-bit values. Modules are normalized to ascending slot order before entering
+the project and are serialized in that canonical order.
+
+`semanticBindingArtifact` is optional and appears only once at master level.
+It is an immutable reference containing a non-empty trimmed artifact ID, the
+artifact digest, and the digest of the project configuration the compiler
+bound. The project does not persist runtime Resource IDs, Process Image
+offsets, controller BootId, package/runtime generations, or any other runtime
+epoch. Those values remain controller-session data and must be resolved from
+the verified compiler artifact and current runtime catalog.
 
 ## Process Data records
 
@@ -189,7 +227,9 @@ cycle range, and shift range.
 - one master's offline slave list;
 - one slave's complete Process Data configuration;
 - one slave's complete Startup configuration;
-- one slave's complete DC configuration.
+- one slave's complete DC configuration;
+- one slave's atomic ESI digest and device-adapter selection;
+- the master's single semantic-binding artifact reference.
 
 Structural-node rename is intentionally limited to Target and Master. Project
 rename remains a separate command, while Slave names remain part of the
@@ -202,6 +242,13 @@ snapshot and update the document's modified state. Sorting, navigation,
 selection, refresh, and snapshot reads do not create undo commands or mark the
 document modified.
 
+The binding artifact is fail-closed against its compile inputs. Changing the
+master timing configuration, replacing the topology, changing Process Data,
+Startup, DC, ESI, or adapter selection clears the reference in the same undo
+command. Undo restores both the previous compile input and its previous
+artifact reference atomically. Display-only Project, Target, and Master
+renames preserve the artifact.
+
 The QUndoStack clean index and pending migration state are the only modified
 sources. A successful atomic save marks the stack clean. Failed validation or
 save leaves the current snapshot, history, source file, and modified state
@@ -211,16 +258,23 @@ unchanged.
 
 Version 1 contains the same structural project and optional slave list but no
 per-slave `configuration`. It loads with empty Process Data and Startup values
-and disabled DC, is marked migrated/modified, and is rewritten as version 3
+and disabled DC, is marked migrated/modified, and is rewritten as version 4
 only after explicit Save or Save All. Before replacement, the exact source
 bytes are copied to `<project>.v1.bak`; existing backups receive a numeric
 suffix and are never overwritten.
 
 Version 2 preserves all per-slave configuration but has no master timing
 configuration. It loads with an unassigned master, is marked
-migrated/modified, and is rewritten as version 3 only after explicit Save or
+migrated/modified, and is rewritten as version 4 only after explicit Save or
 Save All. The exact version-2 bytes are first copied to
 `<project>.v2.bak`.
+
+Version 3 preserves its master timing, Process Data, Startup, and DC values
+exactly. It loads with empty ESI digests, adapter selections, and binding
+artifact reference; the loader never guesses an adapter from identity, name,
+position, or device-description ID. It is marked migrated/modified and is
+rewritten as version 4 only after explicit Save or Save All, after first
+copying the exact source bytes to `<project>.v3.bak`.
 
 The legacy version-0 root shape with `id`, `name`, and `createdBy` remains
 supported. It preserves the project ID, creates stable target/master IDs, and
@@ -228,7 +282,9 @@ uses the same explicit-save flow with `<project>.v0.bak` recovery.
 
 Invalid JSON, unsupported versions, missing current-format configuration
 objects, inconsistent master timing, invalid scalar types/ranges, invalid raw
-hex, duplicate stable IDs, and domain-invalid configuration are rejected. An
+hex, non-lowercase or partial SHA-256 values, partial adapter/artifact objects,
+invalid or duplicate module slots, zero ModuleIdent, offset overflow,
+duplicate stable IDs, and domain-invalid configuration are rejected. An
 initially damaged file opens as an invalid, non-saveable snapshot and adds a
 ProjectExplorer error task; its bytes are never overwritten. Reload of an
 already valid project also rejects a changed project ID and keeps the last
@@ -242,7 +298,7 @@ explicit Save and Save All are the supported persistence paths.
 
 ## New-project and close behavior
 
-The `EtherCAT Engineering Project` wizard creates one version-3 file and opens
+The `EtherCAT Engineering Project` wizard creates one version-4 file and opens
 it through ProjectExplorer. The wizard uses current Qt Creator factory and
 GeneratedFile APIs.
 
@@ -256,16 +312,18 @@ unload or shutdown. There is no second close-time serializer.
 The focused Project suite covers:
 
 - metadata, dependencies, service registration, and wizard discovery;
-- version-3 structural, master-cycle, and slave-configuration round trips;
+- version-4 structural, master-cycle, slave-configuration, ESI/adapter, and
+  binding-artifact round trips;
 - malformed JSON, unsupported versions, missing configuration, duplicate IDs,
-  invalid raw hex, and domain-invalid PDO mapping;
+  invalid raw hex/digests, partial selections, invalid module assignments, and
+  domain-invalid PDO mapping;
 - Project and Target/Master rename, topology replacement, Process Data,
-  Startup, and DC command validation plus Undo/Redo;
+  Startup, DC, adapter selection, binding invalidation, and atomic Undo/Redo;
 - Save All registration, Save As rejection, atomic write failure, and success;
-- exact version-0, version-1, and version-2 migration backups;
+- exact version-0 through version-3 migration and recovery behavior;
 - two real ProjectExplorer projects, startup-project switching, close-save,
   signal publication, close order, and cleanup.
 
-The qualified Qt 6.11.0 Release run passes 12 tests. macOS runs use an isolated
+The qualified Qt 6.11.0 Release run passes 21 tests. macOS runs use an isolated
 HOME and settings path so prior AppKit saved state cannot introduce an
 unrelated modal prompt.

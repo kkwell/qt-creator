@@ -88,8 +88,22 @@ static QList<Data::OfflineSlaveConfiguration> offlineSlaves(const Data::NodeId &
          Data::NodeId::create(),
          {},
          {},
+         {},
+         {},
          {}},
-        {Data::NodeId::create(), master, 0, {2, 0x1000, 1}, 101, 7, "Mock I/O A", {}, {}, {}, {}}};
+        {Data::NodeId::create(),
+         master,
+         0,
+         {2, 0x1000, 1},
+         101,
+         7,
+         "Mock I/O A",
+         {},
+         {},
+         {},
+         {},
+         {},
+         {}}};
 }
 
 static Data::ProcessDataConfiguration processDataConfiguration()
@@ -165,6 +179,26 @@ static Data::StartupConfiguration startupConfiguration()
 static Data::DcConfiguration dcConfiguration()
 {
     return {true, "DC-Synchronous", 0x0300, {true, 125000, -1000}, {}, true};
+}
+
+static Data::DeviceAdapterProjectSelection adapterSelection()
+{
+    return {
+        Data::DeviceAdapterId{"com.embedlabs.test.adapter"},
+        "1.2.3",
+        QByteArray(32, '\x5a'),
+        "dc-default",
+        {{3, 0x03000001, 0x0300, 0x0030}, {1, 0x01000001, 0x0100, 0x0010}},
+    };
+}
+
+static Data::SemanticBindingArtifactReference bindingArtifact()
+{
+    return {
+        "binding/com.embedlabs.test/1",
+        QByteArray(32, '\x6b'),
+        QByteArray(32, '\x7c'),
+    };
 }
 
 void EtherCATProjectTests::testMetadataAndService()
@@ -530,7 +564,7 @@ void EtherCATProjectTests::testOfflineConfigurationPersistenceAndUndo()
     const Utils::Result<QByteArray> savedContents = projectFile.fileContents();
     QVERIFY_RESULT(savedContents);
     const QJsonObject root = QJsonDocument::fromJson(*savedContents).object();
-    QCOMPARE(root.value("formatVersion").toInt(), 3);
+    QCOMPARE(root.value("formatVersion").toInt(), 4);
     const QJsonArray savedSlaves = root.value("master").toObject().value("slaves").toArray();
     QVERIFY(savedSlaves.first().toObject().value("configuration").isObject());
 
@@ -538,6 +572,202 @@ void EtherCATProjectTests::testOfflineConfigurationPersistenceAndUndo()
     QVERIFY_RESULT(loaded);
     QCOMPARE(loaded->snapshot.slaves, document.snapshot().slaves);
     QVERIFY(!loaded->migrationRequired);
+}
+
+void EtherCATProjectTests::testAdapterSelectionPersistenceAndUndo()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath projectFile
+        = temporaryFilePath(directory, "adapter-selection.ecatproject");
+    const Data::ProjectSnapshot source = createProjectSnapshot("Adapter Line", "Test");
+    QVERIFY_RESULT(projectFile.writeFileContents(serializeProject(source)));
+
+    EtherCATProjectDocument document;
+    QVERIFY_RESULT(document.load(projectFile));
+    const Data::NodeId master = masterId(document.snapshot());
+    QList<Data::OfflineSlaveConfiguration> slaves = {offlineSlaves(master).first()};
+    QVERIFY_RESULT(document.replaceOfflineSlaves(master, slaves));
+    const Data::NodeId slaveId = document.snapshot().slaves.first().id;
+    const QByteArray esiSha256(32, '\x49');
+
+    Data::DeviceAdapterProjectSelection selection = adapterSelection();
+    QVERIFY_RESULT(document.setDeviceAdapterSelection(slaveId, esiSha256, selection));
+    selection.moduleAssignments = {
+        {1, 0x01000001, 0x0100, 0x0010},
+        {3, 0x03000001, 0x0300, 0x0030},
+    };
+    QCOMPARE(document.snapshot().slaves.first().adapterSelection, selection);
+
+    const Data::SemanticBindingArtifactReference reference = bindingArtifact();
+    QVERIFY_RESULT(document.setMasterBindingArtifact(reference));
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
+
+    const int commandCount = document.undoStack()->count();
+    Data::DeviceAdapterProjectSelection partialSelection = selection;
+    partialSelection.adapterVersion.clear();
+    QVERIFY(!document.setDeviceAdapterSelection(slaveId, esiSha256, partialSelection));
+    Data::DeviceAdapterProjectSelection duplicateSlotSelection = selection;
+    duplicateSlotSelection.moduleAssignments[1].slot = 1;
+    QVERIFY(!document.setDeviceAdapterSelection(slaveId, esiSha256, duplicateSlotSelection));
+    Data::DeviceAdapterProjectSelection zeroModuleSelection = selection;
+    zeroModuleSelection.moduleAssignments[0].moduleIdent = 0;
+    QVERIFY(!document.setDeviceAdapterSelection(slaveId, esiSha256, zeroModuleSelection));
+    QVERIFY(!document.setDeviceAdapterSelection(slaveId, QByteArray(31, '\x49'), selection));
+    QVERIFY(!document.setDeviceAdapterSelection(Data::NodeId::create(), esiSha256, selection));
+    Data::SemanticBindingArtifactReference partialReference = reference;
+    partialReference.projectConfigurationSha256.clear();
+    QVERIFY(!document.setMasterBindingArtifact(partialReference));
+    QCOMPARE(document.undoStack()->count(), commandCount);
+    QCOMPARE(document.snapshot().slaves.first().adapterSelection, selection);
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
+
+    document.undoStack()->undo();
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    document.undoStack()->undo();
+    QCOMPARE(
+        document.snapshot().slaves.first().adapterSelection,
+        Data::DeviceAdapterProjectSelection());
+    document.undoStack()->redo();
+    document.undoStack()->redo();
+    QCOMPARE(document.snapshot().slaves.first().adapterSelection, selection);
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
+
+    QVERIFY_RESULT(document.save());
+    EtherCATProjectDocument reloaded;
+    QVERIFY_RESULT(reloaded.load(projectFile));
+    QCOMPARE(reloaded.snapshot().slaves.first().esiSha256, esiSha256);
+    QCOMPARE(reloaded.snapshot().slaves.first().adapterSelection, selection);
+    QCOMPARE(reloaded.snapshot().masterBindingArtifact, reference);
+    QVERIFY_RESULT(reloaded.setDeviceAdapterSelection(
+        slaveId, esiSha256, Data::DeviceAdapterProjectSelection()));
+    QCOMPARE(reloaded.snapshot().slaves.first().esiSha256, esiSha256);
+    QCOMPARE(
+        reloaded.snapshot().slaves.first().adapterSelection,
+        Data::DeviceAdapterProjectSelection());
+    reloaded.undoStack()->undo();
+    QCOMPARE(reloaded.snapshot().slaves.first().adapterSelection, selection);
+
+    const Utils::Result<QByteArray> savedContents = projectFile.fileContents();
+    QVERIFY_RESULT(savedContents);
+    const QByteArray lowerHex = QByteArray(32, '\x49').toHex();
+    QVERIFY(savedContents->contains(lowerHex));
+    QVERIFY(!savedContents->contains("runtimeResourceId"));
+    QVERIFY(!savedContents->contains("processImageBitOffset"));
+    QVERIFY(!savedContents->contains("runtimeGeneration"));
+}
+
+void EtherCATProjectTests::testBindingArtifactInvalidationAndUndo()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath projectFile
+        = temporaryFilePath(directory, "binding-invalidation.ecatproject");
+    Data::ProjectSnapshot source = createProjectSnapshot("Binding Guard", "Test");
+    const Data::NodeId master = masterId(source);
+    Data::OfflineSlaveConfiguration slave = offlineSlaves(master).first();
+    slave.esiSha256 = QByteArray(32, '\x49');
+    slave.adapterSelection = adapterSelection();
+    std::sort(
+        slave.adapterSelection.moduleAssignments.begin(),
+        slave.adapterSelection.moduleAssignments.end(),
+        [](const auto &left, const auto &right) { return left.slot < right.slot; });
+    source.slaves = {slave};
+    source.nodes.append({slave.id, master, Data::ProjectNodeKind::Slave, slave.name});
+    source.masterBindingArtifact = bindingArtifact();
+    QVERIFY_RESULT(projectFile.writeFileContents(serializeProject(source)));
+
+    EtherCATProjectDocument document;
+    QVERIFY_RESULT(document.load(projectFile));
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+
+    QVERIFY_RESULT(document.renameProject("Display Name Only"));
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+
+    const Utils::Result<> renameMasterResult
+        = document.renameStructuralNode(master, "Display Master Only");
+    QVERIFY_RESULT(renameMasterResult);
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+
+    QVERIFY_RESULT(document.setMasterConfiguration(
+        master, {Data::MasterTimingMode::DistributedClocks, 125000}));
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    QCOMPARE(document.undoStack()->undoText(), Tr::tr("Configure EtherCAT master cycle"));
+    document.undoStack()->undo();
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact.artifactId,
+        bindingArtifact().artifactId);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact.artifactSha256,
+        bindingArtifact().artifactSha256);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact.projectConfigurationSha256,
+        bindingArtifact().projectConfigurationSha256);
+    QCOMPARE(document.snapshot().masterConfiguration, Data::MasterConfiguration());
+
+    const Data::ProcessDataConfiguration changedProcessData = processDataConfiguration();
+    const Utils::Result<> processDataResult
+        = document.setProcessDataConfiguration(slave.id, changedProcessData);
+    QVERIFY_RESULT(processDataResult);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    QCOMPARE(document.undoStack()->undoText(), Tr::tr("Configure EtherCAT Process Data"));
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(
+        document.snapshot().slaves.first().processData,
+        Data::ProcessDataConfiguration());
+
+    const Data::StartupConfiguration changedStartup = startupConfiguration();
+    const Utils::Result<> startupResult
+        = document.setStartupConfiguration(slave.id, changedStartup);
+    QVERIFY_RESULT(startupResult);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+
+    const Utils::Result<> dcResult = document.setDcConfiguration(slave.id, dcConfiguration());
+    QVERIFY_RESULT(dcResult);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+
+    Data::DeviceAdapterProjectSelection changedSelection = slave.adapterSelection;
+    changedSelection.adapterVersion = "1.2.4";
+    const Utils::Result<> adapterResult
+        = document.setDeviceAdapterSelection(slave.id, slave.esiSha256, changedSelection);
+    QVERIFY_RESULT(adapterResult);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(document.snapshot().slaves.first().adapterSelection, slave.adapterSelection);
+
+    Data::OfflineSlaveConfiguration changedSlave = slave;
+    changedSlave.alias = 42;
+    const Utils::Result<> replaceResult = document.replaceOfflineSlaves(master, {changedSlave});
+    QVERIFY_RESULT(replaceResult);
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().masterBindingArtifact, bindingArtifact());
+    QCOMPARE(document.snapshot().slaves.first(), slave);
+    QVERIFY(!document.isModified());
 }
 
 void EtherCATProjectTests::testVersionOneConfigurationMigration()
@@ -574,6 +804,13 @@ void EtherCATProjectTests::testVersionOneConfigurationMigration()
     QCOMPARE(document.snapshot().formatVersion, Constants::CURRENT_FORMAT_VERSION);
     QCOMPARE(document.snapshot().slaves.size(), 2);
     QCOMPARE(document.snapshot().slaves.first().processData, Data::ProcessDataConfiguration());
+    QVERIFY(document.snapshot().slaves.first().esiSha256.isEmpty());
+    QCOMPARE(
+        document.snapshot().slaves.first().adapterSelection,
+        Data::DeviceAdapterProjectSelection());
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
 
     QVERIFY_RESULT(document.save());
     QVERIFY(document.migrationBackupPath().toUrlishString().contains(".v1.bak"));
@@ -602,12 +839,58 @@ void EtherCATProjectTests::testVersionTwoMasterConfigurationMigration()
     QVERIFY(document.isModified());
     QCOMPARE(document.snapshot().formatVersion, Constants::CURRENT_FORMAT_VERSION);
     QCOMPARE(document.snapshot().masterConfiguration, Data::MasterConfiguration());
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
 
     QVERIFY_RESULT(document.save());
     QVERIFY(document.migrationBackupPath().toUrlishString().contains(".v2.bak"));
     const Utils::Result<QByteArray> backup = document.migrationBackupPath().fileContents();
     QVERIFY_RESULT(backup);
     QCOMPARE(*backup, versionTwoContents);
+}
+
+void EtherCATProjectTests::testVersionThreeAdapterMigration()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath projectFile = temporaryFilePath(directory, "version-three.ecatproject");
+    Data::ProjectSnapshot source = createProjectSnapshot("Version Three", "Test");
+    source.masterConfiguration = {Data::MasterTimingMode::DistributedClocks, 125000};
+    const Data::NodeId master = masterId(source);
+    Data::OfflineSlaveConfiguration slave = offlineSlaves(master).first();
+    slave.processData = processDataConfiguration();
+    slave.startup = startupConfiguration();
+    slave.dc = dcConfiguration();
+    source.slaves = {slave};
+    source.nodes.append({slave.id, master, Data::ProjectNodeKind::Slave, slave.name});
+
+    QJsonObject root = QJsonDocument::fromJson(serializeProject(source)).object();
+    root.insert("formatVersion", 3);
+    const QByteArray versionThreeContents = QJsonDocument(root).toJson();
+    QVERIFY_RESULT(projectFile.writeFileContents(versionThreeContents));
+
+    EtherCATProjectDocument document;
+    QVERIFY_RESULT(document.load(projectFile));
+    QVERIFY(document.snapshot().migrated);
+    QVERIFY(document.isModified());
+    QCOMPARE(document.snapshot().masterConfiguration, source.masterConfiguration);
+    QCOMPARE(document.snapshot().slaves.first().processData, slave.processData);
+    QCOMPARE(document.snapshot().slaves.first().startup, slave.startup);
+    QCOMPARE(document.snapshot().slaves.first().dc, slave.dc);
+    QVERIFY(document.snapshot().slaves.first().esiSha256.isEmpty());
+    QCOMPARE(
+        document.snapshot().slaves.first().adapterSelection,
+        Data::DeviceAdapterProjectSelection());
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+
+    QVERIFY_RESULT(document.save());
+    QVERIFY(document.migrationBackupPath().toUrlishString().contains(".v3.bak"));
+    const Utils::Result<QByteArray> backup = document.migrationBackupPath().fileContents();
+    QVERIFY_RESULT(backup);
+    QCOMPARE(*backup, versionThreeContents);
 }
 
 void EtherCATProjectTests::testOfflineConfigurationCorruption()
@@ -740,6 +1023,112 @@ void EtherCATProjectTests::testOfflineConfigurationCorruption()
     QVERIFY(!loaded.error().isEmpty());
 }
 
+void EtherCATProjectTests::testAdapterSelectionCorruption()
+{
+    Data::ProjectSnapshot source = createProjectSnapshot("Adapter Corruption", "Test");
+    const Data::NodeId master = masterId(source);
+    Data::OfflineSlaveConfiguration slave = offlineSlaves(master).first();
+    slave.esiSha256 = QByteArray(32, '\x49');
+    slave.adapterSelection = adapterSelection();
+    std::sort(
+        slave.adapterSelection.moduleAssignments.begin(),
+        slave.adapterSelection.moduleAssignments.end(),
+        [](const auto &left, const auto &right) { return left.slot < right.slot; });
+    source.slaves = {slave};
+    source.nodes.append({slave.id, master, Data::ProjectNodeKind::Slave, slave.name});
+    source.masterBindingArtifact = bindingArtifact();
+
+    const QJsonObject validRoot = QJsonDocument::fromJson(serializeProject(source)).object();
+    QVERIFY_RESULT(parseProject(QJsonDocument(validRoot).toJson(), "Fallback"));
+
+    const auto rejectSlaveMutation = [&validRoot](const auto &mutate) {
+        QJsonObject root = validRoot;
+        QJsonObject masterObject = root.value("master").toObject();
+        QJsonArray slaves = masterObject.value("slaves").toArray();
+        QJsonObject slaveObject = slaves.first().toObject();
+        mutate(slaveObject);
+        slaves[0] = slaveObject;
+        masterObject.insert("slaves", slaves);
+        root.insert("master", masterObject);
+        return parseProject(QJsonDocument(root).toJson(), "Fallback");
+    };
+
+    QVERIFY(!rejectSlaveMutation([](QJsonObject &object) {
+        object.insert("esiSha256", QString(64, u'A'));
+    }));
+    QVERIFY(!rejectSlaveMutation([](QJsonObject &object) {
+        object.insert("esiSha256", QString(62, u'a'));
+    }));
+    QVERIFY(!rejectSlaveMutation([](QJsonObject &object) {
+        object.remove("esiSha256");
+    }));
+    QVERIFY(!rejectSlaveMutation([](QJsonObject &object) {
+        QJsonObject selection = object.value("adapterSelection").toObject();
+        selection.remove("adapterVersion");
+        object.insert("adapterSelection", selection);
+    }));
+    QVERIFY(!rejectSlaveMutation([](QJsonObject &object) {
+        QJsonObject selection = object.value("adapterSelection").toObject();
+        selection.insert("runtimeResourceId", "0000000000000001");
+        object.insert("adapterSelection", selection);
+    }));
+    QVERIFY(!rejectSlaveMutation([](QJsonObject &object) {
+        QJsonObject selection = object.value("adapterSelection").toObject();
+        QJsonArray modules = selection.value("moduleAssignments").toArray();
+        QJsonObject module = modules.first().toObject();
+        module.insert("slot", -1);
+        modules[0] = module;
+        selection.insert("moduleAssignments", modules);
+        object.insert("adapterSelection", selection);
+    }));
+    QVERIFY(!rejectSlaveMutation([](QJsonObject &object) {
+        QJsonObject selection = object.value("adapterSelection").toObject();
+        QJsonArray modules = selection.value("moduleAssignments").toArray();
+        QJsonObject module = modules.at(1).toObject();
+        module.insert("slot", modules.first().toObject().value("slot"));
+        modules[1] = module;
+        selection.insert("moduleAssignments", modules);
+        object.insert("adapterSelection", selection);
+    }));
+    QVERIFY(!rejectSlaveMutation([](QJsonObject &object) {
+        QJsonObject selection = object.value("adapterSelection").toObject();
+        QJsonArray modules = selection.value("moduleAssignments").toArray();
+        QJsonObject module = modules.first().toObject();
+        module.insert("moduleIdent", 0);
+        modules[0] = module;
+        selection.insert("moduleAssignments", modules);
+        object.insert("adapterSelection", selection);
+    }));
+    QVERIFY(!rejectSlaveMutation([](QJsonObject &object) {
+        QJsonObject selection = object.value("adapterSelection").toObject();
+        QJsonArray modules = selection.value("moduleAssignments").toArray();
+        QJsonObject module = modules.first().toObject();
+        module.insert("objectIndexOffset", 65536);
+        modules[0] = module;
+        selection.insert("moduleAssignments", modules);
+        object.insert("adapterSelection", selection);
+    }));
+
+    const auto rejectArtifactMutation = [&validRoot](const auto &mutate) {
+        QJsonObject root = validRoot;
+        QJsonObject masterObject = root.value("master").toObject();
+        QJsonObject reference = masterObject.value("semanticBindingArtifact").toObject();
+        mutate(reference);
+        masterObject.insert("semanticBindingArtifact", reference);
+        root.insert("master", masterObject);
+        return parseProject(QJsonDocument(root).toJson(), "Fallback");
+    };
+    QVERIFY(!rejectArtifactMutation([](QJsonObject &reference) {
+        reference.remove("projectConfigurationSha256");
+    }));
+    QVERIFY(!rejectArtifactMutation([](QJsonObject &reference) {
+        reference.insert("artifactSha256", QString(64, u'F'));
+    }));
+    QVERIFY(!rejectArtifactMutation([](QJsonObject &reference) {
+        reference.insert("runtimeGeneration", 1);
+    }));
+}
+
 void EtherCATProjectTests::testMigrationCreatesRecoveryBackup()
 {
     QTemporaryDir directory;
@@ -839,20 +1228,77 @@ void EtherCATProjectTests::testProjectExplorerMultiProjectLifecycle()
         nodeName(*service->project(secondProject->snapshot().id), secondMaster),
         Tr::tr("EtherCAT Master"));
 
-    QVERIFY_RESULT(service->replaceOfflineSlaves(
-        secondProject->snapshot().id, secondMaster, offlineSlaves(secondMaster)));
+    const QList<Data::OfflineSlaveConfiguration> serviceSlaves = offlineSlaves(secondMaster);
+    const Utils::Result<> replaceSlavesResult = service->replaceOfflineSlaves(
+        secondProject->snapshot().id, secondMaster, serviceSlaves);
+    QVERIFY_RESULT(replaceSlavesResult);
     QCOMPARE(service->project(secondProject->snapshot().id)->slaves.size(), 2);
     const Data::NodeId configuredSlaveId
         = service->project(secondProject->snapshot().id)->slaves.first().id;
-    QVERIFY_RESULT(service->setProcessDataConfiguration(
-        secondProject->snapshot().id, configuredSlaveId, processDataConfiguration()));
+    const Data::ProcessDataConfiguration serviceProcessData = processDataConfiguration();
+    const Utils::Result<> serviceProcessDataResult = service->setProcessDataConfiguration(
+        secondProject->snapshot().id, configuredSlaveId, serviceProcessData);
+    QVERIFY_RESULT(serviceProcessDataResult);
     QCOMPARE(
         service->project(secondProject->snapshot().id)->slaves.first().processData.pdos.size(), 2);
-    QVERIFY_RESULT(service->undoProject(secondProject->snapshot().id));
+    const QByteArray esiSha256(32, '\x49');
+    Data::DeviceAdapterProjectSelection selection = adapterSelection();
+    QCOMPARE(
+        service->project(secondProject->snapshot().id)->slaves.first().adapterSelection,
+        Data::DeviceAdapterProjectSelection());
+    const int adapterCommandCount = secondProject->document()->undoStack()->count();
+    const int adapterCommandIndex = secondProject->document()->undoStack()->index();
+    const Utils::Result<> serviceAdapterResult = service->setDeviceAdapterSelection(
+        secondProject->snapshot().id, configuredSlaveId, esiSha256, selection);
+    QVERIFY_RESULT(serviceAdapterResult);
+    QCOMPARE(secondProject->document()->undoStack()->count(), adapterCommandCount + 1);
+    QCOMPARE(secondProject->document()->undoStack()->index(), adapterCommandIndex + 1);
     QVERIFY(
-        service->project(secondProject->snapshot().id)->slaves.first().processData.pdos.isEmpty());
+        !service->project(secondProject->snapshot().id)
+             ->slaves.first()
+             .adapterSelection.adapterId.value.isEmpty());
+    QCOMPARE(
+        secondProject->document()->undoStack()->undoText(),
+        Tr::tr("Select EtherCAT device adapter"));
+    const Utils::Result<> serviceBindingResult
+        = service->setMasterBindingArtifact(secondProject->snapshot().id, bindingArtifact());
+    QVERIFY_RESULT(serviceBindingResult);
+    QCOMPARE(
+        secondProject->document()->undoStack()->undoText(),
+        Tr::tr("Set EtherCAT semantic binding artifact"));
+    QCOMPARE(
+        service->project(secondProject->snapshot().id)->masterBindingArtifact,
+        bindingArtifact());
+    const Utils::Result<> undoBindingResult
+        = service->undoProject(secondProject->snapshot().id);
+    QVERIFY_RESULT(undoBindingResult);
+    QCOMPARE(
+        secondProject->document()->undoStack()->undoText(),
+        Tr::tr("Select EtherCAT device adapter"));
+    QCOMPARE(
+        service->project(secondProject->snapshot().id)->masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    const Utils::Result<> undoAdapterResult
+        = service->undoProject(secondProject->snapshot().id);
+    QVERIFY_RESULT(undoAdapterResult);
+    QCOMPARE(
+        secondProject->document()->undoStack()->undoText(),
+        Tr::tr("Configure EtherCAT Process Data"));
+    QCOMPARE(
+        service->project(secondProject->snapshot().id)->slaves.first().adapterSelection,
+        Data::DeviceAdapterProjectSelection());
+    const Utils::Result<> undoProcessDataResult
+        = service->undoProject(secondProject->snapshot().id);
+    QVERIFY_RESULT(undoProcessDataResult);
+    const std::optional<Data::ProjectSnapshot> afterProcessUndo
+        = service->project(secondProject->snapshot().id);
+    QVERIFY(afterProcessUndo);
+    QCOMPARE(afterProcessUndo->slaves.size(), 2);
+    QVERIFY(afterProcessUndo->slaves.first().processData.pdos.isEmpty());
     QVERIFY(service->canUndoProject(secondProject->snapshot().id));
-    QVERIFY_RESULT(service->undoProject(secondProject->snapshot().id));
+    const Utils::Result<> undoSlavesResult
+        = service->undoProject(secondProject->snapshot().id);
+    QVERIFY_RESULT(undoSlavesResult);
     QVERIFY(service->project(secondProject->snapshot().id)->slaves.isEmpty());
 
     // File watch registration is delivered back from Qt Creator's watcher thread.

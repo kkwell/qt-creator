@@ -34,6 +34,12 @@ public:
         const Data::NodeId &slaveId, const Data::StartupConfiguration &configuration);
     Utils::Result<> setDcConfiguration(
         const Data::NodeId &slaveId, const Data::DcConfiguration &configuration);
+    Utils::Result<> setDeviceAdapterSelection(
+        const Data::NodeId &slaveId,
+        const QByteArray &esiSha256,
+        const Data::DeviceAdapterProjectSelection &selection);
+    Utils::Result<> setMasterBindingArtifact(
+        const Data::SemanticBindingArtifactReference &reference);
 
     QByteArray contents() const final;
     bool isModified() const final;
@@ -52,6 +58,7 @@ private:
     void applyProjectName(const QString &name);
     void applyStructuralNodeName(const Data::NodeId &nodeId, const QString &name);
     void applyMasterConfiguration(const Data::MasterConfiguration &configuration);
+    void applyMasterBindingArtifact(const Data::SemanticBindingArtifactReference &reference);
     void applyOfflineSlaves(
         const Data::NodeId &masterId, const QList<Data::OfflineSlaveConfiguration> &slaves);
     void applyOfflineSlave(const Data::OfflineSlaveConfiguration &slave);
@@ -68,6 +75,7 @@ private:
     friend class RenameProjectCommand;
     friend class RenameStructuralNodeCommand;
     friend class UpdateMasterConfigurationCommand;
+    friend class UpdateMasterBindingArtifactCommand;
     friend class ReplaceOfflineSlavesCommand;
     friend class UpdateOfflineSlaveCommand;
 };

@@ -13,6 +13,6 @@ const char WIZARD_ID[] = "EtherCAT.Project.New";
 const char WIZARD_CATEGORY[] = "EtherCAT";
 const char PROJECT_SUFFIX[] = "ecatproject";
 
-constexpr int CURRENT_FORMAT_VERSION = 3;
+constexpr int CURRENT_FORMAT_VERSION = 4;
 
 } // namespace EtherCAT::Project::Constants

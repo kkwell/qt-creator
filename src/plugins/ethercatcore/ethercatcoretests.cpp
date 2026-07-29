@@ -940,6 +940,21 @@ void EtherCATCoreTests::testProjectSnapshotValueSemantics()
         std::is_same_v<
             decltype(&ProjectService::setMasterConfiguration),
             SetMasterConfigurationMethod>);
+    using SetDeviceAdapterSelectionMethod = Utils::Result<> (ProjectService::*)(
+        const Data::NodeId &,
+        const Data::NodeId &,
+        const QByteArray &,
+        const Data::DeviceAdapterProjectSelection &);
+    static_assert(
+        std::is_same_v<
+            decltype(&ProjectService::setDeviceAdapterSelection),
+            SetDeviceAdapterSelectionMethod>);
+    using SetMasterBindingArtifactMethod = Utils::Result<> (ProjectService::*)(
+        const Data::NodeId &, const Data::SemanticBindingArtifactReference &);
+    static_assert(
+        std::is_same_v<
+            decltype(&ProjectService::setMasterBindingArtifact),
+            SetMasterBindingArtifactMethod>);
 
     const Data::NodeId projectId = Data::NodeId::create();
     const Data::NodeId targetId = Data::NodeId::create();
@@ -956,6 +971,7 @@ void EtherCATCoreTests::testProjectSnapshotValueSemantics()
         {},
         {},
         {},
+        {"binding/test", QByteArray(32, '\x31'), QByteArray(32, '\x32')},
     };
 
     const Data::ProjectSnapshot copy = snapshot;
@@ -970,8 +986,17 @@ void EtherCATCoreTests::testProjectSnapshotValueSemantics()
     slave.position = 0;
     slave.identity = {2, 0x1234, 1};
     slave.name = "Offline Slave";
+    slave.esiSha256 = QByteArray(32, '\x41');
+    slave.adapterSelection = {
+        Data::DeviceAdapterId{"com.embedlabs.test.adapter"},
+        "1.0.0",
+        QByteArray(32, '\x42'),
+        "default",
+        {{0, 0x00010001, 0, 0}},
+    };
     snapshot.slaves.append(slave);
     QVERIFY(copy != snapshot);
+    QCOMPARE(copy.masterBindingArtifact.artifactId, QString("binding/test"));
 }
 
 void EtherCATCoreTests::testRuntimeResourceValueSemantics()

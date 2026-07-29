@@ -149,6 +149,14 @@ public:
         const Data::NodeId &projectId,
         const Data::NodeId &nodeId,
         const QString &name) = 0;
+    virtual Utils::Result<> setDeviceAdapterSelection(
+        const Data::NodeId &projectId,
+        const Data::NodeId &slaveId,
+        const QByteArray &esiSha256,
+        const Data::DeviceAdapterProjectSelection &selection) = 0;
+    virtual Utils::Result<> setMasterBindingArtifact(
+        const Data::NodeId &projectId,
+        const Data::SemanticBindingArtifactReference &reference) = 0;
 
 signals:
     void projectAdded(const EtherCAT::Data::ProjectSnapshot &project);

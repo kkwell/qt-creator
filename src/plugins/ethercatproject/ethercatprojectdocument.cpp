@@ -70,21 +70,55 @@ public:
     UpdateMasterConfigurationCommand(
         EtherCATProjectDocument *document,
         const Data::MasterConfiguration &oldConfiguration,
-        const Data::MasterConfiguration &newConfiguration)
+        const Data::MasterConfiguration &newConfiguration,
+        const Data::SemanticBindingArtifactReference &oldBindingArtifact)
         : m_document(document)
         , m_oldConfiguration(oldConfiguration)
         , m_newConfiguration(newConfiguration)
+        , m_oldBindingArtifact(oldBindingArtifact)
     {
         setText(Tr::tr("Configure EtherCAT master cycle"));
     }
 
-    void undo() final { m_document->applyMasterConfiguration(m_oldConfiguration); }
-    void redo() final { m_document->applyMasterConfiguration(m_newConfiguration); }
+    void undo() final
+    {
+        m_document->applyMasterConfiguration(m_oldConfiguration);
+        m_document->applyMasterBindingArtifact(m_oldBindingArtifact);
+    }
+    void redo() final
+    {
+        m_document->applyMasterConfiguration(m_newConfiguration);
+        m_document->applyMasterBindingArtifact({});
+    }
 
 private:
     EtherCATProjectDocument *m_document;
     Data::MasterConfiguration m_oldConfiguration;
     Data::MasterConfiguration m_newConfiguration;
+    Data::SemanticBindingArtifactReference m_oldBindingArtifact;
+};
+
+class UpdateMasterBindingArtifactCommand final : public QUndoCommand
+{
+public:
+    UpdateMasterBindingArtifactCommand(
+        EtherCATProjectDocument *document,
+        const Data::SemanticBindingArtifactReference &oldReference,
+        const Data::SemanticBindingArtifactReference &newReference)
+        : m_document(document)
+        , m_oldReference(oldReference)
+        , m_newReference(newReference)
+    {
+        setText(Tr::tr("Set EtherCAT semantic binding artifact"));
+    }
+
+    void undo() final { m_document->applyMasterBindingArtifact(m_oldReference); }
+    void redo() final { m_document->applyMasterBindingArtifact(m_newReference); }
+
+private:
+    EtherCATProjectDocument *m_document;
+    Data::SemanticBindingArtifactReference m_oldReference;
+    Data::SemanticBindingArtifactReference m_newReference;
 };
 
 class ReplaceOfflineSlavesCommand final : public QUndoCommand
@@ -94,23 +128,34 @@ public:
         EtherCATProjectDocument *document,
         const Data::NodeId &masterId,
         const QList<Data::OfflineSlaveConfiguration> &oldSlaves,
-        const QList<Data::OfflineSlaveConfiguration> &newSlaves)
+        const QList<Data::OfflineSlaveConfiguration> &newSlaves,
+        const Data::SemanticBindingArtifactReference &oldBindingArtifact)
         : m_document(document)
         , m_masterId(masterId)
         , m_oldSlaves(oldSlaves)
         , m_newSlaves(newSlaves)
+        , m_oldBindingArtifact(oldBindingArtifact)
     {
         setText(Tr::tr("Replace offline EtherCAT slaves"));
     }
 
-    void undo() final { m_document->applyOfflineSlaves(m_masterId, m_oldSlaves); }
-    void redo() final { m_document->applyOfflineSlaves(m_masterId, m_newSlaves); }
+    void undo() final
+    {
+        m_document->applyOfflineSlaves(m_masterId, m_oldSlaves);
+        m_document->applyMasterBindingArtifact(m_oldBindingArtifact);
+    }
+    void redo() final
+    {
+        m_document->applyOfflineSlaves(m_masterId, m_newSlaves);
+        m_document->applyMasterBindingArtifact({});
+    }
 
 private:
     EtherCATProjectDocument *m_document;
     Data::NodeId m_masterId;
     QList<Data::OfflineSlaveConfiguration> m_oldSlaves;
     QList<Data::OfflineSlaveConfiguration> m_newSlaves;
+    Data::SemanticBindingArtifactReference m_oldBindingArtifact;
 };
 
 class UpdateOfflineSlaveCommand final : public QUndoCommand
@@ -120,21 +165,32 @@ public:
         EtherCATProjectDocument *document,
         const Data::OfflineSlaveConfiguration &oldSlave,
         const Data::OfflineSlaveConfiguration &newSlave,
+        const Data::SemanticBindingArtifactReference &oldBindingArtifact,
         const QString &text)
         : m_document(document)
         , m_oldSlave(oldSlave)
         , m_newSlave(newSlave)
+        , m_oldBindingArtifact(oldBindingArtifact)
     {
         setText(text);
     }
 
-    void undo() final { m_document->applyOfflineSlave(m_oldSlave); }
-    void redo() final { m_document->applyOfflineSlave(m_newSlave); }
+    void undo() final
+    {
+        m_document->applyOfflineSlave(m_oldSlave);
+        m_document->applyMasterBindingArtifact(m_oldBindingArtifact);
+    }
+    void redo() final
+    {
+        m_document->applyOfflineSlave(m_newSlave);
+        m_document->applyMasterBindingArtifact({});
+    }
 
 private:
     EtherCATProjectDocument *m_document;
     Data::OfflineSlaveConfiguration m_oldSlave;
     Data::OfflineSlaveConfiguration m_newSlave;
+    Data::SemanticBindingArtifactReference m_oldBindingArtifact;
 };
 
 static QList<Data::OfflineSlaveConfiguration> slavesForMaster(
@@ -183,6 +239,78 @@ static Utils::Result<> insertConfigurationId(
     return Utils::ResultOk;
 }
 
+static bool adapterSelectionIsEmpty(const Data::DeviceAdapterProjectSelection &selection)
+{
+    return selection.adapterId.value.isEmpty() && selection.adapterVersion.isEmpty()
+           && selection.adapterContentSha256.isEmpty()
+           && selection.processDataProfileId.isEmpty() && selection.moduleAssignments.isEmpty();
+}
+
+static Utils::Result<Data::DeviceAdapterProjectSelection> normalizeAdapterSelection(
+    const Data::DeviceAdapterProjectSelection &selection, const QByteArray &esiSha256)
+{
+    if (adapterSelectionIsEmpty(selection))
+        return Data::DeviceAdapterProjectSelection();
+    if (selection.adapterId.value.isEmpty()
+        || selection.adapterId.value != selection.adapterId.value.trimmed()
+        || selection.adapterVersion.isEmpty()
+        || selection.adapterVersion != selection.adapterVersion.trimmed()
+        || selection.adapterContentSha256.size() != 32
+        || selection.processDataProfileId.isEmpty()
+        || selection.processDataProfileId != selection.processDataProfileId.trimmed()) {
+        return Utils::ResultError(
+            Tr::tr("The device adapter selection is incomplete or invalid."));
+    }
+    if (esiSha256.size() != 32) {
+        return Utils::ResultError(
+            Tr::tr("A device adapter selection requires an ESI SHA-256 digest."));
+    }
+
+    Data::DeviceAdapterProjectSelection normalized = selection;
+    QSet<int> moduleSlots;
+    for (const Data::DeviceModuleAssignment &assignment : normalized.moduleAssignments) {
+        if (assignment.slot < 0) {
+            return Utils::ResultError(
+                Tr::tr("Device adapter module slots must be non-negative."));
+        }
+        if (!assignment.moduleIdent) {
+            return Utils::ResultError(
+                Tr::tr("Device adapter module assignments require a non-zero ModuleIdent."));
+        }
+        if (moduleSlots.contains(assignment.slot)) {
+            return Utils::ResultError(
+                Tr::tr("Device adapter module slots must be unique."));
+        }
+        moduleSlots.insert(assignment.slot);
+    }
+    std::sort(
+        normalized.moduleAssignments.begin(),
+        normalized.moduleAssignments.end(),
+        [](const auto &left, const auto &right) { return left.slot < right.slot; });
+    return normalized;
+}
+
+static bool bindingArtifactIsEmpty(
+    const Data::SemanticBindingArtifactReference &reference)
+{
+    return reference.artifactId.isEmpty() && reference.artifactSha256.isEmpty()
+           && reference.projectConfigurationSha256.isEmpty();
+}
+
+static Utils::Result<> validateBindingArtifact(
+    const Data::SemanticBindingArtifactReference &reference)
+{
+    if (bindingArtifactIsEmpty(reference))
+        return Utils::ResultOk;
+    if (reference.artifactId.isEmpty() || reference.artifactId != reference.artifactId.trimmed()
+        || reference.artifactSha256.size() != 32
+        || reference.projectConfigurationSha256.size() != 32) {
+        return Utils::ResultError(
+            Tr::tr("The semantic binding artifact reference is incomplete or invalid."));
+    }
+    return Utils::ResultOk;
+}
+
 static Utils::Result<> validateProjectConfigurations(const Data::ProjectSnapshot &snapshot)
 {
     if (snapshot.masterConfiguration.timingMode != Data::MasterTimingMode::Unassigned
@@ -205,6 +333,19 @@ static Utils::Result<> validateProjectConfigurations(const Data::ProjectSnapshot
         ids.insert(node.id);
 
     for (const Data::OfflineSlaveConfiguration &slave : snapshot.slaves) {
+        if (!slave.esiSha256.isEmpty() && slave.esiSha256.size() != 32) {
+            return Utils::ResultError(
+                Tr::tr("ESI SHA-256 digests must contain exactly 32 bytes."));
+        }
+        const auto normalizedSelection
+            = normalizeAdapterSelection(slave.adapterSelection, slave.esiSha256);
+        if (!normalizedSelection)
+            return Utils::ResultError(normalizedSelection.error());
+        if (*normalizedSelection != slave.adapterSelection) {
+            return Utils::ResultError(
+                Tr::tr("Device adapter module assignments must use canonical slot order."));
+        }
+
         constexpr qint64 maximumExactJsonInteger = qint64(1) << 53;
         for (const Data::SyncManagerConfiguration &syncManager : slave.processData.syncManagers) {
             if (syncManager.index < 0 || syncManager.sizeLimitBytes < 0) {
@@ -283,7 +424,7 @@ static Utils::Result<> validateProjectConfigurations(const Data::ProjectSnapshot
             }
         }
     }
-    return Utils::ResultOk;
+    return validateBindingArtifact(snapshot.masterBindingArtifact);
 }
 
 EtherCATProjectDocument::EtherCATProjectDocument(QObject *parent)
@@ -406,13 +547,17 @@ Utils::Result<> EtherCATProjectDocument::setMasterConfiguration(
     if (configuration == m_snapshot.masterConfiguration)
         return Utils::ResultOk;
 
+    const Data::MasterConfiguration oldConfiguration = m_snapshot.masterConfiguration;
+    const Data::SemanticBindingArtifactReference oldBindingArtifact
+        = m_snapshot.masterBindingArtifact;
     Data::ProjectSnapshot candidate = m_snapshot;
     candidate.masterConfiguration = configuration;
+    candidate.masterBindingArtifact = {};
     if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
         return validation;
 
     m_undoStack.push(new UpdateMasterConfigurationCommand(
-        this, m_snapshot.masterConfiguration, configuration));
+        this, oldConfiguration, configuration, oldBindingArtifact));
     return Utils::ResultOk;
 }
 
@@ -460,6 +605,15 @@ Utils::Result<> EtherCATProjectDocument::replaceOfflineSlaves(
             return Utils::ResultError(
                 Tr::tr("Offline slaves require non-zero Vendor ID and Product Code values."));
         }
+        if (!slave.esiSha256.isEmpty() && slave.esiSha256.size() != 32) {
+            return Utils::ResultError(
+                Tr::tr("ESI SHA-256 digests must contain exactly 32 bytes."));
+        }
+        const auto normalizedSelection
+            = normalizeAdapterSelection(slave.adapterSelection, slave.esiSha256);
+        if (!normalizedSelection)
+            return Utils::ResultError(normalizedSelection.error());
+        slave.adapterSelection = *normalizedSelection;
         ids.insert(slave.id);
         positions.insert(slave.position);
     }
@@ -467,15 +621,19 @@ Utils::Result<> EtherCATProjectDocument::replaceOfflineSlaves(
         return left.position < right.position;
     });
 
-    Data::ProjectSnapshot candidate = m_snapshot;
-    applyOfflineSlavesToSnapshot(candidate, masterId, normalized);
-    if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
-        return validation;
-
     const QList<Data::OfflineSlaveConfiguration> oldSlaves = slavesForMaster(m_snapshot, masterId);
     if (oldSlaves == normalized)
         return Utils::ResultOk;
-    m_undoStack.push(new ReplaceOfflineSlavesCommand(this, masterId, oldSlaves, normalized));
+    const Data::SemanticBindingArtifactReference oldBindingArtifact
+        = m_snapshot.masterBindingArtifact;
+    Data::ProjectSnapshot candidate = m_snapshot;
+    applyOfflineSlavesToSnapshot(candidate, masterId, normalized);
+    candidate.masterBindingArtifact = {};
+    if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
+        return validation;
+
+    m_undoStack.push(new ReplaceOfflineSlavesCommand(
+        this, masterId, oldSlaves, normalized, oldBindingArtifact));
     return Utils::ResultOk;
 }
 
@@ -493,17 +651,25 @@ Utils::Result<> EtherCATProjectDocument::setProcessDataConfiguration(
     if (slave->processData == configuration)
         return Utils::ResultOk;
 
-    Data::OfflineSlaveConfiguration updated = *slave;
+    const Data::OfflineSlaveConfiguration oldSlave = *slave;
+    const Data::SemanticBindingArtifactReference oldBindingArtifact
+        = m_snapshot.masterBindingArtifact;
+    Data::OfflineSlaveConfiguration updated = oldSlave;
     updated.processData = configuration;
     Data::ProjectSnapshot candidate = m_snapshot;
     *std::find_if(candidate.slaves.begin(), candidate.slaves.end(), [&slaveId](const auto &entry) {
         return entry.id == slaveId;
     }) = updated;
+    candidate.masterBindingArtifact = {};
     if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
         return validation;
 
     m_undoStack.push(new UpdateOfflineSlaveCommand(
-        this, *slave, updated, Tr::tr("Configure EtherCAT Process Data")));
+        this,
+        oldSlave,
+        updated,
+        oldBindingArtifact,
+        Tr::tr("Configure EtherCAT Process Data")));
     return Utils::ResultOk;
 }
 
@@ -521,17 +687,25 @@ Utils::Result<> EtherCATProjectDocument::setStartupConfiguration(
     if (slave->startup == configuration)
         return Utils::ResultOk;
 
-    Data::OfflineSlaveConfiguration updated = *slave;
+    const Data::OfflineSlaveConfiguration oldSlave = *slave;
+    const Data::SemanticBindingArtifactReference oldBindingArtifact
+        = m_snapshot.masterBindingArtifact;
+    Data::OfflineSlaveConfiguration updated = oldSlave;
     updated.startup = configuration;
     Data::ProjectSnapshot candidate = m_snapshot;
     *std::find_if(candidate.slaves.begin(), candidate.slaves.end(), [&slaveId](const auto &entry) {
         return entry.id == slaveId;
     }) = updated;
+    candidate.masterBindingArtifact = {};
     if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
         return validation;
 
-    m_undoStack.push(
-        new UpdateOfflineSlaveCommand(this, *slave, updated, Tr::tr("Configure EtherCAT Startup")));
+    m_undoStack.push(new UpdateOfflineSlaveCommand(
+        this,
+        oldSlave,
+        updated,
+        oldBindingArtifact,
+        Tr::tr("Configure EtherCAT Startup")));
     return Utils::ResultOk;
 }
 
@@ -549,17 +723,92 @@ Utils::Result<> EtherCATProjectDocument::setDcConfiguration(
     if (slave->dc == configuration)
         return Utils::ResultOk;
 
-    Data::OfflineSlaveConfiguration updated = *slave;
+    const Data::OfflineSlaveConfiguration oldSlave = *slave;
+    const Data::SemanticBindingArtifactReference oldBindingArtifact
+        = m_snapshot.masterBindingArtifact;
+    Data::OfflineSlaveConfiguration updated = oldSlave;
     updated.dc = configuration;
     Data::ProjectSnapshot candidate = m_snapshot;
     *std::find_if(candidate.slaves.begin(), candidate.slaves.end(), [&slaveId](const auto &entry) {
         return entry.id == slaveId;
     }) = updated;
+    candidate.masterBindingArtifact = {};
     if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
         return validation;
 
     m_undoStack.push(new UpdateOfflineSlaveCommand(
-        this, *slave, updated, Tr::tr("Configure EtherCAT Distributed Clocks")));
+        this,
+        oldSlave,
+        updated,
+        oldBindingArtifact,
+        Tr::tr("Configure EtherCAT Distributed Clocks")));
+    return Utils::ResultOk;
+}
+
+Utils::Result<> EtherCATProjectDocument::setDeviceAdapterSelection(
+    const Data::NodeId &slaveId,
+    const QByteArray &esiSha256,
+    const Data::DeviceAdapterProjectSelection &selection)
+{
+    if (!m_snapshot.valid)
+        return Utils::ResultError(Tr::tr("Cannot edit an invalid EtherCAT project."));
+    const auto slave = std::find_if(
+        m_snapshot.slaves.cbegin(), m_snapshot.slaves.cend(), [&slaveId](const auto &entry) {
+            return entry.id == slaveId;
+        });
+    if (slave == m_snapshot.slaves.cend())
+        return Utils::ResultError(Tr::tr("The requested offline slave does not exist."));
+    if (!esiSha256.isEmpty() && esiSha256.size() != 32) {
+        return Utils::ResultError(
+            Tr::tr("ESI SHA-256 digests must contain exactly 32 bytes."));
+    }
+
+    const auto normalizedSelection = normalizeAdapterSelection(selection, esiSha256);
+    if (!normalizedSelection)
+        return Utils::ResultError(normalizedSelection.error());
+    if (slave->esiSha256 == esiSha256 && slave->adapterSelection == *normalizedSelection)
+        return Utils::ResultOk;
+
+    const Data::OfflineSlaveConfiguration oldSlave = *slave;
+    const Data::SemanticBindingArtifactReference oldBindingArtifact
+        = m_snapshot.masterBindingArtifact;
+    Data::OfflineSlaveConfiguration updated = oldSlave;
+    updated.esiSha256 = esiSha256;
+    updated.adapterSelection = *normalizedSelection;
+    Data::ProjectSnapshot candidate = m_snapshot;
+    *std::find_if(candidate.slaves.begin(), candidate.slaves.end(), [&slaveId](const auto &entry) {
+        return entry.id == slaveId;
+    }) = updated;
+    candidate.masterBindingArtifact = {};
+    if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
+        return validation;
+
+    m_undoStack.push(new UpdateOfflineSlaveCommand(
+        this,
+        oldSlave,
+        updated,
+        oldBindingArtifact,
+        Tr::tr("Select EtherCAT device adapter")));
+    return Utils::ResultOk;
+}
+
+Utils::Result<> EtherCATProjectDocument::setMasterBindingArtifact(
+    const Data::SemanticBindingArtifactReference &reference)
+{
+    if (!m_snapshot.valid)
+        return Utils::ResultError(Tr::tr("Cannot edit an invalid EtherCAT project."));
+    if (const Utils::Result<> validation = validateBindingArtifact(reference); !validation)
+        return validation;
+    if (m_snapshot.masterBindingArtifact == reference)
+        return Utils::ResultOk;
+
+    Data::ProjectSnapshot candidate = m_snapshot;
+    candidate.masterBindingArtifact = reference;
+    if (const Utils::Result<> validation = validateProjectConfigurations(candidate); !validation)
+        return validation;
+
+    m_undoStack.push(new UpdateMasterBindingArtifactCommand(
+        this, m_snapshot.masterBindingArtifact, reference));
     return Utils::ResultOk;
 }
 
@@ -660,6 +909,12 @@ void EtherCATProjectDocument::applyMasterConfiguration(
     const Data::MasterConfiguration &configuration)
 {
     m_snapshot.masterConfiguration = configuration;
+}
+
+void EtherCATProjectDocument::applyMasterBindingArtifact(
+    const Data::SemanticBindingArtifactReference &reference)
+{
+    m_snapshot.masterBindingArtifact = reference;
 }
 
 void EtherCATProjectDocument::applyOfflineSlaves(

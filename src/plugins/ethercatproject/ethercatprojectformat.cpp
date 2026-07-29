@@ -124,6 +124,200 @@ static Utils::Result<QJsonObject> parseObject(
     return value.toObject();
 }
 
+static Utils::Result<QByteArray> parseSha256(
+    const QJsonObject &object, const QString &key, const QString &objectName)
+{
+    const auto value = parseString(object, key, objectName);
+    if (!value)
+        return Utils::ResultError(value.error());
+    if (value->size() != 64) {
+        return Utils::ResultError(
+            Tr::tr("%1 has an invalid '%2' SHA-256 digest.").arg(objectName, key));
+    }
+    for (const QChar character : *value) {
+        const bool digit = character >= u'0' && character <= u'9';
+        const bool lowerHex = character >= u'a' && character <= u'f';
+        if (!digit && !lowerHex) {
+            return Utils::ResultError(
+                Tr::tr("%1 has an invalid '%2' SHA-256 digest.").arg(objectName, key));
+        }
+    }
+    return QByteArray::fromHex(value->toLatin1());
+}
+
+static bool hasOnlyKeys(const QJsonObject &object, const QSet<QString> &allowedKeys)
+{
+    for (auto iterator = object.constBegin(); iterator != object.constEnd(); ++iterator) {
+        if (!allowedKeys.contains(iterator.key()))
+            return false;
+    }
+    return true;
+}
+
+static Utils::Result<Data::DeviceAdapterProjectSelection> parseAdapterSelection(
+    const QJsonObject &slaveObject, const QString &objectName, const QByteArray &esiSha256)
+{
+    const QJsonValue selectionValue = slaveObject.value("adapterSelection");
+    if (selectionValue.isUndefined())
+        return Data::DeviceAdapterProjectSelection();
+    if (!selectionValue.isObject()) {
+        return Utils::ResultError(
+            Tr::tr("%1 has an invalid 'adapterSelection' object.").arg(objectName));
+    }
+    if (esiSha256.size() != 32) {
+        return Utils::ResultError(
+            Tr::tr("%1 must bind its adapter selection to an ESI SHA-256 digest.")
+                .arg(objectName));
+    }
+
+    const QJsonObject selectionObject = selectionValue.toObject();
+    static const QSet<QString> selectionKeys{
+        "adapterId",
+        "adapterVersion",
+        "adapterContentSha256",
+        "processDataProfileId",
+        "moduleAssignments",
+    };
+    if (selectionObject.size() != selectionKeys.size()
+        || !hasOnlyKeys(selectionObject, selectionKeys)) {
+        return Utils::ResultError(
+            Tr::tr("%1 has an incomplete adapter selection.").arg(objectName));
+    }
+
+    const auto adapterId = parseString(selectionObject, "adapterId", objectName);
+    const auto adapterVersion = parseString(selectionObject, "adapterVersion", objectName);
+    const auto adapterSha256
+        = parseSha256(selectionObject, "adapterContentSha256", objectName);
+    const auto profileId = parseString(selectionObject, "processDataProfileId", objectName);
+    const auto modules = parseArray(selectionObject, "moduleAssignments", objectName);
+    if (!adapterId || !adapterVersion || !adapterSha256 || !profileId || !modules) {
+        const QString error = !adapterId        ? adapterId.error()
+                              : !adapterVersion ? adapterVersion.error()
+                              : !adapterSha256  ? adapterSha256.error()
+                              : !profileId      ? profileId.error()
+                                                : modules.error();
+        return Utils::ResultError(error);
+    }
+    if (adapterId->isEmpty() || *adapterId != adapterId->trimmed()
+        || adapterVersion->isEmpty() || *adapterVersion != adapterVersion->trimmed()
+        || profileId->isEmpty() || *profileId != profileId->trimmed()) {
+        return Utils::ResultError(
+            Tr::tr("%1 has an invalid adapter identifier, version, or profile.").arg(objectName));
+    }
+
+    QList<Data::DeviceModuleAssignment> assignments;
+    assignments.reserve(modules->size());
+    QSet<int> moduleSlots;
+    static const QSet<QString> moduleKeys{
+        "slot",
+        "moduleIdent",
+        "objectIndexOffset",
+        "pdoIndexOffset",
+    };
+    for (qsizetype index = 0; index < modules->size(); ++index) {
+        if (!modules->at(index).isObject()) {
+            return Utils::ResultError(
+                Tr::tr("Module assignment %1 for %2 must be a JSON object.")
+                    .arg(index)
+                    .arg(objectName));
+        }
+        const QJsonObject moduleObject = modules->at(index).toObject();
+        const QString moduleName = Tr::tr("Module assignment %1 for %2")
+                                       .arg(index)
+                                       .arg(objectName);
+        if (moduleObject.size() != moduleKeys.size()
+            || !hasOnlyKeys(moduleObject, moduleKeys)) {
+            return Utils::ResultError(
+                Tr::tr("%1 is incomplete.").arg(moduleName));
+        }
+        const auto slot = parseUnsigned(
+            moduleObject, "slot", moduleName, std::numeric_limits<int>::max());
+        const auto moduleIdent = parseUnsigned(moduleObject, "moduleIdent", moduleName);
+        const auto objectOffset = parseUnsigned(
+            moduleObject,
+            "objectIndexOffset",
+            moduleName,
+            std::numeric_limits<quint16>::max());
+        const auto pdoOffset = parseUnsigned(
+            moduleObject,
+            "pdoIndexOffset",
+            moduleName,
+            std::numeric_limits<quint16>::max());
+        if (!slot || !moduleIdent || !objectOffset || !pdoOffset) {
+            const QString error = !slot          ? slot.error()
+                                  : !moduleIdent ? moduleIdent.error()
+                                  : !objectOffset ? objectOffset.error()
+                                                  : pdoOffset.error();
+            return Utils::ResultError(error);
+        }
+        if (*moduleIdent == 0) {
+            return Utils::ResultError(
+                Tr::tr("%1 requires a non-zero ModuleIdent.").arg(moduleName));
+        }
+        if (moduleSlots.contains(int(*slot))) {
+            return Utils::ResultError(
+                Tr::tr("%1 reuses an adapter module slot.").arg(moduleName));
+        }
+        moduleSlots.insert(int(*slot));
+        assignments.append(
+            {int(*slot), *moduleIdent, quint16(*objectOffset), quint16(*pdoOffset)});
+    }
+    std::sort(assignments.begin(), assignments.end(), [](const auto &left, const auto &right) {
+        return left.slot < right.slot;
+    });
+
+    return Data::DeviceAdapterProjectSelection{
+        Data::DeviceAdapterId{*adapterId},
+        *adapterVersion,
+        *adapterSha256,
+        *profileId,
+        assignments,
+    };
+}
+
+static Utils::Result<Data::SemanticBindingArtifactReference> parseBindingArtifact(
+    const QJsonObject &masterObject)
+{
+    const QJsonValue referenceValue = masterObject.value("semanticBindingArtifact");
+    if (referenceValue.isUndefined())
+        return Data::SemanticBindingArtifactReference();
+    if (!referenceValue.isObject()) {
+        return Utils::ResultError(
+            Tr::tr("Master has an invalid 'semanticBindingArtifact' object."));
+    }
+
+    const QJsonObject referenceObject = referenceValue.toObject();
+    static const QSet<QString> referenceKeys{
+        "artifactId",
+        "artifactSha256",
+        "projectConfigurationSha256",
+    };
+    if (referenceObject.size() != referenceKeys.size()
+        || !hasOnlyKeys(referenceObject, referenceKeys)) {
+        return Utils::ResultError(Tr::tr("Master has an incomplete binding artifact reference."));
+    }
+
+    const auto artifactId = parseString(referenceObject, "artifactId", Tr::tr("Master"));
+    const auto artifactSha256
+        = parseSha256(referenceObject, "artifactSha256", Tr::tr("Master"));
+    const auto projectSha256
+        = parseSha256(referenceObject, "projectConfigurationSha256", Tr::tr("Master"));
+    if (!artifactId || !artifactSha256 || !projectSha256) {
+        const QString error = !artifactId       ? artifactId.error()
+                              : !artifactSha256 ? artifactSha256.error()
+                                                : projectSha256.error();
+        return Utils::ResultError(error);
+    }
+    if (artifactId->isEmpty() || *artifactId != artifactId->trimmed()) {
+        return Utils::ResultError(Tr::tr("Master has an invalid binding artifact ID."));
+    }
+    return Data::SemanticBindingArtifactReference{
+        *artifactId,
+        *artifactSha256,
+        *projectSha256,
+    };
+}
+
 static Utils::Result<Data::NodeId> parseUniqueId(
     const QJsonObject &object,
     const QString &key,
@@ -645,7 +839,8 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
     const QJsonObject &masterObject,
     const Data::NodeId &masterId,
     QSet<Data::NodeId> *uniqueIds,
-    bool parseConfiguration)
+    bool parseConfiguration,
+    bool parseAdapterData)
 {
     const QJsonValue slavesValue = masterObject.value("slaves");
     if (slavesValue.isUndefined() && !parseConfiguration)
@@ -734,6 +929,22 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
             dc = *parsedDc;
         }
 
+        QByteArray esiSha256;
+        Data::DeviceAdapterProjectSelection adapterSelection;
+        if (parseAdapterData) {
+            const QJsonValue esiValue = object.value("esiSha256");
+            if (!esiValue.isUndefined()) {
+                const auto parsedEsiSha256 = parseSha256(object, "esiSha256", objectName);
+                if (!parsedEsiSha256)
+                    return Utils::ResultError(parsedEsiSha256.error());
+                esiSha256 = *parsedEsiSha256;
+            }
+            const auto parsedSelection = parseAdapterSelection(object, objectName, esiSha256);
+            if (!parsedSelection)
+                return Utils::ResultError(parsedSelection.error());
+            adapterSelection = *parsedSelection;
+        }
+
         positions.insert(int(*position));
         slaves.append(
             {*id,
@@ -746,7 +957,9 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
              descriptionId,
              processData,
              startup,
-             dc});
+             dc,
+             esiSha256,
+             adapterSelection});
     }
     std::sort(slaves.begin(), slaves.end(), [](const auto &left, const auto &right) {
         return left.position < right.position;
@@ -773,6 +986,7 @@ Data::ProjectSnapshot createProjectSnapshot(const QString &name, const QString &
         false,
         true,
         false,
+        {},
         {},
         {},
         {},
@@ -818,7 +1032,8 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
     const int version = root.value("formatVersion").toInt(root.value("version").toInt(-1));
     if (version == 0)
         return parseVersionZero(root, fallbackName);
-    if (version != 1 && version != 2 && version != Constants::CURRENT_FORMAT_VERSION) {
+    if (version != 1 && version != 2 && version != 3
+        && version != Constants::CURRENT_FORMAT_VERSION) {
         return Utils::ResultError(
             Tr::tr("Unsupported EtherCAT project format version %1.").arg(version));
     }
@@ -852,16 +1067,25 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
         return Utils::ResultError(masterName.error());
 
     Data::MasterConfiguration masterConfiguration;
-    if (version == Constants::CURRENT_FORMAT_VERSION) {
+    if (version >= 3) {
         const auto parsedMasterConfiguration = parseMasterConfiguration(masterObject);
         if (!parsedMasterConfiguration)
             return Utils::ResultError(parsedMasterConfiguration.error());
         masterConfiguration = *parsedMasterConfiguration;
     }
 
-    const auto slaves = parseOfflineSlaves(masterObject, *masterId, &uniqueIds, version >= 2);
+    const auto slaves
+        = parseOfflineSlaves(masterObject, *masterId, &uniqueIds, version >= 2, version >= 4);
     if (!slaves)
         return Utils::ResultError(slaves.error());
+
+    Data::SemanticBindingArtifactReference bindingArtifact;
+    if (version >= 4) {
+        const auto parsedBindingArtifact = parseBindingArtifact(masterObject);
+        if (!parsedBindingArtifact)
+            return Utils::ResultError(parsedBindingArtifact.error());
+        bindingArtifact = *parsedBindingArtifact;
+    }
 
     const bool migrationRequired = version != Constants::CURRENT_FORMAT_VERSION;
     Data::ProjectSnapshot snapshot{
@@ -878,6 +1102,7 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
         {},
         *slaves,
         masterConfiguration,
+        bindingArtifact,
     };
     for (const Data::OfflineSlaveConfiguration &slave : *slaves) {
         snapshot.nodes.append({slave.id, slave.masterId, Data::ProjectNodeKind::Slave, slave.name});
@@ -982,6 +1207,59 @@ static QJsonObject serializeDc(const Data::DcConfiguration &dc)
     return object;
 }
 
+static bool adapterSelectionIsEmpty(const Data::DeviceAdapterProjectSelection &selection)
+{
+    return selection.adapterId.value.isEmpty() && selection.adapterVersion.isEmpty()
+           && selection.adapterContentSha256.isEmpty()
+           && selection.processDataProfileId.isEmpty() && selection.moduleAssignments.isEmpty();
+}
+
+static QJsonObject serializeAdapterSelection(
+    const Data::DeviceAdapterProjectSelection &selection)
+{
+    QJsonArray modules;
+    QList<Data::DeviceModuleAssignment> sortedModules = selection.moduleAssignments;
+    std::sort(sortedModules.begin(), sortedModules.end(), [](const auto &left, const auto &right) {
+        return left.slot < right.slot;
+    });
+    for (const Data::DeviceModuleAssignment &assignment : std::as_const(sortedModules)) {
+        QJsonObject module;
+        module.insert("slot", assignment.slot);
+        module.insert("moduleIdent", double(assignment.moduleIdent));
+        module.insert("objectIndexOffset", assignment.objectIndexOffset);
+        module.insert("pdoIndexOffset", assignment.pdoIndexOffset);
+        modules.append(module);
+    }
+
+    QJsonObject object;
+    object.insert("adapterId", selection.adapterId.value);
+    object.insert("adapterVersion", selection.adapterVersion);
+    object.insert(
+        "adapterContentSha256", QString::fromLatin1(selection.adapterContentSha256.toHex()));
+    object.insert("processDataProfileId", selection.processDataProfileId);
+    object.insert("moduleAssignments", modules);
+    return object;
+}
+
+static bool bindingArtifactIsEmpty(
+    const Data::SemanticBindingArtifactReference &reference)
+{
+    return reference.artifactId.isEmpty() && reference.artifactSha256.isEmpty()
+           && reference.projectConfigurationSha256.isEmpty();
+}
+
+static QJsonObject serializeBindingArtifact(
+    const Data::SemanticBindingArtifactReference &reference)
+{
+    QJsonObject object;
+    object.insert("artifactId", reference.artifactId);
+    object.insert("artifactSha256", QString::fromLatin1(reference.artifactSha256.toHex()));
+    object.insert(
+        "projectConfigurationSha256",
+        QString::fromLatin1(reference.projectConfigurationSha256.toHex()));
+    return object;
+}
+
 QByteArray serializeProject(const Data::ProjectSnapshot &snapshot)
 {
     QJsonObject projectObject;
@@ -1018,6 +1296,10 @@ QByteArray serializeProject(const Data::ProjectSnapshot &snapshot)
         object.insert("alias", slave.alias);
         if (!slave.deviceDescriptionId.isNull())
             object.insert("deviceDescriptionId", slave.deviceDescriptionId.toString());
+        if (!slave.esiSha256.isEmpty())
+            object.insert("esiSha256", QString::fromLatin1(slave.esiSha256.toHex()));
+        if (!adapterSelectionIsEmpty(slave.adapterSelection))
+            object.insert("adapterSelection", serializeAdapterSelection(slave.adapterSelection));
         QJsonObject configuration;
         configuration.insert("processData", serializeProcessData(slave.processData));
         configuration.insert("startup", serializeStartup(slave.startup));
@@ -1031,6 +1313,11 @@ QByteArray serializeProject(const Data::ProjectSnapshot &snapshot)
     masterConfiguration.insert("cyclePeriodNs", double(snapshot.masterConfiguration.cyclePeriodNs));
     masterObject.insert("configuration", masterConfiguration);
     masterObject.insert("slaves", slaves);
+    if (!bindingArtifactIsEmpty(snapshot.masterBindingArtifact)) {
+        masterObject.insert(
+            "semanticBindingArtifact",
+            serializeBindingArtifact(snapshot.masterBindingArtifact));
+    }
 
     QJsonObject root;
     root.insert("format", QLatin1StringView(FORMAT_NAME));

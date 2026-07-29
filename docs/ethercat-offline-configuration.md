@@ -92,17 +92,34 @@ nanosecond value.
 
 ## Ownership and next integration steps
 
-The public header is `ethercatdata/offlineconfiguration.h`. It depends only on
-Qt Core and existing `EtherCATData` values. CMake and qbs list the same source
-files.
+The public configuration header is
+`ethercatdata/offlineconfiguration.h`. Project-persisted adapter and binding
+values are declared separately in
+`ethercatdata/deviceadapterselection.h`. Both depend only on Qt Core and
+existing `EtherCATData` values. CMake and qbs list the same source files.
 
 `OfflineSlaveConfiguration` now owns these three values. EtherCATProject format
-version 3 persists them together with `MasterConfiguration`. The master value
+version 4 persists them together with `MasterConfiguration`. The master value
 stores `unassigned`, `free-run`, or `distributed-clocks` plus a nanosecond
 cycle period. The Project plugin rejects inconsistent timing values, migrates
-versions 1 and 2 with exact recovery backups, and exposes checked replacement
-commands through `ProjectService`. Each accepted replacement enters the
-project's unified Undo/Redo stack.
+versions 1 through 3 with exact recovery backups, and exposes checked
+replacement commands through `ProjectService`. Each accepted replacement
+enters the project's unified Undo/Redo stack.
+
+Each offline slave can additionally persist the exact ESI SHA-256 and a
+`DeviceAdapterProjectSelection`: adapter ID/version, adapter-content SHA-256,
+Process Data profile, and canonical slot-sorted module assignments. These are
+reproducible compiler inputs, not runtime state. A single master-level
+`SemanticBindingArtifactReference` points to the compiler-produced mapping
+artifact and the project-configuration digest it was built from. Runtime
+Resource IDs, Process Image offsets, controller epochs, and package/runtime
+generations are deliberately absent.
+
+Any topology or compile-input change atomically invalidates the master binding
+reference; the corresponding Undo restores both the old input and the old
+reference. Display-only renames do not invalidate it. Versions 1 through 3
+load every new version-4 value empty and never infer an adapter from vendor,
+product, position, name, or a device-description ID.
 
 The Workbench Process Data page consumes this API for SM/PDO selection, entry
 editing, validation feedback, and process-image preview. The Startup page uses
@@ -121,9 +138,11 @@ The focused `EtherCATCore` contract suite covers:
 - mandatory, missing/wrong SM, unsupported, duplicate, width, overlap, and
   capacity errors;
 - valid and invalid Startup order/value records;
-- valid nanosecond DC configuration, invalid cycle, and shift range.
+- valid nanosecond DC configuration, invalid cycle, and shift range;
+- value semantics for project adapter selections and semantic-binding
+  references.
 
-The domain suite passes 16 tests on the qualified Qt 6.11.0 Release test build.
-The Project integration has separate format, migration, service, and Undo/Redo
-coverage. The editable Process Data, Startup, and DC pages have Workbench
-integration coverage.
+The qualified Qt 6.11.0 Release `EtherCATCore` run passes 28 tests. Project
+integration has separate format, migration, service, and Undo/Redo coverage.
+The editable Process Data, Startup, and DC pages have Workbench integration
+coverage.

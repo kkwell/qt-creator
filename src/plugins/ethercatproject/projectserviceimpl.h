@@ -55,6 +55,14 @@ public:
         const Data::NodeId &projectId,
         const Data::NodeId &slaveId,
         const Data::DcConfiguration &configuration) final;
+    Utils::Result<> setDeviceAdapterSelection(
+        const Data::NodeId &projectId,
+        const Data::NodeId &slaveId,
+        const QByteArray &esiSha256,
+        const Data::DeviceAdapterProjectSelection &selection) final;
+    Utils::Result<> setMasterBindingArtifact(
+        const Data::NodeId &projectId,
+        const Data::SemanticBindingArtifactReference &reference) final;
     bool canUndoProject(const Data::NodeId &projectId) const final;
     bool canRedoProject(const Data::NodeId &projectId) const final;
     Utils::Result<> renameStructuralNode(

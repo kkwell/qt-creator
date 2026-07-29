@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "deviceadapterselection.h"
 #include "devicedescription.h"
 #include "ethercatdata_global.h"
 #include "nodeid.h"
@@ -28,6 +29,8 @@ struct ETHERCATDATA_EXPORT OfflineSlaveConfiguration
     ProcessDataConfiguration processData;
     StartupConfiguration startup;
     DcConfiguration dc;
+    QByteArray esiSha256;
+    DeviceAdapterProjectSelection adapterSelection;
 
     friend bool operator==(const OfflineSlaveConfiguration &, const OfflineSlaveConfiguration &)
         = default;
@@ -56,6 +59,7 @@ struct ETHERCATDATA_EXPORT ProjectSnapshot
     QString error;
     QList<OfflineSlaveConfiguration> slaves;
     MasterConfiguration masterConfiguration;
+    SemanticBindingArtifactReference masterBindingArtifact;
 
     friend bool operator==(const ProjectSnapshot &, const ProjectSnapshot &) = default;
 };
