@@ -56526,6 +56526,210 @@ AL 状态：%3
         <source> Unavailable: Select the connected EtherCAT Master.</source>
         <translation> 不可用：请选择已连接的 EtherCAT 主站。</translation>
     </message>
+    <message>
+        <source> cycles</source>
+        <translation> 个周期</translation>
+    </message>
+    <message>
+        <source>%1 to %2</source>
+        <translation>%1 至 %2</translation>
+    </message>
+    <message>
+        <source>Action</source>
+        <translation>动作</translation>
+    </message>
+    <message>
+        <source>Action completed: %1</source>
+        <translation>动作已完成：%1</translation>
+    </message>
+    <message>
+        <source>Action failed: %1</source>
+        <translation>动作失败：%1</translation>
+    </message>
+    <message>
+        <source>Action failed: %1 (%2)</source>
+        <translation>动作失败：%1（%2）</translation>
+    </message>
+    <message>
+        <source>Action is not available in the current state.</source>
+        <translation>当前状态下无法执行此动作。</translation>
+    </message>
+    <message>
+        <source>Action is unavailable.</source>
+        <translation>动作不可用。</translation>
+    </message>
+    <message>
+        <source>Action lifetime in controller cycles</source>
+        <translation>动作有效期（控制器周期）</translation>
+    </message>
+    <message>
+        <source>Action parameters are invalid.</source>
+        <translation>动作参数无效。</translation>
+    </message>
+    <message>
+        <source>Action queued: %1</source>
+        <translation>动作已排队：%1</translation>
+    </message>
+    <message>
+        <source>Action result is unknown: %1</source>
+        <translation>动作结果未知：%1</translation>
+    </message>
+    <message>
+        <source>Action result is unknown: %1 (%2)</source>
+        <translation>动作结果未知：%1（%2）</translation>
+    </message>
+    <message>
+        <source>Action result is unknown: %1 (approval evidence invalid)</source>
+        <translation>动作结果未知：%1（确认凭据无效）</translation>
+    </message>
+    <message>
+        <source>Completed.</source>
+        <translation>已完成。</translation>
+    </message>
+    <message>
+        <source>Confirm action</source>
+        <translation>确认执行动作</translation>
+    </message>
+    <message>
+        <source>Confirmation canceled.</source>
+        <translation>已取消确认。</translation>
+    </message>
+    <message>
+        <source>Details</source>
+        <translation>详情</translation>
+    </message>
+    <message>
+        <source>Disabled by the signed action definition.</source>
+        <translation>签名动作定义已禁用此动作。</translation>
+    </message>
+    <message>
+        <source>Failed.</source>
+        <translation>失败。</translation>
+    </message>
+    <message>
+        <source>Lifetime</source>
+        <translation>有效期</translation>
+    </message>
+    <message>
+        <source>Live values and signed actions are available.</source>
+        <translation>在线值和签名动作可用。</translation>
+    </message>
+    <message>
+        <source>Local user</source>
+        <translation>本地用户</translation>
+    </message>
+    <message>
+        <source>Manual action operation status</source>
+        <translation>手动动作执行状态</translation>
+    </message>
+    <message>
+        <source>No live values or signed actions are available.</source>
+        <translation>没有可用的在线值或签名动作。</translation>
+    </message>
+    <message>
+        <source>No manual action is active.</source>
+        <translation>当前没有正在执行的手动动作。</translation>
+    </message>
+    <message>
+        <source>No signed action is selected.</source>
+        <translation>未选择签名动作。</translation>
+    </message>
+    <message>
+        <source>Not qualified for manual control.</source>
+        <translation>未通过手动控制验证。</translation>
+    </message>
+    <message>
+        <source>Parameter</source>
+        <translation>参数</translation>
+    </message>
+    <message>
+        <source>Queued.</source>
+        <translation>已排队。</translation>
+    </message>
+    <message>
+        <source>Ready for local confirmation.</source>
+        <translation>可进行本地确认。</translation>
+    </message>
+    <message>
+        <source>Result unknown.</source>
+        <translation>结果未知。</translation>
+    </message>
+    <message>
+        <source>Run action</source>
+        <translation>执行动作</translation>
+    </message>
+    <message>
+        <source>Run selected signed action</source>
+        <translation>执行所选签名动作</translation>
+    </message>
+    <message>
+        <source>Run “%1” with the entered values?</source>
+        <translation>使用已输入的值执行“%1”？</translation>
+    </message>
+    <message>
+        <source>Running.</source>
+        <translation>正在执行。</translation>
+    </message>
+    <message>
+        <source>Runtime context changed.</source>
+        <translation>运行时上下文已变化。</translation>
+    </message>
+    <message>
+        <source>Runtime context changed. Try again.</source>
+        <translation>运行时上下文已变化，请重试。</translation>
+    </message>
+    <message>
+        <source>Selected action status</source>
+        <translation>所选动作状态</translation>
+    </message>
+    <message>
+        <source>Signed action</source>
+        <translation>签名动作</translation>
+    </message>
+    <message>
+        <source>Signed action proof is incomplete.</source>
+        <translation>签名动作凭据不完整。</translation>
+    </message>
+    <message>
+        <source>Signed action proof is not verified.</source>
+        <translation>签名动作凭据未通过验证。</translation>
+    </message>
+    <message>
+        <source>Signed actions</source>
+        <translation>签名动作</translation>
+    </message>
+    <message>
+        <source>Signed actions are available.</source>
+        <translation>签名动作可用。</translation>
+    </message>
+    <message>
+        <source>Signed semantic actions</source>
+        <translation>签名语义动作</translation>
+    </message>
+    <message>
+        <source>Some live values are unavailable. Signed actions remain state-gated.</source>
+        <translation>部分在线值不可用。签名动作仍受状态约束。</translation>
+    </message>
+    <message>
+        <source>Speed unit conversion is not configured.</source>
+        <translation>未配置速度单位换算。</translation>
+    </message>
+    <message>
+        <source>This signed action requires confirmation by the local user.</source>
+        <translation>此签名动作需要本地用户确认。</translation>
+    </message>
+    <message>
+        <source>Waiting for confirmation</source>
+        <translation>等待确认</translation>
+    </message>
+    <message>
+        <source>Waiting for confirmation.</source>
+        <translation>等待确认。</translation>
+    </message>
+    <message>
+        <source>Waiting for local confirmation.</source>
+        <translation>等待本地确认。</translation>
+    </message>
 </context>
 <context>
     <name>QtC::EtherCATProductApi</name>
