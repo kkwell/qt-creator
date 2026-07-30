@@ -264,7 +264,7 @@ static void appendBindingIdentity(
 
 QByteArray semanticRuntimeContextHash(const Data::SemanticRuntimeContext &context)
 {
-    QByteArray canonical = QByteArrayLiteral("embed-labs.semantic-runtime-context.v2");
+    QByteArray canonical = QByteArrayLiteral("embed-labs.semantic-runtime-context.v3");
     appendContextString(canonical, context.controllerId);
     appendContextString(canonical, context.scope.projectId.toString());
     appendContextString(canonical, context.scope.masterId.toString());
@@ -356,7 +356,26 @@ QByteArray semanticRuntimeContextHash(const Data::SemanticRuntimeContext &contex
         appendContextInteger(canonical, action.requiresExclusiveControl ? 1 : 0);
         appendContextInteger(canonical, action.requiresDc ? 1 : 0);
         appendContextInteger(canonical, action.holdToRun ? 1 : 0);
+        appendContextInteger(canonical, action.maximumTtlMs);
         appendContextInteger(canonical, action.maximumTtlCycles);
+        appendContextInteger(canonical, action.definition.requiresDc ? 1 : 0);
+        appendContextInteger(canonical, action.definition.holdToRun ? 1 : 0);
+        appendContextInteger(canonical, action.definition.commandTtlMs);
+
+        const auto appendFallbackIds =
+            [&canonical](const QList<Data::SemanticActionId> &ids) {
+                QStringList values;
+                values.reserve(ids.size());
+                for (const Data::SemanticActionId &id : ids)
+                    values.append(id.value);
+                std::sort(values.begin(), values.end());
+                appendContextInteger(canonical, quint64(values.size()));
+                for (const QString &value : std::as_const(values))
+                    appendContextString(canonical, value);
+            };
+        appendFallbackIds(action.definition.allowedReleaseActionIds);
+        appendFallbackIds(action.definition.allowedTimeoutActionIds);
+        appendFallbackIds(action.definition.allowedFailureActionIds);
 
         std::sort(
             action.parameters.begin(),
@@ -2120,11 +2139,19 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
     Core::ProjectService *projectService,
     Core::ProviderRegistry *providerRegistry,
     QObject *parent,
-    std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository)
+    std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository
+#ifdef WITH_TESTS
+    ,
+    TestOnlyContextTransform testOnlyContextTransform
+#endif
+    )
     : SemanticRuntimeService(parent)
     , m_projectService(projectService)
     , m_providerRegistry(providerRegistry)
     , m_evidenceRepository(std::move(evidenceRepository))
+#ifdef WITH_TESTS
+    , m_testOnlyContextTransform(std::move(testOnlyContextTransform))
+#endif
 {
     m_execution = std::make_unique<SemanticRuntimeExecutorExecution>(this);
 
@@ -2198,7 +2225,18 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
         connect(m_providerRegistry, &QObject::destroyed, this, [this] {
             m_execution->providerRegistryRemoved();
             m_providerRegistry = nullptr;
+            for (const QList<QMetaObject::Connection> &connections :
+                 std::as_const(m_providerConnections)) {
+                for (const QMetaObject::Connection &connection : connections)
+                    disconnect(connection);
+            }
+            for (const QList<QMetaObject::Connection> &connections :
+                 std::as_const(m_adapterProviderConnections)) {
+                for (const QMetaObject::Connection &connection : connections)
+                    disconnect(connection);
+            }
             m_providerConnections.clear();
+            m_adapterProviderConnections.clear();
             publishContexts();
         });
         for (Core::Provider *provider : m_providerRegistry->providers())
@@ -2465,9 +2503,23 @@ Data::SemanticRuntimeContext SemanticRuntimeExecutor::buildContext(
                 = candidate.snapshot.controllerState->busOperational
                   && candidate.snapshot.controllerState->distributedClocksLocked;
         }
+        QList<Data::DeviceAdapterManifest> adapterManifests;
+        if (m_providerRegistry) {
+            for (Core::Provider *provider :
+                 m_providerRegistry->providers(Core::ProviderKind::DeviceAdapter)) {
+                auto *adapterProvider = qobject_cast<Core::DeviceAdapterProvider *>(provider);
+                if (adapterProvider && adapterProvider->isAvailable())
+                    adapterManifests.append(adapterProvider->adapterManifests());
+            }
+        }
         const Utils::Result<QList<Data::SemanticActionRuntimeState>> actions
             = buildSemanticActionRuntimeStates(
-                context.controllerId, project, *evidence, *bindingCandidates, gates);
+                context.controllerId,
+                project,
+                *evidence,
+                *bindingCandidates,
+                adapterManifests,
+                gates);
         if (!actions) {
             rejectContext(
                 context, ContextIssue::SemanticBindingResolutionFailed, actions.error());
@@ -2478,6 +2530,10 @@ Data::SemanticRuntimeContext SemanticRuntimeExecutor::buildContext(
         context.actionDefinitionsDigest = {};
         context.actionStates.clear();
     }
+#ifdef WITH_TESTS
+    if (m_testOnlyContextTransform)
+        m_testOnlyContextTransform(context);
+#endif
     context.complete = true;
     context.contextHash = semanticRuntimeContextHash(context);
 
@@ -2551,6 +2607,31 @@ void SemanticRuntimeExecutor::publishContexts()
 
 void SemanticRuntimeExecutor::trackProvider(Core::Provider *provider)
 {
+    if (auto *adapterProvider = qobject_cast<Core::DeviceAdapterProvider *>(provider)) {
+        if (m_adapterProviderConnections.contains(adapterProvider))
+            return;
+
+        QList<QMetaObject::Connection> connections;
+        connections.append(
+            connect(adapterProvider, &Core::Provider::availabilityChanged, this, [this] {
+                publishContexts();
+            }));
+        connections.append(connect(
+            adapterProvider,
+            &Core::DeviceAdapterProvider::adapterManifestsChanged,
+            this,
+            [this] { publishContexts(); }));
+        connections.append(
+            connect(adapterProvider, &QObject::destroyed, this, [this, adapterProvider] {
+                m_adapterProviderConnections.remove(adapterProvider);
+                publishContexts();
+            }));
+        m_adapterProviderConnections.insert(adapterProvider, connections);
+        // Provider has one immutable ProviderKind, so a DeviceAdapterProvider
+        // cannot also be a ControllerConnectionProvider.
+        return;
+    }
+
     auto *connectionProvider = qobject_cast<Core::ControllerConnectionProvider *>(provider);
     if (!connectionProvider || m_providerConnections.contains(connectionProvider))
         return;
@@ -2630,6 +2711,14 @@ void SemanticRuntimeExecutor::trackProvider(Core::Provider *provider)
 
 void SemanticRuntimeExecutor::untrackProvider(Core::Provider *provider)
 {
+    if (auto *adapterProvider = qobject_cast<Core::DeviceAdapterProvider *>(provider)) {
+        const QList<QMetaObject::Connection> connections
+            = m_adapterProviderConnections.take(adapterProvider);
+        for (const QMetaObject::Connection &connection : connections)
+            disconnect(connection);
+        return;
+    }
+
     auto *connectionProvider = qobject_cast<Core::ControllerConnectionProvider *>(provider);
     if (!connectionProvider)
         return;

@@ -934,7 +934,8 @@ EngineeringConversionResult convertEngineeringToRaw(
 ManualControlContractValidation validateManualControlEnvelope(
     const Data::ManualControlEnvelope &envelope,
     const QList<Data::SemanticSignalDefinition> &signalDefinitions,
-    const QList<Data::DeviceControlAction> &actionDefinitions)
+    const QList<Data::DeviceControlAction> &actionDefinitions,
+    ManualControlFallbackContract fallbackContract)
 {
     QSet<QString> signalIds;
     QSet<QString> actionIds;
@@ -1147,6 +1148,21 @@ ManualControlContractValidation validateManualControlEnvelope(
                     ManualControlContractError::InvalidParameter,
                     QStringLiteral("Required action parameter lacks a manual envelope."));
             }
+        }
+
+        if (fallbackContract == ManualControlFallbackContract::SignedControllerRecovery) {
+            if (action.holdToRun || !action.releaseActionId.value.isEmpty()
+                || !action.timeoutActionId.value.isEmpty()
+                || !action.failureActionId.value.isEmpty()
+                || !definition->allowedReleaseActionIds.isEmpty()
+                || !definition->allowedTimeoutActionIds.isEmpty()
+                || !definition->allowedFailureActionIds.isEmpty()) {
+                return manualRejection(
+                    ManualControlContractError::FallbackNotAllowed,
+                    QStringLiteral(
+                        "Signed controller recovery cannot depend on semantic fallback actions."));
+            }
+            continue;
         }
 
         const struct

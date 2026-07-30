@@ -217,30 +217,77 @@ bool parameterMatchesRuntimeDefinition(
     }
 
     switch (signedParameter.primitive) {
-    case EcfgResourcePrimitive::Bool:
-        return runtimeParameter.minimum.metaType().id() == QMetaType::Bool
-               && runtimeParameter.maximum.metaType().id() == QMetaType::Bool
-               && runtimeParameter.minimum.toBool() == bool(signedParameter.minimum)
-               && runtimeParameter.maximum.toBool() == bool(signedParameter.maximum);
+    case EcfgResourcePrimitive::Bool: {
+        if (runtimeParameter.minimum.metaType().id() != QMetaType::Bool
+            || runtimeParameter.maximum.metaType().id() != QMetaType::Bool) {
+            return false;
+        }
+        const int minimum = runtimeParameter.minimum.toBool() ? 1 : 0;
+        const int maximum = runtimeParameter.maximum.toBool() ? 1 : 0;
+        return minimum <= maximum && minimum >= signedParameter.minimum
+               && maximum <= signedParameter.maximum;
+    }
     case EcfgResourcePrimitive::U8:
     case EcfgResourcePrimitive::U16:
     case EcfgResourcePrimitive::U32:
-    case EcfgResourcePrimitive::U64:
-        return signedParameter.minimum >= 0
-               && runtimeParameter.minimum.metaType().id() == QMetaType::ULongLong
-               && runtimeParameter.maximum.metaType().id() == QMetaType::ULongLong
-               && runtimeParameter.minimum.toULongLong() == quint64(signedParameter.minimum)
-               && runtimeParameter.maximum.toULongLong() == quint64(signedParameter.maximum);
+    case EcfgResourcePrimitive::U64: {
+        if (signedParameter.minimum < 0
+            || runtimeParameter.minimum.metaType().id() != QMetaType::ULongLong
+            || runtimeParameter.maximum.metaType().id() != QMetaType::ULongLong) {
+            return false;
+        }
+        const quint64 minimum = runtimeParameter.minimum.toULongLong();
+        const quint64 maximum = runtimeParameter.maximum.toULongLong();
+        return minimum <= maximum && minimum >= quint64(signedParameter.minimum)
+               && maximum <= quint64(signedParameter.maximum);
+    }
     case EcfgResourcePrimitive::S8:
     case EcfgResourcePrimitive::S16:
     case EcfgResourcePrimitive::S32:
-    case EcfgResourcePrimitive::S64:
-        return runtimeParameter.minimum.metaType().id() == QMetaType::LongLong
-               && runtimeParameter.maximum.metaType().id() == QMetaType::LongLong
-               && runtimeParameter.minimum.toLongLong() == signedParameter.minimum
-               && runtimeParameter.maximum.toLongLong() == signedParameter.maximum;
+    case EcfgResourcePrimitive::S64: {
+        if (runtimeParameter.minimum.metaType().id() != QMetaType::LongLong
+            || runtimeParameter.maximum.metaType().id() != QMetaType::LongLong) {
+            return false;
+        }
+        const qint64 minimum = runtimeParameter.minimum.toLongLong();
+        const qint64 maximum = runtimeParameter.maximum.toLongLong();
+        return minimum <= maximum && minimum >= signedParameter.minimum
+               && maximum <= signedParameter.maximum;
+    }
     case EcfgResourcePrimitive::Q32_32:
     case EcfgResourcePrimitive::RawBits:
+        return false;
+    }
+    return false;
+}
+
+bool runtimeParameterAcceptsValue(
+    const Data::SemanticActionParameterRuntimeDefinition &parameter,
+    const QVariant &value)
+{
+    switch (parameter.primitiveType) {
+    case Data::RuntimeResourcePrimitiveType::Boolean:
+        return value.metaType().id() == QMetaType::Bool
+               && parameter.minimum.metaType().id() == QMetaType::Bool
+               && parameter.maximum.metaType().id() == QMetaType::Bool
+               && int(value.toBool()) >= int(parameter.minimum.toBool())
+               && int(value.toBool()) <= int(parameter.maximum.toBool());
+    case Data::RuntimeResourcePrimitiveType::UnsignedInteger:
+        return value.metaType().id() == QMetaType::ULongLong
+               && parameter.minimum.metaType().id() == QMetaType::ULongLong
+               && parameter.maximum.metaType().id() == QMetaType::ULongLong
+               && value.toULongLong() >= parameter.minimum.toULongLong()
+               && value.toULongLong() <= parameter.maximum.toULongLong();
+    case Data::RuntimeResourcePrimitiveType::SignedInteger:
+        return value.metaType().id() == QMetaType::LongLong
+               && parameter.minimum.metaType().id() == QMetaType::LongLong
+               && parameter.maximum.metaType().id() == QMetaType::LongLong
+               && value.toLongLong() >= parameter.minimum.toLongLong()
+               && value.toLongLong() <= parameter.maximum.toLongLong();
+    case Data::RuntimeResourcePrimitiveType::FloatingPoint:
+    case Data::RuntimeResourcePrimitiveType::ByteArray:
+    case Data::RuntimeResourcePrimitiveType::Text:
+    case Data::RuntimeResourcePrimitiveType::Opaque:
         return false;
     }
     return false;
@@ -471,10 +518,13 @@ Utils::Result<> SemanticActionPlanBuilder::selectAction()
         strictMaximumTtl = qMin(strictMaximumTtl, group.maximumTtlCycles);
         m_groups.insert(group.consistencyGroupId, &group);
     }
-    if (!m_request.ttlCycles || m_request.ttlCycles > strictMaximumTtl
-        || m_runtimeAction->maximumTtlCycles != strictMaximumTtl) {
+    if (!m_runtimeAction->maximumTtlCycles
+        || m_runtimeAction->maximumTtlCycles > strictMaximumTtl
+        || !m_request.ttlCycles
+        || m_request.ttlCycles > m_runtimeAction->maximumTtlCycles) {
         return planError(
-            QString::fromLatin1("the requested TTL differs from signed output-group limits"));
+            QString::fromLatin1(
+                "the requested TTL exceeds signed or project output-group limits"));
     }
 
     m_action = signedAction;
@@ -504,7 +554,8 @@ Utils::Result<> SemanticActionPlanBuilder::validateParameters()
         if (parameter.parameterId.isEmpty() || signedParameterIds.contains(parameter.parameterId)
             || value == m_request.parameters.cend() || runtimeParameter == runtimeParameters.cend()
             || !parameterValueIsValid(parameter, *value)
-            || !parameterMatchesRuntimeDefinition(parameter, **runtimeParameter)) {
+            || !parameterMatchesRuntimeDefinition(parameter, **runtimeParameter)
+            || !runtimeParameterAcceptsValue(**runtimeParameter, *value)) {
             return planError(
                 QString::fromLatin1("an action parameter differs from its signed definition"));
         }

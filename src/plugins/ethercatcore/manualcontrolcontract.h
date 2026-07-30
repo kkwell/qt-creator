@@ -114,13 +114,20 @@ struct ETHERCATCORE_EXPORT ManualControlContractValidation
         const ManualControlContractValidation &, const ManualControlContractValidation &) = default;
 };
 
+enum class ManualControlFallbackContract {
+    ExactSemanticActions,
+    SignedControllerRecovery,
+};
+
 // This validates the project-owned envelope against one exact adapter definition. It never
 // authorizes execution: callers must additionally require envelope.enabled and the later signed
 // runtime binding/approval gates.
 ETHERCATCORE_EXPORT ManualControlContractValidation validateManualControlEnvelope(
     const Data::ManualControlEnvelope &envelope,
     const QList<Data::SemanticSignalDefinition> &signalDefinitions,
-    const QList<Data::DeviceControlAction> &actionDefinitions);
+    const QList<Data::DeviceControlAction> &actionDefinitions,
+    ManualControlFallbackContract fallbackContract
+    = ManualControlFallbackContract::ExactSemanticActions);
 
 } // namespace EtherCAT::Core
 
@@ -130,3 +137,4 @@ Q_DECLARE_METATYPE(EtherCAT::Core::ExactRationalResult)
 Q_DECLARE_METATYPE(EtherCAT::Core::EngineeringConversionResult)
 Q_DECLARE_METATYPE(EtherCAT::Core::ManualControlContractError)
 Q_DECLARE_METATYPE(EtherCAT::Core::ManualControlContractValidation)
+Q_DECLARE_METATYPE(EtherCAT::Core::ManualControlFallbackContract)

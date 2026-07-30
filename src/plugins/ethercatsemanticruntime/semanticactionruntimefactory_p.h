@@ -32,6 +32,7 @@ Utils::Result<QList<Data::SemanticActionRuntimeState>> buildSemanticActionRuntim
     const Data::ProjectSnapshot &project,
     const VerifiedRuntimePackageEvidence &evidence,
     const ReadOnlySemanticBindingCandidates &candidates,
+    const QList<Data::DeviceAdapterManifest> &adapterManifests,
     const SemanticActionRuntimeGates &gates);
 
 } // namespace EtherCAT::SemanticRuntime::Internal

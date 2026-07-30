@@ -47,6 +47,7 @@ private slots:
     void testSemanticOperationJournal();
     void testSemanticActionPlan();
     void testSemanticActionPlanFailsClosed();
+    void testExecutorRejectsUnauthorizedManualActionBeforeApply();
     void testExecutorExecutesApi038Xb6Action();
     void testExecutorFailsClosedBeforeApply_data();
     void testExecutorFailsClosedBeforeApply();
