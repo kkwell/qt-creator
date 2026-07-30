@@ -10,11 +10,13 @@
 #include <QSet>
 
 #include <memory>
+#include <optional>
 
 namespace EtherCAT::SemanticRuntime::Internal {
 
 class RuntimePackageEvidenceRepository;
 class VerifiedRuntimePackageEvidence;
+class SemanticRuntimeExecutorExecution;
 
 enum class SemanticRuntimeContextIssue {
     ControllerProviderUnavailable,
@@ -53,8 +55,19 @@ public:
         Core::ProviderRegistry *providerRegistry,
         QObject *parent = nullptr,
         std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository = {});
+    ~SemanticRuntimeExecutor() final;
 
     QList<Data::SemanticRuntimeContext> contexts() const final;
+    Data::SemanticOperationRecord submit(
+        const Data::SemanticOperationRequest &request,
+        const Data::SemanticRuntimeActor &actor) final;
+    Data::SemanticOperationRecord approve(
+        const Data::SemanticOperationApprovalRequest &approval,
+        const Data::SemanticRuntimeActor &actor) final;
+    std::optional<Data::SemanticOperationRecord> operation(
+        const Data::SemanticOperationId &operationId) const final;
+    QList<Data::SemanticRuntimeAuditEvent> audit(
+        const QString &controllerId, quint64 afterSequence = 0) const final;
 
 private:
     QList<Data::SemanticRuntimeContext> buildContexts() const;
@@ -76,6 +89,9 @@ private:
     mutable QHash<QByteArray, std::shared_ptr<const VerifiedRuntimePackageEvidence>>
         m_evidenceCache;
     QList<Data::SemanticRuntimeContext> m_contexts;
+    std::unique_ptr<SemanticRuntimeExecutorExecution> m_execution;
+
+    friend class SemanticRuntimeExecutorExecution;
 };
 
 } // namespace EtherCAT::SemanticRuntime::Internal

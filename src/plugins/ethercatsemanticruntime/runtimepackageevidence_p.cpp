@@ -28,6 +28,31 @@ bool sameDigest(QByteArrayView left, QByteArrayView right)
     return Data::runtimeSemanticMappingDigestsEqual(left, right);
 }
 
+bool validOutputPolicies(const QList<EcfgOutputGroupPolicy> &policies)
+{
+    quint32 previousGroupId = 0;
+    for (const EcfgOutputGroupPolicy &policy : policies) {
+        if (!policy.consistencyGroupId || policy.consistencyGroupId <= previousGroupId
+            || (policy.recoveryPolicy != EcfgOutputRecoveryPolicy::ReturnTask
+                && policy.recoveryPolicy != EcfgOutputRecoveryPolicy::HoldSafe)
+            || !policy.maximumTtlCycles || policy.maximumTtlCycles > 65535
+            || !policy.resourceCount || policy.resourceCount > 64
+            || quint32(policy.resourceIds.size()) != policy.resourceCount
+            || !validDigest(policy.groupResourceRecordsSha256)) {
+            return false;
+        }
+
+        quint64 previousResourceId = 0;
+        for (quint64 resourceId : policy.resourceIds) {
+            if (!resourceId || resourceId <= previousResourceId)
+                return false;
+            previousResourceId = resourceId;
+        }
+        previousGroupId = policy.consistencyGroupId;
+    }
+    return true;
+}
+
 QByteArray opaqueBigEndian(quint64 value)
 {
     QByteArray bytes(qsizetype(sizeof(value)), '\0');
@@ -93,7 +118,9 @@ Utils::Result<> validateEvidence(const VerifiedRuntimePackageEvidence &evidence)
         if (!definitions.isValid()
             || definitions.semanticBindingArtifactSha256 != artifact.artifactSha256
             || definitions.definitionCount == 0
-            || definitions.actionCount != quint32(artifact.actions.size())) {
+            || definitions.actionCount != quint32(artifact.actions.size())
+            || evidence.outputPolicies().isEmpty()
+            || !validOutputPolicies(evidence.outputPolicies())) {
             return evidenceError(
                 QString::fromLatin1(
                     "the verified action definitions differ from the semantic artifact"));
@@ -211,11 +238,13 @@ VerifiedRuntimePackageEvidence::VerifiedRuntimePackageEvidence(
     Data::RuntimeSemanticMappingProof proof,
     QByteArray projectConfigurationSha256,
     std::optional<VerifiedSemanticActionDefinitions> actionDefinitions,
+    QList<EcfgOutputGroupPolicy> outputPolicies,
     quint32 cyclePeriodNs)
     : m_semanticBindingArtifact(std::move(artifact))
     , m_semanticMappingProof(std::move(proof))
     , m_projectConfigurationSha256(std::move(projectConfigurationSha256))
     , m_actionDefinitions(std::move(actionDefinitions))
+    , m_outputPolicies(std::move(outputPolicies))
     , m_cyclePeriodNs(cyclePeriodNs)
 {}
 
@@ -240,6 +269,11 @@ const std::optional<VerifiedSemanticActionDefinitions> &
 VerifiedRuntimePackageEvidence::actionDefinitions() const
 {
     return m_actionDefinitions;
+}
+
+const QList<EcfgOutputGroupPolicy> &VerifiedRuntimePackageEvidence::outputPolicies() const
+{
+    return m_outputPolicies;
 }
 
 quint32 VerifiedRuntimePackageEvidence::cyclePeriodNs() const
@@ -297,6 +331,7 @@ Utils::Result<VerifiedRuntimePackageEvidence> verifyRuntimePackageEvidence(
         std::move(proof),
         package.manifest.compiledProjectSource.sha256,
         std::move(actionDefinitions),
+        package.configuration.outputPolicies,
         package.configuration.cyclePeriodNs,
     };
     const Utils::Result<> resultValidation = validateEvidence(result);
