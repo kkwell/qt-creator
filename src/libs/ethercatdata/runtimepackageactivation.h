@@ -91,11 +91,13 @@ public:
     RuntimePackageActivationProjectCapture(
         ProjectSnapshot snapshot,
         QByteArray serializedProject,
+        quint64 documentRevisionNumber,
         RuntimePackageActivationDocumentRevisionToken documentRevision,
         RuntimePackageActivationOriginalBindingToken originalBinding);
 
     const ProjectSnapshot &snapshot() const;
     const QByteArray &serializedProject() const;
+    quint64 documentRevisionNumber() const;
     const RuntimePackageActivationDocumentRevisionToken &documentRevision() const;
     const RuntimePackageActivationOriginalBindingToken &originalBinding() const;
     bool isValid() const;
@@ -107,6 +109,7 @@ public:
 private:
     ProjectSnapshot m_snapshot;
     QByteArray m_serializedProject;
+    quint64 m_documentRevisionNumber = 0;
     RuntimePackageActivationDocumentRevisionToken m_documentRevision;
     RuntimePackageActivationOriginalBindingToken m_originalBinding;
 };

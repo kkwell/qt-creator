@@ -23,6 +23,8 @@ QtcLibrary {
         "projectsnapshot.h",
         "runtimepackageactivation.cpp",
         "runtimepackageactivation.h",
+        "runtimepackagecompiler.cpp",
+        "runtimepackagecompiler.h",
         "runtimeoutputtransaction.h",
         "runtimeresource.h",
         "scansnapshot.h",

@@ -5,6 +5,7 @@
 #include "ethercatcoretr.h"
 #include "manualcontrolcontract.h"
 #include "providerregistry.h"
+#include "runtimepackagecompilerprovider.h"
 #include "selectionservice.h"
 #include "stateservice.h"
 
@@ -20,6 +21,7 @@
 #include <ethercatdata/controllerconnection.h>
 #include <ethercatdata/engineeringvalue.h>
 #include <ethercatdata/manualcontrol.h>
+#include <ethercatdata/runtimepackagecompiler.h>
 #include <ethercatdata/runtimeoutputtransaction.h>
 #include <ethercatdata/runtimeresource.h>
 #include <ethercatdata/semanticmappingattestation.h>
@@ -78,6 +80,10 @@ void EtherCATCorePlugin::initialize()
     qRegisterMetaType<Data::EngineeringValue>();
     qRegisterMetaType<Data::EngineeringTransform>();
     qRegisterMetaType<Data::ManualControlEnvelope>();
+    qRegisterMetaType<Data::RuntimePackageCompilerJobResult>();
+    qRegisterMetaType<Data::RuntimePackageCompilerResultStatus>();
+    qRegisterMetaType<RuntimePackageCompilerJobState>();
+    qRegisterMetaType<RuntimePackageCompilerJobCompletionError>();
     qRegisterMetaType<EngineeringContractValidation>();
     qRegisterMetaType<EngineeringConversionResult>();
     qRegisterMetaType<ManualControlContractValidation>();

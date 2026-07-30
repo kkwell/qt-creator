@@ -24,6 +24,8 @@ QtcPlugin {
         "providers.cpp",
         "providers.h",
         "runtimepackageactivationservice.h",
+        "runtimepackagecompilerprovider.cpp",
+        "runtimepackagecompilerprovider.h",
         "selectionservice.cpp",
         "selectionservice.h",
         "semanticruntimeservice.cpp",

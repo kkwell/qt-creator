@@ -2297,6 +2297,7 @@ void EtherCATProjectTests::testRuntimePackageActivationProjectCompareAndSet()
         = service->captureRuntimePackageActivationProject(projectId);
     QVERIFY_RESULT(initialCapture);
     QVERIFY(initialCapture->isValid());
+    QVERIFY(initialCapture->documentRevisionNumber() != 0);
     QCOMPARE(initialCapture->snapshot(), project->snapshot());
     QCOMPARE(initialCapture->serializedProject(), project->document()->contents());
     QCOMPARE(
@@ -2342,6 +2343,8 @@ void EtherCATProjectTests::testRuntimePackageActivationProjectCompareAndSet()
             = service->captureRuntimePackageActivationProject(projectId);
         QVERIFY_RESULT(afterUndo);
         QVERIFY(afterUndo->documentRevision() != capture->documentRevision());
+        QVERIFY(
+            afterUndo->documentRevisionNumber() > capture->documentRevisionNumber());
     };
 
     verifyStaleAfterMutation(
@@ -2405,6 +2408,8 @@ void EtherCATProjectTests::testRuntimePackageActivationProjectCompareAndSet()
     const Utils::Result<Data::RuntimePackageActivationProjectCapture> afterCommit
         = service->captureRuntimePackageActivationProject(projectId);
     QVERIFY_RESULT(afterCommit);
+    QVERIFY(
+        afterCommit->documentRevisionNumber() > beforeCommit->documentRevisionNumber());
     QCOMPARE(
         afterCommit->documentRevision(),
         committed->commit()->resultingDocumentRevision());
@@ -2436,6 +2441,8 @@ void EtherCATProjectTests::testRuntimePackageActivationProjectCompareAndSet()
     const Utils::Result<Data::RuntimePackageActivationProjectCapture> afterCommitUndo
         = service->captureRuntimePackageActivationProject(projectId);
     QVERIFY_RESULT(afterCommitUndo);
+    QVERIFY(
+        afterCommitUndo->documentRevisionNumber() > afterCommit->documentRevisionNumber());
     QCOMPARE(afterCommitUndo->snapshot(), beforeCommit->snapshot());
     QCOMPARE(afterCommitUndo->serializedProject(), beforeCommit->serializedProject());
     QCOMPARE(afterCommitUndo->originalBinding(), beforeCommit->originalBinding());

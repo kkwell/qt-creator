@@ -10,6 +10,7 @@
 #include "providerregistry.h"
 #include "providers.h"
 #include "runtimepackageactivationservice.h"
+#include "runtimepackagecompilerprovider.h"
 #include "selectionservice.h"
 #include "semanticruntimeservice.h"
 #include "stateservice.h"
@@ -27,6 +28,7 @@
 #include <ethercatdata/offlineconfiguration.h>
 #include <ethercatdata/projectsnapshot.h>
 #include <ethercatdata/runtimepackageactivation.h>
+#include <ethercatdata/runtimepackagecompiler.h>
 #include <ethercatdata/runtimeoutputtransaction.h>
 #include <ethercatdata/runtimeresource.h>
 #include <ethercatdata/semanticmappingattestation.h>
@@ -34,14 +36,19 @@
 
 #include <QCryptographicHash>
 #include <QHash>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QPointer>
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QStringList>
 #include <QTest>
+#include <QTimer>
 #include <QWidget>
 
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <limits>
 #include <type_traits>
 
@@ -381,6 +388,1065 @@ private:
         Data::RuntimePackageActivationRecord>
         m_records;
     quint64 m_sequence = 0;
+};
+
+struct RuntimePackageCompilerFixture
+{
+    Data::NodeId projectId = Data::NodeId::fromString("11111111-1111-4111-8111-111111111111");
+    Data::NodeId masterId = Data::NodeId::fromString("22222222-2222-4222-8222-222222222222");
+    Data::NodeId slaveId = Data::NodeId::fromString("33333333-3333-4333-8333-333333333333");
+    QByteArray esiBytes{"<EtherCATInfo/>"};
+    QByteArray adapterBytes{"format: ethercat-device-adapter-v1\n"};
+    QByteArray topologyJson;
+    QByteArray targetJson;
+    QByteArray adapterBundleJson;
+    QByteArray controllerFeaturesJson{"{\"format\":\"controller-features-v1\"}\n"};
+    QByteArray publicKey = QByteArray(32, '\x31');
+    QByteArray signature = QByteArray(64, '\x32');
+    Data::RuntimePackageCompilerCompileRequest request;
+
+    static Data::RuntimePackageCompilerSha256 sha256(QByteArrayView bytes)
+    {
+        return Data::RuntimePackageCompilerSha256{
+            QCryptographicHash::hash(bytes, QCryptographicHash::Sha256)};
+    }
+
+    static Data::RuntimePackageCompilerCanonicalJson canonical(QByteArray exactBytes)
+    {
+        return Data::RuntimePackageCompilerCanonicalJson::fromExactBytes(std::move(exactBytes));
+    }
+
+    static Data::RuntimePackageCompilerSourceArtifact artifact(
+        Data::RuntimePackageCompilerSourceArtifactKind kind,
+        const QString &relativePath,
+        const QByteArray &bytes)
+    {
+        return {kind, relativePath, bytes, sha256(bytes)};
+    }
+
+    RuntimePackageCompilerFixture()
+    {
+        const auto adapterFileSha256 = sha256(adapterBytes);
+        adapterBundleJson
+            = QByteArray("{\"bundle_id\":\"embedlabs.fixture.adapters\","
+                         "\"entries\":[{\"adapter_id\":\"solidot.xb6.fixture\","
+                         "\"adapter_version\":\"1.0.0\",\"bytes\":")
+              + QByteArray::number(adapterBytes.size())
+              + QByteArray(",\"canonical_sha256\":\"")
+              + adapterFileSha256.value().toHex()
+              + QByteArray("\",\"file_sha256\":\"")
+              + adapterFileSha256.value().toHex()
+              + QByteArray("\",\"relative_path\":\"adapter_bundle/xb6.ecdev.yaml\"}],"
+                           "\"format\":\"ethercat-lower-adapter-bundle-v1\","
+                           "\"format_version\":1}\n");
+        const auto adapterBundleSha256 = sha256(adapterBundleJson);
+        const auto capabilityDescriptorSha256 = sha256("capability");
+        const auto controllerFeaturesSha256 = sha256(controllerFeaturesJson);
+        const auto signingKeyIdSha256 = sha256(publicKey);
+        targetJson
+            = QByteArray("{\"adapter_bundle_sha256\":\"")
+              + adapterBundleSha256.value().toHex()
+              + QByteArray("\",\"capability\":{\"fixture\":true},"
+                           "\"capability_descriptor_sha256\":\"")
+              + capabilityDescriptorSha256.value().toHex()
+              + QByteArray("\",\"controller_features_sha256\":\"")
+              + controllerFeaturesSha256.value().toHex()
+              + QByteArray("\",\"cpu1_abi_version\":2,\"cycle_periods_ns\":[125000],"
+                           "\"format\":\"ethercat-target-capability-profile-v1\","
+                           "\"format_version\":1,\"fpga_abi_version\":1,"
+                           "\"limits\":{\"max_config_package_bytes\":1048576,"
+                           "\"max_cyclic_frames\":8,\"max_pdo_input_bytes\":4096,"
+                           "\"max_pdo_output_bytes\":4096,"
+                           "\"max_runtime_package_bytes\":1048576,"
+                           "\"max_sdo_startup_ops\":1024,\"max_slaves\":64},"
+                           "\"manifest_versions\":[2],\"policy_revision\":1,"
+                           "\"profile_id\":\"embedlabs.zynq.fixture\","
+                           "\"signing_key_id\":\"")
+              + signingKeyIdSha256.value().toHex() + QByteArray("\"}\n");
+
+        Data::ProjectSnapshot project;
+        project.id = projectId;
+        project.name = QStringLiteral("Compiler contract fixture");
+        project.formatVersion = 7;
+        project.valid = true;
+        project.nodes = {
+            {projectId, {}, Data::ProjectNodeKind::Project, QStringLiteral("Project")},
+            {masterId, projectId, Data::ProjectNodeKind::Master, QStringLiteral("Master")},
+            {slaveId, masterId, Data::ProjectNodeKind::Slave, QStringLiteral("Slave")},
+        };
+        project.masterConfiguration.timingMode = Data::MasterTimingMode::FreeRun;
+        project.masterConfiguration.cyclePeriodNs = 125000;
+
+        Data::OfflineSlaveConfiguration slave;
+        slave.id = slaveId;
+        slave.masterId = masterId;
+        slave.position = 0;
+        slave.identity = {0x00884443, 0x000000b6, 0x00000001};
+        slave.name = QStringLiteral("XB6 fixture");
+        slave.stationAddress = 0x1001;
+        slave.esiSha256 = sha256(esiBytes).value();
+        slave.adapterSelection.adapterId = {"solidot.xb6.fixture"};
+        slave.adapterSelection.adapterVersion = QStringLiteral("1.0.0");
+        slave.adapterSelection.adapterContentSha256 = adapterFileSha256.value();
+        slave.adapterSelection.processDataProfileId = QStringLiteral("do16");
+        slave.dc.enabled = false;
+        project.slaves = {slave};
+
+        const Data::RuntimePackageActivationProjectCapture capture{
+            project,
+            QByteArray("{\"format\":\"embed-labs-ethercat-project\"}\n"),
+            7,
+            Data::RuntimePackageActivationDocumentRevisionToken{"revision-7"},
+            Data::RuntimePackageActivationOriginalBindingToken{"binding-empty"},
+        };
+
+        Data::RuntimePackageCompilerFreshTopologyEvidence topology;
+        topology.scope = {projectId, masterId};
+        topology.sessionGeneration = 7;
+        topology.sessionId = 9;
+        topology.evidenceId = QStringLiteral("discover:fixture:sequence-57");
+        topology.captureBootId = 0x4f536f408aafbc51;
+        topology.captureSequence = 57;
+        topology.capturedAtNs = 1'785'542'400'000'000'000ULL;
+        topology.expiresAtNs = topology.capturedAtNs + 3'600'000'000'000ULL;
+        topology.cyclePeriodNs = 125000;
+        topology.linkSpeedMbps = 100;
+        topology.slaves = {
+            {slaveId,
+             slave.position,
+             slave.stationAddress,
+             slave.alias,
+             slave.identity,
+             slave.serialNumber,
+             slave.adapterSelection.moduleAssignments},
+        };
+        topologyJson
+            = QByteArray("{\"capture_boot_id\":\"0x4f536f408aafbc51\","
+                         "\"capture_sequence\":57,\"captured_at_ns\":")
+              + QByteArray::number(topology.capturedAtNs)
+              + QByteArray(",\"evidence_id\":\"discover:fixture:sequence-57\","
+                           "\"expires_at_ns\":")
+              + QByteArray::number(topology.expiresAtNs)
+              + QByteArray(",\"format\":\"ethercat-discover-topology-evidence-v1\","
+                           "\"format_version\":1,\"matched_scan\":{"
+                           "\"cycle_period_ns\":125000,"
+                           "\"format\":\"ethercat-esi-match-v1\","
+                           "\"link_speed_mbps\":100,\"slaves\":[{\"alias\":0,"
+                           "\"identity\":{\"product_code\":182,\"revision\":1,"
+                           "\"vendor_id\":8930371},\"modules\":[],\"position\":0,"
+                           "\"serial\":0,\"station_address\":4097}]}}\n");
+        topology.canonicalEvidence = canonical(topologyJson);
+
+        Data::RuntimePackageCompilerSourceArtifacts sources;
+        sources.topologyEvidence = artifact(
+            Data::RuntimePackageCompilerSourceArtifactKind::TopologyEvidence,
+            QStringLiteral("topology-evidence-v1.json"),
+            topologyJson);
+        sources.targetProfile = artifact(
+            Data::RuntimePackageCompilerSourceArtifactKind::TargetProfile,
+            QStringLiteral("target-capability-profile-v1.json"),
+            targetJson);
+        sources.targetProfileSignature = artifact(
+            Data::RuntimePackageCompilerSourceArtifactKind::TargetProfileSignature,
+            QStringLiteral("target-capability-profile-v1.sig"),
+            signature);
+        sources.productionPublicKey = artifact(
+            Data::RuntimePackageCompilerSourceArtifactKind::ProductionPublicKey,
+            QStringLiteral("production.pub"),
+            publicKey);
+        sources.adapterBundle = artifact(
+            Data::RuntimePackageCompilerSourceArtifactKind::AdapterBundle,
+            QStringLiteral("adapter-bundle-v1.json"),
+            adapterBundleJson);
+        sources.policyTemplate = artifact(
+            Data::RuntimePackageCompilerSourceArtifactKind::PolicyTemplate,
+            QStringLiteral("policy-template.json"),
+            QByteArray("{\"format\":\"policy-template-v1\"}\n"));
+        sources.controllerFeatures = artifact(
+            Data::RuntimePackageCompilerSourceArtifactKind::ControllerFeatures,
+            QStringLiteral("controller-features-v1.json"),
+            controllerFeaturesJson);
+        sources.runtimeSource = artifact(
+            Data::RuntimePackageCompilerSourceArtifactKind::RuntimeSource,
+            QStringLiteral("runtime.st"),
+            QByteArray("PROGRAM PLC_PRG\nEND_PROGRAM\n"));
+
+        Data::RuntimePackageCompilerDeviceSourceEvidence deviceSource;
+        deviceSource.projectDeviceId = slaveId;
+        deviceSource.originalEsi = artifact(
+            Data::RuntimePackageCompilerSourceArtifactKind::OriginalEsi,
+            QStringLiteral("esi/xb6.xml"),
+            esiBytes);
+        deviceSource.adapterSourceFile = artifact(
+            Data::RuntimePackageCompilerSourceArtifactKind::AdapterSourceFile,
+            QStringLiteral("adapter_bundle/xb6.ecdev.yaml"),
+            adapterBytes);
+        deviceSource.adapterId = slave.adapterSelection.adapterId.value;
+        deviceSource.adapterVersion = slave.adapterSelection.adapterVersion;
+        deviceSource.adapterCanonicalSha256 = Data::RuntimePackageCompilerSha256(
+            slave.adapterSelection.adapterContentSha256);
+        deviceSource.pdoProfileId = slave.adapterSelection.processDataProfileId;
+        deviceSource.explicitNoDc = true;
+
+        Data::RuntimePackageCompilerSignedTargetProfileEvidence target;
+        target.profileId = QStringLiteral("embedlabs.zynq.fixture");
+        target.policyRevision = 1;
+        target.canonicalProfile = canonical(targetJson);
+        target.capabilityDescriptorSha256 = capabilityDescriptorSha256;
+        target.controllerFeaturesSha256 = controllerFeaturesSha256;
+        target.adapterBundleSha256 = adapterBundleSha256;
+        target.cpu1AbiVersion = 2;
+        target.fpgaAbiVersion = 1;
+        target.signature = signature;
+        target.signingKeyIdSha256 = signingKeyIdSha256;
+        target.productionSigned = true;
+
+        request.operationId = Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000001")};
+        request.intentId = QStringLiteral("embedlabs:compile-intent:test");
+        request.configurationId = 4201;
+        request.buildTimestampNs = topology.capturedAtNs;
+        request.compileTimeNs = topology.capturedAtNs + 1'000'000'000ULL;
+        request.contractIdentity = {
+            QStringLiteral("ethercat-ide-project-compiler-contract-v1"),
+            1,
+            sha256("api042-schema-bundle"),
+        };
+        request.projectSnapshotEvidence
+            = Data::RuntimePackageCompilerProjectSnapshotEvidence{capture};
+        request.topologyEvidence = topology;
+        request.sourceArtifacts = sources;
+        request.deviceSourceEvidence = {deviceSource};
+        request.targetProfile = target;
+    }
+};
+
+static Data::RuntimePackageCompilerDiagnostic compilerDiagnostic(
+    Data::RuntimePackageCompilerDiagnosticCategory category,
+    const QString &code,
+    const QString &stage = QStringLiteral("input"))
+{
+    const QByteArray canonicalDiagnostic
+        = QStringLiteral("{\"code\":\"%1\",\"format\":\"ethercat-ide-compiler-diagnostic-v1\","
+                         "\"message\":\"Compiler contract fixture diagnostic.\",\"path\":\"$\","
+                         "\"retryable\":false,\"severity\":\"error\",\"stage\":\"%2\"}\n")
+              .arg(code, stage)
+              .toLatin1();
+    return {
+        category,
+        Data::RuntimePackageCompilerDiagnosticSeverity::Error,
+        stage,
+        code,
+        QStringLiteral("$"),
+        QStringLiteral("Compiler contract fixture diagnostic."),
+        false,
+        RuntimePackageCompilerFixture::canonical(canonicalDiagnostic),
+    };
+}
+
+static Data::RuntimePackageCompilerResultEnvelope compilerEnvelope(
+    Data::RuntimePackageCompilerCommand command,
+    Data::RuntimePackageCompilerResultStatus status,
+    const QString &backendStatus,
+    const Data::RuntimePackageCompilerOperationId &operationId,
+    quint64 configurationId,
+    const Data::RuntimePackageCompilerSha256 &requestSha256,
+    QList<Data::RuntimePackageCompilerDiagnostic> diagnostics = {},
+    std::optional<Data::RuntimePackageCompilerCanonicalJson> exactCanonicalResult = std::nullopt)
+{
+    Data::RuntimePackageCompilerCanonicalJson canonicalResult;
+    if (exactCanonicalResult) {
+        canonicalResult = *exactCanonicalResult;
+    } else if (
+        status == Data::RuntimePackageCompilerResultStatus::DomainFailed
+        || status == Data::RuntimePackageCompilerResultStatus::Canceled) {
+        QByteArray exactBytes("{\"diagnostics\":[");
+        for (qsizetype index = 0; index < diagnostics.size(); ++index) {
+            if (index != 0)
+                exactBytes += ',';
+            QByteArray diagnosticBytes = diagnostics.at(index).canonicalJson.exactBytes();
+            diagnosticBytes.chop(1);
+            exactBytes += diagnosticBytes;
+        }
+        exactBytes += "],\"status\":\"fail\"}\n";
+        canonicalResult = RuntimePackageCompilerFixture::canonical(std::move(exactBytes));
+    } else {
+        canonicalResult = RuntimePackageCompilerFixture::canonical(
+            QStringLiteral("{\"status\":\"%1\"}\n").arg(backendStatus).toLatin1());
+    }
+    return {
+        command,
+        status,
+        backendStatus,
+        operationId,
+        configurationId,
+        requestSha256,
+        canonicalResult,
+        std::move(diagnostics),
+    };
+}
+
+static Data::RuntimePackageCompilerSha256 compilerRequestSha256(
+    const Data::RuntimePackageCompilerCompileRequest &request)
+{
+    QByteArray identity("compile\n");
+    identity += request.operationId.value().toUtf8();
+    identity += '\n';
+    identity += request.intentId.toUtf8();
+    identity += '\n';
+    identity += QByteArray::number(request.configurationId);
+    identity += '\n';
+    identity += request.targetProfile.canonicalProfile.sha256().value();
+    identity += request.sourceArtifacts.adapterBundle.sha256.value();
+    return RuntimePackageCompilerFixture::sha256(identity);
+}
+
+static Data::RuntimePackageCompilerSha256 compilerRequestSha256(
+    const Data::RuntimePackageCompilerFinalizeRequest &request)
+{
+    QByteArray identity("finalize\n");
+    identity += request.operationId.value().toUtf8();
+    identity += '\n';
+    identity += QByteArray::number(request.configurationId);
+    identity += request.compileRequestSha256.value();
+    identity += request.manifestSha256.value();
+    identity += request.detachedSigningResponse.sha256().value();
+    return RuntimePackageCompilerFixture::sha256(identity);
+}
+
+static Data::RuntimePackageCompilerSha256 compilerRequestSha256(
+    const Data::RuntimePackageCompilerQueryRequest &request)
+{
+    QByteArray identity("query\n");
+    identity += request.operationId.value().toUtf8();
+    return RuntimePackageCompilerFixture::sha256(identity);
+}
+
+static Data::RuntimePackageCompilerSha256 compilerRequestSha256(
+    const Data::RuntimePackageCompilerVerifyRequest &request)
+{
+    QByteArray identity("verify\n");
+    identity += request.operationId.value().toUtf8();
+    identity += request.packageSha256.value();
+    return RuntimePackageCompilerFixture::sha256(identity);
+}
+
+static Data::RuntimePackageCompilerJobResult failedCompilerJobResult(
+    Data::RuntimePackageCompilerCommand command,
+    const Data::RuntimePackageCompilerOperationId &operationId,
+    quint64 configurationId,
+    const Data::RuntimePackageCompilerSha256 &requestSha256,
+    Data::RuntimePackageCompilerDiagnosticCategory category,
+    const QString &code,
+    const Data::RuntimePackageCompilerSha256 &packageSha256 = {})
+{
+    const auto envelope = compilerEnvelope(
+        command,
+        Data::RuntimePackageCompilerResultStatus::DomainFailed,
+        QStringLiteral("fail"),
+        operationId,
+        configurationId,
+        requestSha256,
+        {compilerDiagnostic(category, code)});
+    switch (command) {
+    case Data::RuntimePackageCompilerCommand::Compile:
+        return Data::RuntimePackageCompilerJobResult{
+            Data::RuntimePackageCompilerCompileResult{envelope, {}, {}, {}, {}, {}, {}, {}, {}, {}}};
+    case Data::RuntimePackageCompilerCommand::Finalize:
+        return Data::RuntimePackageCompilerJobResult{
+            Data::RuntimePackageCompilerFinalizeResult{envelope, {}, {}, {}, {}, {}}};
+    case Data::RuntimePackageCompilerCommand::Query:
+        return Data::RuntimePackageCompilerJobResult{Data::RuntimePackageCompilerQueryResult{
+            envelope, {}, {}}};
+    case Data::RuntimePackageCompilerCommand::Verify:
+        return Data::RuntimePackageCompilerJobResult{Data::RuntimePackageCompilerVerifyResult{
+            envelope, packageSha256, 0, {}, {}, {}, {}, {}, false}};
+    case Data::RuntimePackageCompilerCommand::Unknown:
+        return {};
+    }
+    return {};
+}
+
+static Data::RuntimePackageCompilerJobResult canceledCompilerJobResult(
+    Data::RuntimePackageCompilerCommand command,
+    const Data::RuntimePackageCompilerOperationId &operationId,
+    quint64 configurationId,
+    const Data::RuntimePackageCompilerSha256 &requestSha256,
+    const Data::RuntimePackageCompilerSha256 &packageSha256 = {})
+{
+    const auto envelope = compilerEnvelope(
+        command,
+        Data::RuntimePackageCompilerResultStatus::Canceled,
+        QStringLiteral("cancelled"),
+        operationId,
+        configurationId,
+        requestSha256,
+        {compilerDiagnostic(
+            Data::RuntimePackageCompilerDiagnosticCategory::Idempotency,
+            QStringLiteral("ECOMP-CANCELLED"),
+            QStringLiteral("cancelled"))});
+    switch (command) {
+    case Data::RuntimePackageCompilerCommand::Compile:
+        return Data::RuntimePackageCompilerJobResult{
+            Data::RuntimePackageCompilerCompileResult{envelope, {}, {}, {}, {}, {}, {}, {}, {}, {}}};
+    case Data::RuntimePackageCompilerCommand::Finalize:
+        return Data::RuntimePackageCompilerJobResult{
+            Data::RuntimePackageCompilerFinalizeResult{envelope, {}, {}, {}, {}, {}}};
+    case Data::RuntimePackageCompilerCommand::Query:
+        return Data::RuntimePackageCompilerJobResult{Data::RuntimePackageCompilerQueryResult{
+            envelope, {}, {}}};
+    case Data::RuntimePackageCompilerCommand::Verify:
+        return Data::RuntimePackageCompilerJobResult{Data::RuntimePackageCompilerVerifyResult{
+            envelope, packageSha256, 0, {}, {}, {}, {}, {}, false}};
+    case Data::RuntimePackageCompilerCommand::Unknown:
+        return {};
+    }
+    return {};
+}
+
+static Data::RuntimePackageCompilerCompileResult successfulCompileResult(
+    const Data::RuntimePackageCompilerCompileRequest &request)
+{
+    const auto digest = [](QByteArrayView bytes) {
+        return RuntimePackageCompilerFixture::sha256(bytes);
+    };
+    const auto intentSha256 = compilerRequestSha256(request);
+    const auto compiledProjectSha256 = digest("compiled-project");
+    const auto compileReportSha256 = digest("compile-report");
+    const auto effectiveProjectCompanionSha256 = digest("effective-project-companion");
+    const auto manifestSha256 = digest("manifest");
+    const auto targetProfileSha256 = request.targetProfile.canonicalProfile.sha256();
+    const auto adapterBundleSha256 = request.sourceArtifacts.adapterBundle.sha256;
+    const auto signRequest = RuntimePackageCompilerFixture::canonical(
+        QStringLiteral("{\"effective_project_companion_sha256\":\"%1\","
+                       "\"format\":\"ethercat-ecpkg-sign-request-v1\",\"format_version\":1,"
+                       "\"intent_sha256\":\"%2\",\"manifest_sha256\":\"%3\","
+                       "\"operation_id\":\"%4\",\"policy_revision\":%5,"
+                       "\"signing_key_id\":\"%6\",\"target_profile_sha256\":\"%7\"}\n")
+            .arg(
+                QString::fromLatin1(effectiveProjectCompanionSha256.value().toHex()),
+                QString::fromLatin1(intentSha256.value().toHex()),
+                QString::fromLatin1(manifestSha256.value().toHex()),
+                request.operationId.value(),
+                QString::number(request.targetProfile.policyRevision),
+                QString::fromLatin1(request.targetProfile.signingKeyIdSha256.value().toHex()),
+                QString::fromLatin1(targetProfileSha256.value().toHex()))
+            .toLatin1());
+    const QString outputDirectory = QStringLiteral("/tmp/embed-labs-compiler-output");
+    const QByteArray exactResult
+        = QStringLiteral("{\"adapter_bundle_sha256\":\"%1\",\"compile_report_sha256\":\"%2\","
+                         "\"compiled_project_sha256\":\"%3\",\"configuration_id\":%4,"
+                         "\"effective_project_companion_sha256\":\"%5\","
+                         "\"format\":\"ethercat-ide-project-compiler-result-v1\","
+                         "\"format_version\":1,\"intent_sha256\":\"%6\","
+                         "\"manifest_sha256\":\"%7\",\"operation_id\":\"%8\","
+                         "\"output_dir\":\"%9\",\"sign_request_sha256\":\"%10\","
+                         "\"status\":\"awaiting_signature\",\"target_profile_sha256\":\"%11\"}\n")
+              .arg(
+                  QString::fromLatin1(adapterBundleSha256.value().toHex()),
+                  QString::fromLatin1(compileReportSha256.value().toHex()),
+                  QString::fromLatin1(compiledProjectSha256.value().toHex()),
+                  QString::number(request.configurationId),
+                  QString::fromLatin1(effectiveProjectCompanionSha256.value().toHex()),
+                  QString::fromLatin1(intentSha256.value().toHex()),
+                  QString::fromLatin1(manifestSha256.value().toHex()),
+                  request.operationId.value(),
+                  outputDirectory,
+                  QString::fromLatin1(signRequest.sha256().value().toHex()),
+                  QString::fromLatin1(targetProfileSha256.value().toHex()))
+              .toLatin1();
+    const auto envelope = compilerEnvelope(
+        Data::RuntimePackageCompilerCommand::Compile,
+        Data::RuntimePackageCompilerResultStatus::Succeeded,
+        QStringLiteral("awaiting_signature"),
+        request.operationId,
+        request.configurationId,
+        compilerRequestSha256(request),
+        {},
+        RuntimePackageCompilerFixture::canonical(exactResult));
+    return {
+        envelope,
+        intentSha256,
+        compiledProjectSha256,
+        compileReportSha256,
+        effectiveProjectCompanionSha256,
+        signRequest,
+        manifestSha256,
+        targetProfileSha256,
+        adapterBundleSha256,
+        outputDirectory,
+    };
+}
+
+static Data::RuntimePackageCompilerCanonicalJson detachedSigningResponse(
+    const Data::RuntimePackageCompilerCompileRequest &request,
+    const Data::RuntimePackageCompilerCompileResult &compileResult)
+{
+    return RuntimePackageCompilerFixture::canonical(
+        QStringLiteral("{\"format\":\"ethercat-ecpkg-sign-response-v1\",\"format_version\":1,"
+                       "\"manifest_sha256\":\"%1\",\"operation_id\":\"%2\","
+                       "\"policy_revision\":%3,\"receipt_sha256\":\"%4\","
+                       "\"request_sha256\":\"%5\",\"signature_hex\":\"%6\","
+                       "\"signing_key_id\":\"%7\"}\n")
+            .arg(
+                QString::fromLatin1(compileResult.manifestSha256->value().toHex()),
+                request.operationId.value(),
+                QString::number(request.targetProfile.policyRevision),
+                QString::fromLatin1(
+                    RuntimePackageCompilerFixture::sha256("receipt").value().toHex()),
+                QString::fromLatin1(compileResult.signRequest->sha256().value().toHex()),
+                QString::fromLatin1(QByteArray(64, '\x44').toHex()),
+                QString::fromLatin1(request.targetProfile.signingKeyIdSha256.value().toHex()))
+            .toLatin1());
+}
+
+static Data::RuntimePackageCompilerFinalizeResult successfulFinalizeResult(
+    const Data::RuntimePackageCompilerFinalizeRequest &request)
+{
+    const QByteArray packageBytes("deterministic-production-ecpkg");
+    const auto packageSha256 = RuntimePackageCompilerFixture::sha256(packageBytes);
+    const auto signingReceiptSha256 = RuntimePackageCompilerFixture::sha256("signing-receipt");
+    const QString packagePath = QStringLiteral("/tmp/embed-labs-compiler-output/project.ecpkg");
+    const QByteArray exactResult
+        = QStringLiteral("{\"configuration_id\":%1,"
+                         "\"format\":\"ethercat-ide-project-compiler-result-v1\","
+                         "\"format_version\":1,\"manifest_sha256\":\"%2\","
+                         "\"operation_id\":\"%3\",\"package_bytes\":%4,"
+                         "\"package_path\":\"%5\",\"package_sha256\":\"%6\","
+                         "\"signing_receipt_sha256\":\"%7\",\"status\":\"complete\"}\n")
+              .arg(
+                  QString::number(request.configurationId),
+                  QString::fromLatin1(request.manifestSha256.value().toHex()),
+                  request.operationId.value(),
+                  QString::number(packageBytes.size()),
+                  packagePath,
+                  QString::fromLatin1(packageSha256.value().toHex()),
+                  QString::fromLatin1(signingReceiptSha256.value().toHex()))
+              .toLatin1();
+    const auto envelope = compilerEnvelope(
+        Data::RuntimePackageCompilerCommand::Finalize,
+        Data::RuntimePackageCompilerResultStatus::Succeeded,
+        QStringLiteral("complete"),
+        request.operationId,
+        request.configurationId,
+        compilerRequestSha256(request),
+        {},
+        RuntimePackageCompilerFixture::canonical(exactResult));
+    return {
+        envelope,
+        packagePath,
+        packageBytes,
+        packageSha256,
+        request.manifestSha256,
+        signingReceiptSha256,
+    };
+}
+
+static Data::RuntimePackageCompilerCanonicalJson compilerLedgerRecord(
+    const Data::RuntimePackageCompilerCompileRequest &request,
+    const std::optional<Data::RuntimePackageCompilerCompileResult> &compileResult,
+    const std::optional<Data::RuntimePackageCompilerFinalizeResult> &finalizeResult)
+{
+    QJsonObject record{
+        {QStringLiteral("build_timestamp_ns"), qint64(request.buildTimestampNs)},
+        {QStringLiteral("configuration_id"), qint64(request.configurationId)},
+        {QStringLiteral("intent_sha256"),
+         QString::fromLatin1(
+             (compileResult && compileResult->intentSha256
+                  ? compileResult->intentSha256->value()
+                  : compilerRequestSha256(request).value())
+                 .toHex())},
+        {QStringLiteral("state"), QStringLiteral("reserved")},
+    };
+    if (compileResult) {
+        record.insert(
+            QStringLiteral("compile_report_sha256"),
+            QString::fromLatin1(compileResult->compileReportSha256->value().toHex()));
+        record.insert(
+            QStringLiteral("effective_project_companion_sha256"),
+            QString::fromLatin1(
+                compileResult->effectiveProjectCompanionSha256->value().toHex()));
+        record.insert(
+            QStringLiteral("manifest_sha256"),
+            QString::fromLatin1(compileResult->manifestSha256->value().toHex()));
+        record.insert(QStringLiteral("output_dir"), compileResult->outputDirectory);
+        record.insert(
+            QStringLiteral("sign_request_sha256"),
+            QString::fromLatin1(compileResult->signRequest->sha256().value().toHex()));
+        record.insert(QStringLiteral("state"), QStringLiteral("prepared"));
+    }
+    if (finalizeResult) {
+        record.insert(QStringLiteral("package_bytes"), finalizeResult->packageBytes.size());
+        record.insert(QStringLiteral("package_path"), finalizeResult->packagePath);
+        record.insert(
+            QStringLiteral("package_sha256"),
+            QString::fromLatin1(finalizeResult->packageSha256->value().toHex()));
+        record.insert(QStringLiteral("state"), QStringLiteral("finalized"));
+    }
+    return RuntimePackageCompilerFixture::canonical(
+        QJsonDocument(record).toJson(QJsonDocument::Compact) + '\n');
+}
+
+class TestRuntimePackageCompilerJob final : public RuntimePackageCompilerJob
+{
+public:
+    TestRuntimePackageCompilerJob(
+        Data::RuntimePackageCompilerJobResult plannedResult,
+        Data::RuntimePackageCompilerJobResult canceledResult,
+        QObject *parent)
+        : RuntimePackageCompilerJob(plannedResult.command(), parent)
+        , m_plannedResult(std::move(plannedResult))
+        , m_canceledResult(std::move(canceledResult))
+    {}
+
+    void startAsynchronously()
+    {
+        QTimer::singleShot(0, this, [this] {
+            if (state() == RuntimePackageCompilerJobState::Pending)
+                markRunning();
+            QTimer::singleShot(0, this, [this] {
+                finish(
+                    state() == RuntimePackageCompilerJobState::CancelRequested ? m_canceledResult
+                                                                               : m_plannedResult);
+            });
+        });
+    }
+
+    int cancellationRequestCount() const { return m_cancellationRequestCount; }
+
+    void finishAgainForTest() { finish(m_plannedResult); }
+    void finishForTest(const Data::RuntimePackageCompilerJobResult &result) { finish(result); }
+
+protected:
+    void requestCancellation() final { ++m_cancellationRequestCount; }
+
+private:
+    Data::RuntimePackageCompilerJobResult m_plannedResult;
+    Data::RuntimePackageCompilerJobResult m_canceledResult;
+    int m_cancellationRequestCount = 0;
+};
+
+class TestRuntimePackageCompilerProvider final : public RuntimePackageCompilerProvider
+{
+public:
+    TestRuntimePackageCompilerProvider()
+        : RuntimePackageCompilerProvider(
+              "EtherCAT.Compiler.Test", QStringLiteral("Test runtime package compiler"))
+    {}
+
+    Utils::Result<RuntimePackageCompilerJob *> compile(
+        const Data::RuntimePackageCompilerCompileRequest &request) final
+    {
+        if (failScheduling)
+            return Utils::ResultError(QStringLiteral("Compiler scheduler is unavailable."));
+        if (!request.operationId.isValid() || !request.contractIdentity.isValid()) {
+            return Utils::ResultError(
+                QStringLiteral("Compiler request cannot be assigned a durable identity."));
+        }
+
+        const auto canceled = canceledCompilerJobResult(
+            Data::RuntimePackageCompilerCommand::Compile,
+            request.operationId,
+            request.configurationId,
+            compilerRequestSha256(request));
+
+        if (!request.hasValidReservationInputs()) {
+            return schedule(
+                failedCompilerJobResult(
+                    Data::RuntimePackageCompilerCommand::Compile,
+                    request.operationId,
+                    request.configurationId,
+                    compilerRequestSha256(request),
+                    Data::RuntimePackageCompilerDiagnosticCategory::Idempotency,
+                    QStringLiteral("ECOMP-REQUEST-SCHEMA")),
+                canceled);
+        }
+
+        const auto existing = m_compileRequests.constFind(request.operationId);
+        if (existing != m_compileRequests.cend()) {
+            if (*existing != request) {
+                return schedule(
+                    failedCompilerJobResult(
+                        Data::RuntimePackageCompilerCommand::Compile,
+                        request.operationId,
+                        request.configurationId,
+                        compilerRequestSha256(request),
+                        Data::RuntimePackageCompilerDiagnosticCategory::Idempotency,
+                        QStringLiteral("ECOMP-OPERATION-CONFLICT")),
+                    canceled);
+            }
+            if (const auto finished = m_compileResults.constFind(request.operationId);
+                finished != m_compileResults.cend()) {
+                return schedule(Data::RuntimePackageCompilerJobResult{*finished}, canceled);
+            }
+            if (RuntimePackageCompilerJob *running = m_compileJobs.value(request.operationId))
+                return running;
+        } else {
+            const auto configurationOwner = m_configurationOwners.constFind(
+                request.configurationId);
+            if (configurationOwner != m_configurationOwners.cend()
+                && *configurationOwner != request.operationId) {
+                return schedule(
+                    failedCompilerJobResult(
+                        Data::RuntimePackageCompilerCommand::Compile,
+                        request.operationId,
+                        request.configurationId,
+                        compilerRequestSha256(request),
+                        Data::RuntimePackageCompilerDiagnosticCategory::Idempotency,
+                        QStringLiteral("ECOMP-CONFIGURATION-REPLAY")),
+                    canceled);
+            }
+
+            m_compileRequests.insert(request.operationId, request);
+            m_configurationOwners.insert(request.configurationId, request.operationId);
+            ++ledgerMutationCount;
+        }
+
+        Data::RuntimePackageCompilerJobResult plannedResult;
+        if (!request.isValid()) {
+            Data::RuntimePackageCompilerDiagnosticCategory category
+                = Data::RuntimePackageCompilerDiagnosticCategory::Capability;
+            QString code = QStringLiteral("ECOMP-CAPABILITY-PROFILE");
+            if (!request.topologyEvidence.isFreshAt(request.compileTimeNs)) {
+                category = Data::RuntimePackageCompilerDiagnosticCategory::Slave;
+                code = QStringLiteral("ECOMP-TOPOLOGY-STALE");
+            } else if (!request.sourceArtifacts.adapterBundle.isValid()) {
+                category = Data::RuntimePackageCompilerDiagnosticCategory::Adapter;
+                code = QStringLiteral("ECOMP-ADAPTER-BUNDLE-MISMATCH");
+            } else if (
+                request.deviceSourceEvidence.isEmpty()
+                || !request.deviceSourceEvidence.constFirst().originalEsi.isValid()) {
+                category = Data::RuntimePackageCompilerDiagnosticCategory::Slave;
+                code = QStringLiteral("ECOMP-ESI-MISMATCH");
+            } else if (!request.deviceSourceEvidence.constFirst().isValid()) {
+                category = Data::RuntimePackageCompilerDiagnosticCategory::Dc;
+                code = QStringLiteral("ECOMP-DC-UNSUPPORTED");
+            }
+            plannedResult = failedCompilerJobResult(
+                Data::RuntimePackageCompilerCommand::Compile,
+                request.operationId,
+                request.configurationId,
+                compilerRequestSha256(request),
+                category,
+                code);
+        } else {
+            plannedResult = Data::RuntimePackageCompilerJobResult{
+                successfulCompileResult(request)};
+        }
+
+        RuntimePackageCompilerJob *job = schedule(
+            plannedResult,
+            canceled,
+            [this, operationId = request.operationId](
+                const Data::RuntimePackageCompilerJobResult &terminal) {
+                const auto &compileResult
+                    = std::get<Data::RuntimePackageCompilerCompileResult>(terminal.value());
+                if (compileResult.envelope.status
+                    == Data::RuntimePackageCompilerResultStatus::Succeeded) {
+                    m_compileResults.insert(operationId, compileResult);
+                    ++ledgerMutationCount;
+                }
+                m_compileJobs.remove(operationId);
+            });
+        m_compileJobs.insert(request.operationId, job);
+        return job;
+    }
+
+    Utils::Result<RuntimePackageCompilerJob *> finalize(
+        const Data::RuntimePackageCompilerFinalizeRequest &request) final
+    {
+        if (failScheduling)
+            return Utils::ResultError(QStringLiteral("Compiler scheduler is unavailable."));
+        if (!request.operationId.isValid() || !request.contractIdentity.isValid()) {
+            return Utils::ResultError(
+                QStringLiteral("Finalize request cannot be assigned a durable identity."));
+        }
+
+        const auto canceled = canceledCompilerJobResult(
+            Data::RuntimePackageCompilerCommand::Finalize,
+            request.operationId,
+            request.configurationId,
+            compilerRequestSha256(request));
+        const auto compile = m_compileRequests.constFind(request.operationId);
+        const auto compileResult = m_compileResults.constFind(request.operationId);
+        if (!request.isValid() || compile == m_compileRequests.cend()
+            || compileResult == m_compileResults.cend()
+            || request.configurationId != compile->configurationId
+            || request.compileRequestSha256 != compilerRequestSha256(*compile)
+            || !compileResult->manifestSha256
+            || request.manifestSha256 != *compileResult->manifestSha256) {
+            return schedule(
+                failedCompilerJobResult(
+                    Data::RuntimePackageCompilerCommand::Finalize,
+                    request.operationId,
+                    request.configurationId,
+                    compilerRequestSha256(request),
+                    Data::RuntimePackageCompilerDiagnosticCategory::Signing,
+                    QStringLiteral("ECOMP-SIGN-RESPONSE-STALE")),
+                canceled);
+        }
+
+        const auto existing = m_finalizeRequests.constFind(request.operationId);
+        if (existing != m_finalizeRequests.cend()) {
+            if (*existing != request) {
+                return schedule(
+                    failedCompilerJobResult(
+                        Data::RuntimePackageCompilerCommand::Finalize,
+                        request.operationId,
+                        request.configurationId,
+                        compilerRequestSha256(request),
+                        Data::RuntimePackageCompilerDiagnosticCategory::Idempotency,
+                        QStringLiteral("ECOMP-OPERATION-CONFLICT")),
+                    canceled);
+            }
+            if (const auto finished = m_finalizeResults.constFind(request.operationId);
+                finished != m_finalizeResults.cend()) {
+                return schedule(Data::RuntimePackageCompilerJobResult{*finished}, canceled);
+            }
+            if (RuntimePackageCompilerJob *running = m_finalizeJobs.value(request.operationId))
+                return running;
+        } else {
+            m_finalizeRequests.insert(request.operationId, request);
+            ++ledgerMutationCount;
+        }
+
+        const Data::RuntimePackageCompilerFinalizeResult result = successfulFinalizeResult(request);
+        RuntimePackageCompilerJob *job = schedule(
+            Data::RuntimePackageCompilerJobResult{result},
+            canceled,
+            [this, operationId = request.operationId](
+                const Data::RuntimePackageCompilerJobResult &terminal) {
+                const auto &finalizeResult
+                    = std::get<Data::RuntimePackageCompilerFinalizeResult>(terminal.value());
+                if (finalizeResult.envelope.status
+                    == Data::RuntimePackageCompilerResultStatus::Succeeded) {
+                    m_finalizeResults.insert(operationId, finalizeResult);
+                    ++ledgerMutationCount;
+                }
+                m_finalizeJobs.remove(operationId);
+            });
+        m_finalizeJobs.insert(request.operationId, job);
+        return job;
+    }
+
+    Utils::Result<RuntimePackageCompilerJob *> query(
+        const Data::RuntimePackageCompilerQueryRequest &request) final
+    {
+        if (failScheduling)
+            return Utils::ResultError(QStringLiteral("Compiler scheduler is unavailable."));
+        if (!request.operationId.isValid() || !request.contractIdentity.isValid()) {
+            return Utils::ResultError(
+                QStringLiteral("Query request cannot be assigned a durable identity."));
+        }
+        if (!request.isValid()) {
+            return schedule(
+                failedCompilerJobResult(
+                    Data::RuntimePackageCompilerCommand::Query,
+                    request.operationId,
+                    0,
+                    compilerRequestSha256(request),
+                    Data::RuntimePackageCompilerDiagnosticCategory::Idempotency,
+                    QStringLiteral("ECOMP-QUERY-INVALID")),
+                canceledCompilerJobResult(
+                    Data::RuntimePackageCompilerCommand::Query,
+                    request.operationId,
+                    0,
+                    compilerRequestSha256(request)));
+        }
+
+        const auto compileRequest = m_compileRequests.constFind(request.operationId);
+        const auto finalizeRequest = m_finalizeRequests.constFind(request.operationId);
+        if (compileRequest == m_compileRequests.cend()
+            && finalizeRequest == m_finalizeRequests.cend()) {
+            return schedule(
+                failedCompilerJobResult(
+                    Data::RuntimePackageCompilerCommand::Query,
+                    request.operationId,
+                    0,
+                    compilerRequestSha256(request),
+                    Data::RuntimePackageCompilerDiagnosticCategory::Idempotency,
+                    QStringLiteral("ECOMP-OPERATION-UNKNOWN")),
+                canceledCompilerJobResult(
+                    Data::RuntimePackageCompilerCommand::Query,
+                    request.operationId,
+                    0,
+                    compilerRequestSha256(request)));
+        }
+
+        quint64 configurationId = 0;
+        std::optional<Data::RuntimePackageCompilerCanonicalJson> compilerRecord;
+        std::optional<Data::RuntimePackageCompilerCanonicalJson> signerResponse;
+        if (compileRequest != m_compileRequests.cend()) {
+            configurationId = compileRequest->configurationId;
+            std::optional<Data::RuntimePackageCompilerCompileResult> compileResult;
+            if (const auto found = m_compileResults.constFind(request.operationId);
+                found != m_compileResults.cend()) {
+                compileResult = *found;
+            }
+            std::optional<Data::RuntimePackageCompilerFinalizeResult> finalizeResult;
+            if (const auto found = m_finalizeResults.constFind(request.operationId);
+                found != m_finalizeResults.cend()) {
+                finalizeResult = *found;
+            }
+            compilerRecord = compilerLedgerRecord(
+                *compileRequest, compileResult, finalizeResult);
+        }
+        if (finalizeRequest != m_finalizeRequests.cend())
+            signerResponse = finalizeRequest->detachedSigningResponse;
+
+        QJsonObject canonicalStateObject{
+            {QStringLiteral("compiler"),
+             compilerRecord
+                 ? QJsonValue(
+                       QJsonDocument::fromJson(compilerRecord->exactBytes()).object())
+                 : QJsonValue(QJsonValue::Null)},
+            {QStringLiteral("format"), QStringLiteral("ethercat-ide-compiler-operation-state-v1")},
+            {QStringLiteral("operation_id"), request.operationId.value()},
+            {QStringLiteral("signer_response"),
+             signerResponse
+                 ? QJsonValue(
+                       QJsonDocument::fromJson(signerResponse->exactBytes()).object())
+                 : QJsonValue(QJsonValue::Null)},
+        };
+        const Data::RuntimePackageCompilerCanonicalJson canonicalState
+            = RuntimePackageCompilerFixture::canonical(
+                QJsonDocument(canonicalStateObject).toJson(QJsonDocument::Compact) + '\n');
+        const auto envelope = compilerEnvelope(
+            Data::RuntimePackageCompilerCommand::Query,
+            Data::RuntimePackageCompilerResultStatus::Succeeded,
+            QStringLiteral("state"),
+            request.operationId,
+            configurationId,
+            compilerRequestSha256(request),
+            {},
+            canonicalState);
+        const Data::RuntimePackageCompilerQueryResult result{
+            envelope,
+            compilerRecord,
+            signerResponse,
+        };
+        return schedule(
+            Data::RuntimePackageCompilerJobResult{result},
+            canceledCompilerJobResult(
+                Data::RuntimePackageCompilerCommand::Query,
+                request.operationId,
+                0,
+                compilerRequestSha256(request)));
+    }
+
+    Utils::Result<RuntimePackageCompilerJob *> verify(
+        const Data::RuntimePackageCompilerVerifyRequest &request) final
+    {
+        if (failScheduling)
+            return Utils::ResultError(QStringLiteral("Compiler scheduler is unavailable."));
+        if (!request.operationId.isValid() || !request.contractIdentity.isValid()) {
+            return Utils::ResultError(
+                QStringLiteral("Verify request cannot be assigned a durable identity."));
+        }
+        const Data::RuntimePackageCompilerSha256 transportablePackageSha256
+            = request.packageSha256.isValid() ? request.packageSha256
+                                              : Data::RuntimePackageCompilerSha256{};
+        const auto canceled = canceledCompilerJobResult(
+            Data::RuntimePackageCompilerCommand::Verify,
+            request.operationId,
+            0,
+            compilerRequestSha256(request),
+            transportablePackageSha256);
+        if (!request.isValid()) {
+            return schedule(
+                failedCompilerJobResult(
+                    Data::RuntimePackageCompilerCommand::Verify,
+                    request.operationId,
+                    0,
+                    compilerRequestSha256(request),
+                    Data::RuntimePackageCompilerDiagnosticCategory::Signing,
+                    QStringLiteral("ECOMP-SIGNATURE-INVALID"),
+                    transportablePackageSha256),
+                canceled);
+        }
+
+        ++verifyCallCount;
+        const auto intentSha256 = RuntimePackageCompilerFixture::sha256("intent");
+        const auto effectiveProjectCompanionSha256 = RuntimePackageCompilerFixture::sha256(
+            "effective-project-companion");
+        const auto targetProfileSha256 = RuntimePackageCompilerFixture::sha256("target-profile");
+        const auto adapterBundleSha256 = RuntimePackageCompilerFixture::sha256("adapter-bundle");
+        const auto topologyEvidenceSha256 = RuntimePackageCompilerFixture::sha256(
+            "topology-evidence");
+        const QByteArray exactResult
+            = QStringLiteral(
+                  "{\"adapter_bundle_sha256\":\"%1\",\"configuration_id\":4201,"
+                  "\"effective_project_companion_sha256\":\"%2\","
+                  "\"format\":\"ethercat-ide-project-compiler-verification-v1\","
+                  "\"intent_sha256\":\"%3\",\"manifest_format_version\":2,"
+                  "\"package_sha256\":\"%4\",\"status\":\"pass\","
+                  "\"target_profile_sha256\":\"%5\",\"topology_evidence_sha256\":\"%6\"}\n")
+                  .arg(
+                      QString::fromLatin1(adapterBundleSha256.value().toHex()),
+                      QString::fromLatin1(effectiveProjectCompanionSha256.value().toHex()),
+                      QString::fromLatin1(intentSha256.value().toHex()),
+                      QString::fromLatin1(request.packageSha256.value().toHex()),
+                      QString::fromLatin1(targetProfileSha256.value().toHex()),
+                      QString::fromLatin1(topologyEvidenceSha256.value().toHex()))
+                  .toLatin1();
+        const auto envelope = compilerEnvelope(
+            Data::RuntimePackageCompilerCommand::Verify,
+            Data::RuntimePackageCompilerResultStatus::Succeeded,
+            QStringLiteral("pass"),
+            request.operationId,
+            4201,
+            compilerRequestSha256(request),
+            {},
+            RuntimePackageCompilerFixture::canonical(exactResult));
+        const Data::RuntimePackageCompilerVerifyResult result{
+            envelope,
+            request.packageSha256,
+            2,
+            intentSha256,
+            effectiveProjectCompanionSha256,
+            targetProfileSha256,
+            adapterBundleSha256,
+            topologyEvidenceSha256,
+            true,
+        };
+        return schedule(Data::RuntimePackageCompilerJobResult{result}, canceled);
+    }
+
+    bool failScheduling = false;
+    int ledgerMutationCount = 0;
+    int verifyCallCount = 0;
+
+private:
+    RuntimePackageCompilerJob *schedule(
+        Data::RuntimePackageCompilerJobResult result,
+        Data::RuntimePackageCompilerJobResult canceledResult,
+        std::function<void(const Data::RuntimePackageCompilerJobResult &)> terminalCallback = {})
+    {
+        auto *job
+            = new TestRuntimePackageCompilerJob(std::move(result), std::move(canceledResult), this);
+        if (terminalCallback) {
+            connect(
+                job,
+                &RuntimePackageCompilerJob::finished,
+                this,
+                [callback = std::move(terminalCallback)](
+                    const Data::RuntimePackageCompilerJobResult &terminal) { callback(terminal); });
+        }
+        job->startAsynchronously();
+        return job;
+    }
+
+    QHash<Data::RuntimePackageCompilerOperationId, Data::RuntimePackageCompilerCompileRequest>
+        m_compileRequests;
+    QHash<Data::RuntimePackageCompilerOperationId, Data::RuntimePackageCompilerCompileResult>
+        m_compileResults;
+    QHash<Data::RuntimePackageCompilerOperationId, RuntimePackageCompilerJob *> m_compileJobs;
+    QHash<Data::RuntimePackageCompilerOperationId, Data::RuntimePackageCompilerFinalizeRequest>
+        m_finalizeRequests;
+    QHash<Data::RuntimePackageCompilerOperationId, Data::RuntimePackageCompilerFinalizeResult>
+        m_finalizeResults;
+    QHash<Data::RuntimePackageCompilerOperationId, RuntimePackageCompilerJob *> m_finalizeJobs;
+    QHash<quint64, Data::RuntimePackageCompilerOperationId> m_configurationOwners;
 };
 
 struct SemanticRuntimeFixture
@@ -2646,6 +3712,7 @@ void EtherCATCoreTests::testRuntimePackageActivationContract()
     const Data::RuntimePackageActivationProjectCapture projectCapture{
         capturedSnapshot,
         QByteArray("{\"project\":\"captured\"}\n"),
+        8,
         identity.documentRevisionToken(),
         identity.originalBindingToken(),
     };
@@ -3327,6 +4394,885 @@ void EtherCATCoreTests::testRuntimePackageActivationContract()
             .isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimePackageActivationRecord>().isValid());
     QVERIFY(QMetaType::fromType<RuntimePackageActivationCommandResult>().isValid());
+}
+
+void EtherCATCoreTests::testRuntimePackageCompilerValueSemantics()
+{
+    RuntimePackageCompilerFixture fixture;
+    QVERIFY(fixture.request.isValid());
+    QVERIFY(fixture.request.hasValidReservationInputs());
+    QCOMPARE(
+        fixture.request.projectSnapshotEvidence.documentRevisionNumber(), quint64(7));
+    const Data::RuntimePackageCompilerCompileRequest requestCopy = fixture.request;
+    QCOMPARE(requestCopy, fixture.request);
+    const Data::RuntimePackageActivationProjectCapture invalidSourceCapture{
+        fixture.request.projectSnapshotEvidence.snapshot(),
+        {},
+        fixture.request.projectSnapshotEvidence.documentRevisionNumber(),
+        fixture.request.projectSnapshotEvidence.documentRevision(),
+        fixture.request.projectSnapshotEvidence.originalBinding(),
+    };
+    QVERIFY(!invalidSourceCapture.isValid());
+    QVERIFY(
+        !Data::RuntimePackageCompilerProjectSnapshotEvidence{invalidSourceCapture}
+             .isValid());
+    QVERIFY(Data::RuntimePackageCompilerOperationId{
+        QStringLiteral("04204204-2001-4000-8000-000000000001")}
+                .isValid());
+    QVERIFY(!Data::RuntimePackageCompilerOperationId{QStringLiteral("not-a-uuid")}.isValid());
+
+    const auto preservedJson = RuntimePackageCompilerFixture::canonical(
+        QByteArray("{\"unknown\":{\"future\":true},\"z\":1}\n"));
+    QVERIFY(preservedJson.isValid());
+    QCOMPARE(
+        preservedJson.exactBytes(),
+        QByteArray("{\"unknown\":{\"future\":true},\"z\":1}\n"));
+    QVERIFY(!RuntimePackageCompilerFixture::canonical(
+                 QByteArray("{\"z\":1,\"unknown\":{\"future\":true}}\n"))
+                 .isValid());
+    QVERIFY(!RuntimePackageCompilerFixture::canonical(
+                 QByteArray("{\"duplicate\":1,\"duplicate\":2}\n"))
+                 .isValid());
+    QVERIFY(!RuntimePackageCompilerFixture::canonical(QByteArray("{\"number\":1.0}\n"))
+                 .isValid());
+    const QList<QByteArray> nonCanonicalJson{
+        QByteArray("{\"a\":1}\r\n"),
+        QByteArray("{\"a\":1}\n\n"),
+        QByteArray(" {\"a\":1}\n"),
+        QByteArray("{\"a\": 1}\n"),
+        QByteArray("[]\n"),
+        QByteArray("{\"number\":1e0}\n"),
+        QByteArray("{\"number\":-0}\n"),
+        QByteArray("{\"number\":01}\n"),
+        QByteArray("{\"escaped\":\"\\u4E2D\"}\n"),
+        QByteArray("{\"escaped\":\"\\u0061\"}\n"),
+        QByteArray("{\"nested\":{\"a\":1,\"a\":2}}\n"),
+        QByteArray("{\"escaped\":\"") + QByteArray::fromHex("e4b8ad") + QByteArray("\"}\n"),
+    };
+    for (const QByteArray &json : nonCanonicalJson)
+        QVERIFY(!RuntimePackageCompilerFixture::canonical(json).isValid());
+    QVERIFY(
+        RuntimePackageCompilerFixture::canonical(QByteArray("{\"escaped\":\"\\u4e2d\"}\n"))
+            .isValid());
+    QVERIFY(RuntimePackageCompilerFixture::canonical(
+                QByteArray(
+                    "{\"array\":[-1,0,1,{\"nested\":\"\\ud83d\\ude00\"}],"
+                    "\"escaped\":\"line\\nquote\\\"slash\\\\\"}\n"))
+                .isValid());
+    const Data::RuntimePackageCompilerCanonicalJson
+        changedJson(QByteArray("{\"z\":2}\n"), preservedJson.sha256());
+    QVERIFY(!changedJson.isValid());
+    QVERIFY(!Data::RuntimePackageCompilerCanonicalJson::fromExactBytes(QByteArray("{\"z\":1}"))
+                 .isValid());
+
+    Data::RuntimePackageCompilerSourceArtifact unsafePath
+        = fixture.request.sourceArtifacts.adapterBundle;
+    unsafePath.relativePath = QStringLiteral("../adapter-bundle-v1.json");
+    QVERIFY(!unsafePath.isValid());
+    for (const QString &path :
+         {QStringLiteral("adapter//bundle.json"),
+          QStringLiteral("adapter/bundle/"),
+          QStringLiteral("adapter/./bundle.json")}) {
+        unsafePath.relativePath = path;
+        QVERIFY(!unsafePath.isValid());
+    }
+
+    Data::RuntimePackageCompilerCompileRequest missingCapture = fixture.request;
+    missingCapture.projectSnapshotEvidence = {};
+    QVERIFY(!missingCapture.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest staleTopology = fixture.request;
+    staleTopology.compileTimeNs = staleTopology.topologyEvidence.expiresAtNs + 1;
+    QVERIFY(!staleTopology.isValid());
+    staleTopology = fixture.request;
+    staleTopology.topologyEvidence.expiresAtNs = staleTopology.topologyEvidence.capturedAtNs;
+    QVERIFY(!staleTopology.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest missingEsi = fixture.request;
+    missingEsi.deviceSourceEvidence[0].originalEsi.exactBytes.clear();
+    QVERIFY(!missingEsi.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest missingBundle = fixture.request;
+    missingBundle.sourceArtifacts.adapterBundle = {};
+    QVERIFY(!missingBundle.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest missingDcDecision = fixture.request;
+    missingDcDecision.deviceSourceEvidence[0].explicitNoDc = false;
+    QVERIFY(!missingDcDecision.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest missingTarget = fixture.request;
+    missingTarget.targetProfile = {};
+    QVERIFY(!missingTarget.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedStation = fixture.request;
+    ++changedStation.topologyEvidence.slaves[0].stationAddress;
+    QVERIFY(!changedStation.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedCanonicalTopology = fixture.request;
+    QByteArray changedTopologyBytes
+        = changedCanonicalTopology.topologyEvidence.canonicalEvidence.exactBytes();
+    changedTopologyBytes.replace(
+        QByteArray("\"station_address\":4097"),
+        QByteArray("\"station_address\":4098"));
+    changedCanonicalTopology.topologyEvidence.canonicalEvidence
+        = RuntimePackageCompilerFixture::canonical(changedTopologyBytes);
+    changedCanonicalTopology.sourceArtifacts.topologyEvidence.exactBytes
+        = changedTopologyBytes;
+    changedCanonicalTopology.sourceArtifacts.topologyEvidence.sha256
+        = changedCanonicalTopology.topologyEvidence.canonicalEvidence.sha256();
+    QVERIFY(!changedCanonicalTopology.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedCanonicalTarget = fixture.request;
+    QByteArray changedTargetBytes
+        = changedCanonicalTarget.targetProfile.canonicalProfile.exactBytes();
+    changedTargetBytes.replace(
+        QByteArray("\"policy_revision\":1"),
+        QByteArray("\"policy_revision\":2"));
+    changedCanonicalTarget.targetProfile.canonicalProfile
+        = RuntimePackageCompilerFixture::canonical(changedTargetBytes);
+    changedCanonicalTarget.sourceArtifacts.targetProfile.exactBytes = changedTargetBytes;
+    changedCanonicalTarget.sourceArtifacts.targetProfile.sha256
+        = changedCanonicalTarget.targetProfile.canonicalProfile.sha256();
+    QVERIFY(!changedCanonicalTarget.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedAdapterSource = fixture.request;
+    auto &adapterSource = changedAdapterSource.deviceSourceEvidence[0].adapterSourceFile;
+    adapterSource.exactBytes.append("# changed\n");
+    adapterSource.sha256 = RuntimePackageCompilerFixture::sha256(adapterSource.exactBytes);
+    QVERIFY(adapterSource.isValid());
+    QVERIFY(!changedAdapterSource.isValid());
+
+    const QList<Data::RuntimePackageCompilerDiagnosticCategory> categories{
+        Data::RuntimePackageCompilerDiagnosticCategory::Slave,
+        Data::RuntimePackageCompilerDiagnosticCategory::Pdo,
+        Data::RuntimePackageCompilerDiagnosticCategory::Sdo,
+        Data::RuntimePackageCompilerDiagnosticCategory::Dc,
+        Data::RuntimePackageCompilerDiagnosticCategory::Adapter,
+        Data::RuntimePackageCompilerDiagnosticCategory::Capability,
+        Data::RuntimePackageCompilerDiagnosticCategory::Timing,
+        Data::RuntimePackageCompilerDiagnosticCategory::Signing,
+        Data::RuntimePackageCompilerDiagnosticCategory::Path,
+        Data::RuntimePackageCompilerDiagnosticCategory::Idempotency,
+    };
+    for (Data::RuntimePackageCompilerDiagnosticCategory category : categories)
+        QVERIFY(compilerDiagnostic(category, QStringLiteral("ECOMP-TEST")).isValid());
+    auto mismatchedDiagnostic = compilerDiagnostic(
+        Data::RuntimePackageCompilerDiagnosticCategory::Capability, QStringLiteral("ECOMP-TEST"));
+    mismatchedDiagnostic.message = QStringLiteral("Typed and canonical diagnostics diverged.");
+    QVERIFY(!mismatchedDiagnostic.isValid());
+    QVERIFY(
+        !compilerDiagnostic(
+             Data::RuntimePackageCompilerDiagnosticCategory::Capability, QStringLiteral("ECOMP-"))
+             .isValid());
+    QVERIFY(!compilerDiagnostic(
+                 Data::RuntimePackageCompilerDiagnosticCategory::Capability,
+                 QStringLiteral("ecomp-test"))
+                 .isValid());
+    QVERIFY(!compilerDiagnostic(
+                 Data::RuntimePackageCompilerDiagnosticCategory::Capability,
+                 QStringLiteral("ECOMP-TEST"),
+                 QStringLiteral("future"))
+                 .isValid());
+
+    const Data::RuntimePackageCompilerCompileResult compileResult = successfulCompileResult(
+        fixture.request);
+    QVERIFY(compileResult.isValid());
+    QVERIFY(compileResult.isSuccess());
+    auto mismatchedCompileResult = compileResult;
+    mismatchedCompileResult.outputDirectory = QStringLiteral("/tmp/different-output");
+    QVERIFY(!mismatchedCompileResult.isValid());
+    auto extraFieldCompileResult = compileResult;
+    QJsonObject extraFieldObject = QJsonDocument::fromJson(
+                                       compileResult.envelope.canonicalResult.exactBytes())
+                                       .object();
+    extraFieldObject.insert(QStringLiteral("unexpected"), true);
+    extraFieldCompileResult.envelope.canonicalResult
+        = RuntimePackageCompilerFixture::canonical(
+            QJsonDocument(extraFieldObject).toJson(QJsonDocument::Compact) + '\n');
+    QVERIFY(!extraFieldCompileResult.isValid());
+    QCOMPARE(
+        Data::RuntimePackageCompilerJobResult{compileResult},
+        Data::RuntimePackageCompilerJobResult{compileResult});
+
+    const auto unknownEnvelope = compilerEnvelope(
+        Data::RuntimePackageCompilerCommand::Compile,
+        Data::RuntimePackageCompilerResultStatus::Unknown,
+        QStringLiteral("future_backend_status"),
+        fixture.request.operationId,
+        fixture.request.configurationId,
+        compilerRequestSha256(fixture.request));
+    const Data::RuntimePackageCompilerCompileResult
+        unknownResult{unknownEnvelope, {}, {}, {}, {}, {}, {}, {}, {}, {}};
+    QVERIFY(unknownResult.isValid());
+    QVERIFY(!unknownResult.isSuccess());
+    QVERIFY(!Data::RuntimePackageCompilerJobResult{unknownResult}.isSuccess());
+
+    auto mislabeledSuccess = unknownEnvelope;
+    mislabeledSuccess.status = Data::RuntimePackageCompilerResultStatus::Succeeded;
+    QVERIFY(!mislabeledSuccess.isValid());
+
+    const auto malformedFailureEnvelope = compilerEnvelope(
+        Data::RuntimePackageCompilerCommand::Compile,
+        Data::RuntimePackageCompilerResultStatus::Canceled,
+        QStringLiteral("cancelled"),
+        fixture.request.operationId,
+        fixture.request.configurationId,
+        compilerRequestSha256(fixture.request),
+        {},
+        RuntimePackageCompilerFixture::canonical(
+            QByteArray("{\"diagnostics\":{},\"status\":\"fail\"}\n")));
+    QVERIFY(!malformedFailureEnvelope.isValid());
+
+    auto largeDiagnostic = compilerDiagnostic(
+        Data::RuntimePackageCompilerDiagnosticCategory::Idempotency,
+        QStringLiteral("ECOMP-LARGE-DETAIL"));
+    QByteArray largeDiagnosticBytes
+        = largeDiagnostic.canonicalJson.exactBytes();
+    largeDiagnosticBytes.replace(
+        QByteArray("\"format\""),
+        QByteArray("\"details\":{\"value\":9223372036854775808},\"format\""));
+    largeDiagnostic.canonicalJson
+        = RuntimePackageCompilerFixture::canonical(largeDiagnosticBytes);
+    QVERIFY(largeDiagnostic.isValid());
+    QByteArray mismatchedDiagnosticBytes = largeDiagnosticBytes;
+    mismatchedDiagnosticBytes.replace(
+        QByteArray("9223372036854775808"),
+        QByteArray("9223372036854775809"));
+    mismatchedDiagnosticBytes.chop(1);
+    const auto lossyFailureEnvelope = compilerEnvelope(
+        Data::RuntimePackageCompilerCommand::Compile,
+        Data::RuntimePackageCompilerResultStatus::DomainFailed,
+        QStringLiteral("fail"),
+        fixture.request.operationId,
+        fixture.request.configurationId,
+        compilerRequestSha256(fixture.request),
+        {largeDiagnostic},
+        RuntimePackageCompilerFixture::canonical(
+            QByteArray("{\"diagnostics\":[") + mismatchedDiagnosticBytes
+            + QByteArray("],\"status\":\"fail\"}\n")));
+    QVERIFY(!lossyFailureEnvelope.isValid());
+
+    const Data::RuntimePackageCompilerFinalizeRequest finalizeRequest{
+        fixture.request.operationId,
+        fixture.request.configurationId,
+        fixture.request.contractIdentity,
+        compilerRequestSha256(fixture.request),
+        *compileResult.manifestSha256,
+        detachedSigningResponse(fixture.request, compileResult),
+    };
+    QVERIFY(finalizeRequest.isValid());
+    const Data::RuntimePackageCompilerFinalizeResult finalizeResult = successfulFinalizeResult(
+        finalizeRequest);
+    QVERIFY(finalizeResult.isValid());
+    QVERIFY(finalizeResult.isSuccess());
+
+    const Data::RuntimePackageCompilerQueryRequest queryRequest{
+        fixture.request.operationId,
+        fixture.request.contractIdentity,
+    };
+    QVERIFY(queryRequest.isValid());
+    const auto signerOnlyResponse = finalizeRequest.detachedSigningResponse;
+    const QJsonObject signerOnlyObject{
+        {QStringLiteral("compiler"), QJsonValue(QJsonValue::Null)},
+        {QStringLiteral("format"), QStringLiteral("ethercat-ide-compiler-operation-state-v1")},
+        {QStringLiteral("operation_id"), queryRequest.operationId.value()},
+        {QStringLiteral("signer_response"),
+         QJsonDocument::fromJson(signerOnlyResponse.exactBytes()).object()},
+    };
+    const auto signerOnlyCanonical = RuntimePackageCompilerFixture::canonical(
+        QJsonDocument(signerOnlyObject).toJson(QJsonDocument::Compact) + '\n');
+    const auto signerOnlyEnvelope = compilerEnvelope(
+        Data::RuntimePackageCompilerCommand::Query,
+        Data::RuntimePackageCompilerResultStatus::Succeeded,
+        QStringLiteral("state"),
+        queryRequest.operationId,
+        0,
+        compilerRequestSha256(queryRequest),
+        {},
+        signerOnlyCanonical);
+    const Data::RuntimePackageCompilerQueryResult signerOnlyQuery{
+        signerOnlyEnvelope, {}, signerOnlyResponse};
+    QVERIFY(signerOnlyQuery.isValid());
+    QVERIFY(signerOnlyQuery.isSuccess());
+    QVERIFY(!signerOnlyQuery.hasCompilerRecord());
+    QVERIFY(signerOnlyQuery.hasSignerResponse());
+    auto mismatchedSignerOnlyQuery = signerOnlyQuery;
+    mismatchedSignerOnlyQuery.signerResponse = RuntimePackageCompilerFixture::canonical(
+        QByteArray("{\"format\":\"different-signer-response\"}\n"));
+    QVERIFY(!mismatchedSignerOnlyQuery.isValid());
+
+    const auto largeCompilerRecord = RuntimePackageCompilerFixture::canonical(
+        QByteArray(
+            "{\"configuration_id\":9223372036854775808,\"format\":\"record\"}\n"));
+    const auto lossyQueryCanonical = RuntimePackageCompilerFixture::canonical(
+        QStringLiteral(
+            "{\"compiler\":{\"configuration_id\":9223372036854775809,"
+            "\"format\":\"record\"},"
+            "\"format\":\"ethercat-ide-compiler-operation-state-v1\","
+            "\"operation_id\":\"%1\",\"signer_response\":null}\n")
+            .arg(queryRequest.operationId.value())
+            .toLatin1());
+    QVERIFY(largeCompilerRecord.isValid());
+    QVERIFY(lossyQueryCanonical.isValid());
+    const Data::RuntimePackageCompilerQueryResult lossyQuery{
+        compilerEnvelope(
+            Data::RuntimePackageCompilerCommand::Query,
+            Data::RuntimePackageCompilerResultStatus::Succeeded,
+            QStringLiteral("state"),
+            queryRequest.operationId,
+            0,
+            compilerRequestSha256(queryRequest),
+            {},
+            lossyQueryCanonical),
+        largeCompilerRecord,
+        {},
+    };
+    QVERIFY(!lossyQuery.isValid());
+
+    const Data::RuntimePackageCompilerVerifyRequest verifyRequest{
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000099")},
+        fixture.request.contractIdentity,
+        finalizeResult.packageBytes,
+        *finalizeResult.packageSha256,
+    };
+    QVERIFY(verifyRequest.isValid());
+
+    const auto invalidVerifyEnvelope = compilerEnvelope(
+        Data::RuntimePackageCompilerCommand::Verify,
+        Data::RuntimePackageCompilerResultStatus::Succeeded,
+        QStringLiteral("pass"),
+        verifyRequest.operationId,
+        0,
+        compilerRequestSha256(verifyRequest));
+    const Data::RuntimePackageCompilerVerifyResult invalidVerifyResult{
+        invalidVerifyEnvelope,
+        verifyRequest.packageSha256,
+        2,
+        RuntimePackageCompilerFixture::sha256("intent"),
+        RuntimePackageCompilerFixture::sha256("effective-project-companion"),
+        RuntimePackageCompilerFixture::sha256("target-profile"),
+        RuntimePackageCompilerFixture::sha256("adapter-bundle"),
+        RuntimePackageCompilerFixture::sha256("topology-evidence"),
+        true,
+    };
+    QVERIFY(!invalidVerifyResult.isValid());
+
+    QVERIFY(QMetaType::fromType<Data::RuntimePackageCompilerCompileRequest>().isValid());
+    QVERIFY(
+        QMetaType::fromType<Data::RuntimePackageCompilerProjectSnapshotEvidence>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimePackageCompilerFinalizeRequest>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimePackageCompilerQueryRequest>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimePackageCompilerVerifyRequest>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimePackageCompilerJobResult>().isValid());
+    QVERIFY(QMetaType::fromType<RuntimePackageCompilerJobState>().isValid());
+    QVERIFY(QMetaType::fromType<RuntimePackageCompilerJobCompletionError>().isValid());
+}
+
+void EtherCATCoreTests::testRuntimePackageCompilerProviderContract()
+{
+    RuntimePackageCompilerFixture fixture;
+    TestRuntimePackageCompilerProvider provider;
+    QCOMPARE(int(ProviderKind::RuntimePackageCompiler), 7);
+    QCOMPARE(provider.kind(), ProviderKind::RuntimePackageCompiler);
+    QVERIFY(!provider.isAvailable());
+    provider.setAvailable(true);
+
+    ProviderRegistry *registry = ExtensionSystem::PluginManager::getObject<ProviderRegistry>();
+    QVERIFY(registry);
+    QSignalSpy addedSpy(registry, &ProviderRegistry::providerAdded);
+    QSignalSpy removedSpy(registry, &ProviderRegistry::providerAboutToBeRemoved);
+    ExtensionSystem::PluginManager::addObject(&provider);
+    auto removeProvider = qScopeGuard(
+        [&] { ExtensionSystem::PluginManager::removeObject(&provider); });
+    QCOMPARE(registry->provider(provider.id()), &provider);
+    QCOMPARE(
+        registry->providers(ProviderKind::RuntimePackageCompiler), QList<Provider *>({&provider}));
+    QCOMPARE(addedSpy.count(), 1);
+
+    const auto awaitResult = [](RuntimePackageCompilerJob *job) {
+        QSignalSpy finishedSpy(job, &RuntimePackageCompilerJob::finished);
+        if (job->state() != RuntimePackageCompilerJobState::Finished)
+            finishedSpy.wait(2000);
+        return job->result().value_or(Data::RuntimePackageCompilerJobResult{});
+    };
+    const auto makeRequest = [&](quint64 sequence, quint64 configurationId) {
+        Data::RuntimePackageCompilerCompileRequest request = fixture.request;
+        request.operationId = Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-%1").arg(sequence, 12, 10, QLatin1Char('0'))};
+        request.configurationId = configurationId;
+        request.intentId = QStringLiteral("embedlabs:compile-intent:test-%1").arg(sequence);
+        return request;
+    };
+
+    const Data::RuntimePackageCompilerCompileRequest firstRequest = makeRequest(1, 4201);
+    const Utils::Result<RuntimePackageCompilerJob *> firstScheduled = provider.compile(firstRequest);
+    QVERIFY_RESULT(firstScheduled);
+    auto *firstJob = static_cast<TestRuntimePackageCompilerJob *>(*firstScheduled);
+    QVERIFY(firstJob);
+    QCOMPARE(firstJob->state(), RuntimePackageCompilerJobState::Pending);
+    QSignalSpy firstStateSpy(firstJob, &RuntimePackageCompilerJob::stateChanged);
+    QSignalSpy firstFinishedSpy(firstJob, &RuntimePackageCompilerJob::finished);
+    QVERIFY(firstFinishedSpy.wait(2000));
+    QCOMPARE(firstJob->state(), RuntimePackageCompilerJobState::Finished);
+    QCOMPARE(firstFinishedSpy.count(), 1);
+    QCOMPARE(firstStateSpy.count(), 2);
+    QVERIFY(firstJob->result());
+    QVERIFY(firstJob->result()->isSuccess());
+    firstJob->finishAgainForTest();
+    QCOMPARE(firstFinishedSpy.count(), 1);
+    const int firstMutationCount = provider.ledgerMutationCount;
+
+    const auto canceledFirstResult = canceledCompilerJobResult(
+        Data::RuntimePackageCompilerCommand::Compile,
+        firstRequest.operationId,
+        firstRequest.configurationId,
+        compilerRequestSha256(firstRequest));
+    auto *invalidTerminalJob = new TestRuntimePackageCompilerJob(
+        *firstJob->result(), canceledFirstResult, &provider);
+    QSignalSpy invalidTerminalFinishedSpy(
+        invalidTerminalJob, &RuntimePackageCompilerJob::finished);
+    QSignalSpy invalidTerminalFailedSpy(
+        invalidTerminalJob, &RuntimePackageCompilerJob::completionFailed);
+    invalidTerminalJob->finishForTest({});
+    QCOMPARE(invalidTerminalJob->state(), RuntimePackageCompilerJobState::Finished);
+    QVERIFY(!invalidTerminalJob->result());
+    QCOMPARE(
+        invalidTerminalJob->completionError(),
+        RuntimePackageCompilerJobCompletionError::InvalidTerminalResult);
+    QCOMPARE(invalidTerminalFinishedSpy.count(), 0);
+    QCOMPARE(invalidTerminalFailedSpy.count(), 1);
+    invalidTerminalJob->finishForTest(*firstJob->result());
+    QCOMPARE(invalidTerminalFailedSpy.count(), 1);
+
+    const auto &firstCompileForLifecycle
+        = std::get<Data::RuntimePackageCompilerCompileResult>(
+            firstJob->result()->value());
+    const Data::RuntimePackageCompilerFinalizeRequest lifecycleFinalizeRequest{
+        firstRequest.operationId,
+        firstRequest.configurationId,
+        firstRequest.contractIdentity,
+        firstCompileForLifecycle.envelope.requestSha256,
+        *firstCompileForLifecycle.manifestSha256,
+        detachedSigningResponse(firstRequest, firstCompileForLifecycle),
+    };
+    auto *wrongCommandJob = new TestRuntimePackageCompilerJob(
+        *firstJob->result(), canceledFirstResult, &provider);
+    QSignalSpy wrongCommandFailedSpy(
+        wrongCommandJob, &RuntimePackageCompilerJob::completionFailed);
+    wrongCommandJob->finishForTest(Data::RuntimePackageCompilerJobResult{
+        successfulFinalizeResult(lifecycleFinalizeRequest)});
+    QCOMPARE(wrongCommandJob->state(), RuntimePackageCompilerJobState::Finished);
+    QVERIFY(!wrongCommandJob->result());
+    QCOMPARE(
+        wrongCommandJob->completionError(),
+        RuntimePackageCompilerJobCompletionError::CommandMismatch);
+    QCOMPARE(wrongCommandFailedSpy.count(), 1);
+
+    auto *deletionJob = new TestRuntimePackageCompilerJob(
+        *firstJob->result(), canceledFirstResult, nullptr);
+    QPointer<TestRuntimePackageCompilerJob> deletionGuard(deletionJob);
+    connect(
+        deletionJob,
+        &RuntimePackageCompilerJob::stateChanged,
+        deletionJob,
+        [deletionJob](RuntimePackageCompilerJobState state) {
+            if (state == RuntimePackageCompilerJobState::Finished)
+                delete deletionJob;
+        });
+    deletionJob->finishForTest(*firstJob->result());
+    QVERIFY(!deletionGuard);
+
+    const Utils::Result<RuntimePackageCompilerJob *> exactReplay = provider.compile(firstRequest);
+    QVERIFY_RESULT(exactReplay);
+    QVERIFY(awaitResult(*exactReplay).isSuccess());
+    QCOMPARE(provider.ledgerMutationCount, firstMutationCount);
+
+    Data::RuntimePackageCompilerCompileRequest operationConflict = firstRequest;
+    operationConflict.intentId = QStringLiteral("embedlabs:compile-intent:changed");
+    const Utils::Result<RuntimePackageCompilerJob *> conflictScheduled = provider.compile(
+        operationConflict);
+    QVERIFY_RESULT(conflictScheduled);
+    const auto conflictResult = awaitResult(*conflictScheduled);
+    QVERIFY(conflictResult.isValid());
+    QVERIFY(!conflictResult.isSuccess());
+    const auto &conflictCompile = std::get<Data::RuntimePackageCompilerCompileResult>(
+        conflictResult.value());
+    QCOMPARE(
+        conflictCompile.envelope.diagnostics.constFirst().category,
+        Data::RuntimePackageCompilerDiagnosticCategory::Idempotency);
+
+    const Data::RuntimePackageCompilerCompileRequest configurationReplay
+        = makeRequest(2, firstRequest.configurationId);
+    const Utils::Result<RuntimePackageCompilerJob *> configurationReplayScheduled
+        = provider.compile(configurationReplay);
+    QVERIFY_RESULT(configurationReplayScheduled);
+    QVERIFY(!awaitResult(*configurationReplayScheduled).isSuccess());
+    QCOMPARE(provider.ledgerMutationCount, firstMutationCount);
+
+    const auto expectCompileFailure = [&](Data::RuntimePackageCompilerCompileRequest request) {
+        const Utils::Result<RuntimePackageCompilerJob *> scheduled = provider.compile(request);
+        QVERIFY_RESULT(scheduled);
+        const Data::RuntimePackageCompilerJobResult result = awaitResult(*scheduled);
+        QVERIFY(result.isValid());
+        QVERIFY(!result.isSuccess());
+    };
+
+    Data::RuntimePackageCompilerCompileRequest missingCas = makeRequest(10, 4210);
+    missingCas.projectSnapshotEvidence = {};
+    expectCompileFailure(missingCas);
+    const Utils::Result<RuntimePackageCompilerJob *> reusedUnreservedConfiguration
+        = provider.compile(makeRequest(110, 4210));
+    QVERIFY_RESULT(reusedUnreservedConfiguration);
+    QVERIFY(awaitResult(*reusedUnreservedConfiguration).isSuccess());
+
+    Data::RuntimePackageCompilerCompileRequest zeroConfiguration = makeRequest(111, 4216);
+    zeroConfiguration.configurationId = 0;
+    const Utils::Result<RuntimePackageCompilerJob *> zeroConfigurationScheduled
+        = provider.compile(zeroConfiguration);
+    QVERIFY_RESULT(zeroConfigurationScheduled);
+    const auto zeroConfigurationResult = awaitResult(*zeroConfigurationScheduled);
+    QVERIFY(zeroConfigurationResult.isValid());
+    const auto &zeroConfigurationFailure
+        = std::get<Data::RuntimePackageCompilerCompileResult>(
+            zeroConfigurationResult.value());
+    QCOMPARE(zeroConfigurationFailure.envelope.configurationId, quint64(0));
+    QCOMPARE(
+        zeroConfigurationFailure.envelope.diagnostics.constFirst().code,
+        QStringLiteral("ECOMP-REQUEST-SCHEMA"));
+
+    Data::RuntimePackageCompilerCompileRequest staleTopology = makeRequest(11, 4211);
+    staleTopology.compileTimeNs = staleTopology.topologyEvidence.expiresAtNs + 1;
+    expectCompileFailure(staleTopology);
+    const Utils::Result<RuntimePackageCompilerJob *> staleRetry = provider.compile(
+        staleTopology);
+    QVERIFY_RESULT(staleRetry);
+    QVERIFY(!awaitResult(*staleRetry).isSuccess());
+    const Utils::Result<RuntimePackageCompilerJob *> reservedConfigurationConflict
+        = provider.compile(makeRequest(112, staleTopology.configurationId));
+    QVERIFY_RESULT(reservedConfigurationConflict);
+    const auto reservedConfigurationConflictResult = awaitResult(
+        *reservedConfigurationConflict);
+    const auto &reservedConfigurationFailure
+        = std::get<Data::RuntimePackageCompilerCompileResult>(
+            reservedConfigurationConflictResult.value());
+    QCOMPARE(
+        reservedConfigurationFailure.envelope.diagnostics.constFirst().code,
+        QStringLiteral("ECOMP-CONFIGURATION-REPLAY"));
+
+    Data::RuntimePackageCompilerCompileRequest missingEsi = makeRequest(12, 4212);
+    missingEsi.deviceSourceEvidence[0].originalEsi = {};
+    expectCompileFailure(missingEsi);
+
+    Data::RuntimePackageCompilerCompileRequest missingBundle = makeRequest(13, 4213);
+    missingBundle.sourceArtifacts.adapterBundle = {};
+    expectCompileFailure(missingBundle);
+
+    Data::RuntimePackageCompilerCompileRequest missingDc = makeRequest(14, 4214);
+    missingDc.deviceSourceEvidence[0].explicitNoDc = false;
+    expectCompileFailure(missingDc);
+
+    Data::RuntimePackageCompilerCompileRequest missingTarget = makeRequest(15, 4215);
+    missingTarget.targetProfile.productionSigned = false;
+    expectCompileFailure(missingTarget);
+
+    const Data::RuntimePackageCompilerCompileRequest canceledRequest = makeRequest(20, 4220);
+    const Utils::Result<RuntimePackageCompilerJob *> canceledScheduled = provider.compile(
+        canceledRequest);
+    QVERIFY_RESULT(canceledScheduled);
+    auto *canceledJob = static_cast<TestRuntimePackageCompilerJob *>(*canceledScheduled);
+    QVERIFY(canceledJob);
+    canceledJob->cancel();
+    canceledJob->cancel();
+    QCOMPARE(canceledJob->cancellationRequestCount(), 1);
+    const auto canceledResult = awaitResult(canceledJob);
+    QVERIFY(canceledResult.isValid());
+    QVERIFY(!canceledResult.isSuccess());
+    QCOMPARE(canceledJob->state(), RuntimePackageCompilerJobState::Finished);
+    canceledJob->cancel();
+    QCOMPARE(canceledJob->cancellationRequestCount(), 1);
+    QCOMPARE(
+        std::get<Data::RuntimePackageCompilerCompileResult>(canceledResult.value()).envelope.status,
+        Data::RuntimePackageCompilerResultStatus::Canceled);
+
+    const int afterCanceledMutations = provider.ledgerMutationCount;
+    const Data::RuntimePackageCompilerQueryRequest canceledQuery{
+        canceledRequest.operationId,
+        canceledRequest.contractIdentity,
+    };
+    const Utils::Result<RuntimePackageCompilerJob *> canceledQueryScheduled = provider.query(
+        canceledQuery);
+    QVERIFY_RESULT(canceledQueryScheduled);
+    const auto canceledQueryJobResult = awaitResult(*canceledQueryScheduled);
+    QVERIFY(canceledQueryJobResult.isSuccess());
+    const auto &canceledQueryResult = std::get<Data::RuntimePackageCompilerQueryResult>(
+        canceledQueryJobResult.value());
+    QVERIFY(canceledQueryResult.hasRecoveredResult());
+    QVERIFY(canceledQueryResult.hasCompilerRecord());
+    QVERIFY(!canceledQueryResult.hasSignerResponse());
+    QCOMPARE(
+        QJsonDocument::fromJson(canceledQueryResult.compilerRecord->exactBytes())
+            .object()
+            .value(QStringLiteral("state"))
+            .toString(),
+        QStringLiteral("reserved"));
+    QCOMPARE(provider.ledgerMutationCount, afterCanceledMutations);
+
+    const Utils::Result<RuntimePackageCompilerJob *> canceledReplay = provider.compile(
+        canceledRequest);
+    QVERIFY_RESULT(canceledReplay);
+    const auto canceledReplayResult = awaitResult(*canceledReplay);
+    QVERIFY(canceledReplayResult.isSuccess());
+    QCOMPARE(provider.ledgerMutationCount, afterCanceledMutations + 1);
+
+    const Data::RuntimePackageCompilerCompileRequest runningCanceledRequest = makeRequest(22, 4222);
+    const Utils::Result<RuntimePackageCompilerJob *> runningCanceledScheduled = provider.compile(
+        runningCanceledRequest);
+    QVERIFY_RESULT(runningCanceledScheduled);
+    auto *runningCanceledJob = static_cast<TestRuntimePackageCompilerJob *>(
+        *runningCanceledScheduled);
+    connect(
+        runningCanceledJob,
+        &RuntimePackageCompilerJob::stateChanged,
+        runningCanceledJob,
+        [runningCanceledJob](RuntimePackageCompilerJobState state) {
+            if (state == RuntimePackageCompilerJobState::Running)
+                runningCanceledJob->cancel();
+        });
+    const auto runningCanceledResult = awaitResult(runningCanceledJob);
+    QCOMPARE(runningCanceledJob->cancellationRequestCount(), 1);
+    QCOMPARE(
+        std::get<Data::RuntimePackageCompilerCompileResult>(runningCanceledResult.value())
+            .envelope.status,
+        Data::RuntimePackageCompilerResultStatus::Canceled);
+    const Utils::Result<RuntimePackageCompilerJob *> runningCanceledRetry = provider.compile(
+        runningCanceledRequest);
+    QVERIFY_RESULT(runningCanceledRetry);
+    QVERIFY(awaitResult(*runningCanceledRetry).isSuccess());
+
+    const Data::RuntimePackageCompilerCompileRequest completedRequest = makeRequest(21, 4221);
+    const Utils::Result<RuntimePackageCompilerJob *> completedScheduled = provider.compile(
+        completedRequest);
+    QVERIFY_RESULT(completedScheduled);
+    auto *completedJob = static_cast<TestRuntimePackageCompilerJob *>(*completedScheduled);
+    QVERIFY(completedJob);
+    QVERIFY(awaitResult(completedJob).isSuccess());
+    completedJob->cancel();
+    QCOMPARE(completedJob->cancellationRequestCount(), 0);
+
+    const Data::RuntimePackageCompilerQueryRequest queryRequest{
+        firstRequest.operationId,
+        firstRequest.contractIdentity,
+    };
+    const int beforeQueryMutations = provider.ledgerMutationCount;
+    const Utils::Result<RuntimePackageCompilerJob *> queryScheduled = provider.query(queryRequest);
+    QVERIFY_RESULT(queryScheduled);
+    const auto queryResult = awaitResult(*queryScheduled);
+    QVERIFY(queryResult.isSuccess());
+    const auto &query = std::get<Data::RuntimePackageCompilerQueryResult>(queryResult.value());
+    QVERIFY(query.hasRecoveredResult());
+    QVERIFY(query.hasCompilerRecord());
+    QVERIFY(!query.hasSignerResponse());
+    QCOMPARE(
+        QJsonDocument::fromJson(query.compilerRecord->exactBytes())
+            .object()
+            .value(QStringLiteral("state"))
+            .toString(),
+        QStringLiteral("prepared"));
+    QCOMPARE(provider.ledgerMutationCount, beforeQueryMutations);
+
+    const Data::RuntimePackageCompilerQueryRequest missingQuery{
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000098")},
+        firstRequest.contractIdentity,
+    };
+    const Utils::Result<RuntimePackageCompilerJob *> missingQueryScheduled = provider.query(
+        missingQuery);
+    QVERIFY_RESULT(missingQueryScheduled);
+    const auto missingQueryJobResult = awaitResult(*missingQueryScheduled);
+    QVERIFY(missingQueryJobResult.isValid());
+    QVERIFY(!missingQueryJobResult.isSuccess());
+    const auto &missingQueryResult = std::get<Data::RuntimePackageCompilerQueryResult>(
+        missingQueryJobResult.value());
+    QVERIFY(!missingQueryResult.hasRecoveredResult());
+    QCOMPARE(
+        missingQueryResult.envelope.diagnostics.constFirst().code,
+        QStringLiteral("ECOMP-OPERATION-UNKNOWN"));
+
+    const auto firstCompileResult = std::get<Data::RuntimePackageCompilerCompileResult>(
+        firstJob->result()->value());
+    const Data::RuntimePackageCompilerFinalizeRequest finalizeRequest{
+        firstRequest.operationId,
+        firstRequest.configurationId,
+        firstRequest.contractIdentity,
+        firstCompileResult.envelope.requestSha256,
+        *firstCompileResult.manifestSha256,
+        detachedSigningResponse(firstRequest, firstCompileResult),
+    };
+    Data::RuntimePackageCompilerFinalizeRequest zeroConfigurationFinalize = finalizeRequest;
+    zeroConfigurationFinalize.configurationId = 0;
+    const Utils::Result<RuntimePackageCompilerJob *> zeroConfigurationFinalizeScheduled
+        = provider.finalize(zeroConfigurationFinalize);
+    QVERIFY_RESULT(zeroConfigurationFinalizeScheduled);
+    const auto zeroConfigurationFinalizeResult = awaitResult(
+        *zeroConfigurationFinalizeScheduled);
+    QVERIFY(zeroConfigurationFinalizeResult.isValid());
+    const auto &zeroConfigurationFinalizeFailure
+        = std::get<Data::RuntimePackageCompilerFinalizeResult>(
+            zeroConfigurationFinalizeResult.value());
+    QCOMPARE(zeroConfigurationFinalizeFailure.envelope.configurationId, quint64(0));
+
+    const Utils::Result<RuntimePackageCompilerJob *> finalizeScheduled = provider.finalize(
+        finalizeRequest);
+    QVERIFY_RESULT(finalizeScheduled);
+    auto *canceledFinalizeJob = static_cast<TestRuntimePackageCompilerJob *>(
+        *finalizeScheduled);
+    canceledFinalizeJob->cancel();
+    const auto canceledFinalizeResult = awaitResult(canceledFinalizeJob);
+    QCOMPARE(
+        std::get<Data::RuntimePackageCompilerFinalizeResult>(
+            canceledFinalizeResult.value())
+            .envelope.status,
+        Data::RuntimePackageCompilerResultStatus::Canceled);
+    const Utils::Result<RuntimePackageCompilerJob *> queryAfterCanceledFinalize
+        = provider.query(queryRequest);
+    QVERIFY_RESULT(queryAfterCanceledFinalize);
+    const auto queryAfterCanceledFinalizeJobResult = awaitResult(
+        *queryAfterCanceledFinalize);
+    const auto &queryAfterCanceledFinalizeResult
+        = std::get<Data::RuntimePackageCompilerQueryResult>(
+            queryAfterCanceledFinalizeJobResult.value());
+    QVERIFY(queryAfterCanceledFinalizeResult.hasCompilerRecord());
+    QVERIFY(queryAfterCanceledFinalizeResult.hasSignerResponse());
+    QCOMPARE(
+        QJsonDocument::fromJson(
+            queryAfterCanceledFinalizeResult.compilerRecord->exactBytes())
+            .object()
+            .value(QStringLiteral("state"))
+            .toString(),
+        QStringLiteral("prepared"));
+
+    const Utils::Result<RuntimePackageCompilerJob *> finalizeRetry = provider.finalize(
+        finalizeRequest);
+    QVERIFY_RESULT(finalizeRetry);
+    const auto finalizeResult = awaitResult(*finalizeRetry);
+    QVERIFY(finalizeResult.isSuccess());
+    const int afterFinalizeMutations = provider.ledgerMutationCount;
+
+    const Utils::Result<RuntimePackageCompilerJob *> queryAfterFinalize = provider.query(
+        queryRequest);
+    QVERIFY_RESULT(queryAfterFinalize);
+    const auto queryAfterFinalizeJobResult = awaitResult(*queryAfterFinalize);
+    const auto &queryAfterFinalizeResult = std::get<Data::RuntimePackageCompilerQueryResult>(
+        queryAfterFinalizeJobResult.value());
+    QVERIFY(queryAfterFinalizeResult.hasCompilerRecord());
+    QVERIFY(queryAfterFinalizeResult.hasSignerResponse());
+    QCOMPARE(
+        QJsonDocument::fromJson(queryAfterFinalizeResult.compilerRecord->exactBytes())
+            .object()
+            .value(QStringLiteral("state"))
+            .toString(),
+        QStringLiteral("finalized"));
+
+    const Utils::Result<RuntimePackageCompilerJob *> finalizeReplay = provider.finalize(
+        finalizeRequest);
+    QVERIFY_RESULT(finalizeReplay);
+    QVERIFY(awaitResult(*finalizeReplay).isSuccess());
+    QCOMPARE(provider.ledgerMutationCount, afterFinalizeMutations);
+
+    Data::RuntimePackageCompilerFinalizeRequest finalizeConflict = finalizeRequest;
+    QByteArray changedSigningResponse = finalizeConflict.detachedSigningResponse.exactBytes();
+    const qsizetype signatureOffset = changedSigningResponse.indexOf("\"signature_hex\":\"") + 17;
+    QVERIFY(signatureOffset >= 17);
+    changedSigningResponse[signatureOffset] = '5';
+    finalizeConflict.detachedSigningResponse = RuntimePackageCompilerFixture::canonical(
+        std::move(changedSigningResponse));
+    const Utils::Result<RuntimePackageCompilerJob *> finalizeConflictScheduled = provider.finalize(
+        finalizeConflict);
+    QVERIFY_RESULT(finalizeConflictScheduled);
+    QVERIFY(!awaitResult(*finalizeConflictScheduled).isSuccess());
+    QCOMPARE(provider.ledgerMutationCount, afterFinalizeMutations);
+
+    const auto &finalized = std::get<Data::RuntimePackageCompilerFinalizeResult>(
+        finalizeResult.value());
+    const Data::RuntimePackageCompilerVerifyRequest missingDigestVerifyRequest{
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000097")},
+        firstRequest.contractIdentity,
+        {},
+        {},
+    };
+    const Utils::Result<RuntimePackageCompilerJob *> missingDigestVerifyScheduled
+        = provider.verify(missingDigestVerifyRequest);
+    QVERIFY_RESULT(missingDigestVerifyScheduled);
+    const auto missingDigestVerifyResult = awaitResult(*missingDigestVerifyScheduled);
+    QVERIFY(missingDigestVerifyResult.isValid());
+    QVERIFY(!missingDigestVerifyResult.isSuccess());
+    QCOMPARE(
+        (*missingDigestVerifyScheduled)->completionError(),
+        RuntimePackageCompilerJobCompletionError::None);
+    auto malformedFailedVerify
+        = std::get<Data::RuntimePackageCompilerVerifyResult>(
+            missingDigestVerifyResult.value());
+    malformedFailedVerify.intentSha256
+        = Data::RuntimePackageCompilerSha256{QByteArray(31, '\x55')};
+    QVERIFY(!malformedFailedVerify.isValid());
+
+    const Data::RuntimePackageCompilerVerifyRequest malformedDigestVerifyRequest{
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000096")},
+        firstRequest.contractIdentity,
+        finalized.packageBytes,
+        Data::RuntimePackageCompilerSha256{QByteArray(31, '\x55')},
+    };
+    const Utils::Result<RuntimePackageCompilerJob *> malformedDigestVerifyScheduled
+        = provider.verify(malformedDigestVerifyRequest);
+    QVERIFY_RESULT(malformedDigestVerifyScheduled);
+    const auto malformedDigestVerifyResult = awaitResult(*malformedDigestVerifyScheduled);
+    QVERIFY(malformedDigestVerifyResult.isValid());
+    QVERIFY(!malformedDigestVerifyResult.isSuccess());
+    QCOMPARE(
+        (*malformedDigestVerifyScheduled)->completionError(),
+        RuntimePackageCompilerJobCompletionError::None);
+    QVERIFY(
+        std::get<Data::RuntimePackageCompilerVerifyResult>(
+            malformedDigestVerifyResult.value())
+            .packageSha256.value()
+            .isEmpty());
+
+    const Data::RuntimePackageCompilerVerifyRequest verifyRequest{
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000099")},
+        firstRequest.contractIdentity,
+        finalized.packageBytes,
+        *finalized.packageSha256,
+    };
+    const int beforeVerifyMutations = provider.ledgerMutationCount;
+    const Utils::Result<RuntimePackageCompilerJob *> verifyScheduled = provider.verify(
+        verifyRequest);
+    QVERIFY_RESULT(verifyScheduled);
+    QVERIFY(awaitResult(*verifyScheduled).isSuccess());
+    QCOMPARE(provider.ledgerMutationCount, beforeVerifyMutations);
+    QCOMPARE(provider.verifyCallCount, 1);
+
+    provider.failScheduling = true;
+    const int beforeSchedulingFailure = provider.ledgerMutationCount;
+    const Utils::Result<RuntimePackageCompilerJob *> schedulingFailure = provider.compile(
+        makeRequest(30, 4230));
+    QVERIFY(!schedulingFailure);
+    QCOMPARE(provider.ledgerMutationCount, beforeSchedulingFailure);
+    provider.failScheduling = false;
+
+    Data::RuntimePackageCompilerCompileRequest malformedIdentity = makeRequest(31, 4231);
+    malformedIdentity.operationId = {};
+    const Utils::Result<RuntimePackageCompilerJob *> malformedScheduling = provider.compile(
+        malformedIdentity);
+    QVERIFY(!malformedScheduling);
+
+    ExtensionSystem::PluginManager::removeObject(&provider);
+    removeProvider.dismiss();
+    QVERIFY(!registry->provider(provider.id()));
+    QCOMPARE(removedSpy.count(), 1);
 }
 
 void EtherCATCoreTests::testSemanticRuntimeValueSemantics()

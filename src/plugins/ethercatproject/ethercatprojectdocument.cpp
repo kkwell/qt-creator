@@ -1027,6 +1027,7 @@ EtherCATProjectDocument::captureRuntimePackageActivationProject() const
     Data::RuntimePackageActivationProjectCapture capture{
         m_snapshot,
         serializedProject,
+        m_runtimePackageActivationRevisionSequence,
         runtimePackageActivationDocumentRevisionToken(serializedProject),
         runtimePackageActivationBindingToken(m_snapshot.masterBindingArtifact),
     };

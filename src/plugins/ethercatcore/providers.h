@@ -37,6 +37,7 @@ enum class ProviderKind {
     Diagnostics,
     ControllerConnection,
     DeviceAdapter,
+    RuntimePackageCompiler = 7,
 };
 enum class DeviceImportState { Pending, Running, Canceling, Finished };
 enum class WorkbenchNodeKind {

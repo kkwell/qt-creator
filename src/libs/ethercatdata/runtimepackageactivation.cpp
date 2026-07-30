@@ -789,10 +789,12 @@ bool RuntimePackageActivationOriginalBindingToken::isValid() const
 RuntimePackageActivationProjectCapture::RuntimePackageActivationProjectCapture(
     ProjectSnapshot snapshot,
     QByteArray serializedProject,
+    quint64 documentRevisionNumber,
     RuntimePackageActivationDocumentRevisionToken documentRevision,
     RuntimePackageActivationOriginalBindingToken originalBinding)
     : m_snapshot(std::move(snapshot))
     , m_serializedProject(std::move(serializedProject))
+    , m_documentRevisionNumber(documentRevisionNumber)
     , m_documentRevision(std::move(documentRevision))
     , m_originalBinding(std::move(originalBinding))
 {}
@@ -805,6 +807,11 @@ const ProjectSnapshot &RuntimePackageActivationProjectCapture::snapshot() const
 const QByteArray &RuntimePackageActivationProjectCapture::serializedProject() const
 {
     return m_serializedProject;
+}
+
+quint64 RuntimePackageActivationProjectCapture::documentRevisionNumber() const
+{
+    return m_documentRevisionNumber;
 }
 
 const RuntimePackageActivationDocumentRevisionToken &
@@ -822,7 +829,8 @@ RuntimePackageActivationProjectCapture::originalBinding() const
 bool RuntimePackageActivationProjectCapture::isValid() const
 {
     return m_snapshot.valid && !m_snapshot.id.isNull() && !m_serializedProject.isEmpty()
-           && m_documentRevision.isValid() && m_originalBinding.isValid();
+           && m_documentRevisionNumber != 0 && m_documentRevision.isValid()
+           && m_originalBinding.isValid();
 }
 
 RuntimePackageActivationSha256::RuntimePackageActivationSha256(QByteArray value)
