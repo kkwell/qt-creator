@@ -13,6 +13,7 @@
     "qualification",
     "matchPriority",
     "match",
+    "controllerAdapterTarget",
     "capabilities",
     "source",
     "evidenceSha256",
@@ -58,6 +59,9 @@
     },
     "match": {
       "$ref": "#/$defs/match"
+    },
+    "controllerAdapterTarget": {
+      "$ref": "#/$defs/controllerAdapterTarget"
     },
     "capabilities": {
       "$ref": "#/$defs/stableIdSet"
@@ -170,6 +174,32 @@
           "maximum": 4294967295
         },
         "exactEsiSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "controllerAdapterTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapterId",
+        "adapterVersion",
+        "adapterSha256",
+        "esiSha256"
+      ],
+      "properties": {
+        "adapterId": {
+          "$ref": "#/$defs/simpleId"
+        },
+        "adapterVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "adapterSha256": {
+          "$ref": "#/$defs/nonzeroSha256"
+        },
+        "esiSha256": {
           "$ref": "#/$defs/sha256"
         }
       }

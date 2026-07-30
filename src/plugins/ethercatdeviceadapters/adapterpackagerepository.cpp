@@ -74,6 +74,19 @@ static bool exactSchema(PackageSchema schema)
     return schema == PackageSchema::V2 || schema == PackageSchema::V3;
 }
 
+static DeviceAdapterContractVersion contractVersion(PackageSchema schema)
+{
+    switch (schema) {
+    case PackageSchema::V1:
+        return DeviceAdapterContractVersion::V1;
+    case PackageSchema::V2:
+        return DeviceAdapterContractVersion::V2;
+    case PackageSchema::V3:
+        return DeviceAdapterContractVersion::V3;
+    }
+    return DeviceAdapterContractVersion::Unknown;
+}
+
 static bool parseCanonicalSignedDecimal(
     const QJsonValue &value, const QString &context, qint64 *result, QString *error)
 {
@@ -2799,6 +2812,10 @@ static bool validateV3Manifest(const DeviceAdapterManifest &manifest, QString *e
 
 static bool validateManifest(DeviceAdapterManifest *manifest, PackageSchema schema, QString *error)
 {
+    if (!isValidDeviceAdapterContractVersion(manifest->contractVersion)
+        || manifest->contractVersion != contractVersion(schema)) {
+        return fail(error, "adapter contract version does not match the parsed schema");
+    }
     if (manifest->match.vendorId == 0 || manifest->match.productCode == 0
         || manifest->match.minimumRevision > manifest->match.maximumRevision) {
         return fail(error, "match identity or revision interval is invalid");
@@ -2993,32 +3010,32 @@ static std::optional<Package> parsePackage(
                     QString::fromLatin1(schemaVersionV3)));
         return std::nullopt;
     }
-    if (!checkKeys(
-            object,
-            {"schemaVersion",
-             "id",
-             "version",
-             "displayName",
-             "description",
-             "qualification",
-             "matchPriority",
-             "match",
-             "capabilities",
-             "source",
-             "evidenceSha256",
-             "signatureVerified",
-             "realHardwareAllowed",
-             "signals",
-             "processDataProfiles",
-             "moduleProfiles",
-             "controlActions"},
-            context,
-            error)) {
+    QStringList rootKeys{"schemaVersion",
+                         "id",
+                         "version",
+                         "displayName",
+                         "description",
+                         "qualification",
+                         "matchPriority",
+                         "match",
+                         "capabilities",
+                         "source",
+                         "evidenceSha256",
+                         "signatureVerified",
+                         "realHardwareAllowed",
+                         "signals",
+                         "processDataProfiles",
+                         "moduleProfiles",
+                         "controlActions"};
+    if (schema == PackageSchema::V3)
+        rootKeys.append("controllerAdapterTarget");
+    if (!checkKeys(object, rootKeys, context, error)) {
         return std::nullopt;
     }
 
     Package package;
     DeviceAdapterManifest &manifest = package.manifest;
+    manifest.contractVersion = contractVersion(schema);
     if (!parseString(object, "id", context, &manifest.id.value, error)
         || !parseString(object, "version", context, &manifest.version, error)
         || !parseString(object, "displayName", context, &manifest.displayName, error)
@@ -3101,6 +3118,67 @@ static std::optional<Package> parsePackage(
     manifest.match.minimumRevision = quint32(minimumRevision);
     manifest.match.maximumRevision = quint32(maximumRevision);
 
+    if (schema == PackageSchema::V3) {
+        const QString targetContext = context + ".controllerAdapterTarget";
+        const QJsonValue targetValue = object.value("controllerAdapterTarget");
+        if (!targetValue.isObject()) {
+            fail(error, QString("%1 must be an object").arg(targetContext));
+            return std::nullopt;
+        }
+        const QJsonObject target = targetValue.toObject();
+        if (!checkKeys(
+                target,
+                {"adapterId", "adapterVersion", "adapterSha256", "esiSha256"},
+                targetContext,
+                error)
+            || !parseString(
+                target,
+                "adapterId",
+                targetContext,
+                &manifest.controllerAdapterTarget.adapterId,
+                error)
+            || !parseString(
+                target,
+                "adapterVersion",
+                targetContext,
+                &manifest.controllerAdapterTarget.adapterVersion,
+                error)
+            || !parseHash(
+                target,
+                "adapterSha256",
+                targetContext,
+                &manifest.controllerAdapterTarget.adapterSha256,
+                error)
+            || !parseHash(
+                target,
+                "esiSha256",
+                targetContext,
+                &manifest.controllerAdapterTarget.esiSha256,
+                error)) {
+            return std::nullopt;
+        }
+        const DeviceAdapterControllerTarget &controllerTarget
+            = manifest.controllerAdapterTarget;
+        if (!simpleV3Identifier(controllerTarget.adapterId)
+            || !canonicalIdentifier(controllerTarget.adapterVersion)) {
+            fail(error, QString("%1 identity must be canonical").arg(targetContext));
+            return std::nullopt;
+        }
+        if (std::all_of(
+                controllerTarget.adapterSha256.cbegin(),
+                controllerTarget.adapterSha256.cend(),
+                [](char byte) { return byte == 0; })) {
+            fail(error, QString("%1.adapterSha256 must be non-zero").arg(targetContext));
+            return std::nullopt;
+        }
+        if (controllerTarget.esiSha256 != manifest.match.exactEsiSha256) {
+            fail(
+                error,
+                QString("%1.esiSha256 does not match the exact ESI identity").arg(targetContext));
+            return std::nullopt;
+        }
+    }
+
     if (!parseCapabilityList(
             object, "capabilities", context, &manifest.capabilities, error, exactSchema(schema))) {
         return std::nullopt;
@@ -3141,6 +3219,14 @@ static std::optional<Package> parsePackage(
             schema,
             &manifest.controlActions,
             error)) {
+        return std::nullopt;
+    }
+    if (schema == PackageSchema::V3
+        && manifest.controllerAdapterTarget.esiSha256 != manifest.provenance.sourceSha256) {
+        fail(
+            error,
+            QString("%1.controllerAdapterTarget.esiSha256 does not match source.sha256")
+                .arg(context));
         return std::nullopt;
     }
     if (schema == PackageSchema::V1) {

@@ -13,6 +13,12 @@
     "maximumRevision": 1,
     "exactEsiSha256": "abababababababababababababababababababababababababababababababab"
   },
+  "controllerAdapterTarget": {
+    "adapterId": "test.atomic_output",
+    "adapterVersion": "1.0.0",
+    "adapterSha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "esiSha256": "abababababababababababababababababababababababababababababababab"
+  },
   "capabilities": [
     "org.embedlabs.test.atomic-output"
   ],

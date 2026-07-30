@@ -124,14 +124,19 @@ static Utils::FilePath adaptersRoot()
 }
 
 static const Data::DeviceAdapterManifest *manifestForIdentity(
-    const QList<Data::DeviceAdapterManifest> &manifests, const Data::DeviceIdentity &identity)
+    const QList<Data::DeviceAdapterManifest> &manifests,
+    const Data::DeviceIdentity &identity,
+    const QString &version = {})
 {
     const auto found = std::find_if(
-        manifests.cbegin(), manifests.cend(), [&identity](const Data::DeviceAdapterManifest &item) {
+        manifests.cbegin(),
+        manifests.cend(),
+        [&identity, &version](const Data::DeviceAdapterManifest &item) {
             return item.match.vendorId == identity.vendorId
                    && item.match.productCode == identity.productCode
                    && item.match.minimumRevision == identity.revisionNumber
-                   && item.match.maximumRevision == identity.revisionNumber;
+                   && item.match.maximumRevision == identity.revisionNumber
+                   && (version.isEmpty() || item.version == version);
         });
     return found == manifests.cend() ? nullptr : &*found;
 }
@@ -357,17 +362,19 @@ void EtherCATDeviceAdaptersTests::testBundledResourcesAndManifests()
     AdapterPackageRepository repository(packageRoot);
     QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
     QCOMPARE(repository.packageRoot(), packageRoot);
-    QCOMPARE(repository.loadedPackageCount(), 4);
+    QCOMPARE(repository.loadedPackageCount(), 6);
     QVERIFY(repository.loadErrors().isEmpty());
 
     const QList<Data::DeviceAdapterManifest> manifests = repository.adapterManifests();
-    QCOMPARE(manifests.size(), 4);
+    QCOMPARE(manifests.size(), 6);
     const Data::DeviceAdapterManifest *xb6 = manifestForIdentity(manifests, xb6Identity);
     const Data::DeviceAdapterManifest *sv630n = manifestForIdentity(manifests, sv630nIdentity);
     QVERIFY(xb6);
     QVERIFY(sv630n);
-    QCOMPARE(xb6->version, QString("0.2.0"));
-    QCOMPARE(sv630n->version, QString("0.2.0"));
+    QCOMPARE(xb6->contractVersion, Data::DeviceAdapterContractVersion::V3);
+    QCOMPARE(sv630n->contractVersion, Data::DeviceAdapterContractVersion::V3);
+    QCOMPARE(xb6->version, QString("0.3.0"));
+    QCOMPARE(sv630n->version, QString("0.3.0"));
     QCOMPARE(xb6->match.exactEsiSha256, xb6EsiSha256);
     QCOMPARE(sv630n->match.exactEsiSha256, sv630nEsiSha256);
 
@@ -464,10 +471,14 @@ void EtherCATDeviceAdaptersTests::testBundledV2ExactContracts()
     AdapterPackageRepository repository(adaptersRoot());
     QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
     const QList<Data::DeviceAdapterManifest> manifests = repository.adapterManifests();
-    const Data::DeviceAdapterManifest *xb6 = manifestForIdentity(manifests, xb6Identity);
-    const Data::DeviceAdapterManifest *sv630n = manifestForIdentity(manifests, sv630nIdentity);
+    const Data::DeviceAdapterManifest *xb6
+        = manifestForIdentity(manifests, xb6Identity, "0.2.0");
+    const Data::DeviceAdapterManifest *sv630n
+        = manifestForIdentity(manifests, sv630nIdentity, "0.2.0");
     QVERIFY(xb6);
     QVERIFY(sv630n);
+    QCOMPARE(xb6->contractVersion, Data::DeviceAdapterContractVersion::V2);
+    QCOMPARE(sv630n->contractVersion, Data::DeviceAdapterContractVersion::V2);
     QCOMPARE(xb6->version, QString("0.2.0"));
     QCOMPARE(sv630n->version, QString("0.2.0"));
     QCOMPARE(
@@ -561,6 +572,141 @@ void EtherCATDeviceAdaptersTests::testBundledV2ExactContracts()
     const Core::ManualControlContractValidation validation = Core::validateManualControlEnvelope(
         envelope, sv630n->semanticSignals, sv630n->controlActions);
     QCOMPARE(validation.error, Core::ManualControlContractError::MissingFallback);
+}
+
+void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
+{
+    AdapterPackageRepository repository(
+        ::Core::ICore::resourcePath("ethercat/adapters/v3"));
+    QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
+    QCOMPARE(repository.loadedPackageCount(), 2);
+
+    const QList<Data::DeviceAdapterManifest> manifests = repository.adapterManifests();
+    const Data::DeviceAdapterManifest *xb6
+        = manifestForIdentity(manifests, xb6Identity, "0.3.0");
+    const Data::DeviceAdapterManifest *sv630n
+        = manifestForIdentity(manifests, sv630nIdentity, "0.3.0");
+    QVERIFY(xb6);
+    QVERIFY(sv630n);
+    QCOMPARE(xb6->contractVersion, Data::DeviceAdapterContractVersion::V3);
+    QCOMPARE(sv630n->contractVersion, Data::DeviceAdapterContractVersion::V3);
+    QCOMPARE(
+        xb6->contentSha256,
+        QByteArray::fromHex(
+            "b8a5f085b7952fde6db9833528b8436ba7c7d2fd70358dc901b22a6df613b7d4"));
+    QCOMPARE(
+        sv630n->contentSha256,
+        QByteArray::fromHex(
+            "966e5e426dfc1336ce992dac67163deb945f70b92b3e2e62abfe662963536401"));
+
+    QCOMPARE(
+        xb6->controllerAdapterTarget.adapterId,
+        QString("solidot.xb6_ec0002_rev1_do16"));
+    QCOMPARE(xb6->controllerAdapterTarget.adapterVersion, QString("1.2.0"));
+    QCOMPARE(
+        xb6->controllerAdapterTarget.adapterSha256,
+        QByteArray::fromHex(
+            "72f9f3ae2b941fd3929e68ec76e506142a26304c507a686de39e29bcbb7baff1"));
+    QCOMPARE(xb6->controllerAdapterTarget.esiSha256, xb6EsiSha256);
+    QCOMPARE(xb6->semanticSignals.size(), 18);
+    QCOMPARE(xb6->processDataProfiles.size(), 1);
+    QCOMPARE(xb6->processDataProfiles.constFirst().signedPdoProfileId, QString("do16"));
+    QCOMPARE(xb6->controlActions.size(), 2);
+    QVERIFY(!xb6->signatureVerified);
+    QVERIFY(!xb6->realHardwareAllowed);
+
+    QStringList xb6OutputIds;
+    for (const Data::SemanticSignalDefinition &signal : xb6->semanticSignals) {
+        if (signal.id.value.contains(".digital-output.channel.")) {
+            xb6OutputIds.append(signal.id.value);
+            QCOMPARE(signal.direction, Data::SemanticSignalDirection::Output);
+            QCOMPARE(signal.access, Data::SemanticSignalAccess::ReadWrite);
+            QVERIFY(signal.engineeringSafeValue);
+            QCOMPARE(signal.engineeringSafeValue->kind, Data::EngineeringValueKind::Boolean);
+            QVERIFY(!signal.engineeringSafeValue->boolean);
+        }
+    }
+    QCOMPARE(xb6OutputIds.size(), 16);
+    QVERIFY(xb6OutputIds.contains(
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.0"));
+    QVERIFY(xb6OutputIds.contains(
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.15"));
+    QVERIFY(!xb6OutputIds.contains(
+        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.16"));
+
+    const QHash<QString, QByteArray> xb6ActionDigests{
+        {"org.embedlabs.solidot.xb6.action.clear-digital-outputs",
+         QByteArray::fromHex(
+             "4e6e1ac0ca79032980f5aab89d8eb7f14905123145b87987c58bdc1a908b4b21")},
+        {"org.embedlabs.solidot.xb6.action.set-digital-outputs",
+         QByteArray::fromHex(
+             "d7eae9ade36e0d28fde08b36511966072a63a99a5ebb089f50fdfb3d799c72bd")},
+    };
+    for (const Data::DeviceControlAction &action : xb6->controlActions) {
+        QVERIFY(action.enabled);
+        QCOMPARE(action.signedQualification, Data::DeviceControlActionQualification::Qualified);
+        QCOMPARE(action.expectedSignedDefinitionSha256, xb6ActionDigests.value(action.id.value));
+        QCOMPARE(action.signedPdoProfileIds, QStringList{"do16"});
+        QCOMPARE(action.consistencyGroups.size(), 1);
+        QCOMPARE(action.consistencyGroups.constFirst().id, QString("manual_do16"));
+        QCOMPARE(action.consistencyGroups.constFirst().members.size(), 16);
+        QCOMPARE(
+            action.consistencyGroups.constFirst().recovery,
+            Data::DeviceControlGroupRecovery::HoldSafe);
+        QCOMPARE(action.consistencyGroups.constFirst().maximumTtlCycles, quint32(1000));
+        QCOMPARE(
+            action.failureDisposition,
+            Data::DeviceControlFailureDisposition::HoldOperationalFault);
+    }
+
+    QCOMPARE(
+        sv630n->controllerAdapterTarget.adapterId,
+        QString("inovance.sv630n_1axis_rev00010000_csp"));
+    QCOMPARE(sv630n->controllerAdapterTarget.adapterVersion, QString("1.5.0"));
+    QCOMPARE(
+        sv630n->controllerAdapterTarget.adapterSha256,
+        QByteArray::fromHex(
+            "f5b8d1d579b9804927d9749b8ca61e18f4701ab5be75626aeda7459b9a9db99e"));
+    QCOMPARE(sv630n->controllerAdapterTarget.esiSha256, sv630nEsiSha256);
+    QCOMPARE(sv630n->semanticSignals.size(), 19);
+    QCOMPARE(sv630n->processDataProfiles.size(), 1);
+    QCOMPARE(
+        sv630n->processDataProfiles.constFirst().signedPdoProfileId,
+        QString("csp_1704_1b04"));
+    QCOMPARE(sv630n->processDataProfiles.constFirst().rxPdoIndices, QList<quint16>{0x1704});
+    QCOMPARE(sv630n->processDataProfiles.constFirst().txPdoIndices, QList<quint16>{0x1b04});
+    QCOMPARE(sv630n->controlActions.size(), 3);
+    QVERIFY(!sv630n->signatureVerified);
+    QVERIFY(!sv630n->realHardwareAllowed);
+
+    const QHash<QString, QByteArray> svActionDigests{
+        {"org.embedlabs.inovance.sv630n.action.prepare-csv",
+         QByteArray::fromHex(
+             "4a8bc220a783e600c25b9842802678712d8f4e3a0eb0a1948f295145105551bd")},
+        {"org.embedlabs.inovance.sv630n.action.set-csv-velocity",
+         QByteArray::fromHex(
+             "1355c4d05de03d96f8064f60706e7eb7f0fb381caa715b5dc3f607164114a90a")},
+        {"org.embedlabs.inovance.sv630n.action.stop-csv",
+         QByteArray::fromHex(
+             "df27cc25c14dfb4b6aa435d4ab5d853e051f2e754e3c16093925f5ccf69393d3")},
+    };
+    for (const Data::DeviceControlAction &action : sv630n->controlActions) {
+        QVERIFY(!action.enabled);
+        QCOMPARE(action.signedQualification, Data::DeviceControlActionQualification::Unqualified);
+        QCOMPARE(
+            action.disabledReason,
+            QString("reference_unit_to_rpm_conversion_not_bound"));
+        QVERIFY(action.requiresDc);
+        QCOMPARE(action.expectedSignedDefinitionSha256, svActionDigests.value(action.id.value));
+        QCOMPARE(action.signedPdoProfileIds, QStringList{"csp_1704_1b04"});
+        QCOMPARE(action.consistencyGroups.size(), 1);
+        QCOMPARE(action.consistencyGroups.constFirst().id, QString("manual_velocity"));
+        QCOMPARE(action.consistencyGroups.constFirst().members.size(), 3);
+        QCOMPARE(
+            action.consistencyGroups.constFirst().recovery,
+            Data::DeviceControlGroupRecovery::HoldSafe);
+        QCOMPARE(action.consistencyGroups.constFirst().maximumTtlCycles, quint32(1000));
+    }
 }
 
 void EtherCATDeviceAdaptersTests::testV2StrictParserAndCanonicalDigest()
@@ -725,7 +871,18 @@ void EtherCATDeviceAdaptersTests::testV3SignedActionContract()
     QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
     QCOMPARE(repository.loadedPackageCount(), 1);
     const Data::DeviceAdapterManifest manifest = repository.adapterManifests().constFirst();
+    QCOMPARE(manifest.contractVersion, Data::DeviceAdapterContractVersion::V3);
+    QVERIFY(Data::isValidDeviceAdapterContractVersion(manifest.contractVersion));
+    QVERIFY(!Data::isValidDeviceAdapterContractVersion(
+        Data::DeviceAdapterContractVersion::Unknown));
     QCOMPARE(manifest.id.value, QString("org.embedlabs.adapter.test.atomic-output"));
+    QCOMPARE(manifest.controllerAdapterTarget.adapterId, QString("test.atomic_output"));
+    QCOMPARE(manifest.controllerAdapterTarget.adapterVersion, QString("1.0.0"));
+    QCOMPARE(
+        manifest.controllerAdapterTarget.adapterSha256,
+        QByteArray::fromHex(
+            "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"));
+    QCOMPARE(manifest.controllerAdapterTarget.esiSha256, manifest.match.exactEsiSha256);
     QCOMPARE(manifest.processDataProfiles.size(), 1);
     QCOMPARE(manifest.processDataProfiles.constFirst().signedPdoProfileId, QString("test-profile-v1"));
     QCOMPARE(manifest.controlActions.size(), 1);
@@ -816,6 +973,28 @@ void EtherCATDeviceAdaptersTests::testV3RejectsUnsafeContracts()
     QJsonObject unknown = valid;
     unknown.insert("unexpected", true);
     QVERIFY(packageLoadError(unknown).contains("unknown field \"unexpected\""));
+
+    QJsonObject missingTarget = valid;
+    missingTarget.remove("controllerAdapterTarget");
+    QVERIFY(packageLoadError(missingTarget).contains("missing field \"controllerAdapterTarget\""));
+
+    QJsonObject unknownTargetField = valid;
+    QJsonObject target = unknownTargetField.value("controllerAdapterTarget").toObject();
+    target.insert("unexpected", true);
+    unknownTargetField.insert("controllerAdapterTarget", target);
+    QVERIFY(packageLoadError(unknownTargetField).contains("unknown field \"unexpected\""));
+
+    QJsonObject zeroTargetDigest = valid;
+    target = zeroTargetDigest.value("controllerAdapterTarget").toObject();
+    target.insert("adapterSha256", QString(64, '0'));
+    zeroTargetDigest.insert("controllerAdapterTarget", target);
+    QVERIFY(packageLoadError(zeroTargetDigest).contains("adapterSha256 must be non-zero"));
+
+    QJsonObject mismatchedTargetEsi = valid;
+    target = mismatchedTargetEsi.value("controllerAdapterTarget").toObject();
+    target.insert("esiSha256", QString(64, 'e'));
+    mismatchedTargetEsi.insert("controllerAdapterTarget", target);
+    QVERIFY(packageLoadError(mismatchedTargetEsi).contains("does not match the exact ESI identity"));
 
     QJsonObject missing = valid;
     QJsonArray actions = missing.value("controlActions").toArray();
@@ -1100,6 +1279,7 @@ void EtherCATDeviceAdaptersTests::testV1RemainsFailClosed()
     const QList<Data::DeviceAdapterManifest> manifests = repository.adapterManifests();
     const Data::DeviceAdapterManifest *sv630n = manifestForIdentity(manifests, sv630nIdentity);
     QVERIFY(sv630n);
+    QCOMPARE(sv630n->contractVersion, Data::DeviceAdapterContractVersion::V1);
     QCOMPARE(
         sv630n->contentSha256,
         QCryptographicHash::hash(*bundledContents, QCryptographicHash::Sha256));

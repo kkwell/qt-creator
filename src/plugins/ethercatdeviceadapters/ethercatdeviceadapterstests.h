@@ -14,6 +14,7 @@ private slots:
     void testBundledResourcesAndManifests();
     void testInvalidPackagesAreRejected();
     void testBundledV2ExactContracts();
+    void testBundledV3Api038Contracts();
     void testV2StrictParserAndCanonicalDigest();
     void testV3SignedActionContract();
     void testV3RejectsUnsafeContracts();

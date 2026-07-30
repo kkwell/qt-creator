@@ -26,6 +26,20 @@ enum class DeviceAdapterQualification {
     Revoked,
 };
 
+enum class DeviceAdapterContractVersion {
+    Unknown,
+    V1,
+    V2,
+    V3,
+};
+
+constexpr bool isValidDeviceAdapterContractVersion(DeviceAdapterContractVersion version)
+{
+    return version == DeviceAdapterContractVersion::V1
+           || version == DeviceAdapterContractVersion::V2
+           || version == DeviceAdapterContractVersion::V3;
+}
+
 struct ETHERCATDATA_EXPORT DeviceAdapterMatch
 {
     quint32 vendorId = 0;
@@ -290,8 +304,20 @@ struct ETHERCATDATA_EXPORT DeviceAdapterProvenance
         = default;
 };
 
+struct ETHERCATDATA_EXPORT DeviceAdapterControllerTarget
+{
+    QString adapterId;
+    QString adapterVersion;
+    QByteArray adapterSha256;
+    QByteArray esiSha256;
+
+    friend bool operator==(
+        const DeviceAdapterControllerTarget &, const DeviceAdapterControllerTarget &) = default;
+};
+
 struct ETHERCATDATA_EXPORT DeviceAdapterManifest
 {
+    DeviceAdapterContractVersion contractVersion = DeviceAdapterContractVersion::Unknown;
     DeviceAdapterId id;
     QString version;
     QString displayName;
@@ -305,6 +331,7 @@ struct ETHERCATDATA_EXPORT DeviceAdapterManifest
     QList<DeviceModuleProfile> moduleProfiles;
     QList<DeviceControlAction> controlActions;
     DeviceAdapterProvenance provenance;
+    DeviceAdapterControllerTarget controllerAdapterTarget;
     QByteArray contentSha256;
     QByteArray evidenceSha256;
     bool signatureVerified = false;
@@ -393,6 +420,7 @@ struct ETHERCATDATA_EXPORT DeviceAdapterResolutionResult
 } // namespace EtherCAT::Data
 
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceAdapterQualification)
+Q_DECLARE_METATYPE(EtherCAT::Data::DeviceAdapterContractVersion)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceAdapterMatch)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticSignalDirection)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticSignalAccess)
@@ -420,6 +448,7 @@ Q_DECLARE_METATYPE(EtherCAT::Data::DeviceControlStepKind)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceControlStep)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceControlAction)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceAdapterProvenance)
+Q_DECLARE_METATYPE(EtherCAT::Data::DeviceAdapterControllerTarget)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceAdapterManifest)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceAdapterResolutionRequest)
 Q_DECLARE_METATYPE(EtherCAT::Data::BoundSemanticSignal)
