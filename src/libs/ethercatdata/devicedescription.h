@@ -33,6 +33,7 @@ enum class EtherCATDataType {
 
 enum class PdoDirection { Rx, Tx };
 enum class SyncManagerDirection { Unknown, MasterToSlave, SlaveToMaster };
+enum class ParameterAccess { ReadOnly, WriteOnly, ReadWrite };
 
 struct ETHERCATDATA_EXPORT DeviceIdentity
 {
@@ -46,6 +47,7 @@ struct ETHERCATDATA_EXPORT DeviceIdentity
 struct ETHERCATDATA_EXPORT PdoEntryDescription
 {
     quint16 index = 0;
+    bool indexDependsOnSlot = false;
     quint8 subIndex = 0;
     QString name;
     int bitLength = 0;
@@ -58,6 +60,7 @@ struct ETHERCATDATA_EXPORT PdoEntryDescription
 struct ETHERCATDATA_EXPORT PdoDescription
 {
     quint16 index = 0;
+    bool indexDependsOnSlot = false;
     QString name;
     PdoDirection direction = PdoDirection::Rx;
     int syncManager = -1;
@@ -66,6 +69,116 @@ struct ETHERCATDATA_EXPORT PdoDescription
     QList<PdoEntryDescription> entries;
 
     friend bool operator==(const PdoDescription &, const PdoDescription &) = default;
+};
+
+struct ETHERCATDATA_EXPORT ModuleClassDescription
+{
+    QString identifier;
+    QString name;
+
+    friend bool operator==(const ModuleClassDescription &, const ModuleClassDescription &) = default;
+};
+
+struct ETHERCATDATA_EXPORT ModuleSlotConstraintDescription
+{
+    QString name;
+    int minimumInstances = 0;
+    int maximumInstances = 0;
+    QList<ModuleClassDescription> allowedModuleClasses;
+
+    friend bool operator==(
+        const ModuleSlotConstraintDescription &, const ModuleSlotConstraintDescription &) = default;
+};
+
+struct ETHERCATDATA_EXPORT ModulePdoGroupDescription
+{
+    int index = -1;
+    int alignment = 0;
+    bool hasRxPdo = false;
+    quint16 rxPdoIndex = 0;
+    bool hasTxPdo = false;
+    quint16 txPdoIndex = 0;
+
+    friend bool operator==(
+        const ModulePdoGroupDescription &, const ModulePdoGroupDescription &) = default;
+};
+
+struct ETHERCATDATA_EXPORT ModuleParameterEnumValueDescription
+{
+    QString name;
+    QString value;
+
+    friend bool operator==(
+        const ModuleParameterEnumValueDescription &,
+        const ModuleParameterEnumValueDescription &) = default;
+};
+
+struct ETHERCATDATA_EXPORT ModuleParameterDescription
+{
+    quint8 subIndex = 0;
+    QString name;
+    QString rawDataType;
+    EtherCATDataType dataType = EtherCATDataType::Unknown;
+    int bitLength = 0;
+    int bitOffset = 0;
+    ParameterAccess access = ParameterAccess::ReadOnly;
+    bool setting = false;
+    bool hasDefaultData = false;
+    QByteArray defaultData;
+    bool hasMinimumData = false;
+    QByteArray minimumData;
+    bool hasMaximumData = false;
+    QByteArray maximumData;
+    QList<ModuleParameterEnumValueDescription> enumValues;
+
+    friend bool operator==(
+        const ModuleParameterDescription &, const ModuleParameterDescription &) = default;
+};
+
+struct ETHERCATDATA_EXPORT ModuleParameterObjectDescription
+{
+    quint16 index = 0;
+    bool indexDependsOnSlot = false;
+    QString name;
+    QString rawDataType;
+    int bitLength = 0;
+    ParameterAccess access = ParameterAccess::ReadOnly;
+    QString category;
+    QList<ModuleParameterDescription> parameters;
+
+    friend bool operator==(
+        const ModuleParameterObjectDescription &,
+        const ModuleParameterObjectDescription &) = default;
+};
+
+struct ETHERCATDATA_EXPORT ModuleDescription
+{
+    quint32 moduleIdent = 0;
+    QString typeName;
+    QString name;
+    QString moduleClass;
+    int modulePdoGroupIndex = -1;
+    QList<PdoDescription> rxPdos;
+    QList<PdoDescription> txPdos;
+    QList<ModuleParameterObjectDescription> parameterObjects;
+    bool parameterConfigurationSupported = true;
+    QStringList parameterWarnings;
+
+    friend bool operator==(const ModuleDescription &, const ModuleDescription &) = default;
+};
+
+struct ETHERCATDATA_EXPORT ModuleCatalogDescription
+{
+    bool available = false;
+    bool downloadModuleIdentList = false;
+    int slotIndexIncrement = 0;
+    int slotPdoIncrement = 0;
+    QList<ModuleSlotConstraintDescription> slotConstraints;
+    QList<ModulePdoGroupDescription> pdoGroups;
+    QList<ModuleDescription> modules;
+
+    friend bool operator==(
+        const ModuleCatalogDescription &, const ModuleCatalogDescription &) = default;
 };
 
 struct ETHERCATDATA_EXPORT SyncManagerDescription
@@ -149,6 +262,7 @@ struct ETHERCATDATA_EXPORT DeviceDescription
     QList<StartupParameterDescription> startupParameters;
     QList<DcModeDescription> dcModes;
     SynchronizationTypeCapabilities synchronizationTypes;
+    ModuleCatalogDescription moduleCatalog;
     QString sourcePath;
     QByteArray sourceSha256;
     QDateTime importedAt;
@@ -196,9 +310,18 @@ struct ETHERCATDATA_EXPORT DeviceImportResult
 Q_DECLARE_METATYPE(EtherCAT::Data::EtherCATDataType)
 Q_DECLARE_METATYPE(EtherCAT::Data::PdoDirection)
 Q_DECLARE_METATYPE(EtherCAT::Data::SyncManagerDirection)
+Q_DECLARE_METATYPE(EtherCAT::Data::ParameterAccess)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceIdentity)
 Q_DECLARE_METATYPE(EtherCAT::Data::PdoEntryDescription)
 Q_DECLARE_METATYPE(EtherCAT::Data::PdoDescription)
+Q_DECLARE_METATYPE(EtherCAT::Data::ModuleClassDescription)
+Q_DECLARE_METATYPE(EtherCAT::Data::ModuleSlotConstraintDescription)
+Q_DECLARE_METATYPE(EtherCAT::Data::ModulePdoGroupDescription)
+Q_DECLARE_METATYPE(EtherCAT::Data::ModuleParameterEnumValueDescription)
+Q_DECLARE_METATYPE(EtherCAT::Data::ModuleParameterDescription)
+Q_DECLARE_METATYPE(EtherCAT::Data::ModuleParameterObjectDescription)
+Q_DECLARE_METATYPE(EtherCAT::Data::ModuleDescription)
+Q_DECLARE_METATYPE(EtherCAT::Data::ModuleCatalogDescription)
 Q_DECLARE_METATYPE(EtherCAT::Data::SyncManagerDescription)
 Q_DECLARE_METATYPE(EtherCAT::Data::CoeCapabilities)
 Q_DECLARE_METATYPE(EtherCAT::Data::StartupParameterDescription)

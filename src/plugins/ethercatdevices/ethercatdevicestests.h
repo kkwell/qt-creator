@@ -15,6 +15,8 @@ private slots:
     void testParserRejectsInvalidInput();
     void testParserKeepsMultipleRevisions();
     void testParserReadsOperationalData();
+    void testParserReadsModuleCatalog();
+    void testParserRejectsInvalidModuleCatalog();
     void testBundledVendorEsiFiles();
     void testRepositoryImportFilterAndRebuild();
     void testLargeLibraryAndCancellation();

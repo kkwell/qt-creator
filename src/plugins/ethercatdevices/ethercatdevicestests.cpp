@@ -38,6 +38,78 @@ static QByteArray esiDocument(const QByteArray &deviceElements, const QByteArray
            + deviceElements + "</Devices></Descriptions></EtherCATInfo>";
 }
 
+static QByteArray modularEsiDocument(
+    const QByteArray &moduleElements,
+    const QByteArray &slotsAttributes = "DownloadModuleIdentList=\"true\" "
+                                        "SlotIndexIncrement=\"16\" SlotPdoIncrement=\"1\"",
+    const QByteArray &moduleSuffix = {})
+{
+    const QByteArray effectiveSlotsAttributes
+        = slotsAttributes.isEmpty()
+              ? QByteArray("DownloadModuleIdentList=\"true\" "
+                           "SlotIndexIncrement=\"16\" SlotPdoIncrement=\"1\"")
+              : slotsAttributes;
+    return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+           "<EtherCATInfo>"
+           "<Vendor><Id>#x00000002</Id><Name LcId=\"1033\">Vendor</Name></Vendor>"
+           "<Descriptions>"
+           "<Groups><Group><Type>IO</Type><Name LcId=\"1033\">I/O</Name></Group></Groups>"
+           "<Devices><Device>"
+           "<Type ProductCode=\"#x00001234\" RevisionNo=\"#x00000001\">EL-MDP</Type>"
+           "<Name LcId=\"1033\">Modular terminal</Name><GroupType>IO</GroupType>"
+           "<Slots "
+           + effectiveSlotsAttributes
+           + ">"
+             "<Slot MinInstances=\"0\" MaxInstances=\"4\"><Name>Terminals</Name>"
+             "<ModuleClass><Class>digital-output</Class>"
+             "<Name LcId=\"1033\">Digital output terminals</Name></ModuleClass></Slot>"
+             "<ModulePdoGroup Alignment=\"1\" RxPdo=\"#x1600\" TxPdo=\"#x1a00\"/>"
+             "</Slots></Device></Devices>"
+             "<Modules>"
+           + moduleElements + moduleSuffix + "</Modules></Descriptions></EtherCATInfo>";
+}
+
+static QByteArray digitalOutputModule(const QByteArray &extraElements = {})
+{
+    return QByteArray(R"(<Module>
+<Type ModuleIdent="#x00000010" ModuleClass="digital-output" ModulePdoGroup="0">EL-DO2</Type>
+<Name LcId="1033">Two-channel digital output</Name>
+<RxPdo Fixed="1" Sm="2"><Index DependOnSlot="1">#x1600</Index><Name>Outputs</Name>
+ <Entry><Index DependOnSlot="true">#x7000</Index><SubIndex>1</SubIndex>
+  <BitLen>1</BitLen><Name>Channel 1</Name><DataType>BOOL</DataType></Entry>
+ <Entry><Index>#x0000</Index><BitLen>7</BitLen></Entry>
+</RxPdo>)")
+           + extraElements + "</Module>";
+}
+
+static QByteArray moduleParameterProfile(const QByteArray &parameterInfoExtra = {})
+{
+    return QByteArray(R"(<Profile><Dictionary><DataTypes>
+<DataType><Name>UDINT</Name><BitSize>32</BitSize></DataType>
+<DataType><Name>USINT</Name><BitSize>8</BitSize></DataType>
+<DataType><Name>MODE</Name><BaseType>UDINT</BaseType><BitSize>32</BitSize>
+ <EnumInfo><Text>Off</Text><Enum>0</Enum></EnumInfo>
+ <EnumInfo><Text>On</Text><Enum>1</Enum></EnumInfo>
+</DataType>
+<DataType><Name>CFG</Name><BitSize>48</BitSize>
+ <SubItem><SubIdx>0</SubIdx><Name>SubIndex 000</Name><Type>USINT</Type>
+  <BitSize>8</BitSize><BitOffs>0</BitOffs>
+  <Flags><Access>ro</Access><Setting>0</Setting></Flags></SubItem>
+ <SubItem><SubIdx>1</SubIdx><Name>Mode</Name><Type>MODE</Type>
+  <BitSize>32</BitSize><BitOffs>16</BitOffs>
+  <Flags><Access>rw</Access><Setting>1</Setting></Flags></SubItem>
+</DataType></DataTypes><Objects><Object>
+<Index DependOnSlot="true">#x2000</Index><Name>Configuration</Name>
+<Type>CFG</Type><BitSize>48</BitSize><Info>
+ <SubItem><Name>SubIndex 000</Name><Info><DefaultData>01</DefaultData></Info></SubItem>
+ <SubItem><Name>Mode</Name><Info><MinData>00000000</MinData>
+  <MaxData>01000000</MaxData><DefaultData>01000000</DefaultData>)")
+           + parameterInfoExtra
+           + R"(</Info></SubItem>
+</Info><Flags><Access>rw</Access><Category>o</Category></Flags>
+</Object></Objects></Dictionary></Profile>)";
+}
+
 static QByteArray simpleDevice(quint32 revision, int ordinal = 0)
 {
     return QByteArray("<Device><Type ProductCode=\"#x00001234\" RevisionNo=\"#x")
@@ -216,13 +288,241 @@ void EtherCATDevicesTests::testParserReadsOperationalData()
     QVERIFY(device.summary.supported);
     QCOMPARE(device.sourceSha256.size(), 32);
 
-    const Utils::Result<QList<Data::DeviceDescription>> modular = parseEsiFile(
-        esiDocument(simpleDevice(3, 3).replace("</Device>", "<Modules/></Device>")),
+    QVERIFY(!device.moduleCatalog.available);
+    QVERIFY(device.moduleCatalog.modules.isEmpty());
+}
+
+void EtherCATDevicesTests::testParserReadsModuleCatalog()
+{
+    const Utils::Result<QList<Data::DeviceDescription>> parsed = parseEsiFile(
+        modularEsiDocument(digitalOutputModule()),
         "modular.xml",
         QDateTime::currentDateTimeUtc());
-    QVERIFY_RESULT(modular);
-    QVERIFY(!modular->first().summary.supported);
-    QVERIFY(!modular->first().unsupportedFeatures.isEmpty());
+    QVERIFY_RESULT(parsed);
+    QCOMPARE(parsed->size(), 1);
+
+    const Data::DeviceDescription &device = parsed->constFirst();
+    QVERIFY(device.moduleCatalog.available);
+    QVERIFY(device.moduleCatalog.downloadModuleIdentList);
+    QCOMPARE(device.moduleCatalog.slotIndexIncrement, 16);
+    QCOMPARE(device.moduleCatalog.slotPdoIncrement, 1);
+    QCOMPARE(device.moduleCatalog.slotConstraints.size(), 1);
+    const Data::ModuleSlotConstraintDescription &slot
+        = device.moduleCatalog.slotConstraints.constFirst();
+    QCOMPARE(slot.name, QString("Terminals"));
+    QCOMPARE(slot.minimumInstances, 0);
+    QCOMPARE(slot.maximumInstances, 4);
+    QCOMPARE(slot.allowedModuleClasses.size(), 1);
+    QCOMPARE(slot.allowedModuleClasses.constFirst().identifier, QString("digital-output"));
+
+    QCOMPARE(device.moduleCatalog.pdoGroups.size(), 1);
+    const Data::ModulePdoGroupDescription &group = device.moduleCatalog.pdoGroups.constFirst();
+    QCOMPARE(group.index, 0);
+    QCOMPARE(group.alignment, 1);
+    QVERIFY(group.hasRxPdo);
+    QCOMPARE(group.rxPdoIndex, quint16(0x1600));
+    QVERIFY(group.hasTxPdo);
+    QCOMPARE(group.txPdoIndex, quint16(0x1a00));
+
+    QCOMPARE(device.moduleCatalog.modules.size(), 1);
+    const Data::ModuleDescription &module = device.moduleCatalog.modules.constFirst();
+    QCOMPARE(module.moduleIdent, quint32(0x10));
+    QCOMPARE(module.typeName, QString("EL-DO2"));
+    QCOMPARE(module.name, QString("Two-channel digital output"));
+    QCOMPARE(module.moduleClass, QString("digital-output"));
+    QCOMPARE(module.modulePdoGroupIndex, 0);
+    QCOMPARE(module.rxPdos.size(), 1);
+    QVERIFY(module.rxPdos.constFirst().indexDependsOnSlot);
+    QCOMPARE(module.rxPdos.constFirst().entries.size(), 2);
+    QVERIFY(module.rxPdos.constFirst().entries.constFirst().indexDependsOnSlot);
+    QCOMPARE(module.rxPdos.constFirst().entries.constLast().index, quint16(0));
+    QVERIFY(device.summary.supported);
+
+    const Utils::Result<QList<Data::DeviceDescription>> profiled = parseEsiFile(
+        modularEsiDocument(digitalOutputModule(moduleParameterProfile())),
+        "module-parameters.xml",
+        QDateTime::currentDateTimeUtc());
+    QVERIFY_RESULT(profiled);
+    const Data::ModuleDescription &profiledModule
+        = profiled->constFirst().moduleCatalog.modules.constFirst();
+    QCOMPARE(profiledModule.parameterObjects.size(), 1);
+    const Data::ModuleParameterObjectDescription &parameterObject
+        = profiledModule.parameterObjects.constFirst();
+    QCOMPARE(parameterObject.index, quint16(0x2000));
+    QVERIFY(parameterObject.indexDependsOnSlot);
+    QCOMPARE(parameterObject.rawDataType, QString("CFG"));
+    QCOMPARE(parameterObject.bitLength, 48);
+    QCOMPARE(parameterObject.access, Data::ParameterAccess::ReadWrite);
+    QCOMPARE(parameterObject.category, QString("o"));
+    QCOMPARE(parameterObject.parameters.size(), 2);
+    const Data::ModuleParameterDescription &modeParameter = parameterObject.parameters.at(1);
+    QCOMPARE(modeParameter.subIndex, quint8(1));
+    QCOMPARE(modeParameter.rawDataType, QString("MODE"));
+    QCOMPARE(modeParameter.dataType, Data::EtherCATDataType::UnsignedInteger32);
+    QCOMPARE(modeParameter.bitLength, 32);
+    QCOMPARE(modeParameter.bitOffset, 16);
+    QCOMPARE(modeParameter.access, Data::ParameterAccess::ReadWrite);
+    QVERIFY(modeParameter.setting);
+    QCOMPARE(modeParameter.defaultData, QByteArray::fromHex("01000000"));
+    QCOMPARE(modeParameter.minimumData, QByteArray::fromHex("00000000"));
+    QCOMPARE(modeParameter.maximumData, QByteArray::fromHex("01000000"));
+    QCOMPARE(modeParameter.enumValues.size(), 2);
+    QCOMPARE(modeParameter.enumValues.at(1).name, QString("On"));
+    QCOMPARE(modeParameter.enumValues.at(1).value, QString("1"));
+    QVERIFY(profiled->constFirst().summary.supported);
+
+    QByteArray shortValueProfile = moduleParameterProfile();
+    shortValueProfile.replace(
+        "<DefaultData>01000000</DefaultData>",
+        "<DefaultData>0100</DefaultData>");
+    const Utils::Result<QList<Data::DeviceDescription>> shortValue = parseEsiFile(
+        modularEsiDocument(digitalOutputModule(shortValueProfile)),
+        "short-parameter-value.xml",
+        QDateTime::currentDateTimeUtc());
+    QVERIFY_RESULT(shortValue);
+    const Data::ModuleDescription &shortValueModule
+        = shortValue->constFirst().moduleCatalog.modules.constFirst();
+    QVERIFY(!shortValueModule.parameterConfigurationSupported);
+    QCOMPARE(
+        shortValueModule.parameterObjects.constFirst().parameters.at(1).defaultData,
+        QByteArray::fromHex("0100"));
+
+    const Utils::Result<QList<Data::DeviceDescription>> unknownParameterStructure = parseEsiFile(
+        modularEsiDocument(
+            digitalOutputModule(moduleParameterProfile("<Scale>1</Scale>"))),
+        "unsupported-parameter-structure.xml",
+        QDateTime::currentDateTimeUtc());
+    QVERIFY_RESULT(unknownParameterStructure);
+    QVERIFY(unknownParameterStructure->constFirst().summary.supported);
+    const Data::ModuleDescription &unsupportedParameterModule
+        = unknownParameterStructure->constFirst().moduleCatalog.modules.constFirst();
+    QVERIFY(!unsupportedParameterModule.parameterConfigurationSupported);
+    QVERIFY(std::any_of(
+        unsupportedParameterModule.parameterWarnings.cbegin(),
+        unsupportedParameterModule.parameterWarnings.cend(),
+        [](const QString &feature) { return feature.contains("Scale"); }));
+
+    const Utils::Result<QList<Data::DeviceDescription>> unknownStructure = parseEsiFile(
+        modularEsiDocument(digitalOutputModule("<VendorSpecificMapping/>")),
+        "unsupported-module-structure.xml",
+        QDateTime::currentDateTimeUtc());
+    QVERIFY_RESULT(unknownStructure);
+    QVERIFY(!unknownStructure->constFirst().summary.supported);
+    QVERIFY(std::any_of(
+        unknownStructure->constFirst().unsupportedFeatures.cbegin(),
+        unknownStructure->constFirst().unsupportedFeatures.cend(),
+        [](const QString &feature) { return feature.contains("VendorSpecificMapping"); }));
+}
+
+void EtherCATDevicesTests::testParserRejectsInvalidModuleCatalog()
+{
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    const QByteArray module = digitalOutputModule();
+
+    const Utils::Result<QList<Data::DeviceDescription>> duplicateIdent = parseEsiFile(
+        modularEsiDocument(module, {}, module), "duplicate-module-ident.xml", now);
+    QVERIFY(!duplicateIdent);
+    QVERIFY(duplicateIdent.error().contains("ModuleIdent"));
+
+    QByteArray invalidIdent = module;
+    invalidIdent.replace("#x00000010", "not-a-number");
+    const Utils::Result<QList<Data::DeviceDescription>> badIdent = parseEsiFile(
+        modularEsiDocument(invalidIdent), "invalid-module-ident.xml", now);
+    QVERIFY(!badIdent);
+    QVERIFY(badIdent.error().contains("ModuleIdent"));
+
+    QByteArray danglingClass = module;
+    danglingClass.replace("ModuleClass=\"digital-output\"", "ModuleClass=\"unknown-class\"");
+    const Utils::Result<QList<Data::DeviceDescription>> badClass = parseEsiFile(
+        modularEsiDocument(danglingClass), "dangling-module-class.xml", now);
+    QVERIFY(!badClass);
+    QVERIFY(badClass.error().contains("unknown-class"));
+
+    QByteArray invalidPdo = module;
+    invalidPdo.replace(
+        "<Index DependOnSlot=\"1\">#x1600</Index>",
+        "<Index DependOnSlot=\"1\">invalid</Index>");
+    const Utils::Result<QList<Data::DeviceDescription>> badPdo = parseEsiFile(
+        modularEsiDocument(invalidPdo), "invalid-module-pdo.xml", now);
+    QVERIFY(!badPdo);
+    QVERIFY(badPdo.error().contains("PDO"));
+
+    QByteArray danglingGroup = module;
+    danglingGroup.replace("ModulePdoGroup=\"0\"", "ModulePdoGroup=\"3\"");
+    const Utils::Result<QList<Data::DeviceDescription>> badGroup = parseEsiFile(
+        modularEsiDocument(danglingGroup), "dangling-pdo-group.xml", now);
+    QVERIFY(!badGroup);
+    QVERIFY(badGroup.error().contains("ModulePdoGroup 3"));
+
+    const Utils::Result<QList<Data::DeviceDescription>> badSlotIncrement = parseEsiFile(
+        modularEsiDocument(
+            module,
+            "DownloadModuleIdentList=\"true\" SlotIndexIncrement=\"bad\" "
+            "SlotPdoIncrement=\"1\""),
+        "invalid-slot-increment.xml",
+        now);
+    QVERIFY(!badSlotIncrement);
+    QVERIFY(badSlotIncrement.error().contains("SlotIndexIncrement"));
+
+    QByteArray duplicateTypeProfile = moduleParameterProfile();
+    duplicateTypeProfile.replace(
+        "</DataTypes>",
+        "<DataType><Name>UDINT</Name><BitSize>32</BitSize></DataType></DataTypes>");
+    const Utils::Result<QList<Data::DeviceDescription>> duplicateType = parseEsiFile(
+        modularEsiDocument(digitalOutputModule(duplicateTypeProfile)),
+        "duplicate-parameter-type.xml",
+        now);
+    QVERIFY(!duplicateType);
+    QVERIFY(duplicateType.error().contains("duplicate DataType"));
+
+    QByteArray danglingTypeProfile = moduleParameterProfile();
+    danglingTypeProfile.replace("<Type>MODE</Type>", "<Type>MISSING</Type>");
+    const Utils::Result<QList<Data::DeviceDescription>> danglingType = parseEsiFile(
+        modularEsiDocument(digitalOutputModule(danglingTypeProfile)),
+        "dangling-parameter-type.xml",
+        now);
+    QVERIFY(!danglingType);
+    QVERIFY(danglingType.error().contains("MISSING"));
+
+    QByteArray mismatchedInfoProfile = moduleParameterProfile();
+    mismatchedInfoProfile.replace(
+        "<SubItem><Name>Mode</Name><Info>",
+        "<SubItem><Name>Wrong parameter</Name><Info>");
+    const Utils::Result<QList<Data::DeviceDescription>> mismatchedInfo = parseEsiFile(
+        modularEsiDocument(digitalOutputModule(mismatchedInfoProfile)),
+        "mismatched-parameter-info.xml",
+        now);
+    QVERIFY(!mismatchedInfo);
+    QVERIFY(mismatchedInfo.error().contains("does not match"));
+
+    QByteArray invalidDataProfile = moduleParameterProfile();
+    invalidDataProfile.replace(
+        "<DefaultData>01000000</DefaultData>",
+        "<DefaultData>not-hex</DefaultData>");
+    const Utils::Result<QList<Data::DeviceDescription>> invalidData = parseEsiFile(
+        modularEsiDocument(digitalOutputModule(invalidDataProfile)),
+        "invalid-parameter-data.xml",
+        now);
+    QVERIFY(!invalidData);
+    QVERIFY(invalidData.error().contains("hexadecimal"));
+
+    QByteArray invalidAccessProfile = moduleParameterProfile();
+    invalidAccessProfile.replace("<Access>rw</Access>", "<Access>invalid</Access>");
+    const Utils::Result<QList<Data::DeviceDescription>> invalidAccess = parseEsiFile(
+        modularEsiDocument(digitalOutputModule(invalidAccessProfile)),
+        "invalid-parameter-access.xml",
+        now);
+    QVERIFY(!invalidAccess);
+    QVERIFY(invalidAccess.error().contains("access"));
+
+    QByteArray outOfRangeEnumProfile = moduleParameterProfile();
+    outOfRangeEnumProfile.replace("<Enum>1</Enum>", "<Enum>4294967296</Enum>");
+    const Utils::Result<QList<Data::DeviceDescription>> outOfRangeEnum = parseEsiFile(
+        modularEsiDocument(digitalOutputModule(outOfRangeEnumProfile)),
+        "out-of-range-parameter-enum.xml",
+        now);
+    QVERIFY(!outOfRangeEnum);
+    QVERIFY(outOfRangeEnum.error().contains("out-of-range"));
 }
 
 void EtherCATDevicesTests::testBundledVendorEsiFiles()
@@ -280,6 +580,147 @@ void EtherCATDevicesTests::testBundledVendorEsiFiles()
         if (expected.hasDistributedClocks) {
             QCOMPARE(match->dcModes.constFirst().name, QString("DC"));
             QCOMPARE(match->dcModes.constFirst().assignActivate, quint16(0x0300));
+            QVERIFY(!match->moduleCatalog.available);
+            QVERIFY(match->moduleCatalog.modules.isEmpty());
+            QVERIFY(match->summary.supported);
+        } else {
+            QVERIFY(match->moduleCatalog.available);
+            QVERIFY(match->moduleCatalog.downloadModuleIdentList);
+            QCOMPARE(match->moduleCatalog.slotIndexIncrement, 16);
+            QCOMPARE(match->moduleCatalog.slotPdoIncrement, 1);
+            QCOMPARE(match->moduleCatalog.slotConstraints.size(), 1);
+            QCOMPARE(match->moduleCatalog.slotConstraints.constFirst().minimumInstances, 0);
+            QCOMPARE(match->moduleCatalog.slotConstraints.constFirst().maximumInstances, 32);
+            QCOMPARE(
+                match->moduleCatalog.slotConstraints.constFirst().allowedModuleClasses.size(), 8);
+            QCOMPARE(match->moduleCatalog.pdoGroups.size(), 2);
+            QCOMPARE(match->moduleCatalog.pdoGroups.at(0).alignment, 2);
+            QCOMPARE(match->moduleCatalog.pdoGroups.at(0).rxPdoIndex, quint16(0x16ff));
+            QCOMPARE(match->moduleCatalog.pdoGroups.at(0).txPdoIndex, quint16(0x1aff));
+            QCOMPARE(match->moduleCatalog.pdoGroups.at(1).alignment, 1);
+            QCOMPARE(match->moduleCatalog.pdoGroups.at(1).rxPdoIndex, quint16(0x1600));
+            QCOMPARE(match->moduleCatalog.pdoGroups.at(1).txPdoIndex, quint16(0x1a00));
+            QCOMPARE(match->moduleCatalog.modules.size(), 42);
+            const auto module = std::find_if(
+                match->moduleCatalog.modules.cbegin(),
+                match->moduleCatalog.modules.cend(),
+                [](const Data::ModuleDescription &candidate) {
+                    return candidate.moduleIdent == 0x00000629;
+                });
+            QVERIFY(module != match->moduleCatalog.modules.cend());
+            QCOMPARE(module->typeName, QString("XB6-1600B"));
+            QCOMPARE(module->moduleClass, QString("xb_dig_in"));
+            QCOMPARE(module->modulePdoGroupIndex, 1);
+            QCOMPARE(module->txPdos.size(), 1);
+            QCOMPARE(module->txPdos.constFirst().index, quint16(0x1a00));
+            QVERIFY(module->txPdos.constFirst().indexDependsOnSlot);
+            QCOMPARE(module->txPdos.constFirst().entries.size(), 16);
+            QCOMPARE(module->txPdos.constFirst().entries.constFirst().index, quint16(0x6000));
+            QVERIFY(module->txPdos.constFirst().entries.constFirst().indexDependsOnSlot);
+            const auto outputModule = std::find_if(
+                match->moduleCatalog.modules.cbegin(),
+                match->moduleCatalog.modules.cend(),
+                [](const Data::ModuleDescription &candidate) {
+                    return candidate.moduleIdent == 0x00000625;
+                });
+            QVERIFY(outputModule != match->moduleCatalog.modules.cend());
+            QCOMPARE(outputModule->typeName, QString("XB6-0016B(W)"));
+            QCOMPARE(outputModule->moduleClass, QString("xb_dig_out"));
+            QCOMPARE(outputModule->modulePdoGroupIndex, 1);
+            QCOMPARE(outputModule->rxPdos.size(), 1);
+            QCOMPARE(outputModule->rxPdos.constFirst().index, quint16(0x1600));
+            QCOMPARE(outputModule->rxPdos.constFirst().entries.size(), 16);
+            QCOMPARE(outputModule->rxPdos.constFirst().entries.constFirst().index, quint16(0x7000));
+            int parameterObjectCount = 0;
+            int parameterCount = 0;
+            int materializedEnumValueCount = 0;
+            int parameterWarningCount = 0;
+            int readOnlyParameterCount = 0;
+            int readWriteParameterCount = 0;
+            int unqualifiedParameterModuleCount = 0;
+            for (const Data::ModuleDescription &candidate : match->moduleCatalog.modules) {
+                parameterObjectCount += candidate.parameterObjects.size();
+                parameterWarningCount += candidate.parameterWarnings.size();
+                if (!candidate.parameterConfigurationSupported)
+                    ++unqualifiedParameterModuleCount;
+                for (const Data::ModuleParameterObjectDescription &object :
+                     candidate.parameterObjects) {
+                    parameterCount += object.parameters.size();
+                    for (const Data::ModuleParameterDescription &parameter : object.parameters) {
+                        materializedEnumValueCount += parameter.enumValues.size();
+                        if (parameter.access == Data::ParameterAccess::ReadOnly)
+                            ++readOnlyParameterCount;
+                        else if (parameter.access == Data::ParameterAccess::ReadWrite)
+                            ++readWriteParameterCount;
+                    }
+                }
+            }
+            QCOMPARE(parameterObjectCount, 30);
+            QCOMPARE(parameterCount, 283);
+            // The ESI declares 452 EnumInfo entries. Reused enum data types are copied to every
+            // parameter that references them, producing 688 parameter-local enum choices.
+            QCOMPARE(materializedEnumValueCount, 688);
+            QCOMPARE(parameterWarningCount, 26);
+            QCOMPARE(readOnlyParameterCount, 30);
+            QCOMPARE(readWriteParameterCount, 253);
+            QCOMPARE(unqualifiedParameterModuleCount, 1);
+
+            const auto profiledModule = std::find_if(
+                match->moduleCatalog.modules.cbegin(),
+                match->moduleCatalog.modules.cend(),
+                [](const Data::ModuleDescription &candidate) {
+                    return candidate.moduleIdent == 0x00000627;
+                });
+            QVERIFY(profiledModule != match->moduleCatalog.modules.cend());
+            QVERIFY(profiledModule->parameterConfigurationSupported);
+            QCOMPARE(profiledModule->parameterObjects.size(), 1);
+            const Data::ModuleParameterObjectDescription &object
+                = profiledModule->parameterObjects.constFirst();
+            QCOMPARE(object.index, quint16(0x2000));
+            QVERIFY(object.indexDependsOnSlot);
+            QCOMPARE(object.rawDataType, QString("DT2000"));
+            QCOMPARE(object.bitLength, 48);
+            QCOMPARE(object.parameters.size(), 2);
+            const Data::ModuleParameterDescription &debounce = object.parameters.at(1);
+            QCOMPARE(debounce.subIndex, quint8(1));
+            QCOMPARE(debounce.name, QString("Channel Debounce Time"));
+            QCOMPARE(debounce.rawDataType, QString("DT0800EN32"));
+            QCOMPARE(debounce.dataType, Data::EtherCATDataType::UnsignedInteger32);
+            QCOMPARE(debounce.defaultData, QByteArray::fromHex("03000000"));
+            QCOMPARE(debounce.minimumData, QByteArray::fromHex("00000000"));
+            QCOMPARE(debounce.maximumData, QByteArray::fromHex("14000000"));
+            QCOMPARE(debounce.enumValues.size(), 23);
+            QVERIFY(std::any_of(
+                debounce.enumValues.cbegin(),
+                debounce.enumValues.cend(),
+                [](const Data::ModuleParameterEnumValueDescription &enumValue) {
+                    return enumValue.value == "125" && enumValue.name == "0.25ms";
+                }));
+
+            const auto p20dModule = std::find_if(
+                match->moduleCatalog.modules.cbegin(),
+                match->moduleCatalog.modules.cend(),
+                [](const Data::ModuleDescription &candidate) {
+                    return candidate.moduleIdent == 0x0000620d;
+                });
+            QVERIFY(p20dModule != match->moduleCatalog.modules.cend());
+            QVERIFY(!p20dModule->parameterConfigurationSupported);
+            QCOMPARE(p20dModule->parameterWarnings.size(), 26);
+            QVERIFY(std::any_of(
+                p20dModule->parameterWarnings.cbegin(),
+                p20dModule->parameterWarnings.cend(),
+                [](const QString &warning) {
+                    return warning.contains("32-bit") && warning.contains("raw bytes");
+                }));
+            QVERIFY(match->summary.supported);
+            QVERIFY(match->unsupportedFeatures.isEmpty());
+            QVERIFY(std::none_of(
+                match->unsupportedFeatures.cbegin(),
+                match->unsupportedFeatures.cend(),
+                [](const QString &feature) {
+                    return feature.contains("Modules structure")
+                           || feature.contains("Slots structure");
+                }));
         }
     }
 }
