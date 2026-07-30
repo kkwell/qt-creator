@@ -8,15 +8,58 @@
 
 #include <utils/fileutils.h>
 
+#include <QCryptographicHash>
 #include <QHash>
+#include <QScopedValueRollback>
 #include <QSet>
 #include <QSignalBlocker>
 #include <QUndoCommand>
+#include <QUuid>
+#include <QtEndian>
 
 #include <algorithm>
 #include <utility>
 
 namespace EtherCAT::Project::Internal {
+
+static void addTokenBytes(QCryptographicHash &hash, QByteArrayView bytes)
+{
+    QByteArray lengthBytes(sizeof(quint64), '\0');
+    qToBigEndian<quint64>(quint64(bytes.size()), lengthBytes.data());
+    hash.addData(lengthBytes);
+    hash.addData(bytes);
+}
+
+static void addTokenString(QCryptographicHash &hash, const QString &value)
+{
+    addTokenBytes(hash, value.toUtf8());
+}
+
+static void addTokenU64(QCryptographicHash &hash, quint64 value)
+{
+    QByteArray bytes(sizeof(value), '\0');
+    qToBigEndian<quint64>(value, bytes.data());
+    hash.addData(bytes);
+}
+
+static Data::RuntimePackageActivationOriginalBindingToken
+runtimePackageActivationBindingToken(
+    const Data::SemanticBindingArtifactReference &reference)
+{
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.addData(
+        QByteArrayView("embed-labs.runtime-package-activation.project-binding-token.v1"));
+    addTokenString(hash, reference.artifactId);
+    addTokenBytes(hash, reference.artifactSha256);
+    addTokenBytes(hash, reference.projectConfigurationSha256);
+    addTokenU64(hash, quint64(reference.projectDeviceBindings.size()));
+    for (const Data::SemanticProjectDeviceBinding &binding :
+         reference.projectDeviceBindings) {
+        addTokenString(hash, binding.slaveId.toString());
+        addTokenString(hash, binding.projectDeviceId);
+    }
+    return Data::RuntimePackageActivationOriginalBindingToken(hash.result());
+}
 
 class RenameProjectCommand final : public QUndoCommand
 {
@@ -516,13 +559,20 @@ static Utils::Result<> validateProjectConfigurations(const Data::ProjectSnapshot
 
 EtherCATProjectDocument::EtherCATProjectDocument(QObject *parent)
     : ::Core::IDocument(parent)
+    , m_runtimePackageActivationRevisionNonce(QUuid::createUuid().toRfc4122())
 {
     setId(Constants::DOCUMENT_ID);
     setMimeType(Constants::MIME_TYPE);
     setSuspendAllowed(false);
 
-    connect(&m_undoStack, &QUndoStack::indexChanged, this, [this] { publishSnapshot(); });
-    connect(&m_undoStack, &QUndoStack::cleanChanged, this, [this] { publishSnapshot(); });
+    connect(&m_undoStack, &QUndoStack::indexChanged, this, [this] {
+        if (!m_suppressUndoPublication)
+            publishSnapshot();
+    });
+    connect(&m_undoStack, &QUndoStack::cleanChanged, this, [this] {
+        if (!m_suppressUndoPublication)
+            publishSnapshot();
+    });
 }
 
 Utils::Result<> EtherCATProjectDocument::load(const Utils::FilePath &filePath)
@@ -965,6 +1015,107 @@ Utils::Result<> EtherCATProjectDocument::setMasterBindingArtifact(
     return Utils::ResultOk;
 }
 
+Utils::Result<Data::RuntimePackageActivationProjectCapture>
+EtherCATProjectDocument::captureRuntimePackageActivationProject() const
+{
+    if (!m_snapshot.valid) {
+        return Utils::ResultError(
+            Tr::tr("Cannot capture an invalid EtherCAT project."));
+    }
+
+    const QByteArray serializedProject = serializeProject(m_snapshot);
+    Data::RuntimePackageActivationProjectCapture capture{
+        m_snapshot,
+        serializedProject,
+        runtimePackageActivationDocumentRevisionToken(serializedProject),
+        runtimePackageActivationBindingToken(m_snapshot.masterBindingArtifact),
+    };
+    if (!capture.isValid()) {
+        return Utils::ResultError(
+            Tr::tr("The EtherCAT project could not produce valid activation tokens."));
+    }
+    return capture;
+}
+
+Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult>
+EtherCATProjectDocument::compareAndSetMasterBindingArtifact(
+    const Data::RuntimePackageActivationDocumentRevisionToken &expectedDocumentRevision,
+    const Data::RuntimePackageActivationOriginalBindingToken &expectedBinding,
+    const Data::SemanticBindingArtifactReference &targetReference)
+{
+    if (!m_snapshot.valid) {
+        return Utils::ResultError(
+            Tr::tr("Cannot edit an invalid EtherCAT project."));
+    }
+    if (!expectedDocumentRevision.isValid() || !expectedBinding.isValid()) {
+        return Utils::ResultError(
+            Tr::tr("The activation project tokens are invalid."));
+    }
+
+    const QByteArray currentSerializedProject = serializeProject(m_snapshot);
+    const Data::RuntimePackageActivationDocumentRevisionToken currentDocumentRevision
+        = runtimePackageActivationDocumentRevisionToken(currentSerializedProject);
+    const Data::RuntimePackageActivationOriginalBindingToken currentBinding
+        = runtimePackageActivationBindingToken(m_snapshot.masterBindingArtifact);
+    if (currentDocumentRevision != expectedDocumentRevision
+        || currentBinding != expectedBinding) {
+        return Data::RuntimePackageActivationProjectCompareAndSetResult{
+            Data::RuntimePackageActivationProjectCompareAndSetDisposition::Stale};
+    }
+
+    const QDateTime committedAt = QDateTime::currentDateTimeUtc();
+    if (m_snapshot.masterBindingArtifact == targetReference) {
+        const Data::RuntimePackageActivationProjectCommit commit{
+            currentDocumentRevision,
+            currentBinding,
+            currentDocumentRevision,
+            currentBinding,
+            Data::RuntimePackageActivationProjectCommitDisposition::AlreadyExact,
+            committedAt,
+        };
+        return Data::RuntimePackageActivationProjectCompareAndSetResult{
+            Data::RuntimePackageActivationProjectCompareAndSetDisposition::AlreadyExact,
+            commit};
+    }
+
+    Data::ProjectSnapshot candidate = m_snapshot;
+    candidate.masterBindingArtifact = targetReference;
+    if (const Utils::Result<> validation = validateProjectConfigurations(candidate);
+        !validation) {
+        return Utils::ResultError(validation.error());
+    }
+
+    {
+        const QScopedValueRollback suppressPublication(
+            m_suppressUndoPublication, true);
+        m_undoStack.push(new UpdateMasterBindingArtifactCommand(
+            this, m_snapshot.masterBindingArtifact, targetReference));
+    }
+    publishSnapshot();
+
+    const QByteArray resultingSerializedProject = serializeProject(m_snapshot);
+    const Data::RuntimePackageActivationDocumentRevisionToken resultingDocumentRevision
+        = runtimePackageActivationDocumentRevisionToken(resultingSerializedProject);
+    const Data::RuntimePackageActivationOriginalBindingToken resultingBinding
+        = runtimePackageActivationBindingToken(m_snapshot.masterBindingArtifact);
+    const Data::RuntimePackageActivationProjectCommit commit{
+        currentDocumentRevision,
+        currentBinding,
+        resultingDocumentRevision,
+        resultingBinding,
+        Data::RuntimePackageActivationProjectCommitDisposition::CompareAndSetCommitted,
+        committedAt,
+    };
+    if (!commit.isValid()) {
+        return Utils::ResultError(
+            Tr::tr("The EtherCAT project produced an invalid activation commit."));
+    }
+    return Data::RuntimePackageActivationProjectCompareAndSetResult{
+        Data::RuntimePackageActivationProjectCompareAndSetDisposition::
+            CompareAndSetCommitted,
+        commit};
+}
+
 QByteArray EtherCATProjectDocument::contents() const
 {
     return serializeProject(m_snapshot);
@@ -1088,10 +1239,28 @@ void EtherCATProjectDocument::applyOfflineSlave(const Data::OfflineSlaveConfigur
 
 void EtherCATProjectDocument::publishSnapshot()
 {
+    ++m_runtimePackageActivationRevisionSequence;
+    if (m_runtimePackageActivationRevisionSequence == 0) {
+        m_runtimePackageActivationRevisionNonce = QUuid::createUuid().toRfc4122();
+        m_runtimePackageActivationRevisionSequence = 1;
+    }
     m_snapshot.modified = isModified();
     emit changed();
     emit contentsChanged();
     emit snapshotChanged(m_snapshot);
+}
+
+Data::RuntimePackageActivationDocumentRevisionToken
+EtherCATProjectDocument::runtimePackageActivationDocumentRevisionToken(
+    const QByteArray &serializedProject) const
+{
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.addData(
+        QByteArrayView("embed-labs.runtime-package-activation.document-revision-token.v1"));
+    addTokenBytes(hash, m_runtimePackageActivationRevisionNonce);
+    addTokenU64(hash, m_runtimePackageActivationRevisionSequence);
+    addTokenBytes(hash, serializedProject);
+    return Data::RuntimePackageActivationDocumentRevisionToken(hash.result());
 }
 
 void EtherCATProjectDocument::setInvalidSnapshot(const QString &fallbackName, const QString &error)

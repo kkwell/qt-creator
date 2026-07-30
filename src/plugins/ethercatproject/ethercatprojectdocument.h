@@ -5,6 +5,7 @@
 #include <coreplugin/idocument.h>
 
 #include <ethercatdata/projectsnapshot.h>
+#include <ethercatdata/runtimepackageactivation.h>
 
 #include <QUndoStack>
 
@@ -42,6 +43,13 @@ public:
         const Data::NodeId &slaveId, const Data::ManualControlEnvelope &envelope);
     Utils::Result<> setMasterBindingArtifact(
         const Data::SemanticBindingArtifactReference &reference);
+    Utils::Result<Data::RuntimePackageActivationProjectCapture>
+    captureRuntimePackageActivationProject() const;
+    Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult>
+    compareAndSetMasterBindingArtifact(
+        const Data::RuntimePackageActivationDocumentRevisionToken &expectedDocumentRevision,
+        const Data::RuntimePackageActivationOriginalBindingToken &expectedBinding,
+        const Data::SemanticBindingArtifactReference &targetReference);
 
     QByteArray contents() const final;
     bool isModified() const final;
@@ -65,6 +73,8 @@ private:
         const Data::NodeId &masterId, const QList<Data::OfflineSlaveConfiguration> &slaves);
     void applyOfflineSlave(const Data::OfflineSlaveConfiguration &slave);
     void publishSnapshot();
+    Data::RuntimePackageActivationDocumentRevisionToken
+    runtimePackageActivationDocumentRevisionToken(const QByteArray &serializedProject) const;
     void setInvalidSnapshot(const QString &fallbackName, const QString &error);
     Utils::Result<> createMigrationBackup(const Utils::FilePath &sourcePath);
 
@@ -73,6 +83,9 @@ private:
     bool m_migrationPending = false;
     int m_migrationSourceVersion = -1;
     Utils::FilePath m_migrationBackupPath;
+    QByteArray m_runtimePackageActivationRevisionNonce;
+    quint64 m_runtimePackageActivationRevisionSequence = 0;
+    bool m_suppressUndoPublication = false;
 
     friend class RenameProjectCommand;
     friend class RenameStructuralNodeCommand;

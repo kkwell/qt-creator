@@ -3,6 +3,7 @@
 #pragma once
 
 #include "ethercatdata_global.h"
+#include "projectsnapshot.h"
 #include "semanticmappingattestation.h"
 
 #include <QByteArray>
@@ -78,6 +79,36 @@ public:
 
 private:
     QByteArray m_value;
+};
+
+// One atomic project-service observation. The serialized bytes are the exact
+// project bytes captured with the snapshot and both opaque compare-and-set
+// tokens; consumers must not reserialize the snapshot to reconstruct them.
+class ETHERCATDATA_EXPORT RuntimePackageActivationProjectCapture
+{
+public:
+    RuntimePackageActivationProjectCapture() = default;
+    RuntimePackageActivationProjectCapture(
+        ProjectSnapshot snapshot,
+        QByteArray serializedProject,
+        RuntimePackageActivationDocumentRevisionToken documentRevision,
+        RuntimePackageActivationOriginalBindingToken originalBinding);
+
+    const ProjectSnapshot &snapshot() const;
+    const QByteArray &serializedProject() const;
+    const RuntimePackageActivationDocumentRevisionToken &documentRevision() const;
+    const RuntimePackageActivationOriginalBindingToken &originalBinding() const;
+    bool isValid() const;
+
+    friend bool operator==(
+        const RuntimePackageActivationProjectCapture &,
+        const RuntimePackageActivationProjectCapture &) = default;
+
+private:
+    ProjectSnapshot m_snapshot;
+    QByteArray m_serializedProject;
+    RuntimePackageActivationDocumentRevisionToken m_documentRevision;
+    RuntimePackageActivationOriginalBindingToken m_originalBinding;
 };
 
 class ETHERCATDATA_EXPORT RuntimePackageActivationSha256
@@ -392,6 +423,35 @@ private:
     QDateTime m_committedAt;
 };
 
+enum class RuntimePackageActivationProjectCompareAndSetDisposition {
+    Invalid,
+    Stale,
+    CompareAndSetCommitted,
+    AlreadyExact,
+};
+
+class ETHERCATDATA_EXPORT RuntimePackageActivationProjectCompareAndSetResult
+{
+public:
+    RuntimePackageActivationProjectCompareAndSetResult() = default;
+    RuntimePackageActivationProjectCompareAndSetResult(
+        RuntimePackageActivationProjectCompareAndSetDisposition disposition,
+        std::optional<RuntimePackageActivationProjectCommit> commit = {});
+
+    RuntimePackageActivationProjectCompareAndSetDisposition disposition() const;
+    const std::optional<RuntimePackageActivationProjectCommit> &commit() const;
+    bool isValid() const;
+
+    friend bool operator==(
+        const RuntimePackageActivationProjectCompareAndSetResult &,
+        const RuntimePackageActivationProjectCompareAndSetResult &) = default;
+
+private:
+    RuntimePackageActivationProjectCompareAndSetDisposition m_disposition
+        = RuntimePackageActivationProjectCompareAndSetDisposition::Invalid;
+    std::optional<RuntimePackageActivationProjectCommit> m_commit;
+};
+
 enum class RuntimePackageActivationCancellationControllerResult {
     Pending,
     NoControllerMutation,
@@ -663,6 +723,7 @@ private:
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationOperationId)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationDocumentRevisionToken)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationOriginalBindingToken)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationProjectCapture)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationSha256)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationIdentity)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationRequest)
@@ -674,6 +735,9 @@ Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationDeploymentOutcome)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationDeploymentEvidence)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationProjectCommitDisposition)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationProjectCommit)
+Q_DECLARE_METATYPE(
+    EtherCAT::Data::RuntimePackageActivationProjectCompareAndSetDisposition)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationProjectCompareAndSetResult)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationCancellationControllerResult)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationCancelRequest)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageActivationCancellation)

@@ -35,6 +35,7 @@ private slots:
     void testManualControlEnvelopeCorruption();
     void testMigrationCreatesRecoveryBackup();
     void testProjectExplorerMultiProjectLifecycle();
+    void testRuntimePackageActivationProjectCompareAndSet();
     void testDuplicateProjectIdCannotOwnStartupContext();
     void testDuplicateProjectIdOwnerRecovery();
 };

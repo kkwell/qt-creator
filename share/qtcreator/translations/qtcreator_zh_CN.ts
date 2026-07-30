@@ -49557,6 +49557,22 @@ Source period: %2 ms; UI publish period: %3 ms
         <translation>无法编辑无效的 EtherCAT 项目。</translation>
     </message>
     <message>
+        <source>Cannot capture an invalid EtherCAT project.</source>
+        <translation>无法捕获无效的 EtherCAT 项目。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project could not produce valid activation tokens.</source>
+        <translation>EtherCAT 项目无法生成有效的激活令牌。</translation>
+    </message>
+    <message>
+        <source>The activation project tokens are invalid.</source>
+        <translation>激活工程令牌无效。</translation>
+    </message>
+    <message>
+        <source>The EtherCAT project produced an invalid activation commit.</source>
+        <translation>EtherCAT 项目生成了无效的激活提交结果。</translation>
+    </message>
+    <message>
         <source>Project name cannot be empty.</source>
         <translation>项目名称不能为空。</translation>
     </message>

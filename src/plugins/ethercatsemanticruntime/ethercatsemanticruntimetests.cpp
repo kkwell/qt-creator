@@ -153,6 +153,22 @@ public:
         return unsupported();
     }
 
+    Utils::Result<Data::RuntimePackageActivationProjectCapture>
+    captureRuntimePackageActivationProject(const Data::NodeId &) const final
+    {
+        return Utils::ResultError("Test project capture is not implemented");
+    }
+
+    Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult>
+    compareAndSetMasterBindingArtifact(
+        const Data::NodeId &,
+        const Data::RuntimePackageActivationDocumentRevisionToken &,
+        const Data::RuntimePackageActivationOriginalBindingToken &,
+        const Data::SemanticBindingArtifactReference &) final
+    {
+        return Utils::ResultError("Test project compare-and-set is not implemented");
+    }
+
     void addProject(const Data::ProjectSnapshot &project)
     {
         m_projects.append(project);

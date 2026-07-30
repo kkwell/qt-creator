@@ -9,6 +9,7 @@
 #include <ethercatdata/devicedescription.h>
 #include <ethercatdata/diagnosticssnapshot.h>
 #include <ethercatdata/projectsnapshot.h>
+#include <ethercatdata/runtimepackageactivation.h>
 #include <ethercatdata/runtimeoutputtransaction.h>
 #include <ethercatdata/runtimeresource.h>
 #include <ethercatdata/scansnapshot.h>
@@ -163,6 +164,14 @@ public:
     virtual Utils::Result<> setMasterBindingArtifact(
         const Data::NodeId &projectId,
         const Data::SemanticBindingArtifactReference &reference) = 0;
+    virtual Utils::Result<Data::RuntimePackageActivationProjectCapture>
+    captureRuntimePackageActivationProject(const Data::NodeId &projectId) const = 0;
+    virtual Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult>
+    compareAndSetMasterBindingArtifact(
+        const Data::NodeId &projectId,
+        const Data::RuntimePackageActivationDocumentRevisionToken &expectedDocumentRevision,
+        const Data::RuntimePackageActivationOriginalBindingToken &expectedBinding,
+        const Data::SemanticBindingArtifactReference &targetReference) = 0;
 
 signals:
     void projectAdded(const EtherCAT::Data::ProjectSnapshot &project);

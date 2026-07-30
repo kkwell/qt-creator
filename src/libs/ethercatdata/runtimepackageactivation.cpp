@@ -145,6 +145,20 @@ bool projectCommitDispositionIsKnown(RuntimePackageActivationProjectCommitDispos
     return false;
 }
 
+bool projectCompareAndSetDispositionIsKnown(
+    RuntimePackageActivationProjectCompareAndSetDisposition disposition)
+{
+    switch (disposition) {
+    case RuntimePackageActivationProjectCompareAndSetDisposition::Invalid:
+        return false;
+    case RuntimePackageActivationProjectCompareAndSetDisposition::Stale:
+    case RuntimePackageActivationProjectCompareAndSetDisposition::CompareAndSetCommitted:
+    case RuntimePackageActivationProjectCompareAndSetDisposition::AlreadyExact:
+        return true;
+    }
+    return false;
+}
+
 bool cancellationResultIsKnown(RuntimePackageActivationCancellationControllerResult result)
 {
     switch (result) {
@@ -770,6 +784,45 @@ const QByteArray &RuntimePackageActivationOriginalBindingToken::value() const
 bool RuntimePackageActivationOriginalBindingToken::isValid() const
 {
     return isValidOpaqueToken(m_value);
+}
+
+RuntimePackageActivationProjectCapture::RuntimePackageActivationProjectCapture(
+    ProjectSnapshot snapshot,
+    QByteArray serializedProject,
+    RuntimePackageActivationDocumentRevisionToken documentRevision,
+    RuntimePackageActivationOriginalBindingToken originalBinding)
+    : m_snapshot(std::move(snapshot))
+    , m_serializedProject(std::move(serializedProject))
+    , m_documentRevision(std::move(documentRevision))
+    , m_originalBinding(std::move(originalBinding))
+{}
+
+const ProjectSnapshot &RuntimePackageActivationProjectCapture::snapshot() const
+{
+    return m_snapshot;
+}
+
+const QByteArray &RuntimePackageActivationProjectCapture::serializedProject() const
+{
+    return m_serializedProject;
+}
+
+const RuntimePackageActivationDocumentRevisionToken &
+RuntimePackageActivationProjectCapture::documentRevision() const
+{
+    return m_documentRevision;
+}
+
+const RuntimePackageActivationOriginalBindingToken &
+RuntimePackageActivationProjectCapture::originalBinding() const
+{
+    return m_originalBinding;
+}
+
+bool RuntimePackageActivationProjectCapture::isValid() const
+{
+    return m_snapshot.valid && !m_snapshot.id.isNull() && !m_serializedProject.isEmpty()
+           && m_documentRevision.isValid() && m_originalBinding.isValid();
 }
 
 RuntimePackageActivationSha256::RuntimePackageActivationSha256(QByteArray value)
@@ -1537,6 +1590,43 @@ bool RuntimePackageActivationProjectCommit::isValid() const
                && m_resultingBinding != m_originalBinding;
     }
     return false;
+}
+
+RuntimePackageActivationProjectCompareAndSetResult::
+    RuntimePackageActivationProjectCompareAndSetResult(
+        RuntimePackageActivationProjectCompareAndSetDisposition disposition,
+        std::optional<RuntimePackageActivationProjectCommit> commit)
+    : m_disposition(disposition)
+    , m_commit(std::move(commit))
+{}
+
+RuntimePackageActivationProjectCompareAndSetDisposition
+RuntimePackageActivationProjectCompareAndSetResult::disposition() const
+{
+    return m_disposition;
+}
+
+const std::optional<RuntimePackageActivationProjectCommit> &
+RuntimePackageActivationProjectCompareAndSetResult::commit() const
+{
+    return m_commit;
+}
+
+bool RuntimePackageActivationProjectCompareAndSetResult::isValid() const
+{
+    if (!projectCompareAndSetDispositionIsKnown(m_disposition))
+        return false;
+    if (m_disposition == RuntimePackageActivationProjectCompareAndSetDisposition::Stale)
+        return !m_commit;
+    if (!m_commit || !m_commit->isValid())
+        return false;
+    if (m_disposition
+        == RuntimePackageActivationProjectCompareAndSetDisposition::CompareAndSetCommitted) {
+        return m_commit->disposition()
+               == RuntimePackageActivationProjectCommitDisposition::CompareAndSetCommitted;
+    }
+    return m_commit->disposition()
+           == RuntimePackageActivationProjectCommitDisposition::AlreadyExact;
 }
 
 RuntimePackageActivationCancelRequest::RuntimePackageActivationCancelRequest(

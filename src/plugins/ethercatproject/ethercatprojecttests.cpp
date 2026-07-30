@@ -2260,6 +2260,211 @@ void EtherCATProjectTests::testProjectExplorerMultiProjectLifecycle()
     QCOMPARE(closedProject->snapshot.name, QString("First Closed"));
 }
 
+void EtherCATProjectTests::testRuntimePackageActivationProjectCompareAndSet()
+{
+    auto *service = ExtensionSystem::PluginManager::getObject<ProjectServiceImpl>();
+    QVERIFY(service);
+    QVERIFY(service->projects().isEmpty());
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath projectFile
+        = temporaryFilePath(directory, "activation-cas.ecatproject");
+    Data::ProjectSnapshot source = createProjectSnapshot("Activation CAS", "Test");
+    const Data::NodeId sourceMasterId = masterId(source);
+    source.slaves = offlineSlaves(sourceMasterId);
+    writeProject(projectFile, source);
+
+    const ProjectExplorer::OpenProjectResult openResult
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(projectFile, false);
+    QVERIFY2(openResult, qPrintable(openResult.errorMessage()));
+    QPointer<EtherCATProject> project = qobject_cast<EtherCATProject *>(openResult.project());
+    QVERIFY(project);
+    const QScopeGuard cleanup([&] {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        if (project && ProjectExplorer::ProjectManager::hasProject(project.data()))
+            ProjectExplorer::ProjectManager::removeProject(project.data());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    const Data::NodeId projectId = project->snapshot().id;
+    const Data::NodeId slaveId = project->snapshot().slaves.constFirst().id;
+    const Data::SemanticBindingArtifactReference targetReference
+        = bindingArtifact(project->snapshot().slaves);
+
+    const Utils::Result<Data::RuntimePackageActivationProjectCapture> initialCapture
+        = service->captureRuntimePackageActivationProject(projectId);
+    QVERIFY_RESULT(initialCapture);
+    QVERIFY(initialCapture->isValid());
+    QCOMPARE(initialCapture->snapshot(), project->snapshot());
+    QCOMPARE(initialCapture->serializedProject(), project->document()->contents());
+    QCOMPARE(
+        initialCapture->serializedProject(),
+        serializeProject(initialCapture->snapshot()));
+
+    QSignalSpy projectChangedSpy(service, &Core::ProjectService::projectChanged);
+    const auto verifyStaleAfterMutation = [&](
+                                              const auto &mutation,
+                                              const QString &description) {
+        const Utils::Result<Data::RuntimePackageActivationProjectCapture> capture
+            = service->captureRuntimePackageActivationProject(projectId);
+        QVERIFY2(capture, qPrintable(description + ": capture failed"));
+        const Data::ProjectSnapshot beforeMutation = project->snapshot();
+        const Utils::Result<> mutationResult = mutation();
+        QVERIFY2(mutationResult, qPrintable(description + ": mutation failed"));
+        QVERIFY(project->snapshot() != beforeMutation);
+
+        const Data::ProjectSnapshot beforeCompareAndSet = project->snapshot();
+        const int commandCount = project->document()->undoStack()->count();
+        const int commandIndex = project->document()->undoStack()->index();
+        projectChangedSpy.clear();
+        const Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult> result
+            = service->compareAndSetMasterBindingArtifact(
+                projectId,
+                capture->documentRevision(),
+                capture->originalBinding(),
+                targetReference);
+        QVERIFY2(result, qPrintable(description + ": compare-and-set failed"));
+        QVERIFY(result->isValid());
+        QCOMPARE(
+            result->disposition(),
+            Data::RuntimePackageActivationProjectCompareAndSetDisposition::Stale);
+        QVERIFY(!result->commit());
+        QCOMPARE(project->snapshot(), beforeCompareAndSet);
+        QCOMPARE(project->document()->undoStack()->count(), commandCount);
+        QCOMPARE(project->document()->undoStack()->index(), commandIndex);
+        QCOMPARE(projectChangedSpy.count(), 0);
+
+        QVERIFY_RESULT(service->undoProject(projectId));
+        QCOMPARE(project->snapshot(), beforeMutation);
+        const Utils::Result<Data::RuntimePackageActivationProjectCapture> afterUndo
+            = service->captureRuntimePackageActivationProject(projectId);
+        QVERIFY_RESULT(afterUndo);
+        QVERIFY(afterUndo->documentRevision() != capture->documentRevision());
+    };
+
+    verifyStaleAfterMutation(
+        [&] {
+            return service->setProcessDataConfiguration(
+                projectId, slaveId, processDataConfiguration());
+        },
+        "PDO mutation");
+    verifyStaleAfterMutation(
+        [&] {
+            return service->setStartupConfiguration(
+                projectId, slaveId, startupConfiguration());
+        },
+        "Startup SDO mutation");
+    verifyStaleAfterMutation(
+        [&] {
+            return service->setDcConfiguration(projectId, slaveId, dcConfiguration());
+        },
+        "DC mutation");
+    verifyStaleAfterMutation(
+        [&] {
+            return service->setMasterBindingArtifact(projectId, targetReference);
+        },
+        "Binding mutation");
+
+    const Utils::Result<Data::RuntimePackageActivationProjectCapture> beforeCommit
+        = service->captureRuntimePackageActivationProject(projectId);
+    QVERIFY_RESULT(beforeCommit);
+    const int commandIndexBeforeCommit = project->document()->undoStack()->index();
+    projectChangedSpy.clear();
+    const Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult> committed
+        = service->compareAndSetMasterBindingArtifact(
+            projectId,
+            beforeCommit->documentRevision(),
+            beforeCommit->originalBinding(),
+            targetReference);
+    QVERIFY_RESULT(committed);
+    QVERIFY(committed->isValid());
+    QCOMPARE(
+        committed->disposition(),
+        Data::RuntimePackageActivationProjectCompareAndSetDisposition::
+            CompareAndSetCommitted);
+    QVERIFY(committed->commit());
+    QCOMPARE(
+        committed->commit()->disposition(),
+        Data::RuntimePackageActivationProjectCommitDisposition::
+            CompareAndSetCommitted);
+    QCOMPARE(
+        committed->commit()->originalDocumentRevision(),
+        beforeCommit->documentRevision());
+    QCOMPARE(committed->commit()->originalBinding(), beforeCommit->originalBinding());
+    QVERIFY(
+        committed->commit()->resultingDocumentRevision()
+        != beforeCommit->documentRevision());
+    QVERIFY(committed->commit()->resultingBinding() != beforeCommit->originalBinding());
+    QCOMPARE(project->document()->undoStack()->index(), commandIndexBeforeCommit + 1);
+    QCOMPARE(project->document()->undoStack()->count(), commandIndexBeforeCommit + 1);
+    QCOMPARE(projectChangedSpy.count(), 1);
+    QCOMPARE(project->snapshot().masterBindingArtifact, targetReference);
+
+    const Utils::Result<Data::RuntimePackageActivationProjectCapture> afterCommit
+        = service->captureRuntimePackageActivationProject(projectId);
+    QVERIFY_RESULT(afterCommit);
+    QCOMPARE(
+        afterCommit->documentRevision(),
+        committed->commit()->resultingDocumentRevision());
+    QCOMPARE(afterCommit->originalBinding(), committed->commit()->resultingBinding());
+
+    const int exactCommandCount = project->document()->undoStack()->count();
+    const int exactCommandIndex = project->document()->undoStack()->index();
+    projectChangedSpy.clear();
+    const Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult> exactReplay
+        = service->compareAndSetMasterBindingArtifact(
+            projectId,
+            afterCommit->documentRevision(),
+            afterCommit->originalBinding(),
+            targetReference);
+    QVERIFY_RESULT(exactReplay);
+    QVERIFY(exactReplay->isValid());
+    QCOMPARE(
+        exactReplay->disposition(),
+        Data::RuntimePackageActivationProjectCompareAndSetDisposition::AlreadyExact);
+    QVERIFY(exactReplay->commit());
+    QCOMPARE(
+        exactReplay->commit()->disposition(),
+        Data::RuntimePackageActivationProjectCommitDisposition::AlreadyExact);
+    QCOMPARE(project->document()->undoStack()->count(), exactCommandCount);
+    QCOMPARE(project->document()->undoStack()->index(), exactCommandIndex);
+    QCOMPARE(projectChangedSpy.count(), 0);
+
+    QVERIFY_RESULT(service->undoProject(projectId));
+    const Utils::Result<Data::RuntimePackageActivationProjectCapture> afterCommitUndo
+        = service->captureRuntimePackageActivationProject(projectId);
+    QVERIFY_RESULT(afterCommitUndo);
+    QCOMPARE(afterCommitUndo->snapshot(), beforeCommit->snapshot());
+    QCOMPARE(afterCommitUndo->serializedProject(), beforeCommit->serializedProject());
+    QCOMPARE(afterCommitUndo->originalBinding(), beforeCommit->originalBinding());
+    QVERIFY(
+        afterCommitUndo->documentRevision() != beforeCommit->documentRevision());
+    QVERIFY(
+        afterCommitUndo->documentRevision()
+        != committed->commit()->resultingDocumentRevision());
+
+    const Data::ProjectSnapshot beforeStaleReplay = project->snapshot();
+    const int staleReplayCommandCount = project->document()->undoStack()->count();
+    const int staleReplayCommandIndex = project->document()->undoStack()->index();
+    projectChangedSpy.clear();
+    const Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult> staleReplay
+        = service->compareAndSetMasterBindingArtifact(
+            projectId,
+            beforeCommit->documentRevision(),
+            beforeCommit->originalBinding(),
+            targetReference);
+    QVERIFY_RESULT(staleReplay);
+    QCOMPARE(
+        staleReplay->disposition(),
+        Data::RuntimePackageActivationProjectCompareAndSetDisposition::Stale);
+    QCOMPARE(project->snapshot(), beforeStaleReplay);
+    QCOMPARE(project->document()->undoStack()->count(), staleReplayCommandCount);
+    QCOMPARE(project->document()->undoStack()->index(), staleReplayCommandIndex);
+    QCOMPARE(projectChangedSpy.count(), 0);
+}
+
 void EtherCATProjectTests::testDuplicateProjectIdCannotOwnStartupContext()
 {
     auto *service = ExtensionSystem::PluginManager::getObject<ProjectServiceImpl>();

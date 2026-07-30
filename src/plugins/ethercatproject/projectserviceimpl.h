@@ -67,6 +67,14 @@ public:
     Utils::Result<> setMasterBindingArtifact(
         const Data::NodeId &projectId,
         const Data::SemanticBindingArtifactReference &reference) final;
+    Utils::Result<Data::RuntimePackageActivationProjectCapture>
+    captureRuntimePackageActivationProject(const Data::NodeId &projectId) const final;
+    Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult>
+    compareAndSetMasterBindingArtifact(
+        const Data::NodeId &projectId,
+        const Data::RuntimePackageActivationDocumentRevisionToken &expectedDocumentRevision,
+        const Data::RuntimePackageActivationOriginalBindingToken &expectedBinding,
+        const Data::SemanticBindingArtifactReference &targetReference) final;
     bool canUndoProject(const Data::NodeId &projectId) const final;
     bool canRedoProject(const Data::NodeId &projectId) const final;
     Utils::Result<> renameStructuralNode(

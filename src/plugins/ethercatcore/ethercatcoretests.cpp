@@ -2640,6 +2640,45 @@ void EtherCATCoreTests::testRuntimePackageActivationContract()
     QVERIFY(changedCommit.isValid());
     QVERIFY(changedCommit.evidenceSha256() != projectCommit.evidenceSha256());
 
+    Data::ProjectSnapshot capturedSnapshot;
+    capturedSnapshot.id = scope.projectId;
+    capturedSnapshot.valid = true;
+    const Data::RuntimePackageActivationProjectCapture projectCapture{
+        capturedSnapshot,
+        QByteArray("{\"project\":\"captured\"}\n"),
+        identity.documentRevisionToken(),
+        identity.originalBindingToken(),
+    };
+    QVERIFY(projectCapture.isValid());
+    QVERIFY(!Data::RuntimePackageActivationProjectCapture().isValid());
+
+    const Data::RuntimePackageActivationProjectCompareAndSetResult staleProjectCommit{
+        Data::RuntimePackageActivationProjectCompareAndSetDisposition::Stale};
+    const Data::RuntimePackageActivationProjectCompareAndSetResult committedProjectCommit{
+        Data::RuntimePackageActivationProjectCompareAndSetDisposition::
+            CompareAndSetCommitted,
+        projectCommit};
+    const Data::RuntimePackageActivationProjectCommit alreadyExactCommit{
+        identity.documentRevisionToken(),
+        identity.originalBindingToken(),
+        identity.documentRevisionToken(),
+        identity.originalBindingToken(),
+        Data::RuntimePackageActivationProjectCommitDisposition::AlreadyExact,
+        startedAt.addMSecs(18),
+    };
+    const Data::RuntimePackageActivationProjectCompareAndSetResult alreadyExactProjectCommit{
+        Data::RuntimePackageActivationProjectCompareAndSetDisposition::AlreadyExact,
+        alreadyExactCommit};
+    QVERIFY(staleProjectCommit.isValid());
+    QVERIFY(committedProjectCommit.isValid());
+    QVERIFY(alreadyExactProjectCommit.isValid());
+    QVERIFY(!Data::RuntimePackageActivationProjectCompareAndSetResult().isValid());
+    const Data::RuntimePackageActivationProjectCompareAndSetResult
+        mismatchedProjectCommit{
+            Data::RuntimePackageActivationProjectCompareAndSetDisposition::AlreadyExact,
+            projectCommit};
+    QVERIFY(!mismatchedProjectCommit.isValid());
+
     const auto localEvent = [](
                                 quint64 sequence,
                                 Data::RuntimePackageActivationAuditKind kind,
@@ -3280,7 +3319,12 @@ void EtherCATCoreTests::testRuntimePackageActivationContract()
 
     QVERIFY(QMetaType::fromType<Data::RuntimePackageActivationControllerEvidence>().isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimePackageActivationDeploymentEvidence>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimePackageActivationProjectCapture>().isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimePackageActivationProjectCommit>().isValid());
+    QVERIFY(
+        QMetaType::fromType<
+            Data::RuntimePackageActivationProjectCompareAndSetResult>()
+            .isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimePackageActivationRecord>().isValid());
     QVERIFY(QMetaType::fromType<RuntimePackageActivationCommandResult>().isValid());
 }

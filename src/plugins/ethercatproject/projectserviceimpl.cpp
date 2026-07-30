@@ -219,6 +219,40 @@ Utils::Result<> ProjectServiceImpl::setMasterBindingArtifact(
     return project->document()->setMasterBindingArtifact(reference);
 }
 
+Utils::Result<Data::RuntimePackageActivationProjectCapture>
+ProjectServiceImpl::captureRuntimePackageActivationProject(
+    const Data::NodeId &projectId) const
+{
+    QTC_ASSERT(
+        isGuiThread(),
+        return Utils::ResultError(Tr::tr("Project service thread error.")));
+    const EtherCATProject *project = findProject(projectId);
+    if (!project) {
+        return Utils::ResultError(
+            Tr::tr("The requested EtherCAT project is not open."));
+    }
+    return project->document()->captureRuntimePackageActivationProject();
+}
+
+Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult>
+ProjectServiceImpl::compareAndSetMasterBindingArtifact(
+    const Data::NodeId &projectId,
+    const Data::RuntimePackageActivationDocumentRevisionToken &expectedDocumentRevision,
+    const Data::RuntimePackageActivationOriginalBindingToken &expectedBinding,
+    const Data::SemanticBindingArtifactReference &targetReference)
+{
+    QTC_ASSERT(
+        isGuiThread(),
+        return Utils::ResultError(Tr::tr("Project service thread error.")));
+    EtherCATProject *project = findProject(projectId);
+    if (!project) {
+        return Utils::ResultError(
+            Tr::tr("The requested EtherCAT project is not open."));
+    }
+    return project->document()->compareAndSetMasterBindingArtifact(
+        expectedDocumentRevision, expectedBinding, targetReference);
+}
+
 bool ProjectServiceImpl::canUndoProject(const Data::NodeId &projectId) const
 {
     QTC_ASSERT(isGuiThread(), return false);
