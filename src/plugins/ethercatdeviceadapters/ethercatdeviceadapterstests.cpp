@@ -494,6 +494,13 @@ void EtherCATDeviceAdaptersTests::testBundledV2ExactContracts()
         QVERIFY(!manifest->realHardwareAllowed);
         QVERIFY(
             std::all_of(
+                manifest->processDataProfiles.cbegin(),
+                manifest->processDataProfiles.cend(),
+                [](const Data::ProcessDataProfile &profile) {
+                    return profile.signedDcProfileId.isEmpty();
+                }));
+        QVERIFY(
+            std::all_of(
                 manifest->controlActions.cbegin(),
                 manifest->controlActions.cend(),
                 [](const Data::DeviceControlAction &action) { return !action.enabled; }));
@@ -593,11 +600,11 @@ void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
     QCOMPARE(
         xb6->contentSha256,
         QByteArray::fromHex(
-            "b8a5f085b7952fde6db9833528b8436ba7c7d2fd70358dc901b22a6df613b7d4"));
+            "fbc0e1d3f23652c92eafece5753ce652f1b7a4d05caef1f44d776a91c286c510"));
     QCOMPARE(
         sv630n->contentSha256,
         QByteArray::fromHex(
-            "966e5e426dfc1336ce992dac67163deb945f70b92b3e2e62abfe662963536401"));
+            "acf63ee7c837cf39e87fa510aeb8aadfac89b393d04b6cf28926037499a825b9"));
 
     QCOMPARE(
         xb6->controllerAdapterTarget.adapterId,
@@ -611,6 +618,7 @@ void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
     QCOMPARE(xb6->semanticSignals.size(), 18);
     QCOMPARE(xb6->processDataProfiles.size(), 1);
     QCOMPARE(xb6->processDataProfiles.constFirst().signedPdoProfileId, QString("do16"));
+    QVERIFY(xb6->processDataProfiles.constFirst().signedDcProfileId.isEmpty());
     QCOMPARE(xb6->controlActions.size(), 2);
     QVERIFY(!xb6->signatureVerified);
     QVERIFY(!xb6->realHardwareAllowed);
@@ -673,6 +681,9 @@ void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
     QCOMPARE(
         sv630n->processDataProfiles.constFirst().signedPdoProfileId,
         QString("csp_1704_1b04"));
+    QCOMPARE(
+        sv630n->processDataProfiles.constFirst().signedDcProfileId,
+        QString("sync0_125us"));
     QCOMPARE(sv630n->processDataProfiles.constFirst().rxPdoIndices, QList<quint16>{0x1704});
     QCOMPARE(sv630n->processDataProfiles.constFirst().txPdoIndices, QList<quint16>{0x1b04});
     QCOMPARE(sv630n->controlActions.size(), 3);
@@ -885,6 +896,7 @@ void EtherCATDeviceAdaptersTests::testV3SignedActionContract()
     QCOMPARE(manifest.controllerAdapterTarget.esiSha256, manifest.match.exactEsiSha256);
     QCOMPARE(manifest.processDataProfiles.size(), 1);
     QCOMPARE(manifest.processDataProfiles.constFirst().signedPdoProfileId, QString("test-profile-v1"));
+    QVERIFY(manifest.processDataProfiles.constFirst().signedDcProfileId.isEmpty());
     QCOMPARE(manifest.controlActions.size(), 1);
 
     const Data::DeviceControlAction &action = manifest.controlActions.constFirst();
@@ -916,6 +928,19 @@ void EtherCATDeviceAdaptersTests::testV3SignedActionContract()
     QVERIFY(manifest.semanticSignals.at(0).engineeringSafeValue);
     QVERIFY(manifest.semanticSignals.at(1).engineeringSafeValue);
     QVERIFY(!manifest.semanticSignals.at(2).engineeringSafeValue);
+
+    QJsonObject dcBound = valid;
+    QJsonArray dcProfiles = dcBound.value("processDataProfiles").toArray();
+    QJsonObject dcProfile = dcProfiles.at(0).toObject();
+    dcProfile.insert("signedDcProfileId", "sync0_125us");
+    dcProfiles.replace(0, dcProfile);
+    dcBound.insert("processDataProfiles", dcProfiles);
+    QJsonArray dcActions = dcBound.value("controlActions").toArray();
+    QJsonObject dcAction = dcActions.at(0).toObject();
+    dcAction.insert("requiresDc", true);
+    dcActions.replace(0, dcAction);
+    dcBound.insert("controlActions", dcActions);
+    QVERIFY2(packageLoadError(dcBound).isEmpty(), qPrintable(packageLoadError(dcBound)));
 
     QString error;
     const QByteArray pretty
@@ -963,6 +988,20 @@ void EtherCATDeviceAdaptersTests::testV3SignedActionContract()
             .value("$ref")
             .toString(),
         QString("#/$defs/sha256"));
+    const QJsonObject profileSchema = definitions.value("profile").toObject();
+    QVERIFY(
+        profileSchema.value("required")
+            .toArray()
+            .contains(QJsonValue(QStringLiteral("signedDcProfileId"))));
+    QCOMPARE(
+        profileSchema.value("properties")
+            .toObject()
+            .value("signedDcProfileId")
+            .toObject()
+            .value("oneOf")
+            .toArray()
+            .size(),
+        2);
 }
 
 void EtherCATDeviceAdaptersTests::testV3RejectsUnsafeContracts()
@@ -1161,6 +1200,56 @@ void EtherCATDeviceAdaptersTests::testV3RejectsUnsafeContracts()
     QVERIFY(packageLoadError(incompleteSignedProfile)
                 .contains("required signals are not completely covered"));
 
+    QJsonObject missingSignedDcProfile = valid;
+    profiles = missingSignedDcProfile.value("processDataProfiles").toArray();
+    profile = profiles.at(0).toObject();
+    profile.remove("signedDcProfileId");
+    profiles.replace(0, profile);
+    missingSignedDcProfile.insert("processDataProfiles", profiles);
+    QVERIFY(
+        packageLoadError(missingSignedDcProfile)
+            .contains("missing field \"signedDcProfileId\""));
+
+    QJsonObject emptySignedDcProfile = valid;
+    profiles = emptySignedDcProfile.value("processDataProfiles").toArray();
+    profile = profiles.at(0).toObject();
+    profile.insert("signedDcProfileId", "");
+    profiles.replace(0, profile);
+    emptySignedDcProfile.insert("processDataProfiles", profiles);
+    QVERIFY(
+        packageLoadError(emptySignedDcProfile)
+            .contains("signedDcProfileId must be null or canonical"));
+
+    QJsonObject malformedSignedDcProfile = valid;
+    profiles = malformedSignedDcProfile.value("processDataProfiles").toArray();
+    profile = profiles.at(0).toObject();
+    profile.insert("signedDcProfileId", "invalid:dc");
+    profiles.replace(0, profile);
+    malformedSignedDcProfile.insert("processDataProfiles", profiles);
+    QVERIFY(
+        packageLoadError(malformedSignedDcProfile)
+            .contains("signedDcProfileId must be null or canonical"));
+
+    QJsonObject nonDcActionOnDcProfile = valid;
+    profiles = nonDcActionOnDcProfile.value("processDataProfiles").toArray();
+    profile = profiles.at(0).toObject();
+    profile.insert("signedDcProfileId", "sync0_125us");
+    profiles.replace(0, profile);
+    nonDcActionOnDcProfile.insert("processDataProfiles", profiles);
+    QVERIFY2(
+        packageLoadError(nonDcActionOnDcProfile).isEmpty(),
+        qPrintable(packageLoadError(nonDcActionOnDcProfile)));
+
+    QJsonObject missingRequiredDcProfile = valid;
+    actions = missingRequiredDcProfile.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    action.insert("requiresDc", true);
+    actions.replace(0, action);
+    missingRequiredDcProfile.insert("controlActions", actions);
+    QVERIFY(
+        packageLoadError(missingRequiredDcProfile)
+            .contains("requires a signed DC profile"));
+
     QJsonObject invalidTtl = valid;
     actions = invalidTtl.value("controlActions").toArray();
     action = actions.at(0).toObject();
@@ -1280,6 +1369,13 @@ void EtherCATDeviceAdaptersTests::testV1RemainsFailClosed()
     const Data::DeviceAdapterManifest *sv630n = manifestForIdentity(manifests, sv630nIdentity);
     QVERIFY(sv630n);
     QCOMPARE(sv630n->contractVersion, Data::DeviceAdapterContractVersion::V1);
+    QVERIFY(
+        std::all_of(
+            sv630n->processDataProfiles.cbegin(),
+            sv630n->processDataProfiles.cend(),
+            [](const Data::ProcessDataProfile &profile) {
+                return profile.signedDcProfileId.isEmpty();
+            }));
     QCOMPARE(
         sv630n->contentSha256,
         QCryptographicHash::hash(*bundledContents, QCryptographicHash::Sha256));

@@ -513,50 +513,175 @@ EngineeringContractValidation constraintIsSubset(
 
 bool actionHasExactValues(
     const Data::DeviceControlAction &action,
-    const QList<Data::SemanticSignalDefinition> &signalDefinitions)
+    const QList<Data::SemanticSignalDefinition> &signalDefinitions,
+    bool allowLegacyWriteSignal)
 {
-    for (const Data::DeviceControlStep &step : action.steps) {
-        if (step.kind == Data::DeviceControlStepKind::Delay)
-            continue;
+    const auto neutralValue = [](const Data::DeviceControlValue &value) {
+        return value.source == Data::DeviceControlValueSource::Invalid
+               && !value.literalValue.isValid() && !value.engineeringLiteralValue
+               && value.parameterId.isEmpty();
+    };
+    const auto signalForId = [&signalDefinitions](const Data::SemanticSignalId &signalId) {
         bool ambiguous = false;
         const Data::SemanticSignalDefinition *signal = findUnique(
             signalDefinitions,
-            step.signalId,
+            signalId,
             [](const Data::SemanticSignalDefinition &candidate) { return candidate.id; },
             &ambiguous);
-        if (!signal || ambiguous || !signal->engineeringTransform)
+        return !ambiguous && signal ? signal : nullptr;
+    };
+    const auto valueIsExact = [&action](
+                                  const Data::DeviceControlValue &value,
+                                  const Data::SemanticSignalDefinition &signal) {
+        if (!signal.engineeringTransform)
             return false;
 
-        const auto valueIsExact = [&action, signal](const Data::DeviceControlValue &value) {
-            switch (value.source) {
-            case Data::DeviceControlValueSource::Literal:
-                return value.engineeringLiteralValue
-                       && validateEngineeringValue(*value.engineeringLiteralValue).accepted();
-            case Data::DeviceControlValueSource::Parameter:
-                for (const Data::DeviceControlActionParameter &parameter : action.parameters) {
-                    if (parameter.id != value.parameterId)
-                        continue;
-                    return parameter.engineeringConstraint
-                           && constraintIsSubset(
-                                  *parameter.engineeringConstraint,
-                                  signal->engineeringTransform->constraint)
-                                  .accepted();
-                }
-                return false;
-            case Data::DeviceControlValueSource::Invalid:
+        switch (value.source) {
+        case Data::DeviceControlValueSource::Literal:
+            return !value.literalValue.isValid() && value.engineeringLiteralValue
+                   && value.parameterId.isEmpty()
+                   && validateEngineeringValue(*value.engineeringLiteralValue).accepted()
+                   && validateEngineeringValueAgainstConstraint(
+                          *value.engineeringLiteralValue,
+                          signal.engineeringTransform->constraint)
+                          .accepted();
+        case Data::DeviceControlValueSource::Parameter: {
+            if (value.literalValue.isValid() || value.engineeringLiteralValue
+                || !canonicalIdentifier(value.parameterId)) {
                 return false;
             }
-            return false;
-        };
-        if (!valueIsExact(step.value))
-            return false;
-        if (step.value.source == Data::DeviceControlValueSource::Literal
-            && !validateEngineeringValueAgainstConstraint(
-                    *step.value.engineeringLiteralValue, signal->engineeringTransform->constraint)
-                    .accepted()) {
+            const Data::DeviceControlActionParameter *parameter = nullptr;
+            for (const Data::DeviceControlActionParameter &candidate : action.parameters) {
+                if (candidate.id != value.parameterId)
+                    continue;
+                if (parameter)
+                    return false;
+                parameter = &candidate;
+            }
+            return parameter && parameter->engineeringConstraint
+                   && constraintIsSubset(
+                          *parameter->engineeringConstraint,
+                          signal.engineeringTransform->constraint)
+                          .accepted();
+        }
+        case Data::DeviceControlValueSource::Invalid:
             return false;
         }
-        if (step.kind == Data::DeviceControlStepKind::WaitMaskedEquals && !valueIsExact(step.mask)) {
+        return false;
+    };
+    const auto legacyMaskIsExact = [&valueIsExact](
+                                       const Data::DeviceControlValue &value,
+                                       const Data::SemanticSignalDefinition &signal) {
+        if (value.source != Data::DeviceControlValueSource::Literal)
+            return valueIsExact(value, signal);
+
+        // V1/V2 model bit masks as exact engineering integers. A mask describes raw bits
+        // rather than a realizable signal value, so it is intentionally not range-checked
+        // against the signal's engineering constraint.
+        return !value.literalValue.isValid() && value.engineeringLiteralValue
+               && value.parameterId.isEmpty()
+               && validateEngineeringValue(*value.engineeringLiteralValue).accepted();
+    };
+    const auto canonicalGroup =
+        [&action](const QString &groupId) -> const Data::DeviceControlConsistencyGroup * {
+        const Data::DeviceControlConsistencyGroup *result = nullptr;
+        for (const Data::DeviceControlConsistencyGroup &candidate : action.consistencyGroups) {
+            if (candidate.id != groupId)
+                continue;
+            if (result)
+                return nullptr;
+            result = &candidate;
+        }
+        return result;
+    };
+
+    for (const Data::DeviceControlStep &step : action.steps) {
+        if (step.kind == Data::DeviceControlStepKind::WriteGroup) {
+            const Data::DeviceControlConsistencyGroup *group = canonicalGroup(
+                step.consistencyGroupId);
+            if (!group || !canonicalIdentifier(step.consistencyGroupId)
+                || !step.signalId.value.isEmpty() || !neutralValue(step.value)
+                || !neutralValue(step.mask) || step.assignments.isEmpty() || step.timeoutMs
+                || step.timeoutCycles) {
+                return false;
+            }
+
+            QSet<QString> members;
+            QString previousMember;
+            for (const Data::SemanticSignalId &member : group->members) {
+                if (!canonicalIdentifier(member.value) || members.contains(member.value)
+                    || (!previousMember.isEmpty() && member.value <= previousMember)) {
+                    return false;
+                }
+                members.insert(member.value);
+                previousMember = member.value;
+            }
+            if (members.isEmpty() || step.assignments.size() != members.size())
+                return false;
+
+            QSet<QString> assignments;
+            QString previousAssignment;
+            for (const Data::DeviceControlGroupAssignment &assignment : step.assignments) {
+                const Data::SemanticSignalDefinition *signal = signalForId(assignment.signalId);
+                if (!signal || !canonicalIdentifier(assignment.signalId.value)
+                    || !members.contains(assignment.signalId.value)
+                    || assignments.contains(assignment.signalId.value)
+                    || (!previousAssignment.isEmpty()
+                        && assignment.signalId.value <= previousAssignment)
+                    || !valueIsExact(assignment.value, *signal)) {
+                    return false;
+                }
+                assignments.insert(assignment.signalId.value);
+                previousAssignment = assignment.signalId.value;
+            }
+            if (assignments != members)
+                return false;
+            continue;
+        }
+
+        if (step.kind == Data::DeviceControlStepKind::WaitCycles
+            || step.kind == Data::DeviceControlStepKind::Delay) {
+            if (!step.signalId.value.isEmpty() || !neutralValue(step.value)
+                || !neutralValue(step.mask) || !step.consistencyGroupId.isEmpty()
+                || !step.assignments.isEmpty()) {
+                return false;
+            }
+            if (step.kind == Data::DeviceControlStepKind::WaitCycles) {
+                if (allowLegacyWriteSignal || !step.timeoutCycles || step.timeoutMs)
+                    return false;
+            } else if (!allowLegacyWriteSignal || !step.timeoutMs || step.timeoutCycles) {
+                return false;
+            }
+            continue;
+        }
+
+        const Data::SemanticSignalDefinition *signal = signalForId(step.signalId);
+        if (!signal || !canonicalIdentifier(step.signalId.value)
+            || !step.consistencyGroupId.isEmpty() || !step.assignments.isEmpty()) {
+            return false;
+        }
+        if (step.kind == Data::DeviceControlStepKind::WriteSignal) {
+            if (!allowLegacyWriteSignal || step.timeoutCycles || !neutralValue(step.mask)
+                || !valueIsExact(step.value, *signal)) {
+                return false;
+            }
+            continue;
+        }
+        const bool exactWaitTiming
+            = allowLegacyWriteSignal ? step.timeoutMs && !step.timeoutCycles
+                                     : !step.timeoutMs && step.timeoutCycles;
+        if (!exactWaitTiming)
+            return false;
+        if (step.kind == Data::DeviceControlStepKind::WaitMaskedEquals) {
+            const bool maskIsExact = allowLegacyWriteSignal
+                                         ? legacyMaskIsExact(step.mask, *signal)
+                                         : valueIsExact(step.mask, *signal);
+            if (!valueIsExact(step.value, *signal) || !maskIsExact)
+                return false;
+            continue;
+        }
+        if (step.kind != Data::DeviceControlStepKind::WaitAbsoluteAtMost
+            || !neutralValue(step.mask) || !valueIsExact(step.value, *signal)) {
             return false;
         }
     }
@@ -578,7 +703,7 @@ bool terminalFallbackAction(
         || !action.allowedFailureActionIds.isEmpty()) {
         return false;
     }
-    return actionHasExactValues(action, signalDefinitions)
+    return actionHasExactValues(action, signalDefinitions, true)
            && std::all_of(
                action.parameters.cbegin(),
                action.parameters.cend(),
@@ -1084,7 +1209,10 @@ ManualControlContractValidation validateManualControlEnvelope(
                 QStringLiteral(
                     "Enabled manual action requires an enabled nonempty adapter definition."));
         }
-        if (!actionHasExactValues(*definition, signalDefinitions)) {
+        if (!actionHasExactValues(
+                *definition,
+                signalDefinitions,
+                fallbackContract != ManualControlFallbackContract::SignedControllerRecovery)) {
             return manualRejection(
                 ManualControlContractError::InexactActionDefinition,
                 QStringLiteral(

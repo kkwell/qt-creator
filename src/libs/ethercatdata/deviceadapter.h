@@ -142,6 +142,7 @@ struct ETHERCATDATA_EXPORT ProcessDataProfile
 {
     QString id;
     QString signedPdoProfileId;
+    QString signedDcProfileId;
     QList<quint16> rxPdoIndices;
     QList<quint16> txPdoIndices;
     QList<SemanticSignalId> requiredSignals;

@@ -1273,6 +1273,7 @@ static bool parseProfiles(
                                      ? QStringList{
                                            "id",
                                            "signedPdoProfileId",
+                                           "signedDcProfileId",
                                            "rxPdos",
                                            "txPdos",
                                            "requiredSignals",
@@ -1287,6 +1288,9 @@ static bool parseProfiles(
             || (schema == PackageSchema::V3
                 && !parseString(
                     object, "signedPdoProfileId", itemContext, &profile.signedPdoProfileId, error))
+            || (schema == PackageSchema::V3
+                && !parseNullableString(
+                    object, "signedDcProfileId", itemContext, &profile.signedDcProfileId, error))
             || !parseIndexList(
                 object, "rxPdos", itemContext, &profile.rxPdoIndices, error, exactSchema(schema))
             || !parseIndexList(
@@ -1305,8 +1309,15 @@ static bool parseProfiles(
         if (schema == PackageSchema::V3 && !simpleV3Identifier(profile.signedPdoProfileId)) {
             return fail(error, QString("%1.signedPdoProfileId must be canonical").arg(itemContext));
         }
+        if (schema == PackageSchema::V3 && !object.value("signedDcProfileId").isNull()
+            && !simpleV3Identifier(profile.signedDcProfileId)) {
+            return fail(error, QString("%1.signedDcProfileId must be null or canonical")
+                                   .arg(itemContext));
+        }
         if (schema == PackageSchema::V3
             && (!stableV3Identifier(profile.id) || !simpleV3Identifier(profile.signedPdoProfileId)
+                || (!profile.signedDcProfileId.isEmpty()
+                    && !simpleV3Identifier(profile.signedDcProfileId))
                 || std::any_of(
                     requiredSignals.cbegin(), requiredSignals.cend(), [](const QString &signal) {
                         return !stableV3Identifier(signal);
@@ -2473,8 +2484,13 @@ static bool validateV3Manifest(const DeviceAdapterManifest &manifest, QString *e
     QHash<QString, const ProcessDataProfile *> signedProfiles;
     for (const ProcessDataProfile &profile : manifest.processDataProfiles) {
         if (!simpleV3Identifier(profile.signedPdoProfileId)
+            || (!profile.signedDcProfileId.isEmpty()
+                && !simpleV3Identifier(profile.signedDcProfileId))
             || signedProfiles.contains(profile.signedPdoProfileId)) {
-            return fail(error, "v3 signed PDO profile IDs must be canonical and unique");
+            return fail(
+                error,
+                "v3 signed PDO profile IDs must be canonical and unique, and signed DC "
+                "profile IDs must be empty or canonical");
         }
         signedProfiles.insert(profile.signedPdoProfileId, &profile);
     }
@@ -2551,6 +2567,15 @@ static bool validateV3Manifest(const DeviceAdapterManifest &manifest, QString *e
                 return fail(
                     error,
                     QString("action \"%1\" references unknown signed PDO profile \"%2\"")
+                        .arg(action.id.value, profileId));
+            }
+            const ProcessDataProfile &profile = *signedProfiles.value(profileId);
+            if (action.requiresDc && profile.signedDcProfileId.isEmpty()) {
+                return fail(
+                    error,
+                    QString(
+                        "action \"%1\" requires a signed DC profile for signed PDO profile "
+                        "\"%2\"")
                         .arg(action.id.value, profileId));
             }
         }

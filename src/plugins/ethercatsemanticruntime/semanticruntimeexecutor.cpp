@@ -2139,19 +2139,11 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
     Core::ProjectService *projectService,
     Core::ProviderRegistry *providerRegistry,
     QObject *parent,
-    std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository
-#ifdef WITH_TESTS
-    ,
-    TestOnlyContextTransform testOnlyContextTransform
-#endif
-    )
+    std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository)
     : SemanticRuntimeService(parent)
     , m_projectService(projectService)
     , m_providerRegistry(providerRegistry)
     , m_evidenceRepository(std::move(evidenceRepository))
-#ifdef WITH_TESTS
-    , m_testOnlyContextTransform(std::move(testOnlyContextTransform))
-#endif
 {
     m_execution = std::make_unique<SemanticRuntimeExecutorExecution>(this);
 
@@ -2530,10 +2522,6 @@ Data::SemanticRuntimeContext SemanticRuntimeExecutor::buildContext(
         context.actionDefinitionsDigest = {};
         context.actionStates.clear();
     }
-#ifdef WITH_TESTS
-    if (m_testOnlyContextTransform)
-        m_testOnlyContextTransform(context);
-#endif
     context.complete = true;
     context.contextHash = semanticRuntimeContextHash(context);
 

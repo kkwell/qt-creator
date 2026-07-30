@@ -1114,6 +1114,7 @@
     {
       "id": "org.embedlabs.solidot.xb6.api038-do16",
       "signedPdoProfileId": "do16",
+      "signedDcProfileId": null,
       "rxPdos": [
         5632,
         5887

@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <limits>
 #include <optional>
+#include <variant>
 
 namespace EtherCAT::SemanticRuntime::Internal {
 
@@ -466,6 +467,7 @@ std::optional<quint32> strictMaximumTtlCycles(const VerifiedSemanticAction &acti
 
 struct ManualActionAuthorization
 {
+    bool authorized = false;
     bool policyProjected = false;
     QString rejection;
     Data::DeviceControlAction definition;
@@ -473,6 +475,171 @@ struct ManualActionAuthorization
     quint32 maximumTtlMs = 0;
     quint32 maximumTtlCycles = 0;
 };
+
+std::optional<Data::EngineeringValueKind> rawEngineeringKind(EcfgResourcePrimitive primitive)
+{
+    using Kind = Data::EngineeringValueKind;
+    switch (primitive) {
+    case EcfgResourcePrimitive::Bool:
+        return Kind::Boolean;
+    case EcfgResourcePrimitive::U8:
+    case EcfgResourcePrimitive::U16:
+    case EcfgResourcePrimitive::U32:
+    case EcfgResourcePrimitive::U64:
+        return Kind::UnsignedInteger;
+    case EcfgResourcePrimitive::S8:
+    case EcfgResourcePrimitive::S16:
+    case EcfgResourcePrimitive::S32:
+    case EcfgResourcePrimitive::S64:
+    case EcfgResourcePrimitive::Q32_32:
+        return Kind::SignedInteger;
+    case EcfgResourcePrimitive::RawBits:
+        return {};
+    }
+    return {};
+}
+
+std::optional<std::variant<qint64, quint64>> exactRawValue(
+    const Data::EngineeringValue &engineering,
+    EcfgResourcePrimitive primitive,
+    quint16 bitWidth,
+    const Data::EngineeringTransform &transform)
+{
+    const std::optional<Data::EngineeringValueKind> rawKind = rawEngineeringKind(primitive);
+    if (!rawKind)
+        return {};
+
+    const Core::EngineeringConversionResult converted = Core::convertEngineeringToRaw(
+        engineering, *rawKind, bitWidth, transform);
+    if (!converted.validation.accepted() || !converted.value)
+        return {};
+
+    switch (converted.value->kind) {
+    case Data::EngineeringValueKind::Boolean:
+        return std::variant<qint64, quint64>{quint64(converted.value->boolean)};
+    case Data::EngineeringValueKind::SignedInteger:
+        return std::variant<qint64, quint64>{converted.value->signedInteger};
+    case Data::EngineeringValueKind::UnsignedInteger:
+        return std::variant<qint64, quint64>{converted.value->unsignedInteger};
+    case Data::EngineeringValueKind::Invalid:
+    case Data::EngineeringValueKind::ExactRational:
+    case Data::EngineeringValueKind::Enumeration:
+        return {};
+    }
+    return {};
+}
+
+const Data::SemanticSignalDefinition *uniqueAdapterSignal(
+    const Data::DeviceAdapterManifest &manifest, QStringView signalId)
+{
+    // Runtime authorization consumes explicit resolved signal identities. The
+    // API-038 XB6 package expands its fixed slot-1 signals in semanticSignals;
+    // future dynamic module slots must be resolved before reaching this gate.
+    const Data::SemanticSignalDefinition *result = nullptr;
+    for (const Data::SemanticSignalDefinition &signal : manifest.semanticSignals) {
+        if (signal.id.value != signalId)
+            continue;
+        if (result)
+            return nullptr;
+        result = &signal;
+    }
+    for (const Data::DeviceModuleProfile &module : manifest.moduleProfiles) {
+        for (const Data::SemanticSignalDefinition &signal : module.slotRelativeSignals) {
+            if (signal.id.value != signalId)
+                continue;
+            if (result)
+                return nullptr;
+            result = &signal;
+        }
+    }
+    return result;
+}
+
+std::optional<Data::SemanticSignalDirection> adapterDirection(EcfgResourceDirection direction)
+{
+    if (direction == EcfgResourceDirection::Input)
+        return Data::SemanticSignalDirection::Input;
+    if (direction == EcfgResourceDirection::Output)
+        return Data::SemanticSignalDirection::Output;
+    return {};
+}
+
+std::optional<Data::SemanticSignalAccess> adapterAccess(EcfgResourceAccess access)
+{
+    if (access == EcfgResourceAccess::Read)
+        return Data::SemanticSignalAccess::ReadOnly;
+    if (access == EcfgResourceAccess::ReadWrite)
+        return Data::SemanticSignalAccess::ReadWrite;
+    return {};
+}
+
+bool signalContractMatchesSignedBinding(
+    const Data::DeviceAdapterManifest &manifest,
+    const VerifiedSemanticBindingArtifact &artifact,
+    const VerifiedSemanticActionBindingReference &reference,
+    QStringView projectDeviceId,
+    bool requireSafeValue)
+{
+    const Data::SemanticSignalDefinition *signal = uniqueAdapterSignal(
+        manifest, reference.semanticSignalDefinitionId);
+    const VerifiedSemanticBinding *binding = artifact.findBySemanticSignalId(
+        reference.semanticBindingId);
+    const std::optional<Data::SemanticSignalDirection> direction = adapterDirection(
+        reference.direction);
+    const std::optional<Data::SemanticSignalAccess> access = adapterAccess(reference.access);
+    const std::optional<Data::EtherCATDataType> dataType = publicDataType(reference.primitive);
+    if (!signal || !binding || !direction || !access || !dataType
+        || binding->projectDeviceId != projectDeviceId
+        || binding->semanticBindingId != reference.semanticBindingId
+        || binding->semanticSignalDefinitionId != reference.semanticSignalDefinitionId
+        || binding->componentBindingId != reference.componentBindingId
+        || binding->resourceId != reference.resourceId
+        || binding->consistencyGroupId != reference.consistencyGroupId
+        || binding->primitive != reference.primitive || binding->bitWidth != reference.bitWidth
+        || binding->direction != reference.direction || binding->access != reference.access
+        || binding->source
+               != (reference.direction == EcfgResourceDirection::Output
+                       ? EcfgResourceSource::PdoOutput
+                       : EcfgResourceSource::PdoInput)
+        || binding->unit != reference.unit
+        || binding->scaleNumerator != reference.scaleNumerator
+        || binding->scaleDenominator != reference.scaleDenominator
+        || binding->scaleOffset != reference.scaleOffset || signal->direction != *direction
+        || signal->access != *access || signal->bindings.size() != 1
+        || !signal->engineeringTransform) {
+        return false;
+    }
+
+    const Data::DeviceSignalBinding &deviceBinding = signal->bindings.constFirst();
+    const Data::EngineeringTransform &transform = *signal->engineeringTransform;
+    if (deviceBinding.physicalType != *dataType || deviceBinding.bitWidth != reference.bitWidth
+        || deviceBinding.kind != Data::DeviceSignalBindingKind::ProcessDataObject
+        || deviceBinding.pdoDirection
+               != (reference.direction == EcfgResourceDirection::Output ? Data::PdoDirection::Rx
+                                                                        : Data::PdoDirection::Tx)
+        || transform.unit != reference.unit.value_or(QString())
+        || transform.scale
+               != Data::ExactRational{
+                   reference.scaleNumerator,
+                   reference.scaleDenominator,
+               }
+        || transform.offset != Data::ExactRational{reference.scaleOffset, 1}
+        || transform.rounding != Data::EngineeringRounding::RejectInexact
+        || !Core::validateEngineeringTransform(transform).accepted()) {
+        return false;
+    }
+
+    if (!requireSafeValue)
+        return true;
+    if (reference.direction != EcfgResourceDirection::Output
+        || reference.access != EcfgResourceAccess::ReadWrite || !binding->safeValueDeclared
+        || !binding->safeValue || !signal->engineeringSafeValue) {
+        return false;
+    }
+    const std::optional<std::variant<qint64, quint64>> adapterSafeValue = exactRawValue(
+        *signal->engineeringSafeValue, reference.primitive, reference.bitWidth, transform);
+    return adapterSafeValue && *adapterSafeValue == *binding->safeValue;
+}
 
 std::optional<Data::EngineeringConstraint> signedParameterConstraint(
     const VerifiedSemanticActionParameter &parameter)
@@ -568,7 +735,6 @@ bool exactActionParameters(
         const bool manualRangeValid
             = Core::validateEngineeringConstraint(manual.allowedRange).accepted()
               && manual.allowedRange.minimum && manual.allowedRange.maximum
-              && !manual.allowedRange.step && !manual.allowedRange.stepOrigin
               && manual.allowedRange.enumeration.isEmpty()
               && Core::validateEngineeringValueAgainstConstraint(
                      Data::EngineeringValue::fromExactRational(
@@ -588,14 +754,27 @@ bool exactActionParameters(
             = manualRangeValid
                   ? runtimeBound(parameter.primitive, *manual.allowedRange.maximum)
                   : std::nullopt;
+        const bool adapterDefaultValid
+            = adapter.engineeringConstraint
+              && adapter.hasDefaultValue == adapter.engineeringDefaultValue.has_value()
+              && (!adapter.engineeringDefaultValue
+                  || Core::validateEngineeringValueAgainstConstraint(
+                         *adapter.engineeringDefaultValue, *adapter.engineeringConstraint)
+                         .accepted());
         if (!adapter.required || adapter.dataType != publicDefinition->dataType
             || adapter.valueMetadata.unit != publicDefinition->valueMetadata.unit
-            // Adapter content is already bound by its signed content SHA. For
-            // this first runtime gate, its public engineering range must still
-            // equal the signed companion exactly; the project may only narrow.
-            || !adapter.engineeringConstraint || *adapter.engineeringConstraint != *constraint
-            || adapter.hasDefaultValue || adapter.engineeringDefaultValue
-            || !minimum || !maximum || manual.defaultValue) {
+            || !adapter.engineeringConstraint
+            || adapter.engineeringConstraint->minimum != constraint->minimum
+            || adapter.engineeringConstraint->maximum != constraint->maximum
+            || adapter.engineeringConstraint->step != Data::ExactRational{1, 1}
+            || adapter.engineeringConstraint->stepOrigin != Data::ExactRational{0, 1}
+            || !adapter.engineeringConstraint->enumeration.isEmpty()
+            || adapter.defaultValue.isValid() || !adapterDefaultValid
+            || !minimum || !maximum || manual.defaultValue
+            || (manual.allowedRange.step
+                && manual.allowedRange.step != adapter.engineeringConstraint->step)
+            || (manual.allowedRange.stepOrigin
+                && manual.allowedRange.stepOrigin != adapter.engineeringConstraint->stepOrigin)) {
             return false;
         }
 
@@ -610,30 +789,376 @@ bool exactActionParameters(
            && manualIds.size() == manualAction.parameters.size();
 }
 
-bool exactRequiredSignals(
+bool exactActionSignalSets(
     const VerifiedSemanticAction &signedAction,
     const Data::DeviceControlAction &adapterAction)
 {
-    QStringList signedIds;
-    signedIds.reserve(signedAction.requiredBindings.size());
-    for (const VerifiedSemanticActionBindingReference &binding : signedAction.requiredBindings)
-        signedIds.append(binding.semanticSignalDefinitionId);
-    std::sort(signedIds.begin(), signedIds.end());
-    if (std::adjacent_find(signedIds.cbegin(), signedIds.cend()) != signedIds.cend())
+    const auto signedIds =
+        [](const QList<VerifiedSemanticActionBindingReference> &bindings)
+        -> std::optional<QStringList> {
+        QStringList result;
+        result.reserve(bindings.size());
+        for (const VerifiedSemanticActionBindingReference &binding : bindings)
+            result.append(binding.semanticSignalDefinitionId);
+        std::sort(result.begin(), result.end());
+        if (std::adjacent_find(result.cbegin(), result.cend()) != result.cend())
+            return {};
+        return result;
+    };
+    const auto adapterIds =
+        [](const QList<Data::SemanticSignalId> &signalIds) -> std::optional<QStringList> {
+        QStringList result;
+        result.reserve(signalIds.size());
+        for (const Data::SemanticSignalId &signal : signalIds)
+            result.append(signal.value);
+        std::sort(result.begin(), result.end());
+        if (std::adjacent_find(result.cbegin(), result.cend()) != result.cend())
+            return {};
+        return result;
+    };
+
+    const std::optional<QStringList> signedRequired = signedIds(signedAction.requiredBindings);
+    const std::optional<QStringList> signedOptional = signedIds(signedAction.optionalBindings);
+    const std::optional<QStringList> adapterRequired = adapterIds(adapterAction.requiredSignals);
+    const std::optional<QStringList> adapterOptional = adapterIds(adapterAction.optionalSignals);
+    if (!signedRequired || !signedOptional || !adapterRequired || !adapterOptional
+        || *signedRequired != *adapterRequired || *signedOptional != *adapterOptional) {
+        return false;
+    }
+    QSet<QString> requiredSet(signedRequired->cbegin(), signedRequired->cend());
+    return std::none_of(
+        signedOptional->cbegin(),
+        signedOptional->cend(),
+        [&requiredSet](const QString &id) { return requiredSet.contains(id); });
+}
+
+const VerifiedSemanticActionBindingReference *actionReferenceForDefinition(
+    const VerifiedSemanticAction &action, QStringView definitionId)
+{
+    const VerifiedSemanticActionBindingReference *result = nullptr;
+    for (const auto *bindings : {&action.requiredBindings, &action.optionalBindings}) {
+        for (const VerifiedSemanticActionBindingReference &binding : *bindings) {
+            if (binding.semanticSignalDefinitionId != definitionId)
+                continue;
+            if (result)
+                return nullptr;
+            result = &binding;
+        }
+    }
+    return result;
+}
+
+const VerifiedSemanticActionBindingReference *actionReferenceForBinding(
+    const VerifiedSemanticAction &action, QStringView semanticBindingId)
+{
+    const VerifiedSemanticActionBindingReference *result = nullptr;
+    for (const auto *bindings : {&action.requiredBindings, &action.optionalBindings}) {
+        for (const VerifiedSemanticActionBindingReference &binding : *bindings) {
+            if (binding.semanticBindingId != semanticBindingId)
+                continue;
+            if (result)
+                return nullptr;
+            result = &binding;
+        }
+    }
+    return result;
+}
+
+bool exactActionSignalContracts(
+    const Data::DeviceAdapterManifest &manifest,
+    const VerifiedSemanticBindingArtifact &artifact,
+    const VerifiedSemanticAction &action)
+{
+    QSet<QString> definitionIds;
+    QSet<QString> bindingIds;
+    for (const auto *bindings : {&action.requiredBindings, &action.optionalBindings}) {
+        for (const VerifiedSemanticActionBindingReference &reference : *bindings) {
+            if (definitionIds.contains(reference.semanticSignalDefinitionId)
+                || bindingIds.contains(reference.semanticBindingId)
+                || !signalContractMatchesSignedBinding(
+                    manifest, artifact, reference, action.projectDeviceId, false)) {
+                return false;
+            }
+            definitionIds.insert(reference.semanticSignalDefinitionId);
+            bindingIds.insert(reference.semanticBindingId);
+        }
+    }
+    return !definitionIds.isEmpty();
+}
+
+std::optional<EcfgOutputRecoveryPolicy> signedRecovery(
+    Data::DeviceControlGroupRecovery recovery)
+{
+    if (recovery == Data::DeviceControlGroupRecovery::ReturnTask)
+        return EcfgOutputRecoveryPolicy::ReturnTask;
+    if (recovery == Data::DeviceControlGroupRecovery::HoldSafe)
+        return EcfgOutputRecoveryPolicy::HoldSafe;
+    return {};
+}
+
+bool exactConsistencyGroups(
+    const Data::DeviceAdapterManifest &manifest,
+    const VerifiedSemanticBindingArtifact &artifact,
+    const VerifiedSemanticAction &signedAction,
+    const Data::DeviceControlAction &adapterAction,
+    QHash<QString, quint32> *numericGroupByLocalGroup)
+{
+    if (adapterAction.consistencyGroups.size() != signedAction.consistencyGroups.size()
+        || adapterAction.consistencyGroups.isEmpty()) {
+        return false;
+    }
+
+    QHash<quint32, const VerifiedSemanticActionGroup *> signedGroups;
+    for (const VerifiedSemanticActionGroup &group : signedAction.consistencyGroups) {
+        if (!group.consistencyGroupId || signedGroups.contains(group.consistencyGroupId))
+            return false;
+        signedGroups.insert(group.consistencyGroupId, &group);
+    }
+
+    QSet<quint32> mappedGroups;
+    for (const Data::DeviceControlConsistencyGroup &adapterGroup :
+         adapterAction.consistencyGroups) {
+        if (adapterGroup.id.isEmpty() || numericGroupByLocalGroup->contains(adapterGroup.id)
+            || adapterGroup.members.isEmpty()) {
+            return false;
+        }
+
+        quint32 numericGroupId = 0;
+        QSet<QString> adapterMembers;
+        for (const Data::SemanticSignalId &member : adapterGroup.members) {
+            const VerifiedSemanticActionBindingReference *reference
+                = actionReferenceForDefinition(signedAction, member.value);
+            if (!reference || adapterMembers.contains(member.value)
+                || reference->direction != EcfgResourceDirection::Output
+                || reference->access != EcfgResourceAccess::ReadWrite
+                || !reference->consistencyGroupId
+                || (numericGroupId && numericGroupId != reference->consistencyGroupId)
+                || !signalContractMatchesSignedBinding(
+                    manifest,
+                    artifact,
+                    *reference,
+                    signedAction.projectDeviceId,
+                    true)) {
+                return false;
+            }
+            numericGroupId = reference->consistencyGroupId;
+            adapterMembers.insert(member.value);
+        }
+
+        const auto signedGroup = signedGroups.constFind(numericGroupId);
+        const std::optional<EcfgOutputRecoveryPolicy> recovery = signedRecovery(
+            adapterGroup.recovery);
+        if (!numericGroupId || signedGroup == signedGroups.cend() || !recovery
+            || (*signedGroup)->recoveryPolicy != *recovery
+            || (*signedGroup)->maximumTtlCycles != adapterGroup.maximumTtlCycles
+            || mappedGroups.contains(numericGroupId)) {
+            return false;
+        }
+
+        QSet<QString> signedMembers;
+        QSet<QString> signedBindingIds;
+        for (const auto *bindings :
+             {&signedAction.requiredBindings, &signedAction.optionalBindings}) {
+            for (const VerifiedSemanticActionBindingReference &reference : *bindings) {
+                if (reference.consistencyGroupId == numericGroupId
+                    && reference.direction == EcfgResourceDirection::Output
+                    && reference.access == EcfgResourceAccess::ReadWrite) {
+                    signedMembers.insert(reference.semanticSignalDefinitionId);
+                    signedBindingIds.insert(reference.semanticBindingId);
+                }
+            }
+        }
+        if (signedMembers != adapterMembers)
+            return false;
+
+        QSet<QString> completeControllerMembers;
+        QSet<QString> completeControllerBindingIds;
+        for (const VerifiedSemanticBinding &binding : artifact.bindings) {
+            if (binding.projectDeviceId == signedAction.projectDeviceId
+                && binding.consistencyGroupId == numericGroupId
+                && binding.direction == EcfgResourceDirection::Output
+                && binding.access == EcfgResourceAccess::ReadWrite) {
+                completeControllerMembers.insert(binding.semanticSignalDefinitionId);
+                completeControllerBindingIds.insert(binding.semanticBindingId);
+            }
+        }
+        if (completeControllerMembers != signedMembers
+            || completeControllerBindingIds != signedBindingIds) {
+            return false;
+        }
+
+        numericGroupByLocalGroup->insert(adapterGroup.id, numericGroupId);
+        mappedGroups.insert(numericGroupId);
+    }
+    return mappedGroups.size() == signedGroups.size();
+}
+
+bool exactActionSteps(
+    const Data::DeviceAdapterManifest &manifest,
+    const VerifiedSemanticAction &signedAction,
+    const Data::DeviceControlAction &adapterAction,
+    const QHash<QString, quint32> &numericGroupByLocalGroup)
+{
+    if (adapterAction.steps.size() != signedAction.steps.size() || adapterAction.steps.isEmpty())
         return false;
 
-    QStringList adapterIds;
-    adapterIds.reserve(adapterAction.requiredSignals.size());
-    for (const Data::SemanticSignalId &signal : adapterAction.requiredSignals)
-        adapterIds.append(signal.value);
-    std::sort(adapterIds.begin(), adapterIds.end());
-    return signedIds == adapterIds
-           && std::adjacent_find(adapterIds.cbegin(), adapterIds.cend()) == adapterIds.cend();
+    const auto rawValueForReference =
+        [&manifest](
+            const VerifiedSemanticActionBindingReference &reference,
+            const std::optional<Data::EngineeringValue> &engineering)
+        -> std::optional<std::variant<qint64, quint64>> {
+        const Data::SemanticSignalDefinition *signal = uniqueAdapterSignal(
+            manifest, reference.semanticSignalDefinitionId);
+        if (!signal || !signal->engineeringTransform || !engineering)
+            return {};
+        return exactRawValue(
+            *engineering, reference.primitive, reference.bitWidth, *signal->engineeringTransform);
+    };
+    const auto nonnegativeRaw =
+        [](const std::variant<qint64, quint64> &raw) -> std::optional<quint64> {
+        if (std::holds_alternative<quint64>(raw))
+            return std::get<quint64>(raw);
+        const qint64 value = std::get<qint64>(raw);
+        return value < 0 ? std::nullopt : std::optional<quint64>(quint64(value));
+    };
+    const auto neutralValue = [](const Data::DeviceControlValue &value) {
+        return value.source == Data::DeviceControlValueSource::Invalid
+               && !value.literalValue.isValid() && !value.engineeringLiteralValue
+               && value.parameterId.isEmpty();
+    };
+    const auto literalValue = [](const Data::DeviceControlValue &value) {
+        return value.source == Data::DeviceControlValueSource::Literal
+               && !value.literalValue.isValid() && value.engineeringLiteralValue
+               && value.parameterId.isEmpty();
+    };
+    const auto parameterValue = [](const Data::DeviceControlValue &value) {
+        return value.source == Data::DeviceControlValueSource::Parameter
+               && !value.literalValue.isValid() && !value.engineeringLiteralValue
+               && !value.parameterId.isEmpty();
+    };
+
+    for (qsizetype index = 0; index < signedAction.steps.size(); ++index) {
+        const VerifiedSemanticActionStep &signedStep = signedAction.steps.at(index);
+        const Data::DeviceControlStep &adapterStep = adapterAction.steps.at(index);
+        if (adapterStep.timeoutMs)
+            return false;
+
+        if (signedStep.kind == VerifiedSemanticActionStepKind::WriteGroup) {
+            const auto group = numericGroupByLocalGroup.constFind(
+                adapterStep.consistencyGroupId);
+            if (adapterStep.kind != Data::DeviceControlStepKind::WriteGroup
+                || group == numericGroupByLocalGroup.cend()
+                || *group != signedStep.consistencyGroupId || adapterStep.timeoutCycles
+                || !adapterStep.signalId.value.isEmpty()
+                || !neutralValue(adapterStep.value) || !neutralValue(adapterStep.mask)
+                || adapterStep.assignments.size() != signedStep.assignments.size()) {
+                return false;
+            }
+
+            QHash<QString, const VerifiedSemanticActionAssignment *> signedAssignments;
+            for (const VerifiedSemanticActionAssignment &assignment : signedStep.assignments) {
+                const VerifiedSemanticActionBindingReference *reference
+                    = actionReferenceForBinding(signedAction, assignment.semanticBindingId);
+                if (!reference
+                    || signedAssignments.contains(reference->semanticSignalDefinitionId)) {
+                    return false;
+                }
+                signedAssignments.insert(
+                    reference->semanticSignalDefinitionId, &assignment);
+            }
+            QSet<QString> adapterAssignments;
+            for (const Data::DeviceControlGroupAssignment &assignment :
+                 adapterStep.assignments) {
+                const auto signedAssignment = signedAssignments.constFind(
+                    assignment.signalId.value);
+                const VerifiedSemanticActionBindingReference *reference
+                    = actionReferenceForDefinition(signedAction, assignment.signalId.value);
+                if (signedAssignment == signedAssignments.cend() || !reference
+                    || adapterAssignments.contains(assignment.signalId.value)) {
+                    return false;
+                }
+                adapterAssignments.insert(assignment.signalId.value);
+
+                if (assignment.value.source == Data::DeviceControlValueSource::Literal) {
+                    const std::optional<std::variant<qint64, quint64>> raw = rawValueForReference(
+                        *reference, assignment.value.engineeringLiteralValue);
+                    if (!literalValue(assignment.value) || !(*signedAssignment)->constantValue
+                        || (*signedAssignment)->parameterId || !raw
+                        || *raw != *(*signedAssignment)->constantValue) {
+                        return false;
+                    }
+                } else if (
+                    assignment.value.source == Data::DeviceControlValueSource::Parameter) {
+                    if (!parameterValue(assignment.value)
+                        || (*signedAssignment)->constantValue
+                        || !(*signedAssignment)->parameterId
+                        || assignment.value.parameterId != *(*signedAssignment)->parameterId) {
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            }
+            if (adapterAssignments.size() != signedAssignments.size())
+                return false;
+            continue;
+        }
+
+        const VerifiedSemanticActionBindingReference *reference = actionReferenceForBinding(
+            signedAction, signedStep.semanticBindingId);
+        if (!reference || adapterStep.signalId.value != reference->semanticSignalDefinitionId
+            || !adapterStep.consistencyGroupId.isEmpty() || !adapterStep.assignments.isEmpty()
+            || adapterStep.timeoutCycles != signedStep.timeoutCycles) {
+            return false;
+        }
+        const Data::SemanticSignalDefinition *signal = uniqueAdapterSignal(
+            manifest, reference->semanticSignalDefinitionId);
+        if (!signal || !signal->engineeringTransform)
+            return false;
+
+        if (signedStep.kind == VerifiedSemanticActionStepKind::WaitMasked) {
+            if (adapterStep.kind != Data::DeviceControlStepKind::WaitMaskedEquals
+                || !literalValue(adapterStep.value) || !literalValue(adapterStep.mask)
+                || signal->engineeringTransform->scale != Data::ExactRational{1, 1}
+                || signal->engineeringTransform->offset != Data::ExactRational{0, 1}) {
+                return false;
+            }
+            const std::optional<std::variant<qint64, quint64>> value = rawValueForReference(
+                *reference, adapterStep.value.engineeringLiteralValue);
+            const std::optional<std::variant<qint64, quint64>> mask = rawValueForReference(
+                *reference, adapterStep.mask.engineeringLiteralValue);
+            if (!value || !mask || !std::holds_alternative<quint64>(*value)
+                || !std::holds_alternative<quint64>(*mask)
+                || std::get<quint64>(*value) != signedStep.value
+                || std::get<quint64>(*mask) != signedStep.mask) {
+                return false;
+            }
+            continue;
+        }
+
+        if (signedStep.kind != VerifiedSemanticActionStepKind::WaitAbsoluteLimit
+            || adapterStep.kind != Data::DeviceControlStepKind::WaitAbsoluteAtMost
+            || !literalValue(adapterStep.value) || !neutralValue(adapterStep.mask)
+            || signal->engineeringTransform->scale.denominator <= 0
+            || signal->engineeringTransform->scale.numerator <= 0
+            || signal->engineeringTransform->offset != Data::ExactRational{0, 1}) {
+            return false;
+        }
+        const std::optional<std::variant<qint64, quint64>> limit = rawValueForReference(
+            *reference, adapterStep.value.engineeringLiteralValue);
+        const std::optional<quint64> unsignedLimit
+            = limit ? nonnegativeRaw(*limit) : std::nullopt;
+        if (!unsignedLimit || *unsignedLimit != signedStep.absoluteLimit) {
+            return false;
+        }
+    }
+    return true;
 }
 
 ManualActionAuthorization authorizeManualAction(
     const Data::OfflineSlaveConfiguration &slave,
     const VerifiedSemanticAction &action,
+    const VerifiedSemanticBindingArtifact &artifact,
     const QList<Data::DeviceAdapterManifest> &adapterManifests,
     quint32 cyclePeriodNs,
     quint32 signedMaximumTtlCycles)
@@ -653,16 +1178,69 @@ ManualActionAuthorization authorizeManualAction(
         return result;
 
     const Data::DeviceAdapterManifest &manifest = *manifests.constFirst();
-    if (manifest.id.value != action.adapterId || manifest.version != action.adapterVersion
-        || manifest.contentSha256 != action.adapterSha256
-        || manifest.qualification != Data::DeviceAdapterQualification::Qualified
-        || !manifest.signatureVerified || !manifest.realHardwareAllowed
+    if (manifest.contractVersion != Data::DeviceAdapterContractVersion::V3) {
+        result.rejection = QStringLiteral("manual_adapter_contract_version_unsupported");
+        return result;
+    }
+    // Bundled V3 adapters are upper-layer descriptions, not controller trust
+    // anchors. Authorization comes from exact equivalence to the production
+    // signed ECPKG evidence checked below.
+    if (manifest.qualification != Data::DeviceAdapterQualification::Qualified
         || manifest.match.vendorId != slave.identity.vendorId
         || manifest.match.productCode != slave.identity.productCode
         || slave.identity.revisionNumber < manifest.match.minimumRevision
         || slave.identity.revisionNumber > manifest.match.maximumRevision
         || manifest.match.exactEsiSha256 != slave.esiSha256
-        || manifest.match.exactEsiSha256 != action.esiSha256) {
+        || manifest.provenance.sourceSha256 != slave.esiSha256) {
+        result.rejection = QStringLiteral("manual_adapter_identity_mismatch");
+        return result;
+    }
+
+    const VerifiedSemanticDevice *device = artifact.findDevice(action.projectDeviceId);
+    QList<const SemanticBindingTopologyInstance *> topologyInstances;
+    if (device) {
+        for (const SemanticBindingTopologyInstance &candidate : artifact.topologyInstances) {
+            if (candidate.position == device->position
+                && candidate.stationAddress == device->stationAddress) {
+                topologyInstances.append(&candidate);
+            }
+        }
+    }
+    if (!device || topologyInstances.size() != 1) {
+        result.rejection = QStringLiteral("manual_signed_device_identity_mismatch");
+        return result;
+    }
+    const SemanticBindingTopologyInstance &topology = *topologyInstances.constFirst();
+    const Data::DeviceAdapterControllerTarget &target = manifest.controllerAdapterTarget;
+    if (target.adapterId != action.adapterId || target.adapterVersion != action.adapterVersion
+        || target.adapterSha256 != action.adapterSha256 || target.esiSha256 != action.esiSha256
+        || target.adapterId != device->adapterId || target.adapterVersion != device->adapterVersion
+        || target.adapterSha256 != device->adapterSha256 || target.esiSha256 != device->esiSha256
+        || target.adapterId != topology.adapterId
+        || target.adapterVersion != topology.adapterVersion
+        || target.adapterSha256 != topology.adapterSha256
+        || target.esiSha256 != topology.esiSha256 || target.esiSha256 != slave.esiSha256) {
+        result.rejection = QStringLiteral("manual_controller_target_mismatch");
+        return result;
+    }
+
+    QList<const Data::ProcessDataProfile *> selectedProfiles;
+    for (const Data::ProcessDataProfile &profile : manifest.processDataProfiles) {
+        if (profile.id == slave.adapterSelection.processDataProfileId)
+            selectedProfiles.append(&profile);
+    }
+    if (selectedProfiles.size() != 1) {
+        result.rejection = QStringLiteral("manual_pdo_profile_mismatch");
+        return result;
+    }
+    const Data::ProcessDataProfile &selectedProfile = *selectedProfiles.constFirst();
+    if (selectedProfile.signedPdoProfileId != topology.pdoProfile) {
+        result.rejection = QStringLiteral("manual_pdo_profile_mismatch");
+        return result;
+    }
+    if (!processDataProfileMatchesSignedTopology(
+            selectedProfile, topology, action.dcRequired)) {
+        result.rejection = QStringLiteral("manual_dc_profile_mismatch");
         return result;
     }
 
@@ -671,16 +1249,69 @@ ManualActionAuthorization authorizeManualAction(
         if (candidate.id.value == action.actionDefinitionId)
             adapterActions.append(&candidate);
     }
-    if (adapterActions.size() != 1)
+    if (adapterActions.size() != 1) {
+        result.rejection = QStringLiteral("manual_action_not_declared");
         return result;
+    }
     const Data::DeviceControlAction &adapterAction = *adapterActions.constFirst();
 
-    const Core::ManualControlContractValidation contract
-        = Core::validateManualControlEnvelope(
-            slave.manualControlEnvelope,
-            manifest.semanticSignals,
-            manifest.controlActions,
-            Core::ManualControlFallbackContract::SignedControllerRecovery);
+    // The API-038 companion authorizes one exact PDO profile and the most
+    // conservative local failure disposition. Broader profile/policy choices
+    // remain fail-closed until they are exposed by verified signed evidence.
+    if (adapterAction.enabled != action.enabled
+        || adapterAction.signedQualification != Data::DeviceControlActionQualification::Qualified
+        || !adapterAction.disabledReason.isEmpty()
+        || adapterAction.expectedSignedDefinitionSha256 != action.actionDefinitionSha256
+        || adapterAction.signedPdoProfileIds.size() != 1
+        || adapterAction.signedPdoProfileIds.constFirst() != topology.pdoProfile
+        || !adapterAction.requiresExclusiveControl || adapterAction.holdToRun
+        || adapterAction.commandTtlMs || !adapterAction.runtimeConditions.isEmpty()
+        || adapterAction.failureAction != Data::ManualControlTimeoutAction::ControlledStop
+        || adapterAction.timeoutAction != Data::ManualControlTimeoutAction::ControlledStop
+        || adapterAction.requiresDc != action.dcRequired
+        || adapterAction.failureDisposition
+               != Data::DeviceControlFailureDisposition::HoldOperationalFault
+        || !exactActionSignalSets(action, adapterAction)) {
+        result.rejection = QStringLiteral("manual_action_definition_mismatch");
+        return result;
+    }
+
+    QSet<QString> profileSignals;
+    for (const Data::SemanticSignalId &signal : selectedProfile.requiredSignals) {
+        if (profileSignals.contains(signal.value)) {
+            result.rejection = QStringLiteral("manual_pdo_profile_mismatch");
+            return result;
+        }
+        profileSignals.insert(signal.value);
+    }
+    for (const auto *bindings : {&action.requiredBindings, &action.optionalBindings}) {
+        for (const VerifiedSemanticActionBindingReference &reference : *bindings) {
+            if (!profileSignals.contains(reference.semanticSignalDefinitionId)) {
+                result.rejection = QStringLiteral("manual_pdo_profile_mismatch");
+                return result;
+            }
+        }
+    }
+
+    if (!exactActionSignalContracts(manifest, artifact, action)) {
+        result.rejection = QStringLiteral("manual_signal_contract_mismatch");
+        return result;
+    }
+
+    QHash<QString, quint32> numericGroupByLocalGroup;
+    if (!exactConsistencyGroups(
+            manifest,
+            artifact,
+            action,
+            adapterAction,
+            &numericGroupByLocalGroup)) {
+        result.rejection = QStringLiteral("manual_group_contract_mismatch");
+        return result;
+    }
+    if (!exactActionSteps(manifest, action, adapterAction, numericGroupByLocalGroup)) {
+        result.rejection = QStringLiteral("manual_step_contract_mismatch");
+        return result;
+    }
 
     if (!slave.manualControlEnvelope.enabled) {
         result.rejection = QStringLiteral("manual_control_disabled");
@@ -714,30 +1345,30 @@ ManualActionAuthorization authorizeManualAction(
         result.rejection = QStringLiteral("manual_action_fallback_unsupported");
         return result;
     }
+
+    const Core::ManualControlContractValidation contract
+        = Core::validateManualControlEnvelope(
+            slave.manualControlEnvelope,
+            manifest.semanticSignals,
+            manifest.controlActions,
+            Core::ManualControlFallbackContract::SignedControllerRecovery);
     if (!contract.accepted()) {
         result.rejection = QStringLiteral("manual_control_envelope_invalid");
         return result;
     }
-    if (!adapterAction.enabled || adapterAction.steps.isEmpty()
-        || adapterAction.requiresExclusiveControl != true
-        || adapterAction.requiresDc != action.dcRequired
-        || !exactRequiredSignals(action, adapterAction)
-        || !exactActionParameters(
+    if (!exactActionParameters(
             action, adapterAction, manualAction, &result.parameters)) {
-        result.rejection = QStringLiteral("manual_action_definition_mismatch");
+        result.rejection = QStringLiteral("manual_parameter_contract_mismatch");
         return result;
     }
 
-    if (!cyclePeriodNs || !signedMaximumTtlCycles || !manualAction.timing.commandTtlMs
-        || !adapterAction.commandTtlMs) {
+    if (!cyclePeriodNs || !signedMaximumTtlCycles || !manualAction.timing.commandTtlMs) {
         result.rejection = QStringLiteral("manual_action_ttl_invalid");
         return result;
     }
     const quint64 projectCycles
         = (quint64(manualAction.timing.commandTtlMs) * 1000000ULL) / cyclePeriodNs;
-    const quint64 adapterCycles
-        = (quint64(adapterAction.commandTtlMs) * 1000000ULL) / cyclePeriodNs;
-    if (!projectCycles || !adapterCycles) {
+    if (!projectCycles) {
         result.rejection = QStringLiteral("manual_action_ttl_invalid");
         return result;
     }
@@ -751,10 +1382,7 @@ ManualActionAuthorization authorizeManualAction(
     result.definition.allowedTimeoutActionIds.clear();
     result.definition.allowedFailureActionIds.clear();
     result.definition.steps.clear();
-    result.maximumTtlCycles = quint32(
-        qMin<quint64>(
-            signedMaximumTtlCycles,
-            qMin(projectCycles, adapterCycles)));
+    result.maximumTtlCycles = quint32(qMin<quint64>(signedMaximumTtlCycles, projectCycles));
     if (!result.maximumTtlCycles) {
         result.rejection = QStringLiteral("manual_action_ttl_invalid");
     } else {
@@ -762,22 +1390,32 @@ ManualActionAuthorization authorizeManualAction(
             = quint64(result.maximumTtlCycles) * cyclePeriodNs;
         result.maximumTtlMs = quint32(
             qMin<quint64>(
-                qMin(manualAction.timing.commandTtlMs, adapterAction.commandTtlMs),
+                manualAction.timing.commandTtlMs,
                 maximumDurationNs / 1000000ULL));
-        result.definition.commandTtlMs = result.maximumTtlMs;
-        result.policyProjected = true;
-        // DeviceControlAction represents an ordered sequence of individual
-        // signal operations. It cannot yet prove equivalence to the signed
-        // companion's atomic WriteGroup, group recovery, safe-value, and
-        // timeout contract. Keep the complete projected policy read-only and
-        // fail closed until a signed upper action-contract compatibility proof
-        // is available.
-        result.rejection = QStringLiteral("manual_action_contract_unproven");
+        if (!result.maximumTtlMs) {
+            result.rejection = QStringLiteral("manual_action_ttl_invalid");
+        } else {
+            result.definition.commandTtlMs = result.maximumTtlMs;
+            result.policyProjected = true;
+            result.authorized = true;
+            result.rejection.clear();
+        }
     }
     return result;
 }
 
 } // namespace
+
+bool processDataProfileMatchesSignedTopology(
+    const Data::ProcessDataProfile &profile,
+    const SemanticBindingTopologyInstance &topology,
+    bool actionRequiresDc)
+{
+    const QString signedTopologyDcProfile = topology.dcProfile.value_or(QString());
+    return profile.signedPdoProfileId == topology.pdoProfile
+           && profile.signedDcProfileId == signedTopologyDcProfile
+           && (!actionRequiresDc || !signedTopologyDcProfile.isEmpty());
+}
 
 Utils::Result<QList<Data::SemanticActionRuntimeState>> buildSemanticActionRuntimeStates(
     QStringView controllerId,
@@ -954,6 +1592,7 @@ Utils::Result<QList<Data::SemanticActionRuntimeState>> buildSemanticActionRuntim
             const ManualActionAuthorization authorization = authorizeManualAction(
                 *slave,
                 action,
+                artifact,
                 adapterManifests,
                 evidence.cyclePeriodNs(),
                 *maximumTtlCycles);
@@ -963,10 +1602,16 @@ Utils::Result<QList<Data::SemanticActionRuntimeState>> buildSemanticActionRuntim
                 state.maximumTtlMs = authorization.maximumTtlMs;
                 state.maximumTtlCycles = authorization.maximumTtlCycles;
             }
-            state.availability = Data::SemanticActionAvailability::Rejected;
-            state.detail = authorization.rejection;
-            state.definition.enabled = false;
-            if (!authorization.policyProjected) {
+            if (authorization.authorized) {
+                state.availability = Data::SemanticActionAvailability::Unavailable;
+                state.detail.clear();
+                state.definition.enabled = true;
+            } else {
+                state.availability = Data::SemanticActionAvailability::Rejected;
+                state.detail = authorization.rejection;
+                state.definition.enabled = false;
+            }
+            if (!authorization.authorized && !authorization.policyProjected) {
                 state.maximumTtlMs = 0;
                 state.maximumTtlCycles = 0;
             }

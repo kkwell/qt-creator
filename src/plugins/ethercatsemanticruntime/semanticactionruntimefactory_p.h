@@ -23,6 +23,14 @@ struct SemanticActionRuntimeGates
     bool dcRuntimeActive = false;
 };
 
+// Proves that an upper-layer process profile names the exact PDO and DC
+// profiles signed for one controller topology instance. An action that
+// explicitly requires DC additionally requires a nonempty signed DC profile.
+bool processDataProfileMatchesSignedTopology(
+    const Data::ProcessDataProfile &profile,
+    const SemanticBindingTopologyInstance &topology,
+    bool actionRequiresDc);
+
 // Projects the signed public action surface without exposing the private step,
 // assignment, or consistency-group plan. The supplied bindings must be the
 // complete candidate set produced for the same verified package and live

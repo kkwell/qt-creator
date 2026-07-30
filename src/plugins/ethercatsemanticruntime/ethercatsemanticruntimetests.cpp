@@ -21,6 +21,9 @@
 
 #include <coreplugin/icore.h>
 
+#include <ethercatcore/providerregistry.h>
+#include <ethercatcore/providers.h>
+
 #include <extensionsystem/pluginmanager.h>
 
 #include <QCoreApplication>
@@ -37,6 +40,8 @@
 #include <array>
 #include <future>
 #include <limits>
+#include <utility>
+#include <variant>
 
 namespace EtherCAT::SemanticRuntime::Internal {
 
@@ -184,45 +189,6 @@ private:
 
     QList<Data::ProjectSnapshot> m_projects;
     Data::NodeId m_activeProjectId;
-};
-
-class TestDeviceAdapterProvider final : public Core::DeviceAdapterProvider
-{
-public:
-    explicit TestDeviceAdapterProvider(Utils::Id id)
-        : DeviceAdapterProvider(id, QStringLiteral("Semantic Runtime test adapters"))
-    {}
-
-    QList<Data::DeviceAdapterManifest> adapterManifests() const final { return m_manifests; }
-
-    std::optional<Data::DeviceAdapterManifest> adapterManifest(
-        const Data::DeviceAdapterId &adapterId, const QString &version) const final
-    {
-        const auto found = std::find_if(
-            m_manifests.cbegin(),
-            m_manifests.cend(),
-            [&adapterId, &version](const Data::DeviceAdapterManifest &candidate) {
-                return candidate.id == adapterId && candidate.version == version;
-            });
-        if (found == m_manifests.cend())
-            return std::nullopt;
-        return *found;
-    }
-
-    Data::DeviceAdapterResolutionResult resolveDevice(
-        const Data::DeviceAdapterResolutionRequest &) const final
-    {
-        return {};
-    }
-
-    void publishManifests(const QList<Data::DeviceAdapterManifest> &manifests)
-    {
-        m_manifests = manifests;
-        emit adapterManifestsChanged();
-    }
-
-private:
-    QList<Data::DeviceAdapterManifest> m_manifests;
 };
 
 class CountingControllerProvider final : public Core::ControllerConnectionProvider
@@ -1156,128 +1122,377 @@ static Data::ProjectSnapshot factoryProject(const VerifiedRuntimePackageEvidence
     return project;
 }
 
-static Data::EngineeringConstraint factoryBooleanConstraint()
+static std::optional<Data::EtherCATDataType> factoryDataType(EcfgResourcePrimitive primitive)
 {
-    Data::EngineeringConstraint constraint;
-    constraint.minimum = Data::ExactRational{0, 1};
-    constraint.maximum = Data::ExactRational{1, 1};
-    return constraint;
+    using Type = Data::EtherCATDataType;
+    switch (primitive) {
+    case EcfgResourcePrimitive::Bool:
+        return Type::Boolean;
+    case EcfgResourcePrimitive::U8:
+        return Type::UnsignedInteger8;
+    case EcfgResourcePrimitive::S8:
+        return Type::Integer8;
+    case EcfgResourcePrimitive::U16:
+        return Type::UnsignedInteger16;
+    case EcfgResourcePrimitive::S16:
+        return Type::Integer16;
+    case EcfgResourcePrimitive::U32:
+        return Type::UnsignedInteger32;
+    case EcfgResourcePrimitive::S32:
+        return Type::Integer32;
+    case EcfgResourcePrimitive::U64:
+        return Type::UnsignedInteger64;
+    case EcfgResourcePrimitive::S64:
+        return Type::Integer64;
+    case EcfgResourcePrimitive::Q32_32:
+        return Type::Real64;
+    case EcfgResourcePrimitive::RawBits:
+        return Type::OctetString;
+    }
+    return {};
 }
 
-// This deliberately flattens each signed WriteGroup into individual
-// WriteSignal operations. It is an adversarial v2 manifest used to prove that
-// the production factory rejects an apparently matching adapter until an
-// upper action-contract compatibility proof exists.
-static QList<Data::DeviceAdapterManifest> factoryAdversarialFlattenedActionAdapters(
+static std::optional<Data::EngineeringConstraint> factoryConstraint(
+    EcfgResourcePrimitive primitive, quint16 bitWidth)
+{
+    Data::EngineeringConstraint result;
+    switch (primitive) {
+    case EcfgResourcePrimitive::Bool:
+        result.minimum = Data::ExactRational{0, 1};
+        result.maximum = Data::ExactRational{1, 1};
+        break;
+    case EcfgResourcePrimitive::U8:
+    case EcfgResourcePrimitive::U16:
+    case EcfgResourcePrimitive::U32:
+        result.minimum = Data::ExactRational{0, 1};
+        result.maximum = Data::ExactRational{
+            bitWidth == 32 ? qint64(std::numeric_limits<quint32>::max())
+                           : qint64((quint64(1) << bitWidth) - 1),
+            1,
+        };
+        break;
+    case EcfgResourcePrimitive::S8:
+    case EcfgResourcePrimitive::S16:
+    case EcfgResourcePrimitive::S32:
+        result.minimum = Data::ExactRational{-(qint64(1) << (bitWidth - 1)), 1};
+        result.maximum = Data::ExactRational{(qint64(1) << (bitWidth - 1)) - 1, 1};
+        break;
+    case EcfgResourcePrimitive::U64:
+    case EcfgResourcePrimitive::S64:
+    case EcfgResourcePrimitive::Q32_32:
+    case EcfgResourcePrimitive::RawBits:
+        return {};
+    }
+    return result;
+}
+
+static std::optional<Data::EngineeringValue> factoryEngineeringValue(
+    EcfgResourcePrimitive primitive, const std::variant<qint64, quint64> &raw)
+{
+    if (primitive == EcfgResourcePrimitive::Bool) {
+        const quint64 value = std::holds_alternative<quint64>(raw)
+                                  ? std::get<quint64>(raw)
+                                  : quint64(std::get<qint64>(raw));
+        if (value > 1)
+            return {};
+        return Data::EngineeringValue::fromBoolean(value != 0);
+    }
+    if (primitive == EcfgResourcePrimitive::U8 || primitive == EcfgResourcePrimitive::U16
+        || primitive == EcfgResourcePrimitive::U32
+        || primitive == EcfgResourcePrimitive::U64) {
+        if (!std::holds_alternative<quint64>(raw))
+            return {};
+        return Data::EngineeringValue::fromUnsignedInteger(std::get<quint64>(raw));
+    }
+    if (!std::holds_alternative<qint64>(raw))
+        return {};
+    return Data::EngineeringValue::fromSignedInteger(std::get<qint64>(raw));
+}
+
+struct Api038UpperAdapterIdentity
+{
+    QString id;
+    QString version;
+    QByteArray contentSha256;
+    QString processDataProfileId;
+    QList<quint16> rxPdos;
+    QList<quint16> txPdos;
+    QString localGroupId;
+};
+
+// These are the exact bundled V3 identities covered by the DeviceAdapters
+// parser tests. This fixture projects their API-038 action contract from the
+// independently verified signed package instead of granting a test-only
+// runtime authorization.
+static std::optional<Api038UpperAdapterIdentity> api038UpperAdapterIdentity(
+    QStringView lowerAdapterId)
+{
+    if (lowerAdapterId == u"solidot.xb6_ec0002_rev1_do16") {
+        return Api038UpperAdapterIdentity{
+            QStringLiteral("org.embedlabs.adapter.solidot.xb6-ec0002.rev1"),
+            QStringLiteral("0.3.0"),
+            QByteArray::fromHex(
+                "fbc0e1d3f23652c92eafece5753ce652f1b7a4d05caef1f44d776a91c286c510"),
+            QStringLiteral("org.embedlabs.solidot.xb6.api038-do16"),
+            {0x1600, 0x16ff},
+            {0x1aff},
+            QStringLiteral("manual_do16"),
+        };
+    }
+    if (lowerAdapterId == u"inovance.sv630n_1axis_rev00010000_csp") {
+        return Api038UpperAdapterIdentity{
+            QStringLiteral("org.embedlabs.adapter.inovance.sv630n-1axis.rev00010000"),
+            QStringLiteral("0.3.0"),
+            QByteArray::fromHex(
+                "acf63ee7c837cf39e87fa510aeb8aadfac89b393d04b6cf28926037499a825b9"),
+            QStringLiteral("org.embedlabs.inovance.sv630n.api038-csp-1704-1b04"),
+            {0x1704},
+            {0x1b04},
+            QStringLiteral("manual_velocity"),
+        };
+    }
+    return {};
+}
+
+static Utils::Result<QList<Data::DeviceAdapterManifest>> publishedApi038V3ActionAdapters()
+{
+    auto *providerRegistry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    if (!providerRegistry)
+        return Utils::ResultError("The controller provider registry is unavailable");
+
+    QList<Data::DeviceAdapterManifest> result;
+    QSet<QString> identities;
+    for (Core::Provider *provider :
+         providerRegistry->providers(Core::ProviderKind::DeviceAdapter)) {
+        auto *adapterProvider = qobject_cast<Core::DeviceAdapterProvider *>(provider);
+        if (!adapterProvider || !adapterProvider->isAvailable())
+            continue;
+        for (const Data::DeviceAdapterManifest &manifest :
+             adapterProvider->adapterManifests()) {
+            const std::optional<Api038UpperAdapterIdentity> identity
+                = api038UpperAdapterIdentity(manifest.controllerAdapterTarget.adapterId);
+            if (!identity || manifest.contractVersion != Data::DeviceAdapterContractVersion::V3
+                || manifest.id.value != identity->id || manifest.version != identity->version
+                || manifest.contentSha256 != identity->contentSha256) {
+                continue;
+            }
+            const QString key = manifest.id.value + QLatin1Char('@') + manifest.version;
+            if (identities.contains(key))
+                return Utils::ResultError("A published API-038 V3 adapter is ambiguous");
+            identities.insert(key);
+            result.append(manifest);
+        }
+    }
+    if (result.size() != 2)
+        return Utils::ResultError("The two published API-038 V3 adapters are unavailable");
+    return result;
+}
+
+// Mutation-only mirror for the fixed API-038 topology. Positive integration
+// coverage uses publishedApi038V3ActionAdapters() and the real provider parser.
+static QList<Data::DeviceAdapterManifest> factoryApi038MutationAdapters(
     const VerifiedRuntimePackageEvidence &evidence)
 {
+    // Mutations must start from the same manifests that production publishes.
+    // Keep the evidence-derived mirror below only as a diagnostic fallback;
+    // the positive provider integration test above makes provider absence a
+    // hard test failure.
+    const Utils::Result<QList<Data::DeviceAdapterManifest>> published
+        = publishedApi038V3ActionAdapters();
+    if (published)
+        return *published;
+
     const VerifiedSemanticBindingArtifact &artifact = evidence.semanticBindingArtifact();
-    const auto firstAction = std::find_if(
-        artifact.actions.cbegin(),
-        artifact.actions.cend(),
-        [](const VerifiedSemanticAction &action) {
-            return action.enabled
-                   && action.qualification == VerifiedSemanticActionQualification::Qualified
-                   && !action.disabledReason;
-        });
-    if (firstAction == artifact.actions.cend())
-        return {};
+    QHash<QString, Data::DeviceAdapterManifest> manifests;
 
-    const VerifiedSemanticDevice *device = artifact.findDevice(firstAction->projectDeviceId);
-    const auto topology = device
-                              ? std::find_if(
-                                    artifact.topologyInstances.cbegin(),
-                                    artifact.topologyInstances.cend(),
-                                    [device](const SemanticBindingTopologyInstance &candidate) {
-                                        return candidate.position == device->position
-                                               && candidate.stationAddress
-                                                      == device->stationAddress;
-                                    })
-                              : artifact.topologyInstances.cend();
-    if (!device || topology == artifact.topologyInstances.cend())
-        return {};
-
-    Data::DeviceAdapterManifest manifest;
-    manifest.id = {firstAction->adapterId};
-    manifest.version = firstAction->adapterVersion;
-    manifest.displayName = QStringLiteral("API-038 exact qualified test adapter");
-    manifest.qualification = Data::DeviceAdapterQualification::Qualified;
-    manifest.match.vendorId = topology->vendorId;
-    manifest.match.productCode = topology->productCode;
-    manifest.match.minimumRevision = topology->revision.value_or(0);
-    manifest.match.maximumRevision = topology->revision.value_or(0);
-    manifest.match.exactEsiSha256 = firstAction->esiSha256;
-    manifest.provenance.sourceSha256 = firstAction->esiSha256;
-    manifest.contentSha256 = firstAction->adapterSha256;
-    manifest.evidenceSha256 = QByteArray(32, '\x7d');
-    manifest.signatureVerified = true;
-    manifest.realHardwareAllowed = true;
-
-    QHash<QString, Data::SemanticSignalDefinition> signalDefinitions;
-    for (const VerifiedSemanticAction &action : artifact.actions) {
-        if (action.adapterId != manifest.id.value || action.adapterVersion != manifest.version
-            || action.adapterSha256 != manifest.contentSha256 || !action.enabled
-            || action.qualification != VerifiedSemanticActionQualification::Qualified
-            || action.disabledReason) {
+    for (const SemanticBindingTopologyInstance &topology : artifact.topologyInstances) {
+        const std::optional<Api038UpperAdapterIdentity> upper = api038UpperAdapterIdentity(
+            topology.adapterId);
+        if (!upper)
+            return {};
+        if (manifests.contains(topology.adapterId))
             continue;
+
+        Data::DeviceAdapterManifest manifest;
+        manifest.contractVersion = Data::DeviceAdapterContractVersion::V3;
+        manifest.id = {upper->id};
+        manifest.version = upper->version;
+        manifest.displayName = upper->id;
+        manifest.qualification = Data::DeviceAdapterQualification::Qualified;
+        manifest.match = {
+            topology.vendorId,
+            topology.productCode,
+            topology.revision.value_or(0),
+            topology.revision.value_or(0),
+            topology.esiSha256,
+        };
+        manifest.provenance.sourceSha256 = topology.esiSha256;
+        manifest.controllerAdapterTarget = {
+            topology.adapterId,
+            topology.adapterVersion,
+            topology.adapterSha256,
+            topology.esiSha256,
+        };
+        manifest.contentSha256 = upper->contentSha256;
+        manifest.signatureVerified = false;
+        manifest.realHardwareAllowed = false;
+
+        QHash<QString, Data::SemanticSignalDefinition> signalDefinitions;
+        for (const VerifiedSemanticBinding &binding : artifact.bindings) {
+            if (binding.adapterId != topology.adapterId
+                || binding.adapterVersion != topology.adapterVersion
+                || binding.adapterSha256 != topology.adapterSha256
+                || binding.esiSha256 != topology.esiSha256
+                || signalDefinitions.contains(binding.semanticSignalDefinitionId)) {
+                continue;
+            }
+            const std::optional<Data::EtherCATDataType> dataType = factoryDataType(
+                binding.primitive);
+            const std::optional<Data::EngineeringConstraint> constraint = factoryConstraint(
+                binding.primitive, binding.bitWidth);
+            if (!dataType || !constraint || binding.scaleNumerator != 1
+                || binding.scaleDenominator != 1 || binding.scaleOffset != 0) {
+                return {};
+            }
+
+            Data::SemanticSignalDefinition signal;
+            signal.id = {binding.semanticSignalDefinitionId};
+            signal.displayName = binding.semanticSignalDefinitionId;
+            signal.direction = binding.direction == EcfgResourceDirection::Output
+                                   ? Data::SemanticSignalDirection::Output
+                                   : Data::SemanticSignalDirection::Input;
+            signal.access = binding.access == EcfgResourceAccess::ReadWrite
+                                ? Data::SemanticSignalAccess::ReadWrite
+                                : Data::SemanticSignalAccess::ReadOnly;
+            signal.exposure = Data::SemanticSignalExposure::ActionOnly;
+            Data::DeviceSignalBinding deviceBinding;
+            deviceBinding.kind = Data::DeviceSignalBindingKind::ProcessDataObject;
+            deviceBinding.pdoDirection = binding.direction == EcfgResourceDirection::Output
+                                             ? Data::PdoDirection::Rx
+                                             : Data::PdoDirection::Tx;
+            deviceBinding.pdoIndex = deviceBinding.pdoDirection == Data::PdoDirection::Rx
+                                         ? upper->rxPdos.constFirst()
+                                         : upper->txPdos.constFirst();
+            deviceBinding.objectIndex = 1;
+            deviceBinding.physicalType = *dataType;
+            deviceBinding.bitWidth = binding.bitWidth;
+            signal.bindings.append(deviceBinding);
+
+            Data::EngineeringTransform transform;
+            transform.unit = binding.unit.value_or(QString());
+            transform.constraint = *constraint;
+            transform.rounding = Data::EngineeringRounding::RejectInexact;
+            signal.engineeringTransform = transform;
+            if (binding.safeValueDeclared && binding.safeValue) {
+                signal.engineeringSafeValue = factoryEngineeringValue(
+                    binding.primitive, *binding.safeValue);
+                if (!signal.engineeringSafeValue)
+                    return {};
+            }
+            signalDefinitions.insert(binding.semanticSignalDefinitionId, signal);
         }
+        QStringList signalIds = signalDefinitions.keys();
+        std::sort(signalIds.begin(), signalIds.end());
+        for (const QString &signalId : std::as_const(signalIds))
+            manifest.semanticSignals.append(signalDefinitions.value(signalId));
+
+        Data::ProcessDataProfile profile;
+        profile.id = upper->processDataProfileId;
+        profile.signedPdoProfileId = topology.pdoProfile;
+        profile.signedDcProfileId = topology.dcProfile.value_or(QString());
+        profile.rxPdoIndices = upper->rxPdos;
+        profile.txPdoIndices = upper->txPdos;
+        for (const QString &signalId : std::as_const(signalIds))
+            profile.requiredSignals.append({signalId});
+        manifest.processDataProfiles.append(profile);
+        manifests.insert(topology.adapterId, manifest);
+    }
+
+    QHash<QString, QSet<QString>> actionDefinitionsByAdapter;
+    for (const VerifiedSemanticAction &action : artifact.actions) {
+        auto manifest = manifests.find(action.adapterId);
+        const VerifiedSemanticDevice *device = artifact.findDevice(action.projectDeviceId);
+        const auto topology = device
+                                  ? std::find_if(
+                                        artifact.topologyInstances.cbegin(),
+                                        artifact.topologyInstances.cend(),
+                                        [device](const SemanticBindingTopologyInstance &candidate) {
+                                            return candidate.position == device->position
+                                                   && candidate.stationAddress
+                                                          == device->stationAddress;
+                                        })
+                                  : artifact.topologyInstances.cend();
+        const std::optional<Api038UpperAdapterIdentity> upper = api038UpperAdapterIdentity(
+            action.adapterId);
+        if (manifest == manifests.end() || !device
+            || topology == artifact.topologyInstances.cend() || !upper) {
+            return {};
+        }
+        if (actionDefinitionsByAdapter[action.adapterId].contains(action.actionDefinitionId))
+            continue;
 
         Data::DeviceControlAction definition;
         definition.id = {action.actionDefinitionId};
         definition.displayName = action.actionDefinitionId;
-        definition.enabled = true;
+        definition.enabled = action.enabled;
+        definition.signedQualification
+            = action.qualification == VerifiedSemanticActionQualification::Qualified
+                  ? Data::DeviceControlActionQualification::Qualified
+                  : Data::DeviceControlActionQualification::Unqualified;
+        definition.disabledReason = action.disabledReason.value_or(QString());
         definition.requiresExclusiveControl = true;
         definition.requiresDc = action.dcRequired;
         definition.holdToRun = false;
-        definition.commandTtlMs = 125;
-
-        const auto appendSignal =
-            [&signalDefinitions](const VerifiedSemanticActionBindingReference &reference) {
-                if (reference.primitive != EcfgResourcePrimitive::Bool)
-                    return false;
-                if (signalDefinitions.contains(reference.semanticSignalDefinitionId))
-                    return true;
-
-                Data::SemanticSignalDefinition signal;
-                signal.id = {reference.semanticSignalDefinitionId};
-                signal.displayName = reference.semanticSignalDefinitionId;
-                signal.direction = reference.direction == EcfgResourceDirection::Output
-                                       ? Data::SemanticSignalDirection::Output
-                                       : Data::SemanticSignalDirection::Input;
-                signal.access = reference.access == EcfgResourceAccess::ReadWrite
-                                    ? Data::SemanticSignalAccess::ReadWrite
-                                    : Data::SemanticSignalAccess::ReadOnly;
-                signal.exposure = Data::SemanticSignalExposure::ActionOnly;
-                Data::EngineeringTransform transform;
-                transform.unit = reference.unit.value_or(QString());
-                transform.constraint = factoryBooleanConstraint();
-                transform.rounding = Data::EngineeringRounding::RejectInexact;
-                signal.engineeringTransform = transform;
-                signalDefinitions.insert(reference.semanticSignalDefinitionId, signal);
-                return true;
-            };
-        bool signalsValid = true;
-        for (const VerifiedSemanticActionBindingReference &reference : action.requiredBindings) {
-            signalsValid = appendSignal(reference) && signalsValid;
+        definition.expectedSignedDefinitionSha256 = action.actionDefinitionSha256;
+        definition.signedPdoProfileIds = {topology->pdoProfile};
+        definition.failureDisposition
+            = Data::DeviceControlFailureDisposition::HoldOperationalFault;
+        for (const VerifiedSemanticActionBindingReference &reference : action.requiredBindings)
             definition.requiredSignals.append({reference.semanticSignalDefinitionId});
-        }
         for (const VerifiedSemanticActionBindingReference &reference : action.optionalBindings)
-            signalsValid = appendSignal(reference) && signalsValid;
-        if (!signalsValid)
-            return {};
+            definition.optionalSignals.append({reference.semanticSignalDefinitionId});
+        std::sort(
+            definition.requiredSignals.begin(),
+            definition.requiredSignals.end(),
+            [](const Data::SemanticSignalId &left, const Data::SemanticSignalId &right) {
+                return left.value < right.value;
+            });
+        std::sort(
+            definition.optionalSignals.begin(),
+            definition.optionalSignals.end(),
+            [](const Data::SemanticSignalId &left, const Data::SemanticSignalId &right) {
+                return left.value < right.value;
+            });
 
         for (const VerifiedSemanticActionParameter &parameter : action.parameters) {
-            if (parameter.primitive != EcfgResourcePrimitive::Bool || parameter.minimum != 0
-                || parameter.maximum != 1) {
+            const std::optional<Data::EtherCATDataType> dataType = factoryDataType(
+                parameter.primitive);
+            if (!dataType)
                 return {};
-            }
             Data::DeviceControlActionParameter publicParameter;
             publicParameter.id = parameter.parameterId;
             publicParameter.displayName = parameter.parameterId;
-            publicParameter.dataType = Data::EtherCATDataType::Boolean;
+            publicParameter.dataType = *dataType;
             publicParameter.valueMetadata.unit = parameter.unit.value_or(QString());
             publicParameter.required = true;
-            publicParameter.engineeringConstraint = factoryBooleanConstraint();
+            Data::EngineeringConstraint constraint;
+            constraint.minimum = Data::ExactRational{parameter.minimum, 1};
+            constraint.maximum = Data::ExactRational{parameter.maximum, 1};
+            constraint.step = Data::ExactRational{1, 1};
+            constraint.stepOrigin = Data::ExactRational{0, 1};
+            publicParameter.engineeringConstraint = constraint;
+            const std::variant<qint64, quint64> zero
+                = parameter.primitive == EcfgResourcePrimitive::Bool
+                      || parameter.primitive == EcfgResourcePrimitive::U8
+                      || parameter.primitive == EcfgResourcePrimitive::U16
+                      || parameter.primitive == EcfgResourcePrimitive::U32
+                      || parameter.primitive == EcfgResourcePrimitive::U64
+                  ? std::variant<qint64, quint64>{quint64(0)}
+                  : std::variant<qint64, quint64>{qint64(0)};
+            publicParameter.engineeringDefaultValue = factoryEngineeringValue(
+                parameter.primitive, zero);
+            publicParameter.hasDefaultValue
+                = publicParameter.engineeringDefaultValue.has_value();
             definition.parameters.append(publicParameter);
         }
         std::sort(
@@ -1288,59 +1503,126 @@ static QList<Data::DeviceAdapterManifest> factoryAdversarialFlattenedActionAdapt
                 return left.id < right.id;
             });
 
-        for (const VerifiedSemanticActionStep &signedStep : action.steps) {
-            if (signedStep.kind != VerifiedSemanticActionStepKind::WriteGroup)
+        QHash<quint32, QString> localGroupByNumericGroup;
+        for (const VerifiedSemanticActionGroup &signedGroup : action.consistencyGroups) {
+            Data::DeviceControlConsistencyGroup group;
+            group.id = upper->localGroupId;
+            group.recovery = signedGroup.recoveryPolicy == EcfgOutputRecoveryPolicy::HoldSafe
+                                 ? Data::DeviceControlGroupRecovery::HoldSafe
+                                 : Data::DeviceControlGroupRecovery::ReturnTask;
+            group.maximumTtlCycles = signedGroup.maximumTtlCycles;
+            for (const VerifiedSemanticActionBindingReference &reference :
+                 action.requiredBindings) {
+                if (reference.consistencyGroupId == signedGroup.consistencyGroupId
+                    && reference.direction == EcfgResourceDirection::Output
+                    && reference.access == EcfgResourceAccess::ReadWrite) {
+                    group.members.append({reference.semanticSignalDefinitionId});
+                }
+            }
+            std::sort(
+                group.members.begin(),
+                group.members.end(),
+                [](const Data::SemanticSignalId &left, const Data::SemanticSignalId &right) {
+                    return left.value < right.value;
+                });
+            if (group.members.isEmpty())
                 return {};
-            for (const VerifiedSemanticActionAssignment &assignment : signedStep.assignments) {
+            localGroupByNumericGroup.insert(signedGroup.consistencyGroupId, group.id);
+            definition.consistencyGroups.append(group);
+        }
+
+        for (const VerifiedSemanticActionStep &signedStep : action.steps) {
+            Data::DeviceControlStep step;
+            step.timeoutCycles = signedStep.timeoutCycles;
+            if (signedStep.kind == VerifiedSemanticActionStepKind::WriteGroup) {
+                step.kind = Data::DeviceControlStepKind::WriteGroup;
+                step.consistencyGroupId = localGroupByNumericGroup.value(
+                    signedStep.consistencyGroupId);
+                for (const VerifiedSemanticActionAssignment &signedAssignment :
+                     signedStep.assignments) {
+                    const auto reference = std::find_if(
+                        action.requiredBindings.cbegin(),
+                        action.requiredBindings.cend(),
+                        [&signedAssignment](
+                            const VerifiedSemanticActionBindingReference &candidate) {
+                            return candidate.semanticBindingId
+                                   == signedAssignment.semanticBindingId;
+                        });
+                    if (reference == action.requiredBindings.cend())
+                        return {};
+                    Data::DeviceControlGroupAssignment assignment;
+                    assignment.signalId = {reference->semanticSignalDefinitionId};
+                    if (signedAssignment.parameterId) {
+                        assignment.value.source = Data::DeviceControlValueSource::Parameter;
+                        assignment.value.parameterId = *signedAssignment.parameterId;
+                    } else if (signedAssignment.constantValue) {
+                        assignment.value.source = Data::DeviceControlValueSource::Literal;
+                        assignment.value.engineeringLiteralValue = factoryEngineeringValue(
+                            reference->primitive, *signedAssignment.constantValue);
+                        if (!assignment.value.engineeringLiteralValue)
+                            return {};
+                    } else {
+                        return {};
+                    }
+                    step.assignments.append(assignment);
+                }
+                std::sort(
+                    step.assignments.begin(),
+                    step.assignments.end(),
+                    [](const Data::DeviceControlGroupAssignment &left,
+                       const Data::DeviceControlGroupAssignment &right) {
+                        return left.signalId.value < right.signalId.value;
+                    });
+            } else {
                 const auto reference = std::find_if(
                     action.requiredBindings.cbegin(),
                     action.requiredBindings.cend(),
-                    [&assignment](const VerifiedSemanticActionBindingReference &candidate) {
-                        return candidate.semanticBindingId == assignment.semanticBindingId;
+                    [&signedStep](const VerifiedSemanticActionBindingReference &candidate) {
+                        return candidate.semanticBindingId == signedStep.semanticBindingId;
                     });
                 if (reference == action.requiredBindings.cend())
                     return {};
-
-                Data::DeviceControlStep step;
-                step.kind = Data::DeviceControlStepKind::WriteSignal;
                 step.signalId = {reference->semanticSignalDefinitionId};
-                if (assignment.parameterId) {
-                    step.value.source = Data::DeviceControlValueSource::Parameter;
-                    step.value.parameterId = *assignment.parameterId;
-                } else if (
-                    assignment.constantValue
-                    && std::holds_alternative<quint64>(*assignment.constantValue)
-                    && std::get<quint64>(*assignment.constantValue) <= 1) {
-                    step.value.source = Data::DeviceControlValueSource::Literal;
-                    step.value.engineeringLiteralValue = Data::EngineeringValue::fromBoolean(
-                        std::get<quint64>(*assignment.constantValue) != 0);
+                step.value.source = Data::DeviceControlValueSource::Literal;
+                if (signedStep.kind == VerifiedSemanticActionStepKind::WaitMasked) {
+                    step.kind = Data::DeviceControlStepKind::WaitMaskedEquals;
+                    step.value.engineeringLiteralValue
+                        = Data::EngineeringValue::fromUnsignedInteger(signedStep.value);
+                    step.mask.source = Data::DeviceControlValueSource::Literal;
+                    step.mask.engineeringLiteralValue
+                        = Data::EngineeringValue::fromUnsignedInteger(signedStep.mask);
                 } else {
-                    return {};
+                    step.kind = Data::DeviceControlStepKind::WaitAbsoluteAtMost;
+                    step.value.engineeringLiteralValue
+                        = Data::EngineeringValue::fromSignedInteger(
+                            qint64(signedStep.absoluteLimit));
                 }
-                definition.steps.append(step);
             }
+            definition.steps.append(step);
         }
-        if (definition.steps.isEmpty())
-            return {};
-        manifest.controlActions.append(std::move(definition));
+        manifest->controlActions.append(definition);
+        actionDefinitionsByAdapter[action.adapterId].insert(action.actionDefinitionId);
     }
 
-    QStringList signalIds = signalDefinitions.keys();
-    std::sort(signalIds.begin(), signalIds.end());
-    for (const QString &signalId : std::as_const(signalIds))
-        manifest.semanticSignals.append(signalDefinitions.value(signalId));
+    QList<Data::DeviceAdapterManifest> result = manifests.values();
+    for (Data::DeviceAdapterManifest &manifest : result) {
+        std::sort(
+            manifest.controlActions.begin(),
+            manifest.controlActions.end(),
+            [](const Data::DeviceControlAction &left, const Data::DeviceControlAction &right) {
+                return left.id.value < right.id.value;
+            });
+    }
     std::sort(
-        manifest.controlActions.begin(),
-        manifest.controlActions.end(),
-        [](const Data::DeviceControlAction &left, const Data::DeviceControlAction &right) {
+        result.begin(),
+        result.end(),
+        [](const Data::DeviceAdapterManifest &left, const Data::DeviceAdapterManifest &right) {
             return left.id.value < right.id.value;
         });
-    if (manifest.controlActions.isEmpty())
-        return {};
-    return {manifest};
+    return result;
 }
 
-static void configureAdversarialManualProject(
+static void configureApi038V3ManualProject(
     Data::ProjectSnapshot &project,
     const QList<Data::DeviceAdapterManifest> &adapterManifests)
 {
@@ -1349,22 +1631,29 @@ static void configureAdversarialManualProject(
             adapterManifests.cbegin(),
             adapterManifests.cend(),
             [&slave](const Data::DeviceAdapterManifest &candidate) {
-                return candidate.id == slave.adapterSelection.adapterId
-                       && candidate.version == slave.adapterSelection.adapterVersion
-                       && candidate.contentSha256
-                              == slave.adapterSelection.adapterContentSha256;
+                return candidate.controllerAdapterTarget.adapterId
+                           == slave.adapterSelection.adapterId.value
+                       && candidate.controllerAdapterTarget.adapterVersion
+                              == slave.adapterSelection.adapterVersion
+                       && candidate.controllerAdapterTarget.adapterSha256
+                              == slave.adapterSelection.adapterContentSha256
+                       && candidate.controllerAdapterTarget.esiSha256 == slave.esiSha256;
             });
         if (manifest == adapterManifests.cend())
             continue;
+        slave.adapterSelection.adapterId = manifest->id;
+        slave.adapterSelection.adapterVersion = manifest->version;
+        slave.adapterSelection.adapterContentSha256 = manifest->contentSha256;
+        slave.adapterSelection.processDataProfileId
+            = manifest->processDataProfiles.constFirst().id;
 
         Data::ManualControlEnvelope envelope;
-        envelope.enabled = true;
         for (const Data::DeviceControlAction &definition : manifest->controlActions) {
             Data::ManualActionEnvelope action;
             action.actionId = definition.id;
             action.enabled = definition.enabled;
             action.holdToRun = false;
-            action.timing.commandTtlMs = definition.commandTtlMs;
+            action.timing.commandTtlMs = 125;
             for (const Data::DeviceControlActionParameter &parameter : definition.parameters) {
                 if (!parameter.engineeringConstraint)
                     continue;
@@ -1382,6 +1671,10 @@ static void configureAdversarialManualProject(
                 });
             envelope.actionEnvelopes.append(std::move(action));
         }
+        envelope.enabled = std::any_of(
+            envelope.actionEnvelopes.cbegin(),
+            envelope.actionEnvelopes.cend(),
+            [](const Data::ManualActionEnvelope &action) { return action.enabled; });
         std::sort(
             envelope.actionEnvelopes.begin(),
             envelope.actionEnvelopes.end(),
@@ -1399,24 +1692,10 @@ static Data::OfflineSlaveConfiguration *factoryManualSlave(Data::ProjectSnapshot
         project.slaves.begin(),
         project.slaves.end(),
         [](const Data::OfflineSlaveConfiguration &slave) {
-            return !slave.manualControlEnvelope.actionEnvelopes.isEmpty();
+            return slave.manualControlEnvelope.enabled
+                   && !slave.manualControlEnvelope.actionEnvelopes.isEmpty();
         });
     return found == project.slaves.end() ? nullptr : &*found;
-}
-
-// The downstream plan and OutputTransaction tests exercise only execution
-// algorithms. They must not make the adversarial flattened adapter a production
-// authorization proof. The WITH_TESTS-only executor seam invokes this transform
-// after the production factory has rejected the action contract.
-static void enableApi038ExecutionAlgorithmsForTest(Data::SemanticRuntimeContext &context)
-{
-    for (Data::SemanticActionRuntimeState &action : context.actionStates) {
-        if (action.detail != QStringLiteral("manual_action_contract_unproven"))
-            continue;
-        action.availability = Data::SemanticActionAvailability::Ready;
-        action.definition.enabled = true;
-        action.detail.clear();
-    }
 }
 
 static QList<Data::DeviceAdapterManifest> factoryCurrentIdeV2Adapters()
@@ -1571,9 +1850,12 @@ static Utils::Result<Data::SemanticRuntimeContext> api038ActionContext(
         return Utils::ResultError("API-038 action definitions are unavailable");
 
     Data::ProjectSnapshot project = factoryProject(evidence);
-    const QList<Data::DeviceAdapterManifest> adapterManifests
-        = factoryAdversarialFlattenedActionAdapters(evidence);
-    configureAdversarialManualProject(project, adapterManifests);
+    const Utils::Result<QList<Data::DeviceAdapterManifest>> publishedAdapters
+        = publishedApi038V3ActionAdapters();
+    if (!publishedAdapters)
+        return Utils::ResultError(publishedAdapters.error());
+    const QList<Data::DeviceAdapterManifest> adapterManifests = *publishedAdapters;
+    configureApi038V3ManualProject(project, adapterManifests);
     const Data::RuntimeResourceCatalog catalog = factoryCatalog(project, evidence);
     const Data::RuntimeSemanticMappingAttestation attestation
         = factoryAttestation(catalog, evidence);
@@ -1614,7 +1896,6 @@ static Utils::Result<Data::SemanticRuntimeContext> api038ActionContext(
     context.bindingVerification = candidates->verification;
     context.signalStates = candidates->signalStates;
     context.actionStates = *states;
-    enableApi038ExecutionAlgorithmsForTest(context);
     context.complete = true;
     context.contextHash = semanticRuntimeContextHash(context);
     if (context.contextHash.size()
@@ -1880,7 +2161,6 @@ public:
     SemanticExecutorFixture()
         : temporary(systemTemporaryDirectoryTemplate(u"embed-labs-semantic-output-executor"))
         , provider(nextSemanticExecutorFixtureProviderId(u"DeterministicOutput"))
-        , adapterProvider(nextSemanticExecutorFixtureProviderId(u"AdversarialAdapters"))
     {}
 
     ~SemanticExecutorFixture()
@@ -1892,7 +2172,6 @@ public:
     {
         executor.reset();
         ownedRegistry.reset();
-        adapterRegistration.reset();
         registration.reset();
     }
 
@@ -1900,15 +2179,12 @@ public:
     {
         const QObjectList objects = ExtensionSystem::PluginManager::allObjects();
         return !objects.contains(
-                   const_cast<DeterministicOutputControllerProvider *>(&provider))
-               && !objects.contains(
-                   const_cast<TestDeviceAdapterProvider *>(&adapterProvider));
+            const_cast<DeterministicOutputControllerProvider *>(&provider));
     }
 
     Utils::Result<> initialize(
         bool privateProviderRegistry = false,
-        bool injectTestOnlyExecutionContext = true,
-        bool configureAdversarialPolicy = true)
+        bool configureManualPolicy = true)
     {
         if (!temporary.isValid())
             return Utils::ResultError("The semantic executor temporary directory is invalid");
@@ -1939,9 +2215,13 @@ public:
         evidence = std::make_shared<const VerifiedRuntimePackageEvidence>(*imported);
 
         project = factoryProject(*evidence);
-        adapterManifests = factoryAdversarialFlattenedActionAdapters(*evidence);
-        if (configureAdversarialPolicy)
-            configureAdversarialManualProject(project, adapterManifests);
+        const Utils::Result<QList<Data::DeviceAdapterManifest>> publishedAdapters
+            = publishedApi038V3ActionAdapters();
+        if (!publishedAdapters)
+            return Utils::ResultError(publishedAdapters.error());
+        adapterManifests = *publishedAdapters;
+        if (configureManualPolicy)
+            configureApi038V3ManualProject(project, adapterManifests);
         catalog = factoryCatalog(project, *evidence);
         attestation = factoryAttestation(catalog, *evidence);
         snapshot = factorySnapshot(catalog);
@@ -1951,12 +2231,9 @@ public:
         provider.resourceSnapshot = snapshot;
         provider.semanticMappingAttestation = attestation;
         provider.setAvailable(true);
-        adapterProvider.publishManifests(adapterManifests);
-        adapterProvider.setAvailable(true);
 
         projects.addProject(project);
         registration = std::make_unique<RegisteredObject>(&provider);
-        adapterRegistration = std::make_unique<RegisteredObject>(&adapterProvider);
         Core::ProviderRegistry *registry = nullptr;
         if (privateProviderRegistry) {
             ownedRegistry = std::make_unique<Core::ProviderRegistry>();
@@ -1966,20 +2243,12 @@ public:
         }
         if (!registry)
             return Utils::ResultError("The controller provider registry is unavailable");
-        testOnlyExecutionContextEnabled = injectTestOnlyExecutionContext;
-        SemanticRuntimeExecutor::TestOnlyContextTransform contextTransform;
-        if (injectTestOnlyExecutionContext) {
-            contextTransform = [this](Data::SemanticRuntimeContext &context) {
-                if (testOnlyExecutionContextEnabled)
-                    enableApi038ExecutionAlgorithmsForTest(context);
-            };
-        }
         executor = std::make_unique<SemanticRuntimeExecutor>(
-            &projects, registry, nullptr, repository, std::move(contextTransform));
+            &projects, registry, nullptr, repository);
         if (executor->contexts().size() != 1 || !executor->contexts().constFirst().complete)
             return Utils::ResultError("The API-038 semantic execution context is incomplete");
         const Data::SemanticRuntimeContext &context = executor->contexts().constFirst();
-        if (injectTestOnlyExecutionContext) {
+        if (configureManualPolicy) {
             const auto readyAction = std::find_if(
                 context.actionStates.cbegin(),
                 context.actionStates.cend(),
@@ -1997,7 +2266,6 @@ public:
     QTemporaryDir temporary;
     TestProjectService projects;
     DeterministicOutputControllerProvider provider;
-    TestDeviceAdapterProvider adapterProvider;
     std::shared_ptr<const VerifiedRuntimePackageEvidence> evidence;
     QList<Data::DeviceAdapterManifest> adapterManifests;
     Data::ProjectSnapshot project;
@@ -2005,11 +2273,9 @@ public:
     Data::RuntimeSemanticMappingAttestation attestation;
     Data::RuntimeResourceSnapshot snapshot;
     std::unique_ptr<RegisteredObject> registration;
-    std::unique_ptr<RegisteredObject> adapterRegistration;
     std::unique_ptr<Core::ProviderRegistry> ownedRegistry;
     std::shared_ptr<RuntimePackageEvidenceRepository> repository;
     std::unique_ptr<SemanticRuntimeExecutor> executor;
-    bool testOnlyExecutionContextEnabled = false;
 };
 
 static bool advanceExecutorToApply(
@@ -4548,8 +4814,8 @@ void EtherCATSemanticRuntimeTests::testReadOnlySemanticBindingFactoryRejectsMism
     const Data::ProjectSnapshot emptyProject = factoryProject(evidence);
     Data::ProjectSnapshot project = emptyProject;
     const QList<Data::DeviceAdapterManifest> adapterManifests
-        = factoryAdversarialFlattenedActionAdapters(evidence);
-    configureAdversarialManualProject(project, adapterManifests);
+        = factoryApi038MutationAdapters(evidence);
+    configureApi038V3ManualProject(project, adapterManifests);
     const Data::RuntimeResourceCatalog catalog = factoryCatalog(project, evidence);
     const Data::RuntimeSemanticMappingAttestation attestation
         = factoryAttestation(catalog, evidence);
@@ -4699,10 +4965,87 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactory()
             }),
         qsizetype(0));
 
+    const Utils::Result<QList<Data::DeviceAdapterManifest>> publishedV3Manifests
+        = publishedApi038V3ActionAdapters();
+    QVERIFY_RESULT(publishedV3Manifests);
+    const auto publishedProfile =
+        [&publishedV3Manifests](QStringView controllerAdapterId)
+        -> const Data::ProcessDataProfile * {
+        const auto manifest = std::find_if(
+            publishedV3Manifests->cbegin(),
+            publishedV3Manifests->cend(),
+            [controllerAdapterId](const Data::DeviceAdapterManifest &candidate) {
+                return candidate.controllerAdapterTarget.adapterId == controllerAdapterId;
+            });
+        if (manifest == publishedV3Manifests->cend()
+            || manifest->processDataProfiles.size() != 1) {
+            return nullptr;
+        }
+        return &manifest->processDataProfiles.constFirst();
+    };
+    const Data::ProcessDataProfile *publishedXb6Profile = publishedProfile(
+        u"solidot.xb6_ec0002_rev1_do16");
+    const Data::ProcessDataProfile *publishedSvProfile = publishedProfile(
+        u"inovance.sv630n_1axis_rev00010000_csp");
+    QVERIFY(publishedXb6Profile);
+    QVERIFY(publishedSvProfile);
+    QVERIFY(publishedXb6Profile->signedDcProfileId.isEmpty());
+    QCOMPARE(publishedSvProfile->signedDcProfileId, QStringLiteral("sync0_125us"));
+    for (const SemanticBindingTopologyInstance &topology :
+         evidence.semanticBindingArtifact().topologyInstances) {
+        const Data::ProcessDataProfile *profile = publishedProfile(topology.adapterId);
+        QVERIFY(profile);
+        QCOMPARE(profile->signedPdoProfileId, topology.pdoProfile);
+        QCOMPARE(profile->signedDcProfileId, topology.dcProfile.value_or(QString()));
+        QVERIFY(processDataProfileMatchesSignedTopology(*profile, topology, false));
+        QCOMPARE(
+            processDataProfileMatchesSignedTopology(*profile, topology, true),
+            topology.dcProfile.has_value());
+
+        Data::ProcessDataProfile wrongDcBinding = *profile;
+        if (topology.dcProfile)
+            wrongDcBinding.signedDcProfileId.clear();
+        else
+            wrongDcBinding.signedDcProfileId = QStringLiteral("sync0_125us");
+        QVERIFY(!processDataProfileMatchesSignedTopology(wrongDcBinding, topology, false));
+
+        Data::ProcessDataProfile wrongPdoBinding = *profile;
+        wrongPdoBinding.signedPdoProfileId.append(QStringLiteral("_wrong"));
+        QVERIFY(!processDataProfileMatchesSignedTopology(wrongPdoBinding, topology, false));
+    }
+    Data::ProjectSnapshot publishedV3Project = project;
+    configureApi038V3ManualProject(publishedV3Project, *publishedV3Manifests);
+    const Utils::Result<QList<Data::SemanticActionRuntimeState>> publishedV3States
+        = buildSemanticActionRuntimeStates(
+            u"embed-labs.product-api",
+            publishedV3Project,
+            evidence,
+            *candidates,
+            *publishedV3Manifests,
+            readyGates);
+    QVERIFY_RESULT(publishedV3States);
+    qsizetype publishedReady = 0;
+    qsizetype publishedSignedRejected = 0;
+    for (const Data::SemanticActionRuntimeState &state : *publishedV3States) {
+        if (state.availability == Data::SemanticActionAvailability::Ready) {
+            ++publishedReady;
+            QVERIFY(state.actionBindingId.startsWith(
+                QStringLiteral("embedlabs:project:action:xb6:")));
+        } else {
+            QCOMPARE(state.availability, Data::SemanticActionAvailability::Rejected);
+            QCOMPARE(
+                state.detail,
+                QStringLiteral("reference_unit_to_rpm_conversion_not_bound"));
+            ++publishedSignedRejected;
+        }
+    }
+    QCOMPARE(publishedReady, qsizetype(2));
+    QCOMPARE(publishedSignedRejected, qsizetype(6));
+
     const QList<Data::DeviceAdapterManifest> adapterManifests
-        = factoryAdversarialFlattenedActionAdapters(evidence);
-    QCOMPARE(adapterManifests.size(), qsizetype(1));
-    configureAdversarialManualProject(project, adapterManifests);
+        = factoryApi038MutationAdapters(evidence);
+    QCOMPARE(adapterManifests.size(), qsizetype(2));
+    configureApi038V3ManualProject(project, adapterManifests);
     const Utils::Result<QList<Data::SemanticActionRuntimeState>> states
         = buildSemanticActionRuntimeStates(
             u"embed-labs.product-api",
@@ -4715,6 +5058,7 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactory()
     QCOMPARE(states->size(), qsizetype(8));
 
     const VerifiedSemanticBindingArtifact &artifact = evidence.semanticBindingArtifact();
+    qsizetype readyCount = 0;
     qsizetype rejectedCount = 0;
     QSet<QString> actionBindingIds;
     for (const Data::SemanticActionRuntimeState &state : *states) {
@@ -4733,8 +5077,8 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactory()
         QCOMPARE(state.actionBindingId, action->actionBindingId);
         QCOMPARE(state.actionDefinitionId, action->actionDefinitionId);
         QCOMPARE(state.definition.id, state.target.actionId);
-        QCOMPARE(state.definition.displayName, action->actionDefinitionId);
-        QVERIFY(!state.definition.enabled);
+        QVERIFY(!state.definition.displayName.isEmpty());
+        QCOMPARE(state.definition.enabled, xb6Action);
         QCOMPARE(state.definition.requiresDc, action->dcRequired);
         QVERIFY(state.definition.requiresExclusiveControl);
         QVERIFY(state.definition.steps.isEmpty());
@@ -4774,11 +5118,11 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactory()
         }
 
         if (xb6Action) {
-            ++rejectedCount;
-            QCOMPARE(state.availability, Data::SemanticActionAvailability::Rejected);
+            ++readyCount;
+            QCOMPARE(state.availability, Data::SemanticActionAvailability::Ready);
             QCOMPARE(state.qualification, Data::SemanticActionQualification::Qualified);
             QVERIFY(state.disabledReason.isEmpty());
-            QCOMPARE(state.detail, QStringLiteral("manual_action_contract_unproven"));
+            QVERIFY(state.detail.isEmpty());
             QVERIFY(!state.requiresDc);
         } else {
             ++rejectedCount;
@@ -4791,7 +5135,8 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactory()
         }
     }
     QCOMPARE(actionBindingIds.size(), qsizetype(8));
-    QCOMPARE(rejectedCount, qsizetype(8));
+    QCOMPARE(readyCount, qsizetype(2));
+    QCOMPARE(rejectedCount, qsizetype(6));
 
     const auto setOutputs = std::find_if(
         states->cbegin(), states->cend(), [](const Data::SemanticActionRuntimeState &state) {
@@ -4909,8 +5254,8 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactoryFailsClosed()
     const Data::ProjectSnapshot emptyProject = factoryProject(evidence);
     Data::ProjectSnapshot project = emptyProject;
     const QList<Data::DeviceAdapterManifest> adapterManifests
-        = factoryAdversarialFlattenedActionAdapters(evidence);
-    configureAdversarialManualProject(project, adapterManifests);
+        = factoryApi038MutationAdapters(evidence);
+    configureApi038V3ManualProject(project, adapterManifests);
     const Data::RuntimeResourceCatalog catalog = factoryCatalog(project, evidence);
     const Data::RuntimeSemanticMappingAttestation attestation
         = factoryAttestation(catalog, evidence);
@@ -4937,8 +5282,9 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactoryFailsClosed()
     QCOMPARE(unsupported->size(), qsizetype(8));
     for (const Data::SemanticActionRuntimeState &state : *unsupported) {
         if (state.actionBindingId.startsWith(QStringLiteral("embedlabs:project:action:xb6:"))) {
-            QCOMPARE(state.availability, Data::SemanticActionAvailability::Rejected);
-            QCOMPARE(state.detail, QStringLiteral("manual_action_contract_unproven"));
+            QCOMPARE(
+                state.detail, QStringLiteral("runtime_output_transactions_unavailable"));
+            QCOMPARE(state.availability, Data::SemanticActionAvailability::Unavailable);
         } else {
             QCOMPARE(state.availability, Data::SemanticActionAvailability::Rejected);
             QCOMPARE(state.detail, QStringLiteral("reference_unit_to_rpm_conversion_not_bound"));
@@ -4958,8 +5304,8 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactoryFailsClosed()
     QVERIFY_RESULT(noControl);
     for (const Data::SemanticActionRuntimeState &state : *noControl) {
         if (state.actionBindingId.startsWith(QStringLiteral("embedlabs:project:action:xb6:"))) {
-            QCOMPARE(state.availability, Data::SemanticActionAvailability::Rejected);
-            QCOMPARE(state.detail, QStringLiteral("manual_action_contract_unproven"));
+            QCOMPARE(state.availability, Data::SemanticActionAvailability::Unavailable);
+            QCOMPARE(state.detail, QStringLiteral("exclusive_control_not_owned"));
         }
     }
 
@@ -5013,11 +5359,65 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactoryFailsClosed()
             });
         return found == states.cend() ? nullptr : &*found;
     };
+    const auto xb6Manifest =
+        [](QList<Data::DeviceAdapterManifest> &manifests)
+        -> Data::DeviceAdapterManifest * {
+        const auto found = std::find_if(
+            manifests.begin(),
+            manifests.end(),
+            [](const Data::DeviceAdapterManifest &manifest) {
+                return manifest.controllerAdapterTarget.adapterId
+                       == QStringLiteral("solidot.xb6_ec0002_rev1_do16");
+            });
+        return found == manifests.end() ? nullptr : &*found;
+    };
+    const auto xb6Action =
+        [](Data::DeviceAdapterManifest &manifest, QStringView suffix)
+        -> Data::DeviceControlAction * {
+        const auto found = std::find_if(
+            manifest.controlActions.begin(),
+            manifest.controlActions.end(),
+            [suffix](const Data::DeviceControlAction &action) {
+                return action.id.value.endsWith(suffix);
+            });
+        return found == manifest.controlActions.end() ? nullptr : &*found;
+    };
+    const auto expectRejectedDetail =
+        [&statesFor, &actionFor](
+            const Data::ProjectSnapshot &candidateProject,
+            const QList<Data::DeviceAdapterManifest> &manifests,
+            QStringView actionBindingId,
+            QStringView detail) {
+        const Utils::Result<QList<Data::SemanticActionRuntimeState>> states
+            = statesFor(candidateProject, manifests);
+        QVERIFY_RESULT(states);
+        const Data::SemanticActionRuntimeState *action = actionFor(
+            *states, actionBindingId);
+        QVERIFY(action);
+        QCOMPARE(action->availability, Data::SemanticActionAvailability::Rejected);
+        QCOMPARE(action->detail, detail.toString());
+    };
 
-    const Utils::Result<QList<Data::SemanticActionRuntimeState>> emptyEnvelope
-        = statesFor(emptyProject, adapterManifests);
-    QVERIFY_RESULT(emptyEnvelope);
+    const Utils::Result<QList<Data::SemanticActionRuntimeState>> ready
+        = statesFor(project, adapterManifests);
+    QVERIFY_RESULT(ready);
     const Data::SemanticActionRuntimeState *setOutputs = actionFor(
+        *ready, u"embedlabs:project:action:xb6:set-outputs");
+    QVERIFY(setOutputs);
+    QCOMPARE(setOutputs->availability, Data::SemanticActionAvailability::Ready);
+    QVERIFY(setOutputs->detail.isEmpty());
+    QCOMPARE(setOutputs->maximumTtlCycles, quint32(1000));
+    QCOMPARE(setOutputs->maximumTtlMs, quint32(125));
+    QVERIFY(setOutputs->definition.enabled);
+    QVERIFY(setOutputs->definition.steps.isEmpty());
+
+    Data::ProjectSnapshot noManual = project;
+    QVERIFY(factoryManualSlave(noManual));
+    factoryManualSlave(noManual)->manualControlEnvelope = {};
+    const Utils::Result<QList<Data::SemanticActionRuntimeState>> emptyEnvelope
+        = statesFor(noManual, adapterManifests);
+    QVERIFY_RESULT(emptyEnvelope);
+    setOutputs = actionFor(
         *emptyEnvelope, u"embedlabs:project:action:xb6:set-outputs");
     QVERIFY(setOutputs);
     QCOMPARE(setOutputs->availability, Data::SemanticActionAvailability::Rejected);
@@ -5056,7 +5456,8 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactoryFailsClosed()
     QCOMPARE(setOutputs->detail, QStringLiteral("manual_action_not_authorized"));
 
     QList<Data::DeviceAdapterManifest> mismatchedAdapter = adapterManifests;
-    mismatchedAdapter.first().contentSha256[0] ^= 1;
+    QVERIFY(xb6Manifest(mismatchedAdapter));
+    xb6Manifest(mismatchedAdapter)->contentSha256[0] ^= 1;
     const Utils::Result<QList<Data::SemanticActionRuntimeState>> adapterMismatch
         = statesFor(project, mismatchedAdapter);
     QVERIFY_RESULT(adapterMismatch);
@@ -5109,8 +5510,8 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactoryFailsClosed()
     QVERIFY_RESULT(narrowed);
     setOutputs = actionFor(*narrowed, u"embedlabs:project:action:xb6:set-outputs");
     QVERIFY(setOutputs);
-    QCOMPARE(setOutputs->availability, Data::SemanticActionAvailability::Rejected);
-    QCOMPARE(setOutputs->detail, QStringLiteral("manual_action_contract_unproven"));
+    QCOMPARE(setOutputs->availability, Data::SemanticActionAvailability::Ready);
+    QVERIFY(setOutputs->detail.isEmpty());
     const auto runtimeDo0 = std::find_if(
         setOutputs->parameters.cbegin(),
         setOutputs->parameters.cend(),
@@ -5121,25 +5522,220 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactoryFailsClosed()
     QVERIFY(!runtimeDo0->minimum.toBool());
     QVERIFY(!runtimeDo0->maximum.toBool());
 
-    QList<Data::DeviceAdapterManifest> smallerAdapterTtl = adapterManifests;
-    const auto adapterSetOutputs = std::find_if(
-        smallerAdapterTtl.first().controlActions.begin(),
-        smallerAdapterTtl.first().controlActions.end(),
-        [](const Data::DeviceControlAction &action) {
-            return action.id.value.endsWith(QStringLiteral("set-digital-outputs"));
+    Data::ProjectSnapshot smallerProjectTtl = project;
+    QVERIFY(factoryManualSlave(smallerProjectTtl));
+    Data::ManualControlEnvelope &smallerTtlEnvelope
+        = factoryManualSlave(smallerProjectTtl)->manualControlEnvelope;
+    const auto smallerTtlAction = std::find_if(
+        smallerTtlEnvelope.actionEnvelopes.begin(),
+        smallerTtlEnvelope.actionEnvelopes.end(),
+        [](const Data::ManualActionEnvelope &action) {
+            return action.actionId.value.endsWith(QStringLiteral("set-digital-outputs"));
         });
-    QVERIFY(adapterSetOutputs != smallerAdapterTtl.first().controlActions.end());
-    adapterSetOutputs->commandTtlMs = 50;
+    QVERIFY(smallerTtlAction != smallerTtlEnvelope.actionEnvelopes.end());
+    smallerTtlAction->timing.commandTtlMs = 50;
     const Utils::Result<QList<Data::SemanticActionRuntimeState>> smallerTtl
-        = statesFor(project, smallerAdapterTtl);
+        = statesFor(smallerProjectTtl, adapterManifests);
     QVERIFY_RESULT(smallerTtl);
     setOutputs = actionFor(*smallerTtl, u"embedlabs:project:action:xb6:set-outputs");
     QVERIFY(setOutputs);
-    QCOMPARE(setOutputs->availability, Data::SemanticActionAvailability::Rejected);
-    QCOMPARE(setOutputs->detail, QStringLiteral("manual_action_contract_unproven"));
+    QCOMPARE(setOutputs->availability, Data::SemanticActionAvailability::Ready);
+    QVERIFY(setOutputs->detail.isEmpty());
     QCOMPARE(setOutputs->maximumTtlMs, quint32(50));
     QCOMPARE(setOutputs->maximumTtlCycles, quint32(400));
     QCOMPARE(setOutputs->definition.commandTtlMs, quint32(50));
+
+    const auto rejectSetOutputs =
+        [&expectRejectedDetail, &project](
+            const QList<Data::DeviceAdapterManifest> &manifests, QStringView detail) {
+        expectRejectedDetail(
+            project,
+            manifests,
+            u"embedlabs:project:action:xb6:set-outputs",
+            detail);
+    };
+
+    QList<Data::DeviceAdapterManifest> legacyContract = adapterManifests;
+    QVERIFY(xb6Manifest(legacyContract));
+    xb6Manifest(legacyContract)->contractVersion = Data::DeviceAdapterContractVersion::V2;
+    rejectSetOutputs(legacyContract, u"manual_adapter_contract_version_unsupported");
+
+    QList<Data::DeviceAdapterManifest> wrongControllerTarget = adapterManifests;
+    QVERIFY(xb6Manifest(wrongControllerTarget));
+    xb6Manifest(wrongControllerTarget)->controllerAdapterTarget.adapterId.append(
+        QStringLiteral(".wrong"));
+    rejectSetOutputs(wrongControllerTarget, u"manual_controller_target_mismatch");
+
+    QList<Data::DeviceAdapterManifest> wrongEsi = adapterManifests;
+    QVERIFY(xb6Manifest(wrongEsi));
+    xb6Manifest(wrongEsi)->match.exactEsiSha256[0] ^= 1;
+    rejectSetOutputs(wrongEsi, u"manual_adapter_identity_mismatch");
+
+    QList<Data::DeviceAdapterManifest> wrongDefinitionDigest = adapterManifests;
+    QVERIFY(xb6Manifest(wrongDefinitionDigest));
+    QVERIFY(xb6Action(*xb6Manifest(wrongDefinitionDigest), u"set-digital-outputs"));
+    xb6Action(
+        *xb6Manifest(wrongDefinitionDigest),
+        u"set-digital-outputs")->expectedSignedDefinitionSha256[0]
+        ^= 1;
+    rejectSetOutputs(wrongDefinitionDigest, u"manual_action_definition_mismatch");
+
+    QList<Data::DeviceAdapterManifest> wrongProfile = adapterManifests;
+    QVERIFY(xb6Manifest(wrongProfile));
+    xb6Manifest(wrongProfile)->processDataProfiles.first().signedPdoProfileId
+        = QStringLiteral("wrong_profile");
+    rejectSetOutputs(wrongProfile, u"manual_pdo_profile_mismatch");
+
+    QList<Data::DeviceAdapterManifest> wrongDcProfile = adapterManifests;
+    QVERIFY(xb6Manifest(wrongDcProfile));
+    xb6Manifest(wrongDcProfile)->processDataProfiles.first().signedDcProfileId
+        = QStringLiteral("sync0_125us");
+    rejectSetOutputs(wrongDcProfile, u"manual_dc_profile_mismatch");
+
+    QList<Data::DeviceAdapterManifest> incompleteProfile = adapterManifests;
+    QVERIFY(xb6Manifest(incompleteProfile));
+    xb6Manifest(incompleteProfile)->processDataProfiles.first().requiredSignals.removeLast();
+    rejectSetOutputs(incompleteProfile, u"manual_pdo_profile_mismatch");
+
+    QList<Data::DeviceAdapterManifest> missingRequiredSignal = adapterManifests;
+    QVERIFY(xb6Manifest(missingRequiredSignal));
+    QVERIFY(xb6Action(*xb6Manifest(missingRequiredSignal), u"set-digital-outputs"));
+    xb6Action(
+        *xb6Manifest(missingRequiredSignal),
+        u"set-digital-outputs")->requiredSignals.removeLast();
+    rejectSetOutputs(missingRequiredSignal, u"manual_action_definition_mismatch");
+
+    QList<Data::DeviceAdapterManifest> swappedAssignments = adapterManifests;
+    QVERIFY(xb6Manifest(swappedAssignments));
+    Data::DeviceControlAction *swappedAction = xb6Action(
+        *xb6Manifest(swappedAssignments), u"set-digital-outputs");
+    QVERIFY(swappedAction);
+    QVERIFY(swappedAction->steps.first().assignments.size() >= 2);
+    std::swap(
+        swappedAction->steps.first().assignments[0].value.parameterId,
+        swappedAction->steps.first().assignments[1].value.parameterId);
+    rejectSetOutputs(swappedAssignments, u"manual_step_contract_mismatch");
+
+    QList<Data::DeviceAdapterManifest> mixedValueRepresentation = adapterManifests;
+    QVERIFY(xb6Manifest(mixedValueRepresentation));
+    Data::DeviceControlAction *mixedValueAction = xb6Action(
+        *xb6Manifest(mixedValueRepresentation), u"set-digital-outputs");
+    QVERIFY(mixedValueAction);
+    mixedValueAction->steps.first().assignments.first().value.literalValue = true;
+    rejectSetOutputs(mixedValueRepresentation, u"manual_step_contract_mismatch");
+
+    QList<Data::DeviceAdapterManifest> changedConstant = adapterManifests;
+    QVERIFY(xb6Manifest(changedConstant));
+    Data::DeviceControlAction *clearAction = xb6Action(
+        *xb6Manifest(changedConstant), u"clear-digital-outputs");
+    QVERIFY(clearAction);
+    QVERIFY(clearAction->steps.first().assignments.first().value.engineeringLiteralValue);
+    clearAction->steps.first().assignments.first().value.engineeringLiteralValue
+        = Data::EngineeringValue::fromBoolean(true);
+    expectRejectedDetail(
+        project,
+        changedConstant,
+        u"embedlabs:project:action:xb6:clear-outputs",
+        u"manual_step_contract_mismatch");
+
+    QList<Data::DeviceAdapterManifest> partialGroup = adapterManifests;
+    QVERIFY(xb6Manifest(partialGroup));
+    QVERIFY(xb6Action(*xb6Manifest(partialGroup), u"set-digital-outputs"));
+    xb6Action(
+        *xb6Manifest(partialGroup),
+        u"set-digital-outputs")->consistencyGroups.first().members.removeLast();
+    rejectSetOutputs(partialGroup, u"manual_group_contract_mismatch");
+
+    QList<Data::DeviceAdapterManifest> wrongRecovery = adapterManifests;
+    QVERIFY(xb6Manifest(wrongRecovery));
+    QVERIFY(xb6Action(*xb6Manifest(wrongRecovery), u"set-digital-outputs"));
+    xb6Action(
+        *xb6Manifest(wrongRecovery),
+        u"set-digital-outputs")->consistencyGroups.first().recovery
+        = Data::DeviceControlGroupRecovery::ReturnTask;
+    rejectSetOutputs(wrongRecovery, u"manual_group_contract_mismatch");
+
+    QList<Data::DeviceAdapterManifest> wrongGroupTtl = adapterManifests;
+    QVERIFY(xb6Manifest(wrongGroupTtl));
+    QVERIFY(xb6Action(*xb6Manifest(wrongGroupTtl), u"set-digital-outputs"));
+    --xb6Action(
+        *xb6Manifest(wrongGroupTtl),
+        u"set-digital-outputs")->consistencyGroups.first().maximumTtlCycles;
+    rejectSetOutputs(wrongGroupTtl, u"manual_group_contract_mismatch");
+
+    QList<Data::DeviceAdapterManifest> wrongSafeValue = adapterManifests;
+    QVERIFY(xb6Manifest(wrongSafeValue));
+    const auto safeSignal = std::find_if(
+        xb6Manifest(wrongSafeValue)->semanticSignals.begin(),
+        xb6Manifest(wrongSafeValue)->semanticSignals.end(),
+        [](const Data::SemanticSignalDefinition &signal) {
+            return signal.id.value.endsWith(QStringLiteral("channel.0"));
+        });
+    QVERIFY(safeSignal != xb6Manifest(wrongSafeValue)->semanticSignals.end());
+    safeSignal->engineeringSafeValue = Data::EngineeringValue::fromBoolean(true);
+    rejectSetOutputs(wrongSafeValue, u"manual_group_contract_mismatch");
+
+    QList<Data::DeviceAdapterManifest> wrongTransform = adapterManifests;
+    QVERIFY(xb6Manifest(wrongTransform));
+    const auto transformedSignal = std::find_if(
+        xb6Manifest(wrongTransform)->semanticSignals.begin(),
+        xb6Manifest(wrongTransform)->semanticSignals.end(),
+        [](const Data::SemanticSignalDefinition &signal) {
+            return signal.id.value.endsWith(QStringLiteral("channel.0"));
+        });
+    QVERIFY(transformedSignal != xb6Manifest(wrongTransform)->semanticSignals.end());
+    QVERIFY(transformedSignal->engineeringTransform);
+    transformedSignal->engineeringTransform->unit = QStringLiteral("wrong_unit");
+    rejectSetOutputs(wrongTransform, u"manual_signal_contract_mismatch");
+
+    QList<Data::DeviceAdapterManifest> wrongParameter = adapterManifests;
+    QVERIFY(xb6Manifest(wrongParameter));
+    QVERIFY(xb6Action(*xb6Manifest(wrongParameter), u"set-digital-outputs"));
+    xb6Action(
+        *xb6Manifest(wrongParameter),
+        u"set-digital-outputs")->parameters.first().valueMetadata.unit
+        = QStringLiteral("wrong_unit");
+    rejectSetOutputs(wrongParameter, u"manual_parameter_contract_mismatch");
+
+    QList<Data::DeviceAdapterManifest> wrongStepKind = adapterManifests;
+    QVERIFY(xb6Manifest(wrongStepKind));
+    QVERIFY(xb6Action(*xb6Manifest(wrongStepKind), u"set-digital-outputs"));
+    xb6Action(
+        *xb6Manifest(wrongStepKind),
+        u"set-digital-outputs")->steps.first().kind
+        = Data::DeviceControlStepKind::WaitCycles;
+    rejectSetOutputs(wrongStepKind, u"manual_step_contract_mismatch");
+
+    QList<Data::DeviceAdapterManifest> wrongDc = adapterManifests;
+    QVERIFY(xb6Manifest(wrongDc));
+    QVERIFY(xb6Action(*xb6Manifest(wrongDc), u"set-digital-outputs"));
+    xb6Action(*xb6Manifest(wrongDc), u"set-digital-outputs")->requiresDc = true;
+    rejectSetOutputs(wrongDc, u"manual_action_definition_mismatch");
+
+    QList<Data::DeviceAdapterManifest> elevatedSv = adapterManifests;
+    const auto svManifest = std::find_if(
+        elevatedSv.begin(),
+        elevatedSv.end(),
+        [](const Data::DeviceAdapterManifest &manifest) {
+            return manifest.controllerAdapterTarget.adapterId
+                   == QStringLiteral("inovance.sv630n_1axis_rev00010000_csp");
+        });
+    QVERIFY(svManifest != elevatedSv.end());
+    for (Data::DeviceControlAction &definition : svManifest->controlActions) {
+        definition.enabled = true;
+        definition.signedQualification = Data::DeviceControlActionQualification::Qualified;
+        definition.disabledReason.clear();
+    }
+    const Utils::Result<QList<Data::SemanticActionRuntimeState>> elevatedSvStates
+        = statesFor(project, elevatedSv);
+    QVERIFY_RESULT(elevatedSvStates);
+    const Data::SemanticActionRuntimeState *svVelocity = actionFor(
+        *elevatedSvStates, u"embedlabs:project:action:axis0:set-csv-velocity");
+    QVERIFY(svVelocity);
+    QCOMPARE(svVelocity->availability, Data::SemanticActionAvailability::Rejected);
+    QCOMPARE(
+        svVelocity->detail,
+        QStringLiteral("reference_unit_to_rpm_conversion_not_bound"));
 
     Data::ProjectSnapshot heldAction = project;
     QVERIFY(factoryManualSlave(heldAction));
@@ -5665,7 +6261,9 @@ void EtherCATSemanticRuntimeTests::testExecutorRejectsUnauthorizedManualActionBe
     SemanticExecutorFixture fixture;
     const Utils::Result<> initialized = fixture.initialize(true);
     QVERIFY_RESULT(initialized);
-    fixture.testOnlyExecutionContextEnabled = false;
+    const Data::ProjectSnapshot authorizedProject = fixture.project;
+    QVERIFY(factoryManualSlave(fixture.project));
+    factoryManualSlave(fixture.project)->manualControlEnvelope.enabled = false;
     fixture.projects.changeProject(fixture.project);
     const Data::SemanticRuntimeContext unauthorizedContext
         = fixture.executor->contexts().constFirst();
@@ -5694,7 +6292,7 @@ void EtherCATSemanticRuntimeTests::testExecutorRejectsUnauthorizedManualActionBe
     QVERIFY(fixture.provider.applyRequests.isEmpty());
     QCOMPARE(fixture.provider.pendingRequestCount(), 0);
 
-    fixture.testOnlyExecutionContextEnabled = true;
+    fixture.project = authorizedProject;
     fixture.projects.changeProject(fixture.project);
     const Data::SemanticRuntimeContext authorizedContext
         = fixture.executor->contexts().constFirst();
@@ -5740,7 +6338,6 @@ void EtherCATSemanticRuntimeTests::testExecutorRejectsUnauthorizedManualActionBe
     QVERIFY(fixture.ownedRegistry);
     fixture.ownedRegistry.reset();
     const int afterRegistryRemoval = contextsSpy.count();
-    fixture.adapterProvider.publishManifests({});
     QCoreApplication::processEvents();
     QCOMPARE(contextsSpy.count(), afterRegistryRemoval);
     fixture.unregisterProviders();
@@ -6576,7 +7173,7 @@ void EtherCATSemanticRuntimeTests::testExecutorBlocksOldUnknownAcrossScopes()
     QCOMPARE(unknown->state, Data::SemanticOperationState::OutcomeUnknown);
 
     Data::ProjectSnapshot secondProject = factoryProject(*fixture.evidence);
-    configureAdversarialManualProject(secondProject, fixture.adapterManifests);
+    configureApi038V3ManualProject(secondProject, fixture.adapterManifests);
     const Data::RuntimeResourceCatalog secondCatalog
         = factoryCatalog(secondProject, *fixture.evidence);
     const Data::RuntimeSemanticMappingAttestation secondAttestation

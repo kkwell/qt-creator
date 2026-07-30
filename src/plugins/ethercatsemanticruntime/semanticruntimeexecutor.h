@@ -12,10 +12,6 @@
 #include <memory>
 #include <optional>
 
-#ifdef WITH_TESTS
-#include <functional>
-#endif
-
 namespace EtherCAT::SemanticRuntime::Internal {
 
 class RuntimePackageEvidenceRepository;
@@ -54,20 +50,11 @@ class SemanticRuntimeExecutor final : public Core::SemanticRuntimeService
     Q_OBJECT
 
 public:
-#ifdef WITH_TESTS
-    using TestOnlyContextTransform = std::function<void(Data::SemanticRuntimeContext &)>;
-#endif
-
     SemanticRuntimeExecutor(
         Core::ProjectService *projectService,
         Core::ProviderRegistry *providerRegistry,
         QObject *parent = nullptr,
-        std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository = {}
-#ifdef WITH_TESTS
-        ,
-        TestOnlyContextTransform testOnlyContextTransform = {}
-#endif
-        );
+        std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository = {});
     ~SemanticRuntimeExecutor() final;
 
     QList<Data::SemanticRuntimeContext> contexts() const final;
@@ -96,9 +83,6 @@ private:
     QPointer<Core::ProjectService> m_projectService;
     QPointer<Core::ProviderRegistry> m_providerRegistry;
     std::shared_ptr<const RuntimePackageEvidenceRepository> m_evidenceRepository;
-#ifdef WITH_TESTS
-    TestOnlyContextTransform m_testOnlyContextTransform;
-#endif
     QHash<Core::ControllerConnectionProvider *, QList<QMetaObject::Connection>> m_providerConnections;
     QHash<Core::DeviceAdapterProvider *, QList<QMetaObject::Connection>>
         m_adapterProviderConnections;

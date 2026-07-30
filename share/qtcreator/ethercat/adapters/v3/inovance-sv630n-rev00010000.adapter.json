@@ -1133,6 +1133,7 @@
     {
       "id": "org.embedlabs.inovance.sv630n.api038-csp-1704-1b04",
       "signedPdoProfileId": "csp_1704_1b04",
+      "signedDcProfileId": "sync0_125us",
       "rxPdos": [
         5892
       ],

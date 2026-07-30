@@ -585,6 +585,7 @@
       "required": [
         "id",
         "signedPdoProfileId",
+        "signedDcProfileId",
         "rxPdos",
         "txPdos",
         "requiredSignals"
@@ -595,6 +596,16 @@
         },
         "signedPdoProfileId": {
           "$ref": "#/$defs/simpleId"
+        },
+        "signedDcProfileId": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/simpleId"
+            }
+          ]
         },
         "rxPdos": {
           "type": "array",

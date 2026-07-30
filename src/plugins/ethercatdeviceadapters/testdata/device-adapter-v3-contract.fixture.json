@@ -214,6 +214,7 @@
     {
       "id": "org.embedlabs.test.profile",
       "signedPdoProfileId": "test-profile-v1",
+      "signedDcProfileId": null,
       "rxPdos": [
         5632
       ],
