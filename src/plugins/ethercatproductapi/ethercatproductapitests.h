@@ -39,6 +39,7 @@ private slots:
     void testLeaseOwnershipRequiresAcquireOrResume();
     void testProtocolMinorDowngrade();
     void testControlLifecycle();
+    void testTopologyProvenanceLifecycle();
     void testFaultResetLifecycle();
     void testPackageDeploymentLifecycle();
     void testPackageDeploymentMaximumAudit();

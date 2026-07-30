@@ -297,6 +297,15 @@ struct ETHERCATDATA_EXPORT ControllerPackageDeploymentProgress
         = default;
 };
 
+struct ETHERCATDATA_EXPORT ControllerConnectionScope
+{
+    NodeId projectId;
+    NodeId masterId;
+
+    friend bool operator==(const ControllerConnectionScope &, const ControllerConnectionScope &)
+        = default;
+};
+
 struct ETHERCATDATA_EXPORT ControllerTopologySlave
 {
     quint32 position = 0;
@@ -320,18 +329,27 @@ struct ETHERCATDATA_EXPORT ControllerTopologySnapshot
     qint32 result = 0;
     QList<ControllerTopologySlave> slaves;
     QDateTime discoveredAt;
+    ControllerConnectionScope scope;
+    quint64 sessionGeneration = 0;
+    quint64 sessionId = 0;
+    quint64 bootId = 0;
+    quint64 requestId = 0;
+    // This is the Product API response frame sequence, not a controller-side
+    // topology capture sequence.
+    quint64 responseSequence = 0;
+    // This is the ECAP response send timestamp, not a topology capture time.
+    // Preserve zero because the current wire contract does not forbid it.
+    quint64 controllerTimestampNs = 0;
+    QDateTime receivedAt;
+
+    bool hasCompleteProvenance() const
+    {
+        return !scope.projectId.isNull() && !scope.masterId.isNull() && sessionGeneration
+               && sessionId && bootId && requestId && responseSequence && receivedAt.isValid();
+    }
 
     friend bool operator==(const ControllerTopologySnapshot &,
                            const ControllerTopologySnapshot &)
-        = default;
-};
-
-struct ETHERCATDATA_EXPORT ControllerConnectionScope
-{
-    NodeId projectId;
-    NodeId masterId;
-
-    friend bool operator==(const ControllerConnectionScope &, const ControllerConnectionScope &)
         = default;
 };
 

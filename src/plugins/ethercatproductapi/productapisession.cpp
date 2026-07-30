@@ -6139,10 +6139,19 @@ public:
             if (!topology)
                 break;
             Data::ControllerTopologySnapshot result;
+            const QDateTime receivedAt = QDateTime::currentDateTimeUtc();
             result.firstStationAddress = request.firstStationAddress;
             result.respondingCount = topology->respondingCount;
             result.result = topology->result;
-            result.discoveredAt = QDateTime::currentDateTimeUtc();
+            result.discoveredAt = receivedAt;
+            result.scope = snapshot.scope;
+            result.sessionGeneration = request.generation;
+            result.sessionId = frame.header.sessionId;
+            result.bootId = frame.header.bootId;
+            result.requestId = frame.header.requestId;
+            result.responseSequence = frame.header.sequence;
+            result.controllerTimestampNs = frame.header.controllerTimestampNs;
+            result.receivedAt = receivedAt;
             result.slaves.reserve(topology->slaves.size());
             for (const Protocol::TopologySlave &slave : topology->slaves) {
                 result.slaves.append(
@@ -6154,6 +6163,15 @@ public:
                      slave.productCode,
                      slave.revision,
                      slave.serial});
+            }
+            if (!result.hasCompleteProvenance()) {
+                failProtocol(
+                    value.role,
+                    request.operation,
+                    Tr::tr("The topology result has incomplete provenance."),
+                    {},
+                    requestId);
+                return;
             }
             invalidateRuntimeResources();
             invalidateRuntimeSemanticMappingAttestation(

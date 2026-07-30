@@ -1444,6 +1444,8 @@ public:
         m_nextControlFailureStage = stage;
     }
 
+    void corruptNextTopologyResult() { m_corruptNextTopologyResult = true; }
+
     void omitFaultClearedEventOnce() { m_omitFaultClearedEventOnce = true; }
 
     void rejectNextDeployment(
@@ -2858,11 +2860,18 @@ private:
                 m_violations.append(QStringLiteral("DiscoverTopology preconditions were invalid."));
             }
             sendCommandStages(peer, request, false);
-            sendResponse(
-                peer,
-                Protocol::MessageType::TopologyResult,
-                request.header.requestId,
-                topologyResultPayload());
+            {
+                QByteArray payload = topologyResultPayload();
+                if (m_corruptNextTopologyResult) {
+                    m_corruptNextTopologyResult = false;
+                    putU32(payload, 20, 0x20);
+                }
+                sendResponse(
+                    peer,
+                    Protocol::MessageType::TopologyResult,
+                    request.header.requestId,
+                    payload);
+            }
             return;
         case Protocol::MessageType::RestoreActivePackage:
             if (!m_leaseOwned || readU32(request.payload, 0) != quint32('B')
@@ -3295,6 +3304,7 @@ private:
     bool m_deploymentActivated = false;
     bool m_faultClearedEventAvailable = false;
     bool m_omitFaultClearedEventOnce = false;
+    bool m_corruptNextTopologyResult = false;
     Data::ControllerSlot m_candidateSlot = Data::ControllerSlot::A;
     quint64 m_candidateGeneration = 55;
     quint64 m_deploymentConfigurationId = 0;
@@ -6652,6 +6662,142 @@ void EtherCATProductApiTests::testControlLifecycle()
     QCOMPARE(controller.requestCount(Protocol::MessageType::Resume), 1);
     QCOMPARE(controller.requestCount(Protocol::MessageType::ControlledStop), 1);
     QCOMPARE(controller.requestCount(Protocol::MessageType::ReleaseControl), 1);
+    QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testTopologyProvenanceLifecycle()
+{
+    LoopbackController controller(LoopbackController::Behavior::ControlLifecycle);
+    QVERIFY(controller.start());
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    const Data::ControllerConnectionRequest connectionRequest = requestFor(provider);
+    bool incompleteTopologyPublished = false;
+    connect(
+        &provider,
+        &Core::ControllerConnectionProvider::connectionSnapshotChanged,
+        &provider,
+        [&provider, &incompleteTopologyPublished] {
+            const auto topology = provider.connectionSnapshot().topology;
+            if (topology && !topology->hasCompleteProvenance())
+                incompleteTopologyPublished = true;
+        });
+    QVERIFY(provider.connectToController(connectionRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+    const auto executeAndWait = [&provider](Data::ControllerControlRequest request) {
+        QVERIFY(provider.executeControlCommand(request));
+        QTRY_VERIFY_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state
+                != Data::ControllerControlState::Pending,
+            1000);
+        QCOMPARE(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded);
+    };
+
+    Data::ControllerControlRequest control;
+    control.command = Data::ControllerControlCommand::AcquireControl;
+    executeAndWait(control);
+    control.command = Data::ControllerControlCommand::EnterConfigurationMode;
+    executeAndWait(control);
+
+    control.command = Data::ControllerControlCommand::DiscoverTopology;
+    QVERIFY(provider.executeControlCommand(control));
+    QVERIFY(!provider.connectionSnapshot().topology);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        provider.connectionSnapshot().controlProgress.state
+                == Data::ControllerControlState::Succeeded
+            && provider.connectionSnapshot().topology,
+        1000);
+    const Data::ControllerConnectionSnapshot firstSnapshot = provider.connectionSnapshot();
+    const Data::ControllerTopologySnapshot first = *firstSnapshot.topology;
+    QVERIFY(first.hasCompleteProvenance());
+    QCOMPARE(first.scope, connectionRequest.scope);
+    QCOMPARE(first.sessionGeneration, firstSnapshot.sessionGeneration);
+    QVERIFY(firstSnapshot.session);
+    QCOMPARE(first.sessionId, firstSnapshot.session->sessionId);
+    QCOMPARE(first.bootId, firstSnapshot.session->bootId);
+    QCOMPARE(
+        first.requestId,
+        controller.lastRequestId(Protocol::MessageType::DiscoverTopology));
+    QCOMPARE(first.controllerTimestampNs, quint64(900000) + first.responseSequence);
+    QCOMPARE(first.discoveredAt, first.receivedAt);
+
+    QVERIFY(provider.executeControlCommand(control));
+    QVERIFY(!provider.connectionSnapshot().topology);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        provider.connectionSnapshot().controlProgress.state
+                == Data::ControllerControlState::Succeeded
+            && provider.connectionSnapshot().topology,
+        1000);
+    const Data::ControllerTopologySnapshot second = *provider.connectionSnapshot().topology;
+    QVERIFY(second.hasCompleteProvenance());
+    QCOMPARE(second.scope, first.scope);
+    QCOMPARE(second.sessionGeneration, first.sessionGeneration);
+    QCOMPARE(second.sessionId, first.sessionId);
+    QCOMPARE(second.bootId, first.bootId);
+    QVERIFY(second.requestId > first.requestId);
+    QVERIFY(second.responseSequence > first.responseSequence);
+    QCOMPARE(second.controllerTimestampNs, quint64(900000) + second.responseSequence);
+    QVERIFY(second.receivedAt >= first.receivedAt);
+
+    const quint64 topologyGeneration = second.sessionGeneration;
+    bool staleTopologyPublishedDuringReconnect = false;
+    connect(
+        &provider,
+        &Core::ControllerConnectionProvider::connectionSnapshotChanged,
+        &provider,
+        [&provider, topologyGeneration, &staleTopologyPublishedDuringReconnect] {
+            const Data::ControllerConnectionSnapshot snapshot
+                = provider.connectionSnapshot();
+            if (snapshot.sessionGeneration > topologyGeneration && snapshot.topology)
+                staleTopologyPublishedDuringReconnect = true;
+        });
+    controller.dropChannel(Protocol::Role::Push);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        provider.connectionSnapshot().sessionGeneration > topologyGeneration,
+        1000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(!staleTopologyPublishedDuringReconnect);
+    QVERIFY(!provider.connectionSnapshot().topology);
+    QVERIFY(provider.connectionSnapshot().session);
+    QVERIFY(provider.connectionSnapshot().session->ownsControlLease);
+
+    QVERIFY(provider.disconnectFromController());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        1000);
+    QVERIFY(!provider.connectionSnapshot().topology);
+    QVERIFY(provider.connectionSnapshot().sessionGeneration > topologyGeneration);
+
+    const quint64 disconnectedGeneration = provider.connectionSnapshot().sessionGeneration;
+    QVERIFY(provider.connectToController(connectionRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(!provider.connectionSnapshot().topology);
+    QVERIFY(provider.connectionSnapshot().sessionGeneration > disconnectedGeneration);
+
+    control.command = Data::ControllerControlCommand::AcquireControl;
+    executeAndWait(control);
+    control.command = Data::ControllerControlCommand::EnterConfigurationMode;
+    executeAndWait(control);
+    controller.corruptNextTopologyResult();
+    control.command = Data::ControllerControlCommand::DiscoverTopology;
+    QVERIFY(provider.executeControlCommand(control));
+    QVERIFY(!provider.connectionSnapshot().topology);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        1000);
+    QVERIFY(!provider.connectionSnapshot().topology);
+    QVERIFY(provider.connectionSnapshot().lastError);
+    QCOMPARE(
+        provider.connectionSnapshot().lastError->source,
+        Data::ControllerErrorSource::Protocol);
+    QVERIFY(!incompleteTopologyPublished);
     QVERIFY(controller.violations().isEmpty());
 }
 
