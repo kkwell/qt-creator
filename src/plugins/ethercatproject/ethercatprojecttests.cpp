@@ -90,7 +90,9 @@ static QList<Data::OfflineSlaveConfiguration> offlineSlaves(const Data::NodeId &
          {},
          {},
          {},
-         {}},
+         {},
+         {},
+         0x1002},
         {Data::NodeId::create(),
          master,
          0,
@@ -103,7 +105,9 @@ static QList<Data::OfflineSlaveConfiguration> offlineSlaves(const Data::NodeId &
          {},
          {},
          {},
-         {}}};
+         {},
+         {},
+         0x1001}};
 }
 
 static Data::ProcessDataConfiguration processDataConfiguration()
@@ -377,6 +381,29 @@ void EtherCATProjectTests::testStrictProjectJsonShape()
     const QJsonObject validRoot = QJsonDocument::fromJson(serializeProject(source)).object();
     QVERIFY_RESULT(parseProject(QJsonDocument(validRoot).toJson(), "Fallback"));
 
+    const auto projectWithStationAddress = [&validRoot](const QJsonValue &value, bool remove) {
+        QJsonObject mutated = validRoot;
+        QJsonObject masterObject = mutated.value("master").toObject();
+        QJsonArray slaves = masterObject.value("slaves").toArray();
+        QJsonObject slaveObject = slaves.first().toObject();
+        if (remove)
+            slaveObject.remove("stationAddress");
+        else
+            slaveObject.insert("stationAddress", value);
+        slaves[0] = slaveObject;
+        masterObject.insert("slaves", slaves);
+        mutated.insert("master", masterObject);
+        return mutated;
+    };
+    for (const QJsonObject &invalidStation :
+         {projectWithStationAddress({}, true),
+          projectWithStationAddress(-1, false),
+          projectWithStationAddress(65536, false),
+          projectWithStationAddress(1.5, false),
+          projectWithStationAddress("0x1001", false)}) {
+        QVERIFY(!parseProject(QJsonDocument(invalidStation).toJson(), "Fallback"));
+    }
+
     const auto injectUnknown = [](auto &&self,
                                   const QJsonValue &value,
                                   const QStringList &path) -> QJsonValue {
@@ -619,11 +646,18 @@ void EtherCATProjectTests::testOfflineSlavePersistenceAndUndo()
     QVERIFY(document.isModified());
     QCOMPARE(document.snapshot().slaves.size(), 2);
     QCOMPARE(document.snapshot().slaves.at(0).position, 0);
+    QCOMPARE(document.snapshot().slaves.at(0).stationAddress, quint16(0x1001));
+    QCOMPARE(document.snapshot().slaves.at(1).stationAddress, quint16(0x1002));
     QCOMPARE(document.snapshot().nodes.size(), 5);
 
     QList<Data::OfflineSlaveConfiguration> duplicatePositions = slaves;
     duplicatePositions[0].position = 0;
     QVERIFY(!document.replaceOfflineSlaves(master, duplicatePositions));
+    QCOMPARE(document.snapshot().slaves.size(), 2);
+
+    QList<Data::OfflineSlaveConfiguration> duplicateStationAddresses = slaves;
+    duplicateStationAddresses[0].stationAddress = duplicateStationAddresses[1].stationAddress;
+    QVERIFY(!document.replaceOfflineSlaves(master, duplicateStationAddresses));
     QCOMPARE(document.snapshot().slaves.size(), 2);
 
     document.undoStack()->undo();
@@ -653,6 +687,36 @@ void EtherCATProjectTests::testOfflineSlavePersistenceAndUndo()
     malformedMaster.insert("slaves", malformedSlaves);
     malformedRoot.insert("master", malformedMaster);
     QVERIFY(!parseProject(QJsonDocument(malformedRoot).toJson(), "Fallback"));
+
+    malformed = QJsonDocument::fromJson(*savedContents);
+    malformedRoot = malformed.object();
+    malformedMaster = malformedRoot.value("master").toObject();
+    malformedSlaves = malformedMaster.value("slaves").toArray();
+    duplicate = malformedSlaves.at(1).toObject();
+    duplicate.insert(
+        "stationAddress",
+        malformedSlaves.at(0).toObject().value("stationAddress"));
+    malformedSlaves[1] = duplicate;
+    malformedMaster.insert("slaves", malformedSlaves);
+    malformedRoot.insert("master", malformedMaster);
+    QVERIFY(!parseProject(QJsonDocument(malformedRoot).toJson(), "Fallback"));
+
+    malformed = QJsonDocument::fromJson(*savedContents);
+    malformedRoot = malformed.object();
+    malformedMaster = malformedRoot.value("master").toObject();
+    malformedSlaves = malformedMaster.value("slaves").toArray();
+    for (qsizetype index = 0; index < malformedSlaves.size(); ++index) {
+        QJsonObject unbound = malformedSlaves.at(index).toObject();
+        unbound.insert("stationAddress", 0);
+        malformedSlaves[index] = unbound;
+    }
+    malformedMaster.insert("slaves", malformedSlaves);
+    malformedRoot.insert("master", malformedMaster);
+    const Utils::Result<LoadedProject> unbound
+        = parseProject(QJsonDocument(malformedRoot).toJson(), "Fallback");
+    QVERIFY_RESULT(unbound);
+    for (const Data::OfflineSlaveConfiguration &slave : unbound->snapshot.slaves)
+        QCOMPARE(slave.stationAddress, quint16(0));
 }
 
 void EtherCATProjectTests::testMasterConfigurationPersistenceAndUndo()
@@ -1104,6 +1168,16 @@ void EtherCATProjectTests::testBindingArtifactInvalidationAndUndo()
     QCOMPARE(document.snapshot().slaves.first(), slave);
     QCOMPARE(document.snapshot().masterBindingArtifact, reference);
 
+    Data::OfflineSlaveConfiguration changedStation = slave;
+    ++changedStation.stationAddress;
+    QVERIFY_RESULT(document.replaceOfflineSlaves(master, {changedStation}));
+    QCOMPARE(
+        document.snapshot().masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    document.undoStack()->undo();
+    QCOMPARE(document.snapshot().slaves.first(), slave);
+    QCOMPARE(document.snapshot().masterBindingArtifact, reference);
+
     QVERIFY_RESULT(document.setMasterConfiguration(
         master, {Data::MasterTimingMode::DistributedClocks, 125000}));
     QCOMPARE(
@@ -1300,6 +1374,7 @@ void EtherCATProjectTests::testVersionOneConfigurationMigration()
         QJsonObject slave = slaves.at(index).toObject();
         slave.remove("configuration");
         slave.remove("manualControlEnvelope");
+        slave.remove("stationAddress");
         slaves[index] = slave;
     }
     masterObject.insert("slaves", slaves);
@@ -1343,6 +1418,7 @@ void EtherCATProjectTests::testVersionTwoMasterConfigurationMigration()
     for (qsizetype index = 0; index < slaves.size(); ++index) {
         QJsonObject slave = slaves.at(index).toObject();
         slave.remove("manualControlEnvelope");
+        slave.remove("stationAddress");
         slaves[index] = slave;
     }
     masterObject.insert("slaves", slaves);
@@ -1389,6 +1465,7 @@ void EtherCATProjectTests::testVersionThreeAdapterMigration()
     for (qsizetype index = 0; index < slaves.size(); ++index) {
         QJsonObject slaveObject = slaves.at(index).toObject();
         slaveObject.remove("manualControlEnvelope");
+        slaveObject.remove("stationAddress");
         slaves[index] = slaveObject;
     }
     masterObject.insert("slaves", slaves);
@@ -1449,6 +1526,7 @@ void EtherCATProjectTests::testVersionFourManualControlMigration()
     QJsonArray slaves = masterObject.value("slaves").toArray();
     QJsonObject versionFourSlave = slaves.first().toObject();
     versionFourSlave.remove("manualControlEnvelope");
+    versionFourSlave.remove("stationAddress");
     slaves[0] = versionFourSlave;
     masterObject.insert("slaves", slaves);
     root.insert("master", masterObject);
@@ -1508,6 +1586,13 @@ void EtherCATProjectTests::testVersionFiveBindingArtifactMigration()
         = masterObject.value("semanticBindingArtifact").toObject();
     referenceObject.remove("projectDeviceBindings");
     masterObject.insert("semanticBindingArtifact", referenceObject);
+    QJsonArray slaves = masterObject.value("slaves").toArray();
+    for (qsizetype index = 0; index < slaves.size(); ++index) {
+        QJsonObject slaveObject = slaves.at(index).toObject();
+        slaveObject.remove("stationAddress");
+        slaves[index] = slaveObject;
+    }
+    masterObject.insert("slaves", slaves);
     root.insert("master", masterObject);
     const QByteArray versionFiveContents = QJsonDocument(root).toJson();
     QVERIFY_RESULT(projectFile.writeFileContents(versionFiveContents));
@@ -1541,6 +1626,59 @@ void EtherCATProjectTests::testVersionFiveBindingArtifactMigration()
                                            .toObject();
     QVERIFY(savedReference.value("projectDeviceBindings").isArray());
     QVERIFY(savedReference.value("projectDeviceBindings").toArray().isEmpty());
+}
+
+void EtherCATProjectTests::testVersionSixStationAddressMigration()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath projectFile
+        = temporaryFilePath(directory, "version-six.ecatproject");
+    Data::ProjectSnapshot source = createProjectSnapshot("Version Six", "Test");
+    const Data::NodeId master = masterId(source);
+    source.slaves = offlineSlaves(master);
+    for (const Data::OfflineSlaveConfiguration &slave : std::as_const(source.slaves))
+        source.nodes.append({slave.id, master, Data::ProjectNodeKind::Slave, slave.name});
+    source.masterBindingArtifact = bindingArtifact(source.slaves);
+
+    QJsonObject root = QJsonDocument::fromJson(serializeProject(source)).object();
+    root.insert("formatVersion", 6);
+    QJsonObject masterObject = root.value("master").toObject();
+    QJsonArray slaves = masterObject.value("slaves").toArray();
+    for (qsizetype index = 0; index < slaves.size(); ++index) {
+        QJsonObject slaveObject = slaves.at(index).toObject();
+        slaveObject.remove("stationAddress");
+        slaves[index] = slaveObject;
+    }
+    masterObject.insert("slaves", slaves);
+    root.insert("master", masterObject);
+    const QByteArray versionSixContents = QJsonDocument(root).toJson();
+    QVERIFY_RESULT(projectFile.writeFileContents(versionSixContents));
+
+    EtherCATProjectDocument document;
+    QVERIFY_RESULT(document.load(projectFile));
+    QVERIFY(document.snapshot().migrated);
+    QVERIFY(document.isModified());
+    QCOMPARE(document.snapshot().formatVersion, Constants::CURRENT_FORMAT_VERSION);
+    QCOMPARE(document.snapshot().slaves.size(), 2);
+    for (const Data::OfflineSlaveConfiguration &slave : document.snapshot().slaves)
+        QCOMPARE(slave.stationAddress, quint16(0));
+
+    QVERIFY_RESULT(document.save());
+    QVERIFY(document.migrationBackupPath().toUrlishString().contains(".v6.bak"));
+    const Utils::Result<QByteArray> backup = document.migrationBackupPath().fileContents();
+    QVERIFY_RESULT(backup);
+    QCOMPARE(*backup, versionSixContents);
+
+    const QJsonArray savedSlaves = QJsonDocument::fromJson(*projectFile.fileContents())
+                                       .object()
+                                       .value("master")
+                                       .toObject()
+                                       .value("slaves")
+                                       .toArray();
+    QCOMPARE(savedSlaves.size(), 2);
+    for (const QJsonValue &slave : savedSlaves)
+        QCOMPARE(slave.toObject().value("stationAddress").toInt(-1), 0);
 }
 
 void EtherCATProjectTests::testOfflineConfigurationCorruption()

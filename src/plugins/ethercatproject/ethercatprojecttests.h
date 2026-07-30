@@ -29,6 +29,7 @@ private slots:
     void testVersionThreeAdapterMigration();
     void testVersionFourManualControlMigration();
     void testVersionFiveBindingArtifactMigration();
+    void testVersionSixStationAddressMigration();
     void testOfflineConfigurationCorruption();
     void testAdapterSelectionCorruption();
     void testManualControlEnvelopeCorruption();

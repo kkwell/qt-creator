@@ -8,6 +8,7 @@
 
 #include <utils/fileutils.h>
 
+#include <QHash>
 #include <QSet>
 #include <QSignalBlocker>
 #include <QUndoCommand>
@@ -397,7 +398,16 @@ static Utils::Result<> validateProjectConfigurations(const Data::ProjectSnapshot
     for (const Data::ProjectNodeSnapshot &node : snapshot.nodes)
         ids.insert(node.id);
 
+    QHash<Data::NodeId, QSet<quint16>> stationAddressesByMaster;
     for (const Data::OfflineSlaveConfiguration &slave : snapshot.slaves) {
+        if (slave.stationAddress) {
+            QSet<quint16> &stationAddresses = stationAddressesByMaster[slave.masterId];
+            if (stationAddresses.contains(slave.stationAddress)) {
+                return Utils::ResultError(
+                    Tr::tr("Non-zero EtherCAT station addresses must be unique per master."));
+            }
+            stationAddresses.insert(slave.stationAddress);
+        }
         if (!slave.esiSha256.isEmpty() && slave.esiSha256.size() != 32) {
             return Utils::ResultError(
                 Tr::tr("ESI SHA-256 digests must contain exactly 32 bytes."));
@@ -664,6 +674,7 @@ Utils::Result<> EtherCATProjectDocument::replaceOfflineSlaves(
     QList<Data::OfflineSlaveConfiguration> normalized = slaves;
     QSet<Data::NodeId> ids;
     QSet<int> positions;
+    QSet<quint16> stationAddresses;
     for (Data::OfflineSlaveConfiguration &slave : normalized) {
         slave.name = slave.name.trimmed();
         if (slave.id.isNull())
@@ -676,6 +687,10 @@ Utils::Result<> EtherCATProjectDocument::replaceOfflineSlaves(
             return Utils::ResultError(Tr::tr("Offline slave node IDs must be unique."));
         if (slave.position < 0 || positions.contains(slave.position))
             return Utils::ResultError(Tr::tr("Offline slave positions must be unique and valid."));
+        if (slave.stationAddress && stationAddresses.contains(slave.stationAddress)) {
+            return Utils::ResultError(
+                Tr::tr("Non-zero EtherCAT station addresses must be unique per master."));
+        }
         if (slave.name.isEmpty())
             return Utils::ResultError(Tr::tr("Offline slave names cannot be empty."));
         if (slave.identity.vendorId == 0 || slave.identity.productCode == 0) {
@@ -704,6 +719,8 @@ Utils::Result<> EtherCATProjectDocument::replaceOfflineSlaves(
         }
         ids.insert(slave.id);
         positions.insert(slave.position);
+        if (slave.stationAddress)
+            stationAddresses.insert(slave.stationAddress);
     }
     std::sort(normalized.begin(), normalized.end(), [](const auto &left, const auto &right) {
         return left.position < right.position;

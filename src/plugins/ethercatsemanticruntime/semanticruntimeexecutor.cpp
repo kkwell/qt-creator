@@ -158,7 +158,7 @@ static void rejectContext(
     context.bindingVerification.detail = context.detail;
 }
 
-static bool explicitProjectDevicePositionsMatch(
+static bool explicitProjectDeviceTopologyMatches(
     const Data::ProjectSnapshot &project,
     const VerifiedRuntimePackageEvidence &evidence,
     QString *detail)
@@ -174,10 +174,12 @@ static bool explicitProjectDevicePositionsMatch(
                 return candidate.id == mapping.slaveId;
             });
         if (!signedDevice || slave == project.slaves.cend() || slave->position < 0
-            || slave->position != int(signedDevice->position)) {
+            || slave->position != int(signedDevice->position) || !slave->stationAddress
+            || slave->stationAddress != signedDevice->stationAddress) {
             if (detail) {
                 *detail = QStringLiteral(
-                    "An explicit project-device mapping does not match its signed bus position.");
+                    "An explicit project-device mapping does not match its signed bus position "
+                    "or station address.");
             }
             return false;
         }
@@ -2427,7 +2429,7 @@ Data::SemanticRuntimeContext SemanticRuntimeExecutor::buildContext(
     }
 
     QString projectDeviceDetail;
-    if (!explicitProjectDevicePositionsMatch(project, *evidence, &projectDeviceDetail)) {
+    if (!explicitProjectDeviceTopologyMatches(project, *evidence, &projectDeviceDetail)) {
         rejectContext(
             context, ContextIssue::SemanticBindingResolutionFailed, projectDeviceDetail);
         return context;

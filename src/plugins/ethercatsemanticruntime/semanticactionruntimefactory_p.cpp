@@ -289,7 +289,9 @@ Utils::Result<QHash<QString, Data::NodeId>> explicitProjectDeviceMap(
             || topology->adapterId != device->adapterId
             || topology->adapterVersion != device->adapterVersion
             || topology->adapterSha256 != device->adapterSha256
-            || topology->esiSha256 != device->esiSha256 || slave->position != device->position
+            || topology->esiSha256 != device->esiSha256 || !slave->stationAddress
+            || slave->stationAddress != device->stationAddress
+            || slave->position != device->position
             || slave->identity.vendorId != topology->vendorId
             || slave->identity.productCode != topology->productCode
             || (topology->revision && slave->identity.revisionNumber != *topology->revision)

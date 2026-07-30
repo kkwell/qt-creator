@@ -49593,6 +49593,10 @@ Source period: %2 ms; UI publish period: %3 ms
         <translation>离线从站位置必须唯一且有效。</translation>
     </message>
     <message>
+        <source>Non-zero EtherCAT station addresses must be unique per master.</source>
+        <translation>同一主站下的非零 EtherCAT 站地址必须唯一。</translation>
+    </message>
+    <message>
         <source>Offline slave names cannot be empty.</source>
         <translation>离线从站名称不能为空。</translation>
     </message>
@@ -49723,6 +49727,10 @@ Source period: %2 ms; UI publish period: %3 ms
     <message>
         <source>Offline slave positions must be unique.</source>
         <translation>离线从站位置必须唯一。</translation>
+    </message>
+    <message>
+        <source>Non-zero EtherCAT station addresses must be unique.</source>
+        <translation>非零 EtherCAT 站地址必须唯一。</translation>
     </message>
     <message>
         <source>%1 requires non-zero Vendor ID and Product Code values.</source>
@@ -50869,6 +50877,10 @@ Object Id: %1</source>
     <message>
         <source>Station address</source>
         <translation>站地址</translation>
+    </message>
+    <message>
+        <source>Unbound — scan required</source>
+        <translation>未绑定 — 需要扫描</translation>
     </message>
     <message>
         <source>AL state</source>
@@ -54259,6 +54271,14 @@ Drop a supported ESI device here to append it to this offline Master.</source>
     <message>
         <source>The current bus scan contains an invalid or duplicate position.</source>
         <translation>当前总线扫描包含无效或重复的位置。</translation>
+    </message>
+    <message>
+        <source>The detected EtherCAT device at bus position %1 has station address 0.</source>
+        <translation>总线位置 %1 的 EtherCAT 设备站地址为 0。</translation>
+    </message>
+    <message>
+        <source>Station address 0x%1 is used by bus positions %2 and %3.</source>
+        <translation>站地址 0x%1 被总线位置 %2 和 %3 重复使用。</translation>
     </message>
     <message>
         <source>A detected EtherCAT device has an incomplete identity.</source>

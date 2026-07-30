@@ -343,13 +343,14 @@ static TestProjectFile writeProjectWithSlave(
         {"revisionNumber", double(device.identity.revisionNumber)},
         {"serialNumber", 17},
         {"alias", 3},
+        {"stationAddress", 0},
         {"deviceDescriptionId", device.id.toString()},
         {"manualControlEnvelope", manualControlEnvelope},
         {"configuration",
          QJsonObject{{"processData", processData}, {"startup", startup}, {"dc", dc}}}};
     const QJsonObject root{
         {"format", "ethercat-project"},
-        {"formatVersion", 6},
+        {"formatVersion", 7},
         {"project",
          QJsonObject{
              {"id", result.projectId.toString()},
@@ -5205,15 +5206,21 @@ void EtherCATWorkbenchTests::testEditableConfiguredSlaveGeneralWorkflow()
     QLineEdit *id = page->findChild<QLineEdit *>("EtherCATGeneralId");
     QLineEdit *objectId = page->findChild<QLineEdit *>("EtherCATGeneralObjectId");
     QLineEdit *type = page->findChild<QLineEdit *>("EtherCATGeneralType");
+    QTreeWidget *propertyTree = page->findChild<QTreeWidget *>("EtherCATWorkbenchPageTree");
     QVERIFY(name);
     QVERIFY(title);
     QVERIFY(id);
     QVERIFY(objectId);
     QVERIFY(type);
+    QVERIFY(propertyTree);
     QCOMPARE(name->text(), QString("Configured Servo"));
     QCOMPARE(id->text(), QString("1"));
     QCOMPARE(objectId->text(), file.slaveId.toString());
     QCOMPARE(type->text(), QString("AX5000"));
+    const QList<QTreeWidgetItem *> stationAddressItems
+        = propertyTree->findItems(Tr::tr("Station address"), Qt::MatchExactly, 0);
+    QCOMPARE(stationAddressItems.size(), 1);
+    QCOMPARE(stationAddressItems.constFirst()->text(1), Tr::tr("Unbound — scan required"));
     QVERIFY(!name->isReadOnly());
     QVERIFY(id->isReadOnly());
     QVERIFY(objectId->isReadOnly());
@@ -5702,7 +5709,7 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
     QCOMPARE(name->text(), QString("Process Data Workflow"));
     QCOMPARE(id->text(), file.projectId.toString());
     QCOMPARE(type->text(), Tr::tr("Offline EtherCAT Engineering Project"));
-    QCOMPARE(formatVersion->text(), QString("6"));
+    QCOMPARE(formatVersion->text(), QString("7"));
     QCOMPARE(createdBy->text(), QString("Workbench Test"));
     QCOMPARE(validity->text(), Tr::tr("Valid"));
     QCOMPARE(migration->text(), Tr::tr("Current format"));
@@ -6323,7 +6330,7 @@ void EtherCATWorkbenchTests::testEditableTargetGeneralWorkflow()
     QVERIFY(!engineering->text().isEmpty());
     QCOMPARE(targetRuntime->text(), QString("Not assigned (offline)"));
     QCOMPARE(localRuntime->text(), QString("Not available (phase 1)"));
-    QCOMPARE(projectVersion->text(), QString("Format 6 · Workbench Test"));
+    QCOMPARE(projectVersion->text(), QString("Format 7 · Workbench Test"));
     QVERIFY(!pinVersion->isEnabled());
     QVERIFY(!pinVersion->accessibleDescription().isEmpty());
     QVERIFY(!name->accessibleName().isEmpty());
@@ -9745,7 +9752,7 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QTRY_COMPARE(name->text(), QString("Valid EtherCAT Project"));
     QVERIFY(!name->isReadOnly());
     QCOMPARE(id->text(), valid.projectId.toString());
-    QCOMPARE(formatVersion->text(), QString("6"));
+    QCOMPARE(formatVersion->text(), QString("7"));
     QCOMPARE(validity->text(), QString("Valid"));
     QCOMPARE(target->text(), QString("Offline Controller"));
     QCOMPARE(master->text(), QString("EtherCAT Master"));
@@ -23006,6 +23013,7 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     customizedSlave["name"] = "Customized Servo";
     customizedSlave["serialNumber"] = 7;
     customizedSlave["alias"] = 9;
+    customizedSlave["stationAddress"] = 0x1011;
     QJsonObject customizedConfiguration = customizedSlave.value("configuration").toObject();
     customizedConfiguration["dc"] = QJsonObject{
         {"enabled", true},
@@ -23028,6 +23036,7 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     removedSlave["revisionNumber"] = double(0x00000001);
     removedSlave["serialNumber"] = 33;
     removedSlave["alias"] = 0;
+    removedSlave["stationAddress"] = 0x1014;
     removedSlave["deviceDescriptionId"] = QString();
     slaves[0] = customizedSlave;
     slaves.append(removedSlave);
@@ -23066,6 +23075,8 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     const Data::OfflineSlaveConfiguration removed = project.slaves.at(1);
     QCOMPARE(preserved.name, QString("Customized Servo"));
     QCOMPARE(preserved.alias, quint16(9));
+    QCOMPARE(preserved.stationAddress, quint16(0x1011));
+    QCOMPARE(removed.stationAddress, quint16(0x1014));
     QVERIFY(preserved.dc.enabled);
     QCOMPARE(preserved.dc.modeName, QString("Customized DC"));
 
@@ -23092,6 +23103,34 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     snapshot.state = Data::ControllerConnectionState::Connected;
     snapshot.protocolVersion = {1, 10};
     snapshot.sessionGeneration = 1;
+
+    Data::ControllerTopologySnapshot zeroStationTopology = topology;
+    zeroStationTopology.slaves.first().stationAddress = 0;
+    snapshot.topology = zeroStationTopology;
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(!controller.canApplyCurrentBusToProject());
+    const Utils::Result<> zeroStationApply = controller.applyCurrentBusToProject();
+    QVERIFY(!zeroStationApply);
+    QCOMPARE(
+        zeroStationApply.error(),
+        Tr::tr("The detected EtherCAT device at bus position %1 has station address 0.")
+            .arg(0));
+
+    Data::ControllerTopologySnapshot duplicateStationTopology = topology;
+    duplicateStationTopology.slaves[1].stationAddress
+        = duplicateStationTopology.slaves[0].stationAddress;
+    snapshot.topology = duplicateStationTopology;
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(!controller.canApplyCurrentBusToProject());
+    const Utils::Result<> duplicateStationApply = controller.applyCurrentBusToProject();
+    QVERIFY(!duplicateStationApply);
+    QCOMPARE(
+        duplicateStationApply.error(),
+        Tr::tr("Station address 0x%1 is used by bus positions %2 and %3.")
+            .arg(0x1001, 4, 16, QLatin1Char('0'))
+            .arg(0)
+            .arg(1));
+
     snapshot.topology = topology;
     provider.publishSnapshot(snapshot);
     QTRY_VERIFY(controller.canApplyCurrentBusToProject());
@@ -23115,11 +23154,13 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     QCOMPARE(project.slaves.at(0).name, preserved.name);
     QCOMPARE(project.slaves.at(0).serialNumber, quint32(77));
     QCOMPARE(project.slaves.at(0).alias, preserved.alias);
+    QCOMPARE(project.slaves.at(0).stationAddress, quint16(0x1001));
     QCOMPARE(project.slaves.at(0).processData, preserved.processData);
     QCOMPARE(project.slaves.at(0).dc, preserved.dc);
 
     QCOMPARE(project.slaves.at(1).position, 1);
     QCOMPARE(project.slaves.at(1).serialNumber, quint32(88));
+    QCOMPARE(project.slaves.at(1).stationAddress, quint16(0x1002));
     QCOMPARE(project.slaves.at(1).deviceDescriptionId, matchingSummary->id);
     QVERIFY(!project.slaves.at(1).processData.pdos.isEmpty());
     QVERIFY(!project.slaves.at(1).startup.parameters.isEmpty());
@@ -23127,6 +23168,7 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
 
     QCOMPARE(project.slaves.at(2).position, 2);
     QCOMPARE(project.slaves.at(2).serialNumber, quint32(99));
+    QCOMPARE(project.slaves.at(2).stationAddress, quint16(0x1003));
     QVERIFY(project.slaves.at(2).deviceDescriptionId.isNull());
     QVERIFY(project.slaves.at(2).processData.pdos.isEmpty());
     QVERIFY(project.slaves.at(2).startup.parameters.isEmpty());

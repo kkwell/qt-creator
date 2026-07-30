@@ -19,6 +19,7 @@
 
 #include <utils/qtcassert.h>
 
+#include <QHash>
 #include <QScopedValueRollback>
 #include <QSet>
 #include <QStringList>
@@ -391,6 +392,7 @@ static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
         [](const Data::ControllerTopologySlave &left,
            const Data::ControllerTopologySlave &right) { return left.position < right.position; });
     QSet<quint32> positions;
+    QHash<quint16, quint32> stationPositions;
     for (const Data::ControllerTopologySlave &slave : std::as_const(sortedTopology)) {
         if (slave.position > quint32(std::numeric_limits<int>::max())
             || positions.contains(slave.position)) {
@@ -401,7 +403,22 @@ static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
             return Utils::ResultError(
                 Tr::tr("A detected EtherCAT device has an incomplete identity."));
         }
+        if (!slave.stationAddress) {
+            return Utils::ResultError(
+                Tr::tr(
+                    "The detected EtherCAT device at bus position %1 has station address 0.")
+                    .arg(slave.position));
+        }
+        const auto duplicateStation = stationPositions.constFind(slave.stationAddress);
+        if (duplicateStation != stationPositions.cend()) {
+            return Utils::ResultError(
+                Tr::tr("Station address 0x%1 is used by bus positions %2 and %3.")
+                    .arg(slave.stationAddress, 4, 16, QLatin1Char('0'))
+                    .arg(*duplicateStation)
+                    .arg(slave.position));
+        }
         positions.insert(slave.position);
+        stationPositions.insert(slave.stationAddress, slave.position);
     }
 
     CurrentBusApplyPlan plan;
@@ -468,6 +485,7 @@ static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
                 Tr::tr("Unknown EtherCAT Device %1").arg(position + 1),
                 plan.candidateSlaves);
         }
+        candidate.stationAddress = topologySlave.stationAddress;
 
         if (device)
             ++plan.esiMatches;

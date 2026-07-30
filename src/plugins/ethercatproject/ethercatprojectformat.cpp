@@ -1627,6 +1627,7 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
     const bool parseConfiguration = version >= 2;
     const bool parseAdapterData = version >= 4;
     const bool parseManualControl = version >= 5;
+    const bool parseStationAddress = version >= 7;
     const QJsonValue slavesValue = masterObject.value("slaves");
     if (slavesValue.isUndefined() && !parseConfiguration)
         return QList<Data::OfflineSlaveConfiguration>();
@@ -1635,6 +1636,7 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
 
     QList<Data::OfflineSlaveConfiguration> slaves;
     QSet<int> positions;
+    QSet<quint16> stationAddresses;
     const QJsonArray array = slavesValue.toArray();
     slaves.reserve(array.size());
     for (qsizetype index = 0; index < array.size(); ++index) {
@@ -1662,6 +1664,8 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
         }
         if (parseManualControl)
             slaveKeys.insert("manualControlEnvelope");
+        if (parseStationAddress)
+            slaveKeys.insert("stationAddress");
         if (const Utils::Result<> shape = rejectUnknownKeys(object, slaveKeys, objectName);
             !shape) {
             return Utils::ResultError(shape.error());
@@ -1693,6 +1697,21 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
                                   : !serialNumber   ? serialNumber.error()
                                                     : alias.error();
             return Utils::ResultError(error);
+        }
+        quint16 stationAddress = 0;
+        if (parseStationAddress) {
+            const auto parsedStationAddress = parseUnsigned(
+                object,
+                "stationAddress",
+                objectName,
+                std::numeric_limits<quint16>::max());
+            if (!parsedStationAddress)
+                return Utils::ResultError(parsedStationAddress.error());
+            stationAddress = quint16(*parsedStationAddress);
+            if (stationAddress && stationAddresses.contains(stationAddress)) {
+                return Utils::ResultError(
+                    Tr::tr("Non-zero EtherCAT station addresses must be unique."));
+            }
         }
         if (*vendorId == 0 || *productCode == 0) {
             return Utils::ResultError(
@@ -1781,6 +1800,8 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
         }
 
         positions.insert(int(*position));
+        if (stationAddress)
+            stationAddresses.insert(stationAddress);
         slaves.append(
             {*id,
              masterId,
@@ -1795,7 +1816,8 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
              dc,
              esiSha256,
              adapterSelection,
-             manualControlEnvelope});
+             manualControlEnvelope,
+             stationAddress});
     }
     std::sort(slaves.begin(), slaves.end(), [](const auto &left, const auto &right) {
         return left.position < right.position;
@@ -1890,6 +1912,7 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
         return parseVersionZero(root, fallbackName);
     }
     if (version != 1 && version != 2 && version != 3 && version != 4 && version != 5
+        && version != 6
         && version != Constants::CURRENT_FORMAT_VERSION) {
         return Utils::ResultError(
             Tr::tr("Unsupported EtherCAT project format version %1.").arg(version));
@@ -2361,6 +2384,7 @@ QByteArray serializeProject(const Data::ProjectSnapshot &snapshot)
         object.insert("revisionNumber", double(slave.identity.revisionNumber));
         object.insert("serialNumber", double(slave.serialNumber));
         object.insert("alias", slave.alias);
+        object.insert("stationAddress", slave.stationAddress);
         if (!slave.deviceDescriptionId.isNull())
             object.insert("deviceDescriptionId", slave.deviceDescriptionId.toString());
         if (!slave.esiSha256.isEmpty())

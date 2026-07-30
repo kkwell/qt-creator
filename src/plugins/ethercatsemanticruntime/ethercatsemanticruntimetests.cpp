@@ -1078,7 +1078,7 @@ static Data::ProjectSnapshot factoryProject(const VerifiedRuntimePackageEvidence
     Data::ProjectSnapshot project;
     project.id = Data::NodeId::create();
     project.name = QStringLiteral("API-037 semantic binding factory");
-    project.formatVersion = 6;
+    project.formatVersion = 7;
     project.createdBy = QStringLiteral("EtherCATSemanticRuntimeTests");
     project.valid = true;
 
@@ -1106,6 +1106,7 @@ static Data::ProjectSnapshot factoryProject(const VerifiedRuntimePackageEvidence
                        && candidate.stationAddress == device.stationAddress;
             });
         if (topology != artifact.topologyInstances.cend()) {
+            slave.stationAddress = topology->stationAddress;
             slave.identity.vendorId = topology->vendorId;
             slave.identity.productCode = topology->productCode;
             slave.identity.revisionNumber = topology->revision.value_or(0);
@@ -4822,6 +4823,16 @@ void EtherCATSemanticRuntimeTests::testReadOnlySemanticBindingFactoryRejectsMism
     QVERIFY_RESULT(buildReadOnlySemanticBindingCandidates(
         u"embed-labs.product-api", project, evidence, catalog, attestation));
 
+    Data::ProjectSnapshot unboundStation = project;
+    unboundStation.slaves.first().stationAddress = 0;
+    QVERIFY(!buildReadOnlySemanticBindingCandidates(
+        u"embed-labs.product-api", unboundStation, evidence, catalog, attestation));
+
+    Data::ProjectSnapshot wrongStation = project;
+    ++wrongStation.slaves.first().stationAddress;
+    QVERIFY(!buildReadOnlySemanticBindingCandidates(
+        u"embed-labs.product-api", wrongStation, evidence, catalog, attestation));
+
     Data::ProjectSnapshot missingMapping = project;
     missingMapping.masterBindingArtifact.projectDeviceBindings.removeLast();
     QVERIFY(!buildReadOnlySemanticBindingCandidates(
@@ -5329,6 +5340,26 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactoryFailsClosed()
     QVERIFY(!buildSemanticActionRuntimeStates(
         u"embed-labs.product-api",
         missingDevice,
+        evidence,
+        *candidates,
+        adapterManifests,
+        gates));
+
+    Data::ProjectSnapshot unboundStation = project;
+    unboundStation.slaves.first().stationAddress = 0;
+    QVERIFY(!buildSemanticActionRuntimeStates(
+        u"embed-labs.product-api",
+        unboundStation,
+        evidence,
+        *candidates,
+        adapterManifests,
+        gates));
+
+    Data::ProjectSnapshot wrongStation = project;
+    ++wrongStation.slaves.first().stationAddress;
+    QVERIFY(!buildSemanticActionRuntimeStates(
+        u"embed-labs.product-api",
+        wrongStation,
         evidence,
         *candidates,
         adapterManifests,
@@ -6262,6 +6293,17 @@ void EtherCATSemanticRuntimeTests::testExecutorRejectsUnauthorizedManualActionBe
     const Utils::Result<> initialized = fixture.initialize(true);
     QVERIFY_RESULT(initialized);
     const Data::ProjectSnapshot authorizedProject = fixture.project;
+
+    Data::ProjectSnapshot unboundProject = authorizedProject;
+    unboundProject.slaves.first().stationAddress = 0;
+    fixture.projects.changeProject(unboundProject);
+    const Data::SemanticRuntimeContext unboundContext
+        = fixture.executor->contexts().constFirst();
+    QVERIFY(!unboundContext.complete);
+    QVERIFY(unboundContext.actionStates.isEmpty());
+    fixture.project = authorizedProject;
+    fixture.projects.changeProject(fixture.project);
+
     QVERIFY(factoryManualSlave(fixture.project));
     factoryManualSlave(fixture.project)->manualControlEnvelope.enabled = false;
     fixture.projects.changeProject(fixture.project);

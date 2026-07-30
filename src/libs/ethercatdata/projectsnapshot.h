@@ -33,6 +33,7 @@ struct ETHERCATDATA_EXPORT OfflineSlaveConfiguration
     QByteArray esiSha256;
     DeviceAdapterProjectSelection adapterSelection;
     ManualControlEnvelope manualControlEnvelope = {};
+    quint16 stationAddress = 0;
 
     friend bool operator==(const OfflineSlaveConfiguration &, const OfflineSlaveConfiguration &)
         = default;

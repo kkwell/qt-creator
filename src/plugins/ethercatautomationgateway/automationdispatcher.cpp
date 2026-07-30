@@ -229,6 +229,7 @@ static QJsonObject topologyObject(const Core::AutomationContextSnapshot &context
                 {"identity", identityObject(slave.identity)},
                 {"serial", QString::number(slave.serialNumber)},
                 {"alias", int(slave.alias)},
+                {"stationAddress", int(slave.stationAddress)},
             });
         }
     }
@@ -323,6 +324,7 @@ static QJsonObject deviceObject(const Core::AutomationContextSnapshot &context, 
             {"identity", identityObject(slave.identity)},
             {"serial", QString::number(slave.serialNumber)},
             {"alias", int(slave.alias)},
+            {"stationAddress", int(slave.stationAddress)},
             {"model",
              deviceDescriptionSummary(
                  descriptionFor(context, slave.deviceDescriptionId, slave.identity))},

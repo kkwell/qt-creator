@@ -249,7 +249,7 @@ static Core::AutomationContextSnapshot mockContext()
     context.identitySource = "ide-project-master";
     context.project.id = context.scope.projectId;
     context.project.name = "Mock Packaging Line";
-    context.project.formatVersion = 1;
+    context.project.formatVersion = 7;
     context.project.createdBy = "Gateway Tests";
     context.project.valid = true;
     const Data::NodeId targetId = Data::NodeId::create();
@@ -282,6 +282,7 @@ static Core::AutomationContextSnapshot mockContext()
     configured.identity = {0x00000002, 0x10000001, 0x00000003};
     configured.serialNumber = 17;
     configured.alias = 4;
+    configured.stationAddress = 0x1001;
     configured.name = "Mock Digital I/O";
     configured.deviceDescriptionId = descriptionId;
     context.project.slaves = {configured};
@@ -393,23 +394,25 @@ static Core::AutomationContextSnapshot mockContext()
     description.rxPdos = {
         {
             0x1600,
+            false,
             "Outputs",
             Data::PdoDirection::Rx,
             2,
             true,
             true,
-            {{0x7000, 1, "Output 1", 1, Data::EtherCATDataType::Boolean, "BOOL"}},
+            {{0x7000, false, 1, "Output 1", 1, Data::EtherCATDataType::Boolean, "BOOL"}},
         },
     };
     description.txPdos = {
         {
             0x1a00,
+            false,
             "Inputs",
             Data::PdoDirection::Tx,
             3,
             true,
             true,
-            {{0x6000, 1, "Input 1", 1, Data::EtherCATDataType::Boolean, "BOOL"}},
+            {{0x6000, false, 1, "Input 1", 1, Data::EtherCATDataType::Boolean, "BOOL"}},
         },
     };
     description.coe.supported = true;
@@ -935,6 +938,14 @@ void EtherCATAutomationGatewayTests::testSharedSnapshotUpdatesWithoutGatewayCach
         != controller.value("contextHash").toString());
     QCOMPARE(service.readCount, 2);
 
+    Core::AutomationContextSnapshot offlineStation = initial;
+    offlineStation.scan.reset();
+    Core::AutomationContextSnapshot changedStation = offlineStation;
+    ++changedStation.project.slaves.first().stationAddress;
+    QVERIFY(
+        AutomationDispatcher::snapshotHash(offlineStation)
+        != AutomationDispatcher::snapshotHash(changedStation));
+
     service.current.clear();
     const QJsonObject closed = dispatcher.dispatch(
         "controller.get-state",
@@ -1029,6 +1040,7 @@ void EtherCATAutomationGatewayTests::testVendorDetailsAreNotProjected()
     error.summary = "SECRET_PROVIDER_CLASS";
     error.detail = "SECRET_RAW_REGISTER";
     context.connection.lastError = error;
+    context.scan.reset();
     context.deviceDescriptions[0].sourcePath = "SECRET_ESI_LOCAL_PATH";
     context.deviceDescriptions[0].startupParameters = {
         {"PS", 0x2000, 1, QByteArray::fromHex("deadbeef"), "SECRET_SDO"},
@@ -1050,6 +1062,22 @@ void EtherCATAutomationGatewayTests::testVendorDetailsAreNotProjected()
     deviceArguments.insert("position", 0);
     responses.append(
         dispatcher.dispatch("controller.get-device", deviceArguments, {"mcp", {}, {}, {}}));
+    const QJsonObject topology = responses.at(1)
+                                     .toObject()
+                                     .value("data")
+                                     .toObject()
+                                     .value("topology")
+                                     .toObject();
+    QCOMPARE(
+        topology.value("slaves").toArray().first().toObject().value("stationAddress").toInt(),
+        0x1001);
+    const QJsonObject device = responses.last()
+                                   .toObject()
+                                   .value("data")
+                                   .toObject()
+                                   .value("device")
+                                   .toObject();
+    QCOMPARE(device.value("stationAddress").toInt(), 0x1001);
     const QByteArray encoded = QJsonDocument(responses).toJson(QJsonDocument::Compact);
     const QList<QByteArray> forbiddenValues{
         "SECRET_PRODUCT_API_CHANNEL",

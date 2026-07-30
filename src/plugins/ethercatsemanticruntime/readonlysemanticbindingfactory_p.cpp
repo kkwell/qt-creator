@@ -267,7 +267,8 @@ Utils::Result<QHash<QString, Data::NodeId>> projectDeviceMap(
             return candidateError(
                 QString::fromLatin1("the signed device topology is inconsistent"));
         }
-        if (slave->position != device->position
+        if (!slave->stationAddress || slave->stationAddress != device->stationAddress
+            || slave->position != device->position
             || slave->identity.vendorId != topology->vendorId
             || slave->identity.productCode != topology->productCode
             || (topology->revision

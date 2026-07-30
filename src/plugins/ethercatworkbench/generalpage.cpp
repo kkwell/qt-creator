@@ -743,6 +743,10 @@ void GeneralPage::setContext(const Core::PropertyPageContext &context)
         if (!configuredSlave)
             addRow({Tr::tr("Owner slave"), offlineSlave->name});
         addRow({Tr::tr("Position"), QString::number(offlineSlave->position)});
+        addRow(
+            {Tr::tr("Station address"),
+             offlineSlave->stationAddress ? hexValue(offlineSlave->stationAddress, 4)
+                                          : Tr::tr("Unbound — scan required")});
         addRow({Tr::tr("Vendor ID"), hexValue(offlineSlave->identity.vendorId, 8)});
         addRow({Tr::tr("Product Code"), hexValue(offlineSlave->identity.productCode, 8)});
         addRow({Tr::tr("Revision"), hexValue(offlineSlave->identity.revisionNumber, 8)});
