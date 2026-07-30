@@ -569,6 +569,45 @@ static bool controllerPackageIsActive(const Data::ControllerConnectionSnapshot &
            && snapshot.package->controllerBootId == snapshot.session->bootId;
 }
 
+struct ControllerStartCommandSelection
+{
+    std::optional<Data::ControllerControlCommand> command;
+    QString unavailableReason;
+};
+
+static ControllerStartCommandSelection controllerStartCommandSelection(
+    Core::ProjectService *projectService, const Data::ControllerConnectionScope &scope)
+{
+    if (!projectService)
+        return {{}, Tr::tr("The EtherCAT project service is unavailable.")};
+
+    const std::optional<Data::ProjectSnapshot> project = projectService->project(scope.projectId);
+    if (!project || !project->valid)
+        return {{}, Tr::tr("The EtherCAT project is not available.")};
+    const auto master = std::find_if(
+        project->nodes.cbegin(),
+        project->nodes.cend(),
+        [&scope](const Data::ProjectNodeSnapshot &node) {
+            return node.id == scope.masterId && node.kind == Data::ProjectNodeKind::Master;
+        });
+    if (master == project->nodes.cend())
+        return {{}, Tr::tr("The EtherCAT master is not available.")};
+
+    using Command = Data::ControllerControlCommand;
+    switch (project->masterConfiguration.timingMode) {
+    case Data::MasterTimingMode::FreeRun:
+        return {Command::StartFreeRun, {}};
+    case Data::MasterTimingMode::DistributedClocks:
+        return {Command::StartDistributedClocks, {}};
+    case Data::MasterTimingMode::Unassigned:
+        return {
+            {},
+            Tr::tr(
+                "Select FreeRun or Distributed Clocks for the EtherCAT Master before running.")};
+    }
+    return {{}, Tr::tr("The EtherCAT master timing mode is unsupported.")};
+}
+
 static bool hasUnmanagedEtherCATProject(Core::ProjectService *projectService)
 {
     if (!projectService)
@@ -2178,14 +2217,22 @@ std::optional<Data::ControllerControlCommand> WorkbenchController::quickControll
     using ServiceState = Data::ControllerServiceState;
     const ServiceState serviceState = snapshot.controllerState->serviceState;
     switch (action) {
-    case ControllerQuickControlAction::Run:
-        if (serviceState == ServiceState::Shutdown)
-            return Command::RestoreActivePackage;
-        if (serviceState == ServiceState::OperationalSafe)
-            return Command::Start;
+    case ControllerQuickControlAction::Run: {
+        if (serviceState != ServiceState::Shutdown
+            && serviceState != ServiceState::OperationalSafe
+            && serviceState != ServiceState::Paused) {
+            break;
+        }
+        const ControllerStartCommandSelection startSelection
+            = controllerStartCommandSelection(m_projectService, scope);
+        if (!startSelection.command)
+            break;
         if (serviceState == ServiceState::Paused)
             return Command::Resume;
-        break;
+        if (serviceState == ServiceState::Shutdown)
+            return Command::RestoreActivePackage;
+        return startSelection.command;
+    }
     case ControllerQuickControlAction::Debug:
         if (serviceState == ServiceState::Running)
             return Command::Pause;
@@ -2218,10 +2265,18 @@ QString WorkbenchController::quickControllerControlUnavailableReason(
         return reason;
     }
 
-    if (action == ControllerQuickControlAction::Run && m_projectService) {
-        const std::optional<Data::ProjectSnapshot> project = m_projectService->project(
-            scope.projectId);
-        if (project && project->masterConfiguration.timingMode == Data::MasterTimingMode::FreeRun) {
+    std::optional<Data::ControllerControlCommand> selectedStartCommand;
+    if (action == ControllerQuickControlAction::Run && snapshot.controllerState
+        && (snapshot.controllerState->serviceState == Data::ControllerServiceState::Shutdown
+            || snapshot.controllerState->serviceState
+                   == Data::ControllerServiceState::OperationalSafe
+            || snapshot.controllerState->serviceState == Data::ControllerServiceState::Paused)) {
+        const ControllerStartCommandSelection startSelection
+            = controllerStartCommandSelection(m_projectService, scope);
+        if (!startSelection.command)
+            return startSelection.unavailableReason;
+        selectedStartCommand = startSelection.command;
+        if (*selectedStartCommand == Data::ControllerControlCommand::StartFreeRun) {
             if (const QString reason = masterTimingModeUnavailableReason(
                     scope.projectId, scope.masterId, Data::MasterTimingMode::FreeRun);
                 !reason.isEmpty()) {
@@ -2234,7 +2289,8 @@ QString WorkbenchController::quickControllerControlUnavailableReason(
         = quickControllerControlCommand(scope, action);
     if (command == Data::ControllerControlCommand::RestoreActivePackage
         && action == ControllerQuickControlAction::Run) {
-        return controllerStartupUnavailableReason(provider, snapshot);
+        QTC_ASSERT(selectedStartCommand, return Tr::tr("No controller start mode is selected."));
+        return controllerStartupUnavailableReason(provider, snapshot, *selectedStartCommand);
     }
     if (action == ControllerQuickControlAction::Stop)
         return controllerStopUnavailableReason(provider, snapshot);
@@ -2291,8 +2347,14 @@ Utils::Result<> WorkbenchController::executeQuickControllerControl(
         return Utils::ResultError(Tr::tr("The selected controller adapter is unavailable."));
     if (action == ControllerQuickControlAction::Stop)
         return beginControllerStop(provider, provider->connectionSnapshot());
-    if (*command == Data::ControllerControlCommand::RestoreActivePackage)
-        return beginControllerStartup(provider, provider->connectionSnapshot());
+    if (*command == Data::ControllerControlCommand::RestoreActivePackage) {
+        const ControllerStartCommandSelection startSelection
+            = controllerStartCommandSelection(m_projectService, scope);
+        if (!startSelection.command)
+            return Utils::ResultError(startSelection.unavailableReason);
+        return beginControllerStartup(
+            provider, provider->connectionSnapshot(), *startSelection.command);
+    }
 
     Data::ControllerControlRequest request;
     request.command = *command;
@@ -3467,7 +3529,8 @@ void WorkbenchController::executeControllerAutoAcquire(
 
 QString WorkbenchController::controllerStartupUnavailableReason(
     Core::ControllerConnectionProvider *provider,
-    const Data::ControllerConnectionSnapshot &snapshot) const
+    const Data::ControllerConnectionSnapshot &snapshot,
+    Data::ControllerControlCommand startCommand) const
 {
     if (!provider)
         return Tr::tr("The selected controller adapter is unavailable.");
@@ -3477,7 +3540,11 @@ QString WorkbenchController::controllerStartupUnavailableReason(
         return Tr::tr("Controller stop verification is in progress.");
 
     using Command = Data::ControllerControlCommand;
-    for (const Command command : {Command::RestoreActivePackage, Command::Start}) {
+    if (startCommand != Command::StartFreeRun
+        && startCommand != Command::StartDistributedClocks) {
+        return Tr::tr("Select an explicit controller start mode before running.");
+    }
+    for (const Command command : {Command::RestoreActivePackage, startCommand}) {
         if (!provider->supportsControlCommand(command)) {
             return Tr::tr(
                 "The controller does not support the fast restart sequence.");
@@ -3497,9 +3564,12 @@ QString WorkbenchController::controllerStartupUnavailableReason(
 }
 
 Utils::Result<> WorkbenchController::beginControllerStartup(
-    Core::ControllerConnectionProvider *provider, const Data::ControllerConnectionSnapshot &snapshot)
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionSnapshot &snapshot,
+    Data::ControllerControlCommand startCommand)
 {
-    const QString unavailableReason = controllerStartupUnavailableReason(provider, snapshot);
+    const QString unavailableReason
+        = controllerStartupUnavailableReason(provider, snapshot, startCommand);
     if (!unavailableReason.isEmpty())
         return Utils::ResultError(unavailableReason);
     QTC_ASSERT(
@@ -3520,6 +3590,7 @@ Utils::Result<> WorkbenchController::beginControllerStartup(
     state.sessionGeneration = snapshot.sessionGeneration;
     state.sessionId = snapshot.session->sessionId;
     state.bootId = snapshot.session->bootId;
+    state.startCommand = startCommand;
     state.phase = ControllerStartupPhase::WaitingForRestore;
     state.remainingPolls = controllerStartupMaximumPhasePolls;
     m_controllerStartupStates.insert(provider, state);
@@ -3624,12 +3695,12 @@ void WorkbenchController::advanceControllerStartup(
     --state->remainingPolls;
 
     using Command = Data::ControllerControlCommand;
-    const Command expectedCommand = [phase = state->phase] {
-        switch (phase) {
+    const Command expectedCommand = [&state] {
+        switch (state->phase) {
         case ControllerStartupPhase::WaitingForRestore:
             return Command::RestoreActivePackage;
         case ControllerStartupPhase::WaitingForRunning:
-            return Command::Start;
+            return state->startCommand;
         }
         return Command::None;
     }();
@@ -3706,7 +3777,7 @@ void WorkbenchController::advanceControllerStartup(
             waitForSnapshot();
             return;
         }
-        dispatch(Command::Start, ControllerStartupPhase::WaitingForRunning);
+        dispatch(state->startCommand, ControllerStartupPhase::WaitingForRunning);
         return;
     case ControllerStartupPhase::WaitingForRunning:
         if (!controllerState || !controllerState->ready

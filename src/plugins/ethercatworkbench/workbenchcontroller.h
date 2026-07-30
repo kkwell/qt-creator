@@ -274,6 +274,7 @@ private:
         quint64 sessionGeneration = 0;
         quint64 sessionId = 0;
         quint64 bootId = 0;
+        Data::ControllerControlCommand startCommand = Data::ControllerControlCommand::None;
         ControllerStartupPhase phase = ControllerStartupPhase::WaitingForRestore;
         int remainingPolls = 0;
         int refreshCooldown = 0;
@@ -350,10 +351,12 @@ private:
         quint64 expectedProviderEpoch);
     QString controllerStartupUnavailableReason(
         Core::ControllerConnectionProvider *provider,
-        const Data::ControllerConnectionSnapshot &snapshot) const;
+        const Data::ControllerConnectionSnapshot &snapshot,
+        Data::ControllerControlCommand startCommand) const;
     Utils::Result<> beginControllerStartup(
         Core::ControllerConnectionProvider *provider,
-        const Data::ControllerConnectionSnapshot &snapshot);
+        const Data::ControllerConnectionSnapshot &snapshot,
+        Data::ControllerControlCommand startCommand);
     void scheduleControllerStartup(Core::ControllerConnectionProvider *provider, int delayMs = 0);
     void advanceControllerStartup(
         Core::ControllerConnectionProvider *provider,

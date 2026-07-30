@@ -349,7 +349,7 @@ static TestProjectFile writeProjectWithSlave(
          QJsonObject{{"processData", processData}, {"startup", startup}, {"dc", dc}}}};
     const QJsonObject root{
         {"format", "ethercat-project"},
-        {"formatVersion", 5},
+        {"formatVersion", 6},
         {"project",
          QJsonObject{
              {"id", result.projectId.toString()},
@@ -5702,7 +5702,7 @@ void EtherCATWorkbenchTests::testEditableProjectGeneralWorkflow()
     QCOMPARE(name->text(), QString("Process Data Workflow"));
     QCOMPARE(id->text(), file.projectId.toString());
     QCOMPARE(type->text(), Tr::tr("Offline EtherCAT Engineering Project"));
-    QCOMPARE(formatVersion->text(), QString("5"));
+    QCOMPARE(formatVersion->text(), QString("6"));
     QCOMPARE(createdBy->text(), QString("Workbench Test"));
     QCOMPARE(validity->text(), Tr::tr("Valid"));
     QCOMPARE(migration->text(), Tr::tr("Current format"));
@@ -6323,7 +6323,7 @@ void EtherCATWorkbenchTests::testEditableTargetGeneralWorkflow()
     QVERIFY(!engineering->text().isEmpty());
     QCOMPARE(targetRuntime->text(), QString("Not assigned (offline)"));
     QCOMPARE(localRuntime->text(), QString("Not available (phase 1)"));
-    QCOMPARE(projectVersion->text(), QString("Format 5 · Workbench Test"));
+    QCOMPARE(projectVersion->text(), QString("Format 6 · Workbench Test"));
     QVERIFY(!pinVersion->isEnabled());
     QVERIFY(!pinVersion->accessibleDescription().isEmpty());
     QVERIFY(!name->accessibleName().isEmpty());
@@ -9745,7 +9745,7 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
     QTRY_COMPARE(name->text(), QString("Valid EtherCAT Project"));
     QVERIFY(!name->isReadOnly());
     QCOMPARE(id->text(), valid.projectId.toString());
-    QCOMPARE(formatVersion->text(), QString("5"));
+    QCOMPARE(formatVersion->text(), QString("6"));
     QCOMPARE(validity->text(), QString("Valid"));
     QCOMPARE(target->text(), QString("Offline Controller"));
     QCOMPARE(master->text(), QString("EtherCAT Master"));
@@ -21337,10 +21337,36 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     QVERIFY(release->isEnabled());
     QVERIFY(controller.canDisconnectSelectedController());
     QVERIFY(!scan->isEnabled());
+    QVERIFY(!controller.quickControllerControlCommand(
+        scope, ControllerQuickControlAction::Run));
+    QCOMPARE(
+        controller.quickControllerControlUnavailableReason(
+            scope, ControllerQuickControlAction::Run),
+        Tr::tr(
+            "Select FreeRun or Distributed Clocks for the EtherCAT Master before running."));
+    QCOMPARE(provider.controlCalls, 4);
+
+    QVERIFY_RESULT(projectService->setMasterConfiguration(
+        scope.projectId,
+        scope.masterId,
+        {Data::MasterTimingMode::FreeRun, 1000000}));
+    const std::optional<Data::ControllerControlCommand> freeRunFromOperationalSafe
+        = controller.quickControllerControlCommand(scope, ControllerQuickControlAction::Run);
+    QVERIFY(freeRunFromOperationalSafe);
+    QCOMPARE(
+        *freeRunFromOperationalSafe, Data::ControllerControlCommand::StartFreeRun);
+    QCOMPARE(provider.controlCalls, 4);
+
+    QVERIFY_RESULT(controller.setMasterConfiguration(
+        scope.projectId,
+        scope.masterId,
+        {Data::MasterTimingMode::DistributedClocks, 125000}));
     const std::optional<Data::ControllerControlCommand> runFromOperationalSafe
         = controller.quickControllerControlCommand(scope, ControllerQuickControlAction::Run);
     QVERIFY(runFromOperationalSafe);
-    QCOMPARE(*runFromOperationalSafe, Data::ControllerControlCommand::Start);
+    QCOMPARE(
+        *runFromOperationalSafe,
+        Data::ControllerControlCommand::StartDistributedClocks);
     QVERIFY(!controller.quickControllerControlCommand(
         scope, ControllerQuickControlAction::Debug));
     const std::optional<Data::ControllerControlCommand> stopFromOperationalSafe
@@ -21352,13 +21378,13 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     QCOMPARE(
         provider.lastControlRequest.command,
         Data::ControllerControlCommand::RestoreActivePackage);
-    Data::ControllerControlRequest startRequest;
-    startRequest.command = *runFromOperationalSafe;
     const Utils::Result<> startResult
-        = controller.executeControllerControl(scope, startRequest);
+        = controller.executeQuickControllerControl(scope, ControllerQuickControlAction::Run);
     QVERIFY_RESULT(startResult);
     QCOMPARE(provider.controlCalls, 5);
-    QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::Start);
+    QCOMPARE(
+        provider.lastControlRequest.command,
+        Data::ControllerControlCommand::StartDistributedClocks);
 
     controllerState.currentFaults = 1;
     snapshot.controllerState = controllerState;
@@ -21405,6 +21431,22 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
     provider.publishSnapshot(snapshot);
     QVERIFY(release->isEnabled());
     QVERIFY(controller.canDisconnectSelectedController());
+    QVERIFY_RESULT(projectService->setMasterConfiguration(
+        scope.projectId,
+        scope.masterId,
+        {Data::MasterTimingMode::Unassigned, 0}));
+    QVERIFY(!controller.quickControllerControlCommand(
+        scope, ControllerQuickControlAction::Run));
+    QCOMPARE(
+        controller.quickControllerControlUnavailableReason(
+            scope, ControllerQuickControlAction::Run),
+        Tr::tr(
+            "Select FreeRun or Distributed Clocks for the EtherCAT Master before running."));
+    QCOMPARE(provider.controlCalls, 6);
+    QVERIFY_RESULT(projectService->setMasterConfiguration(
+        scope.projectId,
+        scope.masterId,
+        {Data::MasterTimingMode::DistributedClocks, 125000}));
     const std::optional<Data::ControllerControlCommand> runFromPaused
         = controller.quickControllerControlCommand(scope, ControllerQuickControlAction::Run);
     const std::optional<Data::ControllerControlCommand> debugFromPaused
@@ -22331,7 +22373,8 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
     provider.setSingleProfile(true);
     provider.setSupportedControlCommands(
         {Data::ControllerControlCommand::RestoreActivePackage,
-         Data::ControllerControlCommand::Start});
+         Data::ControllerControlCommand::Start,
+         Data::ControllerControlCommand::StartDistributedClocks});
     bool providerRegistered = false;
     const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
     const QScopeGuard cleanup([&] {
@@ -22403,6 +22446,20 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
     snapshot.package = package;
     provider.publishSnapshot(snapshot);
 
+    QVERIFY(!controller.quickControllerControlCommand(
+        scope, ControllerQuickControlAction::Run));
+    QCOMPARE(
+        controller.quickControllerControlUnavailableReason(
+            scope, ControllerQuickControlAction::Run),
+        Tr::tr(
+            "Select FreeRun or Distributed Clocks for the EtherCAT Master before running."));
+    QCOMPARE(provider.controlCalls, 0);
+    QCOMPARE(provider.deploymentCalls, 0);
+
+    QVERIFY_RESULT(controller.setMasterConfiguration(
+        scope.projectId,
+        scope.masterId,
+        {Data::MasterTimingMode::DistributedClocks, 125000}));
     const std::optional<Data::ControllerControlCommand> startupCommand
         = controller.quickControllerControlCommand(scope, ControllerQuickControlAction::Run);
     QVERIFY(startupCommand);
@@ -22413,8 +22470,9 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
 
     QSignalSpy output(&controller, &WorkbenchController::controllerOutputRequested);
     provider.publishControlPendingOnExecute = true;
-    QVERIFY_RESULT(
-        controller.executeQuickControllerControl(scope, ControllerQuickControlAction::Run));
+    const Utils::Result<> startupResult
+        = controller.executeQuickControllerControl(scope, ControllerQuickControlAction::Run);
+    QVERIFY_RESULT(startupResult);
     QVERIFY(controller.controllerStartupInProgress(scope));
     QCOMPARE(provider.controlCalls, 1);
     QCOMPARE(
@@ -22451,9 +22509,11 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
     snapshot.topology = topology;
     provider.publishSnapshot(snapshot);
     QTRY_COMPARE(provider.controlCalls, 2);
-    QCOMPARE(provider.lastControlRequest.command, Data::ControllerControlCommand::Start);
+    QCOMPARE(
+        provider.lastControlRequest.command,
+        Data::ControllerControlCommand::StartDistributedClocks);
 
-    snapshot = completedSnapshot(Data::ControllerControlCommand::Start);
+    snapshot = completedSnapshot(Data::ControllerControlCommand::StartDistributedClocks);
     snapshot.controllerState->serviceState = Data::ControllerServiceState::Running;
     snapshot.controllerState->applicationActive = true;
     snapshot.controllerState->busOperational = true;
@@ -22479,6 +22539,15 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
     snapshot.topology = topology;
     provider.publishSnapshot(snapshot);
     QTRY_VERIFY(!controller.controllerStartupInProgress(scope));
+    QCOMPARE(provider.controlRequests.size(), 2);
+    QCOMPARE(provider.deploymentCalls, 0);
+    QVERIFY(std::none_of(
+        provider.controlRequests.cbegin(),
+        provider.controlRequests.cend(),
+        [](const Data::ControllerControlRequest &request) {
+            return request.command == Data::ControllerControlCommand::Start
+                   || request.command == Data::ControllerControlCommand::DiscoverTopology;
+        }));
     QVERIFY(std::any_of(output.cbegin(), output.cend(), [](const QList<QVariant> &arguments) {
         const QString message = arguments.constFirst().toString();
         return message.contains(QStringLiteral("WKC 6/6"))

@@ -494,7 +494,10 @@ void EtherCATWorkbenchPlugin::updateQuickControllerActions()
                         "Restore the saved controller package and start it using its configured "
                         "FreeRun or Distributed Clocks mode. Scan is available only from the "
                         "explicit Rescan command.");
-                } else if (command == Data::ControllerControlCommand::Start) {
+                } else if (
+                    command == Data::ControllerControlCommand::Start
+                    || command == Data::ControllerControlCommand::StartFreeRun
+                    || command == Data::ControllerControlCommand::StartDistributedClocks) {
                     text = Tr::tr("Start Controller");
                     availableDescription = Tr::tr(
                         "Start the active controller package using its configured FreeRun or "
