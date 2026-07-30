@@ -97,6 +97,10 @@ public:
     int activeSocketCountForTests() const;
     int pendingRequestCountForTests() const;
     int ignoredRuntimeResourceRequestCountForTests() const;
+    quint16 negotiatedMinorForTests() const;
+    quint32 controlFeatureBitsForTests() const;
+    quint32 pushFeatureBitsForTests() const;
+    quint32 bulkFeatureBitsForTests() const;
     void failNextWriteForTests();
 #endif
 

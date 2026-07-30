@@ -2068,6 +2068,7 @@ public:
         bootId = 0;
         negotiatedMinor = 0;
         featureBits = 0;
+        pushFeatureBits = 0;
         bulkFeatureBits = 0;
         faultResetConfirmation.reset();
     }
@@ -3786,7 +3787,9 @@ public:
                     requestId);
                 return;
             }
-            if (value.role == Protocol::Role::Bulk)
+            if (value.role == Protocol::Role::Push)
+                pushFeatureBits = ack->featureBits;
+            else if (value.role == Protocol::Role::Bulk)
                 bulkFeatureBits = ack->featureBits;
             value.handshaken = true;
             setChannelState(value.role, Data::ControllerChannelState::Connected);
@@ -6946,6 +6949,7 @@ public:
     quint64 heartbeatRequestId = 0;
     quint32 lastAlarmSequence = 0;
     quint16 negotiatedMinor = 0;
+    quint32 pushFeatureBits = 0;
     int reconnectAttempt = 0;
     bool shuttingDown = false;
     bool userDisconnecting = false;
@@ -8270,6 +8274,26 @@ int ProductApiSession::pendingRequestCountForTests() const
 int ProductApiSession::ignoredRuntimeResourceRequestCountForTests() const
 {
     return d->ignoredRuntimeResourceRequestIds.size();
+}
+
+quint16 ProductApiSession::negotiatedMinorForTests() const
+{
+    return d->negotiatedMinor;
+}
+
+quint32 ProductApiSession::controlFeatureBitsForTests() const
+{
+    return d->featureBits;
+}
+
+quint32 ProductApiSession::pushFeatureBitsForTests() const
+{
+    return d->pushFeatureBits;
+}
+
+quint32 ProductApiSession::bulkFeatureBitsForTests() const
+{
+    return d->bulkFeatureBits;
 }
 
 void ProductApiSession::failNextWriteForTests()

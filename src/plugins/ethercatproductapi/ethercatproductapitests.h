@@ -43,7 +43,9 @@ private slots:
     void testPackageDeploymentLifecycle();
     void testPackageDeploymentGuardsAndIdempotency();
     void testPackageDeploymentCancellationAndAbort();
+    void testApi038HardwareFixturePreflight();
     void testHardwareControlLifecycle();
+    void testHardwareApi038ProviderAcceptance();
     void testShutdownReleasePreservesAutonomousRuntime_data();
     void testShutdownReleasePreservesAutonomousRuntime();
     void testDisconnectPreservesAutonomousRuntime();
