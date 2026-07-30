@@ -7802,7 +7802,7 @@ Utils::Result<> ProductApiSession::executeControlCommand(
     if (d->runtimeRefreshInProgress && request.command != Command::ReleaseControl) {
         return Utils::ResultError(Tr::tr("Wait for the runtime resource refresh to finish."));
     }
-    if (d->refreshInProgress)
+    if (d->refreshInProgress && request.command != Command::ReleaseControl)
         return Utils::ResultError(Tr::tr("Wait for the controller refresh to finish."));
     if (d->hasActiveControlOperation())
         return Utils::ResultError(Tr::tr("Another controller operation is already active."));

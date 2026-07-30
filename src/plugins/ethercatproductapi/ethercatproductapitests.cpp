@@ -1198,6 +1198,22 @@ public:
     QList<quint32> resumeAfterSequences() const { return m_resumeAfterSequences; }
     bool hasHeldRequest() const { return m_heldPeer && m_heldRequestId; }
 
+    void holdNextCapability() { m_holdNextCapability = true; }
+    void completeHeldCapability()
+    {
+        if (!hasHeldRequest()) {
+            m_violations.append(QStringLiteral("No held Capability response was available."));
+            return;
+        }
+        sendResponse(
+            *m_heldPeer,
+            Protocol::MessageType::Capability,
+            m_heldRequestId,
+            QByteArray("opaque-vendor-capability-v1"));
+        m_heldPeer = nullptr;
+        m_heldRequestId = 0;
+    }
+
     void rejectNextResume(qint32 status) { m_nextResumeStatus = status; }
     void rejectNextState(qint32 status) { m_nextStateStatus = status; }
     void setDefaultLeaseDurationMs(quint32 durationMs) { m_defaultLeaseDurationMs = durationMs; }
@@ -2418,7 +2434,8 @@ private:
 
     void sendCapabilityResponse(Peer &peer, const Protocol::Frame &request)
     {
-        if (m_behavior == Behavior::HoldCapability) {
+        if (m_behavior == Behavior::HoldCapability || m_holdNextCapability) {
+            m_holdNextCapability = false;
             m_heldPeer = &peer;
             m_heldRequestId = request.header.requestId;
             return;
@@ -3193,6 +3210,7 @@ private:
     QElapsedTimer m_elapsed;
     Peer *m_heldPeer = nullptr;
     quint64 m_heldRequestId = 0;
+    bool m_holdNextCapability = false;
     Peer *m_capacityPeer = nullptr;
     quint64 m_capacityRequestId = 0;
     Peer *m_heldHeartbeatPeer = nullptr;
@@ -7332,6 +7350,7 @@ void EtherCATProductApiTests::testPackageDeploymentMaximumAudit()
         Data::ControllerControlState::Succeeded,
         1000);
 
+    controller.holdNextCapability();
     Data::ControllerPackageDeploymentRequest request;
     request.operationId = QStringLiteral("deploy-maximum-audit");
     request.configurationId = 813;
@@ -7382,12 +7401,25 @@ void EtherCATProductApiTests::testPackageDeploymentMaximumAudit()
     QCOMPARE(progress.audit.constFirst().operation, Data::ControllerOperation::UploadPackage);
     QCOMPARE(progress.audit.constLast().operation, Data::ControllerOperation::ActivatePackage);
 
+    QTRY_VERIFY_WITH_TIMEOUT(controller.hasHeldRequest(), 1000);
+    QVERIFY(provider.sessionForTests()->refreshInProgressForTests());
+    QVERIFY(provider.connectionSnapshot().session);
+    QVERIFY(provider.connectionSnapshot().session->ownsControlLease);
+    QVERIFY(controller.leaseOwned());
+    QVERIFY(!provider.connectionSnapshot().lastError);
+
     control.command = Data::ControllerControlCommand::ReleaseControl;
-    QVERIFY(provider.executeControlCommand(control));
+    const Utils::Result<> releaseResult = provider.executeControlCommand(control);
+    QVERIFY2(releaseResult, qPrintable(releaseResult ? QString() : releaseResult.error()));
     QTRY_COMPARE_WITH_TIMEOUT(
         provider.connectionSnapshot().controlProgress.state,
         Data::ControllerControlState::Succeeded,
         1000);
+    QVERIFY(provider.connectionSnapshot().session);
+    QVERIFY(!provider.connectionSnapshot().session->ownsControlLease);
+    QVERIFY(!controller.leaseOwned());
+    controller.completeHeldCapability();
+    QTRY_VERIFY_WITH_TIMEOUT(!provider.sessionForTests()->refreshInProgressForTests(), 1000);
     QVERIFY(provider.disconnectFromController());
     QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
     QVERIFY(controller.violations().isEmpty());
