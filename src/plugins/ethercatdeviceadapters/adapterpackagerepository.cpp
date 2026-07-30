@@ -12,6 +12,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QRegularExpression>
 #include <QSet>
 
 #include <algorithm>
@@ -27,9 +28,11 @@ namespace {
 
 constexpr char schemaVersionV1[] = "embed-labs.device-adapter/v1";
 constexpr char schemaVersionV2[] = "embed-labs.device-adapter/v2";
+constexpr char schemaVersionV3[] = "embed-labs.device-adapter/v3";
 constexpr char canonicalJsonDomainV2[] = "embed-labs.device-adapter/v2";
+constexpr char canonicalJsonDomainV3[] = "embed-labs.device-adapter/v3";
 
-enum class PackageSchema { V1, V2 };
+enum class PackageSchema { V1, V2, V3 };
 
 struct Package
 {
@@ -50,6 +53,25 @@ static bool canonicalIdentifier(const QString &value)
     return std::none_of(value.cbegin(), value.cend(), [](QChar character) {
         return character.category() == QChar::Other_Control;
     });
+}
+
+static bool stableV3Identifier(const QString &value)
+{
+    static const QRegularExpression pattern(
+        QString::fromLatin1("^[A-Za-z0-9][A-Za-z0-9._:/{}-]{0,255}$"));
+    return pattern.match(value).hasMatch();
+}
+
+static bool simpleV3Identifier(const QString &value)
+{
+    static const QRegularExpression pattern(
+        QString::fromLatin1("^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$"));
+    return pattern.match(value).hasMatch();
+}
+
+static bool exactSchema(PackageSchema schema)
+{
+    return schema == PackageSchema::V2 || schema == PackageSchema::V3;
 }
 
 static bool parseCanonicalSignedDecimal(
@@ -164,8 +186,9 @@ static bool appendCanonicalJson(
             || std::abs(number) > largestExactlyRepresentableInteger) {
             return fail(
                 error,
-                QString("%1 contains a non-canonical JSON number; v2 numbers must be exact "
-                        "integers")
+                QString(
+                    "%1 contains a non-canonical JSON number; v2 numbers must be exact "
+                    "integers")
                     .arg(context));
         }
         result->append(QByteArray::number(qint64(number)));
@@ -216,6 +239,18 @@ static QByteArray canonicalContentSha256V2(
     if (!appendCanonicalJson(object, context, &canonical, error))
         return {};
     QByteArray digestInput(canonicalJsonDomainV2);
+    digestInput.append('\0');
+    digestInput.append(canonical);
+    return QCryptographicHash::hash(digestInput, QCryptographicHash::Sha256);
+}
+
+static QByteArray canonicalContentSha256V3(
+    const QJsonObject &object, const QString &context, QString *error)
+{
+    QByteArray canonical;
+    if (!appendCanonicalJson(object, context, &canonical, error))
+        return {};
+    QByteArray digestInput(canonicalJsonDomainV3);
     digestInput.append('\0');
     digestInput.append(canonical);
     return QCryptographicHash::hash(digestInput, QCryptographicHash::Sha256);
@@ -983,32 +1018,47 @@ static bool parseSignal(
     if (!value.isObject())
         return fail(error, QString("%1 must be an object").arg(context));
     const QJsonObject object = value.toObject();
-    const QStringList keys = schema == PackageSchema::V1
-                                 ? QStringList{
-                                       "id",
-                                       "displayName",
-                                       "description",
-                                       "capabilities",
-                                       "direction",
-                                       "access",
-                                       "required",
-                                       "bindings",
-                                       "value",
-                                       "safeValue",
-                                       "manualControl",
-                                   }
-                                 : QStringList{
-                                       "id",
-                                       "displayName",
-                                       "description",
-                                       "capabilities",
-                                       "direction",
-                                       "access",
-                                       "exposure",
-                                       "required",
-                                       "bindings",
-                                       "engineeringTransform",
-                                   };
+    const QStringList keys
+        = schema == PackageSchema::V1
+              ? QStringList{
+                    "id",
+                    "displayName",
+                    "description",
+                    "capabilities",
+                    "direction",
+                    "access",
+                    "required",
+                    "bindings",
+                    "value",
+                    "safeValue",
+                    "manualControl",
+                }
+              : schema == PackageSchema::V2
+                    ? QStringList{
+                          "id",
+                          "displayName",
+                          "description",
+                          "capabilities",
+                          "direction",
+                          "access",
+                          "exposure",
+                          "required",
+                          "bindings",
+                          "engineeringTransform",
+                      }
+                    : QStringList{
+                          "id",
+                          "displayName",
+                          "description",
+                          "capabilities",
+                          "direction",
+                          "access",
+                          "exposure",
+                          "required",
+                          "bindings",
+                          "engineeringTransform",
+                          "engineeringSafeValue",
+                      };
     if (!checkKeys(object, keys, context, error)) {
         return false;
     }
@@ -1016,12 +1066,14 @@ static bool parseSignal(
         || !parseString(object, "displayName", context, &result->displayName, error)
         || !parseString(object, "description", context, &result->description, error, true)
         || !parseCapabilityList(
-            object, "capabilities", context, &result->capabilities, error, schema == PackageSchema::V2)
+            object, "capabilities", context, &result->capabilities, error, exactSchema(schema))
         || !parseBool(object, "required", context, &result->requiredForComplete, error)) {
         return false;
     }
-    if (schema == PackageSchema::V2 && !canonicalIdentifier(result->id.value))
+    if (exactSchema(schema) && !canonicalIdentifier(result->id.value))
         return fail(error, QString("%1.id must be a canonical identifier").arg(context));
+    if (schema == PackageSchema::V3 && !stableV3Identifier(result->id.value))
+        return fail(error, QString("%1.id must be a stable v3 identifier").arg(context));
     QString direction;
     QString access;
     if (!parseString(object, "direction", context, &direction, error)
@@ -1036,7 +1088,7 @@ static bool parseSignal(
         return fail(error, QString("%1.access is not supported").arg(context));
     result->direction = *parsedDirection;
     result->access = *parsedAccess;
-    if (schema == PackageSchema::V2) {
+    if (exactSchema(schema)) {
         QString exposure;
         if (!parseString(object, "exposure", context, &exposure, error))
             return false;
@@ -1060,7 +1112,7 @@ static bool parseSignal(
                 error)) {
             return false;
         }
-        if (schema == PackageSchema::V2 && !result->bindings.isEmpty()
+        if (exactSchema(schema) && !result->bindings.isEmpty()
             && bindingCanonicalKey(binding) <= bindingCanonicalKey(result->bindings.constLast())) {
             return fail(
                 error,
@@ -1092,6 +1144,14 @@ static bool parseSignal(
         }
         result->engineeringTransform = transform;
         deriveLegacyValueMetadata(transform, &result->valueMetadata);
+        if (schema == PackageSchema::V3
+            && !parseOptionalEngineeringValue(
+                object.value("engineeringSafeValue"),
+                context + ".engineeringSafeValue",
+                &result->engineeringSafeValue,
+                error)) {
+            return false;
+        }
         result->hasSafeValue = false;
         result->safeValue = {};
         result->manualControl = {};
@@ -1102,7 +1162,7 @@ static bool parseSignal(
     }
     if (result->access == SemanticSignalAccess::ReadOnly && result->manualControl.allowed)
         return fail(error, QString("%1 read-only signal cannot allow manual writes").arg(context));
-    if (schema == PackageSchema::V2 && result->exposure == SemanticSignalExposure::ActionOnly
+    if (exactSchema(schema) && result->exposure == SemanticSignalExposure::ActionOnly
         && (result->direction == SemanticSignalDirection::Input
             || result->access == SemanticSignalAccess::ReadOnly)) {
         return fail(error, QString("%1 action-only signal must be writable").arg(context));
@@ -1136,7 +1196,7 @@ static bool parseSignals(
                 error,
                 QString("%1 contains duplicate signal id \"%2\"").arg(context, signal.id.value));
         ids.insert(signal.id.value);
-        if (schema == PackageSchema::V2 && !result->isEmpty()
+        if (exactSchema(schema) && !result->isEmpty()
             && signal.id.value <= result->constLast().id.value) {
             return fail(error, QString("%1 must be in strict semantic ID order").arg(context));
         }
@@ -1196,45 +1256,58 @@ static bool parseProfiles(
         if (!itemValue.isObject())
             return fail(error, QString("%1 must be an object").arg(itemContext));
         const QJsonObject object = itemValue.toObject();
-        if (!checkKeys(object, {"id", "rxPdos", "txPdos", "requiredSignals"}, itemContext, error)) {
+        const QStringList keys = schema == PackageSchema::V3
+                                     ? QStringList{
+                                           "id",
+                                           "signedPdoProfileId",
+                                           "rxPdos",
+                                           "txPdos",
+                                           "requiredSignals",
+                                       }
+                                     : QStringList{"id", "rxPdos", "txPdos", "requiredSignals"};
+        if (!checkKeys(object, keys, itemContext, error)) {
             return false;
         }
         ProcessDataProfile profile;
         QStringList requiredSignals;
         if (!parseString(object, "id", itemContext, &profile.id, error)
+            || (schema == PackageSchema::V3
+                && !parseString(
+                    object, "signedPdoProfileId", itemContext, &profile.signedPdoProfileId, error))
             || !parseIndexList(
-                object,
-                "rxPdos",
-                itemContext,
-                &profile.rxPdoIndices,
-                error,
-                schema == PackageSchema::V2)
+                object, "rxPdos", itemContext, &profile.rxPdoIndices, error, exactSchema(schema))
             || !parseIndexList(
-                object,
-                "txPdos",
-                itemContext,
-                &profile.txPdoIndices,
-                error,
-                schema == PackageSchema::V2)
+                object, "txPdos", itemContext, &profile.txPdoIndices, error, exactSchema(schema))
             || !parseStringList(
                 object,
                 "requiredSignals",
                 itemContext,
                 &requiredSignals,
                 error,
-                schema == PackageSchema::V2)) {
+                exactSchema(schema))) {
             return false;
         }
-        if (schema == PackageSchema::V2 && !canonicalIdentifier(profile.id))
+        if (exactSchema(schema) && !canonicalIdentifier(profile.id))
             return fail(error, QString("%1.id must be canonical").arg(itemContext));
+        if (schema == PackageSchema::V3 && !simpleV3Identifier(profile.signedPdoProfileId)) {
+            return fail(error, QString("%1.signedPdoProfileId must be canonical").arg(itemContext));
+        }
+        if (schema == PackageSchema::V3
+            && (!stableV3Identifier(profile.id) || !simpleV3Identifier(profile.signedPdoProfileId)
+                || std::any_of(
+                    requiredSignals.cbegin(), requiredSignals.cend(), [](const QString &signal) {
+                        return !stableV3Identifier(signal);
+                    }))) {
+            return fail(
+                error, QString("%1 profile IDs must be stable v3 identifiers").arg(itemContext));
+        }
         if (profile.rxPdoIndices.isEmpty() && profile.txPdoIndices.isEmpty())
             return fail(error, QString("%1 must select at least one PDO").arg(itemContext));
         if (ids.contains(profile.id))
             return fail(
                 error, QString("%1 contains duplicate profile id \"%2\"").arg(context, profile.id));
         ids.insert(profile.id);
-        if (schema == PackageSchema::V2 && !result->isEmpty()
-            && profile.id <= result->constLast().id) {
+        if (exactSchema(schema) && !result->isEmpty() && profile.id <= result->constLast().id) {
             return fail(error, QString("%1 must be in strict profile ID order").arg(context));
         }
         for (const QString &signal : std::as_const(requiredSignals))
@@ -1282,12 +1355,7 @@ static bool parseModules(
             || !parseString(object, "typeName", itemContext, &profile.typeName, error)
             || !parseString(object, "moduleClass", itemContext, &profile.moduleClass, error)
             || !parseCapabilityList(
-                object,
-                "capabilities",
-                itemContext,
-                &profile.capabilities,
-                error,
-                schema == PackageSchema::V2)
+                object, "capabilities", itemContext, &profile.capabilities, error, exactSchema(schema))
             || !parseSignals(
                 object.value("signals"),
                 itemContext + ".signals",
@@ -1296,8 +1364,10 @@ static bool parseModules(
                 error)) {
             return false;
         }
-        if (schema == PackageSchema::V2 && !canonicalIdentifier(profile.id))
+        if (exactSchema(schema) && !canonicalIdentifier(profile.id))
             return fail(error, QString("%1.id must be canonical").arg(itemContext));
+        if (schema == PackageSchema::V3 && !stableV3Identifier(profile.id))
+            return fail(error, QString("%1.id must be a stable v3 identifier").arg(itemContext));
         if (moduleIdent == 0)
             return fail(error, QString("%1.moduleIdent must be non-zero").arg(itemContext));
         profile.moduleIdent = quint32(moduleIdent);
@@ -1307,7 +1377,7 @@ static bool parseModules(
         }
         ids.insert(profile.id);
         moduleIdents.insert(profile.moduleIdent);
-        if (schema == PackageSchema::V2 && !result->isEmpty()) {
+        if (exactSchema(schema) && !result->isEmpty()) {
             const DeviceModuleProfile &previous = result->constLast();
             if (std::tie(profile.moduleIdent, profile.id)
                 <= std::tie(previous.moduleIdent, previous.id)) {
@@ -1388,8 +1458,7 @@ static bool parseControlValue(
                                 : result->engineeringLiteralValue.has_value();
     if (result->source == DeviceControlValueSource::Literal && !hasLiteral)
         return fail(error, QString("%1 requires an exact literal value").arg(context));
-    if (schema == PackageSchema::V2 && result->source != DeviceControlValueSource::Literal
-        && hasLiteral) {
+    if (exactSchema(schema) && result->source != DeviceControlValueSource::Literal && hasLiteral) {
         return fail(error, QString("%1 literal is only valid for literal source").arg(context));
     }
     if (result->source == DeviceControlValueSource::Parameter && result->parameterId.isEmpty())
@@ -1502,6 +1571,431 @@ static bool parseActionParameter(
     return true;
 }
 
+static bool parseV3AssignmentValue(
+    const QJsonValue &value, const QString &context, DeviceControlValue *result, QString *error)
+{
+    if (!value.isObject())
+        return fail(error, QString("%1 must be an object").arg(context));
+    const QJsonObject object = value.toObject();
+    if (!checkKeys(object, {"source", "engineeringConstant", "parameterId"}, context, error))
+        return false;
+
+    QString source;
+    if (!parseString(object, "source", context, &source, error)
+        || !parseNullableString(object, "parameterId", context, &result->parameterId, error)
+        || !parseOptionalEngineeringValue(
+            object.value("engineeringConstant"),
+            context + ".engineeringConstant",
+            &result->engineeringLiteralValue,
+            error)) {
+        return false;
+    }
+    if (!result->parameterId.isEmpty() && !simpleV3Identifier(result->parameterId))
+        return fail(error, QString("%1.parameterId must be canonical").arg(context));
+
+    if (source == "constant")
+        result->source = DeviceControlValueSource::Literal;
+    else if (source == "parameter")
+        result->source = DeviceControlValueSource::Parameter;
+    else
+        return fail(error, QString("%1.source must be constant or parameter").arg(context));
+
+    if (result->source == DeviceControlValueSource::Literal) {
+        if (!result->engineeringLiteralValue || !result->parameterId.isEmpty()) {
+            return fail(
+                error, QString("%1 constant source requires only engineeringConstant").arg(context));
+        }
+    } else if (result->engineeringLiteralValue || result->parameterId.isEmpty()) {
+        return fail(error, QString("%1 parameter source requires only parameterId").arg(context));
+    }
+    return true;
+}
+
+static std::optional<DeviceControlGroupRecovery> groupRecoveryFromString(const QString &value)
+{
+    if (value == "return-task")
+        return DeviceControlGroupRecovery::ReturnTask;
+    if (value == "hold-safe")
+        return DeviceControlGroupRecovery::HoldSafe;
+    return std::nullopt;
+}
+
+static std::optional<DeviceControlFailureDisposition> failureDispositionFromString(
+    const QString &value)
+{
+    if (value == "return-task")
+        return DeviceControlFailureDisposition::ReturnTask;
+    if (value == "hold-safe")
+        return DeviceControlFailureDisposition::HoldSafe;
+    if (value == "hold-operational-fault")
+        return DeviceControlFailureDisposition::HoldOperationalFault;
+    return std::nullopt;
+}
+
+static bool parseV3ConsistencyGroups(
+    const QJsonValue &value,
+    const QString &context,
+    QList<DeviceControlConsistencyGroup> *result,
+    QString *error)
+{
+    if (!value.isArray())
+        return fail(error, QString("%1 must be an array").arg(context));
+    result->clear();
+    for (qsizetype index = 0; index < value.toArray().size(); ++index) {
+        const QString itemContext = QString("%1[%2]").arg(context).arg(index);
+        const QJsonValue itemValue = value.toArray().at(index);
+        if (!itemValue.isObject())
+            return fail(error, QString("%1 must be an object").arg(itemContext));
+        const QJsonObject object = itemValue.toObject();
+        if (!checkKeys(object, {"id", "members", "recovery", "maxTtlCycles"}, itemContext, error)) {
+            return false;
+        }
+
+        DeviceControlConsistencyGroup group;
+        QStringList members;
+        QString recovery;
+        quint64 maximumTtlCycles = 0;
+        if (!parseString(object, "id", itemContext, &group.id, error)
+            || !parseStringList(object, "members", itemContext, &members, error, true)
+            || !parseString(object, "recovery", itemContext, &recovery, error)
+            || !parseUnsigned(
+                object,
+                "maxTtlCycles",
+                std::numeric_limits<quint16>::max(),
+                itemContext,
+                &maximumTtlCycles,
+                error)) {
+            return false;
+        }
+        if (!simpleV3Identifier(group.id))
+            return fail(error, QString("%1.id must be canonical").arg(itemContext));
+        if (std::any_of(members.cbegin(), members.cend(), [](const QString &member) {
+                return !stableV3Identifier(member);
+            })) {
+            return fail(error, QString("%1.members contains an unstable identifier").arg(itemContext));
+        }
+        if (members.isEmpty() || members.size() > 64) {
+            return fail(error, QString("%1.members must contain one to 64 signals").arg(itemContext));
+        }
+        if (!result->isEmpty() && group.id <= result->constLast().id) {
+            return fail(error, QString("%1 must be in strict group ID order").arg(context));
+        }
+        const auto parsedRecovery = groupRecoveryFromString(recovery);
+        if (!parsedRecovery)
+            return fail(error, QString("%1.recovery is not supported").arg(itemContext));
+        if (maximumTtlCycles == 0) {
+            return fail(
+                error, QString("%1.maxTtlCycles must be in the range 1 to 65535").arg(itemContext));
+        }
+        group.recovery = *parsedRecovery;
+        group.maximumTtlCycles = quint32(maximumTtlCycles);
+        for (const QString &member : std::as_const(members))
+            group.members.append({member});
+        result->append(group);
+    }
+    return true;
+}
+
+static bool parseV3ActionStep(
+    const QJsonValue &value, const QString &context, DeviceControlStep *result, QString *error)
+{
+    if (!value.isObject())
+        return fail(error, QString("%1 must be an object").arg(context));
+    const QJsonObject object = value.toObject();
+    QString kind;
+    if (!parseString(object, "kind", context, &kind, error))
+        return false;
+
+    if (kind == "write-group") {
+        if (!checkKeys(object, {"kind", "consistencyGroup", "assignments"}, context, error)
+            || !parseString(object, "consistencyGroup", context, &result->consistencyGroupId, error)) {
+            return false;
+        }
+        if (!simpleV3Identifier(result->consistencyGroupId)) {
+            return fail(error, QString("%1.consistencyGroup must be canonical").arg(context));
+        }
+        const QJsonValue assignments = object.value("assignments");
+        if (!assignments.isArray() || assignments.toArray().isEmpty()
+            || assignments.toArray().size() > 64) {
+            return fail(error, QString("%1.assignments must contain one to 64 values").arg(context));
+        }
+        QString previousSignal;
+        for (qsizetype index = 0; index < assignments.toArray().size(); ++index) {
+            const QString assignmentContext = QString("%1.assignments[%2]").arg(context).arg(index);
+            const QJsonValue assignmentValue = assignments.toArray().at(index);
+            if (!assignmentValue.isObject())
+                return fail(error, QString("%1 must be an object").arg(assignmentContext));
+            const QJsonObject assignmentObject = assignmentValue.toObject();
+            DeviceControlGroupAssignment assignment;
+            if (!checkKeys(assignmentObject, {"signalId", "value"}, assignmentContext, error)
+                || !parseString(
+                    assignmentObject, "signalId", assignmentContext, &assignment.signalId.value, error)
+                || !parseV3AssignmentValue(
+                    assignmentObject.value("value"),
+                    assignmentContext + ".value",
+                    &assignment.value,
+                    error)) {
+                return false;
+            }
+            if (!stableV3Identifier(assignment.signalId.value)
+                || (!previousSignal.isEmpty() && assignment.signalId.value <= previousSignal)) {
+                return fail(
+                    error,
+                    QString("%1.assignments must use canonical signals in strict order")
+                        .arg(context));
+            }
+            previousSignal = assignment.signalId.value;
+            result->assignments.append(assignment);
+        }
+        result->kind = DeviceControlStepKind::WriteGroup;
+        return true;
+    }
+
+    if (kind == "wait-masked-equals") {
+        if (!checkKeys(object, {"kind", "signalId", "value", "mask", "timeoutCycles"}, context, error)
+            || !parseString(object, "signalId", context, &result->signalId.value, error)
+            || !parseEngineeringValue(
+                object.value("value"),
+                context + ".value",
+                &result->value.engineeringLiteralValue.emplace(),
+                error)
+            || !parseEngineeringValue(
+                object.value("mask"),
+                context + ".mask",
+                &result->mask.engineeringLiteralValue.emplace(),
+                error)) {
+            return false;
+        }
+        result->value.source = DeviceControlValueSource::Literal;
+        result->mask.source = DeviceControlValueSource::Literal;
+        result->kind = DeviceControlStepKind::WaitMaskedEquals;
+    } else if (kind == "wait-absolute-at-most") {
+        if (!checkKeys(object, {"kind", "signalId", "limit", "timeoutCycles"}, context, error)
+            || !parseString(object, "signalId", context, &result->signalId.value, error)
+            || !parseEngineeringValue(
+                object.value("limit"),
+                context + ".limit",
+                &result->value.engineeringLiteralValue.emplace(),
+                error)) {
+            return false;
+        }
+        result->value.source = DeviceControlValueSource::Literal;
+        result->kind = DeviceControlStepKind::WaitAbsoluteAtMost;
+    } else if (kind == "wait-cycles") {
+        if (!checkKeys(object, {"kind", "cycles"}, context, error))
+            return false;
+        result->kind = DeviceControlStepKind::WaitCycles;
+    } else {
+        return fail(
+            error,
+            QString("%1.kind is unsupported; v3 forbids legacy write-signal steps").arg(context));
+    }
+
+    if (!result->signalId.value.isEmpty() && !stableV3Identifier(result->signalId.value))
+        return fail(error, QString("%1.signalId must be canonical").arg(context));
+    quint64 cycles = 0;
+    const QString cycleKey = result->kind == DeviceControlStepKind::WaitCycles
+                                 ? QString("cycles")
+                                 : QString("timeoutCycles");
+    if (!parseUnsigned(object, cycleKey, std::numeric_limits<quint32>::max(), context, &cycles, error)
+        || cycles == 0) {
+        return fail(
+            error, QString("%1.%2 must be a finite non-zero cycle count").arg(context, cycleKey));
+    }
+    result->timeoutCycles = quint32(cycles);
+    return true;
+}
+
+static bool parseV3Actions(
+    const QJsonValue &value,
+    const QString &context,
+    QList<DeviceControlAction> *result,
+    QString *error)
+{
+    if (!value.isArray())
+        return fail(error, QString("%1 must be an array").arg(context));
+    result->clear();
+    for (qsizetype index = 0; index < value.toArray().size(); ++index) {
+        const QString itemContext = QString("%1[%2]").arg(context).arg(index);
+        const QJsonValue itemValue = value.toArray().at(index);
+        if (!itemValue.isObject())
+            return fail(error, QString("%1 must be an object").arg(itemContext));
+        const QJsonObject object = itemValue.toObject();
+        if (!checkKeys(
+                object,
+                {"id",
+                 "displayName",
+                 "description",
+                 "enabled",
+                 "qualification",
+                 "disabledReason",
+                 "requiresDc",
+                 "expectedSignedDefinitionSha256",
+                 "signedPdoProfileIds",
+                 "failureDisposition",
+                 "requiredSignals",
+                 "optionalSignals",
+                 "parameters",
+                 "consistencyGroups",
+                 "steps"},
+                itemContext,
+                error)) {
+            return false;
+        }
+
+        DeviceControlAction action;
+        QString qualification;
+        QString failureDisposition;
+        QStringList requiredSignals;
+        QStringList optionalSignals;
+        if (!parseString(object, "id", itemContext, &action.id.value, error)
+            || !parseString(object, "displayName", itemContext, &action.displayName, error)
+            || !parseString(object, "description", itemContext, &action.description, error, true)
+            || !parseBool(object, "enabled", itemContext, &action.enabled, error)
+            || !parseString(object, "qualification", itemContext, &qualification, error)
+            || !parseNullableString(
+                object, "disabledReason", itemContext, &action.disabledReason, error)
+            || !parseBool(object, "requiresDc", itemContext, &action.requiresDc, error)
+            || !parseHash(
+                object,
+                "expectedSignedDefinitionSha256",
+                itemContext,
+                &action.expectedSignedDefinitionSha256,
+                error)
+            || !parseStringList(
+                object, "signedPdoProfileIds", itemContext, &action.signedPdoProfileIds, error, true)
+            || !parseString(object, "failureDisposition", itemContext, &failureDisposition, error)
+            || !parseStringList(object, "requiredSignals", itemContext, &requiredSignals, error, true)
+            || !parseStringList(object, "optionalSignals", itemContext, &optionalSignals, error, true)
+            || !parseV3ConsistencyGroups(
+                object.value("consistencyGroups"),
+                itemContext + ".consistencyGroups",
+                &action.consistencyGroups,
+                error)) {
+            return false;
+        }
+        if (!stableV3Identifier(action.id.value)
+            || (!result->isEmpty() && action.id.value <= result->constLast().id.value)) {
+            return fail(
+                error, QString("%1 must use action IDs in strict canonical order").arg(context));
+        }
+        if (qualification == "qualified")
+            action.signedQualification = DeviceControlActionQualification::Qualified;
+        else if (qualification == "unqualified")
+            action.signedQualification = DeviceControlActionQualification::Unqualified;
+        else
+            return fail(error, QString("%1.qualification is not supported").arg(itemContext));
+        if (action.enabled) {
+            if (action.signedQualification != DeviceControlActionQualification::Qualified
+                || !action.disabledReason.isEmpty()) {
+                return fail(
+                    error,
+                    QString("%1 enabled action must be qualified without a disabled reason")
+                        .arg(itemContext));
+            }
+        } else if (action.disabledReason.isEmpty() || !stableV3Identifier(action.disabledReason)) {
+            return fail(
+                error,
+                QString("%1 disabled action requires a canonical disabled reason").arg(itemContext));
+        }
+        const auto parsedDisposition = failureDispositionFromString(failureDisposition);
+        if (!parsedDisposition) {
+            return fail(error, QString("%1.failureDisposition is not supported").arg(itemContext));
+        }
+        action.failureDisposition = *parsedDisposition;
+        if (action.signedPdoProfileIds.isEmpty()) {
+            return fail(error, QString("%1.signedPdoProfileIds must not be empty").arg(itemContext));
+        }
+        if (std::any_of(
+                action.signedPdoProfileIds.cbegin(),
+                action.signedPdoProfileIds.cend(),
+                [](const QString &profileId) { return !simpleV3Identifier(profileId); })) {
+            return fail(
+                error,
+                QString("%1.signedPdoProfileIds contains an unstable identifier").arg(itemContext));
+        }
+        QSet<QString> signalSet;
+        for (const QString &signal : std::as_const(requiredSignals)) {
+            if (!stableV3Identifier(signal)) {
+                return fail(
+                    error,
+                    QString("%1.requiredSignals contains an unstable identifier").arg(itemContext));
+            }
+            action.requiredSignals.append({signal});
+            signalSet.insert(signal);
+        }
+        for (const QString &signal : std::as_const(optionalSignals)) {
+            if (!stableV3Identifier(signal)) {
+                return fail(
+                    error,
+                    QString("%1.optionalSignals contains an unstable identifier").arg(itemContext));
+            }
+            if (signalSet.contains(signal)) {
+                return fail(
+                    error,
+                    QString("%1 required and optional signals must be disjoint").arg(itemContext));
+            }
+            action.optionalSignals.append({signal});
+        }
+
+        const QJsonValue parameters = object.value("parameters");
+        if (!parameters.isArray())
+            return fail(error, QString("%1.parameters must be an array").arg(itemContext));
+        QSet<QString> parameterIds;
+        for (qsizetype parameterIndex = 0; parameterIndex < parameters.toArray().size();
+             ++parameterIndex) {
+            DeviceControlActionParameter parameter;
+            if (!parseActionParameter(
+                    parameters.toArray().at(parameterIndex),
+                    QString("%1.parameters[%2]").arg(itemContext).arg(parameterIndex),
+                    PackageSchema::V3,
+                    &parameter,
+                    error)) {
+                return false;
+            }
+            if (parameterIds.contains(parameter.id) || !simpleV3Identifier(parameter.id)
+                || (!action.parameters.isEmpty()
+                    && parameter.id <= action.parameters.constLast().id)) {
+                return fail(
+                    error,
+                    QString("%1.parameters must use IDs in strict canonical order").arg(itemContext));
+            }
+            parameterIds.insert(parameter.id);
+            action.parameters.append(parameter);
+        }
+
+        const QJsonValue steps = object.value("steps");
+        if (!steps.isArray() || steps.toArray().isEmpty() || steps.toArray().size() > 64) {
+            return fail(error, QString("%1.steps must contain one to 64 steps").arg(itemContext));
+        }
+        for (qsizetype stepIndex = 0; stepIndex < steps.toArray().size(); ++stepIndex) {
+            DeviceControlStep step;
+            if (!parseV3ActionStep(
+                    steps.toArray().at(stepIndex),
+                    QString("%1.steps[%2]").arg(itemContext).arg(stepIndex),
+                    &step,
+                    error)) {
+                return false;
+            }
+            if (step.kind == DeviceControlStepKind::WriteGroup) {
+                for (const DeviceControlGroupAssignment &assignment : step.assignments) {
+                    if (assignment.value.source == DeviceControlValueSource::Parameter
+                        && !parameterIds.contains(assignment.value.parameterId)) {
+                        return fail(
+                            error,
+                            QString("%1 references an unknown action parameter").arg(itemContext));
+                    }
+                }
+            }
+            action.steps.append(step);
+        }
+        action.requiresExclusiveControl = true;
+        action.holdToRun = false;
+        result->append(action);
+    }
+    return true;
+}
+
 static bool parseActionStep(
     const QJsonValue &value,
     const QString &context,
@@ -1579,6 +2073,8 @@ static bool parseActions(
     QList<DeviceControlAction> *result,
     QString *error)
 {
+    if (schema == PackageSchema::V3)
+        return parseV3Actions(value, context, result, error);
     if (!value.isArray())
         return fail(error, QString("%1 must be an array").arg(context));
     result->clear();
@@ -1770,6 +2266,537 @@ static bool parseActions(
     return true;
 }
 
+static std::optional<EngineeringValueKind> rawKind(EtherCATDataType dataType)
+{
+    switch (dataType) {
+    case EtherCATDataType::Boolean:
+        return EngineeringValueKind::Boolean;
+    case EtherCATDataType::Integer8:
+    case EtherCATDataType::Integer16:
+    case EtherCATDataType::Integer32:
+    case EtherCATDataType::Integer64:
+        return EngineeringValueKind::SignedInteger;
+    case EtherCATDataType::UnsignedInteger8:
+    case EtherCATDataType::UnsignedInteger16:
+    case EtherCATDataType::UnsignedInteger32:
+    case EtherCATDataType::UnsignedInteger64:
+        return EngineeringValueKind::UnsignedInteger;
+    case EtherCATDataType::Unknown:
+    case EtherCATDataType::Real32:
+    case EtherCATDataType::Real64:
+    case EtherCATDataType::VisibleString:
+    case EtherCATDataType::OctetString:
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+static const SemanticSignalDefinition *signalForId(
+    const DeviceAdapterManifest &manifest, const SemanticSignalId &id)
+{
+    const auto topLevel = std::find_if(
+        manifest.semanticSignals.cbegin(),
+        manifest.semanticSignals.cend(),
+        [&id](const SemanticSignalDefinition &signal) { return signal.id == id; });
+    if (topLevel != manifest.semanticSignals.cend())
+        return &*topLevel;
+    const SemanticSignalDefinition *match = nullptr;
+    for (const DeviceModuleProfile &module : manifest.moduleProfiles) {
+        const auto found = std::find_if(
+            module.slotRelativeSignals.cbegin(),
+            module.slotRelativeSignals.cend(),
+            [&id](const SemanticSignalDefinition &signal) { return signal.id == id; });
+        if (found == module.slotRelativeSignals.cend())
+            continue;
+        if (match)
+            return nullptr;
+        match = &*found;
+    }
+    return match;
+}
+
+static bool valueConvertsForAllBindings(
+    const SemanticSignalDefinition &signal,
+    const EngineeringValue &value,
+    const QString &context,
+    QString *error)
+{
+    if (!signal.engineeringTransform
+        || signal.engineeringTransform->rounding != EngineeringRounding::RejectInexact) {
+        return fail(error, QString("%1 lacks an exact engineering transform").arg(context));
+    }
+    const Core::EngineeringContractValidation constrained
+        = Core::validateEngineeringValueAgainstConstraint(
+            value, signal.engineeringTransform->constraint);
+    if (!constrained.accepted())
+        return fail(error, QString("%1: %2").arg(context, constrained.detail));
+    for (const DeviceSignalBinding &binding : signal.bindings) {
+        const std::optional<EngineeringValueKind> kind = rawKind(binding.physicalType);
+        if (!kind || binding.bitWidth < 1 || binding.bitWidth > 64) {
+            return fail(error, QString("%1 uses an unsupported writable raw format").arg(context));
+        }
+        const Core::EngineeringConversionResult converted = Core::convertEngineeringToRaw(
+            value, *kind, quint32(binding.bitWidth), *signal.engineeringTransform);
+        if (!converted.validation.accepted()) {
+            return fail(
+                error,
+                QString("%1 is not exactly representable: %2")
+                    .arg(context, converted.validation.detail));
+        }
+    }
+    return true;
+}
+
+static bool parameterDomainConvertsForAllBindings(
+    const DeviceControlActionParameter &parameter,
+    const SemanticSignalDefinition &signal,
+    const QString &context,
+    QString *error)
+{
+    if (!parameter.engineeringConstraint || !signal.engineeringTransform) {
+        return fail(error, QString("%1 lacks an exact parameter or signal contract").arg(context));
+    }
+    const EngineeringConstraint &constraint = *parameter.engineeringConstraint;
+    if (!constraint.minimum || !constraint.maximum || !constraint.step || !constraint.stepOrigin) {
+        return fail(
+            error, QString("%1 requires finite boundaries, a step, and a step origin").arg(context));
+    }
+
+    const auto validateBoundary = [&](const ExactRational &boundary, const QString &name) {
+        const EngineeringValue value = EngineeringValue::fromExactRational(boundary);
+        const Core::EngineeringContractValidation ownConstraint
+            = Core::validateEngineeringValueAgainstConstraint(value, constraint);
+        if (!ownConstraint.accepted()) {
+            return fail(error, QString("%1 %2: %3").arg(context, name, ownConstraint.detail));
+        }
+        return valueConvertsForAllBindings(signal, value, QString("%1 %2").arg(context, name), error);
+    };
+    if (!validateBoundary(*constraint.minimum, "minimum")
+        || !validateBoundary(*constraint.maximum, "maximum")) {
+        return false;
+    }
+
+    const __int128 rawStepNumerator = __int128(constraint.step->numerator)
+                                      * signal.engineeringTransform->scale.denominator;
+    const __int128 rawStepDenominator = __int128(constraint.step->denominator)
+                                        * signal.engineeringTransform->scale.numerator;
+    if (rawStepDenominator == 0 || rawStepNumerator % rawStepDenominator != 0) {
+        return fail(
+            error, QString("%1 step is not exactly encodable by the target signal").arg(context));
+    }
+
+    if (parameter.engineeringDefaultValue
+        && !valueConvertsForAllBindings(
+            signal, *parameter.engineeringDefaultValue, QString("%1 default").arg(context), error)) {
+        return false;
+    }
+    for (const EngineeringEnumerationValue &entry : constraint.enumeration) {
+        if (!valueConvertsForAllBindings(
+                signal,
+                EngineeringValue::fromEnumeration(entry.id),
+                QString("%1 enumeration \"%2\"").arg(context, entry.id),
+                error)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool constraintSafelyWithin(
+    const EngineeringConstraint &candidate,
+    const EngineeringConstraint &allowed,
+    const QString &context,
+    QString *error)
+{
+    const Core::EngineeringContractValidation validation = Core::validateEngineeringConstraint(
+        candidate);
+    if (!validation.accepted())
+        return fail(error, QString("%1: %2").arg(context, validation.detail));
+    if (!candidate.minimum || !candidate.maximum) {
+        return fail(error, QString("%1 must declare finite minimum and maximum values").arg(context));
+    }
+    for (const ExactRational *boundary : {&*candidate.minimum, &*candidate.maximum}) {
+        const Core::EngineeringContractValidation boundaryValidation
+            = Core::validateEngineeringValueAgainstConstraint(
+                EngineeringValue::fromExactRational(*boundary), allowed);
+        if (!boundaryValidation.accepted()) {
+            return fail(
+                error,
+                QString("%1 exceeds the target signal constraint: %2")
+                    .arg(context, boundaryValidation.detail));
+        }
+    }
+    if (allowed.step
+        && (candidate.step != allowed.step || candidate.stepOrigin != allowed.stepOrigin)) {
+        return fail(
+            error, QString("%1 must retain the exact target signal step contract").arg(context));
+    }
+    if (!allowed.enumeration.isEmpty()) {
+        if (candidate.enumeration.isEmpty())
+            return fail(error, QString("%1 omits the target signal enumeration").arg(context));
+        for (const EngineeringEnumerationValue &entry : candidate.enumeration) {
+            const auto found = std::find_if(
+                allowed.enumeration.cbegin(),
+                allowed.enumeration.cend(),
+                [&entry](const EngineeringEnumerationValue &allowedEntry) {
+                    return allowedEntry.id == entry.id && allowedEntry.value == entry.value;
+                });
+            if (found == allowed.enumeration.cend()) {
+                return fail(
+                    error, QString("%1 introduces an unsigned enumeration value").arg(context));
+            }
+        }
+    } else if (!candidate.enumeration.isEmpty()) {
+        return fail(error, QString("%1 introduces an unsupported enumeration").arg(context));
+    }
+    return true;
+}
+
+static bool validateV3Manifest(const DeviceAdapterManifest &manifest, QString *error)
+{
+    if (!stableV3Identifier(manifest.id.value))
+        return fail(error, "v3 adapter ID must be canonical");
+
+    QHash<QString, const ProcessDataProfile *> signedProfiles;
+    for (const ProcessDataProfile &profile : manifest.processDataProfiles) {
+        if (!simpleV3Identifier(profile.signedPdoProfileId)
+            || signedProfiles.contains(profile.signedPdoProfileId)) {
+            return fail(error, "v3 signed PDO profile IDs must be canonical and unique");
+        }
+        signedProfiles.insert(profile.signedPdoProfileId, &profile);
+    }
+
+    QSet<QString> signalDefinitionIds;
+    const auto addSignalDefinition = [&](const SemanticSignalDefinition &signal) {
+        if (signalDefinitionIds.contains(signal.id.value)) {
+            return fail(
+                error,
+                QString("duplicate v3 semantic signal definition \"%1\"").arg(signal.id.value));
+        }
+        signalDefinitionIds.insert(signal.id.value);
+        return true;
+    };
+    for (const SemanticSignalDefinition &signal : manifest.semanticSignals) {
+        if (!addSignalDefinition(signal))
+            return false;
+    }
+    for (const DeviceModuleProfile &module : manifest.moduleProfiles) {
+        for (const SemanticSignalDefinition &signal : module.slotRelativeSignals) {
+            if (!addSignalDefinition(signal))
+                return false;
+        }
+    }
+
+    for (const SemanticSignalDefinition &signal : manifest.semanticSignals) {
+        if (signal.engineeringSafeValue
+            && !valueConvertsForAllBindings(
+                signal,
+                *signal.engineeringSafeValue,
+                QString("signal \"%1\" safe value").arg(signal.id.value),
+                error)) {
+            return false;
+        }
+        if (signal.access == SemanticSignalAccess::ReadOnly && signal.engineeringSafeValue) {
+            return fail(
+                error,
+                QString("read-only signal \"%1\" cannot declare a write safe value")
+                    .arg(signal.id.value));
+        }
+    }
+    for (const DeviceModuleProfile &module : manifest.moduleProfiles) {
+        for (const SemanticSignalDefinition &signal : module.slotRelativeSignals) {
+            if (signal.engineeringSafeValue
+                && !valueConvertsForAllBindings(
+                    signal,
+                    *signal.engineeringSafeValue,
+                    QString("signal \"%1\" safe value").arg(signal.id.value),
+                    error)) {
+                return false;
+            }
+            if (signal.access == SemanticSignalAccess::ReadOnly && signal.engineeringSafeValue) {
+                return fail(
+                    error,
+                    QString("read-only signal \"%1\" cannot declare a write safe value")
+                        .arg(signal.id.value));
+            }
+        }
+    }
+
+    for (const DeviceControlAction &action : manifest.controlActions) {
+        if (action.expectedSignedDefinitionSha256.size() != 32
+            || std::all_of(
+                action.expectedSignedDefinitionSha256.cbegin(),
+                action.expectedSignedDefinitionSha256.cend(),
+                [](char byte) { return byte == 0; })) {
+            return fail(
+                error,
+                QString("action \"%1\" has an invalid signed definition digest")
+                    .arg(action.id.value));
+        }
+        for (const QString &profileId : action.signedPdoProfileIds) {
+            if (!signedProfiles.contains(profileId)) {
+                return fail(
+                    error,
+                    QString("action \"%1\" references unknown signed PDO profile \"%2\"")
+                        .arg(action.id.value, profileId));
+            }
+        }
+
+        QSet<QString> requiredSignals;
+        for (const SemanticSignalId &signalId : action.requiredSignals) {
+            if (!signalForId(manifest, signalId)) {
+                return fail(
+                    error,
+                    QString("action \"%1\" references unknown signal \"%2\"")
+                        .arg(action.id.value, signalId.value));
+            }
+            requiredSignals.insert(signalId.value);
+        }
+        for (const QString &profileId : action.signedPdoProfileIds) {
+            QSet<QString> profileSignals;
+            for (const SemanticSignalId &signalId : signedProfiles.value(profileId)->requiredSignals)
+                profileSignals.insert(signalId.value);
+            if (!std::all_of(
+                    requiredSignals.cbegin(),
+                    requiredSignals.cend(),
+                    [&profileSignals](const QString &signalId) {
+                        return profileSignals.contains(signalId);
+                    })) {
+                return fail(
+                    error,
+                    QString(
+                        "action \"%1\" required signals are not completely covered by signed "
+                        "PDO profile \"%2\"")
+                        .arg(action.id.value, profileId));
+            }
+        }
+        for (const SemanticSignalId &signalId : action.optionalSignals) {
+            if (!signalForId(manifest, signalId)) {
+                return fail(
+                    error,
+                    QString("action \"%1\" references unknown optional signal \"%2\"")
+                        .arg(action.id.value, signalId.value));
+            }
+        }
+
+        QHash<QString, const DeviceControlActionParameter *> parameters;
+        for (const DeviceControlActionParameter &parameter : action.parameters)
+            parameters.insert(parameter.id, &parameter);
+
+        QHash<QString, const DeviceControlConsistencyGroup *> groups;
+        QSet<QString> groupedSignals;
+        for (const DeviceControlConsistencyGroup &group : action.consistencyGroups) {
+            if (groups.contains(group.id) || group.maximumTtlCycles < 1
+                || group.maximumTtlCycles > std::numeric_limits<quint16>::max()
+                || group.recovery == DeviceControlGroupRecovery::Invalid) {
+                return fail(
+                    error,
+                    QString("action \"%1\" has an invalid consistency group").arg(action.id.value));
+            }
+            groups.insert(group.id, &group);
+            for (const SemanticSignalId &member : group.members) {
+                const SemanticSignalDefinition *signal = signalForId(manifest, member);
+                if (!signal || groupedSignals.contains(member.value)
+                    || signal->direction != SemanticSignalDirection::Output
+                    || signal->access != SemanticSignalAccess::ReadWrite
+                    || !signal->engineeringSafeValue
+                    || !std::all_of(
+                        signal->bindings.cbegin(),
+                        signal->bindings.cend(),
+                        [](const DeviceSignalBinding &binding) {
+                            return binding.kind == DeviceSignalBindingKind::ProcessDataObject
+                                   && binding.pdoDirection == PdoDirection::Rx;
+                        })) {
+                    return fail(
+                        error,
+                        QString(
+                            "action \"%1\" group \"%2\" has an unsafe or duplicate member "
+                            "\"%3\"")
+                            .arg(action.id.value, group.id, member.value));
+                }
+                groupedSignals.insert(member.value);
+                if (!requiredSignals.contains(member.value)) {
+                    return fail(
+                        error,
+                        QString("action \"%1\" group member \"%2\" is not required")
+                            .arg(action.id.value, member.value));
+                }
+            }
+        }
+
+        QSet<QString> referencedSignals;
+        QSet<QString> referencedGroups;
+        QSet<QString> referencedParameters;
+        for (const DeviceControlStep &step : action.steps) {
+            if (step.kind == DeviceControlStepKind::WriteSignal) {
+                return fail(
+                    error,
+                    QString("action \"%1\" uses forbidden legacy WriteSignal").arg(action.id.value));
+            }
+            if (step.kind == DeviceControlStepKind::WriteGroup) {
+                const DeviceControlConsistencyGroup *group
+                    = groups.value(step.consistencyGroupId, nullptr);
+                if (!group || step.timeoutMs || step.timeoutCycles
+                    || step.assignments.size() != group->members.size()) {
+                    return fail(
+                        error,
+                        QString("action \"%1\" has an invalid or partial WriteGroup")
+                            .arg(action.id.value));
+                }
+                referencedGroups.insert(group->id);
+                for (qsizetype index = 0; index < step.assignments.size(); ++index) {
+                    const DeviceControlGroupAssignment &assignment = step.assignments.at(index);
+                    if (assignment.signalId != group->members.at(index)) {
+                        return fail(
+                            error,
+                            QString(
+                                "action \"%1\" WriteGroup does not cover its complete "
+                                "canonical member set")
+                                .arg(action.id.value));
+                    }
+                    const SemanticSignalDefinition *signal
+                        = signalForId(manifest, assignment.signalId);
+                    if (!signal)
+                        return fail(error, "validated WriteGroup signal disappeared");
+                    if (assignment.value.source == DeviceControlValueSource::Literal) {
+                        if (!assignment.value.engineeringLiteralValue
+                            || !valueConvertsForAllBindings(
+                                *signal,
+                                *assignment.value.engineeringLiteralValue,
+                                QString("action \"%1\" assignment \"%2\"")
+                                    .arg(action.id.value, assignment.signalId.value),
+                                error)) {
+                            return false;
+                        }
+                    } else if (assignment.value.source == DeviceControlValueSource::Parameter) {
+                        const DeviceControlActionParameter *parameter
+                            = parameters.value(assignment.value.parameterId, nullptr);
+                        if (!parameter || !parameter->engineeringConstraint
+                            || !signal->engineeringTransform
+                            || !constraintSafelyWithin(
+                                *parameter->engineeringConstraint,
+                                signal->engineeringTransform->constraint,
+                                QString("action \"%1\" parameter \"%2\"")
+                                    .arg(action.id.value, assignment.value.parameterId),
+                                error)) {
+                            return false;
+                        }
+                        if (!std::all_of(
+                                signal->bindings.cbegin(),
+                                signal->bindings.cend(),
+                                [parameter](const DeviceSignalBinding &binding) {
+                                    return binding.physicalType == parameter->dataType;
+                                })) {
+                            return fail(
+                                error,
+                                QString(
+                                    "action \"%1\" parameter \"%2\" has a mismatched raw "
+                                    "type")
+                                    .arg(action.id.value, assignment.value.parameterId));
+                        }
+                        if (!parameterDomainConvertsForAllBindings(
+                                *parameter,
+                                *signal,
+                                QString("action \"%1\" parameter \"%2\"")
+                                    .arg(action.id.value, assignment.value.parameterId),
+                                error)) {
+                            return false;
+                        }
+                        referencedParameters.insert(assignment.value.parameterId);
+                    } else {
+                        return fail(error, "v3 assignment has an invalid value source");
+                    }
+                    referencedSignals.insert(assignment.signalId.value);
+                }
+                continue;
+            }
+            if (step.kind == DeviceControlStepKind::WaitCycles) {
+                if (!step.timeoutCycles || step.timeoutMs || !step.signalId.value.isEmpty()
+                    || step.value.source != DeviceControlValueSource::Invalid
+                    || step.mask.source != DeviceControlValueSource::Invalid) {
+                    return fail(
+                        error,
+                        QString("action \"%1\" mixes cycle and legacy timeout fields")
+                            .arg(action.id.value));
+                }
+                continue;
+            }
+            if (step.kind != DeviceControlStepKind::WaitMaskedEquals
+                && step.kind != DeviceControlStepKind::WaitAbsoluteAtMost) {
+                return fail(
+                    error,
+                    QString("action \"%1\" contains an unsupported v3 step").arg(action.id.value));
+            }
+            if (!step.timeoutCycles || step.timeoutMs) {
+                return fail(
+                    error,
+                    QString("action \"%1\" wait must use only timeoutCycles").arg(action.id.value));
+            }
+            const SemanticSignalDefinition *signal = signalForId(manifest, step.signalId);
+            if (!signal || !signal->engineeringTransform || !step.value.engineeringLiteralValue) {
+                return fail(
+                    error,
+                    QString("action \"%1\" wait references an inexact signal").arg(action.id.value));
+            }
+            if (!valueConvertsForAllBindings(
+                    *signal,
+                    *step.value.engineeringLiteralValue,
+                    QString("action \"%1\" wait value").arg(action.id.value),
+                    error)) {
+                return false;
+            }
+            if (step.kind == DeviceControlStepKind::WaitMaskedEquals) {
+                if (!step.mask.engineeringLiteralValue
+                    || step.value.engineeringLiteralValue->kind
+                           != EngineeringValueKind::UnsignedInteger
+                    || step.mask.engineeringLiteralValue->kind
+                           != EngineeringValueKind::UnsignedInteger
+                    || step.mask.engineeringLiteralValue->unsignedInteger == 0
+                    || (step.value.engineeringLiteralValue->unsignedInteger
+                        & ~step.mask.engineeringLiteralValue->unsignedInteger)) {
+                    return fail(
+                        error,
+                        QString("action \"%1\" masked wait has an unsafe mask or value")
+                            .arg(action.id.value));
+                }
+                const quint64 mask = step.mask.engineeringLiteralValue->unsignedInteger;
+                for (const DeviceSignalBinding &binding : signal->bindings) {
+                    if (binding.bitWidth < 1 || binding.bitWidth > 64
+                        || (binding.bitWidth < 64 && (mask >> binding.bitWidth))) {
+                        return fail(
+                            error,
+                            QString("action \"%1\" masked wait exceeds the signal width")
+                                .arg(action.id.value));
+                    }
+                }
+            } else if (step.mask.source != DeviceControlValueSource::Invalid) {
+                return fail(
+                    error,
+                    QString("action \"%1\" absolute wait cannot carry a mask").arg(action.id.value));
+            }
+            referencedSignals.insert(step.signalId.value);
+        }
+        if (referencedGroups.size() != groups.size()) {
+            return fail(
+                error,
+                QString("action \"%1\" declares an unused consistency group").arg(action.id.value));
+        }
+        if (referencedParameters.size() != parameters.size()) {
+            return fail(
+                error, QString("action \"%1\" declares an unused parameter").arg(action.id.value));
+        }
+        if (referencedSignals != requiredSignals) {
+            return fail(
+                error,
+                QString(
+                    "action \"%1\" required signals do not equal its complete step "
+                    "reference set")
+                    .arg(action.id.value));
+        }
+    }
+    return true;
+}
+
 static bool validateManifest(DeviceAdapterManifest *manifest, PackageSchema schema, QString *error)
 {
     if (manifest->match.vendorId == 0 || manifest->match.productCode == 0
@@ -1813,6 +2840,10 @@ static bool validateManifest(DeviceAdapterManifest *manifest, PackageSchema sche
     QSet<QString> signalIds;
     for (const SemanticSignalDefinition &signal : std::as_const(manifest->semanticSignals))
         signalIds.insert(signal.id.value);
+    for (const DeviceModuleProfile &module : std::as_const(manifest->moduleProfiles)) {
+        for (const SemanticSignalDefinition &signal : module.slotRelativeSignals)
+            signalIds.insert(signal.id.value);
+    }
     for (const ProcessDataProfile &profile : std::as_const(manifest->processDataProfiles)) {
         for (const SemanticSignalId &requiredSignal : profile.requiredSignals) {
             if (!signalIds.contains(requiredSignal.value)) {
@@ -1824,7 +2855,7 @@ static bool validateManifest(DeviceAdapterManifest *manifest, PackageSchema sche
         }
     }
     for (const DeviceControlAction &action : std::as_const(manifest->controlActions)) {
-        if (action.enabled && action.commandTtlMs == 0) {
+        if (schema != PackageSchema::V3 && action.enabled && action.commandTtlMs == 0) {
             return fail(
                 error,
                 QString("enabled action \"%1\" must declare a non-zero command TTL")
@@ -1922,6 +2953,8 @@ static bool validateManifest(DeviceAdapterManifest *manifest, PackageSchema sche
             }
         }
     }
+    if (schema == PackageSchema::V3 && !validateV3Manifest(*manifest, error))
+        return false;
     return true;
 }
 
@@ -1947,14 +2980,17 @@ static std::optional<Package> parsePackage(
         schema = PackageSchema::V1;
     else if (parsedSchema == schemaVersionV2)
         schema = PackageSchema::V2;
+    else if (parsedSchema == schemaVersionV3)
+        schema = PackageSchema::V3;
     else {
         fail(
             error,
-            QString("%1.schemaVersion must equal \"%2\" or \"%3\"")
+            QString("%1.schemaVersion must equal \"%2\", \"%3\", or \"%4\"")
                 .arg(
                     context,
                     QString::fromLatin1(schemaVersionV1),
-                    QString::fromLatin1(schemaVersionV2)));
+                    QString::fromLatin1(schemaVersionV2),
+                    QString::fromLatin1(schemaVersionV3)));
         return std::nullopt;
     }
     if (!checkKeys(
@@ -2066,12 +3102,7 @@ static std::optional<Package> parsePackage(
     manifest.match.maximumRevision = quint32(maximumRevision);
 
     if (!parseCapabilityList(
-            object,
-            "capabilities",
-            context,
-            &manifest.capabilities,
-            error,
-            schema == PackageSchema::V2)) {
+            object, "capabilities", context, &manifest.capabilities, error, exactSchema(schema))) {
         return std::nullopt;
     }
     const QJsonValue sourceValue = object.value("source");
@@ -2114,8 +3145,12 @@ static std::optional<Package> parsePackage(
     }
     if (schema == PackageSchema::V1) {
         manifest.contentSha256 = QCryptographicHash::hash(contents, QCryptographicHash::Sha256);
-    } else {
+    } else if (schema == PackageSchema::V2) {
         manifest.contentSha256 = canonicalContentSha256V2(object, context, error);
+        if (manifest.contentSha256.isEmpty())
+            return std::nullopt;
+    } else {
+        manifest.contentSha256 = canonicalContentSha256V3(object, context, error);
         if (manifest.contentSha256.isEmpty())
             return std::nullopt;
     }

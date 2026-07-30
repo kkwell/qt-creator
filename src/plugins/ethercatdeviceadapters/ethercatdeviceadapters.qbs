@@ -18,6 +18,8 @@ QtcPlugin {
         files: [
             "ethercatdeviceadapterstests.cpp",
             "ethercatdeviceadapterstests.h",
+            "testdata/device-adapter-v3-contract.fixture.json",
+            "testdata/device-adapter-v3.schema.json",
         ]
     }
 }

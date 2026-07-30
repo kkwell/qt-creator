@@ -115,6 +115,7 @@ struct ETHERCATDATA_EXPORT SemanticSignalDefinition
     QList<DeviceSignalBinding> bindings;
     SemanticValueMetadata valueMetadata;
     std::optional<EngineeringTransform> engineeringTransform;
+    std::optional<EngineeringValue> engineeringSafeValue;
     bool hasSafeValue = false;
     QVariant safeValue;
     ManualControlPolicy manualControl;
@@ -126,6 +127,7 @@ struct ETHERCATDATA_EXPORT SemanticSignalDefinition
 struct ETHERCATDATA_EXPORT ProcessDataProfile
 {
     QString id;
+    QString signedPdoProfileId;
     QList<quint16> rxPdoIndices;
     QList<quint16> txPdoIndices;
     QList<SemanticSignalId> requiredSignals;
@@ -184,10 +186,50 @@ struct ETHERCATDATA_EXPORT DeviceControlValue
     friend bool operator==(const DeviceControlValue &, const DeviceControlValue &) = default;
 };
 
+struct ETHERCATDATA_EXPORT DeviceControlGroupAssignment
+{
+    SemanticSignalId signalId;
+    DeviceControlValue value;
+
+    friend bool operator==(
+        const DeviceControlGroupAssignment &, const DeviceControlGroupAssignment &) = default;
+};
+
+enum class DeviceControlGroupRecovery {
+    Invalid,
+    ReturnTask,
+    HoldSafe,
+};
+
+struct ETHERCATDATA_EXPORT DeviceControlConsistencyGroup
+{
+    QString id;
+    QList<SemanticSignalId> members;
+    DeviceControlGroupRecovery recovery = DeviceControlGroupRecovery::Invalid;
+    quint32 maximumTtlCycles = 0;
+
+    friend bool operator==(
+        const DeviceControlConsistencyGroup &, const DeviceControlConsistencyGroup &) = default;
+};
+
+enum class DeviceControlFailureDisposition {
+    Invalid,
+    ReturnTask,
+    HoldSafe,
+    HoldOperationalFault,
+};
+
+enum class DeviceControlActionQualification {
+    Unqualified,
+    Qualified,
+};
+
 enum class DeviceControlStepKind {
     WriteSignal,
+    WriteGroup,
     WaitMaskedEquals,
     WaitAbsoluteAtMost,
+    WaitCycles,
     Delay,
 };
 
@@ -197,7 +239,10 @@ struct ETHERCATDATA_EXPORT DeviceControlStep
     SemanticSignalId signalId;
     DeviceControlValue value;
     DeviceControlValue mask;
+    QString consistencyGroupId;
+    QList<DeviceControlGroupAssignment> assignments;
     quint32 timeoutMs = 0;
+    quint32 timeoutCycles = 0;
 
     friend bool operator==(const DeviceControlStep &, const DeviceControlStep &) = default;
 };
@@ -209,6 +254,9 @@ struct ETHERCATDATA_EXPORT DeviceControlAction
     QString displayName;
     QString description;
     bool enabled = false;
+    DeviceControlActionQualification signedQualification
+        = DeviceControlActionQualification::Unqualified;
+    QString disabledReason;
     bool requiresExclusiveControl = true;
     bool requiresDc = true;
     bool holdToRun = true;
@@ -220,6 +268,11 @@ struct ETHERCATDATA_EXPORT DeviceControlAction
     QList<SemanticActionId> allowedTimeoutActionIds;
     QList<SemanticActionId> allowedFailureActionIds;
     QList<SemanticSignalId> requiredSignals;
+    QList<SemanticSignalId> optionalSignals;
+    QByteArray expectedSignedDefinitionSha256;
+    QStringList signedPdoProfileIds;
+    QList<DeviceControlConsistencyGroup> consistencyGroups;
+    DeviceControlFailureDisposition failureDisposition = DeviceControlFailureDisposition::Invalid;
     QList<DeviceControlActionParameter> parameters;
     QList<DeviceControlStep> steps;
 
@@ -358,6 +411,11 @@ Q_DECLARE_METATYPE(EtherCAT::Data::DeviceModuleProfile)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceControlActionParameter)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceControlValueSource)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceControlValue)
+Q_DECLARE_METATYPE(EtherCAT::Data::DeviceControlGroupAssignment)
+Q_DECLARE_METATYPE(EtherCAT::Data::DeviceControlGroupRecovery)
+Q_DECLARE_METATYPE(EtherCAT::Data::DeviceControlConsistencyGroup)
+Q_DECLARE_METATYPE(EtherCAT::Data::DeviceControlFailureDisposition)
+Q_DECLARE_METATYPE(EtherCAT::Data::DeviceControlActionQualification)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceControlStepKind)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceControlStep)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceControlAction)

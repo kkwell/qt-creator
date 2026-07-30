@@ -108,6 +108,16 @@ static QByteArray packageDigest(const QByteArray &contents, QString *error)
     return repository.adapterManifests().constFirst().contentSha256;
 }
 
+static QJsonObject v3Fixture()
+{
+    const QString path = QFINDTESTDATA("testdata/device-adapter-v3-contract.fixture.json");
+    QFile file(path);
+    if (path.isEmpty() || !file.open(QIODevice::ReadOnly))
+        return {};
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
+    return document.isObject() ? document.object() : QJsonObject{};
+}
+
 static Utils::FilePath adaptersRoot()
 {
     return ::Core::ICore::resourcePath("ethercat/adapters");
@@ -401,7 +411,7 @@ void EtherCATDeviceAdaptersTests::testInvalidPackagesAreRejected()
     QVERIFY(writePackage(root + "/c-unknown-field.adapter.json", unknownField));
 
     QJsonObject wrongSchema = valid;
-    wrongSchema.insert("schemaVersion", "embed-labs.device-adapter/v3");
+    wrongSchema.insert("schemaVersion", "embed-labs.device-adapter/v4");
     QVERIFY(writePackage(root + "/d-wrong-schema.adapter.json", wrongSchema));
 
     QJsonObject upperCaseHash = valid;
@@ -471,10 +481,11 @@ void EtherCATDeviceAdaptersTests::testBundledV2ExactContracts()
         QCOMPARE(manifest->qualification, Data::DeviceAdapterQualification::Candidate);
         QVERIFY(!manifest->signatureVerified);
         QVERIFY(!manifest->realHardwareAllowed);
-        QVERIFY(std::all_of(
-            manifest->controlActions.cbegin(),
-            manifest->controlActions.cend(),
-            [](const Data::DeviceControlAction &action) { return !action.enabled; }));
+        QVERIFY(
+            std::all_of(
+                manifest->controlActions.cbegin(),
+                manifest->controlActions.cend(),
+                [](const Data::DeviceControlAction &action) { return !action.enabled; }));
     }
 
     for (const Data::SemanticSignalDefinition &signal : xb6->semanticSignals) {
@@ -701,6 +712,383 @@ void EtherCATDeviceAdaptersTests::testV2StrictParserAndCanonicalDigest()
     QVERIFY(changedDigest != prettyDigest);
 }
 
+void EtherCATDeviceAdaptersTests::testV3SignedActionContract()
+{
+    const QJsonObject valid = v3Fixture();
+    QVERIFY(!valid.isEmpty());
+    QVERIFY2(packageLoadError(valid).isEmpty(), qPrintable(packageLoadError(valid)));
+
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    QVERIFY(writePackage(temporaryDirectory.path() + "/v3.adapter.json", valid));
+    AdapterPackageRepository repository(Utils::FilePath::fromString(temporaryDirectory.path()));
+    QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
+    QCOMPARE(repository.loadedPackageCount(), 1);
+    const Data::DeviceAdapterManifest manifest = repository.adapterManifests().constFirst();
+    QCOMPARE(manifest.id.value, QString("org.embedlabs.adapter.test.atomic-output"));
+    QCOMPARE(manifest.processDataProfiles.size(), 1);
+    QCOMPARE(manifest.processDataProfiles.constFirst().signedPdoProfileId, QString("test-profile-v1"));
+    QCOMPARE(manifest.controlActions.size(), 1);
+
+    const Data::DeviceControlAction &action = manifest.controlActions.constFirst();
+    QVERIFY(action.enabled);
+    QCOMPARE(action.signedQualification, Data::DeviceControlActionQualification::Qualified);
+    QVERIFY(action.disabledReason.isEmpty());
+    QCOMPARE(action.expectedSignedDefinitionSha256.size(), qsizetype(32));
+    QCOMPARE(action.signedPdoProfileIds, QStringList{"test-profile-v1"});
+    QCOMPARE(action.failureDisposition, Data::DeviceControlFailureDisposition::HoldOperationalFault);
+    QCOMPARE(action.consistencyGroups.size(), 1);
+    const Data::DeviceControlConsistencyGroup &group = action.consistencyGroups.constFirst();
+    QCOMPARE(group.id, QString("manual_outputs"));
+    QCOMPARE(group.members.size(), 2);
+    QCOMPARE(group.recovery, Data::DeviceControlGroupRecovery::HoldSafe);
+    QCOMPARE(group.maximumTtlCycles, quint32(1000));
+    QCOMPARE(action.steps.size(), 3);
+    QCOMPARE(action.steps.at(0).kind, Data::DeviceControlStepKind::WaitMaskedEquals);
+    QCOMPARE(action.steps.at(0).timeoutCycles, quint32(1000));
+    QCOMPARE(action.steps.at(1).kind, Data::DeviceControlStepKind::WriteGroup);
+    QCOMPARE(action.steps.at(1).assignments.size(), 2);
+    QCOMPARE(
+        action.steps.at(1).assignments.at(0).value.source,
+        Data::DeviceControlValueSource::Parameter);
+    QCOMPARE(
+        action.steps.at(1).assignments.at(1).value.source, Data::DeviceControlValueSource::Literal);
+    QCOMPARE(action.steps.at(2).kind, Data::DeviceControlStepKind::WaitCycles);
+    QCOMPARE(action.steps.at(2).timeoutCycles, quint32(2));
+    QVERIFY(action.parameters.constFirst().engineeringDefaultValue);
+    QVERIFY(manifest.semanticSignals.at(0).engineeringSafeValue);
+    QVERIFY(manifest.semanticSignals.at(1).engineeringSafeValue);
+    QVERIFY(!manifest.semanticSignals.at(2).engineeringSafeValue);
+
+    QString error;
+    const QByteArray pretty
+        = packageDigest(QJsonDocument(valid).toJson(QJsonDocument::Indented), &error);
+    QVERIFY2(!pretty.isEmpty(), qPrintable(error));
+    const QByteArray compact
+        = packageDigest(QJsonDocument(valid).toJson(QJsonDocument::Compact), &error);
+    QVERIFY2(!compact.isEmpty(), qPrintable(error));
+    const QByteArray reversed = packageDigest(jsonWithReverseRootKeys(valid), &error);
+    QVERIFY2(!reversed.isEmpty(), qPrintable(error));
+    QCOMPARE(compact, pretty);
+    QCOMPARE(reversed, pretty);
+
+    QJsonObject semanticMutation = valid;
+    QJsonArray actions = semanticMutation.value("controlActions").toArray();
+    QJsonObject mutatedAction = actions.at(0).toObject();
+    mutatedAction.insert("failureDisposition", "hold-safe");
+    actions.replace(0, mutatedAction);
+    semanticMutation.insert("controlActions", actions);
+    const QByteArray changed
+        = packageDigest(QJsonDocument(semanticMutation).toJson(QJsonDocument::Compact), &error);
+    QVERIFY2(!changed.isEmpty(), qPrintable(error));
+    QVERIFY(changed != pretty);
+
+    const QString schemaPath = QFINDTESTDATA("testdata/device-adapter-v3.schema.json");
+    QVERIFY(!schemaPath.isEmpty());
+    QFile schemaFile(schemaPath);
+    QVERIFY(schemaFile.open(QIODevice::ReadOnly));
+    const QJsonDocument schemaDocument = QJsonDocument::fromJson(schemaFile.readAll());
+    QVERIFY(schemaDocument.isObject());
+    QCOMPARE(
+        schemaDocument.object().value("$id").toString(),
+        QString("https://embed-labs.dev/schemas/device-adapter-v3.schema.json"));
+    const QJsonObject definitions = schemaDocument.object().value("$defs").toObject();
+    QCOMPARE(
+        definitions.value("simpleId").toObject().value("pattern").toString(),
+        QString("^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$"));
+    QCOMPARE(
+        definitions.value("nonzeroSha256")
+            .toObject()
+            .value("allOf")
+            .toArray()
+            .at(0)
+            .toObject()
+            .value("$ref")
+            .toString(),
+        QString("#/$defs/sha256"));
+}
+
+void EtherCATDeviceAdaptersTests::testV3RejectsUnsafeContracts()
+{
+    const QJsonObject valid = v3Fixture();
+    QVERIFY(!valid.isEmpty());
+
+    QJsonObject unknown = valid;
+    unknown.insert("unexpected", true);
+    QVERIFY(packageLoadError(unknown).contains("unknown field \"unexpected\""));
+
+    QJsonObject missing = valid;
+    QJsonArray actions = missing.value("controlActions").toArray();
+    QJsonObject action = actions.at(0).toObject();
+    action.remove("failureDisposition");
+    actions.replace(0, action);
+    missing.insert("controlActions", actions);
+    QVERIFY(packageLoadError(missing).contains("missing field \"failureDisposition\""));
+
+    QJsonObject invalidDigest = valid;
+    actions = invalidDigest.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    action.insert(
+        "expectedSignedDefinitionSha256",
+        action.value("expectedSignedDefinitionSha256").toString().toUpper());
+    actions.replace(0, action);
+    invalidDigest.insert("controlActions", actions);
+    QVERIFY(packageLoadError(invalidDigest).contains("exact 64-character SHA-256"));
+
+    QJsonObject zeroDigest = valid;
+    actions = zeroDigest.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    action.insert("expectedSignedDefinitionSha256", QString(64, '0'));
+    actions.replace(0, action);
+    zeroDigest.insert("controlActions", actions);
+    QVERIFY(packageLoadError(zeroDigest).contains("invalid signed definition digest"));
+
+    QJsonObject duplicateMember = valid;
+    actions = duplicateMember.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    QJsonArray groups = action.value("consistencyGroups").toArray();
+    QJsonObject group = groups.at(0).toObject();
+    QJsonArray members = group.value("members").toArray();
+    members.append(members.at(1));
+    group.insert("members", members);
+    groups.replace(0, group);
+    action.insert("consistencyGroups", groups);
+    actions.replace(0, action);
+    duplicateMember.insert("controlActions", actions);
+    QVERIFY(packageLoadError(duplicateMember).contains("duplicate values"));
+
+    QJsonObject partialGroup = valid;
+    actions = partialGroup.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    QJsonArray steps = action.value("steps").toArray();
+    QJsonObject writeGroup = steps.at(1).toObject();
+    QJsonArray assignments = writeGroup.value("assignments").toArray();
+    assignments.removeLast();
+    writeGroup.insert("assignments", assignments);
+    steps.replace(1, writeGroup);
+    action.insert("steps", steps);
+    actions.replace(0, action);
+    partialGroup.insert("controlActions", actions);
+    QVERIFY(packageLoadError(partialGroup).contains("partial WriteGroup"));
+
+    QJsonObject missingSafeValue = valid;
+    QJsonArray signalArray = missingSafeValue.value("signals").toArray();
+    QJsonObject output = signalArray.at(0).toObject();
+    output.insert("engineeringSafeValue", QJsonValue::Null);
+    signalArray.replace(0, output);
+    missingSafeValue.insert("signals", signalArray);
+    QVERIFY(packageLoadError(missingSafeValue).contains("unsafe or duplicate member"));
+
+    QJsonObject nonOutputPdo = valid;
+    signalArray = nonOutputPdo.value("signals").toArray();
+    output = signalArray.at(0).toObject();
+    QJsonArray bindings = output.value("bindings").toArray();
+    QJsonObject binding = bindings.at(0).toObject();
+    binding.insert("pdoDirection", "tx");
+    bindings.replace(0, binding);
+    output.insert("bindings", bindings);
+    signalArray.replace(0, output);
+    nonOutputPdo.insert("signals", signalArray);
+    QVERIFY(packageLoadError(nonOutputPdo).contains("unsafe or duplicate member"));
+
+    QJsonObject writeOnlyOutput = valid;
+    signalArray = writeOnlyOutput.value("signals").toArray();
+    output = signalArray.at(0).toObject();
+    output.insert("access", "write-only");
+    signalArray.replace(0, output);
+    writeOnlyOutput.insert("signals", signalArray);
+    QVERIFY(packageLoadError(writeOnlyOutput).contains("unsafe or duplicate member"));
+
+    QJsonObject bidirectionalOutput = valid;
+    signalArray = bidirectionalOutput.value("signals").toArray();
+    output = signalArray.at(0).toObject();
+    output.insert("direction", "bidirectional");
+    signalArray.replace(0, output);
+    bidirectionalOutput.insert("signals", signalArray);
+    QVERIFY(packageLoadError(bidirectionalOutput).contains("unsafe or duplicate member"));
+
+    QJsonObject unsafeConstant = valid;
+    actions = unsafeConstant.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    steps = action.value("steps").toArray();
+    writeGroup = steps.at(1).toObject();
+    assignments = writeGroup.value("assignments").toArray();
+    QJsonObject assignment = assignments.at(1).toObject();
+    QJsonObject assignmentValue = assignment.value("value").toObject();
+    assignmentValue
+        .insert("engineeringConstant", QJsonObject{{"kind", "unsigned-integer"}, {"value", "2"}});
+    assignment.insert("value", assignmentValue);
+    assignments.replace(1, assignment);
+    writeGroup.insert("assignments", assignments);
+    steps.replace(1, writeGroup);
+    action.insert("steps", steps);
+    actions.replace(0, action);
+    unsafeConstant.insert("controlActions", actions);
+    const QString unsafeConstantError = packageLoadError(unsafeConstant);
+    QVERIFY2(unsafeConstantError.contains("declared maximum"), qPrintable(unsafeConstantError));
+
+    QJsonObject mixedTimeout = valid;
+    actions = mixedTimeout.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    steps = action.value("steps").toArray();
+    QJsonObject wait = steps.at(0).toObject();
+    wait.insert("timeoutMs", 1000);
+    steps.replace(0, wait);
+    action.insert("steps", steps);
+    actions.replace(0, action);
+    mixedTimeout.insert("controlActions", actions);
+    QVERIFY(packageLoadError(mixedTimeout).contains("unknown field \"timeoutMs\""));
+
+    QJsonObject legacyWrite = valid;
+    actions = legacyWrite.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    steps = action.value("steps").toArray();
+    writeGroup = steps.at(1).toObject();
+    writeGroup.insert("kind", "write-signal");
+    steps.replace(1, writeGroup);
+    action.insert("steps", steps);
+    actions.replace(0, action);
+    legacyWrite.insert("controlActions", actions);
+    QVERIFY(packageLoadError(legacyWrite).contains("forbids legacy write-signal"));
+
+    QJsonObject unknownGroup = valid;
+    actions = unknownGroup.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    steps = action.value("steps").toArray();
+    writeGroup = steps.at(1).toObject();
+    writeGroup.insert("consistencyGroup", "unknown_group");
+    steps.replace(1, writeGroup);
+    action.insert("steps", steps);
+    actions.replace(0, action);
+    unknownGroup.insert("controlActions", actions);
+    QVERIFY(packageLoadError(unknownGroup).contains("invalid or partial WriteGroup"));
+
+    QJsonObject duplicateSignedProfile = valid;
+    QJsonArray profiles = duplicateSignedProfile.value("processDataProfiles").toArray();
+    QJsonObject secondProfile = profiles.at(0).toObject();
+    secondProfile.insert("id", "org.embedlabs.test.profile.second");
+    profiles.append(secondProfile);
+    duplicateSignedProfile.insert("processDataProfiles", profiles);
+    QVERIFY(packageLoadError(duplicateSignedProfile).contains("signed PDO profile IDs"));
+
+    QJsonObject incompleteSignedProfile = valid;
+    profiles = incompleteSignedProfile.value("processDataProfiles").toArray();
+    QJsonObject profile = profiles.at(0).toObject();
+    QJsonArray profileSignals = profile.value("requiredSignals").toArray();
+    profileSignals.removeLast();
+    profile.insert("requiredSignals", profileSignals);
+    profiles.replace(0, profile);
+    incompleteSignedProfile.insert("processDataProfiles", profiles);
+    QVERIFY(packageLoadError(incompleteSignedProfile)
+                .contains("required signals are not completely covered"));
+
+    QJsonObject invalidTtl = valid;
+    actions = invalidTtl.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    groups = action.value("consistencyGroups").toArray();
+    group = groups.at(0).toObject();
+    group.insert("maxTtlCycles", 0);
+    groups.replace(0, group);
+    action.insert("consistencyGroups", groups);
+    actions.replace(0, action);
+    invalidTtl.insert("controlActions", actions);
+    QVERIFY(packageLoadError(invalidTtl).contains("range 1 to 65535"));
+
+    QJsonObject overlappingSignals = valid;
+    actions = overlappingSignals.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    action.insert("optionalSignals", QJsonArray{"org.embedlabs.test.status"});
+    actions.replace(0, action);
+    overlappingSignals.insert("controlActions", actions);
+    QVERIFY(packageLoadError(overlappingSignals).contains("must be disjoint"));
+
+    QJsonObject nonSimpleProfileId = valid;
+    profiles = nonSimpleProfileId.value("processDataProfiles").toArray();
+    profile = profiles.at(0).toObject();
+    profile.insert("signedPdoProfileId", "invalid:profile");
+    profiles.replace(0, profile);
+    nonSimpleProfileId.insert("processDataProfiles", profiles);
+    QVERIFY(packageLoadError(nonSimpleProfileId).contains("signedPdoProfileId must be canonical"));
+
+    QJsonObject nonSimpleGroupId = valid;
+    actions = nonSimpleGroupId.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    groups = action.value("consistencyGroups").toArray();
+    group = groups.at(0).toObject();
+    group.insert("id", "invalid:group");
+    groups.replace(0, group);
+    action.insert("consistencyGroups", groups);
+    actions.replace(0, action);
+    nonSimpleGroupId.insert("controlActions", actions);
+    QVERIFY(packageLoadError(nonSimpleGroupId).contains(".id must be canonical"));
+
+    QJsonObject nonSimpleParameterId = valid;
+    actions = nonSimpleParameterId.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    QJsonArray parameters = action.value("parameters").toArray();
+    QJsonObject parameter = parameters.at(0).toObject();
+    parameter.insert("id", "invalid:parameter");
+    parameters.replace(0, parameter);
+    action.insert("parameters", parameters);
+    actions.replace(0, action);
+    nonSimpleParameterId.insert("controlActions", actions);
+    QVERIFY(packageLoadError(nonSimpleParameterId).contains("parameters must use IDs"));
+
+    QJsonObject duplicateGlobalSignal = valid;
+    signalArray = duplicateGlobalSignal.value("signals").toArray();
+    QJsonObject duplicateSignal = signalArray.at(signalArray.size() - 1).toObject();
+    duplicateSignal.insert("id", "zz.embedlabs.test.{slot}.status");
+    bindings = duplicateSignal.value("bindings").toArray();
+    binding = bindings.at(0).toObject();
+    binding.insert("slotRelative", true);
+    bindings.replace(0, binding);
+    duplicateSignal.insert("bindings", bindings);
+    signalArray.append(duplicateSignal);
+    duplicateGlobalSignal.insert("signals", signalArray);
+    duplicateGlobalSignal.insert(
+        "moduleProfiles",
+        QJsonArray{QJsonObject{
+            {"id", "zz.embedlabs.test.module"},
+            {"moduleIdent", 1},
+            {"typeName", "Duplicate test module"},
+            {"moduleClass", "test"},
+            {"capabilities", QJsonArray{}},
+            {"signals", QJsonArray{duplicateSignal}},
+        }});
+    QVERIFY(
+        packageLoadError(duplicateGlobalSignal).contains("duplicate v3 semantic signal definition"));
+
+    QJsonObject inexactParameterStep = valid;
+    signalArray = inexactParameterStep.value("signals").toArray();
+    output = signalArray.at(0).toObject();
+    QJsonObject transform = output.value("engineeringTransform").toObject();
+    QJsonObject scale = transform.value("scale").toObject();
+    scale.insert("numerator", "2");
+    transform.insert("scale", scale);
+    QJsonObject signalConstraint = transform.value("constraint").toObject();
+    QJsonObject signalMaximum = signalConstraint.value("maximum").toObject();
+    signalMaximum.insert("numerator", "2");
+    signalConstraint.insert("maximum", signalMaximum);
+    transform.insert("constraint", signalConstraint);
+    output.insert("engineeringTransform", transform);
+    signalArray.replace(0, output);
+    inexactParameterStep.insert("signals", signalArray);
+    actions = inexactParameterStep.value("controlActions").toArray();
+    action = actions.at(0).toObject();
+    parameters = action.value("parameters").toArray();
+    parameter = parameters.at(0).toObject();
+    QJsonObject parameterConstraint = parameter.value("engineeringConstraint").toObject();
+    QJsonObject parameterMaximum = parameterConstraint.value("maximum").toObject();
+    parameterMaximum.insert("numerator", "2");
+    parameterConstraint.insert("maximum", parameterMaximum);
+    parameter.insert("engineeringConstraint", parameterConstraint);
+    parameters.replace(0, parameter);
+    action.insert("parameters", parameters);
+    actions.replace(0, action);
+    inexactParameterStep.insert("controlActions", actions);
+    QVERIFY(packageLoadError(inexactParameterStep).contains("step is not exactly encodable"));
+}
+
 void EtherCATDeviceAdaptersTests::testV1RemainsFailClosed()
 {
     const Utils::FilePath bundledPath = ::Core::ICore::resourcePath(
@@ -715,10 +1103,13 @@ void EtherCATDeviceAdaptersTests::testV1RemainsFailClosed()
     QCOMPARE(
         sv630n->contentSha256,
         QCryptographicHash::hash(*bundledContents, QCryptographicHash::Sha256));
-    QVERIFY(std::all_of(
-        sv630n->semanticSignals.cbegin(),
-        sv630n->semanticSignals.cend(),
-        [](const Data::SemanticSignalDefinition &signal) { return !signal.engineeringTransform; }));
+    QVERIFY(
+        std::all_of(
+            sv630n->semanticSignals.cbegin(),
+            sv630n->semanticSignals.cend(),
+            [](const Data::SemanticSignalDefinition &signal) {
+                return !signal.engineeringTransform;
+            }));
 
     const QJsonDocument document = QJsonDocument::fromJson(*bundledContents);
     QVERIFY(document.isObject());
@@ -911,10 +1302,11 @@ void EtherCATDeviceAdaptersTests::testCandidateHardwareGate()
             }
         }
         QVERIFY(outputCount > 0);
-        QVERIFY(std::all_of(
-            manifest.controlActions.cbegin(),
-            manifest.controlActions.cend(),
-            [](const Data::DeviceControlAction &action) { return !action.enabled; }));
+        QVERIFY(
+            std::all_of(
+                manifest.controlActions.cbegin(),
+                manifest.controlActions.cend(),
+                [](const Data::DeviceControlAction &action) { return !action.enabled; }));
     }
 
     const Data::DeviceAdapterManifest *sv630n = manifestForIdentity(manifests, sv630nIdentity);
@@ -1208,25 +1600,27 @@ void EtherCATDeviceAdaptersTests::testXb6ExpandsDo16Modules()
             });
         QVERIFY(profile != xb6->moduleProfiles.cend());
         QCOMPARE(profile->slotRelativeSignals.size(), 16);
-        QVERIFY(std::all_of(
-            profile->slotRelativeSignals.cbegin(),
-            profile->slotRelativeSignals.cend(),
-            [](const Data::SemanticSignalDefinition &signal) {
-                return signal.bindings.size() == 1 && signal.bindings.constFirst().slotRelative;
-            }));
+        QVERIFY(
+            std::all_of(
+                profile->slotRelativeSignals.cbegin(),
+                profile->slotRelativeSignals.cend(),
+                [](const Data::SemanticSignalDefinition &signal) {
+                    return signal.bindings.size() == 1 && signal.bindings.constFirst().slotRelative;
+                }));
 
         const Data::DeviceAdapterResolutionResult singleModule = repository.resolveDevice(
             xb6SingleModuleRequest(moduleIdent));
         QVERIFY2(singleModule.resolved, qPrintable(singleModule.error));
         QVERIFY(singleModule.model.complete);
         QCOMPARE(singleModule.model.boundSignals.size(), 18);
-        QVERIFY(std::all_of(
-            singleModule.model.boundSignals.cbegin(),
-            singleModule.model.boundSignals.cend(),
-            [moduleIdent](const Data::BoundSemanticSignal &signal) {
-                return signal.slot < 0 ? signal.moduleIdent == 0
-                                       : signal.slot == 1 && signal.moduleIdent == moduleIdent;
-            }));
+        QVERIFY(
+            std::all_of(
+                singleModule.model.boundSignals.cbegin(),
+                singleModule.model.boundSignals.cend(),
+                [moduleIdent](const Data::BoundSemanticSignal &signal) {
+                    return signal.slot < 0 ? signal.moduleIdent == 0
+                                           : signal.slot == 1 && signal.moduleIdent == moduleIdent;
+                }));
     }
 
     const Data::DeviceAdapterResolutionResult result = repository.resolveDevice(xb6Request());
@@ -1273,12 +1667,13 @@ void EtherCATDeviceAdaptersTests::testXb6ExpandsDo16Modules()
     const Data::DeviceAdapterResolutionResult npnResult = repository.resolveDevice(npn);
     QVERIFY2(npnResult.resolved, qPrintable(npnResult.error));
     QVERIFY(npnResult.model.complete);
-    QVERIFY(std::all_of(
-        npnResult.model.boundSignals.cbegin(),
-        npnResult.model.boundSignals.cend(),
-        [](const Data::BoundSemanticSignal &signal) {
-            return signal.slot != 1 || signal.moduleIdent == 0x00000624;
-        }));
+    QVERIFY(
+        std::all_of(
+            npnResult.model.boundSignals.cbegin(),
+            npnResult.model.boundSignals.cend(),
+            [](const Data::BoundSemanticSignal &signal) {
+                return signal.slot != 1 || signal.moduleIdent == 0x00000624;
+            }));
 }
 
 void EtherCATDeviceAdaptersTests::testXb6RejectsInvalidModuleLayouts()
@@ -1324,16 +1719,17 @@ void EtherCATDeviceAdaptersTests::testProviderRegistryOrdering()
     QVERIFY(providers.contains(repository));
 
     const QList<Data::DeviceAdapterManifest> manifests = repository->adapterManifests();
-    QVERIFY(std::is_sorted(
-        manifests.cbegin(),
-        manifests.cend(),
-        [](const Data::DeviceAdapterManifest &left, const Data::DeviceAdapterManifest &right) {
-            if (left.matchPriority != right.matchPriority)
-                return left.matchPriority > right.matchPriority;
-            if (left.id.value != right.id.value)
-                return left.id.value < right.id.value;
-            return left.version < right.version;
-        }));
+    QVERIFY(
+        std::is_sorted(
+            manifests.cbegin(),
+            manifests.cend(),
+            [](const Data::DeviceAdapterManifest &left, const Data::DeviceAdapterManifest &right) {
+                if (left.matchPriority != right.matchPriority)
+                    return left.matchPriority > right.matchPriority;
+                if (left.id.value != right.id.value)
+                    return left.id.value < right.id.value;
+                return left.version < right.version;
+            }));
     for (const Data::DeviceAdapterManifest &manifest : manifests) {
         const std::optional<Data::DeviceAdapterManifest> exact
             = repository->adapterManifest(manifest.id, manifest.version);

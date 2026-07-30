@@ -1,0 +1,987 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://embed-labs.dev/schemas/device-adapter-v3.schema.json",
+  "title": "Embed Labs Device Adapter Manifest v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "version",
+    "displayName",
+    "description",
+    "qualification",
+    "matchPriority",
+    "match",
+    "capabilities",
+    "source",
+    "evidenceSha256",
+    "signatureVerified",
+    "realHardwareAllowed",
+    "signals",
+    "processDataProfiles",
+    "moduleProfiles",
+    "controlActions"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "embed-labs.device-adapter/v3"
+    },
+    "id": {
+      "$ref": "#/$defs/stableId"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "qualification": {
+      "enum": [
+        "unqualified",
+        "candidate",
+        "qualified",
+        "mock-only",
+        "revoked"
+      ]
+    },
+    "matchPriority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "match": {
+      "$ref": "#/$defs/match"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/stableIdSet"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "evidenceSha256": {
+      "oneOf": [
+        {
+          "const": ""
+        },
+        {
+          "$ref": "#/$defs/sha256"
+        }
+      ]
+    },
+    "signatureVerified": {
+      "const": false
+    },
+    "realHardwareAllowed": {
+      "const": false
+    },
+    "signals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/signal"
+      }
+    },
+    "processDataProfiles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/profile"
+      }
+    },
+    "moduleProfiles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/module"
+      }
+    },
+    "controlActions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/action"
+      }
+    }
+  },
+  "$defs": {
+    "stableId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/{}-]{0,255}$"
+    },
+    "simpleId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nonzeroSha256": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/sha256"
+        },
+        {
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        }
+      ]
+    },
+    "stableIdSet": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/stableId"
+      }
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vendorId",
+        "productCode",
+        "minimumRevision",
+        "maximumRevision",
+        "exactEsiSha256"
+      ],
+      "properties": {
+        "vendorId": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "productCode": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "minimumRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "maximumRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "exactEsiSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "location",
+        "sha256"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "exactRational": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "numerator",
+        "denominator"
+      ],
+      "properties": {
+        "numerator": {
+          "type": "string",
+          "pattern": "^(0|-?[1-9][0-9]*)$"
+        },
+        "denominator": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        }
+      }
+    },
+    "engineeringValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "boolean"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "signed-integer",
+                "unsigned-integer"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^(0|-?[1-9][0-9]*)$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "exact-rational"
+            },
+            "value": {
+              "$ref": "#/$defs/exactRational"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "enumeration"
+            },
+            "value": {
+              "$ref": "#/$defs/stableId"
+            }
+          }
+        }
+      ]
+    },
+    "constraint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimum",
+        "maximum",
+        "step",
+        "stepOrigin",
+        "enumeration"
+      ],
+      "properties": {
+        "minimum": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/exactRational"
+            }
+          ]
+        },
+        "maximum": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/exactRational"
+            }
+          ]
+        },
+        "step": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/exactRational"
+            }
+          ]
+        },
+        "stepOrigin": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/exactRational"
+            }
+          ]
+        },
+        "enumeration": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "displayName",
+              "value"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/stableId"
+              },
+              "displayName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "$ref": "#/$defs/exactRational"
+              }
+            }
+          }
+        }
+      }
+    },
+    "transform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scale",
+        "offset",
+        "unit",
+        "rounding",
+        "constraint"
+      ],
+      "properties": {
+        "scale": {
+          "$ref": "#/$defs/exactRational"
+        },
+        "offset": {
+          "$ref": "#/$defs/exactRational"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "rounding": {
+          "enum": [
+            "reject-inexact",
+            "toward-zero",
+            "toward-negative-infinity",
+            "toward-positive-infinity",
+            "nearest-ties-to-even"
+          ]
+        },
+        "constraint": {
+          "$ref": "#/$defs/constraint"
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "pdoDirection",
+        "pdoIndex",
+        "objectIndex",
+        "subIndex",
+        "physicalType",
+        "bitWidth",
+        "byteOrder",
+        "slotRelative"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "process-data-object",
+            "object-dictionary"
+          ]
+        },
+        "pdoDirection": {
+          "enum": [
+            "rx",
+            "tx"
+          ]
+        },
+        "pdoIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "objectIndex": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "subIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "physicalType": {
+          "enum": [
+            "boolean",
+            "integer8",
+            "unsigned-integer8",
+            "integer16",
+            "unsigned-integer16",
+            "integer32",
+            "unsigned-integer32",
+            "integer64",
+            "unsigned-integer64"
+          ]
+        },
+        "bitWidth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "byteOrder": {
+          "enum": [
+            "little-endian",
+            "big-endian"
+          ]
+        },
+        "slotRelative": {
+          "type": "boolean"
+        }
+      }
+    },
+    "signal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "displayName",
+        "description",
+        "capabilities",
+        "direction",
+        "access",
+        "exposure",
+        "required",
+        "bindings",
+        "engineeringTransform",
+        "engineeringSafeValue"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/stableIdSet"
+        },
+        "direction": {
+          "enum": [
+            "input",
+            "output",
+            "bidirectional"
+          ]
+        },
+        "access": {
+          "enum": [
+            "read-only",
+            "write-only",
+            "read-write"
+          ]
+        },
+        "exposure": {
+          "enum": [
+            "public",
+            "action-only",
+            "internal"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "bindings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/binding"
+          }
+        },
+        "engineeringTransform": {
+          "$ref": "#/$defs/transform"
+        },
+        "engineeringSafeValue": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/engineeringValue"
+            }
+          ]
+        }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "signedPdoProfileId",
+        "rxPdos",
+        "txPdos",
+        "requiredSignals"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "signedPdoProfileId": {
+          "$ref": "#/$defs/simpleId"
+        },
+        "rxPdos": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        "txPdos": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        },
+        "requiredSignals": {
+          "$ref": "#/$defs/stableIdSet"
+        }
+      }
+    },
+    "module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "moduleIdent",
+        "typeName",
+        "moduleClass",
+        "capabilities",
+        "signals"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "moduleIdent": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "typeName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "moduleClass": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capabilities": {
+          "$ref": "#/$defs/stableIdSet"
+        },
+        "signals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/signal"
+          }
+        }
+      }
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "displayName",
+        "description",
+        "dataType",
+        "unit",
+        "engineeringConstraint",
+        "required",
+        "engineeringDefaultValue"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/simpleId"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "dataType": {
+          "enum": [
+            "boolean",
+            "integer8",
+            "unsigned-integer8",
+            "integer16",
+            "unsigned-integer16",
+            "integer32",
+            "unsigned-integer32",
+            "integer64",
+            "unsigned-integer64"
+          ]
+        },
+        "unit": {
+          "type": "string"
+        },
+        "engineeringConstraint": {
+          "$ref": "#/$defs/constraint"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "engineeringDefaultValue": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/engineeringValue"
+            }
+          ]
+        }
+      }
+    },
+    "assignmentValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "engineeringConstant",
+            "parameterId"
+          ],
+          "properties": {
+            "source": {
+              "const": "constant"
+            },
+            "engineeringConstant": {
+              "$ref": "#/$defs/engineeringValue"
+            },
+            "parameterId": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source",
+            "engineeringConstant",
+            "parameterId"
+          ],
+          "properties": {
+            "source": {
+              "const": "parameter"
+            },
+            "engineeringConstant": {
+              "type": "null"
+            },
+            "parameterId": {
+              "$ref": "#/$defs/simpleId"
+            }
+          }
+        }
+      ]
+    },
+    "assignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "signalId",
+        "value"
+      ],
+      "properties": {
+        "signalId": {
+          "$ref": "#/$defs/stableId"
+        },
+        "value": {
+          "$ref": "#/$defs/assignmentValue"
+        }
+      }
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "members",
+        "recovery",
+        "maxTtlCycles"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/simpleId"
+        },
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/stableId"
+          }
+        },
+        "recovery": {
+          "enum": [
+            "return-task",
+            "hold-safe"
+          ]
+        },
+        "maxTtlCycles": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "step": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "consistencyGroup",
+            "assignments"
+          ],
+          "properties": {
+            "kind": {
+              "const": "write-group"
+            },
+            "consistencyGroup": {
+              "$ref": "#/$defs/simpleId"
+            },
+            "assignments": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "items": {
+                "$ref": "#/$defs/assignment"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "signalId",
+            "value",
+            "mask",
+            "timeoutCycles"
+          ],
+          "properties": {
+            "kind": {
+              "const": "wait-masked-equals"
+            },
+            "signalId": {
+              "$ref": "#/$defs/stableId"
+            },
+            "value": {
+              "$ref": "#/$defs/engineeringValue"
+            },
+            "mask": {
+              "$ref": "#/$defs/engineeringValue"
+            },
+            "timeoutCycles": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "signalId",
+            "limit",
+            "timeoutCycles"
+          ],
+          "properties": {
+            "kind": {
+              "const": "wait-absolute-at-most"
+            },
+            "signalId": {
+              "$ref": "#/$defs/stableId"
+            },
+            "limit": {
+              "$ref": "#/$defs/engineeringValue"
+            },
+            "timeoutCycles": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "cycles"
+          ],
+          "properties": {
+            "kind": {
+              "const": "wait-cycles"
+            },
+            "cycles": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            }
+          }
+        }
+      ]
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "displayName",
+        "description",
+        "enabled",
+        "qualification",
+        "disabledReason",
+        "requiresDc",
+        "expectedSignedDefinitionSha256",
+        "signedPdoProfileIds",
+        "failureDisposition",
+        "requiredSignals",
+        "optionalSignals",
+        "parameters",
+        "consistencyGroups",
+        "steps"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "qualification": {
+          "enum": [
+            "unqualified",
+            "qualified"
+          ]
+        },
+        "disabledReason": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/stableId"
+            }
+          ]
+        },
+        "requiresDc": {
+          "type": "boolean"
+        },
+        "expectedSignedDefinitionSha256": {
+          "$ref": "#/$defs/nonzeroSha256"
+        },
+        "signedPdoProfileIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/simpleId"
+          }
+        },
+        "failureDisposition": {
+          "enum": [
+            "return-task",
+            "hold-safe",
+            "hold-operational-fault"
+          ]
+        },
+        "requiredSignals": {
+          "$ref": "#/$defs/stableIdSet"
+        },
+        "optionalSignals": {
+          "$ref": "#/$defs/stableIdSet"
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/parameter"
+          }
+        },
+        "consistencyGroups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/group"
+          }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/step"
+          }
+        }
+      }
+    }
+  }
+}

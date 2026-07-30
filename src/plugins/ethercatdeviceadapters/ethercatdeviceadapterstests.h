@@ -15,6 +15,8 @@ private slots:
     void testInvalidPackagesAreRejected();
     void testBundledV2ExactContracts();
     void testV2StrictParserAndCanonicalDigest();
+    void testV3SignedActionContract();
+    void testV3RejectsUnsafeContracts();
     void testV1RemainsFailClosed();
     void testV1AndV2ExactSelection();
     void testExactIdentityAndEsiMatching();
