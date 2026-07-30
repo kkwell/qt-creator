@@ -710,16 +710,17 @@
     },
     {
       "name": "runtime.operation.request",
-      "title": "Request a semantic runtime operation",
-      "description": "Submit one semantic signal or action intent to the shared IDE service. Automation cannot approve it and the Gateway never calls a Provider directly.",
+      "title": "Request a signed semantic action",
+      "description": "Submit one signed semantic action intent to the shared IDE service. The Gateway injects the current signed action-definition digest. Automation cannot approve it and the Gateway never calls a Provider directly.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "required": [
           "controllerId",
           "deviceId",
+          "actionId",
           "contextHash",
-          "ttlMs"
+          "ttlCycles"
         ],
         "properties": {
           "controllerId": {
@@ -732,24 +733,18 @@
             "minLength": 1,
             "maxLength": 64
           },
-          "signalId": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 256
-          },
           "actionId": {
             "type": "string",
             "minLength": 1,
             "maxLength": 256
           },
-          "value": {},
           "parameters": {
             "type": "object"
           },
-          "ttlMs": {
+          "ttlCycles": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 4294967295
+            "maximum": 65535
           },
           "contextHash": {
             "type": "string",
@@ -761,38 +756,6 @@
             "maxLength": 128
           }
         },
-        "oneOf": [
-          {
-            "required": [
-              "signalId",
-              "value"
-            ],
-            "not": {
-              "required": [
-                "actionId"
-              ]
-            }
-          },
-          {
-            "required": [
-              "actionId"
-            ],
-            "not": {
-              "anyOf": [
-                {
-                  "required": [
-                    "signalId"
-                  ]
-                },
-                {
-                  "required": [
-                    "value"
-                  ]
-                }
-              ]
-            }
-          }
-        ],
         "additionalProperties": false
       },
       "outputSchema": {

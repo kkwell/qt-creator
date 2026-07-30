@@ -96,8 +96,9 @@ public:
 
         m_safety = new QLabel(
             Tr::tr("Safety boundary: controller views are loopback-only, Mock-only, and read-only. "
-                   "Semantic operation tools submit approval-required intents to the IDE service; "
-                   "they never call a Provider or controller directly."),
+                   "The semantic action tool only submits signed, cycle-bounded intents to the "
+                   "IDE service; a verified user must approve them separately, and the Gateway "
+                   "never calls a Provider or controller directly."),
             this);
         m_safety->setObjectName(SETTINGS_SAFETY_OBJECT_NAME);
         m_safety->setAccessibleName(Tr::tr("Gateway safety boundary"));

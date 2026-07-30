@@ -435,6 +435,8 @@ static Data::SemanticRuntimeContext semanticRuntimeContext(
     context.epoch.topologyIdentity = QByteArray::fromHex("0102030405060708");
     context.mappingDigest = {"sha256", QByteArray(32, '\x5a')};
     context.controllerMappingDigest = context.mappingDigest;
+    context.actionDefinitionsDigest = {"sha256", QByteArray(32, '\x6c')};
+    context.cyclePeriodNs = 125000;
     context.bindingVerification.state = Data::SemanticBindingVerificationState::Verified;
     context.bindingVerification.verifierId = "gateway-test-verifier";
     context.bindingVerification.signedManifestDigest = {"sha256", QByteArray(32, '\x6b')};
@@ -493,19 +495,35 @@ static Data::SemanticRuntimeContext semanticRuntimeContext(
     signal.controllerTimestampNs = 123456;
     context.signalStates = {signal};
 
-    Data::SemanticActionRuntimeState action;
-    action.target.controllerId = context.controllerId;
-    action.target.scope = context.scope;
-    action.target.deviceId = deviceId;
-    action.target.kind = Data::SemanticRuntimeTargetKind::Action;
-    action.target.actionId = {"embedlabs.test:manual.disabled-action"};
-    action.definition.id = action.target.actionId;
-    action.definition.enabled = false;
-    action.availability = Data::SemanticActionAvailability::Rejected;
-    action.requiresApproval = true;
-    action.maximumTtlMs = 0;
-    action.detail = "The adapter action is not qualified.";
-    context.actionStates = {action};
+    Data::SemanticActionRuntimeState disabledAction;
+    disabledAction.target.controllerId = context.controllerId;
+    disabledAction.target.scope = context.scope;
+    disabledAction.target.deviceId = deviceId;
+    disabledAction.target.kind = Data::SemanticRuntimeTargetKind::Action;
+    disabledAction.target.actionId = {"embedlabs.test:manual.disabled-action"};
+    disabledAction.definition.id = disabledAction.target.actionId;
+    disabledAction.definition.enabled = false;
+    disabledAction.availability = Data::SemanticActionAvailability::Rejected;
+    disabledAction.requiresApproval = true;
+    disabledAction.detail = "The adapter action is not qualified.";
+
+    Data::SemanticActionRuntimeState readyAction;
+    readyAction.target.controllerId = context.controllerId;
+    readyAction.target.scope = context.scope;
+    readyAction.target.deviceId = deviceId;
+    readyAction.target.kind = Data::SemanticRuntimeTargetKind::Action;
+    readyAction.target.actionId = {"embedlabs.test:manual.set-output"};
+    readyAction.definition.id = readyAction.target.actionId;
+    readyAction.definition.enabled = true;
+    readyAction.actionBindingId = readyAction.target.actionId.value;
+    readyAction.actionDefinitionId = "embedlabs.test:definition.set-output";
+    readyAction.actionDefinitionDigest = {"sha256", QByteArray(32, '\x6d')};
+    readyAction.qualification = Data::SemanticActionQualification::Qualified;
+    readyAction.availability = Data::SemanticActionAvailability::Ready;
+    readyAction.bindings = {binding};
+    readyAction.requiresApproval = true;
+    readyAction.maximumTtlCycles = 1000;
+    context.actionStates = {disabledAction, readyAction};
 
     context.complete = true;
     context.mock = true;
@@ -1119,6 +1137,7 @@ void EtherCATAutomationGatewayTests::testSemanticRuntimeFailsClosedAndRedactsBin
     QVERIFY(contextJson.contains(context.contextHash.toHex()));
     const QList<QByteArray> forbidden{
         "SECRET_",
+        "actionDefinitionDigest",
         "resourceId",
         "componentInstanceId",
         "consistencyGroupId",
@@ -1178,11 +1197,10 @@ void EtherCATAutomationGatewayTests::testSemanticRuntimeOperationIntentAndJourna
     QJsonObject request{
         {"operationId", "semantic-operation-shared"},
         {"controllerId", controller.controllerId},
-        {"deviceId", context.signalStates.constFirst().target.deviceId.toString()},
-        {"signalId", context.signalStates.constFirst().target.signalId.value},
-        {"value", false},
+        {"deviceId", context.actionStates.constLast().target.deviceId.toString()},
+        {"actionId", context.actionStates.constLast().target.actionId.value},
         {"parameters", QJsonObject{}},
-        {"ttlMs", 200},
+        {"ttlCycles", 200},
         {"contextHash", QString::fromLatin1(context.contextHash.toHex())},
     };
     const AutomationActor mcpActor{"mcp", "mcp-session-17", "semantic-client", "2.0"};
@@ -1193,21 +1211,26 @@ void EtherCATAutomationGatewayTests::testSemanticRuntimeOperationIntentAndJourna
     QCOMPARE(operation.value("operationId").toString(), "semantic-operation-shared");
     QCOMPARE(operation.value("state").toString(), "approval-required");
     QVERIFY(!operation.value("approvalChallenge").toString().isEmpty());
-    QCOMPARE(
-        operation.keys(),
-        QStringList({"approvalChallenge", "operationId", "state"}));
+    QCOMPARE(operation.keys(), QStringList({"approvalChallenge", "operationId", "state"}));
     QCOMPARE(semantic.submitCount, 1);
     QCOMPARE(semantic.lastActor.kind, Data::SemanticRuntimeActorKind::Automation);
     QCOMPARE(semantic.lastActor.authenticationDigest.size(), 32);
+    const Data::SemanticOperationRequest submittedRequest
+        = semantic.records.value("semantic-operation-shared").request;
+    QCOMPARE(submittedRequest.kind, Data::SemanticOperationKind::InvokeAction);
+    QCOMPARE(submittedRequest.ttlMs, 0);
+    QCOMPARE(submittedRequest.ttlCycles, 200);
+    QCOMPARE(
+        submittedRequest.expectedActionDefinitionDigest,
+        context.actionStates.constLast().actionDefinitionDigest);
 
     QJsonObject staleRequest = request;
     staleRequest.insert("operationId", "semantic-operation-stale");
     staleRequest.insert("contextHash", QString(64, '0'));
-    const QJsonObject stale = dispatcher.dispatch(
-        "runtime.operation.request", staleRequest, {"rest", {}, {}, {}});
+    const QJsonObject stale
+        = dispatcher.dispatch("runtime.operation.request", staleRequest, {"rest", {}, {}, {}});
     QVERIFY(!stale.value("ok").toBool());
-    QCOMPARE(
-        stale.value("error").toObject().value("code").toString(), "CT022_CONTEXT_STALE");
+    QCOMPARE(stale.value("error").toObject().value("code").toString(), "CT022_CONTEXT_STALE");
     QCOMPARE(semantic.submitCount, 1);
 
     const QJsonObject actorIdentity{
@@ -1229,13 +1252,70 @@ void EtherCATAutomationGatewayTests::testSemanticRuntimeOperationIntentAndJourna
     QCOMPARE(semantic.submitCount, 1);
 
     QJsonObject conflictRequest = request;
-    conflictRequest.insert("value", true);
+    conflictRequest.insert("ttlCycles", 201);
     const QJsonObject conflict
         = dispatcher.dispatch("runtime.operation.request", conflictRequest, {"rest", {}, {}, {}});
     QVERIFY(!conflict.value("ok").toBool());
     QCOMPARE(
         conflict.value("error").toObject().value("details").toObject().value("reason").toString(),
         "operation-id-conflict");
+    QCOMPARE(semantic.submitCount, 1);
+
+    QJsonObject legacyTtl = request;
+    legacyTtl.insert("operationId", "semantic-operation-legacy-ttl");
+    legacyTtl.remove("ttlCycles");
+    legacyTtl.insert("ttlMs", 200);
+    const QJsonObject legacyTtlRejected
+        = dispatcher.dispatch("runtime.operation.request", legacyTtl, mcpActor);
+    QVERIFY(!legacyTtlRejected.value("ok").toBool());
+    QCOMPARE(
+        legacyTtlRejected.value("error").toObject().value("code").toString(), "CT010_BAD_REQUEST");
+    QCOMPARE(legacyTtlRejected.value("error").toObject().value("path").toString(), "$.ttlMs");
+
+    QJsonObject signalWrite = request;
+    signalWrite.insert("operationId", "semantic-operation-signal-write");
+    signalWrite.remove("actionId");
+    signalWrite.insert("signalId", context.signalStates.constFirst().target.signalId.value);
+    signalWrite.insert("value", false);
+    const QJsonObject signalWriteRejected
+        = dispatcher.dispatch("runtime.operation.request", signalWrite, mcpActor);
+    QVERIFY(!signalWriteRejected.value("ok").toBool());
+    QCOMPARE(
+        signalWriteRejected.value("error").toObject().value("code").toString(), "CT010_BAD_REQUEST");
+    QCOMPARE(signalWriteRejected.value("error").toObject().value("path").toString(), "$.signalId");
+
+    QJsonObject digestInjection = request;
+    digestInjection.insert("operationId", "semantic-operation-digest-injection");
+    digestInjection.insert("expectedActionDefinitionDigest", QString(64, 'a'));
+    const QJsonObject digestInjectionRejected
+        = dispatcher.dispatch("runtime.operation.request", digestInjection, mcpActor);
+    QVERIFY(!digestInjectionRejected.value("ok").toBool());
+    QCOMPARE(
+        digestInjectionRejected.value("error").toObject().value("code").toString(),
+        "CT010_BAD_REQUEST");
+    QCOMPARE(
+        digestInjectionRejected.value("error").toObject().value("path").toString(),
+        "$.expectedActionDefinitionDigest");
+
+    QJsonObject unqualifiedAction = request;
+    unqualifiedAction.insert("operationId", "semantic-operation-unqualified");
+    unqualifiedAction.insert("actionId", context.actionStates.constFirst().target.actionId.value);
+    const QJsonObject unqualifiedRejected
+        = dispatcher.dispatch("runtime.operation.request", unqualifiedAction, mcpActor);
+    QVERIFY(!unqualifiedRejected.value("ok").toBool());
+    QCOMPARE(
+        unqualifiedRejected.value("error").toObject().value("code").toString(),
+        "CT023_SEMANTIC_TARGET_UNAVAILABLE");
+
+    QJsonObject excessiveTtl = request;
+    excessiveTtl.insert("operationId", "semantic-operation-excessive-ttl");
+    excessiveTtl.insert("ttlCycles", 1001);
+    const QJsonObject excessiveTtlRejected
+        = dispatcher.dispatch("runtime.operation.request", excessiveTtl, mcpActor);
+    QVERIFY(!excessiveTtlRejected.value("ok").toBool());
+    QCOMPARE(
+        excessiveTtlRejected.value("error").toObject().value("code").toString(),
+        "CT023_SEMANTIC_TARGET_UNAVAILABLE");
     QCOMPARE(semantic.submitCount, 1);
 
     const QJsonObject fetched = dispatcher.dispatch(
@@ -1291,6 +1371,31 @@ void EtherCATAutomationGatewayTests::testSemanticRuntimeOperationIntentAndJourna
         approvalRejected.value("error").toObject().value("code").toString(),
         "CT011_PROTOCOL_UNSUPPORTED");
     QCOMPARE(semantic.approveCount, 0);
+
+    Data::SemanticRuntimeContext parameterContext = context;
+    Data::SemanticActionParameterRuntimeDefinition velocity;
+    velocity.id = "velocity";
+    velocity.primitiveType = Data::RuntimeResourcePrimitiveType::SignedInteger;
+    velocity.unit = "reference-unit-per-second";
+    velocity.minimum = QVariant::fromValue<qlonglong>(-1000);
+    velocity.maximum = QVariant::fromValue<qlonglong>(1000);
+    parameterContext.actionStates.last().parameters = {velocity};
+    FakeSemanticRuntimeService parameterSemantic;
+    parameterSemantic.current = {parameterContext};
+    AutomationDispatcher parameterDispatcher(&automation, &parameterSemantic);
+    QJsonObject parameterRequest = request;
+    parameterRequest.insert("operationId", "semantic-operation-parameter");
+    parameterRequest.insert("parameters", QJsonObject{{"velocity", 25}});
+    const QJsonObject parameterSubmitted
+        = parameterDispatcher.dispatch("runtime.operation.request", parameterRequest, mcpActor);
+    QVERIFY(parameterSubmitted.value("ok").toBool());
+    const QVariant submittedVelocity = parameterSemantic.records
+                                           .value("semantic-operation-parameter")
+                                           .request.parameters.value("velocity");
+    QCOMPARE(submittedVelocity.metaType().id(), QMetaType::LongLong);
+    QCOMPARE(submittedVelocity.toLongLong(), 25);
+    QCOMPARE(parameterSemantic.submitCount, 1);
+    QCOMPARE(parameterSemantic.approveCount, 0);
 
     FailClosedSemanticRuntimeService failClosed;
     failClosed.current = {context};
@@ -1703,6 +1808,24 @@ void EtherCATAutomationGatewayTests::testArtifactValidationAndBuildSystemSync()
     QVERIFY(!pluginText.contains("QMessageBox"));
 
     const QDir repositoryRoot(sourceDir.filePath("../../.."));
+    QFile mcpContract(
+        repositoryRoot.filePath("ethercat-ai-controller/api/controller-tools-v1.mcp-tools.json"));
+    QFile openApiContract(
+        repositoryRoot.filePath("ethercat-ai-controller/api/controller-tools-v1.openapi.json"));
+    QVERIFY(mcpContract.open(QIODevice::ReadOnly));
+    QVERIFY(openApiContract.open(QIODevice::ReadOnly));
+    const QByteArray mcpContractText = mcpContract.readAll();
+    const QByteArray openApiContractText = openApiContract.readAll();
+    const QList<QByteArray> publicContractTexts{mcpContractText, openApiContractText};
+    for (const QByteArray &contractText : publicContractTexts) {
+        QVERIFY(contractText.contains("\"ttlCycles\""));
+        QVERIFY(!contractText.contains("\"ttlMs\""));
+        QVERIFY(!contractText.contains("\"expectedActionDefinitionDigest\""));
+        QVERIFY(!contractText.contains("\"resourceId\""));
+        QVERIFY(!contractText.contains("\"consistencyGroupId\""));
+        QVERIFY(!contractText.contains("\"pdo\""));
+    }
+
     QFile translation(repositoryRoot.filePath("share/qtcreator/translations/qtcreator_zh_CN.ts"));
     QVERIFY(translation.open(QIODevice::ReadOnly));
     const QByteArray translationText = translation.readAll();

@@ -48497,8 +48497,8 @@ What do you want to do?</source>
         <translation>自动分配 (0)</translation>
     </message>
     <message>
-        <source>Safety boundary: controller views are loopback-only, Mock-only, and read-only. Semantic operation tools submit approval-required intents to the IDE service; they never call a Provider or controller directly.</source>
-        <translation>安全边界：控制器视图仅限本机回环、仅限 Mock 且只读。语义操作工具只向 IDE 服务提交需要审批的意图，绝不直接调用 Provider 或控制器。</translation>
+        <source>Safety boundary: controller views are loopback-only, Mock-only, and read-only. The semantic action tool only submits signed, cycle-bounded intents to the IDE service; a verified user must approve them separately, and the Gateway never calls a Provider or controller directly.</source>
+        <translation>安全边界：控制器视图仅限本机回环、仅限 Mock 且只读。语义动作工具只向 IDE 服务提交已签名且有周期时限的意图；必须由已验证用户另行批准，网关绝不直接调用 Provider 或控制器。</translation>
     </message>
     <message>
         <source>Loopback address:</source>
@@ -48609,8 +48609,8 @@ What do you want to do?</source>
         <translation>因无法保存设置，监听器已停止：%1</translation>
     </message>
     <message>
-        <source>Listening on MCP %1 and REST %2 (controller views are Mock-only/read-only; semantic intents require approval).</source>
-        <translation>正在监听 MCP %1 和 REST %2（控制器视图仅限 Mock/只读；语义意图需要审批）。</translation>
+        <source>Listening on MCP %1 and REST %2 (controller views are Mock-only/read-only; signed semantic action intents require separate user approval).</source>
+        <translation>正在监听 MCP %1 和 REST %2（控制器视图仅限 Mock/只读；已签名的语义动作意图需要用户另行批准）。</translation>
     </message>
     <message>
         <source>Safe disabled state could not be persisted: %1</source>

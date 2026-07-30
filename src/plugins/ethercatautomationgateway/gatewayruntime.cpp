@@ -250,7 +250,7 @@ Utils::Result<> GatewayRuntimeController::startAndPersist(
     emitEvent(
         GatewayRuntimeEventKind::Started,
         Tr::tr("Listening on MCP %1 and REST %2 (controller views are Mock-only/read-only; "
-               "semantic intents require approval).")
+               "signed semantic action intents require separate user approval).")
             .arg(m_server->mcpEndpoint().toString(), m_server->restEndpoint().toString()));
     return Utils::ResultOk;
 }

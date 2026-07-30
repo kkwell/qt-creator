@@ -4,7 +4,7 @@
   "info": {
     "title": "EtherCAT Controller Tools",
     "version": "1.0.0",
-    "description": "Loopback controller-tools-v1 facade. Controller views remain Mock-only/read-only; semantic operation tools submit approval-required intent to the shared IDE service and never call a Provider directly."
+    "description": "Loopback controller-tools-v1 facade. Controller views remain Mock-only/read-only; the semantic action tool submits approval-required signed intent to the shared IDE service and never calls a Provider directly."
   },
   "servers": [
     {
@@ -364,8 +364,8 @@
           "Semantic Runtime"
         ],
         "operationId": "runtime.operation.request",
-        "summary": "Submit one approval-required semantic operation intent",
-        "description": "The Gateway fills the runtime epoch and mapping proof from the current IDE context, forces an Automation actor, and calls only SemanticRuntimeService.",
+        "summary": "Submit one approval-required signed semantic action intent",
+        "description": "The Gateway fills the runtime epoch, mapping proof, and signed action-definition digest from the current IDE context, forces an Automation actor, and calls only SemanticRuntimeService.",
         "parameters": [
           {
             "$ref": "#/components/parameters/ControllerId"
@@ -379,27 +379,24 @@
                 "type": "object",
                 "required": [
                   "deviceId",
+                  "actionId",
                   "contextHash",
-                  "ttlMs"
+                  "ttlCycles"
                 ],
                 "properties": {
                   "deviceId": {
                     "type": "string"
                   },
-                  "signalId": {
-                    "type": "string"
-                  },
                   "actionId": {
                     "type": "string"
                   },
-                  "value": {},
                   "parameters": {
                     "type": "object"
                   },
-                  "ttlMs": {
+                  "ttlCycles": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": 4294967295
+                    "maximum": 65535
                   },
                   "contextHash": {
                     "type": "string",
@@ -718,7 +715,10 @@
     },
     "semanticRuntime": {
       "verifiedContextRead": true,
-      "operationIntentSubmission": true,
+      "semanticActionIntentSubmission": true,
+      "actionOnly": true,
+      "ttlUnit": "controller-cycles",
+      "signedActionDefinitionRequired": true,
       "approvalRequired": true,
       "automationCanApprove": false,
       "directProviderCalls": false

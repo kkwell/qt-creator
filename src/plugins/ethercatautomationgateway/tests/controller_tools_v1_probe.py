@@ -307,7 +307,13 @@ def run_probe(mcp_url: str, rest_url: str, timeout: float) -> dict[str, Any]:
         or not protocol_data.get("controllerViews", {}).get("readOnly")
         or not protocol_data.get("semanticRuntime", {}).get("available")
         or not protocol_data.get("semanticRuntime", {}).get(
-            "operationIntentSubmission"
+            "semanticActionIntentSubmission"
+        )
+        or not protocol_data.get("semanticRuntime", {}).get("actionOnly")
+        or protocol_data.get("semanticRuntime", {}).get("ttlUnit")
+        != "controller-cycles"
+        or not protocol_data.get("semanticRuntime", {}).get(
+            "signedActionDefinitionRequired"
         )
         or not protocol_data.get("semanticRuntime", {}).get("approvalRequired")
         or protocol_data.get("semanticRuntime", {}).get("automationCanApprove")
@@ -416,9 +422,19 @@ def run_probe(mcp_url: str, rest_url: str, timeout: float) -> dict[str, Any]:
     signal = signals[0]
     device_id = signal.get("deviceId", "")
     signal_id = signal.get("signalId", "")
+    ready_actions = [
+        action
+        for action in semantic_context.get("actions", [])
+        if action.get("availability") == "ready"
+    ]
+    if len(ready_actions) != 1:
+        raise ProbeFailure("semantic runtime context has no unique ready action")
+    action = ready_actions[0]
+    action_device_id = action.get("deviceId", "")
+    action_id = action.get("actionId", "")
     context_hash = semantic_context.get("contextHash", "")
-    if not device_id or not signal_id:
-        raise ProbeFailure("semantic signal identity is incomplete")
+    if not device_id or not signal_id or not action_device_id or not action_id:
+        raise ProbeFailure("semantic runtime identity is incomplete")
     semantic_encoded = json.dumps(
         semantic_context_data, sort_keys=True, separators=(",", ":")
     )
@@ -426,6 +442,7 @@ def run_probe(mcp_url: str, rest_url: str, timeout: float) -> dict[str, Any]:
         "resourceId",
         "componentInstanceId",
         "consistencyGroupId",
+        "actionDefinitionDigest",
         "processImage",
         "pdo",
         "127.0.0.1",
@@ -461,11 +478,10 @@ def run_probe(mcp_url: str, rest_url: str, timeout: float) -> dict[str, Any]:
         f"/api/controller-tools/v1/runtime/{encoded}/operations",
         {
             "controllerId": controller_id,
-            "deviceId": device_id,
-            "signalId": signal_id,
-            "value": False,
+            "deviceId": action_device_id,
+            "actionId": action_id,
             "parameters": {},
-            "ttlMs": 200,
+            "ttlCycles": 200,
             "contextHash": context_hash,
         },
         "probe-cross-runtime-operation",
