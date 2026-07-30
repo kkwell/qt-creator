@@ -249,6 +249,9 @@ struct ETHERCATDATA_EXPORT ControllerPackageDeploymentRequest
 {
     QString operationId;
     QByteArray artifact;
+    // Reserved for IDE-local evidence verification. Providers must neither
+    // serialize these bytes nor include them in controller-wire identities.
+    QByteArray compiledProjectSource;
     quint64 configurationId = 0;
     bool activate = true;
     bool rollbackOnActivationFailure = true;
