@@ -882,14 +882,80 @@ class TestSemanticRuntimeService final : public Core::SemanticRuntimeService
 public:
     QList<Data::SemanticRuntimeContext> contexts() const final { return m_contexts; }
 
+    Data::SemanticOperationRecord submit(
+        const Data::SemanticOperationRequest &request,
+        const Data::SemanticRuntimeActor &actor) final
+    {
+        ++submitCalls;
+        lastRequest = request;
+        lastSubmitActor = actor;
+
+        Data::SemanticOperationRecord record;
+        record.request = request;
+        record.actor = actor;
+        record.state = Data::SemanticOperationState::ApprovalRequired;
+        record.canonicalRequestDigest = QCryptographicHash::hash(
+            Core::canonicalSemanticOperationRequest(request),
+            QCryptographicHash::Sha256);
+        QByteArray approvalChallenge = QByteArrayLiteral("workbench-test-approval:");
+        approvalChallenge.append(request.operationId.value.toUtf8());
+        record.approvalChallenge
+            = QCryptographicHash::hash(approvalChallenge, QCryptographicHash::Sha256);
+        record.createdAt = QDateTime::currentDateTimeUtc();
+        record.updatedAt = record.createdAt;
+        record.resultCode = "approval-required";
+        m_operations.insert(request.operationId, record);
+        return record;
+    }
+
+    Data::SemanticOperationRecord approve(
+        const Data::SemanticOperationApprovalRequest &approval,
+        const Data::SemanticRuntimeActor &actor) final
+    {
+        ++approveCalls;
+        lastApproval = approval;
+        lastApprovalActor = actor;
+        Data::SemanticOperationRecord record = m_operations.value(approval.operationId);
+        record.approvals.append({approval, actor, QDateTime::currentDateTimeUtc()});
+        record.state = Data::SemanticOperationState::Approved;
+        record.updatedAt = QDateTime::currentDateTimeUtc();
+        record.resultCode = "queued";
+        m_operations.insert(approval.operationId, record);
+        return record;
+    }
+
+    std::optional<Data::SemanticOperationRecord> operation(
+        const Data::SemanticOperationId &operationId) const final
+    {
+        const auto found = m_operations.constFind(operationId);
+        if (found == m_operations.cend())
+            return std::nullopt;
+        return *found;
+    }
+
     void publish(const QList<Data::SemanticRuntimeContext> &contexts)
     {
         m_contexts = contexts;
         emit contextsChanged();
     }
 
+    void publishOperation(Data::SemanticOperationRecord record)
+    {
+        record.updatedAt = QDateTime::currentDateTimeUtc();
+        m_operations.insert(record.request.operationId, record);
+        emit operationChanged(record.request.operationId);
+    }
+
+    int submitCalls = 0;
+    int approveCalls = 0;
+    Data::SemanticOperationRequest lastRequest;
+    Data::SemanticRuntimeActor lastSubmitActor;
+    Data::SemanticOperationApprovalRequest lastApproval;
+    Data::SemanticRuntimeActor lastApprovalActor;
+
 private:
     QList<Data::SemanticRuntimeContext> m_contexts;
+    QHash<Data::SemanticOperationId, Data::SemanticOperationRecord> m_operations;
 };
 
 static AdapterTreeFixture adapterTreeFixture(const TestDeviceAdapterProvider &provider)
@@ -3742,6 +3808,374 @@ void EtherCATWorkbenchTests::testSemanticControlPageFailsClosed()
     QVERIFY(signalTree->isHidden());
     QVERIFY(!requestedValue->isEnabled());
     QVERIFY(!apply->isEnabled());
+}
+
+void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()
+{
+    TestDeviceAdapterProvider adapterProvider;
+    const AdapterTreeFixture fixture = adapterTreeFixture(adapterProvider);
+    WorkbenchController controller;
+    controller.treeModel()->setDeviceAdapterProviders({&adapterProvider});
+    controller.treeModel()->setProjects({fixture.project});
+
+    const QModelIndex configuredSlave = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    QVERIFY(configuredSlave.isValid());
+    const Core::PropertyPageContext slaveContext
+        = controller.treeModel()->contextForIndex(configuredSlave);
+    const std::optional<SemanticControlSelection> selection
+        = controller.treeModel()->semanticControlSelection(fixture.slaveId);
+    QVERIFY(selection);
+
+    const Data::SemanticRuntimeDigest mappingDigest{
+        "sha256", QByteArray(32, '\x71')};
+    const Data::SemanticRuntimeDigest signedManifestDigest{
+        "sha256", QByteArray(32, '\x72')};
+    const Data::SemanticRuntimeDigest actionDefinitionsDigest{
+        "sha256", QByteArray(32, '\x73')};
+    const Data::SemanticRuntimeDigest actionDefinitionDigest{
+        "sha256", QByteArray(32, '\x74')};
+
+    Data::RuntimeResourceCatalogEpoch epoch;
+    epoch.controllerBootId = 11;
+    epoch.activePackageSlot = Data::ControllerSlot::A;
+    epoch.activePackageGeneration = 12;
+    epoch.configurationId = 13;
+    epoch.topologyGeneration = 14;
+    epoch.runtimeGeneration = 15;
+    epoch.catalogRevision = 16;
+    epoch.topologyIdentity = QByteArrayLiteral("hidden-topology-identity");
+
+    Data::SemanticRuntimeTarget signalTarget;
+    signalTarget.controllerId = "hidden-controller-id";
+    signalTarget.scope = selection->scope;
+    signalTarget.deviceId = selection->deviceId;
+    signalTarget.kind = Data::SemanticRuntimeTargetKind::Signal;
+    signalTarget.signalId = {"org.embedlabs.signed.output"};
+
+    Data::SemanticRuntimeBinding binding;
+    binding.target = signalTarget;
+    binding.semanticBindingId = "hidden-semantic-binding";
+    binding.componentBindingId = "hidden-component-binding";
+    binding.adapterId = {"forbidden.vendor.adapter"};
+    binding.adapterVersion = "1.0";
+    binding.adapterContentSha256 = QByteArray(32, '\x75');
+    binding.esiSha256 = QByteArray(32, '\x76');
+    binding.bindingArtifactSha256 = QByteArray(32, '\x77');
+    binding.sessionGeneration = 17;
+    binding.epoch = epoch;
+    binding.mappingDigest = mappingDigest;
+    binding.controllerMappingDigest = mappingDigest;
+    binding.verification.state = Data::SemanticBindingVerificationState::Verified;
+    binding.verification.verifierId = "test-verifier";
+    binding.verification.signedManifestDigest = signedManifestDigest;
+    binding.verification.verifiedAt
+        = QDateTime::fromString("2026-07-30T03:04:05Z", Qt::ISODate);
+    binding.verification.detail = "verified";
+    binding.resourceId = {QByteArrayLiteral("hidden-resource-id")};
+    binding.componentInstanceId = {QByteArrayLiteral("hidden-component-id")};
+    binding.consistencyGroupId = {QByteArrayLiteral("hidden-group-id")};
+    binding.primitiveType = Data::RuntimeResourcePrimitiveType::Boolean;
+    binding.valueTypeIdentity = QByteArrayLiteral("BOOL");
+    binding.bitWidth = 1;
+    binding.direction = Data::RuntimeResourceDirection::Output;
+    binding.access = Data::RuntimeResourceAccess::ReadWrite;
+
+    Data::SemanticSignalRuntimeState signalState;
+    signalState.target = signalTarget;
+    signalState.definition.id = signalTarget.signalId;
+    signalState.definition.displayName = "Output state";
+    signalState.definition.description = "ForbiddenVendor PDO 0x7010";
+    Data::EngineeringTransform engineeringTransform;
+    engineeringTransform.unit = "state";
+    engineeringTransform.rounding = Data::EngineeringRounding::RejectInexact;
+    signalState.definition.engineeringTransform = engineeringTransform;
+    signalState.availability = Data::SemanticSignalAvailability::Ready;
+    signalState.binding = binding;
+    Data::RuntimeResourceTypedValue signalValue;
+    signalValue.primitiveType = Data::RuntimeResourcePrimitiveType::Boolean;
+    signalValue.value = true;
+    signalValue.typeIdentity = QByteArrayLiteral("BOOL");
+    signalState.value = signalValue;
+    signalState.quality.state = Data::RuntimeResourceQualityState::Good;
+    signalState.snapshotComplete = true;
+    signalState.captureCycle = 8100;
+    signalState.controllerTimestampNs = 9100;
+
+    Data::SemanticActionRuntimeState action;
+    action.target.controllerId = signalTarget.controllerId;
+    action.target.scope = selection->scope;
+    action.target.deviceId = selection->deviceId;
+    action.target.kind = Data::SemanticRuntimeTargetKind::Action;
+    action.target.actionId = {"org.embedlabs.action.set-outputs"};
+    action.definition.id = action.target.actionId;
+    action.definition.displayName = "Set outputs";
+    action.definition.description = "ForbiddenVendor PDO 0x7010 control";
+    action.definition.enabled = true;
+    action.definition.requiresExclusiveControl = true;
+    action.definition.requiresDc = false;
+    action.definition.holdToRun = false;
+    action.actionBindingId = action.target.actionId.value;
+    action.actionDefinitionId = "org.embedlabs.definition.set-outputs";
+    action.actionDefinitionDigest = actionDefinitionDigest;
+    action.qualification = Data::SemanticActionQualification::Qualified;
+    action.availability = Data::SemanticActionAvailability::Ready;
+    action.bindings = {binding};
+    action.requiresApproval = true;
+    action.requiresExclusiveControl = true;
+    action.maximumTtlCycles = 1000;
+
+    const auto appendParameter =
+        [&action](
+            const QString &id,
+            const QString &displayName,
+            Data::RuntimeResourcePrimitiveType primitive,
+            const QVariant &minimum,
+            const QVariant &maximum,
+            const QVariant &defaultValue) {
+            Data::SemanticActionParameterRuntimeDefinition runtimeParameter;
+            runtimeParameter.id = id;
+            runtimeParameter.primitiveType = primitive;
+            runtimeParameter.minimum = minimum;
+            runtimeParameter.maximum = maximum;
+            action.parameters.append(runtimeParameter);
+
+            Data::DeviceControlActionParameter publicParameter;
+            publicParameter.id = id;
+            publicParameter.displayName = displayName;
+            publicParameter.hasDefaultValue = true;
+            publicParameter.defaultValue = defaultValue;
+            action.definition.parameters.append(publicParameter);
+        };
+    appendParameter(
+        "enabled",
+        "Enabled",
+        Data::RuntimeResourcePrimitiveType::Boolean,
+        false,
+        true,
+        true);
+    appendParameter(
+        "signed_value",
+        "Signed value",
+        Data::RuntimeResourcePrimitiveType::SignedInteger,
+        QVariant::fromValue<qlonglong>(-100),
+        QVariant::fromValue<qlonglong>(100),
+        QVariant::fromValue<qlonglong>(0));
+    appendParameter(
+        "unsigned_value",
+        "Unsigned value",
+        Data::RuntimeResourcePrimitiveType::UnsignedInteger,
+        QVariant::fromValue<qulonglong>(0),
+        QVariant::fromValue<qulonglong>(500),
+        QVariant::fromValue<qulonglong>(0));
+
+    Data::SemanticActionRuntimeState unqualifiedAction = action;
+    unqualifiedAction.target.actionId = {"org.embedlabs.action.move-axis"};
+    unqualifiedAction.definition.id = unqualifiedAction.target.actionId;
+    unqualifiedAction.definition.displayName = "Move axis";
+    unqualifiedAction.definition.enabled = false;
+    unqualifiedAction.actionBindingId = unqualifiedAction.target.actionId.value;
+    unqualifiedAction.actionDefinitionId = "org.embedlabs.definition.move-axis";
+    unqualifiedAction.actionDefinitionDigest = {
+        "sha256", QByteArray(32, '\x78')};
+    unqualifiedAction.qualification = Data::SemanticActionQualification::Unqualified;
+    unqualifiedAction.disabledReason
+        = "reference_unit_to_rpm_conversion_not_bound";
+
+    Data::SemanticRuntimeContext runtimeContext;
+    runtimeContext.controllerId = signalTarget.controllerId;
+    runtimeContext.scope = selection->scope;
+    runtimeContext.sessionGeneration = binding.sessionGeneration;
+    runtimeContext.epoch = epoch;
+    runtimeContext.mappingDigest = mappingDigest;
+    runtimeContext.controllerMappingDigest = mappingDigest;
+    runtimeContext.actionDefinitionsDigest = actionDefinitionsDigest;
+    runtimeContext.cyclePeriodNs = 125000;
+    runtimeContext.bindingVerification = binding.verification;
+    runtimeContext.contextHash = QByteArray(32, '\x79');
+    runtimeContext.signalStates = {signalState};
+    runtimeContext.actionStates = {action, unqualifiedAction};
+    runtimeContext.complete = true;
+
+    TestSemanticRuntimeService runtime;
+    SemanticControlPage page(&controller, &runtime);
+    page.setContext(slaveContext);
+    runtime.publish({runtimeContext});
+
+    QTreeWidget *signalTree
+        = page.findChild<QTreeWidget *>("EtherCATSemanticControlSignals");
+    QTreeWidget *actionTree
+        = page.findChild<QTreeWidget *>("EtherCATSemanticControlActions");
+    QLabel *actionDetail
+        = page.findChild<QLabel *>("EtherCATSemanticActionDetail");
+    QLabel *operationStatus
+        = page.findChild<QLabel *>("EtherCATSemanticActionOperationStatus");
+    QSpinBox *ttlCycles
+        = page.findChild<QSpinBox *>("EtherCATSemanticActionTtlCycles");
+    QPushButton *apply
+        = page.findChild<QPushButton *>("EtherCATSemanticControlApply");
+    QVERIFY(signalTree);
+    QVERIFY(actionTree);
+    QVERIFY(actionDetail);
+    QVERIFY(operationStatus);
+    QVERIFY(ttlCycles);
+    QVERIFY(apply);
+
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 1);
+    QCOMPARE(signalTree->topLevelItem(0)->text(0), QString("Output state"));
+    QCOMPARE(signalTree->topLevelItem(0)->text(1), Tr::tr("On"));
+    QTRY_COMPARE(actionTree->topLevelItemCount(), 2);
+    for (int column = 0; column < actionTree->columnCount(); ++column)
+        QCOMPARE(actionTree->header()->sectionResizeMode(column), QHeaderView::Interactive);
+
+    QTreeWidgetItem *readyItem = nullptr;
+    QTreeWidgetItem *unqualifiedItem = nullptr;
+    for (int row = 0; row < actionTree->topLevelItemCount(); ++row) {
+        QTreeWidgetItem *item = actionTree->topLevelItem(row);
+        if (item->text(0) == "Set outputs")
+            readyItem = item;
+        else if (item->text(0) == "Move axis")
+            unqualifiedItem = item;
+    }
+    QVERIFY(readyItem);
+    QVERIFY(unqualifiedItem);
+    QCOMPARE(readyItem->text(1), Tr::tr("Ready"));
+    QVERIFY(readyItem->flags().testFlag(Qt::ItemIsEnabled));
+    QVERIFY(readyItem->flags().testFlag(Qt::ItemIsSelectable));
+    QCOMPARE(unqualifiedItem->text(1), Tr::tr("Unavailable"));
+    QCOMPARE(
+        unqualifiedItem->text(2),
+        Tr::tr("Speed unit conversion is not configured."));
+    QVERIFY(!unqualifiedItem->flags().testFlag(Qt::ItemIsEnabled));
+    QVERIFY(!unqualifiedItem->flags().testFlag(Qt::ItemIsSelectable));
+    QCOMPARE(actionTree->currentItem(), readyItem);
+    QCOMPARE(actionDetail->text(), Tr::tr("Ready for local confirmation."));
+    QCOMPARE(ttlCycles->maximum(), 1000);
+    QCOMPARE(ttlCycles->value(), 1000);
+    QVERIFY(apply->isEnabled());
+
+    QWidget *boolEditor = nullptr;
+    QWidget *signedEditor = nullptr;
+    QWidget *unsignedEditor = nullptr;
+    for (QWidget *editor : page.findChildren<QWidget *>()) {
+        const QString parameterId
+            = editor->property("EtherCAT.SemanticParameterId").toString();
+        if (parameterId == "enabled")
+            boolEditor = editor;
+        else if (parameterId == "signed_value")
+            signedEditor = editor;
+        else if (parameterId == "unsigned_value")
+            unsignedEditor = editor;
+    }
+    QVERIFY(qobject_cast<QCheckBox *>(boolEditor));
+    QVERIFY(qobject_cast<QLineEdit *>(signedEditor));
+    QVERIFY(qobject_cast<QLineEdit *>(unsignedEditor));
+    qobject_cast<QCheckBox *>(boolEditor)->setChecked(false);
+    qobject_cast<QLineEdit *>(signedEditor)->setText("42");
+    qobject_cast<QLineEdit *>(unsignedEditor)->setText("7");
+    QVERIFY(apply->isEnabled());
+
+    apply->click();
+    QPointer<QMessageBox> confirmation;
+    QTRY_VERIFY(
+        (confirmation = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())));
+    QVERIFY(confirmation->text().contains("Set outputs"));
+    QVERIFY(!confirmation->text().contains("hidden-", Qt::CaseInsensitive));
+    QVERIFY(!confirmation->text().contains("PDO", Qt::CaseInsensitive));
+    QAbstractButton *yes = confirmation->button(QMessageBox::Yes);
+    QVERIFY(yes);
+    yes->click();
+
+    QTRY_COMPARE(runtime.submitCalls, 1);
+    QTRY_COMPARE(runtime.approveCalls, 1);
+    QVERIFY(Core::isCanonicalSemanticOperationId(runtime.lastRequest.operationId));
+    QVERIFY(runtime.lastRequest.operationId.value.startsWith("workbench-ui-"));
+    QCOMPARE(runtime.lastRequest.kind, Data::SemanticOperationKind::InvokeAction);
+    QCOMPARE(runtime.lastRequest.target, action.target);
+    QCOMPARE(runtime.lastRequest.expectedEpoch, runtimeContext.epoch);
+    QCOMPARE(runtime.lastRequest.expectedMappingDigest, runtimeContext.mappingDigest);
+    QCOMPARE(
+        runtime.lastRequest.expectedControllerMappingDigest,
+        runtimeContext.controllerMappingDigest);
+    QCOMPARE(
+        runtime.lastRequest.expectedActionDefinitionDigest,
+        action.actionDefinitionDigest);
+    QCOMPARE(runtime.lastRequest.expectedContextHash, runtimeContext.contextHash);
+    QCOMPARE(runtime.lastRequest.ttlMs, quint32(0));
+    QCOMPARE(runtime.lastRequest.ttlCycles, quint32(1000));
+    QCOMPARE(runtime.lastRequest.parameters.value("enabled"), QVariant(false));
+    QCOMPARE(
+        runtime.lastRequest.parameters.value("signed_value"),
+        QVariant::fromValue<qlonglong>(42));
+    QCOMPARE(
+        runtime.lastRequest.parameters.value("unsigned_value"),
+        QVariant::fromValue<qulonglong>(7));
+    QVERIFY(
+        Core::validateSemanticOperationRequest(runtime.lastRequest, runtimeContext)
+            .accepted());
+    QCOMPARE(runtime.lastSubmitActor.kind, Data::SemanticRuntimeActorKind::User);
+    QCOMPARE(runtime.lastSubmitActor.authenticationDigest.size(), qsizetype(32));
+    QCOMPARE(
+        runtime.lastSubmitActor.origin,
+        QString("ethercat-workbench-local-confirmation"));
+    QCOMPARE(runtime.lastApproval.operationId, runtime.lastRequest.operationId);
+    QCOMPARE(
+        runtime.lastApproval.decision,
+        Data::SemanticApprovalDecision::Approved);
+    QCOMPARE(runtime.lastApproval.challenge.size(), qsizetype(32));
+    QCOMPARE(
+        runtime.lastApproval.expectedRequestDigest,
+        QCryptographicHash::hash(
+            Core::canonicalSemanticOperationRequest(runtime.lastRequest),
+            QCryptographicHash::Sha256));
+    QCOMPARE(runtime.lastApproval.expectedContextHash, runtimeContext.contextHash);
+    QCOMPARE(runtime.lastApprovalActor.kind, Data::SemanticRuntimeActorKind::User);
+    QCOMPARE(
+        runtime.lastApprovalActor.authenticationDigest,
+        runtime.lastSubmitActor.authenticationDigest);
+    QTRY_COMPARE(operationStatus->text(), Tr::tr("Queued."));
+
+    const auto approved = runtime.operation(runtime.lastRequest.operationId);
+    QVERIFY(approved);
+    Data::SemanticOperationRecord executing = *approved;
+    executing.state = Data::SemanticOperationState::Executing;
+    runtime.publishOperation(executing);
+    QTRY_COMPARE(operationStatus->text(), Tr::tr("Running."));
+
+    Data::SemanticOperationRecord unknown = executing;
+    unknown.state = Data::SemanticOperationState::OutcomeUnknown;
+    runtime.publishOperation(unknown);
+    QTRY_COMPARE(operationStatus->text(), Tr::tr("Result unknown."));
+    QVERIFY(!apply->isEnabled());
+
+    Data::SemanticOperationRecord succeeded = unknown;
+    succeeded.state = Data::SemanticOperationState::Succeeded;
+    runtime.publishOperation(succeeded);
+    QTRY_COMPARE(operationStatus->text(), Tr::tr("Completed."));
+    QVERIFY(apply->isEnabled());
+
+    QString visibleText;
+    for (QLabel *label : page.findChildren<QLabel *>())
+        visibleText += label->text();
+    for (QTreeWidget *tree : page.findChildren<QTreeWidget *>()) {
+        for (int column = 0; column < tree->columnCount(); ++column)
+            visibleText += tree->headerItem()->text(column);
+        for (int row = 0; row < tree->topLevelItemCount(); ++row) {
+            for (int column = 0; column < tree->columnCount(); ++column)
+                visibleText += tree->topLevelItem(row)->text(column);
+        }
+    }
+    for (const QString &forbidden :
+         {QString("hidden-resource-id"),
+          QString("hidden-group-id"),
+          QString("hidden-controller-id"),
+          QString("forbidden.vendor"),
+          QString("PDO"),
+          QString("0x7010"),
+          QString("reference_unit_to_rpm_conversion_not_bound")}) {
+        QVERIFY2(
+            !visibleText.contains(forbidden, Qt::CaseInsensitive),
+            qPrintable(QString("Leaked physical identifier: %1").arg(forbidden)));
+    }
 }
 
 void EtherCATWorkbenchTests::testDeviceAdapterTreeFailsClosed()

@@ -21,6 +21,7 @@ private slots:
     void testConfiguredSlaveTreePhysicalOrder();
     void testDeviceAdapterSelectionBuildsModuleChannelTree();
     void testSemanticControlPageFailsClosed();
+    void testSemanticControlPageSignedActions();
     void testDeviceAdapterTreeFailsClosed();
     void testDeviceAdapterProviderRemovalInvalidatesTree();
     void testTwinCatInsertDeviceWorkflow();
