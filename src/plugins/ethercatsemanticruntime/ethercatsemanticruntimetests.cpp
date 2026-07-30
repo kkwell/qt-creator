@@ -19,6 +19,8 @@
 #include "signedecpkgmanifest_p.h"
 #include "verifiedecpkgstore_p.h"
 
+#include <coreplugin/icore.h>
+
 #include <extensionsystem/pluginmanager.h>
 
 #include <QCoreApplication>
@@ -4019,6 +4021,28 @@ void EtherCATSemanticRuntimeTests::testRuntimePackageEvidenceRepositoryRejectsUn
         recovered->semanticBindingArtifact().packageSha256,
         imported->semanticBindingArtifact().packageSha256);
     QVERIFY_RESULT(halfRepository.load(reference));
+}
+
+void EtherCATSemanticRuntimeTests::testInstalledProductionTrustAnchor()
+{
+    const QString keyId = QStringLiteral(
+        "eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6");
+    const Utils::FilePath trustDirectory
+        = ::Core::ICore::resourcePath("ethercat/production-trust");
+    const Utils::Result<QByteArray> publicKey
+        = (trustDirectory / (keyId + ".pub")).fileContents();
+    QVERIFY_RESULT(publicKey);
+    QCOMPARE(publicKey->size(), qsizetype(32));
+    QCOMPARE(
+        QString::fromLatin1(
+            QCryptographicHash::hash(*publicKey, QCryptographicHash::Sha256).toHex()),
+        keyId);
+    const Utils::Result<QList<EcpkgTrustedPublicKey>> trust
+        = loadProductionEcpkgTrustStore(trustDirectory.toFSPathString());
+    QVERIFY_RESULT(trust);
+    QCOMPARE(trust->size(), qsizetype(1));
+    QCOMPARE(trust->constFirst().rawPublicKey, *publicKey);
+    QCOMPARE(trust->constFirst().trust, EcpkgTrustClass::Production);
 }
 
 void EtherCATSemanticRuntimeTests::testReadOnlySemanticBindingFactory()

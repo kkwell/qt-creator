@@ -39,6 +39,7 @@ private slots:
     void testRuntimePackageEvidenceRejectsMismatches();
     void testRuntimePackageEvidenceRepository();
     void testRuntimePackageEvidenceRepositoryRejectsUnsafeInputs();
+    void testInstalledProductionTrustAnchor();
     void testReadOnlySemanticBindingFactory();
     void testReadOnlySemanticBindingFactoryRejectsMismatches();
     void testSemanticActionRuntimeFactory();

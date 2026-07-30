@@ -55,9 +55,11 @@ void EtherCATSemanticRuntimePlugin::initialize()
 
     const Utils::FilePath evidenceRoot
         = ::Core::ICore::userResourcePath("ethercat/runtime-evidence");
+    const Utils::FilePath productionTrustDirectory
+        = ::Core::ICore::resourcePath("ethercat/production-trust");
     m_evidenceRepository = std::make_shared<RuntimePackageEvidenceRepository>(
         (evidenceRoot / "verified-packages").toFSPathString(),
-        (evidenceRoot / "production-trust").toFSPathString(),
+        productionTrustDirectory.toFSPathString(),
         (evidenceRoot / "compiled-projects").toFSPathString());
     m_runtime = std::make_unique<SemanticRuntimeExecutor>(
         projectService, providerRegistry, nullptr, m_evidenceRepository);
