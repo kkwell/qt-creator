@@ -601,6 +601,32 @@ static QByteArray deviceEsi()
 </OpMode></Dc></Device></Devices></Descriptions></EtherCATInfo>)";
 }
 
+static QByteArray withUnsupportedVendorModule(QByteArray esi)
+{
+    const QByteArray slotCatalog = R"(<Slots DownloadModuleIdentList="true"
+ SlotIndexIncrement="16" SlotPdoIncrement="1">
+<Slot MinInstances="0" MaxInstances="1"><Name>Test module slot</Name>
+<ModuleClass><Class>vendor-test</Class><Name>Vendor test modules</Name></ModuleClass>
+</Slot><ModulePdoGroup Alignment="1" RxPdo="#x1600" TxPdo="#x1a00"/>
+</Slots>)";
+    const QByteArray moduleCatalog = R"(<Modules><Module>
+<Type ModuleIdent="#x00000010" ModuleClass="vendor-test" ModulePdoGroup="0">
+Vendor test module</Type><Name>Vendor mapping module</Name>
+<RxPdo Fixed="1" Sm="0"><Index DependOnSlot="1">#x1600</Index><Name>Outputs</Name>
+<Entry><Index DependOnSlot="true">#x7000</Index><SubIndex>1</SubIndex>
+<BitLen>1</BitLen><Name>Channel 1</Name><DataType>BOOL</DataType></Entry>
+<Entry><Index>#x0000</Index><BitLen>7</BitLen></Entry></RxPdo>
+<VendorSpecificMapping/></Module></Modules>)";
+
+    QByteArray deviceSuffix = slotCatalog;
+    deviceSuffix.append("</Device>");
+    esi.replace("</Device>", deviceSuffix);
+    QByteArray descriptionSuffix = moduleCatalog;
+    descriptionSuffix.append("</Descriptions>");
+    esi.replace("</Descriptions>", descriptionSuffix);
+    return esi;
+}
+
 static QByteArray deviceEsiWithSynchronizationTypes(quint16 supportedTypes)
 {
     QByteArray esi = deviceEsi();
@@ -4383,7 +4409,7 @@ void EtherCATWorkbenchTests::testTwinCatInsertDeviceWorkflow()
         esi.replace("#x00000011", revisionText);
         esi.replace("Workbench Servo", name);
         if (limited)
-            esi.replace("</Device>", "<Modules/></Device>");
+            esi = withUnsupportedVendorModule(esi);
         const Utils::FilePath path = Utils::FilePath::fromString(directory.path())
                                          .canonicalPath()
                                          .pathAppended(fileName);
@@ -5028,7 +5054,7 @@ void EtherCATWorkbenchTests::testEsiDeviceDragDropWorkflow()
         esi.replace("#x00005678", productText);
         esi.replace("Workbench Servo", name);
         if (limited)
-            esi.replace("</Device>", "<Modules/></Device>");
+            esi = withUnsupportedVendorModule(esi);
         const Utils::FilePath path = Utils::FilePath::fromString(directory.path())
                                          .canonicalPath()
                                          .pathAppended(fileName);
@@ -6089,7 +6115,7 @@ void EtherCATWorkbenchTests::testEsiDeviceGeneralWorkflow()
     uniqueEsi.replace(
         "<CycleTimeSync0>125000</CycleTimeSync0>",
         "<CycleTimeSync0 Factor=\"1\">125000</CycleTimeSync0>");
-    uniqueEsi.replace("</Device>", "<Modules/></Device>");
+    uniqueEsi = withUnsupportedVendorModule(uniqueEsi);
     const Utils::FilePath sourcePath = Utils::FilePath::fromString(directory.path())
                                            .pathAppended("esi-device-general.xml");
     QVERIFY_RESULT(sourcePath.writeFileContents(uniqueEsi));
@@ -6212,8 +6238,8 @@ void EtherCATWorkbenchTests::testEsiDeviceGeneralWorkflow()
     QCOMPARE(unsupportedCount->text(), QString("1"));
     QVERIFY(warningDetails->text().contains("formula attributes"));
     QVERIFY(warningDetails->text().contains("source XML"));
-    QVERIFY(unsupportedDetails->text().contains("Modules structure"));
-    QVERIFY(unsupportedDetails->text().contains("not expanded"));
+    QVERIFY(unsupportedDetails->text().contains("VendorSpecificMapping"));
+    QVERIFY(unsupportedDetails->text().contains("not interpreted"));
     QCOMPARE(sourceFile->text(), device->sourcePath);
     QCOMPARE(sourceHash->text(), QString::fromLatin1(device->sourceSha256.toHex()));
     QCOMPARE(imported->text(), device->importedAt.toLocalTime().toString(Qt::ISODate));
@@ -7508,7 +7534,7 @@ void EtherCATWorkbenchTests::testEtherCATRepositoryEmptyState()
     unsupportedEmptyEsi.replace("#x0000B201", "#x0000B202");
     unsupportedEmptyEsi.replace("EL-ETHERCAT-EMPTY", "EL-ETHERCAT-EMPTY-UNSUPPORTED");
     unsupportedEmptyEsi.replace("\u65e0 SyncManager", "\u65e0 SyncManager / \u4e0d\u652f\u6301");
-    unsupportedEmptyEsi.replace("</Device>", "<Modules/></Device>");
+    unsupportedEmptyEsi = withUnsupportedVendorModule(unsupportedEmptyEsi);
 
     QByteArray supportedPopulatedEsi = uniqueDevice(
         deviceEsi(),
@@ -7523,7 +7549,7 @@ void EtherCATWorkbenchTests::testEtherCATRepositoryEmptyState()
     unsupportedPopulatedEsi.replace("EL-ETHERCAT-POPULATED", "EL-ETHERCAT-POPULATED-UNSUPPORTED");
     unsupportedPopulatedEsi.replace(
         "\u5df2\u89e3\u6790 SyncManager", "\u5df2\u89e3\u6790 SyncManager / \u4e0d\u652f\u6301");
-    unsupportedPopulatedEsi.replace("</Device>", "<Modules/></Device>");
+    unsupportedPopulatedEsi = withUnsupportedVendorModule(unsupportedPopulatedEsi);
 
     struct EsiFixture
     {
@@ -12362,7 +12388,7 @@ void EtherCATWorkbenchTests::testProcessDataRepositoryEmptyState()
     unsupportedEmptyEsi.replace("#x0000B001", "#x0000B002");
     unsupportedEmptyEsi.replace("EL-PD-EMPTY", "EL-PD-EMPTY-UNSUPPORTED");
     unsupportedEmptyEsi.replace("无 PDO 映射", "无 PDO 映射 / 不支持");
-    unsupportedEmptyEsi.replace("</Device>", "<Modules/></Device>");
+    unsupportedEmptyEsi = withUnsupportedVendorModule(unsupportedEmptyEsi);
 
     QByteArray supportedPopulatedEsi = uniqueDevice(
         deviceEsi(),
@@ -12376,7 +12402,7 @@ void EtherCATWorkbenchTests::testProcessDataRepositoryEmptyState()
     unsupportedPopulatedEsi.replace("#x0000B003", "#x0000B004");
     unsupportedPopulatedEsi.replace("EL-PD-POPULATED", "EL-PD-POPULATED-UNSUPPORTED");
     unsupportedPopulatedEsi.replace("已解析 PDO", "已解析 PDO / 不支持");
-    unsupportedPopulatedEsi.replace("</Device>", "<Modules/></Device>");
+    unsupportedPopulatedEsi = withUnsupportedVendorModule(unsupportedPopulatedEsi);
 
     QByteArray supportedInvalidEsi = supportedPopulatedEsi;
     supportedInvalidEsi.replace("#x7A180003", "#x7A180005");
@@ -16558,7 +16584,7 @@ void EtherCATWorkbenchTests::testStartupRepositoryEmptyState()
     unsupportedEmptyEsi.replace("#x0000B101", "#x0000B102");
     unsupportedEmptyEsi.replace("EL-STARTUP-EMPTY", "EL-STARTUP-EMPTY-UNSUPPORTED");
     unsupportedEmptyEsi.replace("无启动请求", "无启动请求 / 不支持");
-    unsupportedEmptyEsi.replace("</Device>", "<Modules/></Device>");
+    unsupportedEmptyEsi = withUnsupportedVendorModule(unsupportedEmptyEsi);
 
     QByteArray supportedPopulatedEsi = uniqueDevice(
         deviceEsi(),
@@ -16572,7 +16598,7 @@ void EtherCATWorkbenchTests::testStartupRepositoryEmptyState()
     unsupportedPopulatedEsi.replace("#x0000B103", "#x0000B104");
     unsupportedPopulatedEsi.replace("EL-STARTUP-POPULATED", "EL-STARTUP-POPULATED-UNSUPPORTED");
     unsupportedPopulatedEsi.replace("已解析启动请求", "已解析启动请求 / 不支持");
-    unsupportedPopulatedEsi.replace("</Device>", "<Modules/></Device>");
+    unsupportedPopulatedEsi = withUnsupportedVendorModule(unsupportedPopulatedEsi);
 
     QByteArray supportedInvalidEsi = supportedPopulatedEsi;
     supportedInvalidEsi.replace("#x7A190003", "#x7A190005");
@@ -18792,7 +18818,7 @@ void EtherCATWorkbenchTests::testDcRepositoryModeEmptyState()
     unsupportedEmptyDcEsi.replace("EL-DC-EMPTY", "EL-DC-LIMITED");
     unsupportedEmptyDcEsi.replace(
         "DC Empty Servo / 无 DC 模式", "DC Limited Servo / 不支持 DC 空态");
-    unsupportedEmptyDcEsi.replace("</Device>", "<Modules/></Device>");
+    unsupportedEmptyDcEsi = withUnsupportedVendorModule(unsupportedEmptyDcEsi);
     const Utils::FilePath unsupportedEsiPath = Utils::FilePath::fromString(directory.path())
                                                    .pathAppended("dc-repository-limited.xml");
     QVERIFY_RESULT(unsupportedEsiPath.writeFileContents(unsupportedEmptyDcEsi));
@@ -18853,7 +18879,7 @@ void EtherCATWorkbenchTests::testDcRepositoryModeEmptyState()
     unsupportedPreviewEsi.replace(
         "<CycleTimeSync1>500000</CycleTimeSync1>",
         "<CycleTimeSync1>4294967296</CycleTimeSync1>");
-    unsupportedPreviewEsi.replace("</Device>", "<Modules/></Device>");
+    unsupportedPreviewEsi = withUnsupportedVendorModule(unsupportedPreviewEsi);
     const Utils::FilePath unsupportedPreviewEsiPath
         = Utils::FilePath::fromString(directory.path())
               .pathAppended("dc-repository-limited-preview.xml");
