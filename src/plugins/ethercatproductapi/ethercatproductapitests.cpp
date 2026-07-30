@@ -7313,6 +7313,86 @@ void EtherCATProductApiTests::testPackageDeploymentLifecycle()
     QVERIFY(controller.violations().isEmpty());
 }
 
+void EtherCATProductApiTests::testPackageDeploymentMaximumAudit()
+{
+    LoopbackController controller(LoopbackController::Behavior::PackageDeployment);
+    QVERIFY(controller.start());
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Connected,
+        2000);
+
+    Data::ControllerControlRequest control;
+    control.command = Data::ControllerControlCommand::AcquireControl;
+    QVERIFY(provider.executeControlCommand(control));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().controlProgress.state,
+        Data::ControllerControlState::Succeeded,
+        1000);
+
+    Data::ControllerPackageDeploymentRequest request;
+    request.operationId = QStringLiteral("deploy-maximum-audit");
+    request.configurationId = 813;
+    request.artifact = QByteArray(16 * 1024 * 1024, '\x5a');
+    QVERIFY(provider.deployPackage(request));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().packageDeploymentProgress.state,
+        Data::ControllerPackageDeploymentState::Succeeded,
+        20000);
+
+    const Data::ControllerPackageDeploymentProgress progress
+        = provider.connectionSnapshot().packageDeploymentProgress;
+    const qsizetype expectedChunkCount
+        = (request.artifact.size() + qsizetype(Protocol::BulkChunkMaximumBytes) - 1)
+          / qsizetype(Protocol::BulkChunkMaximumBytes);
+    QCOMPARE(
+        controller.requestCount(Protocol::MessageType::BulkChunk),
+        int(expectedChunkCount));
+    // Every bulk request records queued and accepted evidence. The remaining
+    // transcript consists of deployment start plus begin/commit (5 upload
+    // events), validation (6 events), and activation (7 events).
+    constexpr qsizetype ValidateAuditEvents = 6;
+    constexpr qsizetype ActivateAuditEvents = 7;
+    const qsizetype expectedUploadAuditEvents = 2 * expectedChunkCount + 5;
+    const qsizetype expectedAuditEvents
+        = expectedUploadAuditEvents + ValidateAuditEvents + ActivateAuditEvents;
+    QCOMPARE(expectedChunkCount, qsizetype(257));
+    QCOMPARE(progress.audit.size(), expectedAuditEvents);
+    for (qsizetype index = 0; index < progress.audit.size(); ++index)
+        QCOMPARE(progress.audit.at(index).sequence, quint64(index + 1));
+    const auto countAuditOperation = [&progress](Data::ControllerOperation operation) {
+        return qsizetype(std::count_if(
+            progress.audit.cbegin(),
+            progress.audit.cend(),
+            [operation](const Data::ControllerPackageDeploymentAuditEvent &event) {
+                return event.operation == operation;
+            }));
+    };
+    QCOMPARE(
+        countAuditOperation(Data::ControllerOperation::UploadPackage),
+        expectedUploadAuditEvents);
+    QCOMPARE(
+        countAuditOperation(Data::ControllerOperation::ValidatePackage),
+        ValidateAuditEvents);
+    QCOMPARE(
+        countAuditOperation(Data::ControllerOperation::ActivatePackage),
+        ActivateAuditEvents);
+    QCOMPARE(progress.audit.constFirst().operation, Data::ControllerOperation::UploadPackage);
+    QCOMPARE(progress.audit.constLast().operation, Data::ControllerOperation::ActivatePackage);
+
+    control.command = Data::ControllerControlCommand::ReleaseControl;
+    QVERIFY(provider.executeControlCommand(control));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().controlProgress.state,
+        Data::ControllerControlState::Succeeded,
+        1000);
+    QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    QVERIFY(controller.violations().isEmpty());
+}
+
 void EtherCATProductApiTests::testPackageDeploymentGuardsAndIdempotency()
 {
     LoopbackController controller(LoopbackController::Behavior::PackageDeployment);

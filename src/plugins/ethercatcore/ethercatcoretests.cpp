@@ -9,6 +9,7 @@
 #include "manualcontrolcontract.h"
 #include "providerregistry.h"
 #include "providers.h"
+#include "runtimepackageactivationservice.h"
 #include "selectionservice.h"
 #include "semanticruntimeservice.h"
 #include "stateservice.h"
@@ -25,12 +26,14 @@
 #include <ethercatdata/nodeid.h>
 #include <ethercatdata/offlineconfiguration.h>
 #include <ethercatdata/projectsnapshot.h>
+#include <ethercatdata/runtimepackageactivation.h>
 #include <ethercatdata/runtimeoutputtransaction.h>
 #include <ethercatdata/runtimeresource.h>
 #include <ethercatdata/semanticmappingattestation.h>
 #include <ethercatdata/semanticruntime.h>
 
 #include <QCryptographicHash>
+#include <QHash>
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QStringList>
@@ -72,6 +75,312 @@ public:
 
     mutable int readCount = 0;
     QList<Data::SemanticRuntimeContext> snapshots;
+};
+
+class TestRuntimePackageActivationService final : public RuntimePackageActivationService
+{
+public:
+    using RuntimePackageActivationService::RuntimePackageActivationService;
+
+    RuntimePackageActivationCommandResult start(
+        const Data::RuntimePackageActivationRequest &request) final
+    {
+        if (!request.isValid()) {
+            return {
+                RuntimePackageActivationCommandDisposition::InvalidRequest,
+                {},
+                QStringLiteral("The activation request is invalid."),
+            };
+        }
+        const auto operationId = request.identity().operationId();
+        const auto existing = m_records.constFind(operationId);
+        if (existing != m_records.cend()) {
+            if (existing->requestFingerprint() == request.fingerprint()) {
+                return {
+                    RuntimePackageActivationCommandDisposition::IdempotentReplay,
+                    *existing,
+                    {},
+                };
+            }
+            return {
+                RuntimePackageActivationCommandDisposition::Conflict,
+                *existing,
+                QStringLiteral("The activation OperationId has a different request fingerprint."),
+            };
+        }
+        const QDateTime now = QDateTime::currentDateTimeUtc();
+        const Data::RuntimePackageActivationAuditEvent event{
+            1,
+            Data::RuntimePackageActivationAuditKind::IntentPersisted,
+            Data::RuntimePackageActivationPhase::Queued,
+            Data::RuntimePackageActivationOutcome::Pending,
+            Data::RuntimePackageActivationProviderAction::None,
+            Data::RuntimePackageActivationProviderReconciliation::None,
+            {},
+            0,
+            0,
+            0,
+            {},
+            {},
+            {},
+            request.fingerprint(),
+            QStringLiteral("queued"),
+            QStringLiteral("Activation queued for offline contract testing."),
+            now,
+        };
+        const Data::RuntimePackageActivationRecord created{
+            request.identity(),
+            request.fingerprint(),
+            request.rollbackOnActivationFailure(),
+            1,
+            event.phase(),
+            event.outcome(),
+            {event},
+            event.detail(),
+            now,
+            now,
+        };
+        publish(created);
+        return {
+            RuntimePackageActivationCommandDisposition::Accepted,
+            created,
+            {},
+        };
+    }
+
+    RuntimePackageActivationCommandResult reconcile(
+        const Data::RuntimePackageActivationOperationId &operationId) final
+    {
+        const auto found = m_records.constFind(operationId);
+        if (!operationId.isValid()) {
+            return {
+                RuntimePackageActivationCommandDisposition::InvalidRequest,
+                {},
+                QStringLiteral("The activation OperationId is invalid."),
+            };
+        }
+        if (found == m_records.cend()) {
+            return {
+                RuntimePackageActivationCommandDisposition::NotFound,
+                {},
+                QStringLiteral("The activation operation does not exist."),
+            };
+        }
+        if (found->phase() == Data::RuntimePackageActivationPhase::Reconciling
+            || Data::runtimePackageActivationOutcomeIsTerminal(found->outcome())) {
+            return {
+                RuntimePackageActivationCommandDisposition::IdempotentReplay,
+                *found,
+                {},
+            };
+        }
+        if (!found->needsReconciliation()) {
+            return {
+                RuntimePackageActivationCommandDisposition::NotAllowed,
+                *found,
+                QStringLiteral("The activation outcome does not require reconciliation."),
+            };
+        }
+        return transition(
+            *found,
+            Data::RuntimePackageActivationPhase::Reconciling,
+            Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+            Data::RuntimePackageActivationAuditKind::ReconciliationStarted,
+            QStringLiteral("reconciling"),
+            found->cancellation());
+    }
+
+    RuntimePackageActivationCommandResult cancel(
+        const Data::RuntimePackageActivationCancelRequest &request) final
+    {
+        if (!request.isValid()) {
+            return {
+                RuntimePackageActivationCommandDisposition::InvalidRequest,
+                {},
+                QStringLiteral("The activation cancel request is invalid."),
+            };
+        }
+        const auto found = m_records.constFind(request.operationId());
+        if (found == m_records.cend()) {
+            return {
+                RuntimePackageActivationCommandDisposition::NotFound,
+                {},
+                QStringLiteral("The activation operation does not exist."),
+            };
+        }
+        if (found->cancellation()
+            && found->cancellation()->expectedRecordRevision()
+                   == request.expectedRecordRevision()
+            && found->cancellation()->expectedDocumentRevision()
+                   == request.expectedDocumentRevision()
+            && found->cancellation()->expectedBinding() == request.expectedBinding()) {
+            return {
+                RuntimePackageActivationCommandDisposition::IdempotentReplay,
+                *found,
+                {},
+            };
+        }
+        if (found->needsReconciliation()) {
+            return {
+                RuntimePackageActivationCommandDisposition::ReconciliationRequired,
+                *found,
+                QStringLiteral("Reconcile the unknown controller outcome before continuing."),
+            };
+        }
+        if (Data::runtimePackageActivationOutcomeIsTerminal(found->outcome())) {
+            return {
+                RuntimePackageActivationCommandDisposition::TooLate,
+                *found,
+                QStringLiteral("The activation operation is already complete."),
+            };
+        }
+        if (request.expectedRecordRevision() != found->revision()
+            || request.expectedDocumentRevision()
+                   != found->identity().documentRevisionToken()
+            || request.expectedBinding() != found->identity().originalBindingToken()) {
+            return {
+                RuntimePackageActivationCommandDisposition::StaleRevision,
+                *found,
+                QStringLiteral("The activation or project revision changed before cancellation."),
+            };
+        }
+        if (!Data::runtimePackageActivationPhaseAllowsCancel(found->phase())) {
+            return {
+                RuntimePackageActivationCommandDisposition::TooLate,
+                *found,
+                QStringLiteral("Cancellation is too late for the current activation phase."),
+            };
+        }
+        const Data::RuntimePackageActivationCancellation cancellation{
+            request.expectedRecordRevision(),
+            request.expectedDocumentRevision(),
+            request.expectedBinding(),
+            request.fingerprint(),
+            found->phase(),
+            Data::RuntimePackageActivationCancellationControllerResult::Pending,
+            {},
+            nextTimestamp(*found),
+        };
+        return transition(
+            *found,
+            Data::RuntimePackageActivationPhase::Canceling,
+            Data::RuntimePackageActivationOutcome::Pending,
+            Data::RuntimePackageActivationAuditKind::CancellationRequested,
+            QStringLiteral("canceling"),
+            cancellation);
+    }
+
+    std::optional<Data::RuntimePackageActivationRecord> record(
+        const Data::RuntimePackageActivationOperationId &operationId) const final
+    {
+        const auto found = m_records.constFind(operationId);
+        return found == m_records.cend() ? std::nullopt
+                                        : std::optional(*found);
+    }
+
+    Data::RuntimePackageActivationSnapshot snapshot() const final
+    {
+        QDateTime capturedAt = QDateTime::currentDateTimeUtc();
+        for (const Data::RuntimePackageActivationRecord &record : m_records) {
+            if (capturedAt < record.updatedAt())
+                capturedAt = record.updatedAt();
+        }
+        return {
+            m_sequence ? m_sequence : 1,
+            m_records.values(),
+            capturedAt,
+        };
+    }
+
+    void replaceForTest(const Data::RuntimePackageActivationRecord &record)
+    {
+        m_records.insert(record.identity().operationId(), record);
+    }
+
+private:
+    static QDateTime nextTimestamp(const Data::RuntimePackageActivationRecord &record)
+    {
+        return std::max(
+            QDateTime::currentDateTimeUtc(), record.updatedAt().addMSecs(1));
+    }
+
+    RuntimePackageActivationCommandResult transition(
+        const Data::RuntimePackageActivationRecord &current,
+        Data::RuntimePackageActivationPhase phase,
+        Data::RuntimePackageActivationOutcome outcome,
+        Data::RuntimePackageActivationAuditKind kind,
+        const QString &code,
+        std::optional<Data::RuntimePackageActivationCancellation> cancellation)
+    {
+        const QDateTime now = cancellation ? cancellation->requestedAt()
+                                           : nextTimestamp(current);
+        QList<Data::RuntimePackageActivationAuditEvent> audit = current.audit();
+        const std::optional<Data::RuntimePackageActivationSha256> eventEvidence
+            = kind == Data::RuntimePackageActivationAuditKind::CancellationRequested
+                      && cancellation
+                  ? std::optional(cancellation->requestFingerprint())
+                  : std::nullopt;
+        audit.append({
+            audit.constLast().sequence() + 1,
+            kind,
+            phase,
+            outcome,
+            Data::RuntimePackageActivationProviderAction::None,
+            Data::RuntimePackageActivationProviderReconciliation::None,
+            {},
+            0,
+            0,
+            0,
+            {},
+            {},
+            {},
+            eventEvidence,
+            code,
+            code,
+            now,
+        });
+        const Data::RuntimePackageActivationRecord updated{
+            current.identity(),
+            current.requestFingerprint(),
+            current.rollbackOnActivationFailure(),
+            current.revision() + 1,
+            phase,
+            outcome,
+            audit,
+            code,
+            current.startedAt(),
+            now,
+            {},
+            current.beforeController(),
+            current.afterController(),
+            current.projectCommit(),
+            std::move(cancellation),
+            current.deploymentEvidence(),
+            current.controllerEvidenceHistory(),
+        };
+        publish(updated);
+        return {
+            RuntimePackageActivationCommandDisposition::Accepted,
+            updated,
+            {},
+        };
+    }
+
+    void publish(const Data::RuntimePackageActivationRecord &record)
+    {
+        m_records.insert(record.identity().operationId(), record);
+        ++m_sequence;
+        emit recordChanged(record);
+        emit statusChanged(
+            record.identity().operationId(), record.phase(), record.outcome());
+        emit snapshotChanged(snapshot());
+    }
+
+    QHash<
+        Data::RuntimePackageActivationOperationId,
+        Data::RuntimePackageActivationRecord>
+        m_records;
+    quint64 m_sequence = 0;
 };
 
 struct SemanticRuntimeFixture
@@ -1862,6 +2171,1120 @@ void EtherCATCoreTests::testRuntimeOutputTransactionContract()
     QVERIFY(QMetaType::fromType<Data::RuntimeOutputTransactionResult>().isValid());
 }
 
+void EtherCATCoreTests::testRuntimePackageActivationContract()
+{
+    const auto sha256 = [](QByteArrayView bytes) {
+        return Data::RuntimePackageActivationSha256{
+            QCryptographicHash::hash(bytes, QCryptographicHash::Sha256),
+        };
+    };
+    const auto digest = [](char value) { return QByteArray(32, value); };
+    const QDateTime startedAt
+        = QDateTime::fromMSecsSinceEpoch(1'800'000'000'000, Qt::UTC);
+    const QByteArray packageBytes{"signed-ecpkg"};
+    const QByteArray compiledProject{"compiled-project"};
+    const QByteArray companion{"opaque-companion"};
+    const Data::ControllerConnectionScope scope{
+        Data::NodeId::fromString("11111111-1111-1111-1111-111111111111"),
+        Data::NodeId::fromString("22222222-2222-2222-2222-222222222222"),
+    };
+    constexpr quint64 sessionGeneration = 9;
+    constexpr quint64 sessionId = 100;
+    constexpr quint64 bootId = 10;
+
+    Data::RuntimeSemanticMappingProof targetProof;
+    targetProof.formatVersion = 2;
+    targetProof.bindingCount = 56;
+    targetProof.packageSigned = true;
+    targetProof.signatureVerified = true;
+    targetProof.semanticBindingVerified = true;
+    targetProof.trust = Data::RuntimeSemanticMappingTrust::Production;
+    targetProof.packageSha256 = sha256(packageBytes).value();
+    targetProof.manifestSha256 = digest('\x21');
+    targetProof.mappingSha256 = digest('\x22');
+    targetProof.resourceRecordsSha256 = digest('\x23');
+    targetProof.resourceSectionSha256 = digest('\x24');
+    targetProof.topologySha256 = digest('\x25');
+    targetProof.signingKeyIdSha256 = digest('\x26');
+
+    const Data::RuntimePackageActivationIdentity identity{
+        Data::RuntimePackageActivationOperationId{"activation-1"},
+        scope,
+        Data::RuntimePackageActivationDocumentRevisionToken{"document-revision-7"},
+        Data::RuntimePackageActivationOriginalBindingToken{"original-binding-empty"},
+        Data::RuntimePackageActivationOriginalBindingToken{"binding-runtime-api038"},
+        QStringLiteral("runtime/api038/manual-control"),
+        3701,
+        99,
+        QByteArray("topology-identity"),
+        sha256(packageBytes),
+        sha256(compiledProject),
+        sha256(companion),
+        targetProof,
+    };
+    const Data::RuntimePackageActivationRequest request{
+        identity,
+        packageBytes,
+        compiledProject,
+        companion,
+    };
+    QVERIFY(identity.isValid());
+    QVERIFY(request.isValid());
+    const Data::RuntimePackageActivationRequest alteredPackage{
+        identity,
+        QByteArray("altered-package"),
+        compiledProject,
+        companion,
+    };
+    QVERIFY(!alteredPackage.isValid());
+    const Data::RuntimePackageActivationRequest noRollbackRequest{
+        identity,
+        packageBytes,
+        compiledProject,
+        companion,
+        false,
+    };
+    QVERIFY(noRollbackRequest.isValid());
+    QVERIFY(noRollbackRequest.fingerprint() != request.fingerprint());
+    const Data::RuntimePackageActivationIdentity changedCatalogIdentity{
+        identity.operationId(),
+        identity.scope(),
+        identity.documentRevisionToken(),
+        identity.originalBindingToken(),
+        identity.targetBindingToken(),
+        identity.bindingArtifactId(),
+        identity.configurationId(),
+        identity.expectedCatalogRevision() + 1,
+        identity.expectedTopologyIdentity(),
+        identity.packageSha256(),
+        identity.compiledProjectSha256(),
+        identity.effectiveProjectCompanionSha256(),
+        identity.expectedMappingProof(),
+    };
+    QVERIFY(changedCatalogIdentity.isValid());
+    QVERIFY(
+        Data::runtimePackageActivationCanonicalRequestFingerprint(
+            changedCatalogIdentity, true)
+        != request.fingerprint());
+
+    const Data::ControllerPackageSelector previous{
+        Data::ControllerSlot::B, 33, 44};
+    const Data::ControllerPackageSelector candidate{
+        Data::ControllerSlot::A, 55, identity.configurationId()};
+    Data::RuntimeSemanticMappingProof previousProof = targetProof;
+    previousProof.packageSha256 = digest('\x31');
+
+    const auto makeAttestation = [&](
+                                     const Data::ControllerPackageSelector &selector,
+                                     const Data::RuntimeSemanticMappingProof &proof,
+                                     quint64 generation,
+                                     const QDateTime &at) {
+        Data::RuntimeSemanticMappingAttestation value;
+        value.scope = scope;
+        value.sessionGeneration = generation;
+        value.epoch.controllerBootId = bootId;
+        value.epoch.activePackageSlot = selector.slot;
+        value.epoch.activePackageGeneration = selector.generation;
+        value.epoch.configurationId = selector.configurationId;
+        value.epoch.topologyGeneration = 77;
+        value.epoch.runtimeGeneration = 88;
+        value.epoch.catalogRevision = 99;
+        value.epoch.topologyIdentity = QByteArray("topology-identity");
+        value.proof = proof;
+        value.receivedAt = at.addMSecs(-1);
+        return value;
+    };
+    const auto makeEvidence = [&](
+                                  const Data::ControllerPackageSelector &selector,
+                                  const Data::RuntimeSemanticMappingProof &proof,
+                                  Data::ControllerServiceState serviceState,
+                                  quint64 leaseOwner,
+                                  const QDateTime &at,
+                                  quint64 generation = sessionGeneration,
+                                  quint64 observer = sessionId) {
+        return Data::RuntimePackageActivationControllerEvidence{
+            scope,
+            generation,
+            observer,
+            leaseOwner,
+            bootId,
+            selector,
+            Data::ControllerPackageState::Active,
+            serviceState,
+            makeAttestation(selector, proof, generation, at),
+            at,
+        };
+    };
+
+    const auto before = makeEvidence(
+        previous,
+        previousProof,
+        Data::ControllerServiceState::Shutdown,
+        0,
+        startedAt.addMSecs(4));
+    const auto acquired = makeEvidence(
+        previous,
+        previousProof,
+        Data::ControllerServiceState::Shutdown,
+        sessionId,
+        startedAt.addMSecs(7));
+    const auto afterHeld = makeEvidence(
+        candidate,
+        targetProof,
+        Data::ControllerServiceState::OperationalSafe,
+        sessionId,
+        startedAt.addMSecs(14));
+    const auto afterReleased = makeEvidence(
+        candidate,
+        targetProof,
+        Data::ControllerServiceState::OperationalSafe,
+        0,
+        startedAt.addMSecs(20));
+    QVERIFY(before.isValid());
+    QVERIFY(acquired.isValid());
+    QVERIFY(afterHeld.isValid());
+    QVERIFY(afterReleased.isValid());
+    QVERIFY(afterHeld.matchesActivatedIdentity(identity));
+
+    const auto faultSnapshot = makeEvidence(
+        candidate,
+        targetProof,
+        Data::ControllerServiceState::Fault,
+        0,
+        startedAt.addMSecs(8));
+    const auto shutdownSnapshot = makeEvidence(
+        candidate,
+        targetProof,
+        Data::ControllerServiceState::Shutdown,
+        0,
+        startedAt.addMSecs(8));
+    QVERIFY(faultSnapshot.isValid());
+    QVERIFY(shutdownSnapshot.isValid());
+    QVERIFY(!faultSnapshot.matchesActivatedIdentity(identity));
+    QVERIFY(!shutdownSnapshot.matchesActivatedIdentity(identity));
+    auto wrongCatalogAttestation = *afterHeld.mappingAttestation();
+    ++wrongCatalogAttestation.epoch.catalogRevision;
+    const Data::RuntimePackageActivationControllerEvidence wrongCatalogSnapshot{
+        scope,
+        sessionGeneration,
+        sessionId,
+        sessionId,
+        bootId,
+        candidate,
+        Data::ControllerPackageState::Active,
+        Data::ControllerServiceState::OperationalSafe,
+        wrongCatalogAttestation,
+        startedAt.addMSecs(15),
+    };
+    QVERIFY(wrongCatalogSnapshot.isValid());
+    QVERIFY(!wrongCatalogSnapshot.matchesActivatedIdentity(identity));
+    auto wrongTopologyAttestation = *afterHeld.mappingAttestation();
+    wrongTopologyAttestation.epoch.topologyIdentity.append("-external");
+    const Data::RuntimePackageActivationControllerEvidence wrongTopologySnapshot{
+        scope,
+        sessionGeneration,
+        sessionId,
+        sessionId,
+        bootId,
+        candidate,
+        Data::ControllerPackageState::Active,
+        Data::ControllerServiceState::OperationalSafe,
+        wrongTopologyAttestation,
+        startedAt.addMSecs(15),
+    };
+    QVERIFY(wrongTopologySnapshot.isValid());
+    QVERIFY(!wrongTopologySnapshot.matchesActivatedIdentity(identity));
+
+    const auto changedEvidence = makeEvidence(
+        {candidate.slot, candidate.generation + 1, candidate.configurationId},
+        targetProof,
+        Data::ControllerServiceState::OperationalSafe,
+        sessionId,
+        afterHeld.observedAt());
+    QVERIFY(changedEvidence.isValid());
+    QVERIFY(changedEvidence.evidenceSha256() != afterHeld.evidenceSha256());
+
+    const auto progressEvent = [](
+                                   quint64 sequence,
+                                   Data::ControllerOperation operation,
+                                   std::optional<quint64> requestId,
+                                   std::optional<qint32> status,
+                                   const QDateTime &at) {
+        Data::ControllerPackageDeploymentAuditEvent event;
+        event.sequence = sequence;
+        event.operation = operation;
+        event.requestId = requestId;
+        event.status = status;
+        if (status)
+            event.operationResult = 0;
+        event.detail = QStringLiteral("deployment-event-%1").arg(sequence);
+        event.occurredAt = at;
+        return event;
+    };
+    const auto makeSuccessProgress = [&](
+                                         qint64 bytes,
+                                         qsizetype chunks,
+                                         const QByteArray &artifactDigest) {
+        Data::ControllerPackageDeploymentProgress progress;
+        progress.operationId = QStringLiteral("deploy-op");
+        progress.artifactSha256 = artifactDigest;
+        progress.state = Data::ControllerPackageDeploymentState::Succeeded;
+        progress.totalBytes = bytes;
+        progress.transferredBytes = bytes;
+        progress.candidate = candidate;
+        progress.previousActive = previous;
+        progress.status = 0;
+        progress.operationResult = 0;
+        progress.detail = QStringLiteral("deployment-succeeded");
+        progress.startedAt = startedAt.addMSecs(5);
+        quint64 sequence = 1;
+        progress.audit.append(progressEvent(
+            sequence,
+            Data::ControllerOperation::UploadPackage,
+            {},
+            {},
+            progress.startedAt));
+        const auto exchange = [&](
+                                  Data::ControllerOperation operation,
+                                  quint64 requestId,
+                                  qsizetype responses) {
+            progress.audit.append(progressEvent(
+                ++sequence,
+                operation,
+                requestId,
+                {},
+                progress.startedAt));
+            for (qsizetype index = 0; index < responses; ++index) {
+                progress.audit.append(progressEvent(
+                    ++sequence,
+                    operation,
+                    requestId,
+                    0,
+                    progress.startedAt));
+            }
+        };
+        exchange(Data::ControllerOperation::UploadPackage, 1, 1);
+        for (qsizetype index = 0; index < chunks; ++index)
+            exchange(Data::ControllerOperation::UploadPackage, quint64(index + 2), 1);
+        exchange(Data::ControllerOperation::UploadPackage, quint64(chunks + 2), 1);
+        exchange(Data::ControllerOperation::ValidatePackage, quint64(chunks + 3), 6);
+        exchange(Data::ControllerOperation::ActivatePackage, quint64(chunks + 4), 6);
+        progress.completedAt = progress.startedAt.addMSecs(1);
+        return progress;
+    };
+
+    const auto progress = makeSuccessProgress(
+        packageBytes.size(), 1, identity.packageSha256().value());
+    const Data::RuntimePackageActivationDeploymentEvidence deployment{
+        sessionGeneration,
+        sessionId,
+        bootId,
+        progress,
+        startedAt.addMSecs(12),
+    };
+    QVERIFY(deployment.isValid());
+    QCOMPARE(deployment.progress(), progress);
+    QCOMPARE(deployment.candidate(), std::optional(candidate));
+
+    Data::ControllerPackageDeploymentProgress truncatedProgress = progress;
+    truncatedProgress.audit.removeLast();
+    const Data::RuntimePackageActivationDeploymentEvidence truncatedDeployment{
+        sessionGeneration,
+        sessionId,
+        bootId,
+        truncatedProgress,
+        startedAt.addMSecs(12),
+    };
+    QVERIFY(!truncatedDeployment.isValid());
+
+    Data::ControllerPackageDeploymentProgress changedProgress = progress;
+    changedProgress.detail = QStringLiteral("changed-complete-progress");
+    const Data::RuntimePackageActivationDeploymentEvidence changedDeployment{
+        sessionGeneration,
+        sessionId,
+        bootId,
+        changedProgress,
+        startedAt.addMSecs(12),
+    };
+    QVERIFY(changedDeployment.isValid());
+    QVERIFY(changedDeployment.evidenceSha256() != deployment.evidenceSha256());
+
+    Data::ControllerPackageDeploymentProgress precommitFailure;
+    precommitFailure.operationId = QStringLiteral("precommit-failure");
+    precommitFailure.artifactSha256 = identity.packageSha256().value();
+    precommitFailure.state = Data::ControllerPackageDeploymentState::Failed;
+    precommitFailure.totalBytes = packageBytes.size();
+    precommitFailure.status = -21;
+    precommitFailure.operationResult = 0;
+    precommitFailure.detail = QStringLiteral("bulk-begin-failed");
+    precommitFailure.startedAt = startedAt.addMSecs(1);
+    precommitFailure.audit = {
+        progressEvent(1, Data::ControllerOperation::UploadPackage, {}, {},
+                      precommitFailure.startedAt),
+        progressEvent(2, Data::ControllerOperation::UploadPackage, 1, {},
+                      precommitFailure.startedAt.addMSecs(1)),
+        progressEvent(3, Data::ControllerOperation::UploadPackage, 1, -21,
+                      precommitFailure.startedAt.addMSecs(2)),
+    };
+    precommitFailure.completedAt = precommitFailure.startedAt.addMSecs(3);
+    const Data::RuntimePackageActivationDeploymentEvidence precommitEvidence{
+        sessionGeneration,
+        sessionId,
+        bootId,
+        precommitFailure,
+        precommitFailure.completedAt,
+    };
+    QVERIFY(precommitEvidence.isValid());
+    QVERIFY(!precommitEvidence.candidate());
+
+    Data::ControllerPackageDeploymentProgress precommitUnknown = precommitFailure;
+    precommitUnknown.operationId = QStringLiteral("precommit-unknown");
+    precommitUnknown.state = Data::ControllerPackageDeploymentState::OutcomeUnknown;
+    precommitUnknown.status.reset();
+    precommitUnknown.operationResult.reset();
+    precommitUnknown.detail = QStringLiteral("bulk-begin-unknown");
+    precommitUnknown.audit.removeLast();
+    const Data::RuntimePackageActivationDeploymentEvidence unknownEvidence{
+        sessionGeneration,
+        sessionId,
+        bootId,
+        precommitUnknown,
+        precommitUnknown.completedAt,
+    };
+    QVERIFY(unknownEvidence.isValid());
+    QVERIFY(!unknownEvidence.candidate());
+
+    Data::ControllerPackageDeploymentProgress rollbackProgress = progress;
+    rollbackProgress.state = Data::ControllerPackageDeploymentState::Failed;
+    rollbackProgress.status = -19;
+    rollbackProgress.operationResult = 0;
+    rollbackProgress.detail = QStringLiteral("internal-rollback-succeeded");
+    quint64 rollbackSequence = quint64(rollbackProgress.audit.size());
+    rollbackProgress.audit.append(progressEvent(
+        ++rollbackSequence,
+        Data::ControllerOperation::RollbackPackage,
+        600,
+        {},
+        rollbackProgress.completedAt));
+    rollbackProgress.audit.append(progressEvent(
+        ++rollbackSequence,
+        Data::ControllerOperation::RollbackPackage,
+        600,
+        0,
+        rollbackProgress.completedAt.addMSecs(1)));
+    rollbackProgress.completedAt = rollbackProgress.completedAt.addMSecs(2);
+    const Data::RuntimePackageActivationDeploymentEvidence rollbackEvidence{
+        sessionGeneration,
+        sessionId,
+        bootId,
+        rollbackProgress,
+        rollbackProgress.completedAt,
+    };
+    QVERIFY(rollbackEvidence.isValid());
+
+    auto duplicateRollbackProgress = rollbackProgress;
+    duplicateRollbackProgress.audit.append(progressEvent(
+        ++rollbackSequence,
+        Data::ControllerOperation::RollbackPackage,
+        601,
+        {},
+        duplicateRollbackProgress.completedAt));
+    duplicateRollbackProgress.audit.append(progressEvent(
+        ++rollbackSequence,
+        Data::ControllerOperation::RollbackPackage,
+        601,
+        0,
+        duplicateRollbackProgress.completedAt.addMSecs(1)));
+    duplicateRollbackProgress.completedAt
+        = duplicateRollbackProgress.completedAt.addMSecs(2);
+    const Data::RuntimePackageActivationDeploymentEvidence duplicateRollback{
+        sessionGeneration,
+        sessionId,
+        bootId,
+        duplicateRollbackProgress,
+        duplicateRollbackProgress.completedAt,
+    };
+    QVERIFY(!duplicateRollback.isValid());
+
+    const auto maximumProgress = makeSuccessProgress(
+        16 * 1024 * 1024,
+        257,
+        sha256(QByteArrayView("maximum-package")).value());
+    QCOMPARE(maximumProgress.audit.size(), 533);
+    const Data::RuntimePackageActivationDeploymentEvidence maximumDeployment{
+        sessionGeneration,
+        sessionId,
+        bootId,
+        maximumProgress,
+        maximumProgress.completedAt,
+    };
+    QVERIFY(maximumDeployment.isValid());
+
+    const Data::RuntimePackageActivationProjectCommit projectCommit{
+        identity.documentRevisionToken(),
+        identity.originalBindingToken(),
+        Data::RuntimePackageActivationDocumentRevisionToken{"document-revision-8"},
+        identity.targetBindingToken(),
+        Data::RuntimePackageActivationProjectCommitDisposition::CompareAndSetCommitted,
+        startedAt.addMSecs(17),
+    };
+    const Data::RuntimePackageActivationProjectCommit changedCommit{
+        identity.documentRevisionToken(),
+        identity.originalBindingToken(),
+        Data::RuntimePackageActivationDocumentRevisionToken{"document-revision-9"},
+        identity.targetBindingToken(),
+        Data::RuntimePackageActivationProjectCommitDisposition::CompareAndSetCommitted,
+        startedAt.addMSecs(17),
+    };
+    QVERIFY(projectCommit.isValid());
+    QVERIFY(changedCommit.isValid());
+    QVERIFY(changedCommit.evidenceSha256() != projectCommit.evidenceSha256());
+
+    const auto localEvent = [](
+                                quint64 sequence,
+                                Data::RuntimePackageActivationAuditKind kind,
+                                Data::RuntimePackageActivationPhase phase,
+                                Data::RuntimePackageActivationOutcome outcome,
+                                QString code,
+                                const QDateTime &at,
+                                std::optional<Data::RuntimePackageActivationSha256> evidence = {}) {
+        return Data::RuntimePackageActivationAuditEvent{
+            sequence, kind, phase, outcome,
+            Data::RuntimePackageActivationProviderAction::None,
+            Data::RuntimePackageActivationProviderReconciliation::None,
+            {}, 0, 0, 0, {}, {}, {}, std::move(evidence),
+            code, code, at,
+        };
+    };
+    const auto providerEvent = [](
+                                   quint64 sequence,
+                                   Data::RuntimePackageActivationAuditKind kind,
+                                   Data::RuntimePackageActivationPhase phase,
+                                   Data::RuntimePackageActivationOutcome outcome,
+                                   Data::RuntimePackageActivationProviderAction action,
+                                   Data::RuntimePackageActivationProviderReconciliation reconciliation,
+                                   QString operationId,
+                                   quint64 generation,
+                                   std::optional<quint64> requestId,
+                                   std::optional<qint32> status,
+                                   std::optional<qint32> operationResult,
+                                   std::optional<Data::RuntimePackageActivationSha256> evidence,
+                                   const QDateTime &at) {
+        return Data::RuntimePackageActivationAuditEvent{
+            sequence, kind, phase, outcome, action, reconciliation,
+            std::move(operationId), generation, sessionId, bootId,
+            requestId, status, operationResult, std::move(evidence),
+            QStringLiteral("provider-event"),
+            QStringLiteral("provider-event"),
+            at,
+        };
+    };
+    const auto queued = localEvent(
+        1,
+        Data::RuntimePackageActivationAuditKind::IntentPersisted,
+        Data::RuntimePackageActivationPhase::Queued,
+        Data::RuntimePackageActivationOutcome::Pending,
+        QStringLiteral("queued"),
+        startedAt,
+        request.fingerprint());
+
+    QList<Data::RuntimePackageActivationAuditEvent> audit{
+        queued,
+        localEvent(2, Data::RuntimePackageActivationAuditKind::PhaseTransition,
+                   Data::RuntimePackageActivationPhase::VerifyingInputs,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("verify"), startedAt.addMSecs(1)),
+        localEvent(3, Data::RuntimePackageActivationAuditKind::PhaseTransition,
+                   Data::RuntimePackageActivationPhase::CapturingProject,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("capture"), startedAt.addMSecs(2)),
+        localEvent(4, Data::RuntimePackageActivationAuditKind::PhaseTransition,
+                   Data::RuntimePackageActivationPhase::ProbingExistingPackage,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("probe"), startedAt.addMSecs(3)),
+        localEvent(5, Data::RuntimePackageActivationAuditKind::ControllerEvidenceCaptured,
+                   Data::RuntimePackageActivationPhase::ProbingExistingPackage,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("before"), startedAt.addMSecs(4),
+                   before.evidenceSha256()),
+        localEvent(6, Data::RuntimePackageActivationAuditKind::PhaseTransition,
+                   Data::RuntimePackageActivationPhase::AcquiringControl,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("acquire"), startedAt.addMSecs(5)),
+        providerEvent(7, Data::RuntimePackageActivationAuditKind::ProviderRequestSent,
+                      Data::RuntimePackageActivationPhase::AcquiringControl,
+                      Data::RuntimePackageActivationOutcome::Pending,
+                      Data::RuntimePackageActivationProviderAction::AcquireControl,
+                      Data::RuntimePackageActivationProviderReconciliation::None,
+                      QStringLiteral("acquire-op"), sessionGeneration, 41, {}, {}, {},
+                      startedAt.addMSecs(6)),
+        localEvent(8, Data::RuntimePackageActivationAuditKind::ControllerEvidenceCaptured,
+                   Data::RuntimePackageActivationPhase::AcquiringControl,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("lease"), startedAt.addMSecs(7),
+                   acquired.evidenceSha256()),
+        providerEvent(9, Data::RuntimePackageActivationAuditKind::ProviderTerminalResponse,
+                      Data::RuntimePackageActivationPhase::AcquiringControl,
+                      Data::RuntimePackageActivationOutcome::Pending,
+                      Data::RuntimePackageActivationProviderAction::AcquireControl,
+                      Data::RuntimePackageActivationProviderReconciliation::None,
+                      QStringLiteral("acquire-op"), sessionGeneration, 41, 0, 0,
+                      acquired.evidenceSha256(), startedAt.addMSecs(8)),
+        localEvent(10, Data::RuntimePackageActivationAuditKind::PhaseTransition,
+                   Data::RuntimePackageActivationPhase::DeployingPackage,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("deploy"), startedAt.addMSecs(9)),
+        providerEvent(11, Data::RuntimePackageActivationAuditKind::ProviderRequestSent,
+                      Data::RuntimePackageActivationPhase::DeployingPackage,
+                      Data::RuntimePackageActivationOutcome::Pending,
+                      Data::RuntimePackageActivationProviderAction::DeployPackage,
+                      Data::RuntimePackageActivationProviderReconciliation::None,
+                      QStringLiteral("deploy-op"), sessionGeneration, {}, {}, {}, {},
+                      startedAt.addMSecs(10)),
+        providerEvent(12, Data::RuntimePackageActivationAuditKind::DeploymentEvidenceCaptured,
+                      Data::RuntimePackageActivationPhase::DeployingPackage,
+                      Data::RuntimePackageActivationOutcome::Pending,
+                      Data::RuntimePackageActivationProviderAction::DeployPackage,
+                      Data::RuntimePackageActivationProviderReconciliation::None,
+                      QStringLiteral("deploy-op"), sessionGeneration, {}, {}, {},
+                      deployment.evidenceSha256(), startedAt.addMSecs(11)),
+        providerEvent(13, Data::RuntimePackageActivationAuditKind::ProviderTerminalResponse,
+                      Data::RuntimePackageActivationPhase::DeployingPackage,
+                      Data::RuntimePackageActivationOutcome::Pending,
+                      Data::RuntimePackageActivationProviderAction::DeployPackage,
+                      Data::RuntimePackageActivationProviderReconciliation::None,
+                      QStringLiteral("deploy-op"), sessionGeneration, {}, 0, 0,
+                      deployment.evidenceSha256(), startedAt.addMSecs(12)),
+        localEvent(14, Data::RuntimePackageActivationAuditKind::PhaseTransition,
+                   Data::RuntimePackageActivationPhase::VerifyingRuntimeIdentity,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("verify-runtime"), startedAt.addMSecs(13)),
+        localEvent(15, Data::RuntimePackageActivationAuditKind::ControllerEvidenceCaptured,
+                   Data::RuntimePackageActivationPhase::VerifyingRuntimeIdentity,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("after"), startedAt.addMSecs(14),
+                   afterHeld.evidenceSha256()),
+        localEvent(16, Data::RuntimePackageActivationAuditKind::PhaseTransition,
+                   Data::RuntimePackageActivationPhase::PersistingEvidence,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("persist"), startedAt.addMSecs(15)),
+        localEvent(17, Data::RuntimePackageActivationAuditKind::PhaseTransition,
+                   Data::RuntimePackageActivationPhase::CommittingProjectBinding,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("commit"), startedAt.addMSecs(16)),
+        localEvent(18, Data::RuntimePackageActivationAuditKind::ProjectCompareAndSet,
+                   Data::RuntimePackageActivationPhase::CommittingProjectBinding,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("project-cas"), projectCommit.committedAt(),
+                   projectCommit.evidenceSha256()),
+        localEvent(19, Data::RuntimePackageActivationAuditKind::PhaseTransition,
+                   Data::RuntimePackageActivationPhase::ReleasingControl,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("release"), startedAt.addMSecs(18)),
+        providerEvent(20, Data::RuntimePackageActivationAuditKind::ProviderRequestSent,
+                      Data::RuntimePackageActivationPhase::ReleasingControl,
+                      Data::RuntimePackageActivationOutcome::Pending,
+                      Data::RuntimePackageActivationProviderAction::ReleaseControl,
+                      Data::RuntimePackageActivationProviderReconciliation::None,
+                      QStringLiteral("release-op"), sessionGeneration, 42, {}, {}, {},
+                      startedAt.addMSecs(19)),
+        localEvent(21, Data::RuntimePackageActivationAuditKind::ControllerEvidenceCaptured,
+                   Data::RuntimePackageActivationPhase::ReleasingControl,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("released"), startedAt.addMSecs(20),
+                   afterReleased.evidenceSha256()),
+        providerEvent(22, Data::RuntimePackageActivationAuditKind::ProviderTerminalResponse,
+                      Data::RuntimePackageActivationPhase::ReleasingControl,
+                      Data::RuntimePackageActivationOutcome::Pending,
+                      Data::RuntimePackageActivationProviderAction::ReleaseControl,
+                      Data::RuntimePackageActivationProviderReconciliation::None,
+                      QStringLiteral("release-op"), sessionGeneration, 42, 0, 0,
+                      afterReleased.evidenceSha256(), startedAt.addMSecs(21)),
+        localEvent(23, Data::RuntimePackageActivationAuditKind::Completed,
+                   Data::RuntimePackageActivationPhase::Finished,
+                   Data::RuntimePackageActivationOutcome::SucceededWithActivatedPackage,
+                   QStringLiteral("succeeded"), startedAt.addMSecs(22),
+                   projectCommit.evidenceSha256()),
+    };
+
+    const auto activatedRecord = [&](
+                                     const QList<Data::RuntimePackageActivationAuditEvent> &events,
+                                     const Data::RuntimePackageActivationControllerEvidence &after,
+                                     quint64 revision) {
+        return Data::RuntimePackageActivationRecord{
+            identity,
+            request.fingerprint(),
+            true,
+            revision,
+            Data::RuntimePackageActivationPhase::Finished,
+            Data::RuntimePackageActivationOutcome::SucceededWithActivatedPackage,
+            events,
+            events.constLast().detail(),
+            startedAt,
+            events.constLast().occurredAt(),
+            events.constLast().occurredAt(),
+            before,
+            after,
+            projectCommit,
+            {},
+            deployment,
+            {acquired, afterReleased},
+        };
+    };
+    const auto activatedSuccess = activatedRecord(audit, afterHeld, quint64(audit.size()));
+    QVERIFY(activatedSuccess.isValid());
+
+    auto wrongGenerationAudit = audit;
+    wrongGenerationAudit[8] = providerEvent(
+        9, Data::RuntimePackageActivationAuditKind::ProviderTerminalResponse,
+        Data::RuntimePackageActivationPhase::AcquiringControl,
+        Data::RuntimePackageActivationOutcome::Pending,
+        Data::RuntimePackageActivationProviderAction::AcquireControl,
+        Data::RuntimePackageActivationProviderReconciliation::None,
+        QStringLiteral("acquire-op"), sessionGeneration + 1, 41, 0, 0,
+        acquired.evidenceSha256(), startedAt.addMSecs(8));
+    QVERIFY(!activatedRecord(
+        wrongGenerationAudit, afterHeld, quint64(wrongGenerationAudit.size())).isValid());
+
+    const auto noLeaseAfter = makeEvidence(
+        candidate,
+        targetProof,
+        Data::ControllerServiceState::OperationalSafe,
+        0,
+        afterHeld.observedAt());
+    auto noLeaseAudit = audit;
+    noLeaseAudit[14] = localEvent(
+        15, Data::RuntimePackageActivationAuditKind::ControllerEvidenceCaptured,
+        Data::RuntimePackageActivationPhase::VerifyingRuntimeIdentity,
+        Data::RuntimePackageActivationOutcome::Pending,
+        QStringLiteral("no-lease"), afterHeld.observedAt(),
+        noLeaseAfter.evidenceSha256());
+    QVERIFY(!activatedRecord(
+        noLeaseAudit, noLeaseAfter, quint64(noLeaseAudit.size())).isValid());
+
+    const auto wrongCandidateAfter = makeEvidence(
+        {candidate.slot, candidate.generation + 1, candidate.configurationId},
+        targetProof,
+        Data::ControllerServiceState::OperationalSafe,
+        sessionId,
+        afterHeld.observedAt());
+    QVERIFY(wrongCandidateAfter.matchesActivatedIdentity(identity));
+    auto wrongCandidateAudit = audit;
+    wrongCandidateAudit[14] = localEvent(
+        15, Data::RuntimePackageActivationAuditKind::ControllerEvidenceCaptured,
+        Data::RuntimePackageActivationPhase::VerifyingRuntimeIdentity,
+        Data::RuntimePackageActivationOutcome::Pending,
+        QStringLiteral("wrong-candidate"), afterHeld.observedAt(),
+        wrongCandidateAfter.evidenceSha256());
+    QVERIFY(!activatedRecord(
+        wrongCandidateAudit,
+        wrongCandidateAfter,
+        quint64(wrongCandidateAudit.size())).isValid());
+    auto orphanEvidenceAudit = audit;
+    orphanEvidenceAudit[14] = localEvent(
+        15,
+        Data::RuntimePackageActivationAuditKind::ControllerEvidenceCaptured,
+        Data::RuntimePackageActivationPhase::VerifyingRuntimeIdentity,
+        Data::RuntimePackageActivationOutcome::Pending,
+        QStringLiteral("orphan-evidence"),
+        afterHeld.observedAt(),
+        sha256(QByteArrayView("unparseable-evidence")));
+    QVERIFY(!activatedRecord(
+        orphanEvidenceAudit,
+        afterHeld,
+        quint64(orphanEvidenceAudit.size())).isValid());
+    QVERIFY(!activatedRecord(
+        audit, afterHeld, quint64(audit.size() + 1)).isValid());
+
+    const auto existingBefore = makeEvidence(
+        candidate,
+        targetProof,
+        Data::ControllerServiceState::OperationalSafe,
+        0,
+        startedAt.addMSecs(4));
+    const auto existingAfter = makeEvidence(
+        candidate,
+        targetProof,
+        Data::ControllerServiceState::OperationalSafe,
+        0,
+        startedAt.addMSecs(6));
+    QList<Data::RuntimePackageActivationAuditEvent> existingAudit{
+        queued,
+        audit.at(1),
+        audit.at(2),
+        audit.at(3),
+        localEvent(5, Data::RuntimePackageActivationAuditKind::ControllerEvidenceCaptured,
+                   Data::RuntimePackageActivationPhase::ProbingExistingPackage,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("existing-before"), startedAt.addMSecs(4),
+                   existingBefore.evidenceSha256()),
+        localEvent(6, Data::RuntimePackageActivationAuditKind::PhaseTransition,
+                   Data::RuntimePackageActivationPhase::VerifyingRuntimeIdentity,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("verify-existing"), startedAt.addMSecs(5)),
+        localEvent(7, Data::RuntimePackageActivationAuditKind::ControllerEvidenceCaptured,
+                   Data::RuntimePackageActivationPhase::VerifyingRuntimeIdentity,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("existing-after"), startedAt.addMSecs(6),
+                   existingAfter.evidenceSha256()),
+        localEvent(8, Data::RuntimePackageActivationAuditKind::PhaseTransition,
+                   Data::RuntimePackageActivationPhase::PersistingEvidence,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("persist-existing"), startedAt.addMSecs(7)),
+        localEvent(9, Data::RuntimePackageActivationAuditKind::PhaseTransition,
+                   Data::RuntimePackageActivationPhase::CommittingProjectBinding,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("commit-existing"), startedAt.addMSecs(8)),
+        localEvent(10, Data::RuntimePackageActivationAuditKind::ProjectCompareAndSet,
+                   Data::RuntimePackageActivationPhase::CommittingProjectBinding,
+                   Data::RuntimePackageActivationOutcome::Pending,
+                   QStringLiteral("cas-existing"), projectCommit.committedAt(),
+                   projectCommit.evidenceSha256()),
+        localEvent(11, Data::RuntimePackageActivationAuditKind::Completed,
+                   Data::RuntimePackageActivationPhase::Finished,
+                   Data::RuntimePackageActivationOutcome::SucceededWithExistingPackage,
+                   QStringLiteral("existing-succeeded"), startedAt.addMSecs(18),
+                   projectCommit.evidenceSha256()),
+    };
+    const Data::RuntimePackageActivationRecord existingSuccess{
+        identity, request.fingerprint(), true, quint64(existingAudit.size()),
+        Data::RuntimePackageActivationPhase::Finished,
+        Data::RuntimePackageActivationOutcome::SucceededWithExistingPackage,
+        existingAudit, existingAudit.constLast().detail(), startedAt,
+        existingAudit.constLast().occurredAt(), existingAudit.constLast().occurredAt(),
+        existingBefore, existingAfter, projectCommit,
+    };
+    QVERIFY(existingSuccess.isValid());
+
+    auto externalExistingAudit = existingAudit;
+    externalExistingAudit[4] = localEvent(
+        5, Data::RuntimePackageActivationAuditKind::ControllerEvidenceCaptured,
+        Data::RuntimePackageActivationPhase::ProbingExistingPackage,
+        Data::RuntimePackageActivationOutcome::Pending,
+        QStringLiteral("external-before"), startedAt.addMSecs(4),
+        before.evidenceSha256());
+    const Data::RuntimePackageActivationRecord externalExisting{
+        identity, request.fingerprint(), true, quint64(externalExistingAudit.size()),
+        Data::RuntimePackageActivationPhase::Finished,
+        Data::RuntimePackageActivationOutcome::SucceededWithExistingPackage,
+        externalExistingAudit, externalExistingAudit.constLast().detail(), startedAt,
+        externalExistingAudit.constLast().occurredAt(),
+        externalExistingAudit.constLast().occurredAt(),
+        before, existingAfter, projectCommit,
+    };
+    QVERIFY(!externalExisting.isValid());
+
+    const Data::RuntimePackageActivationRecord deployPending{
+        identity, request.fingerprint(), true, 11,
+        Data::RuntimePackageActivationPhase::DeployingPackage,
+        Data::RuntimePackageActivationOutcome::Pending,
+        audit.mid(0, 11), audit.at(10).detail(), startedAt,
+        audit.at(10).occurredAt(), {}, before, {}, {}, {}, {}, {acquired},
+    };
+    QVERIFY(deployPending.isValid());
+
+    auto deployUnknownAudit = audit.mid(0, 11);
+    deployUnknownAudit.append(localEvent(
+        12, Data::RuntimePackageActivationAuditKind::PhaseTransition,
+        Data::RuntimePackageActivationPhase::AwaitingReconciliation,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        QStringLiteral("deploy-unknown"), startedAt.addMSecs(11)));
+    const Data::RuntimePackageActivationRecord deployUnknown{
+        identity, request.fingerprint(), true, quint64(deployUnknownAudit.size()),
+        Data::RuntimePackageActivationPhase::AwaitingReconciliation,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        deployUnknownAudit, deployUnknownAudit.constLast().detail(), startedAt,
+        deployUnknownAudit.constLast().occurredAt(), {}, before, {}, {}, {}, {},
+        {acquired},
+    };
+    QVERIFY(deployUnknown.isValid());
+
+    auto appliedWithoutProgressAudit = deployUnknownAudit;
+    appliedWithoutProgressAudit.append(localEvent(
+        13, Data::RuntimePackageActivationAuditKind::ReconciliationStarted,
+        Data::RuntimePackageActivationPhase::Reconciling,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        QStringLiteral("reconcile-deploy"), startedAt.addMSecs(12)));
+    appliedWithoutProgressAudit.append(localEvent(
+        14, Data::RuntimePackageActivationAuditKind::ControllerEvidenceCaptured,
+        Data::RuntimePackageActivationPhase::Reconciling,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        QStringLiteral("target-after-reconnect"), startedAt.addMSecs(14),
+        afterHeld.evidenceSha256()));
+    appliedWithoutProgressAudit.append(providerEvent(
+        15, Data::RuntimePackageActivationAuditKind::ProviderOutcomeReconciled,
+        Data::RuntimePackageActivationPhase::Reconciling,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        Data::RuntimePackageActivationProviderAction::DeployPackage,
+        Data::RuntimePackageActivationProviderReconciliation::Applied,
+        QStringLiteral("deploy-op"), sessionGeneration, {}, {}, {},
+        afterHeld.evidenceSha256(), startedAt.addMSecs(15)));
+    appliedWithoutProgressAudit.append(localEvent(
+        16, Data::RuntimePackageActivationAuditKind::ProjectCompareAndSet,
+        Data::RuntimePackageActivationPhase::Reconciling,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        QStringLiteral("cas-after-reconnect"), projectCommit.committedAt(),
+        projectCommit.evidenceSha256()));
+    appliedWithoutProgressAudit.append(localEvent(
+        17, Data::RuntimePackageActivationAuditKind::ControllerEvidenceCaptured,
+        Data::RuntimePackageActivationPhase::Reconciling,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        QStringLiteral("lease-cleared-after-reconnect"), startedAt.addMSecs(20),
+        afterReleased.evidenceSha256()));
+    appliedWithoutProgressAudit.append(providerEvent(
+        18, Data::RuntimePackageActivationAuditKind::ControlLeaseReconciled,
+        Data::RuntimePackageActivationPhase::Reconciling,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        Data::RuntimePackageActivationProviderAction::ReleaseControl,
+        Data::RuntimePackageActivationProviderReconciliation::Applied,
+        QStringLiteral("lease-reconcile"), sessionGeneration, {}, {}, {},
+        afterReleased.evidenceSha256(), startedAt.addMSecs(21)));
+    appliedWithoutProgressAudit.append(localEvent(
+        19, Data::RuntimePackageActivationAuditKind::Completed,
+        Data::RuntimePackageActivationPhase::Finished,
+        Data::RuntimePackageActivationOutcome::SucceededWithActivatedPackage,
+        QStringLiteral("forged-success-without-progress"), startedAt.addMSecs(22),
+        projectCommit.evidenceSha256()));
+    const Data::RuntimePackageActivationRecord appliedWithoutInternalProgress{
+        identity, request.fingerprint(), true,
+        quint64(appliedWithoutProgressAudit.size()),
+        Data::RuntimePackageActivationPhase::Finished,
+        Data::RuntimePackageActivationOutcome::SucceededWithActivatedPackage,
+        appliedWithoutProgressAudit,
+        appliedWithoutProgressAudit.constLast().detail(), startedAt,
+        appliedWithoutProgressAudit.constLast().occurredAt(),
+        appliedWithoutProgressAudit.constLast().occurredAt(),
+        before, afterHeld, projectCommit, {}, {}, {acquired, afterReleased},
+    };
+    QVERIFY(!appliedWithoutInternalProgress.isValid());
+
+    const auto reconnectedBefore = makeEvidence(
+        previous,
+        previousProof,
+        Data::ControllerServiceState::Shutdown,
+        0,
+        startedAt.addMSecs(14),
+        sessionGeneration + 1,
+        sessionId + 1);
+    auto notAppliedAudit = deployUnknownAudit;
+    notAppliedAudit.append(localEvent(
+        13, Data::RuntimePackageActivationAuditKind::ReconciliationStarted,
+        Data::RuntimePackageActivationPhase::Reconciling,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        QStringLiteral("reconcile-not-applied"), startedAt.addMSecs(12)));
+    notAppliedAudit.append(localEvent(
+        14, Data::RuntimePackageActivationAuditKind::ControllerEvidenceCaptured,
+        Data::RuntimePackageActivationPhase::Reconciling,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        QStringLiteral("unchanged-after-reconnect"), startedAt.addMSecs(14),
+        reconnectedBefore.evidenceSha256()));
+    notAppliedAudit.append(providerEvent(
+        15, Data::RuntimePackageActivationAuditKind::ProviderOutcomeReconciled,
+        Data::RuntimePackageActivationPhase::Reconciling,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        Data::RuntimePackageActivationProviderAction::DeployPackage,
+        Data::RuntimePackageActivationProviderReconciliation::NotApplied,
+        QStringLiteral("deploy-op"), sessionGeneration, {}, {}, {},
+        reconnectedBefore.evidenceSha256(), startedAt.addMSecs(15)));
+    notAppliedAudit.append(providerEvent(
+        16, Data::RuntimePackageActivationAuditKind::ControlLeaseReconciled,
+        Data::RuntimePackageActivationPhase::Reconciling,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        Data::RuntimePackageActivationProviderAction::ReleaseControl,
+        Data::RuntimePackageActivationProviderReconciliation::Applied,
+        QStringLiteral("lease-reconcile"), sessionGeneration, {}, {}, {},
+        reconnectedBefore.evidenceSha256(), startedAt.addMSecs(16)));
+    notAppliedAudit.append(localEvent(
+        17, Data::RuntimePackageActivationAuditKind::Completed,
+        Data::RuntimePackageActivationPhase::Finished,
+        Data::RuntimePackageActivationOutcome::FailedWithoutControllerChange,
+        QStringLiteral("deploy-not-applied"), startedAt.addMSecs(17),
+        reconnectedBefore.evidenceSha256()));
+    const Data::RuntimePackageActivationRecord notAppliedAfterReconnect{
+        identity, request.fingerprint(), true, quint64(notAppliedAudit.size()),
+        Data::RuntimePackageActivationPhase::Finished,
+        Data::RuntimePackageActivationOutcome::FailedWithoutControllerChange,
+        notAppliedAudit, notAppliedAudit.constLast().detail(), startedAt,
+        notAppliedAudit.constLast().occurredAt(),
+        notAppliedAudit.constLast().occurredAt(),
+        before, reconnectedBefore, {}, {}, {}, {acquired},
+    };
+    QVERIFY(notAppliedAfterReconnect.isValid());
+
+    const Data::RuntimePackageActivationDeploymentEvidence uncapturedDeployment{
+        sessionGeneration,
+        sessionId,
+        bootId,
+        progress,
+        audit.at(10).occurredAt(),
+    };
+    QVERIFY(uncapturedDeployment.isValid());
+    const Data::RuntimePackageActivationRecord deploymentWithoutCapture{
+        identity, request.fingerprint(), true, 11,
+        Data::RuntimePackageActivationPhase::DeployingPackage,
+        Data::RuntimePackageActivationOutcome::Pending,
+        audit.mid(0, 11), audit.at(10).detail(), startedAt,
+        audit.at(10).occurredAt(), {}, before, {}, {}, {}, uncapturedDeployment,
+        {acquired},
+    };
+    QVERIFY(!deploymentWithoutCapture.isValid());
+
+    const Data::RuntimePackageActivationRecord commitCapturedPending{
+        identity, request.fingerprint(), true, 18,
+        Data::RuntimePackageActivationPhase::CommittingProjectBinding,
+        Data::RuntimePackageActivationOutcome::Pending,
+        audit.mid(0, 18), audit.at(17).detail(), startedAt,
+        audit.at(17).occurredAt(), {}, before, afterHeld, projectCommit, {},
+        deployment, {acquired},
+    };
+    QVERIFY(commitCapturedPending.isValid());
+
+    const Data::RuntimePackageActivationRecord commitCrash{
+        identity, request.fingerprint(), true, 19,
+        Data::RuntimePackageActivationPhase::ReleasingControl,
+        Data::RuntimePackageActivationOutcome::Pending,
+        audit.mid(0, 19), audit.at(18).detail(), startedAt,
+        audit.at(18).occurredAt(), {}, before, afterHeld, projectCommit, {},
+        deployment, {acquired},
+    };
+    QVERIFY(commitCrash.isValid());
+
+    auto unknownAudit = audit.mid(0, 20);
+    unknownAudit.append(localEvent(
+        21, Data::RuntimePackageActivationAuditKind::PhaseTransition,
+        Data::RuntimePackageActivationPhase::AwaitingReconciliation,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        QStringLiteral("release-unknown"), startedAt.addMSecs(20)));
+    const Data::RuntimePackageActivationRecord unknownRelease{
+        identity, request.fingerprint(), true, quint64(unknownAudit.size()),
+        Data::RuntimePackageActivationPhase::AwaitingReconciliation,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        unknownAudit, unknownAudit.constLast().detail(), startedAt,
+        unknownAudit.constLast().occurredAt(), {}, before, afterHeld,
+        projectCommit, {}, deployment, {acquired},
+    };
+    QVERIFY(unknownRelease.isValid());
+
+    auto recoveredAudit = unknownAudit;
+    recoveredAudit.append(localEvent(
+        22, Data::RuntimePackageActivationAuditKind::ReconciliationStarted,
+        Data::RuntimePackageActivationPhase::Reconciling,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        QStringLiteral("reconciling"), startedAt.addMSecs(21)));
+    recoveredAudit.append(localEvent(
+        23, Data::RuntimePackageActivationAuditKind::ControllerEvidenceCaptured,
+        Data::RuntimePackageActivationPhase::Reconciling,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        QStringLiteral("released-after-crash"), startedAt.addMSecs(22),
+        afterReleased.evidenceSha256()));
+    recoveredAudit.append(providerEvent(
+        24, Data::RuntimePackageActivationAuditKind::ProviderOutcomeReconciled,
+        Data::RuntimePackageActivationPhase::Reconciling,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        Data::RuntimePackageActivationProviderAction::ReleaseControl,
+        Data::RuntimePackageActivationProviderReconciliation::Applied,
+        QStringLiteral("release-op"), sessionGeneration, 42, {}, {},
+        afterReleased.evidenceSha256(), startedAt.addMSecs(23)));
+    recoveredAudit.append(localEvent(
+        25, Data::RuntimePackageActivationAuditKind::Completed,
+        Data::RuntimePackageActivationPhase::Finished,
+        Data::RuntimePackageActivationOutcome::SucceededWithActivatedPackage,
+        QStringLiteral("recovered"), startedAt.addMSecs(24),
+        projectCommit.evidenceSha256()));
+    const Data::RuntimePackageActivationRecord recovered{
+        identity, request.fingerprint(), true, quint64(recoveredAudit.size()),
+        Data::RuntimePackageActivationPhase::Finished,
+        Data::RuntimePackageActivationOutcome::SucceededWithActivatedPackage,
+        recoveredAudit, recoveredAudit.constLast().detail(), startedAt,
+        recoveredAudit.constLast().occurredAt(),
+        recoveredAudit.constLast().occurredAt(),
+        before, afterHeld, projectCommit, {}, deployment, {acquired, afterReleased},
+    };
+    QVERIFY(recovered.isValid());
+
+    QVERIFY(Data::runtimePackageActivationPhaseAllowsCancel(
+        Data::RuntimePackageActivationPhase::ProbingExistingPackage));
+    QVERIFY(!Data::runtimePackageActivationPhaseAllowsCancel(
+        Data::RuntimePackageActivationPhase::AcquiringControl));
+    QVERIFY(!Data::runtimePackageActivationPhaseAllowsCancel(
+        Data::RuntimePackageActivationPhase::DeployingPackage));
+    for (Data::ControllerOperation denied :
+         {Data::ControllerOperation::QueryState,
+          Data::ControllerOperation::QueryCapability,
+          Data::ControllerOperation::QueryPackageState,
+          Data::ControllerOperation::QueryRuntimeResourceCatalog,
+          Data::ControllerOperation::QueryRuntimeResourceSnapshot,
+          Data::ControllerOperation::QueryRuntimeSemanticMappingAttestation,
+          Data::ControllerOperation::Refresh,
+          Data::ControllerOperation::Start,
+          Data::ControllerOperation::StartFreeRun,
+          Data::ControllerOperation::StartDistributedClocks,
+          Data::ControllerOperation::ActivatePackage,
+          Data::ControllerOperation::RollbackPackage}) {
+        QVERIFY(!Data::runtimePackageActivationProviderOperationIsAllowed(denied));
+    }
+    const Data::RuntimePackageActivationAuditEvent orphanQueryTerminal{
+        1,
+        Data::RuntimePackageActivationAuditKind::ProviderTerminalResponse,
+        Data::RuntimePackageActivationPhase::ProbingExistingPackage,
+        Data::RuntimePackageActivationOutcome::Pending,
+        Data::RuntimePackageActivationProviderAction::None,
+        Data::RuntimePackageActivationProviderReconciliation::None,
+        QStringLiteral("query-state"),
+        sessionGeneration,
+        sessionId,
+        bootId,
+        91,
+        0,
+        0,
+        sha256(QByteArrayView("orphan-query-evidence")),
+        QStringLiteral("orphan-query-terminal"),
+        QStringLiteral("orphan-query-terminal"),
+        startedAt,
+    };
+    QVERIFY(!orphanQueryTerminal.isValid());
+
+    TestRuntimePackageActivationService service;
+    const RuntimePackageActivationCommandResult started = service.start(request);
+    QVERIFY(started.isValid());
+    QCOMPARE(started.disposition, RuntimePackageActivationCommandDisposition::Accepted);
+    QCOMPARE(service.start(request).disposition,
+             RuntimePackageActivationCommandDisposition::IdempotentReplay);
+    QCOMPARE(service.start(noRollbackRequest).disposition,
+             RuntimePackageActivationCommandDisposition::Conflict);
+    const Data::RuntimePackageActivationCancelRequest cancelRequest{
+        identity.operationId(), started.record->revision(),
+        identity.documentRevisionToken(), identity.originalBindingToken()};
+    QCOMPARE(service.cancel(cancelRequest).disposition,
+             RuntimePackageActivationCommandDisposition::Accepted);
+
+    const Data::RuntimePackageActivationRecord acquirePending{
+        identity, request.fingerprint(), true, 7,
+        Data::RuntimePackageActivationPhase::AcquiringControl,
+        Data::RuntimePackageActivationOutcome::Pending,
+        audit.mid(0, 7), audit.at(6).detail(), startedAt,
+        audit.at(6).occurredAt(), {}, before,
+    };
+    QVERIFY(acquirePending.isValid());
+    TestRuntimePackageActivationService pendingService;
+    pendingService.replaceForTest(acquirePending);
+    const Data::RuntimePackageActivationCancelRequest unsafeCancel{
+        identity.operationId(), acquirePending.revision(),
+        identity.documentRevisionToken(), identity.originalBindingToken()};
+    QCOMPARE(pendingService.cancel(unsafeCancel).disposition,
+             RuntimePackageActivationCommandDisposition::TooLate);
+
+    const Data::RuntimePackageActivationSnapshot snapshot{
+        1, {activatedSuccess}, activatedSuccess.updatedAt()};
+    QVERIFY(snapshot.isValid());
+
+    QVERIFY(QMetaType::fromType<Data::RuntimePackageActivationControllerEvidence>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimePackageActivationDeploymentEvidence>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimePackageActivationProjectCommit>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimePackageActivationRecord>().isValid());
+    QVERIFY(QMetaType::fromType<RuntimePackageActivationCommandResult>().isValid());
+}
+
 void EtherCATCoreTests::testSemanticRuntimeValueSemantics()
 {
     SemanticRuntimeFixture fixture;
@@ -2992,6 +4415,166 @@ void EtherCATCoreTests::testManualControlEnvelopeContract()
             .error,
         ManualControlContractError::InvalidParameter);
 
+    Data::SemanticSignalDefinition statusSignal = speedSignalDefinition;
+    statusSignal.id = {"urn:test:signal/status"};
+    statusSignal.direction = Data::SemanticSignalDirection::Input;
+    statusSignal.access = Data::SemanticSignalAccess::ReadOnly;
+    statusSignal.engineeringTransform->constraint.minimum = {0, 1};
+    statusSignal.engineeringTransform->constraint.maximum = {65535, 1};
+
+    Data::SemanticSignalDefinition actualSpeedSignal = speedSignalDefinition;
+    actualSpeedSignal.id = {"urn:test:signal/actual-speed"};
+    actualSpeedSignal.direction = Data::SemanticSignalDirection::Input;
+    actualSpeedSignal.access = Data::SemanticSignalAccess::ReadOnly;
+    QList<Data::SemanticSignalDefinition> signedSignals = signalDefinitions;
+    signedSignals.append(actualSpeedSignal);
+    signedSignals.append(statusSignal);
+
+    Data::DeviceControlAction signedAction;
+    signedAction.id = {"urn:test:action/signed-group"};
+    signedAction.enabled = true;
+    signedAction.holdToRun = false;
+    signedAction.parameters = {speedParameter};
+    Data::DeviceControlConsistencyGroup signedGroup;
+    signedGroup.id = "manual_velocity";
+    signedGroup.members = {speedSignalDefinition.id};
+    signedGroup.recovery = Data::DeviceControlGroupRecovery::HoldSafe;
+    signedGroup.maximumTtlCycles = 1000;
+    signedAction.consistencyGroups = {signedGroup};
+
+    Data::DeviceControlGroupAssignment speedAssignment;
+    speedAssignment.signalId = speedSignalDefinition.id;
+    speedAssignment.value.source = Data::DeviceControlValueSource::Parameter;
+    speedAssignment.value.parameterId = speedParameter.id;
+    Data::DeviceControlStep signedWrite;
+    signedWrite.kind = Data::DeviceControlStepKind::WriteGroup;
+    signedWrite.consistencyGroupId = signedGroup.id;
+    signedWrite.assignments = {speedAssignment};
+
+    Data::DeviceControlStep signedMaskedWait;
+    signedMaskedWait.kind = Data::DeviceControlStepKind::WaitMaskedEquals;
+    signedMaskedWait.signalId = statusSignal.id;
+    signedMaskedWait.value.source = Data::DeviceControlValueSource::Literal;
+    signedMaskedWait.value.engineeringLiteralValue
+        = Data::EngineeringValue::fromUnsignedInteger(0x27);
+    signedMaskedWait.mask.source = Data::DeviceControlValueSource::Literal;
+    signedMaskedWait.mask.engineeringLiteralValue
+        = Data::EngineeringValue::fromUnsignedInteger(0x6f);
+    signedMaskedWait.timeoutCycles = 1000;
+
+    Data::DeviceControlStep signedAbsoluteWait;
+    signedAbsoluteWait.kind = Data::DeviceControlStepKind::WaitAbsoluteAtMost;
+    signedAbsoluteWait.signalId = actualSpeedSignal.id;
+    signedAbsoluteWait.value.source = Data::DeviceControlValueSource::Literal;
+    signedAbsoluteWait.value.engineeringLiteralValue
+        = Data::EngineeringValue::fromSignedInteger(10);
+    signedAbsoluteWait.timeoutCycles = 8000;
+
+    Data::DeviceControlStep signedCycleWait;
+    signedCycleWait.kind = Data::DeviceControlStepKind::WaitCycles;
+    signedCycleWait.timeoutCycles = 2;
+    signedAction.steps = {
+        signedWrite,
+        signedMaskedWait,
+        signedAbsoluteWait,
+        signedCycleWait,
+    };
+
+    Data::ManualActionParameterEnvelope signedParameter;
+    signedParameter.parameterId = speedParameter.id;
+    signedParameter.allowedRange = speedConstraint;
+    Data::ManualActionEnvelope signedActionEnvelope;
+    signedActionEnvelope.actionId = signedAction.id;
+    signedActionEnvelope.enabled = true;
+    signedActionEnvelope.holdToRun = false;
+    signedActionEnvelope.timing.commandTtlMs = 100;
+    signedActionEnvelope.parameters = {signedParameter};
+    Data::ManualControlEnvelope signedEnvelope;
+    signedEnvelope.enabled = true;
+    signedEnvelope.actionEnvelopes = {signedActionEnvelope};
+    QVERIFY(
+        validateManualControlEnvelope(
+            signedEnvelope,
+            signedSignals,
+            {signedAction},
+            ManualControlFallbackContract::SignedControllerRecovery)
+            .accepted());
+
+    Data::DeviceControlAction partialGroup = signedAction;
+    partialGroup.consistencyGroups[0].members = {
+        signalDefinition.id,
+        speedSignalDefinition.id,
+    };
+    QCOMPARE(
+        validateManualControlEnvelope(
+            signedEnvelope,
+            signedSignals,
+            {partialGroup},
+            ManualControlFallbackContract::SignedControllerRecovery)
+            .error,
+        ManualControlContractError::InexactActionDefinition);
+
+    Data::DeviceControlAction duplicateAssignment = signedAction;
+    duplicateAssignment.consistencyGroups[0].members = {
+        signalDefinition.id,
+        speedSignalDefinition.id,
+    };
+    duplicateAssignment.steps[0].assignments.append(speedAssignment);
+    QCOMPARE(
+        validateManualControlEnvelope(
+            signedEnvelope,
+            signedSignals,
+            {duplicateAssignment},
+            ManualControlFallbackContract::SignedControllerRecovery)
+            .error,
+        ManualControlContractError::InexactActionDefinition);
+
+    Data::DeviceControlAction unknownAssignment = signedAction;
+    unknownAssignment.consistencyGroups[0].members[0] = {"urn:test:signal/unknown"};
+    unknownAssignment.steps[0].assignments[0].signalId = {"urn:test:signal/unknown"};
+    QCOMPARE(
+        validateManualControlEnvelope(
+            signedEnvelope,
+            signedSignals,
+            {unknownAssignment},
+            ManualControlFallbackContract::SignedControllerRecovery)
+            .error,
+        ManualControlContractError::InexactActionDefinition);
+
+    Data::DeviceControlAction malformedWrite = signedAction;
+    malformedWrite.steps[0].signalId = speedSignalDefinition.id;
+    QCOMPARE(
+        validateManualControlEnvelope(
+            signedEnvelope,
+            signedSignals,
+            {malformedWrite},
+            ManualControlFallbackContract::SignedControllerRecovery)
+            .error,
+        ManualControlContractError::InexactActionDefinition);
+
+    Data::DeviceControlAction legacySignedWrite = signedAction;
+    legacySignedWrite.steps = {mainStep};
+    QCOMPARE(
+        validateManualControlEnvelope(
+            signedEnvelope,
+            signedSignals,
+            {legacySignedWrite},
+            ManualControlFallbackContract::SignedControllerRecovery)
+            .error,
+        ManualControlContractError::InexactActionDefinition);
+
+    Data::DeviceControlAction legacyTimedWait = signedAction;
+    legacyTimedWait.steps[1].timeoutCycles = 0;
+    legacyTimedWait.steps[1].timeoutMs = 100;
+    QCOMPARE(
+        validateManualControlEnvelope(
+            signedEnvelope,
+            signedSignals,
+            {legacyTimedWait},
+            ManualControlFallbackContract::SignedControllerRecovery)
+            .error,
+        ManualControlContractError::InexactActionDefinition);
+
     Data::ManualControlEnvelope disabled;
     QVERIFY(
         validateManualControlEnvelope(disabled, signalDefinitions, actionDefinitions).accepted());
@@ -3192,14 +4775,21 @@ void EtherCATCoreTests::testDeviceDescriptionAndImportJobContract()
            true};
     description.syncManagers.append(
         {2, "Outputs", Data::SyncManagerDirection::MasterToSlave, 0x1000, 32, 0x24, true});
-    description.rxPdos.append(
-        {0x1600,
-         "Command",
-         Data::PdoDirection::Rx,
-         2,
-         true,
-         true,
-         {{0x6040, 0, "Controlword", 16, Data::EtherCATDataType::UnsignedInteger16, "UINT"}}});
+    Data::PdoDescription commandPdo;
+    commandPdo.index = 0x1600;
+    commandPdo.name = "Command";
+    commandPdo.direction = Data::PdoDirection::Rx;
+    commandPdo.syncManager = 2;
+    commandPdo.fixed = true;
+    commandPdo.mandatory = true;
+    Data::PdoEntryDescription controlwordEntry;
+    controlwordEntry.index = 0x6040;
+    controlwordEntry.name = "Controlword";
+    controlwordEntry.bitLength = 16;
+    controlwordEntry.dataType = Data::EtherCATDataType::UnsignedInteger16;
+    controlwordEntry.rawDataType = "UINT";
+    commandPdo.entries.append(controlwordEntry);
+    description.rxPdos.append(commandPdo);
     description.coe = {true, true, true, true, false};
     description.dcModes.append({"DC-Synchronous", 0x0300, 125000, 0, 0, 0});
 

@@ -1882,7 +1882,10 @@ public:
         event.occurredAt = QDateTime::currentDateTimeUtc();
         auto &audit = snapshot.packageDeploymentProgress.audit;
         audit.append(event);
-        constexpr qsizetype MaximumAuditEvents = 256;
+        // A maximum-size 16 MiB package needs 257 BulkChunk exchanges.
+        // Keep the complete bounded deployment transcript, including begin,
+        // commit, validation, activation, and an optional internal rollback.
+        constexpr qsizetype MaximumAuditEvents = 1024;
         if (audit.size() > MaximumAuditEvents)
             audit.remove(0, audit.size() - MaximumAuditEvents);
     }
@@ -4160,6 +4163,12 @@ public:
                 snapshot.session->ownsControlLease = false;
             }
         }
+        appendDeploymentAudit(
+            request.operation,
+            deploymentFailureDetail,
+            requestId,
+            status,
+            operationResult);
         removePending(requestId);
         activeDeploymentRequestId = 0;
 
@@ -4435,7 +4444,7 @@ public:
 
         deploymentRollbackRequestSelector = currentActive;
         appendDeploymentAudit(
-            Data::ControllerOperation::RollbackPackage,
+            Data::ControllerOperation::QueryPackageState,
             Tr::tr("Confirmed the exact active selector before rollback."),
             requestId,
             0,

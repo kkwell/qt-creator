@@ -41,6 +41,7 @@ private slots:
     void testControlLifecycle();
     void testFaultResetLifecycle();
     void testPackageDeploymentLifecycle();
+    void testPackageDeploymentMaximumAudit();
     void testPackageDeploymentGuardsAndIdempotency();
     void testPackageDeploymentCancellationAndAbort();
     void testApi038HardwareFixturePreflight();
