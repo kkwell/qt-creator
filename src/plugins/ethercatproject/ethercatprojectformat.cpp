@@ -156,6 +156,89 @@ static bool hasOnlyKeys(const QJsonObject &object, const QSet<QString> &allowedK
     return true;
 }
 
+static Utils::Result<> rejectUnknownKeys(
+    const QJsonObject &object, const QSet<QString> &allowedKeys, const QString &objectName)
+{
+    for (auto iterator = object.constBegin(); iterator != object.constEnd(); ++iterator) {
+        if (!allowedKeys.contains(iterator.key())) {
+            return Utils::ResultError(
+                Tr::tr("%1 has an unsupported '%2' field.").arg(objectName, iterator.key()));
+        }
+    }
+    return Utils::ResultOk;
+}
+
+static Utils::Result<> rejectDuplicateJsonKeys(const QByteArray &contents)
+{
+    struct Scope
+    {
+        bool object = false;
+        bool expectsKey = false;
+        QSet<QString> keys;
+    };
+    QList<Scope> scopes;
+
+    for (qsizetype offset = 0; offset < contents.size();) {
+        const char character = contents.at(offset);
+        if (character == '{') {
+            scopes.append(Scope{true, true, {}});
+            ++offset;
+            continue;
+        }
+        if (character == '[') {
+            scopes.append(Scope{false, false, {}});
+            ++offset;
+            continue;
+        }
+        if (character == '}' || character == ']') {
+            if (!scopes.isEmpty())
+                scopes.removeLast();
+            ++offset;
+            continue;
+        }
+        if (character == ',') {
+            if (!scopes.isEmpty() && scopes.last().object)
+                scopes.last().expectsKey = true;
+            ++offset;
+            continue;
+        }
+        if (character != '"') {
+            ++offset;
+            continue;
+        }
+
+        const qsizetype start = offset++;
+        while (offset < contents.size()) {
+            const char stringCharacter = contents.at(offset++);
+            if (stringCharacter == '\\') {
+                ++offset;
+                continue;
+            }
+            if (stringCharacter == '"')
+                break;
+        }
+        if (scopes.isEmpty() || !scopes.last().object || !scopes.last().expectsKey)
+            continue;
+
+        const QByteArray encoded = contents.mid(start, offset - start);
+        QJsonParseError parseError;
+        const QJsonDocument decoded = QJsonDocument::fromJson(
+            QByteArrayLiteral("[") + encoded + QByteArrayLiteral("]"), &parseError);
+        if (parseError.error != QJsonParseError::NoError || !decoded.isArray()
+            || decoded.array().size() != 1 || !decoded.array().first().isString()) {
+            return Utils::ResultError(Tr::tr("The JSON document has an invalid object key."));
+        }
+        const QString key = decoded.array().first().toString();
+        if (scopes.last().keys.contains(key)) {
+            return Utils::ResultError(
+                Tr::tr("The JSON document contains the duplicate key '%1'.").arg(key));
+        }
+        scopes.last().keys.insert(key);
+        scopes.last().expectsKey = false;
+    }
+    return Utils::ResultOk;
+}
+
 static bool isCanonicalIdentifier(const QString &value)
 {
     if (value.isEmpty() || value != value.trimmed() || value.size() > 256)
@@ -1093,6 +1176,11 @@ static Utils::Result<Data::MasterConfiguration> parseMasterConfiguration(
     const auto object = parseObject(masterObject, "configuration", Tr::tr("Master"));
     if (!object)
         return Utils::ResultError(object.error());
+    static const QSet<QString> keys{"timingMode", "cyclePeriodNs"};
+    if (object->size() != keys.size() || !hasOnlyKeys(*object, keys)) {
+        return Utils::ResultError(
+            Tr::tr("Master configuration has an invalid shape."));
+    }
     const auto mode = parseString(*object, "timingMode", Tr::tr("Master configuration"));
     const auto cycle = parseUnsigned(*object, "cyclePeriodNs", Tr::tr("Master configuration"));
     if (!mode || !cycle)
@@ -1135,6 +1223,16 @@ static Utils::Result<QList<Data::SyncManagerConfiguration>> parseSyncManagers(
         }
         const QJsonObject object = array->at(index).toObject();
         const QString objectName = Tr::tr("Sync Manager %1 for '%2'").arg(index).arg(slaveName);
+        static const QSet<QString> keys{
+            "id",
+            "index",
+            "name",
+            "direction",
+            "enabled",
+            "sizeLimitBytes",
+        };
+        if (object.size() != keys.size() || !hasOnlyKeys(object, keys))
+            return Utils::ResultError(Tr::tr("%1 has an invalid shape.").arg(objectName));
         const auto id = parseUniqueId(object, "id", objectName, uniqueIds);
         const auto managerIndex
             = parseUnsigned(object, "index", objectName, std::numeric_limits<int>::max());
@@ -1173,6 +1271,20 @@ static Utils::Result<QList<Data::PdoEntryConfiguration>> parsePdoEntries(
         }
         const QJsonObject object = array->at(index).toObject();
         const QString objectName = Tr::tr("PDO entry %1 in %2").arg(index).arg(pdoName);
+        static const QSet<QString> keys{
+            "id",
+            "index",
+            "subIndex",
+            "name",
+            "bitLength",
+            "dataType",
+            "rawDataType",
+            "requestedBitOffset",
+            "mappingSupported",
+            "padding",
+        };
+        if (object.size() != keys.size() || !hasOnlyKeys(object, keys))
+            return Utils::ResultError(Tr::tr("%1 has an invalid shape.").arg(objectName));
         const auto id = parseUniqueId(object, "id", objectName, uniqueIds);
         const auto objectIndex
             = parseUnsigned(object, "index", objectName, std::numeric_limits<quint16>::max());
@@ -1233,6 +1345,22 @@ static Utils::Result<QList<Data::PdoConfiguration>> parsePdos(
         }
         const QJsonObject object = array->at(index).toObject();
         const QString objectName = Tr::tr("PDO %1 for '%2'").arg(index).arg(slaveName);
+        static const QSet<QString> keys{
+            "id",
+            "index",
+            "name",
+            "direction",
+            "syncManager",
+            "selected",
+            "fixed",
+            "mandatory",
+            "defaultSelected",
+            "mappingSupported",
+            "predefinedGroup",
+            "entries",
+        };
+        if (object.size() != keys.size() || !hasOnlyKeys(object, keys))
+            return Utils::ResultError(Tr::tr("%1 has an invalid shape.").arg(objectName));
         const auto id = parseUniqueId(object, "id", objectName, uniqueIds);
         const auto pdoIndex
             = parseUnsigned(object, "index", objectName, std::numeric_limits<quint16>::max());
@@ -1287,6 +1415,11 @@ static Utils::Result<Data::ProcessDataConfiguration> parseProcessDataConfigurati
     const auto object = parseObject(configurationObject, "processData", slaveName);
     if (!object)
         return Utils::ResultError(object.error());
+    static const QSet<QString> keys{"syncManagers", "pdos"};
+    if (object->size() != keys.size() || !hasOnlyKeys(*object, keys)) {
+        return Utils::ResultError(
+            Tr::tr("Process Data for '%1' has an invalid shape.").arg(slaveName));
+    }
     const auto syncManagers = parseSyncManagers(*object, slaveName, uniqueIds);
     if (!syncManagers)
         return Utils::ResultError(syncManagers.error());
@@ -1326,6 +1459,9 @@ static Utils::Result<Data::StartupConfiguration> parseStartupConfiguration(
     const auto object = parseObject(configurationObject, "startup", slaveName);
     if (!object)
         return Utils::ResultError(object.error());
+    static const QSet<QString> keys{"parameters"};
+    if (object->size() != keys.size() || !hasOnlyKeys(*object, keys))
+        return Utils::ResultError(Tr::tr("Startup for '%1' has an invalid shape.").arg(slaveName));
     const auto array = parseArray(*object, "parameters", slaveName);
     if (!array)
         return Utils::ResultError(array.error());
@@ -1341,6 +1477,22 @@ static Utils::Result<Data::StartupConfiguration> parseStartupConfiguration(
         }
         const QJsonObject parameterObject = array->at(index).toObject();
         const QString objectName = Tr::tr("Startup parameter %1 for '%2'").arg(index).arg(slaveName);
+        static const QSet<QString> parameterKeys{
+            "id",
+            "enabled",
+            "order",
+            "transition",
+            "index",
+            "subIndex",
+            "dataType",
+            "rawDataType",
+            "rawValueHex",
+            "comment",
+        };
+        if (parameterObject.size() != parameterKeys.size()
+            || !hasOnlyKeys(parameterObject, parameterKeys)) {
+            return Utils::ResultError(Tr::tr("%1 has an invalid shape.").arg(objectName));
+        }
         const auto id = parseUniqueId(parameterObject, "id", objectName, uniqueIds);
         const auto enabled = parseBool(parameterObject, "enabled", objectName);
         const auto order
@@ -1404,6 +1556,9 @@ static Utils::Result<Data::DcSignalConfiguration> parseDcSignal(
     if (!object)
         return Utils::ResultError(object.error());
     const QString objectName = key.toUpper() + Tr::tr(" for '%1'").arg(slaveName);
+    static const QSet<QString> keys{"enabled", "cycleTimeNs", "shiftTimeNs"};
+    if (object->size() != keys.size() || !hasOnlyKeys(*object, keys))
+        return Utils::ResultError(Tr::tr("%1 has an invalid shape.").arg(objectName));
     const auto enabled = parseBool(*object, "enabled", objectName);
     constexpr qint64 maximumExactJsonInteger = qint64(1) << 53;
     const auto cycle = parseSigned(
@@ -1423,6 +1578,16 @@ static Utils::Result<Data::DcConfiguration> parseDcConfiguration(
     const auto object = parseObject(configurationObject, "dc", slaveName);
     if (!object)
         return Utils::ResultError(object.error());
+    static const QSet<QString> keys{
+        "enabled",
+        "modeName",
+        "assignActivate",
+        "sync0",
+        "sync1",
+        "potentialReferenceClock",
+    };
+    if (object->size() != keys.size() || !hasOnlyKeys(*object, keys))
+        return Utils::ResultError(Tr::tr("DC for '%1' has an invalid shape.").arg(slaveName));
     const auto enabled = parseBool(*object, "enabled", slaveName);
     const auto modeName = parseString(*object, "modeName", slaveName);
     const auto assignActivate
@@ -1457,10 +1622,11 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
     const QJsonObject &masterObject,
     const Data::NodeId &masterId,
     QSet<Data::NodeId> *uniqueIds,
-    bool parseConfiguration,
-    bool parseAdapterData,
-    bool parseManualControl)
+    int version)
 {
+    const bool parseConfiguration = version >= 2;
+    const bool parseAdapterData = version >= 4;
+    const bool parseManualControl = version >= 5;
     const QJsonValue slavesValue = masterObject.value("slaves");
     if (slavesValue.isUndefined() && !parseConfiguration)
         return QList<Data::OfflineSlaveConfiguration>();
@@ -1477,6 +1643,29 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
         }
         const QJsonObject object = array.at(index).toObject();
         const QString objectName = Tr::tr("Offline slave %1").arg(index);
+        QSet<QString> slaveKeys{
+            "id",
+            "name",
+            "position",
+            "vendorId",
+            "productCode",
+            "revisionNumber",
+            "serialNumber",
+            "alias",
+            "deviceDescriptionId",
+        };
+        if (parseConfiguration)
+            slaveKeys.insert("configuration");
+        if (parseAdapterData) {
+            slaveKeys.insert("esiSha256");
+            slaveKeys.insert("adapterSelection");
+        }
+        if (parseManualControl)
+            slaveKeys.insert("manualControlEnvelope");
+        if (const Utils::Result<> shape = rejectUnknownKeys(object, slaveKeys, objectName);
+            !shape) {
+            return Utils::ResultError(shape.error());
+        }
         const auto id = parseRequiredId(object, "id", objectName);
         if (!id)
             return Utils::ResultError(id.error());
@@ -1533,6 +1722,12 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
             const auto configuration = parseObject(object, "configuration", objectName);
             if (!configuration)
                 return Utils::ResultError(configuration.error());
+            static const QSet<QString> configurationKeys{"processData", "startup", "dc"};
+            if (configuration->size() != configurationKeys.size()
+                || !hasOnlyKeys(*configuration, configurationKeys)) {
+                return Utils::ResultError(
+                    Tr::tr("%1 has an invalid configuration shape.").arg(objectName));
+            }
             const auto parsedProcessData
                 = parseProcessDataConfiguration(*configuration, *name, uniqueIds);
             if (!parsedProcessData)
@@ -1663,6 +1858,9 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
                 .arg(parseError.offset)
                 .arg(parseError.errorString()));
     }
+    if (const Utils::Result<> duplicateKeys = rejectDuplicateJsonKeys(contents); !duplicateKeys) {
+        return Utils::ResultError(duplicateKeys.error());
+    }
     if (!document.isObject())
         return Utils::ResultError(Tr::tr("The EtherCAT project root must be a JSON object."));
 
@@ -1671,17 +1869,71 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
         return Utils::ResultError(Tr::tr("The file is not an EtherCAT project."));
 
     const int version = root.value("formatVersion").toInt(root.value("version").toInt(-1));
-    if (version == 0)
+    if (version == 0) {
+        static const QSet<QString> versionZeroKeys{
+            "format",
+            "version",
+            "formatVersion",
+            "id",
+            "name",
+            "createdBy",
+        };
+        if (root.contains("version") && root.contains("formatVersion")) {
+            return Utils::ResultError(
+                Tr::tr("Version 0 must use exactly one format-version field."));
+        }
+        if (const Utils::Result<> shape
+            = rejectUnknownKeys(root, versionZeroKeys, Tr::tr("Version 0 project"));
+            !shape) {
+            return Utils::ResultError(shape.error());
+        }
         return parseVersionZero(root, fallbackName);
+    }
     if (version != 1 && version != 2 && version != 3 && version != 4 && version != 5
         && version != Constants::CURRENT_FORMAT_VERSION) {
         return Utils::ResultError(
             Tr::tr("Unsupported EtherCAT project format version %1.").arg(version));
     }
 
-    const QJsonObject projectObject = root.value("project").toObject();
-    const QJsonObject targetObject = root.value("target").toObject();
-    const QJsonObject masterObject = root.value("master").toObject();
+    static const QSet<QString> rootKeys{
+        "format",
+        "formatVersion",
+        "project",
+        "target",
+        "master",
+    };
+    if (root.size() != rootKeys.size() || !hasOnlyKeys(root, rootKeys))
+        return Utils::ResultError(Tr::tr("The EtherCAT project root has an invalid shape."));
+
+    const auto projectValue = parseObject(root, "project", Tr::tr("EtherCAT project root"));
+    const auto targetValue = parseObject(root, "target", Tr::tr("EtherCAT project root"));
+    const auto masterValue = parseObject(root, "master", Tr::tr("EtherCAT project root"));
+    if (!projectValue || !targetValue || !masterValue) {
+        const QString error = !projectValue ? projectValue.error()
+                              : !targetValue ? targetValue.error()
+                                             : masterValue.error();
+        return Utils::ResultError(error);
+    }
+    const QJsonObject projectObject = *projectValue;
+    const QJsonObject targetObject = *targetValue;
+    const QJsonObject masterObject = *masterValue;
+    static const QSet<QString> projectKeys{"id", "name", "createdBy"};
+    static const QSet<QString> targetKeys{"id", "name"};
+    if (projectObject.size() != projectKeys.size() || !hasOnlyKeys(projectObject, projectKeys))
+        return Utils::ResultError(Tr::tr("Project has an invalid shape."));
+    if (targetObject.size() != targetKeys.size() || !hasOnlyKeys(targetObject, targetKeys))
+        return Utils::ResultError(Tr::tr("Target has an invalid shape."));
+
+    QSet<QString> masterKeys{"id", "name", "slaves"};
+    if (version >= 3)
+        masterKeys.insert("configuration");
+    if (version >= 4)
+        masterKeys.insert("semanticBindingArtifact");
+    if (const Utils::Result<> shape
+        = rejectUnknownKeys(masterObject, masterKeys, Tr::tr("Master"));
+        !shape) {
+        return Utils::ResultError(shape.error());
+    }
 
     const auto projectId = parseRequiredId(projectObject, "id", Tr::tr("Project"));
     if (!projectId)
@@ -1715,13 +1967,7 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
         masterConfiguration = *parsedMasterConfiguration;
     }
 
-    const auto slaves = parseOfflineSlaves(
-        masterObject,
-        *masterId,
-        &uniqueIds,
-        version >= 2,
-        version >= 4,
-        version >= 5);
+    const auto slaves = parseOfflineSlaves(masterObject, *masterId, &uniqueIds, version);
     if (!slaves)
         return Utils::ResultError(slaves.error());
 

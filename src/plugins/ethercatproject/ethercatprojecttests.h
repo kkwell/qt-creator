@@ -14,6 +14,7 @@ private slots:
     void testMetadataAndService();
     void testProjectNeedsNoTargetConfiguration();
     void testFormatRoundTripAndCorruption();
+    void testStrictProjectJsonShape();
     void testDocumentUndoRedoAndAtomicFailure();
     void testStructuralNodeRenameAndPersistence();
     void testOfflineSlavePersistenceAndUndo();

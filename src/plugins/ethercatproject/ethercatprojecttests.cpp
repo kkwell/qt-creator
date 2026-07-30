@@ -354,6 +354,138 @@ void EtherCATProjectTests::testFormatRoundTripAndCorruption()
     QVERIFY(!future.error().isEmpty());
 }
 
+void EtherCATProjectTests::testStrictProjectJsonShape()
+{
+    Data::ProjectSnapshot source = createProjectSnapshot("Strict Shape", "Test");
+    const Data::NodeId master = masterId(source);
+    Data::OfflineSlaveConfiguration slave = offlineSlaves(master).first();
+    slave.processData = processDataConfiguration();
+    slave.startup = startupConfiguration();
+    slave.dc = dcConfiguration();
+    slave.esiSha256 = QByteArray(32, '\x49');
+    slave.adapterSelection = adapterSelection();
+    std::sort(
+        slave.adapterSelection.moduleAssignments.begin(),
+        slave.adapterSelection.moduleAssignments.end(),
+        [](const auto &left, const auto &right) { return left.slot < right.slot; });
+    slave.manualControlEnvelope = manualControlEnvelope();
+    source.slaves = {slave};
+    source.nodes.append({slave.id, master, Data::ProjectNodeKind::Slave, slave.name});
+    source.masterConfiguration = {Data::MasterTimingMode::DistributedClocks, 125000};
+    source.masterBindingArtifact = bindingArtifact(source.slaves);
+
+    const QJsonObject validRoot = QJsonDocument::fromJson(serializeProject(source)).object();
+    QVERIFY_RESULT(parseProject(QJsonDocument(validRoot).toJson(), "Fallback"));
+
+    const auto injectUnknown = [](auto &&self,
+                                  const QJsonValue &value,
+                                  const QStringList &path) -> QJsonValue {
+        if (path.isEmpty()) {
+            QJsonObject object = value.toObject();
+            object.insert("ignoredProductionField", true);
+            return object;
+        }
+
+        const QString head = path.first();
+        const QStringList tail = path.sliced(1);
+        if (head.startsWith('#')) {
+            QJsonArray array = value.toArray();
+            bool ok = false;
+            const qsizetype index = head.sliced(1).toLongLong(&ok);
+            if (ok && index >= 0 && index < array.size())
+                array[index] = self(self, array.at(index), tail);
+            return array;
+        }
+
+        QJsonObject object = value.toObject();
+        if (object.contains(head))
+            object.insert(head, self(self, object.value(head), tail));
+        return object;
+    };
+
+    const QList<QStringList> objectPaths{
+        {},
+        {"project"},
+        {"target"},
+        {"master"},
+        {"master", "configuration"},
+        {"master", "semanticBindingArtifact"},
+        {"master", "semanticBindingArtifact", "projectDeviceBindings", "#0"},
+        {"master", "slaves", "#0"},
+        {"master", "slaves", "#0", "configuration"},
+        {"master", "slaves", "#0", "configuration", "processData"},
+        {"master", "slaves", "#0", "configuration", "processData", "syncManagers", "#0"},
+        {"master", "slaves", "#0", "configuration", "processData", "pdos", "#0"},
+        {"master", "slaves", "#0", "configuration", "processData", "pdos", "#0", "entries", "#0"},
+        {"master", "slaves", "#0", "configuration", "startup"},
+        {"master", "slaves", "#0", "configuration", "startup", "parameters", "#0"},
+        {"master", "slaves", "#0", "configuration", "dc"},
+        {"master", "slaves", "#0", "configuration", "dc", "sync0"},
+        {"master", "slaves", "#0", "configuration", "dc", "sync1"},
+        {"master", "slaves", "#0", "adapterSelection"},
+        {"master", "slaves", "#0", "adapterSelection", "moduleAssignments", "#0"},
+        {"master", "slaves", "#0", "manualControlEnvelope"},
+        {"master", "slaves", "#0", "manualControlEnvelope", "signalEnvelopes", "#0"},
+        {"master", "slaves", "#0", "manualControlEnvelope", "signalEnvelopes", "#0", "timing"},
+        {"master", "slaves", "#0", "manualControlEnvelope", "signalEnvelopes", "#0",
+         "allowedRange"},
+        {"master", "slaves", "#0", "manualControlEnvelope", "signalEnvelopes", "#0",
+         "allowedRange", "minimum"},
+        {"master", "slaves", "#0", "manualControlEnvelope", "signalEnvelopes", "#0",
+         "safeValue"},
+        {"master", "slaves", "#0", "manualControlEnvelope", "signalEnvelopes", "#0",
+         "consistencyGroupSafeValues", "#0"},
+        {"master", "slaves", "#0", "manualControlEnvelope", "signalEnvelopes", "#0",
+         "consistencyGroupSafeValues", "#0", "value"},
+        {"master", "slaves", "#0", "manualControlEnvelope", "actionEnvelopes", "#0"},
+        {"master", "slaves", "#0", "manualControlEnvelope", "actionEnvelopes", "#0", "timing"},
+        {"master", "slaves", "#0", "manualControlEnvelope", "actionEnvelopes", "#0",
+         "parameters", "#0"},
+        {"master", "slaves", "#0", "manualControlEnvelope", "actionEnvelopes", "#0",
+         "parameters", "#0", "allowedRange"},
+        {"master", "slaves", "#0", "manualControlEnvelope", "actionEnvelopes", "#0",
+         "parameters", "#0", "defaultValue"},
+        {"master", "slaves", "#0", "manualControlEnvelope", "actionEnvelopes", "#0",
+         "parameters", "#0", "defaultValue", "exactRational"},
+    };
+    for (const QStringList &path : objectPaths) {
+        const QJsonValue mutated = injectUnknown(injectUnknown, validRoot, path);
+        const Utils::Result<LoadedProject> loaded
+            = parseProject(QJsonDocument(mutated.toObject()).toJson(), "Fallback");
+        QVERIFY2(!loaded, qPrintable(path.join('/')));
+    }
+
+    QByteArray duplicateRoot = serializeProject(source);
+    const qsizetype rootStart = duplicateRoot.indexOf('{');
+    QVERIFY(rootStart >= 0);
+    duplicateRoot.insert(rootStart + 1, "\"f\\u006frmat\":\"ethercat-project\",");
+    const Utils::Result<LoadedProject> duplicateRootResult
+        = parseProject(duplicateRoot, "Fallback");
+    QVERIFY(!duplicateRootResult);
+    QVERIFY(duplicateRootResult.error().contains("duplicate", Qt::CaseInsensitive));
+
+    QByteArray duplicateNested = serializeProject(source);
+    const QByteArray projectMarker = QByteArrayLiteral("\"project\": {");
+    const qsizetype projectStart = duplicateNested.indexOf(projectMarker);
+    QVERIFY(projectStart >= 0);
+    duplicateNested.insert(
+        projectStart + projectMarker.size(), "\"na\\u006de\":\"shadowed\",");
+    const Utils::Result<LoadedProject> duplicateNestedResult
+        = parseProject(duplicateNested, "Fallback");
+    QVERIFY(!duplicateNestedResult);
+    QVERIFY(duplicateNestedResult.error().contains("duplicate", Qt::CaseInsensitive));
+
+    QJsonObject legacyRoot{
+        {"format", "ethercat-project"},
+        {"version", 0},
+        {"id", Data::NodeId::create().toString()},
+        {"name", "Legacy"},
+        {"createdBy", "Legacy Tool"},
+        {"ignoredProductionField", true},
+    };
+    QVERIFY(!parseProject(QJsonDocument(legacyRoot).toJson(), "Fallback"));
+}
+
 void EtherCATProjectTests::testDocumentUndoRedoAndAtomicFailure()
 {
     QTemporaryDir directory;
@@ -1167,6 +1299,7 @@ void EtherCATProjectTests::testVersionOneConfigurationMigration()
     for (qsizetype index = 0; index < slaves.size(); ++index) {
         QJsonObject slave = slaves.at(index).toObject();
         slave.remove("configuration");
+        slave.remove("manualControlEnvelope");
         slaves[index] = slave;
     }
     masterObject.insert("slaves", slaves);
@@ -1206,6 +1339,13 @@ void EtherCATProjectTests::testVersionTwoMasterConfigurationMigration()
     root.insert("formatVersion", 2);
     QJsonObject masterObject = root.value("master").toObject();
     masterObject.remove("configuration");
+    QJsonArray slaves = masterObject.value("slaves").toArray();
+    for (qsizetype index = 0; index < slaves.size(); ++index) {
+        QJsonObject slave = slaves.at(index).toObject();
+        slave.remove("manualControlEnvelope");
+        slaves[index] = slave;
+    }
+    masterObject.insert("slaves", slaves);
     root.insert("master", masterObject);
     const QByteArray versionTwoContents = QJsonDocument(root).toJson();
     QVERIFY_RESULT(projectFile.writeFileContents(versionTwoContents));
@@ -1244,6 +1384,15 @@ void EtherCATProjectTests::testVersionThreeAdapterMigration()
 
     QJsonObject root = QJsonDocument::fromJson(serializeProject(source)).object();
     root.insert("formatVersion", 3);
+    QJsonObject masterObject = root.value("master").toObject();
+    QJsonArray slaves = masterObject.value("slaves").toArray();
+    for (qsizetype index = 0; index < slaves.size(); ++index) {
+        QJsonObject slaveObject = slaves.at(index).toObject();
+        slaveObject.remove("manualControlEnvelope");
+        slaves[index] = slaveObject;
+    }
+    masterObject.insert("slaves", slaves);
+    root.insert("master", masterObject);
     const QByteArray versionThreeContents = QJsonDocument(root).toJson();
     QVERIFY_RESULT(projectFile.writeFileContents(versionThreeContents));
 
