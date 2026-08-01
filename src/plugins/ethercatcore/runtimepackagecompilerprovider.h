@@ -38,6 +38,31 @@ enum class RuntimePackageCompilerJobCompletionError {
     CanceledAfterReconciliation,
 };
 
+// Identifies one completed compile -> finalize -> independent verify chain
+// without accepting caller-selected filesystem paths or caller-supplied
+// compiled-project/companion bytes. The typed terminal records are retained so
+// the provider can compare them with its exact immutable canonical evidence;
+// any path fields inside those records are comparisons only and never read
+// sources. Package bytes are likewise accepted only after byte-for-byte
+// comparison with the provider's sealed package evidence.
+struct ETHERCATCORE_EXPORT RuntimePackageCompilerActivationProofAssemblyRequest
+{
+    QString compilerProviderId;
+    Data::RuntimePackageCompilerContractIdentity contractIdentity;
+    Data::RuntimePackageCompilerCompileRequest compileRequest;
+    Data::RuntimePackageCompilerCompileResult compileResult;
+    Data::RuntimePackageCompilerFinalizeRequest finalizeRequest;
+    Data::RuntimePackageCompilerFinalizeResult finalizeResult;
+    Data::RuntimePackageCompilerVerifyRequest verifyRequest;
+    Data::RuntimePackageCompilerVerifyResult verifyResult;
+
+    bool isValid() const;
+
+    friend bool operator==(
+        const RuntimePackageCompilerActivationProofAssemblyRequest &,
+        const RuntimePackageCompilerActivationProofAssemblyRequest &) = default;
+};
+
 class ETHERCATCORE_EXPORT RuntimePackageCompilerJob : public QObject
 {
     Q_OBJECT
@@ -102,6 +127,12 @@ public:
         const Data::RuntimePackageCompilerQueryRequest &request) = 0;
     virtual Utils::Result<RuntimePackageCompilerJob *> verify(
         const Data::RuntimePackageCompilerVerifyRequest &request) = 0;
+
+    // Only the immutable operation-store owner can assemble a proof. The base
+    // implementation rejects so a coordinator cannot manufacture provenance
+    // from terminal values, paths, or artifact bytes.
+    virtual Utils::Result<Data::RuntimePackageCompilerActivationProof> assembleActivationProof(
+        const RuntimePackageCompilerActivationProofAssemblyRequest &request) const;
 
     // This is a read-only provider-provenance gate. It binds a proof to the
     // provider's immutable evidence and trusted external verifier result; it

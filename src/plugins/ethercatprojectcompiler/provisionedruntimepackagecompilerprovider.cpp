@@ -14,6 +14,7 @@
 
 #include <QProcess>
 #include <QSet>
+#include <QThread>
 #include <QTimer>
 
 #include <functional>
@@ -804,6 +805,10 @@ Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompil
 Utils::Result<> ProvisionedRuntimePackageCompilerProvider::validateActivationProof(
     const Data::RuntimePackageCompilerActivationProof &proof) const
 {
+    if (QThread::currentThread() != thread()) {
+        return Utils::ResultError(
+            Tr::tr("Activation proof validation must run on the compiler provider thread."));
+    }
     const QString providerId = QString::fromUtf8(Constants::PROJECT_COMPILER_PROVIDER_ID.name());
     if (!proof.isValid() || proof.compilerProviderId != providerId)
         return Utils::ResultError(Tr::tr("Activation proof names a different compiler provider."));
@@ -831,6 +836,43 @@ Utils::Result<> ProvisionedRuntimePackageCompilerProvider::validateActivationPro
     }
     return d->store.validateActivationProofEvidence(
         proof, *compileRequest, *finalizeRequest, *verifyRequest, d->limits.maximumArtifactBytes);
+}
+
+Utils::Result<Data::RuntimePackageCompilerActivationProof>
+ProvisionedRuntimePackageCompilerProvider::assembleActivationProof(
+    const Core::RuntimePackageCompilerActivationProofAssemblyRequest &request) const
+{
+    if (QThread::currentThread() != thread()) {
+        return Utils::ResultError(
+            Tr::tr("Activation proof assembly must run on the compiler provider thread."));
+    }
+    const QString providerId = QString::fromUtf8(Constants::PROJECT_COMPILER_PROVIDER_ID.name());
+    if (!request.isValid() || request.compilerProviderId != providerId)
+        return Utils::ResultError(Tr::tr("Activation proof names a different compiler provider."));
+    if (const Utils::Result<> current = d->validateProfile(request.contractIdentity); !current)
+        return Utils::ResultError(current.error());
+    if (request.compileRequest.sourceArtifacts.productionPublicKey.sha256
+            != d->profile->productionPublicKeySha256()
+        || request.compileRequest.targetProfile.signingKeyIdSha256
+               != d->profile->productionPublicKeySha256()
+        || request.compileRequest.sourceArtifacts.productionPublicKey.exactBytes
+               != d->profile->exactProductionPublicKeyBytes()) {
+        return Utils::ResultError(
+            Tr::tr("Activation proof does not match the provisioned production key."));
+    }
+
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> compileRequest
+        = Core::encodeRuntimePackageCompilerCompileRequest(request.compileRequest);
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> finalizeRequest
+        = Core::encodeRuntimePackageCompilerFinalizeRequest(request.finalizeRequest);
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> verifyRequest
+        = Core::encodeRuntimePackageCompilerVerifyRequest(request.verifyRequest);
+    if (!compileRequest || !finalizeRequest || !verifyRequest) {
+        return Utils::ResultError(
+            Tr::tr("Activation proof requests cannot be encoded canonically."));
+    }
+    return d->store.assembleActivationProofEvidence(
+        request, *compileRequest, *finalizeRequest, *verifyRequest, d->limits.maximumArtifactBytes);
 }
 
 void ProvisionedRuntimePackageCompilerProvider::shutdown()

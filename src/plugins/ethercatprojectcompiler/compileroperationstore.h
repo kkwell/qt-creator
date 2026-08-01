@@ -13,6 +13,10 @@
 #include <functional>
 #endif
 
+namespace EtherCAT::Core {
+struct RuntimePackageCompilerActivationProofAssemblyRequest;
+}
+
 namespace EtherCAT::ProjectCompiler {
 
 struct CompilerStoreRoot;
@@ -126,6 +130,13 @@ public:
         const Utils::FilePath &file,
         qsizetype maximumBytes) const;
 
+    Utils::Result<Data::RuntimePackageCompilerActivationProof> assembleActivationProofEvidence(
+        const Core::RuntimePackageCompilerActivationProofAssemblyRequest &request,
+        const Data::RuntimePackageCompilerCanonicalJson &canonicalCompileRequest,
+        const Data::RuntimePackageCompilerCanonicalJson &canonicalFinalizeRequest,
+        const Data::RuntimePackageCompilerCanonicalJson &canonicalVerifyRequest,
+        qsizetype maximumArtifactBytes) const;
+
     Utils::Result<> validateActivationProofEvidence(
         const Data::RuntimePackageCompilerActivationProof &proof,
         const Data::RuntimePackageCompilerCanonicalJson &canonicalCompileRequest,
@@ -162,6 +173,13 @@ private:
         const Data::RuntimePackageCompilerCompileRequest &request,
         const CompilerOperationPaths &paths);
     Utils::Result<> sealCompilerLedger(const CompilerOperationLease &lease) const;
+    Utils::Result<> validateActivationProofEvidenceWithLease(
+        const CompilerOperationLease &lease,
+        const Data::RuntimePackageCompilerActivationProof &proof,
+        const Data::RuntimePackageCompilerCanonicalJson &canonicalCompileRequest,
+        const Data::RuntimePackageCompilerCanonicalJson &canonicalFinalizeRequest,
+        const Data::RuntimePackageCompilerCanonicalJson &canonicalVerifyRequest,
+        qsizetype maximumArtifactBytes) const;
 
     Utils::FilePath m_compilerRoot;
     QString m_storeIdentity;

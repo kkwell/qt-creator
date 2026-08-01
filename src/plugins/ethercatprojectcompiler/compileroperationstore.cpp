@@ -2,6 +2,8 @@
 
 #include "compileroperationstore.h"
 
+#include <ethercatcore/runtimepackagecompilerprovider.h>
+
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -1845,6 +1847,88 @@ Utils::Result<QByteArray> CompilerOperationStore::readProviderFile(
         m_rootHandle, m_compilerRoot, file, maximumBytes, DirectoryPolicy::CompilerOwned);
 }
 
+Utils::Result<Data::RuntimePackageCompilerActivationProof>
+CompilerOperationStore::assembleActivationProofEvidence(
+    const Core::RuntimePackageCompilerActivationProofAssemblyRequest &request,
+    const Data::RuntimePackageCompilerCanonicalJson &canonicalCompileRequest,
+    const Data::RuntimePackageCompilerCanonicalJson &canonicalFinalizeRequest,
+    const Data::RuntimePackageCompilerCanonicalJson &canonicalVerifyRequest,
+    qsizetype maximumArtifactBytes) const
+{
+    if (!request.isValid() || !canonicalCompileRequest.isValid()
+        || !canonicalFinalizeRequest.isValid() || !canonicalVerifyRequest.isValid()
+        || maximumArtifactBytes <= 0 || maximumArtifactBytes > maximumPackageBytes
+        || canonicalCompileRequest.sha256() != request.compileResult.envelope.requestSha256) {
+        return Utils::ResultError(
+            QStringLiteral("Activation proof assembly request is inconsistent."));
+    }
+
+    Utils::Result<CompilerOperationLease> acquiredReadLease = acquireReadLease();
+    if (!acquiredReadLease)
+        return Utils::ResultError(acquiredReadLease.error());
+    CompilerOperationLease readLease = std::move(*acquiredReadLease);
+    if (!readLease.isValid())
+        return Utils::ResultError(QStringLiteral("Compiler read lease is invalid."));
+
+    const CompilerOperationPaths compilePaths = paths(request.compileRequest.operationId);
+    const Data::RuntimePackageCompilerSha256 compiledProjectSha256
+        = *request.compileResult.compiledProjectSha256;
+    const Data::RuntimePackageCompilerSha256 companionSha256
+        = *request.compileResult.effectiveProjectCompanionSha256;
+    const Data::RuntimePackageCompilerSha256 packageSha256 = *request.finalizeResult.packageSha256;
+    const auto readSealed =
+        [this](const Utils::FilePath &file, qsizetype maximumBytes) -> Utils::Result<QByteArray> {
+        return readRegularLeaf(
+            m_rootHandle, m_compilerRoot, file, maximumBytes, DirectoryPolicy::Private);
+    };
+    const Utils::Result<QByteArray> compiledProject
+        = readSealed(binaryEvidencePath(compilePaths, compiledProjectSha256), maximumArtifactBytes);
+    const Utils::Result<QByteArray> companion
+        = readSealed(binaryEvidencePath(compilePaths, companionSha256), maximumArtifactBytes);
+    const Utils::Result<QByteArray> package
+        = readSealed(packageEvidencePath(compilePaths, packageSha256), maximumArtifactBytes);
+    if (!compiledProject || !companion || !package) {
+        return Utils::ResultError(
+            QStringLiteral("Sealed activation artifacts are missing or unsafe."));
+    }
+    if (compiledProject->isEmpty() || companion->isEmpty() || package->isEmpty()
+        || sha256(*compiledProject) != compiledProjectSha256
+        || sha256(*companion) != companionSha256 || sha256(*package) != packageSha256
+        || request.finalizeResult.packageBytes != *package
+        || request.verifyRequest.packageBytes != *package) {
+        return Utils::ResultError(
+            QStringLiteral("Sealed activation artifacts differ from terminal evidence."));
+    }
+
+    Data::RuntimePackageCompilerActivationProof proof{
+        request.compilerProviderId,
+        request.contractIdentity,
+        request.compileRequest,
+        request.compileResult,
+        request.finalizeRequest,
+        canonicalFinalizeRequest.sha256(),
+        request.finalizeResult,
+        request.verifyRequest,
+        canonicalVerifyRequest.sha256(),
+        request.verifyResult,
+        *compiledProject,
+        *companion,
+    };
+    if (!proof.isValid())
+        return Utils::ResultError(QStringLiteral("Assembled activation proof is inconsistent."));
+    if (const Utils::Result<> valid = validateActivationProofEvidenceWithLease(
+            readLease,
+            proof,
+            canonicalCompileRequest,
+            canonicalFinalizeRequest,
+            canonicalVerifyRequest,
+            maximumArtifactBytes);
+        !valid) {
+        return Utils::ResultError(valid.error());
+    }
+    return proof;
+}
+
 Utils::Result<> CompilerOperationStore::validateActivationProofEvidence(
     const Data::RuntimePackageCompilerActivationProof &proof,
     const Data::RuntimePackageCompilerCanonicalJson &canonicalCompileRequest,
@@ -1852,7 +1936,30 @@ Utils::Result<> CompilerOperationStore::validateActivationProofEvidence(
     const Data::RuntimePackageCompilerCanonicalJson &canonicalVerifyRequest,
     qsizetype maximumArtifactBytes) const
 {
-    if (!proof.isValid() || !canonicalCompileRequest.isValid()
+    Utils::Result<CompilerOperationLease> acquiredReadLease = acquireReadLease();
+    if (!acquiredReadLease)
+        return Utils::ResultError(acquiredReadLease.error());
+    CompilerOperationLease readLease = std::move(*acquiredReadLease);
+    if (!readLease.isValid())
+        return Utils::ResultError(QStringLiteral("Compiler read lease is invalid."));
+    return validateActivationProofEvidenceWithLease(
+        readLease,
+        proof,
+        canonicalCompileRequest,
+        canonicalFinalizeRequest,
+        canonicalVerifyRequest,
+        maximumArtifactBytes);
+}
+
+Utils::Result<> CompilerOperationStore::validateActivationProofEvidenceWithLease(
+    const CompilerOperationLease &readLease,
+    const Data::RuntimePackageCompilerActivationProof &proof,
+    const Data::RuntimePackageCompilerCanonicalJson &canonicalCompileRequest,
+    const Data::RuntimePackageCompilerCanonicalJson &canonicalFinalizeRequest,
+    const Data::RuntimePackageCompilerCanonicalJson &canonicalVerifyRequest,
+    qsizetype maximumArtifactBytes) const
+{
+    if (!ownsLease(readLease) || !proof.isValid() || !canonicalCompileRequest.isValid()
         || !canonicalFinalizeRequest.isValid() || !canonicalVerifyRequest.isValid()
         || maximumArtifactBytes <= 0 || maximumArtifactBytes > maximumPackageBytes
         || proof.compileRequest.operationId == proof.verifyRequest.operationId
@@ -1861,13 +1968,6 @@ Utils::Result<> CompilerOperationStore::validateActivationProofEvidence(
         || canonicalVerifyRequest.sha256() != proof.verifyRequestSha256) {
         return Utils::ResultError(QStringLiteral("Activation proof encoding is inconsistent."));
     }
-    Utils::Result<CompilerOperationLease> acquiredReadLease = acquireReadLease();
-    if (!acquiredReadLease)
-        return Utils::ResultError(acquiredReadLease.error());
-    CompilerOperationLease readLease = std::move(*acquiredReadLease);
-    if (!readLease.isValid())
-        return Utils::ResultError(QStringLiteral("Compiler read lease is invalid."));
-
     const CompilerOperationPaths compilePaths = paths(proof.compileRequest.operationId);
     const CompilerOperationPaths verifyPaths = paths(proof.verifyRequest.operationId);
     for (const Utils::FilePath &directory :

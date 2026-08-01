@@ -10,6 +10,7 @@
 #include <QCryptographicHash>
 #include <QMetaObject>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QThread>
 
 namespace EtherCAT::Core {
@@ -152,6 +153,30 @@ RuntimePackageCompilerProvider::RuntimePackageCompilerProvider(
     : Provider(ProviderKind::RuntimePackageCompiler, id, displayName, parent)
 {}
 
+bool RuntimePackageCompilerActivationProofAssemblyRequest::isValid() const
+{
+    static const QRegularExpression stableId(QStringLiteral("^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$"));
+    return stableId.match(compilerProviderId).hasMatch() && contractIdentity.isValid()
+           && compileRequest.isValid() && compileResult.isSuccess() && finalizeRequest.isValid()
+           && finalizeResult.isSuccess() && verifyRequest.isValid() && verifyResult.isSuccess()
+           && compileRequest.contractIdentity == contractIdentity
+           && finalizeRequest.contractIdentity == contractIdentity
+           && verifyRequest.contractIdentity == contractIdentity
+           && compileResult.envelope.operationId == compileRequest.operationId
+           && finalizeRequest.operationId == compileRequest.operationId
+           && finalizeResult.envelope.operationId == compileRequest.operationId
+           && verifyResult.envelope.operationId == verifyRequest.operationId
+           && verifyRequest.operationId != compileRequest.operationId;
+}
+
+Utils::Result<Data::RuntimePackageCompilerActivationProof>
+RuntimePackageCompilerProvider::assembleActivationProof(
+    const RuntimePackageCompilerActivationProofAssemblyRequest &) const
+{
+    return Utils::ResultError(
+        QStringLiteral("This compiler provider cannot assemble activation proof provenance."));
+}
+
 Utils::Result<> RuntimePackageCompilerProvider::validateActivationProof(
     const Data::RuntimePackageCompilerActivationProof &) const
 {
@@ -199,8 +224,15 @@ Utils::Result<> validateRuntimePackageCompilerActivationProof(
     QList<Provider *> availableProviders;
     for (Provider *candidate : providerRegistry->providers(
              ProviderKind::RuntimePackageCompiler)) {
-        if (candidate && candidate->isAvailable())
+        if (!candidate)
+            continue;
+        if (candidate->thread() != QThread::currentThread()) {
+            return Utils::ResultError(
+                QStringLiteral("A compiler provider belongs to a different thread."));
+        }
+        if (candidate->isAvailable()) {
             availableProviders.append(candidate);
+        }
     }
     if (availableProviders.size() != 1) {
         return Utils::ResultError(

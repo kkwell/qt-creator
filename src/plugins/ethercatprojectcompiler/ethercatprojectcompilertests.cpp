@@ -32,6 +32,7 @@
 #include <QTimer>
 
 #include <optional>
+#include <thread>
 #include <tuple>
 
 #ifdef Q_OS_UNIX
@@ -501,6 +502,21 @@ Data::RuntimePackageCompilerFinalizeRequest finalizeRequestFor(
     };
 }
 
+Core::RuntimePackageCompilerActivationProofAssemblyRequest activationProofAssemblyRequest(
+    const Data::RuntimePackageCompilerActivationProof &proof)
+{
+    return {
+        proof.compilerProviderId,
+        proof.contractIdentity,
+        proof.compileRequest,
+        proof.compileResult,
+        proof.finalizeRequest,
+        proof.finalizeResult,
+        proof.verifyRequest,
+        proof.verifyResult,
+    };
+}
+
 std::optional<Data::RuntimePackageCompilerActivationProof> successfulActivationProof(
     TestEnvironment &environment,
     ProvisionedRuntimePackageCompilerProvider &provider,
@@ -542,30 +558,20 @@ std::optional<Data::RuntimePackageCompilerActivationProof> successfulActivationP
     if (!verified || !verified->isSuccess())
         return std::nullopt;
 
-    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> finalizeCanonical
-        = Core::encodeRuntimePackageCompilerFinalizeRequest(finalizeRequest);
-    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> verifyCanonical
-        = Core::encodeRuntimePackageCompilerVerifyRequest(verifyRequest);
-    if (!finalizeCanonical || !verifyCanonical)
-        return std::nullopt;
-    const QString outputDirectory = compileResultCopy.outputDirectory;
-    Data::RuntimePackageCompilerActivationProof proof{
+    const Core::RuntimePackageCompilerActivationProofAssemblyRequest assemblyRequest{
         QString::fromUtf8(Constants::PROJECT_COMPILER_PROVIDER_ID.name()),
         environment.fixture.request.contractIdentity,
         environment.fixture.request,
         compileResultCopy,
         finalizeRequest,
-        finalizeCanonical->sha256(),
         finalizeResultCopy,
         verifyRequest,
-        verifyCanonical->sha256(),
         *verified,
-        readFile(outputDirectory + QStringLiteral("/project.json")),
-        readFile(outputDirectory + QStringLiteral("/effective-project-companion-v1.json")),
     };
-    return proof.isValid()
-               ? std::optional<Data::RuntimePackageCompilerActivationProof>{std::move(proof)}
-               : std::nullopt;
+    const Utils::Result<Data::RuntimePackageCompilerActivationProof> proof
+        = provider.assembleActivationProof(assemblyRequest);
+    return proof ? std::optional<Data::RuntimePackageCompilerActivationProof>{*proof}
+                 : std::nullopt;
 }
 
 QByteArray storeWriteFingerprint(const QString &root)
@@ -1041,11 +1047,32 @@ void EtherCATProjectCompilerTests::testActivationProofProvenanceAndRestart()
     QVERIFY(
         proof->compileRequest.projectSnapshotEvidence.serializedProjectSha256()
         == sha256(environment.fixture.serializedProject));
+    const Core::RuntimePackageCompilerActivationProofAssemblyRequest assemblyRequest
+        = activationProofAssemblyRequest(*proof);
+    QVERIFY(assemblyRequest.isValid());
 
     const QString calls = environment.root + QStringLiteral("/compiler-ledger.json.calls");
     const QByteArray callsBefore = readFile(calls);
     const QByteArray storeBefore = storeWriteFingerprint(environment.root);
+    const Utils::Result<Data::RuntimePackageCompilerActivationProof> assembled
+        = provider->assembleActivationProof(assemblyRequest);
+    QVERIFY(assembled);
+    QCOMPARE(*assembled, *proof);
     QVERIFY(provider->validateActivationProof(*proof));
+    QCOMPARE(readFile(calls), callsBefore);
+    QCOMPARE(storeWriteFingerprint(environment.root), storeBefore);
+
+    const bool availabilityBeforeCrossThreadCalls = provider->isAvailable();
+    bool crossThreadValidationSucceeded = true;
+    bool crossThreadAssemblySucceeded = true;
+    std::thread worker([&] {
+        crossThreadValidationSucceeded = bool(provider->validateActivationProof(*proof));
+        crossThreadAssemblySucceeded = bool(provider->assembleActivationProof(assemblyRequest));
+    });
+    worker.join();
+    QVERIFY(!crossThreadValidationSucceeded);
+    QVERIFY(!crossThreadAssemblySucceeded);
+    QCOMPARE(provider->isAvailable(), availabilityBeforeCrossThreadCalls);
     QCOMPARE(readFile(calls), callsBefore);
     QCOMPARE(storeWriteFingerprint(environment.root), storeBefore);
 
@@ -1067,6 +1094,10 @@ void EtherCATProjectCompilerTests::testActivationProofProvenanceAndRestart()
     QVERIFY(provider->isAvailable());
     const QByteArray restartedCalls = readFile(calls);
     const QByteArray restartedStore = storeWriteFingerprint(environment.root);
+    const Utils::Result<Data::RuntimePackageCompilerActivationProof> restartedAssembly
+        = provider->assembleActivationProof(assemblyRequest);
+    QVERIFY(restartedAssembly);
+    QCOMPARE(*restartedAssembly, *proof);
     QVERIFY(provider->validateActivationProof(*proof));
     QCOMPARE(readFile(calls), restartedCalls);
     QCOMPARE(storeWriteFingerprint(environment.root), restartedStore);
@@ -1097,6 +1128,23 @@ void EtherCATProjectCompilerTests::testActivationProofRejectsMutationsWithoutPro
             const bool rejected = !provider->validateActivationProof(value);
             return rejected && readFile(calls) == before;
         };
+    const auto assemblyRejectedWithoutProcess =
+        [&](const Core::RuntimePackageCompilerActivationProofAssemblyRequest &request) {
+            const QByteArray before = readFile(calls);
+            const bool rejected = !provider->assembleActivationProof(request);
+            return rejected && readFile(calls) == before;
+        };
+
+    Core::RuntimePackageCompilerActivationProofAssemblyRequest changedAssembly
+        = activationProofAssemblyRequest(*proof);
+    changedAssembly.compileRequest.intentId.append(QStringLiteral(".mutated"));
+    QVERIFY(changedAssembly.isValid());
+    QVERIFY(assemblyRejectedWithoutProcess(changedAssembly));
+
+    changedAssembly = activationProofAssemblyRequest(*proof);
+    changedAssembly.finalizeResult.packageBytes.append("different-package");
+    QVERIFY(!changedAssembly.isValid());
+    QVERIFY(assemblyRejectedWithoutProcess(changedAssembly));
 
     Data::RuntimePackageCompilerActivationProof changed = *proof;
     changed.compilerProviderId = QStringLiteral("EtherCAT.ProjectCompiler.Relabeled");
@@ -1301,6 +1349,12 @@ void EtherCATProjectCompilerTests::testActivationProofRejectsMutationsWithoutPro
     QVERIFY(changed.isValid());
     QVERIFY(rejectedWithoutProcess(changed));
 
+    changedAssembly = activationProofAssemblyRequest(*proof);
+    changedAssembly.verifyRequest = secondOperationProof->verifyRequest;
+    changedAssembly.verifyResult = secondOperationProof->verifyResult;
+    QVERIFY(changedAssembly.isValid());
+    QVERIFY(assemblyRejectedWithoutProcess(changedAssembly));
+
     changed = *proof;
     changed.verifyRequest.operationId = changed.compileRequest.operationId;
     changed.verifyResult.envelope.operationId = changed.compileRequest.operationId;
@@ -1333,10 +1387,13 @@ void EtherCATProjectCompilerTests::testActivationProofRejectsUnsafeEvidence()
     const Utils::FilePath verifyRoot = provider->operationRoot(proof->verifyRequest.operationId);
     const Utils::FilePath compilerRoot = compileRoot.parentDir().parentDir();
     const QString calls = environment.root + QStringLiteral("/compiler-ledger.json.calls");
+    const Core::RuntimePackageCompilerActivationProofAssemblyRequest assemblyRequest
+        = activationProofAssemblyRequest(*proof);
 
     const auto rejectsCurrentStore = [&] {
         const QByteArray before = readFile(calls);
-        const bool rejected = !provider->validateActivationProof(*proof);
+        const bool rejected = !provider->validateActivationProof(*proof)
+                              && !provider->assembleActivationProof(assemblyRequest);
         return rejected && readFile(calls) == before;
     };
     const auto corruptAndRestore = [&](const Utils::FilePath &file) {
