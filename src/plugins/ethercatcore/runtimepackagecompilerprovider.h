@@ -22,14 +22,17 @@ enum class RuntimePackageCompilerJobState {
     Finished,
 };
 
-// A completion error is a provider-contract violation, not a compiler-domain
-// result and not a scheduling failure. Scheduling failures return ResultError
-// before a job exists; valid domain rejection and cancellation remain in
-// RuntimePackageCompilerJobResult.
+// A completion error means no trustworthy compiler-domain terminal result was
+// available. Scheduling failures return ResultError before a job exists;
+// valid backend rejection and authoritative cancellation remain in
+// RuntimePackageCompilerJobResult. Cancellation without a recoverable terminal
+// record is CanceledAfterReconciliation.
 enum class RuntimePackageCompilerJobCompletionError {
     None,
     InvalidTerminalResult,
     CommandMismatch,
+    BackendProcessFailure,
+    CanceledAfterReconciliation,
 };
 
 class ETHERCATCORE_EXPORT RuntimePackageCompilerJob : public QObject
@@ -62,11 +65,10 @@ protected:
     // may call them from a worker thread, but the state change is then queued.
     void markRunning();
     void finish(const Data::RuntimePackageCompilerJobResult &result);
+    void finishWithCompletionError(RuntimePackageCompilerJobCompletionError completionError);
     virtual void requestCancellation() = 0;
 
 private:
-    void finishWithCompletionError(RuntimePackageCompilerJobCompletionError completionError);
-
     const Data::RuntimePackageCompilerCommand m_command;
     RuntimePackageCompilerJobState m_state = RuntimePackageCompilerJobState::Pending;
     std::optional<Data::RuntimePackageCompilerJobResult> m_result;
@@ -78,8 +80,9 @@ private:
 // API-042 codec: typed IDE requests are encoded once, while exact backend
 // responses are schema-validated and compared with their typed projection
 // before a job may finish. A ResultError means the job could not be scheduled
-// at all. Once a job is returned, compiler-domain rejection, cancellation, and
-// unknown backend status are carried exclusively by its terminal result.
+// at all. Once a job is returned, compiler-domain rejection and unknown backend
+// status are carried by its terminal result. Cancellation either preserves an
+// authoritative backend result or ends with CanceledAfterReconciliation.
 class ETHERCATCORE_EXPORT RuntimePackageCompilerProvider : public Provider
 {
     Q_OBJECT
@@ -89,17 +92,13 @@ public:
         Utils::Id id, const QString &displayName, QObject *parent = nullptr);
 
     virtual Utils::Result<RuntimePackageCompilerJob *> compile(
-        const Data::RuntimePackageCompilerCompileRequest &request)
-        = 0;
+        const Data::RuntimePackageCompilerCompileRequest &request) = 0;
     virtual Utils::Result<RuntimePackageCompilerJob *> finalize(
-        const Data::RuntimePackageCompilerFinalizeRequest &request)
-        = 0;
+        const Data::RuntimePackageCompilerFinalizeRequest &request) = 0;
     virtual Utils::Result<RuntimePackageCompilerJob *> query(
-        const Data::RuntimePackageCompilerQueryRequest &request)
-        = 0;
+        const Data::RuntimePackageCompilerQueryRequest &request) = 0;
     virtual Utils::Result<RuntimePackageCompilerJob *> verify(
-        const Data::RuntimePackageCompilerVerifyRequest &request)
-        = 0;
+        const Data::RuntimePackageCompilerVerifyRequest &request) = 0;
 };
 
 } // namespace EtherCAT::Core
