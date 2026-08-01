@@ -34,6 +34,7 @@ struct SemanticControlSelection
     Data::ControllerConnectionScope scope;
     Data::NodeId deviceId;
     QList<Data::SemanticSignalId> signalIds;
+    bool wholeDevice = true;
 
     friend bool operator==(const SemanticControlSelection &, const SemanticControlSelection &)
         = default;

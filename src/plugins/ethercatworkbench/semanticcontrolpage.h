@@ -62,6 +62,7 @@ private:
     QPointer<WorkbenchController> m_controller;
     QPointer<Core::SemanticRuntimeService> m_runtimeService;
     Core::PropertyPageContext m_context;
+    QLabel *m_selectionScope;
     QLabel *m_status;
     QTreeWidget *m_signals;
     QGroupBox *m_manualControl;

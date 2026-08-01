@@ -3481,8 +3481,30 @@ void EtherCATWorkbenchTests::testDeviceAdapterSelectionBuildsModuleChannelTree()
     QCOMPARE(slaveSelection->scope, expectedScope);
     QCOMPARE(slaveSelection->deviceId, fixture.slaveId);
     QVERIFY(slaveSelection->signalIds.isEmpty());
-    QVERIFY(!model.semanticControlSelection(outputModuleId));
-    QVERIFY(!model.semanticControlSelection(outputChannelId));
+    QVERIFY(slaveSelection->wholeDevice);
+
+    const std::optional<SemanticControlSelection> outputModuleSelection
+        = model.semanticControlSelection(outputModuleId);
+    QVERIFY(outputModuleSelection);
+    QCOMPARE(outputModuleSelection->scope, expectedScope);
+    QCOMPARE(outputModuleSelection->deviceId, fixture.slaveId);
+    QCOMPARE(
+        outputModuleSelection->signalIds,
+        QList<Data::SemanticSignalId>(
+            {{"org.embedlabs.test.slot.1.digital-output.channel.1"},
+             {"org.embedlabs.test.slot.1.digital-output.channel.2"}}));
+    QVERIFY(!outputModuleSelection->wholeDevice);
+
+    const std::optional<SemanticControlSelection> outputChannelSelection
+        = model.semanticControlSelection(outputChannelId);
+    QVERIFY(outputChannelSelection);
+    QCOMPARE(outputChannelSelection->scope, expectedScope);
+    QCOMPARE(outputChannelSelection->deviceId, fixture.slaveId);
+    QCOMPARE(
+        outputChannelSelection->signalIds,
+        QList<Data::SemanticSignalId>(
+            {{"org.embedlabs.test.slot.1.digital-output.channel.1"}}));
+    QVERIFY(!outputChannelSelection->wholeDevice);
     QVERIFY(!model.semanticControlSelection(
         modules.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>()));
 
@@ -3491,6 +3513,44 @@ void EtherCATWorkbenchTests::testDeviceAdapterSelectionBuildsModuleChannelTree()
     QVERIFY(!outputIcon.isNull());
     QVERIFY(!inputIcon.isNull());
     QVERIFY(outputIcon.cacheKey() != inputIcon.cacheKey());
+
+    Data::ProjectSnapshot twoSlaveProject = fixture.project;
+    Data::OfflineSlaveConfiguration secondSlave = twoSlaveProject.slaves.constFirst();
+    secondSlave.id = Data::NodeId::create();
+    secondSlave.position = 1;
+    secondSlave.name = "Configured XB6 second";
+    twoSlaveProject.slaves.append(secondSlave);
+    twoSlaveProject.nodes.append(
+        {secondSlave.id,
+         secondSlave.masterId,
+         Data::ProjectNodeKind::Slave,
+         secondSlave.name});
+    model.setProjects({twoSlaveProject});
+
+    const QModelIndex secondConfiguredSlave = model.indexForNodeId(secondSlave.id);
+    QVERIFY(secondConfiguredSlave.isValid());
+    const QModelIndex secondModules = directChildByKind(
+        &model, Core::WorkbenchNodeKind::Modules, secondConfiguredSlave);
+    QVERIFY(secondModules.isValid());
+    const QModelIndex secondOutputModule = model.index(0, 0, secondModules);
+    const QModelIndex secondSlaveOutputChannel = findByDisplayText(
+        &model, "Digital output 1", secondOutputModule);
+    QVERIFY(secondOutputModule.isValid());
+    QVERIFY(secondSlaveOutputChannel.isValid());
+    const std::optional<SemanticControlSelection> secondModuleSelection
+        = model.semanticControlSelection(
+            secondOutputModule.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
+    const std::optional<SemanticControlSelection> secondChannelSelection
+        = model.semanticControlSelection(
+            secondSlaveOutputChannel.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
+    QVERIFY(secondModuleSelection);
+    QVERIFY(secondChannelSelection);
+    QCOMPARE(secondModuleSelection->deviceId, secondSlave.id);
+    QCOMPARE(secondChannelSelection->deviceId, secondSlave.id);
+    QCOMPARE(secondModuleSelection->signalIds, outputModuleSelection->signalIds);
+    QCOMPARE(secondChannelSelection->signalIds, outputChannelSelection->signalIds);
+    QVERIFY(model.semanticControlSelection(outputModuleId));
+    QCOMPARE(model.semanticControlSelection(outputModuleId)->deviceId, fixture.slaveId);
 
     model.setProjects({});
     QCOMPARE(model.rowCount(), 0);
@@ -3522,12 +3582,25 @@ void EtherCATWorkbenchTests::testControlPageSelectionPolicy()
         const Data::NodeId ordinaryModuleId
             = ordinaryModule.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
         QVERIFY(!ordinaryController.treeModel()->controllerTopologySlave(ordinaryModuleId));
+        const QModelIndex ordinaryChannel = findByDisplayText(
+            ordinaryController.treeModel(), "Digital output 1", ordinaryModule);
+        QVERIFY(ordinaryChannel.isValid());
 
         BuiltinPropertyPageProvider ordinaryPages(&ordinaryController);
-        const QList<Core::PropertyPageDescriptor> descriptors = ordinaryPages.pages(
+        const QList<Core::PropertyPageDescriptor> moduleDescriptors = ordinaryPages.pages(
             ordinaryController.treeModel()->contextForIndex(ordinaryModule));
-        QCOMPARE(descriptors.size(), 1);
-        QCOMPARE(descriptors.constFirst().id, Utils::Id(Constants::GENERAL_PAGE_ID));
+        QCOMPARE(moduleDescriptors.size(), 2);
+        QCOMPARE(
+            moduleDescriptors.constFirst().id,
+            Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID));
+        QCOMPARE(moduleDescriptors.constFirst().priority, 50);
+        const QList<Core::PropertyPageDescriptor> channelDescriptors = ordinaryPages.pages(
+            ordinaryController.treeModel()->contextForIndex(ordinaryChannel));
+        QCOMPARE(channelDescriptors.size(), 2);
+        QCOMPARE(
+            channelDescriptors.constFirst().id,
+            Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID));
+        QCOMPARE(channelDescriptors.constFirst().priority, 50);
     }
 
     WorkbenchController controller;
@@ -3761,10 +3834,21 @@ void EtherCATWorkbenchTests::testSemanticControlPageFailsClosed()
         = controller.treeModel()->semanticControlSelection(fixture.slaveId);
     QVERIFY(selection);
     QVERIFY(selection->signalIds.isEmpty());
-    QVERIFY(!controller.treeModel()->semanticControlSelection(
-        outputModule.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>()));
-    QVERIFY(!controller.treeModel()->semanticControlSelection(
-        outputChannel.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>()));
+    QVERIFY(selection->wholeDevice);
+    const std::optional<SemanticControlSelection> moduleSelection
+        = controller.treeModel()->semanticControlSelection(
+            outputModule.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
+    const std::optional<SemanticControlSelection> channelSelection
+        = controller.treeModel()->semanticControlSelection(
+            outputChannel.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
+    QVERIFY(moduleSelection);
+    QVERIFY(channelSelection);
+    QCOMPARE(moduleSelection->deviceId, fixture.slaveId);
+    QCOMPARE(channelSelection->deviceId, fixture.slaveId);
+    QCOMPARE(moduleSelection->signalIds.size(), 2);
+    QCOMPARE(channelSelection->signalIds.size(), 1);
+    QVERIFY(!moduleSelection->wholeDevice);
+    QVERIFY(!channelSelection->wholeDevice);
 
     TestSemanticRuntimeService runtime;
     Data::SemanticRuntimeContext unavailableContext;
@@ -3777,10 +3861,10 @@ void EtherCATWorkbenchTests::testSemanticControlPageFailsClosed()
     BuiltinPropertyPageProvider pages(&controller, nullptr, &runtime);
     const QList<Core::PropertyPageDescriptor> modulePages = pages.pages(moduleContext);
     const QList<Core::PropertyPageDescriptor> channelPages = pages.pages(channelContext);
-    QCOMPARE(modulePages.size(), 1);
-    QCOMPARE(channelPages.size(), 1);
-    QCOMPARE(modulePages.constFirst().id, Utils::Id(Constants::GENERAL_PAGE_ID));
-    QCOMPARE(channelPages.constFirst().id, Utils::Id(Constants::GENERAL_PAGE_ID));
+    QCOMPARE(modulePages.size(), 2);
+    QCOMPARE(channelPages.size(), 2);
+    QCOMPARE(modulePages.constFirst().id, Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID));
+    QCOMPARE(channelPages.constFirst().id, Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID));
     const QList<Core::PropertyPageDescriptor> slavePages = pages.pages(slaveContext);
     const auto slaveControlPage = std::find_if(
         slavePages.cbegin(),
@@ -3799,15 +3883,19 @@ void EtherCATWorkbenchTests::testSemanticControlPageFailsClosed()
         Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID), page.get(), slaveContext);
 
     QLabel *status = page->findChild<QLabel *>("EtherCATSemanticControlStatus");
+    QLabel *selectionScope = page->findChild<QLabel *>("EtherCATSemanticControlScope");
     QTreeWidget *signalTree = page->findChild<QTreeWidget *>("EtherCATSemanticControlSignals");
     QLineEdit *requestedValue
         = page->findChild<QLineEdit *>("EtherCATSemanticControlRequestedValue");
     QPushButton *apply = page->findChild<QPushButton *>("EtherCATSemanticControlApply");
     QVERIFY(status);
+    QVERIFY(selectionScope);
     QVERIFY(signalTree);
     QVERIFY(requestedValue);
     QVERIFY(apply);
     QCOMPARE(status->text(), Tr::tr("Signed semantic binding proof is unavailable."));
+    QCOMPARE(selectionScope->text(), Tr::tr("Whole-device control"));
+    QVERIFY(!selectionScope->isHidden());
     QCOMPARE(signalTree->topLevelItemCount(), 0);
     QVERIFY(signalTree->isHidden());
     QVERIFY(!requestedValue->isEnabled());
@@ -3899,6 +3987,54 @@ void EtherCATWorkbenchTests::testSemanticControlPageFailsClosed()
     readyContext.complete = true;
     const Data::SemanticSignalRuntimeState baselineSignalState = signalState;
     const Data::SemanticRuntimeContext baselineContext = readyContext;
+
+    {
+        std::unique_ptr<QWidget> subnodePage(
+            pages.createPage(Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID), nullptr));
+        QVERIFY(subnodePage);
+        QLabel *subnodeScope
+            = subnodePage->findChild<QLabel *>("EtherCATSemanticControlScope");
+        QLabel *subnodeStatus
+            = subnodePage->findChild<QLabel *>("EtherCATSemanticControlStatus");
+        QTreeWidget *subnodeSignals
+            = subnodePage->findChild<QTreeWidget *>("EtherCATSemanticControlSignals");
+        QVERIFY(subnodeScope);
+        QVERIFY(subnodeStatus);
+        QVERIFY(subnodeSignals);
+
+        pages.updatePage(
+            Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID),
+            subnodePage.get(),
+            moduleContext);
+        QCOMPARE(
+            subnodeScope->text(),
+            Tr::tr("Selected module control | %n signal(s)", nullptr, 2));
+
+        pages.updatePage(
+            Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID),
+            subnodePage.get(),
+            channelContext);
+        QCOMPARE(subnodeScope->text(), Tr::tr("Selected channel control"));
+
+        runtime.publish({baselineContext});
+        QTRY_COMPARE(subnodeStatus->text(), Tr::tr("Runtime signal set is incomplete."));
+        QCOMPARE(subnodeSignals->topLevelItemCount(), 0);
+
+        Data::SemanticSignalRuntimeState selectedChannelState = baselineSignalState;
+        selectedChannelState.target.signalId = channelSelection->signalIds.constFirst();
+        selectedChannelState.definition.id = selectedChannelState.target.signalId;
+        selectedChannelState.binding->target = selectedChannelState.target;
+        Data::SemanticSignalRuntimeState otherSlaveState = selectedChannelState;
+        otherSlaveState.target.deviceId = Data::NodeId::create();
+        otherSlaveState.binding->target = otherSlaveState.target;
+        Data::SemanticRuntimeContext selectedChannelContext = baselineContext;
+        selectedChannelContext.signalStates = {selectedChannelState, otherSlaveState};
+        runtime.publish({selectedChannelContext});
+        QTRY_COMPARE(subnodeSignals->topLevelItemCount(), 1);
+        QCOMPARE(subnodeSignals->topLevelItem(0)->text(0), QString("Digital output 1"));
+        QCOMPARE(subnodeStatus->text(),
+                 Tr::tr("Live values are available. Manual output is not enabled yet."));
+    }
 
     Data::SemanticSignalRuntimeState lowerIdState = signalState;
     lowerIdState.target.signalId = {"org.embedlabs.signed.input.1"};
@@ -4243,6 +4379,35 @@ void EtherCATWorkbenchTests::testSemanticControlPageFailsClosed()
     QVERIFY(signalTree->isHidden());
     QVERIFY(!requestedValue->isEnabled());
     QVERIFY(!apply->isEnabled());
+
+    Data::ProjectSnapshot unmappedModuleProject = fixture.project;
+    unmappedModuleProject.slaves.first().adapterSelection.moduleAssignments.append(
+        {3, 0x00000625, 0x0030, 0x0003});
+    controller.treeModel()->setProjects({unmappedModuleProject});
+    const QModelIndex refreshedSlave
+        = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    const QModelIndex refreshedModules = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Modules, refreshedSlave);
+    const QModelIndex unmappedModule = findByDisplayText(
+        controller.treeModel(), "Slot 3 · DO16", refreshedModules);
+    QVERIFY(unmappedModule.isValid());
+    const Data::NodeId unmappedModuleId
+        = unmappedModule.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    const std::optional<SemanticControlSelection> unmappedSelection
+        = controller.treeModel()->semanticControlSelection(unmappedModuleId);
+    QVERIFY(unmappedSelection);
+    QCOMPARE(unmappedSelection->deviceId, fixture.slaveId);
+    QVERIFY(unmappedSelection->signalIds.isEmpty());
+    QVERIFY(unmappedSelection->wholeDevice);
+    pages.updatePage(
+        Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID),
+        page.get(),
+        controller.treeModel()->contextForIndex(unmappedModule));
+    QCOMPARE(
+        selectionScope->text(),
+        Tr::tr(
+            "Whole-device control | No exact semantic signal mapping is available for this "
+            "node."));
 }
 
 void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()

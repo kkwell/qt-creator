@@ -1916,9 +1916,11 @@ std::optional<SemanticControlSelection> WorkbenchTreeModel::semanticControlSelec
     const Data::NodeId &nodeId) const
 {
     const Node *node = findNode(nodeId);
-    if (!node || node->kind != Core::WorkbenchNodeKind::ConfiguredSlave
-        || node->projectId.isNull() || node->ownerSlaveId.isNull()
-        || node->id != node->ownerSlaveId) {
+    if (!node
+        || (node->kind != Core::WorkbenchNodeKind::ConfiguredSlave
+            && node->kind != Core::WorkbenchNodeKind::Module
+            && node->kind != Core::WorkbenchNodeKind::Channel)
+        || node->projectId.isNull() || node->ownerSlaveId.isNull()) {
         return std::nullopt;
     }
 
@@ -1948,10 +1950,35 @@ std::optional<SemanticControlSelection> WorkbenchTreeModel::semanticControlSelec
     if (!masterExists)
         return std::nullopt;
 
+    QList<Data::SemanticSignalId> signalIds;
+    bool wholeDevice = true;
+    if (node->kind != Core::WorkbenchNodeKind::ConfiguredSlave
+        && !node->semanticSignalIds.isEmpty()) {
+        signalIds = node->semanticSignalIds;
+        std::sort(
+            signalIds.begin(),
+            signalIds.end(),
+            [](const Data::SemanticSignalId &left, const Data::SemanticSignalId &right) {
+                return left.value < right.value;
+            });
+        const bool invalidSignalId = std::any_of(
+            signalIds.cbegin(), signalIds.cend(), [](const Data::SemanticSignalId &signalId) {
+                return signalId.value.isEmpty() || signalId.value != signalId.value.trimmed();
+            });
+        if (invalidSignalId) {
+            signalIds.clear();
+        } else {
+            signalIds.erase(
+                std::unique(signalIds.begin(), signalIds.end()), signalIds.end());
+            wholeDevice = false;
+        }
+    }
+
     return SemanticControlSelection{
         {project->id, slave->masterId},
         slave->id,
-        {},
+        signalIds,
+        wholeDevice,
     };
 }
 

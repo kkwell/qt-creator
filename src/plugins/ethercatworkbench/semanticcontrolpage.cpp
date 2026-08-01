@@ -520,6 +520,7 @@ SemanticControlPage::SemanticControlPage(
     : QWidget(parent)
     , m_controller(controller)
     , m_runtimeService(runtimeService)
+    , m_selectionScope(new QLabel(this))
     , m_status(new QLabel(this))
     , m_signals(new QTreeWidget(this))
     , m_manualControl(new QGroupBox(Tr::tr("Signed actions"), this))
@@ -533,6 +534,11 @@ SemanticControlPage::SemanticControlPage(
     , m_apply(new QPushButton(Tr::tr("Run action"), m_manualControl))
 {
     setProperty("EtherCAT.Workbench.SemanticControlPage", true);
+
+    m_selectionScope->setObjectName("EtherCATSemanticControlScope");
+    m_selectionScope->setWordWrap(true);
+    m_selectionScope->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_selectionScope->setAccessibleName(Tr::tr("Semantic control selection scope"));
 
     m_status->setObjectName("EtherCATSemanticControlStatus");
     m_status->setWordWrap(true);
@@ -623,11 +629,13 @@ SemanticControlPage::SemanticControlPage(
         Utils::StyleHelper::SpacingTokens::PaddingHM,
         Utils::StyleHelper::SpacingTokens::PaddingVM);
     layout->setSpacing(Utils::StyleHelper::SpacingTokens::GapVM);
+    layout->addWidget(m_selectionScope);
     layout->addWidget(m_status);
     layout->addWidget(m_signals, 1);
     layout->addWidget(m_manualControl);
 
     m_actions->setVisible(false);
+    m_selectionScope->setVisible(false);
     m_actionDetail->setText(Tr::tr("No signed action is selected."));
     m_parameterHost->setVisible(false);
     m_operationStatus->setText(Tr::tr("No manual action is active."));
@@ -1083,6 +1091,8 @@ void SemanticControlPage::refresh()
     const QSignalBlocker actionTreeBlocker(m_actions);
     m_signals->clear();
     m_signals->setVisible(false);
+    m_selectionScope->clear();
+    m_selectionScope->setVisible(false);
     m_actions->clear();
     m_actions->setVisible(false);
     m_manualControl->setVisible(true);
@@ -1115,6 +1125,27 @@ void SemanticControlPage::refresh()
         m_status->setText(Tr::tr("Control is unavailable for this selection."));
         return;
     }
+
+    if (selection->wholeDevice) {
+        const bool selectedDevice
+            = m_context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave;
+        m_selectionScope->setText(
+            selectedDevice
+                ? Tr::tr("Whole-device control")
+                : Tr::tr(
+                      "Whole-device control | No exact semantic signal mapping is available for "
+                      "this node."));
+    } else if (m_context.nodeKind == Core::WorkbenchNodeKind::Channel) {
+        m_selectionScope->setText(Tr::tr("Selected channel control"));
+    } else {
+        m_selectionScope->setText(
+            Tr::tr(
+                "Selected module control | %n signal(s)",
+                nullptr,
+                selection->signalIds.size()));
+    }
+    m_selectionScope->setVisible(true);
+
     if (!m_runtimeService) {
         m_status->setText(Tr::tr("Runtime data is unavailable."));
         return;
@@ -1144,22 +1175,24 @@ void SemanticControlPage::refresh()
         return;
     }
 
-    if (!selection->signalIds.isEmpty()) {
-        m_status->setText(Tr::tr("Runtime signal binding is not verified."));
-        return;
-    }
+    QSet<QString> selectedSignalIds;
+    for (const Data::SemanticSignalId &signalId : selection->signalIds)
+        selectedSignalIds.insert(signalId.value);
 
     QList<Data::SemanticSignalRuntimeState> states;
     std::copy_if(
         runtimeContext.signalStates.cbegin(),
         runtimeContext.signalStates.cend(),
         std::back_inserter(states),
-        [&runtimeContext, &selection](const Data::SemanticSignalRuntimeState &state) {
+        [&runtimeContext, &selection, &selectedSignalIds](
+            const Data::SemanticSignalRuntimeState &state) {
             return state.target.controllerId == runtimeContext.controllerId
                    && state.target.scope == selection->scope
                    && state.target.deviceId == selection->deviceId
                    && state.target.kind == Data::SemanticRuntimeTargetKind::Signal
-                   && state.target.actionId.value.isEmpty();
+                   && state.target.actionId.value.isEmpty()
+                   && (selectedSignalIds.isEmpty()
+                       || selectedSignalIds.contains(state.target.signalId.value));
         });
     std::sort(
         states.begin(),
@@ -1170,6 +1203,7 @@ void SemanticControlPage::refresh()
         });
     const bool invalidSignalSet
         = states.isEmpty()
+          || (!selectedSignalIds.isEmpty() && states.size() != selectedSignalIds.size())
           || std::any_of(
               states.cbegin(),
               states.cend(),
@@ -1226,12 +1260,28 @@ void SemanticControlPage::refresh()
         runtimeContext.actionStates.cbegin(),
         runtimeContext.actionStates.cend(),
         std::back_inserter(m_actionStates),
-        [&runtimeContext, &selection](const Data::SemanticActionRuntimeState &action) {
+        [&runtimeContext, &selection, &selectedSignalIds](
+            const Data::SemanticActionRuntimeState &action) {
             return action.target.controllerId == runtimeContext.controllerId
                    && action.target.scope == selection->scope
                    && action.target.deviceId == selection->deviceId
                    && action.target.kind == Data::SemanticRuntimeTargetKind::Action
-                   && action.target.signalId.value.isEmpty();
+                   && action.target.signalId.value.isEmpty()
+                   && (selectedSignalIds.isEmpty()
+                       || (!action.bindings.isEmpty()
+                           && std::all_of(
+                               action.bindings.cbegin(),
+                               action.bindings.cend(),
+                               [&selection, &selectedSignalIds](
+                                   const Data::SemanticRuntimeBinding &binding) {
+                                   return binding.target.scope == selection->scope
+                                          && binding.target.deviceId == selection->deviceId
+                                          && binding.target.kind
+                                                 == Data::SemanticRuntimeTargetKind::Signal
+                                          && binding.target.actionId.value.isEmpty()
+                                          && selectedSignalIds.contains(
+                                              binding.target.signalId.value);
+                               })));
         });
     std::sort(
         m_actionStates.begin(),
