@@ -39,6 +39,8 @@ private slots:
     void testRuntimePackageEvidenceRejectsMismatches();
     void testRuntimePackageEvidenceRepository();
     void testRuntimePackageEvidenceRepositoryRejectsUnsafeInputs();
+    void testTrustedRuntimePackageActivation();
+    void testTrustedRuntimePackageActivationFailsClosed();
     void testInstalledProductionTrustAnchor();
     void testReadOnlySemanticBindingFactory();
     void testReadOnlySemanticBindingFactoryRejectsMismatches();
@@ -61,6 +63,9 @@ private slots:
     void testExecutorFreezesUnknownWhenInfrastructureDisappears_data();
     void testExecutorFreezesUnknownWhenInfrastructureDisappears();
     void testExecutorPublishesVerifiedReadOnlyContext();
+    void testRuntimeBootstrapIsSerializedAndIdempotent();
+    void testRuntimeBootstrapRetriesRejectedRefreshOnce();
+    void testRuntimeBootstrapRequiresEvidenceAndUniqueProvider();
     void testPublishesOneProductionService();
     void testProjectAndProviderLifecycle();
     void testStrictProviderCardinality();

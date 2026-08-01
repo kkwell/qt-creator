@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Embed Labs
 
 #include "semanticruntimeexecutor.h"
+#include "runtimepackageactivationservice_p.h"
 #include "runtimepackageevidencerepository_p.h"
 
 #ifdef WITH_TESTS
@@ -33,6 +34,7 @@ private:
     void shutdown();
 
     std::unique_ptr<SemanticRuntimeExecutor> m_runtime;
+    std::unique_ptr<TrustedRuntimePackageActivationService> m_activation;
     std::shared_ptr<RuntimePackageEvidenceRepository> m_evidenceRepository;
     bool m_registered = false;
 };
@@ -63,7 +65,37 @@ void EtherCATSemanticRuntimePlugin::initialize()
         (evidenceRoot / "compiled-projects").toFSPathString());
     m_runtime = std::make_unique<SemanticRuntimeExecutor>(
         projectService, providerRegistry, nullptr, m_evidenceRepository);
+    const auto exactProjectProofVerifier
+        = [providerRegistry](
+              const Core::RuntimePackageActivationPreparationRequest &,
+              const Data::RuntimePackageActivationProjectCapture &,
+              const VerifiedRuntimePackageEvidence &) -> Utils::Result<> {
+        for (Core::Provider *provider : providerRegistry->providers(
+                 Core::ProviderKind::RuntimePackageCompiler)) {
+            if (provider && provider->isAvailable()) {
+                return Utils::ResultError(
+                    QStringLiteral(
+                        "The API-042 compiler provider does not expose the exact typed compile "
+                        "request evidence required to recompute the current project proof."));
+            }
+        }
+        return Utils::ResultError(
+            QStringLiteral(
+                "No API-042 compiler provider is installed; the exact compile-time project "
+                "proof cannot be reconstructed."));
+    };
+    m_activation = std::make_unique<TrustedRuntimePackageActivationService>(
+        projectService,
+        providerRegistry,
+        m_evidenceRepository,
+        (evidenceRoot / "activation-journal").toFSPathString(),
+        nullptr,
+        15000,
+        45000,
+        std::function<bool()>{},
+        exactProjectProofVerifier);
     ExtensionSystem::PluginManager::addObject(m_runtime.get());
+    ExtensionSystem::PluginManager::addObject(m_activation.get());
     m_registered = true;
 
 #ifdef WITH_TESTS
@@ -80,10 +112,12 @@ ExtensionSystem::IPlugin::ShutdownFlag EtherCATSemanticRuntimePlugin::aboutToShu
 void EtherCATSemanticRuntimePlugin::shutdown()
 {
     if (m_registered) {
+        ExtensionSystem::PluginManager::removeObject(m_activation.get());
         ExtensionSystem::PluginManager::removeObject(m_runtime.get());
         m_registered = false;
     }
     m_runtime.reset();
+    m_activation.reset();
     m_evidenceRepository.reset();
 }
 

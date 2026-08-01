@@ -89,6 +89,22 @@ class TestRuntimePackageActivationService final : public RuntimePackageActivatio
 public:
     using RuntimePackageActivationService::RuntimePackageActivationService;
 
+    RuntimePackageActivationPreparationResult prepare(
+        const RuntimePackageActivationPreparationRequest &request) final
+    {
+        if (!request.isValid()) {
+            return {
+                {},
+                QStringLiteral("The activation preparation request is invalid."),
+            };
+        }
+        return {
+            {},
+            QStringLiteral(
+                "The Core contract test service has no production package verifier."),
+        };
+    }
+
     RuntimePackageActivationCommandResult start(
         const Data::RuntimePackageActivationRequest &request) final
     {
@@ -113,6 +129,15 @@ public:
                 RuntimePackageActivationCommandDisposition::Conflict,
                 *existing,
                 QStringLiteral("The activation OperationId has a different request fingerprint."),
+            };
+        }
+        const auto prepared = m_prepared.constFind(operationId);
+        if (prepared == m_prepared.cend()
+            || *prepared != request.fingerprint()) {
+            return {
+                RuntimePackageActivationCommandDisposition::InvalidRequest,
+                {},
+                QStringLiteral("The activation request was not prepared."),
             };
         }
         const QDateTime now = QDateTime::currentDateTimeUtc();
@@ -147,6 +172,7 @@ public:
             now,
             now,
         };
+        m_prepared.remove(operationId);
         publish(created);
         return {
             RuntimePackageActivationCommandDisposition::Accepted,
@@ -304,6 +330,13 @@ public:
         m_records.insert(record.identity().operationId(), record);
     }
 
+    void authorizeForTest(
+        const Data::RuntimePackageActivationRequest &request)
+    {
+        m_prepared.insert(
+            request.identity().operationId(), request.fingerprint());
+    }
+
 private:
     static QDateTime nextTimestamp(const Data::RuntimePackageActivationRecord &record)
     {
@@ -387,6 +420,10 @@ private:
         Data::RuntimePackageActivationOperationId,
         Data::RuntimePackageActivationRecord>
         m_records;
+    QHash<
+        Data::RuntimePackageActivationOperationId,
+        Data::RuntimePackageActivationSha256>
+        m_prepared;
     quint64 m_sequence = 0;
 };
 
@@ -485,10 +522,14 @@ struct RuntimePackageCompilerFixture
         slave.name = QStringLiteral("XB6 fixture");
         slave.stationAddress = 0x1001;
         slave.esiSha256 = sha256(esiBytes).value();
-        slave.adapterSelection.adapterId = {"solidot.xb6.fixture"};
-        slave.adapterSelection.adapterVersion = QStringLiteral("1.0.0");
-        slave.adapterSelection.adapterContentSha256 = adapterFileSha256.value();
-        slave.adapterSelection.processDataProfileId = QStringLiteral("do16");
+        slave.adapterSelection.adapterId = {
+            "org.embedlabs.adapter.solidot.xb6-fixture",
+        };
+        slave.adapterSelection.adapterVersion = QStringLiteral("0.3.0");
+        slave.adapterSelection.adapterContentSha256
+            = sha256("upper-v3-adapter-manifest").value();
+        slave.adapterSelection.processDataProfileId
+            = QStringLiteral("org.embedlabs.solidot.xb6.do16");
         slave.dc.enabled = false;
         project.slaves = {slave};
 
@@ -581,11 +622,27 @@ struct RuntimePackageCompilerFixture
             Data::RuntimePackageCompilerSourceArtifactKind::AdapterSourceFile,
             QStringLiteral("adapter_bundle/xb6.ecdev.yaml"),
             adapterBytes);
-        deviceSource.adapterId = slave.adapterSelection.adapterId.value;
-        deviceSource.adapterVersion = slave.adapterSelection.adapterVersion;
-        deviceSource.adapterCanonicalSha256 = Data::RuntimePackageCompilerSha256(
-            slave.adapterSelection.adapterContentSha256);
-        deviceSource.pdoProfileId = slave.adapterSelection.processDataProfileId;
+        deviceSource.projectAdapterContractVersion
+            = Data::DeviceAdapterContractVersion::V3;
+        deviceSource.projectAdapterId = slave.adapterSelection.adapterId;
+        deviceSource.projectAdapterVersion
+            = slave.adapterSelection.adapterVersion;
+        deviceSource.projectAdapterContentSha256
+            = Data::RuntimePackageCompilerSha256{
+                slave.adapterSelection.adapterContentSha256};
+        deviceSource.projectControllerAdapterTarget = {
+            QStringLiteral("solidot.xb6.fixture"),
+            QStringLiteral("1.0.0"),
+            adapterFileSha256.value(),
+            sha256(esiBytes).value(),
+        };
+        deviceSource.projectPdoProfileId
+            = slave.adapterSelection.processDataProfileId;
+        deviceSource.projectSignedPdoProfileId = QStringLiteral("do16");
+        deviceSource.adapterId = QStringLiteral("solidot.xb6.fixture");
+        deviceSource.adapterVersion = QStringLiteral("1.0.0");
+        deviceSource.adapterCanonicalSha256 = adapterFileSha256;
+        deviceSource.pdoProfileId = QStringLiteral("do16");
         deviceSource.explicitNoDc = true;
 
         Data::RuntimePackageCompilerSignedTargetProfileEvidence target;
@@ -3296,6 +3353,78 @@ void EtherCATCoreTests::testRuntimePackageActivationContract()
     };
     QVERIFY(identity.isValid());
     QVERIFY(request.isValid());
+    const auto compilerSha256 = [](QByteArrayView bytes) {
+        return RuntimePackageCompilerFixture::sha256(bytes);
+    };
+    const Data::RuntimePackageCompilerSha256 compilerPackageSha256
+        = compilerSha256(packageBytes);
+    const Data::RuntimePackageCompilerSha256 compilerCompanionSha256
+        = compilerSha256(companion);
+    const Data::RuntimePackageCompilerSha256 compilerIntentSha256
+        = compilerSha256("activation-intent");
+    const Data::RuntimePackageCompilerSha256 compilerTargetSha256
+        = compilerSha256("target-profile");
+    const Data::RuntimePackageCompilerSha256 compilerAdapterSha256
+        = compilerSha256("adapter-bundle");
+    const Data::RuntimePackageCompilerSha256 compilerTopologySha256
+        = compilerSha256("topology-evidence");
+    const QByteArray compilerResult
+        = QStringLiteral(
+              "{\"adapter_bundle_sha256\":\"%1\",\"configuration_id\":3701,"
+              "\"effective_project_companion_sha256\":\"%2\","
+              "\"format\":\"ethercat-ide-project-compiler-verification-v1\","
+              "\"intent_sha256\":\"%3\",\"manifest_format_version\":2,"
+              "\"package_sha256\":\"%4\",\"status\":\"pass\","
+              "\"target_profile_sha256\":\"%5\",\"topology_evidence_sha256\":\"%6\"}\n")
+              .arg(
+                  QString::fromLatin1(
+                      compilerAdapterSha256.value().toHex()),
+                  QString::fromLatin1(
+                      compilerCompanionSha256.value().toHex()),
+                  QString::fromLatin1(
+                      compilerIntentSha256.value().toHex()),
+                  QString::fromLatin1(
+                      compilerPackageSha256.value().toHex()),
+                  QString::fromLatin1(
+                      compilerTargetSha256.value().toHex()),
+                  QString::fromLatin1(
+                      compilerTopologySha256.value().toHex()))
+              .toLatin1();
+    const Data::RuntimePackageCompilerOperationId compilerOperationId{
+        QStringLiteral("04204204-2001-4000-8000-000000000370")};
+    const Data::RuntimePackageCompilerVerifyResult compilerVerification{
+        compilerEnvelope(
+            Data::RuntimePackageCompilerCommand::Verify,
+            Data::RuntimePackageCompilerResultStatus::Succeeded,
+            QStringLiteral("pass"),
+            compilerOperationId,
+            3701,
+            compilerSha256("verify-request"),
+            {},
+            RuntimePackageCompilerFixture::canonical(compilerResult)),
+        compilerPackageSha256,
+        2,
+        compilerIntentSha256,
+        compilerCompanionSha256,
+        compilerTargetSha256,
+        compilerAdapterSha256,
+        compilerTopologySha256,
+        true,
+    };
+    QVERIFY(compilerVerification.isSuccess());
+    const RuntimePackageActivationPreparationRequest preparation{
+        identity.operationId(),
+        scope,
+        packageBytes,
+        compiledProject,
+        companion,
+        compilerVerification,
+        true,
+    };
+    QVERIFY(preparation.isValid());
+    RuntimePackageActivationPreparationRequest missingLower = preparation;
+    missingLower.compiledProjectSource.clear();
+    QVERIFY(!missingLower.isValid());
     const Data::RuntimePackageActivationRequest alteredPackage{
         identity,
         QByteArray("altered-package"),
@@ -4351,6 +4480,10 @@ void EtherCATCoreTests::testRuntimePackageActivationContract()
     QVERIFY(!orphanQueryTerminal.isValid());
 
     TestRuntimePackageActivationService service;
+    QCOMPARE(
+        service.start(request).disposition,
+        RuntimePackageActivationCommandDisposition::InvalidRequest);
+    service.authorizeForTest(request);
     const RuntimePackageActivationCommandResult started = service.start(request);
     QVERIFY(started.isValid());
     QCOMPARE(started.disposition, RuntimePackageActivationCommandDisposition::Accepted);
@@ -4403,6 +4536,23 @@ void EtherCATCoreTests::testRuntimePackageCompilerValueSemantics()
     QVERIFY(fixture.request.hasValidReservationInputs());
     QCOMPARE(
         fixture.request.projectSnapshotEvidence.documentRevisionNumber(), quint64(7));
+    const auto &selectedSlave
+        = fixture.request.projectSnapshotEvidence.snapshot().slaves.constFirst();
+    const auto &deviceSource
+        = fixture.request.deviceSourceEvidence.constFirst();
+    QCOMPARE(deviceSource.projectAdapterId, selectedSlave.adapterSelection.adapterId);
+    QCOMPARE(
+        deviceSource.projectAdapterContentSha256.value(),
+        selectedSlave.adapterSelection.adapterContentSha256);
+    QCOMPARE(
+        deviceSource.projectControllerAdapterTarget.adapterId,
+        deviceSource.adapterId);
+    QCOMPARE(
+        deviceSource.projectSignedPdoProfileId,
+        deviceSource.pdoProfileId);
+    QVERIFY(
+        deviceSource.adapterId
+        != selectedSlave.adapterSelection.adapterId.value);
     const Data::RuntimePackageCompilerCompileRequest requestCopy = fixture.request;
     QCOMPARE(requestCopy, fixture.request);
     const Data::RuntimePackageActivationProjectCapture invalidSourceCapture{
@@ -4499,6 +4649,140 @@ void EtherCATCoreTests::testRuntimePackageCompilerValueSemantics()
     Data::RuntimePackageCompilerCompileRequest missingDcDecision = fixture.request;
     missingDcDecision.deviceSourceEvidence[0].explicitNoDc = false;
     QVERIFY(!missingDcDecision.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedUpperAdapter
+        = fixture.request;
+    changedUpperAdapter.deviceSourceEvidence[0].projectAdapterId.value.append(
+        QStringLiteral(".different"));
+    QVERIFY(!changedUpperAdapter.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedUpperAdapterVersion
+        = fixture.request;
+    changedUpperAdapterVersion.deviceSourceEvidence[0].projectAdapterVersion
+        .append(QStringLiteral(".different"));
+    QVERIFY(!changedUpperAdapterVersion.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedUpperAdapterContent
+        = fixture.request;
+    changedUpperAdapterContent.deviceSourceEvidence[0]
+        .projectAdapterContentSha256
+        = RuntimePackageCompilerFixture::sha256("different-upper-manifest");
+    QVERIFY(!changedUpperAdapterContent.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedUpperProfile
+        = fixture.request;
+    changedUpperProfile.deviceSourceEvidence[0].projectPdoProfileId.append(
+        QStringLiteral(".different"));
+    QVERIFY(!changedUpperProfile.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedUpperControllerTarget
+        = fixture.request;
+    changedUpperControllerTarget.deviceSourceEvidence[0]
+        .projectControllerAdapterTarget.adapterId.append(
+            QStringLiteral(".different"));
+    QVERIFY(!changedUpperControllerTarget.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest
+        changedUpperControllerTargetVersion = fixture.request;
+    changedUpperControllerTargetVersion.deviceSourceEvidence[0]
+        .projectControllerAdapterTarget.adapterVersion.append(
+            QStringLiteral(".different"));
+    QVERIFY(!changedUpperControllerTargetVersion.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedUpperControllerSha
+        = fixture.request;
+    changedUpperControllerSha.deviceSourceEvidence[0]
+        .projectControllerAdapterTarget.adapterSha256[0] ^= 1;
+    QVERIFY(!changedUpperControllerSha.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedUpperControllerEsi
+        = fixture.request;
+    changedUpperControllerEsi.deviceSourceEvidence[0]
+        .projectControllerAdapterTarget.esiSha256[0] ^= 1;
+    QVERIFY(!changedUpperControllerEsi.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedUpperPdoBinding
+        = fixture.request;
+    changedUpperPdoBinding.deviceSourceEvidence[0]
+        .projectSignedPdoProfileId.append(QStringLiteral("_different"));
+    QVERIFY(!changedUpperPdoBinding.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedUpperDcBinding
+        = fixture.request;
+    changedUpperDcBinding.deviceSourceEvidence[0].projectSignedDcProfileId
+        = QStringLiteral("sync0_125us");
+    QVERIFY(!changedUpperDcBinding.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedUpperContract
+        = fixture.request;
+    changedUpperContract.deviceSourceEvidence[0]
+        .projectAdapterContractVersion = Data::DeviceAdapterContractVersion::V2;
+    QVERIFY(!changedUpperContract.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedLowerAdapter
+        = fixture.request;
+    changedLowerAdapter.deviceSourceEvidence[0].adapterId.append(
+        QStringLiteral(".different"));
+    QVERIFY(!changedLowerAdapter.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedLowerAdapterVersion
+        = fixture.request;
+    changedLowerAdapterVersion.deviceSourceEvidence[0].adapterVersion.append(
+        QStringLiteral(".different"));
+    QVERIFY(!changedLowerAdapterVersion.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedLowerAdapterSha
+        = fixture.request;
+    changedLowerAdapterSha.deviceSourceEvidence[0].adapterCanonicalSha256
+        = RuntimePackageCompilerFixture::sha256("different-lower-adapter");
+    QVERIFY(!changedLowerAdapterSha.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest changedLowerPdo
+        = fixture.request;
+    changedLowerPdo.deviceSourceEvidence[0].pdoProfileId.append(
+        QStringLiteral("_different"));
+    QVERIFY(!changedLowerPdo.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest dcRequest = fixture.request;
+    Data::ProjectSnapshot dcProject
+        = dcRequest.projectSnapshotEvidence.snapshot();
+    dcProject.masterConfiguration.timingMode
+        = Data::MasterTimingMode::DistributedClocks;
+    dcProject.slaves[0].dc.enabled = true;
+    dcProject.slaves[0].dc.modeName = QStringLiteral("DC");
+    dcProject.slaves[0].dc.assignActivate = 0x0300;
+    dcProject.slaves[0].dc.sync0 = {true, 125000, 0};
+    dcRequest.projectSnapshotEvidence
+        = Data::RuntimePackageCompilerProjectSnapshotEvidence{
+            Data::RuntimePackageActivationProjectCapture{
+                dcProject,
+                QByteArray("{\"format\":\"embed-labs-ethercat-project\"}\n"),
+                7,
+                Data::RuntimePackageActivationDocumentRevisionToken{
+                    "revision-7"},
+                Data::RuntimePackageActivationOriginalBindingToken{
+                    "binding-empty"},
+            }};
+    dcRequest.deviceSourceEvidence[0].explicitNoDc = false;
+    dcRequest.deviceSourceEvidence[0].projectSignedDcProfileId
+        = QStringLiteral("sync0_125us");
+    dcRequest.deviceSourceEvidence[0].signedDcProfileId
+        = QStringLiteral("sync0_125us");
+    QVERIFY(dcRequest.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest mismatchedLowerDc = dcRequest;
+    mismatchedLowerDc.deviceSourceEvidence[0].signedDcProfileId
+        = QStringLiteral("sync0_250us");
+    QVERIFY(!mismatchedLowerDc.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest missingUpperDc = dcRequest;
+    missingUpperDc.deviceSourceEvidence[0].projectSignedDcProfileId.clear();
+    QVERIFY(!missingUpperDc.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest ambiguousNoDc = fixture.request;
+    ambiguousNoDc.deviceSourceEvidence[0].signedDcProfileId
+        = QStringLiteral("sync0_125us");
+    QVERIFY(!ambiguousNoDc.isValid());
 
     Data::RuntimePackageCompilerCompileRequest missingTarget = fixture.request;
     missingTarget.targetProfile = {};

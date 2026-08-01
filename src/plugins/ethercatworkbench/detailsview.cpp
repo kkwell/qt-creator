@@ -2,6 +2,7 @@
 
 #include "detailsview.h"
 
+#include "ethercatworkbenchconstants.h"
 #include "ethercatworkbenchtr.h"
 #include "workbenchcontroller.h"
 #include "workbenchtreemodel.h"
@@ -26,6 +27,22 @@
 namespace EtherCAT::Workbench::Internal {
 
 static constexpr int maxSynchronousPageOperations = 8;
+
+static QString semanticControlPageKey()
+{
+    return QString(Constants::BUILTIN_PAGE_PROVIDER_ID) + '/'
+           + Constants::SEMANTIC_CONTROL_PAGE_ID;
+}
+
+static bool shouldDefaultToControlPage(
+    WorkbenchController *controller, const Core::PropertyPageContext &context)
+{
+    if (context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave)
+        return true;
+    return context.nodeKind == Core::WorkbenchNodeKind::Module && controller
+           && controller->treeModel()
+           && controller->treeModel()->controllerTopologySlave(context.nodeId);
+}
 
 struct PageCandidate
 {
@@ -245,8 +262,14 @@ void DetailsView::setCurrentNode(const Data::NodeId &nodeId)
 {
     if (m_destroying)
         return;
+    const Data::NodeId previousNodeId = m_context.nodeId;
     m_context = m_controller ? m_controller->treeModel()->contextForNodeId(nodeId)
                              : Core::PropertyPageContext();
+    if (m_context.nodeId != previousNodeId
+        && shouldDefaultToControlPage(m_controller, m_context)) {
+        requestPageRebuild(semanticControlPageKey(), {});
+        return;
+    }
     rebuildPages();
 }
 

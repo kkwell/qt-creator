@@ -143,20 +143,22 @@ DeploymentPage::DeploymentPage(WorkbenchController *controller, QWidget *parent)
     , m_configurationId(new QLineEdit(this))
     , m_operationId(new QLineEdit(this))
     , m_newOperation(new QToolButton(this))
-    , m_activate(new QCheckBox(Tr::tr("Activate after validation"), this))
-    , m_rollback(new QCheckBox(Tr::tr("Rollback on explicit activation failure"), this))
+    , m_activate(new QCheckBox(this))
+    , m_rollback(new QCheckBox(this))
     , m_deploy(new QToolButton(this))
     , m_cancel(new QToolButton(this))
+    , m_trustedActivationStatus(new QLabel(this))
+    , m_trustedActivate(new QToolButton(this))
     , m_deploymentSummary(new QLabel(this))
     , m_progress(new QProgressBar(this))
     , m_status(new QTreeWidget(this))
     , m_audit(new QTreeWidget(this))
 {
     setObjectName("EtherCATWorkbenchDeploymentPage");
-    setAccessibleName(Tr::tr("Controller package deployment"));
+    setAccessibleName(Tr::tr("Controller package staging"));
     setAccessibleDescription(
         Tr::tr(
-            "Deploys one already-built and signed ECPKG through the selected controller "
+            "Stages and validates one already-built ECPKG through the selected controller "
             "adapter's transactional package service."));
 
     m_guidance->setObjectName("EtherCATDeploymentGuidance");
@@ -164,9 +166,9 @@ DeploymentPage::DeploymentPage(WorkbenchController *controller, QWidget *parent)
     m_guidance->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_guidance->setText(
         Tr::tr(
-            "Select an immutable, already-built and signed ECPKG. Deployment requires an "
-            "exclusive control lease, transactional Bulk support, and a ready controller in "
-            "Shutdown. Embed Labs does not construct, rewrite, or sign the package."));
+            "Select an immutable, already-built ECPKG. This page only uploads and validates it. "
+            "Activation and node control binding use the separate trusted project workflow "
+            "below."));
 
     m_artifactPath->setObjectName("EtherCATDeploymentArtifactPath");
     m_artifactPath->setAccessibleName(Tr::tr("ECPKG artifact path"));
@@ -215,16 +217,13 @@ DeploymentPage::DeploymentPage(WorkbenchController *controller, QWidget *parent)
     operationLayout->addWidget(m_newOperation);
 
     m_activate->setObjectName("EtherCATDeploymentActivate");
-    m_activate->setChecked(true);
+    m_activate->setChecked(false);
+    m_activate->setEnabled(false);
+    m_activate->hide();
     m_rollback->setObjectName("EtherCATDeploymentRollback");
-    m_rollback->setChecked(true);
-    auto optionsWidget = new QWidget(this);
-    auto optionsLayout = new QHBoxLayout(optionsWidget);
-    optionsLayout->setContentsMargins(QMargins());
-    optionsLayout->setSpacing(Utils::StyleHelper::SpacingTokens::GapHM);
-    optionsLayout->addWidget(m_activate);
-    optionsLayout->addWidget(m_rollback);
-    optionsLayout->addStretch();
+    m_rollback->setChecked(false);
+    m_rollback->setEnabled(false);
+    m_rollback->hide();
 
     auto form = new QFormLayout;
     form->setContentsMargins(QMargins());
@@ -234,11 +233,10 @@ DeploymentPage::DeploymentPage(WorkbenchController *controller, QWidget *parent)
     form->addRow(QString(), m_artifactSummary);
     form->addRow(Tr::tr("Configuration ID:"), m_configurationId);
     form->addRow(Tr::tr("Operation ID:"), operationWidget);
-    form->addRow(Tr::tr("Deployment options:"), optionsWidget);
 
     m_deploy->setObjectName("EtherCATDeploymentStart");
-    m_deploy->setText(Tr::tr("Deploy Package"));
-    m_deploy->setAccessibleName(Tr::tr("Deploy controller package"));
+    m_deploy->setText(Tr::tr("Stage Package"));
+    m_deploy->setAccessibleName(Tr::tr("Stage and validate controller package"));
     m_deploy->setIcon(Utils::Icons::EXPORTFILE_TOOLBAR.icon());
     m_deploy->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_cancel->setObjectName("EtherCATDeploymentCancel");
@@ -253,6 +251,37 @@ DeploymentPage::DeploymentPage(WorkbenchController *controller, QWidget *parent)
     commandLayout->addWidget(m_deploy);
     commandLayout->addWidget(m_cancel);
     commandLayout->addStretch();
+
+    m_trustedActivationStatus->setObjectName(
+        "EtherCATTrustedActivationStatus");
+    m_trustedActivationStatus->setWordWrap(true);
+    m_trustedActivationStatus->setTextInteractionFlags(
+        Qt::TextSelectableByMouse);
+    m_trustedActivate->setObjectName("EtherCATTrustedActivationStart");
+    m_trustedActivate->setText(Tr::tr("Activate Verified Project"));
+    m_trustedActivate->setAccessibleName(
+        Tr::tr("Activate the verified project package"));
+    m_trustedActivate->setIcon(Utils::Icons::RUN_SMALL_TOOLBAR.icon());
+    m_trustedActivate->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+
+    auto trustedActivationGroup
+        = new QGroupBox(Tr::tr("Trusted project activation"), this);
+    auto trustedActivationLayout = new QVBoxLayout(trustedActivationGroup);
+    trustedActivationLayout->setContentsMargins(
+        Utils::StyleHelper::SpacingTokens::PaddingHS,
+        Utils::StyleHelper::SpacingTokens::PaddingVS,
+        Utils::StyleHelper::SpacingTokens::PaddingHS,
+        Utils::StyleHelper::SpacingTokens::PaddingVS);
+    trustedActivationLayout->setSpacing(
+        Utils::StyleHelper::SpacingTokens::GapVS);
+    trustedActivationLayout->addWidget(m_trustedActivationStatus);
+    auto trustedActivationCommands = new QHBoxLayout;
+    trustedActivationCommands->setContentsMargins(QMargins());
+    trustedActivationCommands->setSpacing(
+        Utils::StyleHelper::SpacingTokens::GapHM);
+    trustedActivationCommands->addWidget(m_trustedActivate);
+    trustedActivationCommands->addStretch();
+    trustedActivationLayout->addLayout(trustedActivationCommands);
 
     m_deploymentSummary->setObjectName("EtherCATDeploymentSummary");
     m_deploymentSummary->setWordWrap(true);
@@ -320,6 +349,7 @@ DeploymentPage::DeploymentPage(WorkbenchController *controller, QWidget *parent)
     layout->addWidget(m_guidance);
     layout->addLayout(form);
     layout->addLayout(commandLayout);
+    layout->addWidget(trustedActivationGroup);
     layout->addWidget(stateGroup, 1);
     layout->addWidget(auditGroup, 1);
 
@@ -333,25 +363,26 @@ DeploymentPage::DeploymentPage(WorkbenchController *controller, QWidget *parent)
         prepareNewOperation();
         refresh();
     });
-    connect(m_activate, &QCheckBox::toggled, this, [this](bool checked) {
-        m_rollback->setEnabled(checked);
-        prepareNewOperation();
-        refresh();
-    });
-    connect(m_rollback, &QCheckBox::toggled, this, [this] {
-        prepareNewOperation();
-        refresh();
-    });
     connect(m_newOperation, &QToolButton::clicked, this, [this] {
         prepareNewOperation();
         refresh();
     });
     connect(m_deploy, &QToolButton::clicked, this, &DeploymentPage::deploy);
+    connect(
+        m_trustedActivate,
+        &QToolButton::clicked,
+        this,
+        &DeploymentPage::activateTrustedPackage);
     connect(m_cancel, &QToolButton::clicked, this, &DeploymentPage::cancelDeployment);
     if (m_controller) {
         connect(
             m_controller,
             &WorkbenchController::controllerConnectionChanged,
+            this,
+            &DeploymentPage::refresh);
+        connect(
+            m_controller,
+            &WorkbenchController::trustedRuntimePackageActivationChanged,
             this,
             &DeploymentPage::refresh);
     }
@@ -453,7 +484,7 @@ void DeploymentPage::deploy()
     const std::optional<quint64> configuredId = configurationId();
     if (!configuredId) {
         m_controller->writeControllerOutput(
-            Tr::tr("Cannot deploy the controller package: enter a nonzero configuration ID."),
+            Tr::tr("Cannot stage the controller package: enter a nonzero configuration ID."),
             ControllerOutputLevel::Error);
         refresh();
         return;
@@ -471,25 +502,42 @@ void DeploymentPage::deploy()
     request.operationId = m_operationId->text();
     request.artifact = m_artifact;
     request.configurationId = *configuredId;
-    request.activate = m_activate->isChecked();
-    request.rollbackOnActivationFailure = request.activate && m_rollback->isChecked();
+    // This legacy page has no trusted compiler/activation coordinator. It must never turn an
+    // arbitrary selected artifact into an active runtime or a semantic control binding.
+    request.activate = false;
+    request.rollbackOnActivationFailure = false;
     const Utils::Result<> result = m_controller->deployControllerPackage(scope, request);
     if (!result) {
         m_controller->writeControllerOutput(
-            Tr::tr("Cannot deploy the controller package: %1").arg(result.error()),
+            Tr::tr("Cannot stage the controller package: %1").arg(result.error()),
             ControllerOutputLevel::Error);
         refresh();
         return;
     }
 
     m_controller->writeControllerOutput(
-        Tr::tr("Queued package deployment [%1] from %2: %3 bytes, SHA-256 %4, configuration %5.")
+        Tr::tr("Package staging queued [%1]: configuration %2, SHA-256 %3.")
             .arg(
                 request.operationId,
-                m_loadedArtifactPath.toUserOutput(),
-                QString::number(request.artifact.size()),
-                QString::fromLatin1(m_artifactSha256.toHex()),
-                QString::number(request.configurationId)));
+                QString::number(request.configurationId),
+                QString::fromLatin1(m_artifactSha256.toHex())));
+    refresh();
+}
+
+void DeploymentPage::activateTrustedPackage()
+{
+    if (!m_controller)
+        return;
+    const Data::ControllerConnectionScope scope{
+        m_context.projectId, m_context.nodeId};
+    const Utils::Result<> result
+        = m_controller->startTrustedRuntimePackageActivation(scope);
+    if (!result) {
+        m_controller->writeControllerOutput(
+            Tr::tr("Trusted package activation unavailable: %1")
+                .arg(result.error()),
+            ControllerOutputLevel::Error);
+    }
     refresh();
 }
 
@@ -524,8 +572,8 @@ void DeploymentPage::refresh()
     m_artifactPath->setEnabled(masterContext);
     m_browse->setEnabled(masterContext);
     m_configurationId->setEnabled(masterContext);
-    m_activate->setEnabled(masterContext);
-    m_rollback->setEnabled(masterContext && m_activate->isChecked());
+    m_activate->setEnabled(false);
+    m_rollback->setEnabled(false);
     m_newOperation->setEnabled(masterContext);
 
     Data::ControllerConnectionSnapshot snapshot;
@@ -546,10 +594,29 @@ void DeploymentPage::refresh()
     m_deploy->setEnabled(unavailable.isEmpty());
     m_deploy->setToolTip(
         unavailable.isEmpty()
-            ? Tr::tr("Upload, validate, and optionally activate the exact selected ECPKG.")
+            ? Tr::tr("Upload and validate the exact selected ECPKG without activating it.")
             : unavailable);
 
     const Data::ControllerConnectionScope scope{m_context.projectId, m_context.nodeId};
+    const QString trustedUnavailable
+        = masterContext && m_controller
+              ? m_controller
+                    ->trustedRuntimePackageActivationUnavailableReason(scope)
+              : Tr::tr(
+                    "Select an EtherCAT Master in an open project before trusted activation.");
+    m_trustedActivationStatus->setText(
+        masterContext && m_controller
+            ? m_controller->trustedRuntimePackageActivationStatus(scope)
+            : trustedUnavailable);
+    m_trustedActivationStatus->setAccessibleDescription(
+        m_trustedActivationStatus->text());
+    m_trustedActivate->setEnabled(trustedUnavailable.isEmpty());
+    m_trustedActivate->setToolTip(
+        trustedUnavailable.isEmpty()
+            ? Tr::tr(
+                  "Prepare and start only the exact production-verified API-042 project package.")
+            : trustedUnavailable);
+
     const bool canCancel = masterContext && m_controller
                            && m_controller->canCancelControllerPackageDeployment(scope);
     m_cancel->setEnabled(canCancel);
@@ -640,7 +707,7 @@ QString DeploymentPage::inputUnavailableReason() const
 {
     if (m_context.nodeKind != Core::WorkbenchNodeKind::Master || m_context.projectId.isNull()
         || m_context.nodeId.isNull()) {
-        return Tr::tr("Select an EtherCAT Master before deploying a package.");
+        return Tr::tr("Select an EtherCAT Master before staging a package.");
     }
     if (m_artifactPath->text().trimmed().isEmpty())
         return Tr::tr("Select an ECPKG artifact.");

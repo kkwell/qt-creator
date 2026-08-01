@@ -30,35 +30,11 @@ static void addTokenBytes(QCryptographicHash &hash, QByteArrayView bytes)
     hash.addData(bytes);
 }
 
-static void addTokenString(QCryptographicHash &hash, const QString &value)
-{
-    addTokenBytes(hash, value.toUtf8());
-}
-
 static void addTokenU64(QCryptographicHash &hash, quint64 value)
 {
     QByteArray bytes(sizeof(value), '\0');
     qToBigEndian<quint64>(value, bytes.data());
     hash.addData(bytes);
-}
-
-static Data::RuntimePackageActivationOriginalBindingToken
-runtimePackageActivationBindingToken(
-    const Data::SemanticBindingArtifactReference &reference)
-{
-    QCryptographicHash hash(QCryptographicHash::Sha256);
-    hash.addData(
-        QByteArrayView("embed-labs.runtime-package-activation.project-binding-token.v1"));
-    addTokenString(hash, reference.artifactId);
-    addTokenBytes(hash, reference.artifactSha256);
-    addTokenBytes(hash, reference.projectConfigurationSha256);
-    addTokenU64(hash, quint64(reference.projectDeviceBindings.size()));
-    for (const Data::SemanticProjectDeviceBinding &binding :
-         reference.projectDeviceBindings) {
-        addTokenString(hash, binding.slaveId.toString());
-        addTokenString(hash, binding.projectDeviceId);
-    }
-    return Data::RuntimePackageActivationOriginalBindingToken(hash.result());
 }
 
 class RenameProjectCommand final : public QUndoCommand
@@ -1029,7 +1005,7 @@ EtherCATProjectDocument::captureRuntimePackageActivationProject() const
         serializedProject,
         m_runtimePackageActivationRevisionSequence,
         runtimePackageActivationDocumentRevisionToken(serializedProject),
-        runtimePackageActivationBindingToken(m_snapshot.masterBindingArtifact),
+        Data::runtimePackageActivationBindingToken(m_snapshot.masterBindingArtifact),
     };
     if (!capture.isValid()) {
         return Utils::ResultError(
@@ -1057,7 +1033,7 @@ EtherCATProjectDocument::compareAndSetMasterBindingArtifact(
     const Data::RuntimePackageActivationDocumentRevisionToken currentDocumentRevision
         = runtimePackageActivationDocumentRevisionToken(currentSerializedProject);
     const Data::RuntimePackageActivationOriginalBindingToken currentBinding
-        = runtimePackageActivationBindingToken(m_snapshot.masterBindingArtifact);
+        = Data::runtimePackageActivationBindingToken(m_snapshot.masterBindingArtifact);
     if (currentDocumentRevision != expectedDocumentRevision
         || currentBinding != expectedBinding) {
         return Data::RuntimePackageActivationProjectCompareAndSetResult{
@@ -1098,7 +1074,7 @@ EtherCATProjectDocument::compareAndSetMasterBindingArtifact(
     const Data::RuntimePackageActivationDocumentRevisionToken resultingDocumentRevision
         = runtimePackageActivationDocumentRevisionToken(resultingSerializedProject);
     const Data::RuntimePackageActivationOriginalBindingToken resultingBinding
-        = runtimePackageActivationBindingToken(m_snapshot.masterBindingArtifact);
+        = Data::runtimePackageActivationBindingToken(m_snapshot.masterBindingArtifact);
     const Data::RuntimePackageActivationProjectCommit commit{
         currentDocumentRevision,
         currentBinding,
@@ -1167,6 +1143,13 @@ Utils::Result<> EtherCATProjectDocument::saveImpl(const Utils::FilePath &filePat
         return Utils::ResultError(Tr::tr("Save As is not supported for an open EtherCAT project."));
     }
 
+    const QByteArray serializedProject = serializeProject(m_snapshot);
+    if (!isModified()) {
+        const Utils::Result<QByteArray> savedProject = destination.fileContents();
+        if (savedProject && *savedProject == serializedProject)
+            return Utils::ResultOk;
+    }
+
     if (m_migrationPending && destination == this->filePath()) {
         const Utils::Result<> backupResult = createMigrationBackup(this->filePath());
         if (!backupResult)
@@ -1174,7 +1157,7 @@ Utils::Result<> EtherCATProjectDocument::saveImpl(const Utils::FilePath &filePat
     }
 
     Utils::FileSaver saver(destination, QIODevice::Text);
-    if (!saver.write(serializeProject(m_snapshot)))
+    if (!saver.write(serializedProject))
         return Utils::ResultError(saver.errorString());
     const Utils::Result<> saveResult = saver.finalize();
     if (!saveResult)
@@ -1183,7 +1166,11 @@ Utils::Result<> EtherCATProjectDocument::saveImpl(const Utils::FilePath &filePat
     m_migrationPending = false;
     m_migrationSourceVersion = -1;
     m_snapshot.migrated = false;
-    m_undoStack.setClean();
+    {
+        const QScopedValueRollback suppressPublication(
+            m_suppressUndoPublication, true);
+        m_undoStack.setClean();
+    }
     publishSnapshot();
     return Utils::ResultOk;
 }

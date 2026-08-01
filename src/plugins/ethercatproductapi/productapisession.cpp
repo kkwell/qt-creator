@@ -10,6 +10,7 @@
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QMetaEnum>
 #include <QRandomGenerator>
 #include <QSet>
 #include <QTcpSocket>
@@ -69,6 +70,43 @@ QString channelDisplayName(Protocol::Role role)
     }
     return {};
 }
+
+QString sanitizedSocketErrorString(const QString &errorString)
+{
+    QString sanitized = errorString;
+    for (QChar &character : sanitized) {
+        if (character.isNull() || character.category() == QChar::Other_Control)
+            character = QLatin1Char(' ');
+    }
+    return sanitized.simplified();
+}
+
+struct ControllerConnectionFailure
+{
+    Protocol::Role role = Protocol::Role::Control;
+    QAbstractSocket::SocketError socketError = QAbstractSocket::UnknownSocketError;
+    QString socketErrorString;
+
+    QString detail() const
+    {
+        const QMetaEnum socketErrorMetaEnum
+            = QMetaEnum::fromType<QAbstractSocket::SocketError>();
+        const char *socketErrorKey = socketErrorMetaEnum.valueToKey(int(socketError));
+        const QString socketErrorName = socketErrorKey
+                                            ? QString::fromLatin1(socketErrorKey)
+                                            : QStringLiteral("SocketError");
+        QStringList fields{
+            Tr::tr("%1 channel").arg(channelDisplayName(role)),
+            QStringLiteral("QAbstractSocket::%1 (%2)")
+                .arg(socketErrorName)
+                .arg(int(socketError)),
+        };
+        const QString sanitizedError = sanitizedSocketErrorString(socketErrorString);
+        if (!sanitizedError.isEmpty())
+            fields.append(sanitizedError);
+        return fields.join(Tr::tr(" · "));
+    }
+};
 
 int roleMaximumPayloadBytes(Protocol::Role role)
 {
@@ -2431,7 +2469,8 @@ public:
         Data::ControllerOperation operation,
         const QString &summary,
         bool requestMayHaveReachedController = true,
-        std::optional<quint64> requestId = {})
+        std::optional<quint64> requestId = {},
+        const QString &detail = {})
     {
         if (shuttingDown || userDisconnecting)
             return;
@@ -2511,7 +2550,7 @@ public:
             role,
             operation,
             summary,
-            {},
+            detail,
             {},
             {},
             Data::ControllerRetryDisposition::Reconnect);
@@ -2610,16 +2649,25 @@ public:
             value.socket,
             &QTcpSocket::errorOccurred,
             q,
-            [this, expectedGeneration, expectedEpoch, role](QAbstractSocket::SocketError) {
+            [this, expectedGeneration, expectedEpoch, role](
+                QAbstractSocket::SocketError socketError) {
                 Channel &current = channel(role);
                 if (generation != expectedGeneration || current.epoch != expectedEpoch)
                     return;
+                const ControllerConnectionFailure failure{
+                    role,
+                    socketError,
+                    current.socket ? current.socket->errorString() : QString(),
+                };
                 if (role == Protocol::Role::Control && current.helloResumeSessionId)
                     clearResumeCandidate();
                 failNetwork(
                     role,
                     Data::ControllerOperation::Connect,
-                    Tr::tr("The controller channel connection failed."));
+                    Tr::tr("The controller channel connection failed."),
+                    true,
+                    {},
+                    failure.detail());
             });
         QObject::connect(
             value.socket,

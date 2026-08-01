@@ -1164,6 +1164,11 @@ public:
         };
     }
 
+    void stopListening(Protocol::Role role)
+    {
+        serverFor(role).close();
+    }
+
     QStringList violations() const { return m_violations; }
     quint32 serviceState() const { return m_serviceState; }
     bool leaseOwned() const { return m_leaseOwned; }
@@ -5364,6 +5369,94 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
         alarm->detail,
         Tr::tr("OSL_ERR_TIMEOUT (%1), phase FAILED (%2)").arg(-2).arg(255));
 
+    struct AlarmTextCase
+    {
+        quint32 code;
+        quint32 detail0;
+        quint32 detail1;
+        quint32 detail2;
+        QString codeName;
+        QString detail;
+    };
+    const QList<AlarmTextCase> alarmTextCases{
+        {1, 3, 6, 0, Tr::tr("State changed"), Tr::tr("state 3 -> 6")},
+        {2,
+         17,
+         quint32(-3),
+         6,
+         Tr::tr("Command rejected"),
+         Tr::tr("command 17, result -3, state 6")},
+        {3,
+         quint32(-10),
+         255,
+         0,
+         Tr::tr("Runtime error"),
+         Tr::tr("OSL_ERR_CYCLE_LATE (%1), phase FAILED (%2)").arg(-10).arg(255)},
+        {4,
+         73,
+         500,
+         1000,
+         Tr::tr("DC drift"),
+         Tr::tr("measured 73 ns, warning 500 ns, fault 1000 ns")},
+        {6,
+         1,
+         0,
+         0,
+         Tr::tr("Safe output changed"),
+         Tr::tr("safe output value 1")},
+        {7,
+         quint32(-21),
+         12,
+         3701,
+         Tr::tr("Configuration failed"),
+         Tr::tr("result -21, generation 12, configuration 3701")},
+        {8,
+         0,
+         12,
+         3701,
+         Tr::tr("Configuration accepted"),
+         Tr::tr("result 0, generation 12, configuration 3701")},
+        {9,
+         0,
+         0,
+         0,
+         Tr::tr("Network quick stop"),
+         Tr::tr("operator-requested non-safety stop")},
+        {10,
+         2,
+         9,
+         0x06010002,
+         Tr::tr("Activation diagnostic"),
+         Tr::tr("phase 2, record 9, detail 0x06010002: "
+                "attempt to write a read-only object")},
+    };
+    quint32 alarmTextSequence = 20;
+    for (const AlarmTextCase &alarmTextCase : alarmTextCases) {
+        const auto decoded = Protocol::decodeAlarmEvent(
+            responseFrame(
+                Protocol::MessageType::AlarmRaised,
+                alarmEventPayload(
+                    alarmTextSequence++,
+                    alarmTextCase.code,
+                    3,
+                    1,
+                    1,
+                    alarmTextCase.detail0,
+                    alarmTextCase.detail1,
+                    alarmTextCase.detail2,
+                    0),
+                3,
+                Protocol::Flag::Response | Protocol::Flag::Important),
+            &error);
+        QVERIFY(decoded);
+        QVERIFY(!error);
+        QCOMPARE(decoded->codeName, alarmTextCase.codeName);
+        QCOMPARE(decoded->detail, alarmTextCase.detail);
+        QCOMPARE(decoded->detail0, alarmTextCase.detail0);
+        QCOMPARE(decoded->detail1, alarmTextCase.detail1);
+        QCOMPARE(decoded->detail2, alarmTextCase.detail2);
+    }
+
     Protocol::Frame invalidAlarm = alarmFrame;
     invalidAlarm.header.flags = Protocol::flagValue(Protocol::Flag::Response);
     error = {};
@@ -5402,6 +5495,7 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
         &error);
     QVERIFY(faultClearedAlarm);
     QCOMPARE(faultClearedAlarm->codeName, Tr::tr("Fault cleared"));
+    QCOMPARE(faultClearedAlarm->detail, Tr::tr("fault mask 0x0000000000008000"));
     QCOMPARE(faultClearedAlarm->severity, Data::ControllerSeverity::Information);
     QCOMPARE(faultClearedAlarm->source, Data::ControllerAlarmSource::Service);
 
@@ -10764,6 +10858,129 @@ void EtherCATProductApiTests::testMalformedSessionCapacity()
     QVERIFY(provider.sessionForTests()->isIdleForTests());
     QVERIFY(controller.violations().isEmpty());
     QVERIFY(provider.disconnectFromController());
+}
+
+void EtherCATProductApiTests::testChannelConnectionFailureDiagnostics_data()
+{
+    QTest::addColumn<int>("role");
+    QTest::addColumn<QString>("channelId");
+    QTest::addColumn<QString>("channelName");
+
+    QTest::newRow("control")
+        << int(Protocol::Role::Control) << QStringLiteral("control") << Tr::tr("Control");
+    QTest::newRow("push")
+        << int(Protocol::Role::Push) << QStringLiteral("push") << Tr::tr("Push");
+    QTest::newRow("bulk")
+        << int(Protocol::Role::Bulk) << QStringLiteral("bulk") << Tr::tr("Bulk");
+}
+
+void EtherCATProductApiTests::testChannelConnectionFailureDiagnostics()
+{
+    QFETCH(int, role);
+    QFETCH(QString, channelId);
+    QFETCH(QString, channelName);
+
+    LoopbackController controller;
+    QVERIFY(controller.start());
+    const ProductApiSession::EndpointSet endpoints = controller.endpoints();
+    controller.stopListening(static_cast<Protocol::Role>(role));
+
+    ProductApiSession::Options options = testOptions();
+    const int productionReconnectAttempts = ProductApiSession::Options{}.reconnectAttempts;
+    QVERIFY(productionReconnectAttempts > 0);
+    options.reconnectAttempts = productionReconnectAttempts;
+    ProductApiConnectionProvider provider(endpoints, options);
+    const quint64 generationBeforeConnect = provider.connectionSnapshot().sessionGeneration;
+    QList<Data::ControllerConnectionSnapshot> observedSnapshots;
+    connect(
+        &provider,
+        &Core::ControllerConnectionProvider::connectionSnapshotChanged,
+        &provider,
+        [&provider, &observedSnapshots] {
+            observedSnapshots.append(provider.connectionSnapshot());
+        });
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+
+    const qsizetype snapshotCountAtTerminal = observedSnapshots.size();
+    QTest::qWait(options.reconnectMaximumDelayMs * 2);
+    QCOMPARE(observedSnapshots.size(), snapshotCountAtTerminal);
+
+    const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+    const int connectionAttempts = productionReconnectAttempts + 1;
+    QCOMPARE(
+        snapshot.sessionGeneration,
+        generationBeforeConnect + quint64(connectionAttempts + 1));
+    const Protocol::Role failedRole = static_cast<Protocol::Role>(role);
+    const std::array<Protocol::Role, 3> roles{
+        Protocol::Role::Control,
+        Protocol::Role::Push,
+        Protocol::Role::Bulk,
+    };
+    for (const Protocol::Role candidate : roles) {
+        const int expectedAccepts
+            = failedRole != Protocol::Role::Control && candidate != failedRole
+                  ? connectionAttempts
+                  : 0;
+        QCOMPARE(controller.acceptCount(candidate), expectedAccepts);
+    }
+
+    QCOMPARE(
+        std::count_if(
+            observedSnapshots.cbegin(),
+            observedSnapshots.cend(),
+            [](const Data::ControllerConnectionSnapshot &observed) {
+                return observed.state == Data::ControllerConnectionState::Disconnected;
+            }),
+        1);
+    QVERIFY(std::none_of(
+        observedSnapshots.cbegin(),
+        observedSnapshots.cend(),
+        [](const Data::ControllerConnectionSnapshot &observed) {
+            return observed.state == Data::ControllerConnectionState::Connected;
+        }));
+    QVERIFY(!observedSnapshots.isEmpty());
+    QCOMPARE(
+        observedSnapshots.constLast().state,
+        Data::ControllerConnectionState::Disconnected);
+
+    QVERIFY(snapshot.lastError);
+    const Data::ControllerOperationError &error = *snapshot.lastError;
+    QCOMPARE(error.source, Data::ControllerErrorSource::Network);
+    QCOMPARE(error.operation, Data::ControllerOperation::Connect);
+    QCOMPARE(error.channelId, channelId);
+    QCOMPARE(error.summary, Tr::tr("The controller channel connection failed."));
+    QVERIFY(error.detail.startsWith(Tr::tr("%1 channel · ").arg(channelName)));
+    QVERIFY(error.detail.contains(
+        QStringLiteral("QAbstractSocket::ConnectionRefusedError (0) · ")));
+    QVERIFY(!error.detail.endsWith(QLatin1String(" · ")));
+    QVERIFY(!error.detail.contains(QLatin1Char('\r')));
+    QVERIFY(!error.detail.contains(QLatin1Char('\n')));
+    QCOMPARE(error.detail, error.detail.simplified());
+
+    for (const Data::ControllerChannelStatus &channel : snapshot.channels)
+        QCOMPARE(channel.state, Data::ControllerChannelState::Disconnected);
+    QVERIFY(!snapshot.session);
+    QCOMPARE(snapshot.protocolVersion, Data::ControllerProtocolVersion{});
+    QVERIFY(!snapshot.connectedAt.isValid());
+    QVERIFY(!snapshot.lastHeartbeatAt.isValid());
+    QVERIFY(!snapshot.controllerState);
+    QVERIFY(snapshot.recentAlarms.isEmpty());
+    QVERIFY(!snapshot.performance);
+    QVERIFY(!snapshot.capability);
+    QVERIFY(!snapshot.package);
+    QVERIFY(!snapshot.firmware);
+    QVERIFY(!snapshot.topology);
+    QVERIFY(!provider.runtimeResourceCatalog());
+    QVERIFY(!provider.runtimeResourceSnapshot());
+    QCOMPARE(provider.sessionForTests()->activeSocketCountForTests(), 0);
+    QCOMPARE(provider.sessionForTests()->pendingRequestCountForTests(), 0);
+    QVERIFY(provider.sessionForTests()->isIdleForTests());
+    QVERIFY(controller.violations().isEmpty());
 }
 
 void EtherCATProductApiTests::testSessionTimeoutAndShutdown()

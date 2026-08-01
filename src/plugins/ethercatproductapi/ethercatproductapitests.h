@@ -66,6 +66,8 @@ private slots:
     void testMalformedControllerStatus();
     void testSessionCapacityRetry();
     void testMalformedSessionCapacity();
+    void testChannelConnectionFailureDiagnostics_data();
+    void testChannelConnectionFailureDiagnostics();
     void testSessionTimeoutAndShutdown();
     void testInFlightShutdown();
     void testSessionReconnectAndGeneration();

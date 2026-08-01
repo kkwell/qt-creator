@@ -5,12 +5,62 @@
 #include "ethercatcore_global.h"
 
 #include <ethercatdata/runtimepackageactivation.h>
+#include <ethercatdata/runtimepackagecompiler.h>
 
 #include <QObject>
 
 #include <optional>
 
 namespace EtherCAT::Core {
+
+// Read-only preparation input produced after the compiler provider has verified
+// the exact finalized ECPKG. compiledProjectSource is the API-042 lower
+// compiler's exact project.json output; it is deliberately distinct from the
+// current Qt .ecatproject bytes captured by ProjectService. Callers supply no
+// binding token, artifact ID, catalog identity, or semantic proof; the
+// activation service captures and derives those values from the current project
+// and independently verified production package.
+struct ETHERCATCORE_EXPORT RuntimePackageActivationPreparationRequest
+{
+    Data::RuntimePackageActivationOperationId operationId;
+    Data::ControllerConnectionScope scope;
+    QByteArray packageBytes;
+    QByteArray compiledProjectSource;
+    QByteArray effectiveProjectCompanion;
+    Data::RuntimePackageCompilerVerifyResult compilerVerification;
+    bool rollbackOnActivationFailure = true;
+
+    bool isValid() const
+    {
+        return operationId.isValid() && !scope.projectId.isNull() && !scope.masterId.isNull()
+               && !packageBytes.isEmpty() && !compiledProjectSource.isEmpty()
+               && !effectiveProjectCompanion.isEmpty()
+               && compilerVerification.isSuccess();
+    }
+
+    friend bool operator==(
+        const RuntimePackageActivationPreparationRequest &,
+        const RuntimePackageActivationPreparationRequest &) = default;
+};
+
+struct ETHERCATCORE_EXPORT RuntimePackageActivationPreparationResult
+{
+    std::optional<Data::RuntimePackageActivationRequest> request;
+    QString detail;
+
+    bool isValid() const
+    {
+        if (request)
+            return request->isValid() && detail.isEmpty();
+        return !detail.isEmpty() && detail == detail.trimmed();
+    }
+
+    bool succeeded() const { return request.has_value(); }
+
+    friend bool operator==(
+        const RuntimePackageActivationPreparationResult &,
+        const RuntimePackageActivationPreparationResult &) = default;
+};
 
 enum class RuntimePackageActivationCommandDisposition {
     Accepted,
@@ -71,6 +121,11 @@ struct ETHERCATCORE_EXPORT RuntimePackageActivationCommandResult
 // start() is OperationId-idempotent: an exact fingerprint replay returns the
 // existing record with IdempotentReplay and performs no write, signal, or
 // provider call; a different fingerprint returns Conflict.
+// A new operation passed to start() must be the exact request returned by a
+// successful prepare() call on the same service instance. Implementations must
+// reject caller-constructed or modified requests before persistence or any
+// provider mutation. Persisted recovery records are restored internally and do
+// not pass through this public admission path.
 //
 // On startup, implementations must scan persisted nonterminal records before
 // accepting start/cancel/resume work. Such records stay frozen until their
@@ -99,6 +154,8 @@ class ETHERCATCORE_EXPORT RuntimePackageActivationService : public QObject
 public:
     using QObject::QObject;
 
+    virtual RuntimePackageActivationPreparationResult prepare(
+        const RuntimePackageActivationPreparationRequest &request) = 0;
     virtual RuntimePackageActivationCommandResult start(
         const Data::RuntimePackageActivationRequest &request) = 0;
     virtual RuntimePackageActivationCommandResult reconcile(
@@ -122,3 +179,5 @@ signals:
 
 Q_DECLARE_METATYPE(EtherCAT::Core::RuntimePackageActivationCommandDisposition)
 Q_DECLARE_METATYPE(EtherCAT::Core::RuntimePackageActivationCommandResult)
+Q_DECLARE_METATYPE(EtherCAT::Core::RuntimePackageActivationPreparationRequest)
+Q_DECLARE_METATYPE(EtherCAT::Core::RuntimePackageActivationPreparationResult)

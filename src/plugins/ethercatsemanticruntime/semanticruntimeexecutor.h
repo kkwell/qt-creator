@@ -70,6 +70,19 @@ public:
         const QString &controllerId, quint64 afterSequence = 0) const final;
 
 private:
+    struct RuntimeBootstrapState
+    {
+        QByteArray identityKey;
+        QByteArray attestationAttemptKey;
+        quint64 catalogSignalBaseline = 0;
+        quint64 snapshotSignalBaseline = 0;
+        quint64 refreshRetrySignalBaseline = 0;
+        quint8 refreshAttemptCount = 0;
+        bool refreshAccepted = false;
+        bool attestationAccepted = false;
+        bool attestationRetryUsed = false;
+    };
+
     QList<Data::SemanticRuntimeContext> buildContexts() const;
     Data::SemanticRuntimeContext buildContext(
         const Data::ProjectSnapshot &project, const Data::NodeId &masterId) const;
@@ -77,6 +90,8 @@ private:
         const Data::SemanticBindingArtifactReference &reference, QString *error) const;
     void clearEvidenceCache();
     void publishContexts();
+    void scheduleRuntimeBootstrap();
+    void processRuntimeBootstrap();
     void trackProvider(Core::Provider *provider);
     void untrackProvider(Core::Provider *provider);
 
@@ -90,6 +105,11 @@ private:
     QSet<Data::NodeId> m_projectsBeingRemoved;
     mutable QHash<QByteArray, std::shared_ptr<const VerifiedRuntimePackageEvidence>>
         m_evidenceCache;
+    QHash<Core::ControllerConnectionProvider *, RuntimeBootstrapState> m_runtimeBootstrapStates;
+    QHash<Core::ControllerConnectionProvider *, quint64> m_runtimeBootstrapSignalGenerations;
+    QHash<Core::ControllerConnectionProvider *, quint64> m_runtimeCatalogSignalGenerations;
+    QHash<Core::ControllerConnectionProvider *, quint64> m_runtimeSnapshotSignalGenerations;
+    bool m_runtimeBootstrapScheduled = false;
     QList<Data::SemanticRuntimeContext> m_contexts;
     std::unique_ptr<SemanticRuntimeExecutorExecution> m_execution;
 

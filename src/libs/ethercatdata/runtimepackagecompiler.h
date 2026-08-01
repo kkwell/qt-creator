@@ -3,6 +3,7 @@
 #pragma once
 
 #include "controllerconnection.h"
+#include "deviceadapter.h"
 #include "ethercatdata_global.h"
 #include "projectsnapshot.h"
 #include "runtimepackageactivation.h"
@@ -148,6 +149,23 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerDeviceSourceEvidence
     NodeId projectDeviceId;
     RuntimePackageCompilerSourceArtifact originalEsi;
     RuntimePackageCompilerSourceArtifact adapterSourceFile;
+
+    // The project retains the upper V3 adapter selection used by Workbench.
+    // The lower fields below identify the compiler adapter bundle entry. A
+    // production request builder must derive this bridge from one exact,
+    // content-addressed upper manifest's controllerAdapterTarget and selected
+    // ProcessDataProfile; neither side may be inferred by ID spelling.
+    DeviceAdapterContractVersion projectAdapterContractVersion
+        = DeviceAdapterContractVersion::Unknown;
+    DeviceAdapterId projectAdapterId;
+    QString projectAdapterVersion;
+    RuntimePackageCompilerSha256 projectAdapterContentSha256;
+    DeviceAdapterControllerTarget projectControllerAdapterTarget;
+    QString projectPdoProfileId;
+    QString projectSignedPdoProfileId;
+    QString projectSignedDcProfileId;
+
+    // Lower compiler/controller identity.
     QString adapterId;
     QString adapterVersion;
     RuntimePackageCompilerSha256 adapterCanonicalSha256;

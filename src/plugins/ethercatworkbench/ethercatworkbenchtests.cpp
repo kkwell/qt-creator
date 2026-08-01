@@ -904,14 +904,167 @@ private:
     std::optional<QByteArray> m_resolvedContentSha256Override;
 };
 
+class CurrentBusDeviceAdapterProvider final : public Core::DeviceAdapterProvider
+{
+public:
+    CurrentBusDeviceAdapterProvider(
+        Utils::Id providerId, const QString &upperAdapterId, const Data::DeviceDescription &device)
+        : DeviceAdapterProvider(providerId, upperAdapterId)
+    {
+        m_manifest.contractVersion = Data::DeviceAdapterContractVersion::V3;
+        m_manifest.id = {upperAdapterId};
+        m_manifest.version = "3.0.0";
+        m_manifest.displayName = upperAdapterId;
+        m_manifest.qualification = Data::DeviceAdapterQualification::Candidate;
+        m_manifest.match = {
+            device.summary.identity.vendorId,
+            device.summary.identity.productCode,
+            device.summary.identity.revisionNumber,
+            device.summary.identity.revisionNumber,
+            device.sourceSha256,
+        };
+        const QByteArray upperContent = QByteArray("upper:") + upperAdapterId.toUtf8();
+        const QByteArray lowerContent = QByteArray("lower:") + upperAdapterId.toUtf8();
+        m_manifest.contentSha256 = QCryptographicHash::hash(
+            upperContent, QCryptographicHash::Sha256);
+        m_manifest.controllerAdapterTarget = {
+            upperAdapterId + ".controller",
+            "1.0.0",
+            QCryptographicHash::hash(lowerContent, QCryptographicHash::Sha256),
+            device.sourceSha256,
+        };
+        m_manifest.provenance = {
+            upperAdapterId + ".esi",
+            "1",
+            "current-bus-test.xml",
+            device.sourceSha256,
+        };
+
+        m_profile.id = upperAdapterId + ".default";
+        m_manifest.processDataProfiles = {m_profile};
+        setAvailable(true);
+    }
+
+    QList<Data::DeviceAdapterManifest> adapterManifests() const final { return {m_manifest}; }
+
+    std::optional<Data::DeviceAdapterManifest> adapterManifest(
+        const Data::DeviceAdapterId &adapterId, const QString &version) const final
+    {
+        if (adapterId == m_manifest.id && version == m_manifest.version)
+            return m_manifest;
+        return std::nullopt;
+    }
+
+    Data::DeviceAdapterResolutionResult resolveDevice(
+        const Data::DeviceAdapterResolutionRequest &request) const final
+    {
+        ++resolveCalls;
+        lastRequest = request;
+
+        const Data::DeviceIdentity &identity = request.device.summary.identity;
+        if (identity.vendorId != m_manifest.match.vendorId
+            || identity.productCode != m_manifest.match.productCode
+            || identity.revisionNumber < m_manifest.match.minimumRevision
+            || identity.revisionNumber > m_manifest.match.maximumRevision
+            || request.device.sourceSha256 != m_manifest.match.exactEsiSha256) {
+            return {false, {}, "Device identity does not match."};
+        }
+        if (request.hasExpectedAdapterSelection()
+            && (!request.hasValidExpectedAdapterSelection()
+                || request.expectedAdapterId != m_manifest.id
+                || request.expectedAdapterVersion != m_manifest.version
+                || request.expectedAdapterContentSha256 != m_manifest.contentSha256)) {
+            return {false, {}, "Expected adapter selection does not match."};
+        }
+
+        switch (m_manifest.qualification) {
+        case Data::DeviceAdapterQualification::Candidate:
+            if (!request.allowCandidate || request.requireRealHardwareQualification)
+                return {false, {}, "Candidate adapter is not allowed."};
+            break;
+        case Data::DeviceAdapterQualification::Qualified:
+            if (request.requireRealHardwareQualification
+                && (!m_manifest.signatureVerified || !m_manifest.realHardwareAllowed)) {
+                return {false, {}, "Qualified adapter lacks hardware permission."};
+            }
+            break;
+        case Data::DeviceAdapterQualification::MockOnly:
+            if (!request.allowMock || request.requireRealHardwareQualification)
+                return {false, {}, "Mock-only adapter is not allowed."};
+            break;
+        case Data::DeviceAdapterQualification::Revoked:
+            return {false, {}, "Adapter has been revoked."};
+        case Data::DeviceAdapterQualification::Unqualified:
+            return {false, {}, "Adapter is unqualified."};
+        }
+
+        if (m_manifest.processDataProfiles.isEmpty())
+            return {false, {}, "No process-data profile is available."};
+        const QString profileId = request.processDataProfileId.isEmpty()
+                                      ? m_profile.id
+                                      : request.processDataProfileId;
+        const auto profile = std::find_if(
+            m_manifest.processDataProfiles.cbegin(),
+            m_manifest.processDataProfiles.cend(),
+            [&profileId](const Data::ProcessDataProfile &candidate) {
+                return candidate.id == profileId;
+            });
+        if (profile == m_manifest.processDataProfiles.cend())
+            return {false, {}, "The process-data profile is unavailable."};
+
+        Data::ResolvedDeviceModel model;
+        model.slaveId = request.slaveId;
+        model.identity = identity;
+        model.esiSha256 = request.device.sourceSha256;
+        model.adapterId = m_manifest.id;
+        model.adapterVersion = m_manifest.version;
+        model.adapterContentSha256 = m_manifest.contentSha256;
+        model.qualification = m_manifest.qualification;
+        model.processDataProfileId = profile->id;
+        model.moduleAssignments = request.moduleAssignments;
+        model.complete = true;
+        return {true, model, {}};
+    }
+
+    void setQualification(Data::DeviceAdapterQualification qualification)
+    {
+        m_manifest.qualification = qualification;
+    }
+
+    void setProductionTrust(bool signatureVerified, bool realHardwareAllowed)
+    {
+        m_manifest.signatureVerified = signatureVerified;
+        m_manifest.realHardwareAllowed = realHardwareAllowed;
+    }
+
+    void setProvenanceSourceSha256(const QByteArray &sourceSha256)
+    {
+        m_manifest.provenance.sourceSha256 = sourceSha256;
+    }
+
+    void setProfileAvailable(bool available)
+    {
+        m_manifest.processDataProfiles = available ? QList<Data::ProcessDataProfile>{m_profile}
+                                                   : QList<Data::ProcessDataProfile>{};
+    }
+
+    Data::DeviceAdapterManifest manifest() const { return m_manifest; }
+
+    mutable int resolveCalls = 0;
+    mutable Data::DeviceAdapterResolutionRequest lastRequest;
+
+private:
+    Data::DeviceAdapterManifest m_manifest;
+    Data::ProcessDataProfile m_profile;
+};
+
 class TestSemanticRuntimeService final : public Core::SemanticRuntimeService
 {
 public:
     QList<Data::SemanticRuntimeContext> contexts() const final { return m_contexts; }
 
     Data::SemanticOperationRecord submit(
-        const Data::SemanticOperationRequest &request,
-        const Data::SemanticRuntimeActor &actor) final
+        const Data::SemanticOperationRequest &request, const Data::SemanticRuntimeActor &actor) final
     {
         ++submitCalls;
         lastRequest = request;
@@ -1121,8 +1274,26 @@ public:
         setAvailable(true);
     }
 
-    QList<Data::DeviceSummary> devices(const Data::DeviceFilter &) const final { return {}; }
-    std::optional<Data::DeviceDescription> device(const Data::NodeId &) const final { return {}; }
+    QList<Data::DeviceSummary> devices(const Data::DeviceFilter &) const final
+    {
+        QList<Data::DeviceSummary> summaries;
+        summaries.reserve(descriptions.size());
+        for (const Data::DeviceDescription &description : descriptions)
+            summaries.append(description.summary);
+        return summaries;
+    }
+
+    std::optional<Data::DeviceDescription> device(const Data::NodeId &deviceId) const final
+    {
+        const auto found = std::find_if(
+            descriptions.cbegin(),
+            descriptions.cend(),
+            [&deviceId](const Data::DeviceDescription &description) {
+                return description.summary.id == deviceId;
+            });
+        return found == descriptions.cend() ? std::nullopt
+                                            : std::optional<Data::DeviceDescription>(*found);
+    }
     QByteArray originalXml(const Data::NodeId &) const final { return {}; }
 
     Core::DeviceImportJob *importFiles(const Utils::FilePaths &) final { return createJob(); }
@@ -1145,6 +1316,7 @@ public:
     }
 
     ControlledDeviceImportJob *job = nullptr;
+    QList<Data::DeviceDescription> descriptions;
 };
 
 class ControlledControllerConnectionProvider final : public Core::ControllerConnectionProvider
@@ -3324,6 +3496,242 @@ void EtherCATWorkbenchTests::testDeviceAdapterSelectionBuildsModuleChannelTree()
     QCOMPARE(model.rowCount(), 0);
 }
 
+void EtherCATWorkbenchTests::testControlPageSelectionPolicy()
+{
+    {
+        TestDeviceAdapterProvider adapterProvider;
+        const AdapterTreeFixture fixture = adapterTreeFixture(adapterProvider);
+        WorkbenchController ordinaryController;
+        ordinaryController.treeModel()->setDeviceAdapterProviders({&adapterProvider});
+        ordinaryController.treeModel()->setProjects({fixture.project});
+
+        const QModelIndex configuredSlave
+            = ordinaryController.treeModel()->indexForNodeId(fixture.slaveId);
+        QVERIFY(configuredSlave.isValid());
+        const QModelIndex modules = directChildByKind(
+            ordinaryController.treeModel(),
+            Core::WorkbenchNodeKind::Modules,
+            configuredSlave);
+        QVERIFY(modules.isValid());
+        const QModelIndex ordinaryModule = ordinaryController.treeModel()->index(0, 0, modules);
+        QVERIFY(ordinaryModule.isValid());
+        QCOMPARE(
+            ordinaryModule.data(WorkbenchTreeModel::NodeKindRole)
+                .value<Core::WorkbenchNodeKind>(),
+            Core::WorkbenchNodeKind::Module);
+        const Data::NodeId ordinaryModuleId
+            = ordinaryModule.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+        QVERIFY(!ordinaryController.treeModel()->controllerTopologySlave(ordinaryModuleId));
+
+        BuiltinPropertyPageProvider ordinaryPages(&ordinaryController);
+        const QList<Core::PropertyPageDescriptor> descriptors = ordinaryPages.pages(
+            ordinaryController.treeModel()->contextForIndex(ordinaryModule));
+        QCOMPARE(descriptors.size(), 1);
+        QCOMPARE(descriptors.constFirst().id, Utils::Id(Constants::GENERAL_PAGE_ID));
+    }
+
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+    controller.selectionService()->clear();
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Data::DeviceSummary device = deviceSummaries(1).constFirst();
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        device,
+        "control-page-selection.ecatproject",
+        "Control Page Selection");
+    QVERIFY(!file.path.isEmpty());
+
+    const Utils::Result<QByteArray> projectContents = file.path.fileContents();
+    QVERIFY_RESULT(projectContents);
+    QJsonDocument projectDocument = QJsonDocument::fromJson(*projectContents);
+    QVERIFY(projectDocument.isObject());
+    QJsonObject root = projectDocument.object();
+    QJsonObject master = root.value("master").toObject();
+    master["slaves"] = QJsonArray();
+    root["master"] = master;
+    QVERIFY_RESULT(
+        file.path.writeFileContents(QJsonDocument(root).toJson(QJsonDocument::Indented)));
+
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    ProjectExplorer::ProjectManager::setStartupProject(opened.project());
+
+    ControlledControllerConnectionProvider provider(
+        Utils::Id("EtherCAT.Workbench.TestControllerConnection.ControlPageSelection"),
+        "Control page selection controller");
+    provider.setAvailable(true);
+    provider.setSingleProfile(true);
+    bool providerRegistered = false;
+    const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
+    const QScopeGuard cleanup([&] {
+        controller.selectionService()->clear();
+        if (providerRegistered)
+            ExtensionSystem::PluginManager::removeObject(&provider);
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    ExtensionSystem::PluginManager::addObject(&provider);
+    providerRegistered = true;
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.masterId).isValid());
+
+    Data::ControllerTopologySnapshot topology;
+    topology.firstStationAddress = 0x1001;
+    topology.respondingCount = 1;
+    topology.result = 0;
+    topology.discoveredAt = QDateTime::currentDateTimeUtc();
+    topology.slaves = {
+        {0,
+         0x1001,
+         0x0008,
+         0,
+         device.identity.vendorId,
+         device.identity.productCode,
+         device.identity.revisionNumber,
+         17},
+    };
+
+    Data::ControllerConnectionSnapshot snapshot;
+    snapshot.scope = scope;
+    snapshot.profileId = provider.primaryProfileId();
+    snapshot.state = Data::ControllerConnectionState::Connected;
+    snapshot.protocolVersion = {1, 10};
+    snapshot.sessionGeneration = 1;
+    snapshot.readOnly = false;
+    snapshot.mock = false;
+    snapshot.topology = topology;
+    provider.publishSnapshot(snapshot);
+
+    const QModelIndex masterIndex = controller.treeModel()->indexForNodeId(file.masterId);
+    QVERIFY(masterIndex.isValid());
+    QModelIndex onlineModule;
+    QTRY_VERIFY(
+        (onlineModule = directChildByKind(
+             controller.treeModel(), Core::WorkbenchNodeKind::Module, masterIndex))
+            .isValid());
+    const Data::NodeId onlineModuleId
+        = onlineModule.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    QVERIFY(controller.treeModel()->controllerTopologySlave(onlineModuleId));
+    QVERIFY(!controller.treeModel()->semanticControlSelection(onlineModuleId));
+
+    BuiltinPropertyPageProvider pages(&controller);
+    const Core::PropertyPageContext onlineContext
+        = controller.treeModel()->contextForIndex(onlineModule);
+    const QList<Core::PropertyPageDescriptor> onlinePages = pages.pages(onlineContext);
+    QCOMPARE(onlinePages.size(), 2);
+    QCOMPARE(onlinePages.constFirst().id, Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID));
+    QCOMPARE(onlinePages.constFirst().priority, 50);
+
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    DetailsView details(&controller);
+    details.resize(900, 600);
+    details.show();
+    QTRY_VERIFY(details.isVisible());
+    QTRY_COMPARE(details.currentContext().nodeId, file.masterId);
+
+    const QString controlPageKey = QString(Constants::BUILTIN_PAGE_PROVIDER_ID) + '/'
+                                   + Constants::SEMANTIC_CONTROL_PAGE_ID;
+    const QString generalPageKey = QString(Constants::BUILTIN_PAGE_PROVIDER_ID) + '/'
+                                   + Constants::GENERAL_PAGE_ID;
+    const auto currentPageKey = [&details] {
+        QWidget *current = details.tabWidget()->currentWidget();
+        return current ? current->property("EtherCAT.PageKey").toString() : QString();
+    };
+    const auto pageIndexForKey = [&details](const QString &pageKey) {
+        for (int index = 0; index < details.tabWidget()->count(); ++index) {
+            QWidget *page = details.tabWidget()->widget(index);
+            if (page && page->property("EtherCAT.PageKey").toString() == pageKey)
+                return index;
+        }
+        return -1;
+    };
+
+    controller.selectionService()->setCurrentNodeId(onlineModuleId);
+    QTRY_COMPARE(details.currentContext().nodeId, onlineModuleId);
+    QTRY_COMPARE(details.currentContext().nodeKind, Core::WorkbenchNodeKind::Module);
+    QTRY_COMPARE(currentPageKey(), controlPageKey);
+
+    auto controlPage = qobject_cast<SemanticControlPage *>(
+        details.tabWidget()->currentWidget());
+    QVERIFY(controlPage);
+    QLabel *status = controlPage->findChild<QLabel *>("EtherCATSemanticControlStatus");
+    QTreeWidget *signalTree
+        = controlPage->findChild<QTreeWidget *>("EtherCATSemanticControlSignals");
+    QGroupBox *manualControl
+        = controlPage->findChild<QGroupBox *>("EtherCATSemanticManualControl");
+    QPushButton *apply
+        = controlPage->findChild<QPushButton *>("EtherCATSemanticControlApply");
+    QVERIFY(status);
+    QVERIFY(signalTree);
+    QVERIFY(manualControl);
+    QVERIFY(apply);
+    QCOMPARE(
+        status->text(),
+        Tr::tr(
+            "Apply the current bus to the project and save it before signed, verified "
+            "control can be enabled."));
+    QVERIFY(signalTree->isHidden());
+    QVERIFY(manualControl->isHidden());
+    QVERIFY(!apply->isEnabled());
+
+    Data::OfflineSlaveConfiguration configured;
+    configured.id = file.slaveId;
+    configured.masterId = file.masterId;
+    configured.position = 0;
+    configured.identity = device.identity;
+    configured.serialNumber = 17;
+    configured.name = "Configured Servo";
+    configured.deviceDescriptionId = device.id;
+    configured.stationAddress = 0x1001;
+    QVERIFY_RESULT(
+        projectService->replaceOfflineSlaves(file.projectId, file.masterId, {configured}));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.size(), 1);
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.masterId);
+    controller.selectionService()->setCurrentNodeId(file.slaveId);
+    QTRY_COMPARE(details.currentContext().nodeId, file.slaveId);
+    QTRY_COMPARE(
+        details.currentContext().nodeKind, Core::WorkbenchNodeKind::ConfiguredSlave);
+    QTRY_COMPARE(currentPageKey(), controlPageKey);
+
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+    QTRY_COMPARE(details.currentContext().nodeId, file.slaveId);
+    QTRY_COMPARE(currentPageKey(), controlPageKey);
+    QTRY_VERIFY(pageIndexForKey(generalPageKey) >= 0);
+    details.tabWidget()->setCurrentIndex(pageIndexForKey(generalPageKey));
+    QTRY_COMPARE(currentPageKey(), generalPageKey);
+    QPointer<QWidget> generalPage = details.tabWidget()->currentWidget();
+    QVERIFY(generalPage);
+    QPointer<QLineEdit> name
+        = generalPage->findChild<QLineEdit *>("EtherCATGeneralName");
+    QVERIFY(name);
+    QTRY_VERIFY(name->isVisible());
+    details.activateWindow();
+    name->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), name.data());
+
+    QVERIFY_RESULT(
+        projectService->renameProject(file.projectId, "Control Page Selection Refreshed"));
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->name,
+        QString("Control Page Selection Refreshed"));
+    QCOMPARE(details.currentContext().nodeId, file.slaveId);
+    QCOMPARE(currentPageKey(), generalPageKey);
+    QCOMPARE(details.tabWidget()->currentWidget(), generalPage.data());
+    QTRY_COMPARE(QApplication::focusWidget(), name.data());
+}
+
 void EtherCATWorkbenchTests::testSemanticControlPageFailsClosed()
 {
     TestDeviceAdapterProvider adapterProvider;
@@ -5288,6 +5696,9 @@ void EtherCATWorkbenchTests::testEditableConfiguredSlaveGeneralWorkflow()
 
 void EtherCATWorkbenchTests::testGeneralRenameRejectionFeedback()
 {
+    ::Core::ModeManager::activateMode(Constants::MODE_ID);
+    QTRY_COMPARE(::Core::ModeManager::currentModeId(), Utils::Id(Constants::MODE_ID));
+
     WorkbenchController controller;
     Core::ProjectService *projectService = controller.projectService();
     QVERIFY(projectService);
@@ -5366,6 +5777,10 @@ void EtherCATWorkbenchTests::testGeneralRenameRejectionFeedback()
             "EtherCATWorkbenchPropertyPage_"
             + Utils::Id(Constants::GENERAL_PAGE_ID).toString());
         QVERIFY(page);
+        const int pageIndex = details.tabWidget()->indexOf(page);
+        QVERIFY(pageIndex >= 0);
+        details.tabWidget()->setCurrentIndex(pageIndex);
+        QTRY_VERIFY(page->isVisible());
         QWidget *feedbackWidget = page->findChild<QWidget *>("EtherCATGeneralNameFeedback");
         QVERIFY(feedbackWidget);
         auto feedback = static_cast<Utils::InfoLabel *>(feedbackWidget);
@@ -21949,6 +22364,7 @@ void EtherCATWorkbenchTests::testControllerPackageDeploymentWorkflow()
         = page.findChild<QLineEdit *>("EtherCATDeploymentConfigurationId");
     QLineEdit *operationId
         = page.findChild<QLineEdit *>("EtherCATDeploymentOperationId");
+    QLabel *guidance = page.findChild<QLabel *>("EtherCATDeploymentGuidance");
     QCheckBox *activate
         = page.findChild<QCheckBox *>("EtherCATDeploymentActivate");
     QCheckBox *rollback
@@ -21957,6 +22373,10 @@ void EtherCATWorkbenchTests::testControllerPackageDeploymentWorkflow()
         = page.findChild<QToolButton *>("EtherCATDeploymentStart");
     QToolButton *cancel
         = page.findChild<QToolButton *>("EtherCATDeploymentCancel");
+    QLabel *trustedActivationStatus
+        = page.findChild<QLabel *>("EtherCATTrustedActivationStatus");
+    QToolButton *trustedActivate
+        = page.findChild<QToolButton *>("EtherCATTrustedActivationStart");
     QProgressBar *progress
         = page.findChild<QProgressBar *>("EtherCATDeploymentProgress");
     QTreeWidget *status
@@ -21966,22 +22386,41 @@ void EtherCATWorkbenchTests::testControllerPackageDeploymentWorkflow()
     QVERIFY(artifactPath);
     QVERIFY(configurationId);
     QVERIFY(operationId);
+    QVERIFY(guidance);
     QVERIFY(activate);
     QVERIFY(rollback);
     QVERIFY(deploy);
     QVERIFY(cancel);
+    QVERIFY(trustedActivationStatus);
+    QVERIFY(trustedActivate);
     QVERIFY(progress);
     QVERIFY(status);
     QVERIFY(audit);
     QVERIFY(!operationId->text().isEmpty());
-    QVERIFY(activate->isChecked());
-    QVERIFY(rollback->isChecked());
+    QVERIFY(activate->isHidden());
+    QVERIFY(rollback->isHidden());
+    QVERIFY(!activate->isEnabled());
+    QVERIFY(!rollback->isEnabled());
+    QVERIFY(!activate->isChecked());
+    QVERIFY(!rollback->isChecked());
+    QVERIFY(guidance->text().contains("only uploads and validates"));
+    QVERIFY(guidance->text().contains("trusted project workflow"));
+    QCOMPARE(deploy->text(), Tr::tr("Stage Package"));
     QVERIFY(!deploy->isEnabled());
     QVERIFY(!cancel->isEnabled());
+    QVERIFY(!trustedActivate->isEnabled());
+    QVERIFY(
+        trustedActivationStatus->text().contains("API-042")
+        || trustedActivationStatus->text().contains(
+            "exact open project", Qt::CaseInsensitive));
+    QCOMPARE(
+        controller.startTrustedRuntimePackageActivation(scope).error(),
+        controller.trustedRuntimePackageActivationUnavailableReason(scope));
+    QCOMPARE(provider.deploymentCalls, 0);
 
     const Utils::FilePath packagePath
-        = Utils::FilePath::fromString(directory.path()).pathAppended("qualified.ecpkg");
-    const QByteArray artifact("qualified-signed-ecpkg");
+        = Utils::FilePath::fromString(directory.path()).pathAppended("stage-only-fixture.ecpkg");
+    const QByteArray artifact("not-a-real-ecpkg");
     QVERIFY_RESULT(packagePath.writeFileContents(artifact));
     artifactPath->setText(packagePath.toUserOutput());
     configurationId->setText("814");
@@ -22026,17 +22465,43 @@ void EtherCATWorkbenchTests::testControllerPackageDeploymentWorkflow()
     QVERIFY(status->topLevelItem(1)->text(1).contains("813"));
     QVERIFY(status->topLevelItem(2)->text(1).contains("813"));
 
+    Data::ControllerPackageDeploymentRequest forbiddenRequest;
+    forbiddenRequest.operationId = QStringLiteral("forbidden-activation");
+    forbiddenRequest.artifact = artifact;
+    forbiddenRequest.configurationId = 814;
+    forbiddenRequest.activate = true;
+    forbiddenRequest.rollbackOnActivationFailure = false;
+    const Utils::Result<> activationRejected
+        = controller.deployControllerPackage(scope, forbiddenRequest);
+    QVERIFY(!activationRejected);
+    QVERIFY(activationRejected.error().contains(
+        QStringLiteral("only stages and validates")));
+    QCOMPARE(provider.deploymentCalls, 0);
+
+    forbiddenRequest.operationId = QStringLiteral("forbidden-rollback");
+    forbiddenRequest.activate = false;
+    forbiddenRequest.rollbackOnActivationFailure = true;
+    const Utils::Result<> rollbackRejected
+        = controller.deployControllerPackage(scope, forbiddenRequest);
+    QVERIFY(!rollbackRejected);
+    QVERIFY(rollbackRejected.error().contains(
+        QStringLiteral("only stages and validates")));
+    QCOMPARE(provider.deploymentCalls, 0);
+
     QSignalSpy controllerOutput(&controller, &WorkbenchController::controllerOutputRequested);
     QVERIFY(controllerOutput.isValid());
     controllerOutput.clear();
     const QString firstOperationId = operationId->text();
+    // Even stale automation or restored widget state cannot turn this legacy path into activation.
+    activate->setChecked(true);
+    rollback->setChecked(true);
     deploy->click();
     QCOMPARE(provider.deploymentCalls, 1);
     QCOMPARE(provider.lastDeploymentRequest.operationId, firstOperationId);
     QCOMPARE(provider.lastDeploymentRequest.artifact, artifact);
     QCOMPARE(provider.lastDeploymentRequest.configurationId, quint64(814));
-    QVERIFY(provider.lastDeploymentRequest.activate);
-    QVERIFY(provider.lastDeploymentRequest.rollbackOnActivationFailure);
+    QVERIFY(!provider.lastDeploymentRequest.activate);
+    QVERIFY(!provider.lastDeploymentRequest.rollbackOnActivationFailure);
     QTRY_VERIFY(cancel->isEnabled());
     QVERIFY(!deploy->isEnabled());
     QTRY_VERIFY(controllerOutput.count() >= 1);
@@ -22044,8 +22509,10 @@ void EtherCATWorkbenchTests::testControllerPackageDeploymentWorkflow()
         controllerOutput.cbegin(),
         controllerOutput.cend(),
         [&firstOperationId](const QList<QVariant> &arguments) {
-            return arguments.at(0).toString().contains(firstOperationId)
-                   && arguments.at(0).toString().contains("SHA-256");
+            const QString output = arguments.at(0).toString();
+            return output.contains(firstOperationId) && output.contains("SHA-256")
+                   && output.contains("staging queued", Qt::CaseInsensitive)
+                   && !output.contains("activat", Qt::CaseInsensitive);
         }));
 
     snapshot = provider.connectionSnapshot();
@@ -22084,7 +22551,7 @@ void EtherCATWorkbenchTests::testControllerPackageDeploymentWorkflow()
 
     snapshot.packageDeploymentProgress.state
         = Data::ControllerPackageDeploymentState::Succeeded;
-    snapshot.packageDeploymentProgress.detail = "Package activated";
+    snapshot.packageDeploymentProgress.detail = "Package staged and validated";
     snapshot.packageDeploymentProgress.transferredBytes
         = snapshot.packageDeploymentProgress.totalBytes;
     provider.publishSnapshot(snapshot);
@@ -22093,6 +22560,8 @@ void EtherCATWorkbenchTests::testControllerPackageDeploymentWorkflow()
     QCOMPARE(provider.deploymentCalls, 2);
     QVERIFY(provider.lastDeploymentRequest.operationId != firstOperationId);
     QVERIFY(!provider.lastDeploymentRequest.operationId.isEmpty());
+    QVERIFY(!provider.lastDeploymentRequest.activate);
+    QVERIFY(!provider.lastDeploymentRequest.rollbackOnActivationFailure);
 }
 
 void EtherCATWorkbenchTests::testControllerFreeRunCapabilityWarnings()
@@ -23008,17 +23477,62 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
     const QList<Data::DeviceSummary> repositoryDevices = repository->devices();
     const auto matchingSummary = std::find_if(
-        repositoryDevices.cbegin(),
-        repositoryDevices.cend(),
-        [](const Data::DeviceSummary &device) {
+        repositoryDevices.cbegin(), repositoryDevices.cend(), [](const Data::DeviceSummary &device) {
             return device.identity.vendorId == 0x00000002
                    && device.identity.productCode == 0x00005678
                    && device.identity.revisionNumber == 0x00000011;
         });
     QVERIFY(matchingSummary != repositoryDevices.cend());
-    const std::optional<Data::DeviceDescription> matchingDevice
-        = repository->device(matchingSummary->id);
+    const std::optional<Data::DeviceDescription> matchingDevice = repository->device(
+        matchingSummary->id);
     QVERIFY(matchingDevice);
+
+    ControlledDeviceRepositoryProvider ambiguousRepository;
+    Data::DeviceDescription ambiguousDevice = *matchingDevice;
+    ambiguousDevice.summary.id = Data::NodeId::create();
+    ambiguousDevice.summary.name = "Ambiguous Workbench Servo";
+    ambiguousDevice.sourceSha256 = QCryptographicHash::hash(
+        QByteArray("ambiguous-current-bus-esi"), QCryptographicHash::Sha256);
+    ambiguousRepository.descriptions = {*matchingDevice, ambiguousDevice};
+    const Data::ControllerTopologySlave ambiguousTopologySlave{
+        1,
+        0x1002,
+        0x0002,
+        0,
+        matchingDevice->summary.identity.vendorId,
+        matchingDevice->summary.identity.productCode,
+        matchingDevice->summary.identity.revisionNumber,
+        88,
+    };
+    int ambiguousMatches = 0;
+    int unsupportedMatches = 0;
+    const std::optional<Data::DeviceDescription> ambiguousMatch
+        = WorkbenchController::matchingDeviceDescriptionForCurrentBusTest(
+            &ambiguousRepository,
+            ambiguousRepository.devices({}),
+            ambiguousTopologySlave,
+            nullptr,
+            &ambiguousMatches,
+            &unsupportedMatches);
+    QVERIFY(!ambiguousMatch);
+    QCOMPARE(ambiguousMatches, 1);
+    QCOMPARE(unsupportedMatches, 0);
+
+    Data::OfflineSlaveConfiguration explicitlySelected;
+    explicitlySelected.identity = matchingDevice->summary.identity;
+    explicitlySelected.deviceDescriptionId = matchingDevice->summary.id;
+    ambiguousMatches = 0;
+    const std::optional<Data::DeviceDescription> preservedMatch
+        = WorkbenchController::matchingDeviceDescriptionForCurrentBusTest(
+            &ambiguousRepository,
+            ambiguousRepository.devices({}),
+            ambiguousTopologySlave,
+            &explicitlySelected,
+            &ambiguousMatches,
+            &unsupportedMatches);
+    QVERIFY(preservedMatch);
+    QCOMPARE(preservedMatch->summary.id, matchingDevice->summary.id);
+    QCOMPARE(ambiguousMatches, 0);
 
     const TestProjectFile file = writeProjectWithSlave(
         directory,
@@ -23045,10 +23559,8 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
         {"enabled", true},
         {"modeName", "Customized DC"},
         {"assignActivate", 0x0300},
-        {"sync0",
-         QJsonObject{{"enabled", true}, {"cycleTimeNs", 250000}, {"shiftTimeNs", 125}}},
-        {"sync1",
-         QJsonObject{{"enabled", false}, {"cycleTimeNs", 0}, {"shiftTimeNs", 0}}},
+        {"sync0", QJsonObject{{"enabled", true}, {"cycleTimeNs", 250000}, {"shiftTimeNs", 125}}},
+        {"sync1", QJsonObject{{"enabled", false}, {"cycleTimeNs", 0}, {"shiftTimeNs", 0}}},
         {"potentialReferenceClock", false},
     };
     customizedSlave["configuration"] = customizedConfiguration;
@@ -23068,8 +23580,7 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     slaves.append(removedSlave);
     master["slaves"] = slaves;
     root["master"] = master;
-    QVERIFY_RESULT(
-        file.path.writeFileContents(QJsonDocument(root).toJson(QJsonDocument::Indented)));
+    QVERIFY_RESULT(file.path.writeFileContents(QJsonDocument(root).toJson(QJsonDocument::Indented)));
 
     const ProjectExplorer::OpenProjectResult opened
         = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
@@ -23081,9 +23592,23 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
         "Current bus apply controller");
     provider.setAvailable(true);
     provider.setSingleProfile(true);
+    CurrentBusDeviceAdapterProvider adapterProvider(
+        Utils::Id("EtherCAT.Workbench.TestDeviceAdapter.CurrentBusApply"),
+        "org.embedlabs.test.current-bus.upper",
+        *matchingDevice);
+    CurrentBusDeviceAdapterProvider secondAdapterProvider(
+        Utils::Id("EtherCAT.Workbench.TestDeviceAdapter.CurrentBusApply.Second"),
+        "org.embedlabs.test.current-bus.second-upper",
+        *matchingDevice);
     bool providerRegistered = false;
+    bool adapterProviderRegistered = false;
+    bool secondAdapterProviderRegistered = false;
     const QScopeGuard cleanup([&] {
         controller.selectionService()->clear();
+        if (secondAdapterProviderRegistered)
+            ExtensionSystem::PluginManager::removeObject(&secondAdapterProvider);
+        if (adapterProviderRegistered)
+            ExtensionSystem::PluginManager::removeObject(&adapterProvider);
         if (providerRegistered)
             ExtensionSystem::PluginManager::removeObject(&provider);
         if (projectService->project(file.projectId))
@@ -23093,6 +23618,8 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     });
     ExtensionSystem::PluginManager::addObject(&provider);
     providerRegistered = true;
+    ExtensionSystem::PluginManager::addObject(&adapterProvider);
+    adapterProviderRegistered = true;
     QTRY_VERIFY(projectService->project(file.projectId).has_value());
 
     Data::ProjectSnapshot project = *projectService->project(file.projectId);
@@ -23109,8 +23636,7 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
     controller.selectionService()->setCurrentNodeId(file.masterId);
     QVERIFY_RESULT(controller.selectControllerConnectionProvider(scope, provider.id()));
-    QVERIFY_RESULT(
-        controller.selectControllerConnectionProfile(scope, provider.primaryProfileId()));
+    QVERIFY_RESULT(controller.selectControllerConnectionProfile(scope, provider.primaryProfileId()));
 
     Data::ControllerTopologySnapshot topology;
     topology.firstStationAddress = 0x1001;
@@ -23139,8 +23665,7 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     QVERIFY(!zeroStationApply);
     QCOMPARE(
         zeroStationApply.error(),
-        Tr::tr("The detected EtherCAT device at bus position %1 has station address 0.")
-            .arg(0));
+        Tr::tr("The detected EtherCAT device at bus position %1 has station address 0.").arg(0));
 
     Data::ControllerTopologySnapshot duplicateStationTopology = topology;
     duplicateStationTopology.slaves[1].stationAddress
@@ -23157,22 +23682,134 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
             .arg(0)
             .arg(1));
 
+    snapshot.mock = true;
+    snapshot.topology = topology;
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(!controller.canApplyCurrentBusToProject());
+    const Utils::Result<> mockApply = controller.applyCurrentBusToProject();
+    QVERIFY(!mockApply);
+    QCOMPARE(
+        mockApply.error(),
+        Tr::tr("A Mock topology cannot configure a production EtherCAT project."));
+
+    snapshot.mock = false;
     snapshot.topology = topology;
     provider.publishSnapshot(snapshot);
     QTRY_VERIFY(controller.canApplyCurrentBusToProject());
 
     QSignalSpy output(&controller, &WorkbenchController::controllerOutputRequested);
+    const QString baseOutput
+        = Tr::tr("Bus applied · %1 devices · %2 matched · %3 unknown").arg(3).arg(2).arg(1);
+    const QString adapterWarning = Tr::tr(
+        " · Manual control requires importing a trusted adapter bundle.");
+
     QVERIFY_RESULT(controller.applyCurrentBusToProject());
     QTRY_COMPARE(output.size(), 1);
+    QCOMPARE(output.constFirst().constFirst().toString(), baseOutput + adapterWarning);
+    QCOMPARE(output.constFirst().at(1).value<ControllerOutputLevel>(), ControllerOutputLevel::Warning);
+    project = *projectService->project(file.projectId);
+    QCOMPARE(project.slaves.size(), 3);
+    const Data::DeviceAdapterManifest candidateManifest = adapterProvider.manifest();
+    QCOMPARE(project.slaves.at(0).esiSha256, matchingDevice->sourceSha256);
+    QCOMPARE(project.slaves.at(0).adapterSelection.adapterId, candidateManifest.id);
+    QCOMPARE(project.slaves.at(0).adapterSelection.adapterVersion, candidateManifest.version);
     QCOMPARE(
-        output.constFirst().constFirst().toString(),
-        Tr::tr("Bus applied · %1 devices · %2 matched · %3 unknown")
-            .arg(3)
-            .arg(2)
-            .arg(1));
+        project.slaves.at(0).adapterSelection.adapterContentSha256, candidateManifest.contentSha256);
     QCOMPARE(
-        output.constFirst().at(1).value<ControllerOutputLevel>(),
-        ControllerOutputLevel::Warning);
+        project.slaves.at(0).adapterSelection.processDataProfileId,
+        candidateManifest.processDataProfiles.constFirst().id);
+    QVERIFY(
+        project.slaves.at(0).adapterSelection.adapterId.value
+        != candidateManifest.controllerAdapterTarget.adapterId);
+    QCOMPARE(project.slaves.at(1).adapterSelection.adapterId, candidateManifest.id);
+    QVERIFY(project.slaves.at(2).adapterSelection.adapterId.value.isEmpty());
+    QVERIFY(adapterProvider.lastRequest.allowCandidate);
+    QVERIFY(!adapterProvider.lastRequest.allowMock);
+    QVERIFY(!adapterProvider.lastRequest.requireRealHardwareQualification);
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    project = *projectService->project(file.projectId);
+    QCOMPARE(project.slaves, QList<Data::OfflineSlaveConfiguration>({preserved, removed}));
+
+    adapterProvider.setQualification(Data::DeviceAdapterQualification::Qualified);
+    adapterProvider.setProductionTrust(false, false);
+    output.clear();
+    QVERIFY_RESULT(controller.applyCurrentBusToProject());
+    QTRY_COMPARE(output.size(), 1);
+    QCOMPARE(output.constFirst().constFirst().toString(), baseOutput + adapterWarning);
+    project = *projectService->project(file.projectId);
+    QCOMPARE(project.slaves.at(0).adapterSelection.adapterId, candidateManifest.id);
+    QCOMPARE(project.slaves.at(1).adapterSelection.adapterId, candidateManifest.id);
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    project = *projectService->project(file.projectId);
+    QCOMPARE(project.slaves, QList<Data::OfflineSlaveConfiguration>({preserved, removed}));
+
+    adapterProvider.setProductionTrust(true, true);
+    adapterProvider.setProvenanceSourceSha256(QByteArray(32, '\x7f'));
+    output.clear();
+    QVERIFY_RESULT(controller.applyCurrentBusToProject());
+    QTRY_COMPARE(output.size(), 1);
+    QCOMPARE(output.constFirst().constFirst().toString(), baseOutput + adapterWarning);
+    project = *projectService->project(file.projectId);
+    QCOMPARE(project.slaves.at(0).adapterSelection.adapterId, candidateManifest.id);
+    QCOMPARE(project.slaves.at(1).adapterSelection.adapterId, candidateManifest.id);
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    project = *projectService->project(file.projectId);
+    QCOMPARE(project.slaves, QList<Data::OfflineSlaveConfiguration>({preserved, removed}));
+    adapterProvider.setProvenanceSourceSha256(matchingDevice->sourceSha256);
+
+    for (const Data::DeviceAdapterQualification qualification :
+         {Data::DeviceAdapterQualification::Unqualified,
+          Data::DeviceAdapterQualification::MockOnly,
+          Data::DeviceAdapterQualification::Revoked}) {
+        adapterProvider.setQualification(qualification);
+        output.clear();
+        QVERIFY_RESULT(controller.applyCurrentBusToProject());
+        QTRY_COMPARE(output.size(), 1);
+        QCOMPARE(output.constFirst().constFirst().toString(), baseOutput + adapterWarning);
+        project = *projectService->project(file.projectId);
+        QVERIFY(project.slaves.at(0).adapterSelection.adapterId.value.isEmpty());
+        QVERIFY(project.slaves.at(1).adapterSelection.adapterId.value.isEmpty());
+        QVERIFY_RESULT(projectService->undoProject(file.projectId));
+        project = *projectService->project(file.projectId);
+        QCOMPARE(project.slaves, QList<Data::OfflineSlaveConfiguration>({preserved, removed}));
+    }
+
+    adapterProvider.setQualification(Data::DeviceAdapterQualification::Candidate);
+    adapterProvider.setProfileAvailable(false);
+    output.clear();
+    QVERIFY_RESULT(controller.applyCurrentBusToProject());
+    QTRY_COMPARE(output.size(), 1);
+    QCOMPARE(output.constFirst().constFirst().toString(), baseOutput + adapterWarning);
+    project = *projectService->project(file.projectId);
+    QVERIFY(project.slaves.at(0).adapterSelection.adapterId.value.isEmpty());
+    QVERIFY(project.slaves.at(1).adapterSelection.adapterId.value.isEmpty());
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    project = *projectService->project(file.projectId);
+    QCOMPARE(project.slaves, QList<Data::OfflineSlaveConfiguration>({preserved, removed}));
+    adapterProvider.setProfileAvailable(true);
+
+    ExtensionSystem::PluginManager::addObject(&secondAdapterProvider);
+    secondAdapterProviderRegistered = true;
+    output.clear();
+    QVERIFY_RESULT(controller.applyCurrentBusToProject());
+    QTRY_COMPARE(output.size(), 1);
+    QCOMPARE(output.constFirst().constFirst().toString(), baseOutput + adapterWarning);
+    project = *projectService->project(file.projectId);
+    QVERIFY(project.slaves.at(0).adapterSelection.adapterId.value.isEmpty());
+    QVERIFY(project.slaves.at(1).adapterSelection.adapterId.value.isEmpty());
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    project = *projectService->project(file.projectId);
+    QCOMPARE(project.slaves, QList<Data::OfflineSlaveConfiguration>({preserved, removed}));
+    ExtensionSystem::PluginManager::removeObject(&secondAdapterProvider);
+    secondAdapterProviderRegistered = false;
+
+    adapterProvider.setQualification(Data::DeviceAdapterQualification::Qualified);
+    adapterProvider.setProductionTrust(true, true);
+    output.clear();
+    QVERIFY_RESULT(controller.applyCurrentBusToProject());
+    QTRY_COMPARE(output.size(), 1);
+    QCOMPARE(output.constFirst().constFirst().toString(), baseOutput);
+    QCOMPARE(output.constFirst().at(1).value<ControllerOutputLevel>(), ControllerOutputLevel::Warning);
 
     project = *projectService->project(file.projectId);
     QCOMPARE(project.slaves.size(), 3);
@@ -23183,6 +23820,11 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     QCOMPARE(project.slaves.at(0).stationAddress, quint16(0x1001));
     QCOMPARE(project.slaves.at(0).processData, preserved.processData);
     QCOMPARE(project.slaves.at(0).dc, preserved.dc);
+    QCOMPARE(project.slaves.at(0).esiSha256, matchingDevice->sourceSha256);
+    QCOMPARE(project.slaves.at(0).adapterSelection.adapterId, candidateManifest.id);
+    QCOMPARE(project.slaves.at(0).adapterSelection.adapterVersion, candidateManifest.version);
+    QCOMPARE(
+        project.slaves.at(0).adapterSelection.adapterContentSha256, candidateManifest.contentSha256);
 
     QCOMPARE(project.slaves.at(1).position, 1);
     QCOMPARE(project.slaves.at(1).serialNumber, quint32(88));
@@ -23191,6 +23833,8 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     QVERIFY(!project.slaves.at(1).processData.pdos.isEmpty());
     QVERIFY(!project.slaves.at(1).startup.parameters.isEmpty());
     QVERIFY(project.slaves.at(1).dc.enabled);
+    QCOMPARE(project.slaves.at(1).esiSha256, matchingDevice->sourceSha256);
+    QCOMPARE(project.slaves.at(1).adapterSelection.adapterId, candidateManifest.id);
 
     QCOMPARE(project.slaves.at(2).position, 2);
     QCOMPARE(project.slaves.at(2).serialNumber, quint32(99));
@@ -23205,6 +23849,8 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     QCOMPARE(project.slaves, QList<Data::OfflineSlaveConfiguration>({preserved, removed}));
     QVERIFY_RESULT(projectService->redoProject(file.projectId));
     QCOMPARE(projectService->project(file.projectId)->slaves.size(), 3);
+    snapshot.topology = topology;
+    provider.publishSnapshot(snapshot);
     QVERIFY(!controller.canApplyCurrentBusToProject());
     QVERIFY(!controller.applyCurrentBusToProject());
 }
@@ -23263,8 +23909,7 @@ void EtherCATWorkbenchTests::testControllerCommunicationAutoAcquireAcrossProject
     QTRY_VERIFY(projectService->project(activeProject.projectId).has_value());
     QTRY_VERIFY(projectService->project(connectedProject.projectId).has_value());
     QTRY_COMPARE(projectService->activeProjectId(), activeProject.projectId);
-    QTRY_VERIFY(
-        controller.treeModel()->indexForNodeId(connectedProject.masterId).isValid());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(connectedProject.masterId).isValid());
     controller.selectionService()->setCurrentNodeId(connectedProject.masterId);
 
     const Data::ControllerConnectionScope activeScope{

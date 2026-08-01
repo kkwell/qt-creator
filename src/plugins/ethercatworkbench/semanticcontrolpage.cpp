@@ -539,6 +539,7 @@ SemanticControlPage::SemanticControlPage(
     m_status->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_status->setAccessibleName(Tr::tr("Semantic control status"));
 
+    m_manualControl->setObjectName("EtherCATSemanticManualControl");
     m_signals->setObjectName("EtherCATSemanticControlSignals");
     m_signals->setColumnCount(6);
     m_signals->setHeaderLabels(
@@ -1084,6 +1085,7 @@ void SemanticControlPage::refresh()
     m_signals->setVisible(false);
     m_actions->clear();
     m_actions->setVisible(false);
+    m_manualControl->setVisible(true);
     m_actionStates.clear();
     m_selectedActionId = {};
     m_actionDetail->setText(Tr::tr("No signed action is selected."));
@@ -1091,6 +1093,19 @@ void SemanticControlPage::refresh()
     m_requestedValue->setEnabled(false);
     m_apply->setEnabled(false);
     m_ttlCycles->setEnabled(false);
+
+    const bool controllerTopologyNode
+        = m_context.nodeKind == Core::WorkbenchNodeKind::Module && m_controller
+          && m_controller->treeModel()
+          && m_controller->treeModel()->controllerTopologySlave(m_context.nodeId);
+    if (controllerTopologyNode) {
+        m_manualControl->setVisible(false);
+        m_status->setText(
+            Tr::tr(
+                "Apply the current bus to the project and save it before signed, verified "
+                "control can be enabled."));
+        return;
+    }
 
     const std::optional<SemanticControlSelection> selection
         = m_controller && m_controller->treeModel()

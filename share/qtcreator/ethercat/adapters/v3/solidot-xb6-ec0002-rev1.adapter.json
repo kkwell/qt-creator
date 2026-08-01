@@ -1,7 +1,7 @@
 {
   "schemaVersion": "embed-labs.device-adapter/v3",
   "id": "org.embedlabs.adapter.solidot.xb6-ec0002.rev1",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "displayName": "Solidot XB6-EC0002 revision 1",
   "description": "API-038 upper-layer adapter for the exact XB6 rev1 DO16 profile and coupler status.",
   "qualification": "qualified",
@@ -15,8 +15,8 @@
   },
   "controllerAdapterTarget": {
     "adapterId": "solidot.xb6_ec0002_rev1_do16",
-    "adapterVersion": "1.2.0",
-    "adapterSha256": "72f9f3ae2b941fd3929e68ec76e506142a26304c507a686de39e29bcbb7baff1",
+    "adapterVersion": "1.3.0",
+    "adapterSha256": "1b33847b728585760471384cc6dec4273c7c1fb739e001a0b848229b935e3c42",
     "esiSha256": "5b0bfbfffdfde1fd293589deb4a1c59f974aa79dcd9206ac0a695ab00f395bf7"
   },
   "capabilities": [

@@ -1022,12 +1022,37 @@ bool RuntimePackageCompilerDeviceSourceEvidence::isValid() const
     const bool dcDecisionIsExact = explicitNoDc
                                        ? !signedDcProfileId.has_value()
                                        : signedDcProfileId && isStableId(*signedDcProfileId);
+    const bool upperDcBridgeIsExact
+        = projectSignedDcProfileId.isEmpty()
+              ? explicitNoDc && !signedDcProfileId.has_value()
+              : !explicitNoDc && isStableId(projectSignedDcProfileId)
+                    && signedDcProfileId
+                    && *signedDcProfileId == projectSignedDcProfileId;
+    const RuntimePackageCompilerSha256 controllerAdapterSha256{
+        projectControllerAdapterTarget.adapterSha256};
+    const RuntimePackageCompilerSha256 controllerEsiSha256{
+        projectControllerAdapterTarget.esiSha256};
     return !projectDeviceId.isNull() && originalEsi.isValid()
            && originalEsi.kind == RuntimePackageCompilerSourceArtifactKind::OriginalEsi
            && adapterSourceFile.isValid()
            && adapterSourceFile.kind == RuntimePackageCompilerSourceArtifactKind::AdapterSourceFile
+           && projectAdapterContractVersion == DeviceAdapterContractVersion::V3
+           && isStableId(projectAdapterId.value)
+           && isCanonicalText(projectAdapterVersion, 64)
+           && projectAdapterContentSha256.isValid()
+           && isStableId(projectPdoProfileId)
+           && isStableId(projectControllerAdapterTarget.adapterId)
+           && isCanonicalText(projectControllerAdapterTarget.adapterVersion, 64)
+           && controllerAdapterSha256.isValid() && controllerEsiSha256.isValid()
+           && isStableId(projectSignedPdoProfileId)
            && isStableId(adapterId) && isCanonicalText(adapterVersion, 64)
-           && adapterCanonicalSha256.isValid() && isStableId(pdoProfileId) && dcDecisionIsExact;
+           && adapterCanonicalSha256.isValid() && isStableId(pdoProfileId) && dcDecisionIsExact
+           && projectControllerAdapterTarget.adapterId == adapterId
+           && projectControllerAdapterTarget.adapterVersion == adapterVersion
+           && projectControllerAdapterTarget.adapterSha256
+                  == adapterCanonicalSha256.value()
+           && projectControllerAdapterTarget.esiSha256 == originalEsi.sha256.value()
+           && projectSignedPdoProfileId == pdoProfileId && upperDcBridgeIsExact;
 }
 
 bool RuntimePackageCompilerTopologySlaveEvidence::isValid() const
@@ -1312,10 +1337,12 @@ bool RuntimePackageCompilerCompileRequest::isValid() const
         const RuntimePackageCompilerDeviceSourceEvidence *source
             = findDeviceSourceEvidence(deviceSourceEvidence, slave.id);
         if (!source || source->originalEsi.sha256.value() != slave.esiSha256
-            || source->adapterId != slave.adapterSelection.adapterId.value
-            || source->adapterVersion != slave.adapterSelection.adapterVersion
-            || source->adapterCanonicalSha256.value() != slave.adapterSelection.adapterContentSha256
-            || source->pdoProfileId != slave.adapterSelection.processDataProfileId
+            || source->projectAdapterId != slave.adapterSelection.adapterId
+            || source->projectAdapterVersion != slave.adapterSelection.adapterVersion
+            || source->projectAdapterContentSha256.value()
+                   != slave.adapterSelection.adapterContentSha256
+            || source->projectPdoProfileId
+                   != slave.adapterSelection.processDataProfileId
             || source->explicitNoDc == slave.dc.enabled) {
             return false;
         }

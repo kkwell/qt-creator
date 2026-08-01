@@ -4,6 +4,8 @@
 
 #include "workbenchtreemodel.h"
 
+#include <ethercatcore/runtimepackageactivationservice.h>
+
 #include <utils/id.h>
 #include <utils/result.h>
 
@@ -176,6 +178,17 @@ public:
         const Data::ControllerPackageDeploymentRequest &request);
     Utils::Result<> cancelControllerPackageDeployment(
         const Data::ControllerConnectionScope &scope, const QString &operationId);
+    QString trustedRuntimePackageActivationUnavailableReason(
+        const Data::ControllerConnectionScope &scope) const;
+    QString trustedRuntimePackageActivationStatus(
+        const Data::ControllerConnectionScope &scope) const;
+    bool canStartTrustedRuntimePackageActivation(
+        const Data::ControllerConnectionScope &scope) const;
+    Utils::Result<> setTrustedRuntimePackageActivationPreparation(
+        const Core::RuntimePackageActivationPreparationRequest &request);
+    void clearTrustedRuntimePackageActivationPreparation();
+    Utils::Result<> startTrustedRuntimePackageActivation(
+        const Data::ControllerConnectionScope &scope);
     void writeControllerOutput(
         const QString &message,
         ControllerOutputLevel level = ControllerOutputLevel::Information);
@@ -228,20 +241,30 @@ signals:
     void diagnosticsProviderChanged(bool availabilityChanged);
     void diagnosticsStatusChanged();
     void controllerConnectionChanged();
+    void trustedRuntimePackageActivationChanged();
     void controllerOutputRequested(
-        const QString &message,
-        EtherCAT::Workbench::Internal::ControllerOutputLevel level);
+        const QString &message, EtherCAT::Workbench::Internal::ControllerOutputLevel level);
 
 private:
     friend class EtherCATWorkbenchTests;
+
+#ifdef WITH_TESTS
+    static std::optional<Data::DeviceDescription> matchingDeviceDescriptionForCurrentBusTest(
+        Core::DeviceRepositoryProvider *repository,
+        const QList<Data::DeviceSummary> &devices,
+        const Data::ControllerTopologySlave &slave,
+        const Data::OfflineSlaveConfiguration *existing,
+        int *ambiguousMatches,
+        int *unsupportedMatches);
+#endif
 
     // Product API state-changing commands can legitimately remain pending for 45 seconds,
     // including the authoritative state refresh. Keep the whole project-close cleanup bounded
     // while leaving enough time for the final release and disconnect.
     static constexpr int controllerCleanupPollIntervalMs = 100;
     static constexpr int controllerCleanupMaximumWaitMs = 60000;
-    static constexpr int controllerCleanupMaximumPolls
-        = controllerCleanupMaximumWaitMs / controllerCleanupPollIntervalMs;
+    static constexpr int controllerCleanupMaximumPolls = controllerCleanupMaximumWaitMs
+                                                         / controllerCleanupPollIntervalMs;
     static constexpr int controllerStartupPollIntervalMs = 100;
     static constexpr int controllerStartupMaximumPhaseWaitMs = 60000;
     static constexpr int controllerStartupMaximumPhasePolls = controllerStartupMaximumPhaseWaitMs
@@ -410,6 +433,10 @@ private:
     QPointer<Core::ProjectService> m_projectService;
     QPointer<Core::DeviceRepositoryProvider> m_deviceRepository;
     QPointer<Core::ProviderRegistry> m_providerRegistry;
+    QPointer<Core::RuntimePackageActivationService> m_runtimePackageActivationService;
+    std::optional<Core::RuntimePackageActivationPreparationRequest>
+        m_runtimePackageActivationPreparation;
+    QHash<QString, quint64> m_reportedRuntimePackageActivationRevisions;
     QList<QMetaObject::Connection> m_connections;
     bool m_shuttingDown = false;
     OptionalProviderPresentation m_scanProvider;

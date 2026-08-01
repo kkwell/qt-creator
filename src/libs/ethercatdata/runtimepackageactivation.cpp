@@ -258,6 +258,11 @@ bool providerOperationIsAllowedInPhase(
 class ActivationFingerprintBuilder
 {
 public:
+    void addRawBytes(QByteArrayView value)
+    {
+        m_hash.addData(value);
+    }
+
     void addByte(quint8 value)
     {
         const char byte = char(value);
@@ -784,6 +789,25 @@ const QByteArray &RuntimePackageActivationOriginalBindingToken::value() const
 bool RuntimePackageActivationOriginalBindingToken::isValid() const
 {
     return isValidOpaqueToken(m_value);
+}
+
+RuntimePackageActivationOriginalBindingToken
+runtimePackageActivationBindingToken(
+    const SemanticBindingArtifactReference &reference)
+{
+    ActivationFingerprintBuilder builder;
+    builder.addRawBytes(
+        QByteArrayView("embed-labs.runtime-package-activation.project-binding-token.v1"));
+    builder.addString(reference.artifactId);
+    builder.addBytes(reference.artifactSha256);
+    builder.addBytes(reference.projectConfigurationSha256);
+    builder.addU64(quint64(reference.projectDeviceBindings.size()));
+    for (const SemanticProjectDeviceBinding &binding :
+         reference.projectDeviceBindings) {
+        builder.addString(binding.slaveId.toString());
+        builder.addString(binding.projectDeviceId);
+    }
+    return RuntimePackageActivationOriginalBindingToken{builder.result().value()};
 }
 
 RuntimePackageActivationProjectCapture::RuntimePackageActivationProjectCapture(
@@ -2013,7 +2037,10 @@ bool RuntimePackageActivationAuditEvent::isValid() const
     case RuntimePackageActivationAuditKind::ControllerEvidenceCaptured:
         return (m_phase == RuntimePackageActivationPhase::ProbingExistingPackage
                 || m_phase == RuntimePackageActivationPhase::AcquiringControl
+                || m_phase == RuntimePackageActivationPhase::DeployingPackage
                 || m_phase == RuntimePackageActivationPhase::VerifyingRuntimeIdentity
+                || m_phase == RuntimePackageActivationPhase::PersistingEvidence
+                || m_phase == RuntimePackageActivationPhase::CommittingProjectBinding
                 || m_phase == RuntimePackageActivationPhase::Canceling
                 || m_phase == RuntimePackageActivationPhase::ReleasingControl
                 || m_phase == RuntimePackageActivationPhase::Reconciling)
@@ -2249,6 +2276,7 @@ bool RuntimePackageActivationRecord::isValid() const
     quint64 acquiredControlProviderSessionId = 0;
     quint64 acquiredControlBootId = 0;
     quint64 acquiredControlOwnerSessionId = 0;
+    std::optional<RuntimePackageActivationSha256> acquireNotAppliedEvidence;
     std::optional<RuntimePackageActivationSha256> deployNotAppliedEvidence;
     qsizetype cancellationRequestIndex = -1;
     qsizetype projectCommitIndex = -1;
@@ -2351,10 +2379,6 @@ bool RuntimePackageActivationRecord::isValid() const
                 const bool applied
                     = event.providerReconciliation()
                       == RuntimePackageActivationProviderReconciliation::Applied;
-                const bool sameControllerAsBefore
-                    = m_beforeController
-                      && m_beforeController->describesSameControllerStateAs(
-                          *authoritativeEvidence);
                 const bool samePackageAsBefore
                     = m_beforeController
                       && packageRuntimeStateMatches(
@@ -2368,9 +2392,11 @@ bool RuntimePackageActivationRecord::isValid() const
                         = applied
                               ? authoritativeEvidence->controlLeaseOwnerSessionId()
                                     == event.providerSessionId()
-                              : sameControllerAsBefore
+                              : samePackageAsBefore
                                     && authoritativeEvidence->controlLeaseOwnerSessionId()
                                            != event.providerSessionId();
+                    if (!applied && evidenceMatchesDisposition)
+                        acquireNotAppliedEvidence = event.evidenceSha256();
                     break;
                 case RuntimePackageActivationProviderAction::ReleaseControl:
                     evidenceMatchesDisposition
@@ -2477,9 +2503,17 @@ bool RuntimePackageActivationRecord::isValid() const
                     }
                 }
             }
-            if (applied
-                && event.providerAction()
-                       == RuntimePackageActivationProviderAction::AcquireControl) {
+            const bool acquireLeaseObserved
+                = event.providerAction()
+                      == RuntimePackageActivationProviderAction::AcquireControl
+                  && (applied
+                      || (event.kind()
+                              == RuntimePackageActivationAuditKind::
+                                  ProviderTerminalResponse
+                          && authoritativeEvidence
+                          && authoritativeEvidence->controlLeaseOwnerSessionId()
+                                 == event.providerSessionId()));
+            if (acquireLeaseObserved) {
                 acquiredControlStillHeld = true;
                 acquiredControlSessionGeneration = event.providerSessionGeneration();
                 acquiredControlProviderSessionId = event.providerSessionId();
@@ -2550,9 +2584,46 @@ bool RuntimePackageActivationRecord::isValid() const
             break;
         }
     }
+    const bool unresolvedProjectPersistence
+        = m_projectCommit && m_beforeController && m_afterController
+          && m_afterController->matchesActivatedIdentity(m_identity);
 
     const RuntimePackageActivationAuditEvent &first = m_audit.constFirst();
     const RuntimePackageActivationAuditEvent &last = m_audit.constLast();
+    const bool unresolvedDurableCleanup
+        = last.code() == QStringLiteral("activation-guard-delete-failed")
+          && m_beforeController && m_afterController;
+    const bool unresolvedProviderContradiction
+        = (last.code() == QStringLiteral("acquire-response-contradictory")
+           || last.code() == QStringLiteral("release-outcome-unknown")
+           || last.code() == QStringLiteral("controller-provider-unavailable")
+           || last.code() == QStringLiteral("recovery-lease-owner-mismatch")
+           || last.code() == QStringLiteral("recovery-existing-package-lease")
+           || last.code() == QStringLiteral("activation-recovery-release-invalid")
+           || last.code() == QStringLiteral("recovery-request-id-exhausted")
+           || last.code() == QStringLiteral("activation-reconciliation-incomplete"))
+          && m_beforeController && m_afterController;
+    const bool unresolvedControllerDrift
+        = last.code() == QStringLiteral("controller-target-drifted")
+          && m_beforeController && m_afterController;
+    const bool unresolvedDurableRecovery
+        = (last.code() == QStringLiteral("activation-recovered")
+           || last.code()
+                  == QStringLiteral("activation-journal-update-failed"))
+          && m_beforeController;
+    const RuntimePackageActivationControllerEvidence *releaseEvidence
+        = last.evidenceSha256()
+              ? evidenceForDigest(*last.evidenceSha256())
+              : nullptr;
+    const bool recoveryReleaseAwaitingFinalization
+        = m_phase == RuntimePackageActivationPhase::Reconciling
+          && last.kind()
+                 == RuntimePackageActivationAuditKind::ProviderTerminalResponse
+          && last.providerAction()
+                 == RuntimePackageActivationProviderAction::ReleaseControl
+          && last.providerStatus() == std::optional<qint32>(0)
+          && last.providerOperationResult() == std::optional<qint32>(0)
+          && releaseEvidence && !releaseEvidence->ownsControlLease();
     if (first.kind() != RuntimePackageActivationAuditKind::IntentPersisted
         || first.phase() != RuntimePackageActivationPhase::Queued
         || first.outcome() != RuntimePackageActivationOutcome::Pending
@@ -2563,7 +2634,12 @@ bool RuntimePackageActivationRecord::isValid() const
         || (terminal && !outstandingProviderRequests.isEmpty())
         || (terminal && acquiredControlStillHeld)
         || (m_outcome == RuntimePackageActivationOutcome::OutcomeUnknown
-            && !outstandingControllerMutation && !acquiredControlStillHeld)) {
+            && !outstandingControllerMutation && !acquiredControlStillHeld
+            && !unresolvedProjectPersistence && !unresolvedDurableCleanup
+            && !unresolvedProviderContradiction
+            && !unresolvedControllerDrift
+            && !unresolvedDurableRecovery
+            && !recoveryReleaseAwaitingFinalization)) {
         return false;
     }
 
@@ -2700,7 +2776,19 @@ bool RuntimePackageActivationRecord::isValid() const
             }
             break;
         case RuntimePackageActivationDeploymentOutcome::OutcomeUnknown:
-            if (m_outcome != RuntimePackageActivationOutcome::OutcomeUnknown) {
+            if (m_outcome
+                    != RuntimePackageActivationOutcome::OutcomeUnknown
+                && !std::any_of(
+                    m_audit.cbegin(),
+                    m_audit.cend(),
+                    [](const RuntimePackageActivationAuditEvent &event) {
+                        return event.kind()
+                                   == RuntimePackageActivationAuditKind::
+                                       ProviderOutcomeReconciled
+                               && event.providerAction()
+                                      == RuntimePackageActivationProviderAction::
+                                          DeployPackage;
+                    })) {
                 return false;
             }
             break;
@@ -2711,6 +2799,12 @@ bool RuntimePackageActivationRecord::isValid() const
     const bool controllerUnchanged = hasBeforeAndAfter
                                      && m_beforeController->describesSameControllerStateAs(
                                          *m_afterController);
+    const bool controllerRuntimeUnchanged
+        = hasBeforeAndAfter
+          && packageRuntimeStateMatches(
+              *m_beforeController, *m_afterController)
+          && !m_beforeController->controlLeaseOwnerSessionId()
+          && !m_afterController->controlLeaseOwnerSessionId();
     const bool afterMatchesTarget
         = m_afterController && m_afterController->matchesActivatedIdentity(m_identity);
     const bool authoritativeDeployNotApplied
@@ -2720,6 +2814,13 @@ bool RuntimePackageActivationRecord::isValid() const
           && !acquiredControlStillHeld
           && m_afterController->controlLeaseOwnerSessionId()
                  != acquiredControlOwnerSessionId;
+    const bool authoritativeAcquireNotApplied
+        = acquireNotAppliedEvidence && m_beforeController && m_afterController
+          && *acquireNotAppliedEvidence
+                 == m_afterController->evidenceSha256()
+          && packageRuntimeStateMatches(
+              *m_beforeController, *m_afterController)
+          && !acquiredControlStillHeld;
     qsizetype acquireSuccessIndex = -1;
     qsizetype deploySuccessIndex = -1;
     qsizetype releaseSuccessIndex = -1;
@@ -2733,6 +2834,17 @@ bool RuntimePackageActivationRecord::isValid() const
                       == RuntimePackageActivationAuditKind::ProviderOutcomeReconciled
                   && event.providerReconciliation()
                          == RuntimePackageActivationProviderReconciliation::Applied);
+        if (event.kind()
+                == RuntimePackageActivationAuditKind::ControlLeaseReconciled
+            && event.providerAction()
+                   == RuntimePackageActivationProviderAction::ReleaseControl
+            && event.providerReconciliation()
+                   == RuntimePackageActivationProviderReconciliation::Applied) {
+            if (releaseSuccessIndex >= 0)
+                return false;
+            releaseSuccessIndex = index;
+            continue;
+        }
         if (!success)
             continue;
         switch (event.providerAction()) {
@@ -2784,9 +2896,15 @@ bool RuntimePackageActivationRecord::isValid() const
             && (!hasBeforeAndAfter || !afterMatchesTarget)) {
             return false;
         }
-        if (m_phase == RuntimePackageActivationPhase::ReleasingControl
-            && (!hasBeforeAndAfter || !afterMatchesTarget || !m_projectCommit)) {
-            return false;
+        if (m_phase == RuntimePackageActivationPhase::ReleasingControl) {
+            if (!hasBeforeAndAfter || !acquiredControlStillHeld)
+                return false;
+            if (m_projectCommit) {
+                if (!afterMatchesTarget)
+                    return false;
+            } else if (!controllerMutationWasSent) {
+                return false;
+            }
         }
         return true;
     case RuntimePackageActivationOutcome::OutcomeUnknown:
@@ -2798,11 +2916,16 @@ bool RuntimePackageActivationRecord::isValid() const
         }
         if (!m_projectCommit)
             return true;
-        return hasBeforeAndAfter && afterMatchesTarget && acquiredControlStillHeld;
+        return hasBeforeAndAfter
+               && ((afterMatchesTarget
+                    && (acquiredControlStillHeld
+                        || unresolvedProjectPersistence))
+                   || unresolvedControllerDrift);
     case RuntimePackageActivationOutcome::SucceededWithExistingPackage:
         return hasBeforeAndAfter
                && m_beforeController->matchesActivatedIdentity(m_identity)
-               && controllerUnchanged && afterMatchesTarget && m_projectCommit
+               && controllerRuntimeUnchanged && afterMatchesTarget
+               && m_projectCommit
                && last.evidenceSha256()
                && *last.evidenceSha256() == m_projectCommit->evidenceSha256()
                && !auditHasOperation(
@@ -2827,9 +2950,15 @@ bool RuntimePackageActivationRecord::isValid() const
         if (m_projectCommit || m_cancellation)
             return false;
         if (!controllerMutationWasSent)
-            return !m_afterController;
+            return !m_afterController
+                   || (hasBeforeAndAfter
+                       && controllerRuntimeUnchanged
+                       && last.evidenceSha256()
+                       && *last.evidenceSha256()
+                              == m_afterController->evidenceSha256());
         return hasBeforeAndAfter
-               && (controllerUnchanged || authoritativeDeployNotApplied)
+               && (controllerUnchanged || authoritativeDeployNotApplied
+                   || authoritativeAcquireNotApplied)
                && last.evidenceSha256()
                && *last.evidenceSha256() == m_afterController->evidenceSha256();
     case RuntimePackageActivationOutcome::FailedAfterRollback:

@@ -10,6 +10,7 @@
 #include "readonlysemanticbindingfactory_p.h"
 #include "runtimepackageevidence_p.h"
 #include "runtimepackageevidencerepository_p.h"
+#include "runtimepackageactivationservice_p.h"
 #include "semanticactiondefinitions_p.h"
 #include "semanticactionplan_p.h"
 #include "semanticactionruntimefactory_p.h"
@@ -31,6 +32,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -87,7 +91,28 @@ public:
         return unsupported();
     }
 
-    Utils::Result<> saveProject(const Data::NodeId &) final { return unsupported(); }
+    Utils::Result<> saveProject(const Data::NodeId &projectId) final
+    {
+        if (!activationCapture
+            || activationCapture->snapshot().id != projectId) {
+            return unsupported();
+        }
+        ++activationSaveCalls;
+        if (activationSaveError)
+            return Utils::ResultError(*activationSaveError);
+        const Data::RuntimePackageActivationDocumentRevisionToken
+            persistedDocumentRevision{QByteArray(32, '\x6e')};
+        Data::ProjectSnapshot savedSnapshot = activationCapture->snapshot();
+        savedSnapshot.modified = false;
+        activationCapture = Data::RuntimePackageActivationProjectCapture{
+            savedSnapshot,
+            activationCapture->serializedProject(),
+            activationCapture->documentRevisionNumber() + 1,
+            persistedDocumentRevision,
+            activationCapture->originalBinding(),
+        };
+        return Utils::ResultOk;
+    }
     Utils::Result<> undoProject(const Data::NodeId &) final { return unsupported(); }
     Utils::Result<> redoProject(const Data::NodeId &) final { return unsupported(); }
 
@@ -154,19 +179,72 @@ public:
     }
 
     Utils::Result<Data::RuntimePackageActivationProjectCapture>
-    captureRuntimePackageActivationProject(const Data::NodeId &) const final
+    captureRuntimePackageActivationProject(const Data::NodeId &projectId) const final
     {
-        return Utils::ResultError("Test project capture is not implemented");
+        ++activationCaptureCalls;
+        if (!activationCapture)
+            return Utils::ResultError("Test project capture is not implemented");
+        if (activationCapture->snapshot().id != projectId)
+            return Utils::ResultError("Unknown test activation project");
+        return *activationCapture;
     }
 
     Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult>
     compareAndSetMasterBindingArtifact(
-        const Data::NodeId &,
-        const Data::RuntimePackageActivationDocumentRevisionToken &,
-        const Data::RuntimePackageActivationOriginalBindingToken &,
-        const Data::SemanticBindingArtifactReference &) final
+        const Data::NodeId &projectId,
+        const Data::RuntimePackageActivationDocumentRevisionToken &documentRevision,
+        const Data::RuntimePackageActivationOriginalBindingToken &originalBinding,
+        const Data::SemanticBindingArtifactReference &target) final
     {
-        return Utils::ResultError("Test project compare-and-set is not implemented");
+        ++activationCompareAndSetCalls;
+        lastActivationTarget = target;
+        if (activationCompareAndSetError)
+            return Utils::ResultError(*activationCompareAndSetError);
+        if (!activationCapture || activationCapture->snapshot().id != projectId
+            || activationCapture->documentRevision() != documentRevision
+            || activationCapture->originalBinding() != originalBinding
+            || activationCompareAndSetStale) {
+            return Data::RuntimePackageActivationProjectCompareAndSetResult{
+                Data::RuntimePackageActivationProjectCompareAndSetDisposition::Stale};
+        }
+
+        const auto resultingBinding
+            = Data::runtimePackageActivationBindingToken(target);
+        const Data::RuntimePackageActivationDocumentRevisionToken
+            resultingDocumentRevision{QByteArray(32, '\x7e')};
+        const Data::RuntimePackageActivationProjectCommit commit{
+            documentRevision,
+            originalBinding,
+            resultingDocumentRevision,
+            resultingBinding,
+            Data::RuntimePackageActivationProjectCommitDisposition::
+                CompareAndSetCommitted,
+            QDateTime::currentDateTimeUtc(),
+        };
+        if (!commit.isValid())
+            return Utils::ResultError("The test project commit is invalid");
+        Data::ProjectSnapshot resultingSnapshot = activationCapture->snapshot();
+        resultingSnapshot.masterBindingArtifact = target;
+        resultingSnapshot.modified = true;
+        activationCapture = Data::RuntimePackageActivationProjectCapture{
+            resultingSnapshot,
+            activationCapture->serializedProject()
+                + QByteArray("\nactivation-binding-saved"),
+            activationCapture->documentRevisionNumber() + 1,
+            resultingDocumentRevision,
+            resultingBinding,
+        };
+        for (Data::ProjectSnapshot &candidate : m_projects) {
+            if (candidate.id == projectId) {
+                candidate = resultingSnapshot;
+                emit projectChanged(candidate);
+                break;
+            }
+        }
+        return Data::RuntimePackageActivationProjectCompareAndSetResult{
+            Data::RuntimePackageActivationProjectCompareAndSetDisposition::
+                CompareAndSetCommitted,
+            commit};
     }
 
     void addProject(const Data::ProjectSnapshot &project)
@@ -196,6 +274,15 @@ public:
             return;
         }
     }
+
+    std::optional<Data::RuntimePackageActivationProjectCapture> activationCapture;
+    std::optional<QString> activationCompareAndSetError;
+    std::optional<QString> activationSaveError;
+    bool activationCompareAndSetStale = false;
+    mutable int activationCaptureCalls = 0;
+    int activationCompareAndSetCalls = 0;
+    int activationSaveCalls = 0;
+    Data::SemanticBindingArtifactReference lastActivationTarget;
 
 private:
     static Utils::Result<> unsupported()
@@ -289,8 +376,10 @@ public:
 
     Utils::Result<> refreshRuntimeResources() final
     {
-        ++mutationCalls;
-        return rejectedMutation();
+        ++runtimeResourceRefreshCalls;
+        return runtimeResourceRefreshError
+                   ? Utils::ResultError(*runtimeResourceRefreshError)
+                   : Utils::ResultOk;
     }
 
     Utils::Result<> requestRuntimeResourceSnapshot(const Data::RuntimeResourceSnapshotRequest &) final
@@ -312,10 +401,12 @@ public:
     }
 
     Utils::Result<> requestRuntimeSemanticMappingAttestation(
-        const Data::RuntimeSemanticMappingAttestationRequest &) final
+        const Data::RuntimeSemanticMappingAttestationRequest &request) final
     {
-        ++mutationCalls;
-        return rejectedMutation();
+        semanticMappingAttestationRequests.append(request);
+        return semanticMappingAttestationRequestError
+                   ? Utils::ResultError(*semanticMappingAttestationRequestError)
+                   : Utils::ResultOk;
     }
 
     void publishSnapshot(const Data::ControllerConnectionSnapshot &value)
@@ -336,6 +427,12 @@ public:
         emit runtimeResourceSnapshotChanged();
     }
 
+    void publishResourceSnapshotRequestFinished(
+        const Data::RuntimeResourceSnapshotResult &result)
+    {
+        emit runtimeResourceSnapshotRequestFinished(result);
+    }
+
     void publishSemanticMappingAttestation(
         const std::optional<Data::RuntimeSemanticMappingAttestation> &value)
     {
@@ -353,7 +450,12 @@ public:
     mutable int catalogReads = 0;
     mutable int resourceSnapshotReads = 0;
     mutable int semanticMappingAttestationReads = 0;
+    int runtimeResourceRefreshCalls = 0;
     int mutationCalls = 0;
+    QList<Data::RuntimeSemanticMappingAttestationRequest>
+        semanticMappingAttestationRequests;
+    std::optional<QString> runtimeResourceRefreshError;
+    std::optional<QString> semanticMappingAttestationRequestError;
     bool runtimeResourcesSupported = true;
     bool semanticMappingAttestationSupported = true;
     Data::ControllerConnectionSnapshot snapshot;
@@ -366,6 +468,381 @@ private:
     {
         return Utils::ResultError("Counting controller must not be mutated");
     }
+};
+
+class ActivationControllerProvider final : public Core::ControllerConnectionProvider
+{
+public:
+    enum class DeploymentMode {
+        Succeed,
+        FailTerminal,
+        RejectImmediately,
+        OutcomeUnknown,
+        Stall,
+        ProgressThenSucceed,
+    };
+
+    enum class ControlMode {
+        Complete,
+        StallAcquire,
+        StallRelease,
+    };
+
+    explicit ActivationControllerProvider(Utils::Id id)
+        : ControllerConnectionProvider(
+              id, QStringLiteral("Trusted activation test controller"))
+    {}
+
+    QList<Data::ControllerConnectionProfile> connectionProfiles(
+        const Data::ControllerConnectionScope &) const final
+    {
+        return {};
+    }
+
+    Utils::Result<> setConnectionProfileEndpoint(
+        const Data::ControllerConnectionScope &,
+        const Data::NodeId &,
+        const QString &) final
+    {
+        return unsupported();
+    }
+
+    Data::ControllerConnectionSnapshot connectionSnapshot() const final
+    {
+        return snapshot;
+    }
+
+    Utils::Result<> connectToController(
+        const Data::ControllerConnectionRequest &) final
+    {
+        return unsupported();
+    }
+
+    Utils::Result<> disconnectFromController() final { return unsupported(); }
+    Utils::Result<> refreshController() final { return unsupported(); }
+
+    bool supportsControlCommand(Data::ControllerControlCommand command) const final
+    {
+        return command == Data::ControllerControlCommand::AcquireControl
+               || command == Data::ControllerControlCommand::ReleaseControl;
+    }
+
+    Utils::Result<> executeControlCommand(
+        const Data::ControllerControlRequest &request) final
+    {
+        controlRequests.append(request);
+        if (!snapshot.session)
+            return Utils::ResultError("The activation test session is missing");
+        if (request.command == Data::ControllerControlCommand::AcquireControl) {
+            if (controlMode == ControlMode::StallAcquire)
+                return Utils::ResultOk;
+            QTimer::singleShot(0, this, [this] {
+                snapshot.session->controlLeaseOwnerSessionId
+                    = snapshot.session->sessionId;
+                snapshot.session->ownsControlLease = true;
+                snapshot.controlProgress = successfulControlProgress(
+                    Data::ControllerControlCommand::AcquireControl,
+                    QStringLiteral("lease-acquired"));
+                emit connectionSnapshotChanged();
+            });
+            return Utils::ResultOk;
+        }
+        if (request.command == Data::ControllerControlCommand::ReleaseControl) {
+            if (controlMode == ControlMode::StallRelease)
+                return Utils::ResultOk;
+            QTimer::singleShot(0, this, [this] {
+                snapshot.session->controlLeaseOwnerSessionId = 0;
+                snapshot.session->ownsControlLease = false;
+                snapshot.controlProgress = successfulControlProgress(
+                    Data::ControllerControlCommand::ReleaseControl,
+                    QStringLiteral("lease-released"));
+                emit connectionSnapshotChanged();
+            });
+            return Utils::ResultOk;
+        }
+        return unsupported();
+    }
+
+    bool supportsPackageDeployment() const final { return true; }
+
+    Utils::Result<> deployPackage(
+        const Data::ControllerPackageDeploymentRequest &request) final
+    {
+        deploymentRequests.append(request);
+        if (deploymentMode == DeploymentMode::RejectImmediately)
+            return Utils::ResultError("The provider rejected package deployment");
+        if (deploymentMode == DeploymentMode::Stall)
+            return Utils::ResultOk;
+
+        int completionDelayMs = 0;
+        if (deploymentMode == DeploymentMode::ProgressThenSucceed) {
+            completionDelayMs = 30;
+            QTimer::singleShot(10, this, [this, request] {
+                const QDateTime startedAt
+                    = QDateTime::currentDateTimeUtc();
+                Data::ControllerPackageDeploymentProgress progress;
+                progress.operationId = request.operationId;
+                progress.artifactSha256 = QCryptographicHash::hash(
+                    request.artifact, QCryptographicHash::Sha256);
+                progress.state
+                    = Data::ControllerPackageDeploymentState::Uploading;
+                progress.totalBytes = request.artifact.size();
+                progress.transferredBytes = request.artifact.size() / 2;
+                progress.previousActive = previousActive;
+                progress.startedAt = startedAt;
+                progress.audit.append(deploymentAuditEvent(
+                    1,
+                    Data::ControllerOperation::UploadPackage,
+                    1,
+                    {},
+                    startedAt));
+                snapshot.packageDeploymentProgress = progress;
+                emit connectionSnapshotChanged();
+            });
+        }
+
+        QTimer::singleShot(completionDelayMs, this, [this, request] {
+            const QDateTime startedAt = QDateTime::currentDateTimeUtc();
+            Data::ControllerPackageDeploymentProgress progress;
+            progress.operationId = request.operationId;
+            progress.artifactSha256 = QCryptographicHash::hash(
+                request.artifact, QCryptographicHash::Sha256);
+            progress.totalBytes = request.artifact.size();
+            progress.previousActive = previousActive;
+            progress.startedAt = startedAt;
+            progress.audit.append(deploymentAuditEvent(
+                1,
+                Data::ControllerOperation::UploadPackage,
+                {},
+                {},
+                startedAt));
+            progress.audit.append(deploymentAuditEvent(
+                2,
+                Data::ControllerOperation::UploadPackage,
+                1,
+                {},
+                startedAt));
+
+            if (deploymentMode == DeploymentMode::OutcomeUnknown) {
+                progress.state
+                    = Data::ControllerPackageDeploymentState::OutcomeUnknown;
+                progress.detail = QStringLiteral("deployment-outcome-unknown");
+                progress.completedAt = startedAt;
+                snapshot.packageDeploymentProgress = progress;
+                emit connectionSnapshotChanged();
+                return;
+            }
+            if (deploymentMode == DeploymentMode::FailTerminal) {
+                progress.audit.append(deploymentAuditEvent(
+                    3,
+                    Data::ControllerOperation::UploadPackage,
+                    1,
+                    -21,
+                    startedAt));
+                progress.state = Data::ControllerPackageDeploymentState::Failed;
+                progress.status = -21;
+                progress.operationResult = 0;
+                progress.detail = QStringLiteral("deployment-rejected");
+                progress.completedAt = startedAt;
+                snapshot.packageDeploymentProgress = progress;
+                emit connectionSnapshotChanged();
+                return;
+            }
+
+            quint64 sequence = 2;
+            progress.audit.append(deploymentAuditEvent(
+                ++sequence,
+                Data::ControllerOperation::UploadPackage,
+                1,
+                0,
+                startedAt));
+            progress.audit.append(deploymentAuditEvent(
+                ++sequence,
+                Data::ControllerOperation::UploadPackage,
+                2,
+                {},
+                startedAt));
+            progress.audit.append(deploymentAuditEvent(
+                ++sequence,
+                Data::ControllerOperation::UploadPackage,
+                2,
+                0,
+                startedAt));
+            progress.audit.append(deploymentAuditEvent(
+                ++sequence,
+                Data::ControllerOperation::UploadPackage,
+                3,
+                {},
+                startedAt));
+            progress.audit.append(deploymentAuditEvent(
+                ++sequence,
+                Data::ControllerOperation::UploadPackage,
+                3,
+                0,
+                startedAt));
+            appendSixResponseExchange(
+                progress,
+                sequence,
+                Data::ControllerOperation::ValidatePackage,
+                4,
+                startedAt);
+            appendSixResponseExchange(
+                progress,
+                sequence,
+                Data::ControllerOperation::ActivatePackage,
+                5,
+                startedAt);
+
+            progress.state = Data::ControllerPackageDeploymentState::Succeeded;
+            progress.transferredBytes = request.artifact.size();
+            progress.candidate = candidate;
+            progress.status = 0;
+            progress.operationResult = 0;
+            progress.detail = QStringLiteral("deployment-succeeded");
+            progress.completedAt = startedAt;
+            snapshot.packageDeploymentProgress = progress;
+            if (snapshot.package) {
+                snapshot.package->stagedSlot = candidate.slot;
+                snapshot.package->stagedGeneration = candidate.generation;
+                snapshot.package->stagedConfigurationId
+                    = candidate.configurationId;
+                snapshot.package->activeSlot = candidate.slot;
+                snapshot.package->activeGeneration = candidate.generation;
+                snapshot.package->activeConfigurationId
+                    = candidate.configurationId;
+                snapshot.package->controllerState
+                    = Data::ControllerPackageState::Active;
+            }
+            if (snapshot.controllerState) {
+                snapshot.controllerState->serviceState
+                    = Data::ControllerServiceState::OperationalSafe;
+            }
+            emit runtimeResourceCatalogChanged();
+            emit runtimeSemanticMappingAttestationChanged();
+            emit connectionSnapshotChanged();
+        });
+        return Utils::ResultOk;
+    }
+
+    Utils::Result<> cancelPackageDeployment(const QString &) final
+    {
+        return unsupported();
+    }
+
+    bool supportsRuntimeResources() const final { return true; }
+
+    std::optional<Data::RuntimeResourceCatalog> runtimeResourceCatalog() const final
+    {
+        return catalog;
+    }
+
+    std::optional<Data::RuntimeResourceSnapshot> runtimeResourceSnapshot() const final
+    {
+        return std::nullopt;
+    }
+
+    Utils::Result<> refreshRuntimeResources() final { return Utils::ResultOk; }
+
+    Utils::Result<> requestRuntimeResourceSnapshot(
+        const Data::RuntimeResourceSnapshotRequest &) final
+    {
+        return unsupported();
+    }
+
+    bool supportsRuntimeSemanticMappingAttestation() const final { return true; }
+
+    std::optional<Data::RuntimeSemanticMappingAttestation>
+    runtimeSemanticMappingAttestation() const final
+    {
+        return attestation;
+    }
+
+    Utils::Result<> requestRuntimeSemanticMappingAttestation(
+        const Data::RuntimeSemanticMappingAttestationRequest &request) final
+    {
+        QTimer::singleShot(0, this, [this, request] {
+            emit runtimeSemanticMappingAttestationRequestFinished(
+                Data::RuntimeSemanticMappingAttestationResult{
+                    request, attestation, {}});
+        });
+        return Utils::ResultOk;
+    }
+
+    static Data::ControllerControlProgress successfulControlProgress(
+        Data::ControllerControlCommand command, const QString &detail)
+    {
+        const QDateTime now = QDateTime::currentDateTimeUtc();
+        return {
+            command,
+            Data::ControllerControlState::Succeeded,
+            4,
+            true,
+            0,
+            0,
+            0,
+            0,
+            detail,
+            now,
+            now,
+        };
+    }
+
+    static Data::ControllerPackageDeploymentAuditEvent deploymentAuditEvent(
+        quint64 sequence,
+        Data::ControllerOperation operation,
+        std::optional<quint64> requestId,
+        std::optional<qint32> status,
+        const QDateTime &occurredAt)
+    {
+        return {
+            sequence,
+            operation,
+            requestId,
+            status,
+            status ? std::optional<qint32>(0) : std::nullopt,
+            QStringLiteral("activation-test-deployment"),
+            occurredAt,
+        };
+    }
+
+    static void appendSixResponseExchange(
+        Data::ControllerPackageDeploymentProgress &progress,
+        quint64 &sequence,
+        Data::ControllerOperation operation,
+        quint64 requestId,
+        const QDateTime &startedAt)
+    {
+        progress.audit.append(deploymentAuditEvent(
+            ++sequence,
+            operation,
+            requestId,
+            {},
+            startedAt));
+        for (int index = 0; index < 6; ++index) {
+            progress.audit.append(deploymentAuditEvent(
+                ++sequence,
+                operation,
+                requestId,
+                0,
+                startedAt));
+        }
+    }
+
+    static Utils::Result<> unsupported()
+    {
+        return Utils::ResultError(
+            "The activation test provider does not support this operation");
+    }
+
+    DeploymentMode deploymentMode = DeploymentMode::Succeed;
+    ControlMode controlMode = ControlMode::Complete;
+    Data::ControllerPackageSelector previousActive;
+    Data::ControllerPackageSelector candidate;
+    Data::ControllerConnectionSnapshot snapshot;
+    std::optional<Data::RuntimeResourceCatalog> catalog;
+    std::optional<Data::RuntimeSemanticMappingAttestation> attestation;
+    QList<Data::ControllerControlRequest> controlRequests;
+    QList<Data::ControllerPackageDeploymentRequest> deploymentRequests;
 };
 
 class DeterministicOutputControllerProvider final : public Core::ControllerConnectionProvider
@@ -604,6 +1081,62 @@ public:
 
 private:
     QObject *m_object = nullptr;
+};
+
+static Utils::Id nextActivationAdapterProviderId()
+{
+    static quint64 sequence = 0;
+    return Utils::Id::fromString(
+        QStringLiteral("EtherCAT.SemanticRuntime.Tests.ActivationAdapter.%1")
+            .arg(++sequence));
+}
+
+class ActivationAdapterProvider final : public Core::DeviceAdapterProvider
+{
+public:
+    explicit ActivationAdapterProvider(
+        QList<Data::DeviceAdapterManifest> manifests)
+        : DeviceAdapterProvider(
+              nextActivationAdapterProviderId(),
+              "Trusted activation test adapters")
+        , manifests(std::move(manifests))
+    {
+        setAvailable(true);
+    }
+
+    QList<Data::DeviceAdapterManifest> adapterManifests() const final
+    {
+        return manifests;
+    }
+
+    std::optional<Data::DeviceAdapterManifest> adapterManifest(
+        const Data::DeviceAdapterId &adapterId,
+        const QString &version) const final
+    {
+        const auto found = std::find_if(
+            manifests.cbegin(),
+            manifests.cend(),
+            [&adapterId, &version](const Data::DeviceAdapterManifest &manifest) {
+                return manifest.id == adapterId
+                       && manifest.version == version;
+            });
+        if (found == manifests.cend())
+            return std::nullopt;
+        return *found;
+    }
+
+    Data::DeviceAdapterResolutionResult resolveDevice(
+        const Data::DeviceAdapterResolutionRequest &) const final
+    {
+        return {
+            false,
+            {},
+            QStringLiteral(
+                "The activation test adapter provider exposes manifests only."),
+        };
+    }
+
+    QList<Data::DeviceAdapterManifest> manifests;
 };
 
 static Data::ControllerConnectionScope projectScope(const Data::ProjectSnapshot &project)
@@ -1247,9 +1780,9 @@ static std::optional<Api038UpperAdapterIdentity> api038UpperAdapterIdentity(
     if (lowerAdapterId == u"solidot.xb6_ec0002_rev1_do16") {
         return Api038UpperAdapterIdentity{
             QStringLiteral("org.embedlabs.adapter.solidot.xb6-ec0002.rev1"),
-            QStringLiteral("0.3.0"),
+            QStringLiteral("0.3.1"),
             QByteArray::fromHex(
-                "fbc0e1d3f23652c92eafece5753ce652f1b7a4d05caef1f44d776a91c286c510"),
+                "1b95083165cf124054069bd9897837d09bc414e8f375bbd77a0f9ddc1bcfa84c"),
             QStringLiteral("org.embedlabs.solidot.xb6.api038-do16"),
             {0x1600, 0x16ff},
             {0x1aff},
@@ -1305,19 +1838,80 @@ static Utils::Result<QList<Data::DeviceAdapterManifest>> publishedApi038V3Action
     return result;
 }
 
-// Mutation-only mirror for the fixed API-038 topology. Positive integration
-// coverage uses publishedApi038V3ActionAdapters() and the real provider parser.
+static Utils::Result<QList<Data::DeviceAdapterManifest>> api038HistoricalTestAdapters(
+    const VerifiedRuntimePackageEvidence &evidence)
+{
+    const Utils::Result<QList<Data::DeviceAdapterManifest>> published
+        = publishedApi038V3ActionAdapters();
+    if (!published)
+        return Utils::ResultError(published.error());
+
+    QList<Data::DeviceAdapterManifest> result = *published;
+    const auto &topologies = evidence.semanticBindingArtifact().topologyInstances;
+    for (Data::DeviceAdapterManifest &manifest : result) {
+        const auto topology = std::find_if(
+            topologies.cbegin(),
+            topologies.cend(),
+            [&manifest](const SemanticBindingTopologyInstance &candidate) {
+                return candidate.adapterId
+                       == manifest.controllerAdapterTarget.adapterId;
+            });
+        if (topology == topologies.cend()
+            || !std::all_of(
+                topology,
+                topologies.cend(),
+                [&manifest, &topology](
+                    const SemanticBindingTopologyInstance &candidate) {
+                    return candidate.adapterId
+                               != manifest.controllerAdapterTarget.adapterId
+                           || (candidate.adapterVersion == topology->adapterVersion
+                               && candidate.adapterSha256 == topology->adapterSha256
+                               && candidate.esiSha256 == topology->esiSha256
+                               && candidate.pdoProfile == topology->pdoProfile
+                               && candidate.dcProfile == topology->dcProfile);
+                })) {
+            return Utils::ResultError(
+                "The activation fixture controller target is ambiguous");
+        }
+        const auto profile = std::find_if(
+            manifest.processDataProfiles.cbegin(),
+            manifest.processDataProfiles.cend(),
+            [&topology](const Data::ProcessDataProfile &candidate) {
+                return candidate.signedPdoProfileId == topology->pdoProfile
+                       && candidate.signedDcProfileId
+                              == topology->dcProfile.value_or(QString());
+            });
+        if (profile == manifest.processDataProfiles.cend()) {
+            return Utils::ResultError(
+                "The activation fixture signed PDO/DC profile is unavailable");
+        }
+
+        manifest.id.value.prepend(QStringLiteral("org.embedlabs.tests.api038."));
+        manifest.version = QStringLiteral("1.0.0");
+        manifest.controllerAdapterTarget = {
+            topology->adapterId,
+            topology->adapterVersion,
+            topology->adapterSha256,
+            topology->esiSha256,
+        };
+        QByteArray contentIdentity = manifest.id.value.toUtf8();
+        contentIdentity.append(topology->adapterSha256);
+        manifest.contentSha256 = QCryptographicHash::hash(
+            contentIdentity, QCryptographicHash::Sha256);
+    }
+    return result;
+}
+
+// Historical cfg3701 tests derive their upper-layer contract from the real
+// provider parser, then bind only the test copy to that package's exact lower
+// adapter identity. The evidence-derived mirror remains a diagnostic fallback.
 static QList<Data::DeviceAdapterManifest> factoryApi038MutationAdapters(
     const VerifiedRuntimePackageEvidence &evidence)
 {
-    // Mutations must start from the same manifests that production publishes.
-    // Keep the evidence-derived mirror below only as a diagnostic fallback;
-    // the positive provider integration test above makes provider absence a
-    // hard test failure.
-    const Utils::Result<QList<Data::DeviceAdapterManifest>> published
-        = publishedApi038V3ActionAdapters();
-    if (published)
-        return *published;
+    const Utils::Result<QList<Data::DeviceAdapterManifest>> historical
+        = api038HistoricalTestAdapters(evidence);
+    if (historical)
+        return *historical;
 
     const VerifiedSemanticBindingArtifact &artifact = evidence.semanticBindingArtifact();
     QHash<QString, Data::DeviceAdapterManifest> manifests;
@@ -1794,6 +2388,622 @@ static Data::RuntimeSemanticMappingAttestation factoryAttestation(
     return attestation;
 }
 
+class RuntimeBootstrapFixture final
+{
+public:
+    RuntimeBootstrapFixture()
+        : temporary(systemTemporaryDirectoryTemplate(u"embed-labs-runtime-bootstrap"))
+    {}
+
+    Utils::Result<> initialize()
+    {
+        if (!temporary.isValid())
+            return Utils::ResultError("The runtime bootstrap temporary directory is invalid");
+
+        const QByteArray packageBytes = readTestData(
+            "testdata/api038/three-slave-manual-control-cfg3701.ecpkg");
+        const QByteArray projectBytes = readTestData("testdata/api038/project.json");
+        const QString keyFileName = QStringLiteral(
+            "eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub");
+        const QByteArray publicKey = readTestData(
+            QStringLiteral("testdata/api038/") + keyFileName);
+        const QString trustRoot = QDir(temporary.path()).filePath("trust");
+        if (packageBytes.isEmpty() || projectBytes.isEmpty() || publicKey.size() != 32
+            || !QDir().mkpath(trustRoot)
+            || !writeFile(QDir(trustRoot).filePath(keyFileName), publicKey)) {
+            return Utils::ResultError("The runtime bootstrap fixture is incomplete");
+        }
+
+        repository = std::make_shared<RuntimePackageEvidenceRepository>(
+            QDir(temporary.path()).filePath("packages"),
+            trustRoot,
+            QDir(temporary.path()).filePath("projects"));
+        const Utils::Result<VerifiedRuntimePackageEvidence> imported
+            = repository->import(packageBytes, projectBytes);
+        if (!imported)
+            return Utils::ResultError(imported.error());
+        evidence = std::make_shared<const VerifiedRuntimePackageEvidence>(*imported);
+        project = factoryProject(*evidence);
+        return Utils::ResultOk;
+    }
+
+    QTemporaryDir temporary;
+    std::shared_ptr<RuntimePackageEvidenceRepository> repository;
+    std::shared_ptr<const VerifiedRuntimePackageEvidence> evidence;
+    Data::ProjectSnapshot project;
+};
+
+static Utils::Id nextActivationFixtureProviderId()
+{
+    static quint64 sequence = 0;
+    return Utils::Id::fromString(
+        QStringLiteral("EtherCAT.SemanticRuntime.Tests.Activation.%1")
+            .arg(++sequence));
+}
+
+class ActivationFixture final
+{
+public:
+    ActivationFixture()
+        : temporary(systemTemporaryDirectoryTemplate(u"embed-labs-runtime-activation"))
+        , ownedProvider(std::make_unique<ActivationControllerProvider>(
+              nextActivationFixtureProviderId()))
+        , provider(*ownedProvider)
+    {}
+
+    Utils::Result<> initialize(
+        ActivationControllerProvider::DeploymentMode deploymentMode
+            = ActivationControllerProvider::DeploymentMode::Succeed,
+        QString operationId = QStringLiteral("operation/runtime-activation/success"),
+        bool prepareForStart = true)
+    {
+        if (!temporary.isValid())
+            return Utils::ResultError("The activation temporary directory is invalid");
+
+        packageBytes = readTestData(
+            "testdata/api038/three-slave-manual-control-cfg3701.ecpkg");
+        projectBytes = readTestData("testdata/api038/project.json");
+        const QString keyFileName = QStringLiteral(
+            "eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub");
+        const QByteArray publicKey = readTestData(
+            QStringLiteral("testdata/api038/") + keyFileName);
+        if (packageBytes.isEmpty() || projectBytes.isEmpty()
+            || publicKey.size() != 32) {
+            return Utils::ResultError("The API-038 activation fixture is incomplete");
+        }
+
+        const QString trustRoot = QDir(temporary.path()).filePath("trust");
+        if (!QDir().mkpath(trustRoot)
+            || !writeFile(QDir(trustRoot).filePath(keyFileName), publicKey)) {
+            return Utils::ResultError("The activation trust store could not be prepared");
+        }
+        repository = std::make_shared<RuntimePackageEvidenceRepository>(
+            QDir(temporary.path()).filePath("packages"),
+            trustRoot,
+            QDir(temporary.path()).filePath("projects"));
+        const Utils::Result<VerifiedRuntimePackageEvidence> imported
+            = repository->import(packageBytes, projectBytes);
+        if (!imported)
+            return Utils::ResultError(imported.error());
+        evidence = std::make_shared<const VerifiedRuntimePackageEvidence>(*imported);
+
+        project = factoryProject(*evidence);
+        project.masterBindingArtifact = {};
+        const VerifiedSemanticBindingArtifact &artifact
+            = evidence->semanticBindingArtifact();
+        for (Data::OfflineSlaveConfiguration &slave : project.slaves) {
+            const auto topology = std::find_if(
+                artifact.topologyInstances.cbegin(),
+                artifact.topologyInstances.cend(),
+                [&slave](const SemanticBindingTopologyInstance &candidate) {
+                    return candidate.position == quint32(slave.position)
+                           && candidate.stationAddress == slave.stationAddress;
+                });
+            if (topology == artifact.topologyInstances.cend())
+                return Utils::ResultError("The signed activation topology is incomplete");
+            slave.adapterSelection.processDataProfileId = topology->pdoProfile;
+        }
+        const Utils::Result<QList<Data::DeviceAdapterManifest>> activationAdapters
+            = api038HistoricalTestAdapters(*evidence);
+        if (!activationAdapters)
+            return Utils::ResultError(activationAdapters.error());
+        adapterManifests = *activationAdapters;
+        configureApi038V3ManualProject(project, adapterManifests);
+        project.masterConfiguration.timingMode
+            = Data::MasterTimingMode::DistributedClocks;
+        project.masterConfiguration.cyclePeriodNs
+            = evidence->cyclePeriodNs();
+
+        const Data::ControllerConnectionScope scope = projectScope(project);
+        targetReference.artifactId
+            = QStringLiteral("test/api038/runtime-activation-binding");
+        targetReference.artifactSha256
+            = evidence->semanticMappingProof().mappingSha256;
+        targetReference.projectConfigurationSha256
+            = evidence->projectConfigurationSha256();
+        for (const VerifiedSemanticDevice &device : artifact.devices) {
+            const auto slave = std::find_if(
+                project.slaves.cbegin(),
+                project.slaves.cend(),
+                [&device](const Data::OfflineSlaveConfiguration &candidate) {
+                    return candidate.position == int(device.position)
+                           && candidate.stationAddress == device.stationAddress;
+                });
+            if (slave == project.slaves.cend())
+                return Utils::ResultError("The activation project device is missing");
+            targetReference.projectDeviceBindings.append(
+                {slave->id, device.projectDeviceId});
+        }
+
+        documentRevision
+            = Data::RuntimePackageActivationDocumentRevisionToken{
+                QByteArray(32, '\x61')};
+        originalBinding
+            = Data::runtimePackageActivationBindingToken(
+                project.masterBindingArtifact);
+        targetBinding
+            = Data::runtimePackageActivationBindingToken(targetReference);
+        const auto digestHex = [](QByteArrayView bytes) {
+            return QString::fromLatin1(
+                QCryptographicHash::hash(bytes, QCryptographicHash::Sha256)
+                    .toHex());
+        };
+        QJsonArray companionDevices;
+        for (const Data::OfflineSlaveConfiguration &slave : project.slaves) {
+            const auto binding = std::find_if(
+                targetReference.projectDeviceBindings.cbegin(),
+                targetReference.projectDeviceBindings.cend(),
+                [&slave](const Data::SemanticProjectDeviceBinding &candidate) {
+                    return candidate.slaveId == slave.id;
+                });
+            if (binding == targetReference.projectDeviceBindings.cend())
+                return Utils::ResultError("The activation companion device is missing");
+            const auto signedDevice = std::find_if(
+                artifact.devices.cbegin(),
+                artifact.devices.cend(),
+                [&slave](const VerifiedSemanticDevice &candidate) {
+                    return candidate.position == slave.position
+                           && candidate.stationAddress
+                                  == slave.stationAddress;
+                });
+            if (signedDevice == artifact.devices.cend())
+                return Utils::ResultError("The signed activation device is missing");
+            const QString deviceDomain
+                = QStringLiteral("activation-companion-device-%1")
+                      .arg(slave.position);
+            const auto deviceDigestHex
+                = [&digestHex, &deviceDomain](QByteArrayView suffix) {
+                      QByteArray input = deviceDomain.toUtf8();
+                      input.append(suffix);
+                      return digestHex(input);
+                  };
+            companionDevices.append(QJsonObject{
+                {QStringLiteral("adapter_id"),
+                 signedDevice->adapterId},
+                {QStringLiteral("adapter_sha256"),
+                 QString::fromLatin1(
+                     signedDevice->adapterSha256.toHex())},
+                {QStringLiteral("adapter_version"),
+                 signedDevice->adapterVersion},
+                {QStringLiteral("binding_identity_sha256"),
+                 deviceDigestHex("-binding")},
+                {QStringLiteral("dc_sha256"),
+                 deviceDigestHex("-dc")},
+                {QStringLiteral("esi_sha256"),
+                 QString::fromLatin1(slave.esiSha256.toHex())},
+                {QStringLiteral("identity_sha256"),
+                 deviceDigestHex("-identity")},
+                {QStringLiteral("manual_envelope_sha256"),
+                 deviceDigestHex("-manual")},
+                {QStringLiteral("module_assignments_sha256"),
+                 deviceDigestHex("-modules")},
+                {QStringLiteral("pdo_selection_sha256"),
+                 deviceDigestHex("-pdo")},
+                {QStringLiteral("position"), slave.position},
+                {QStringLiteral("project_device_id"),
+                 binding->projectDeviceId},
+                {QStringLiteral("slave_node_id"), slave.id.toString()},
+                {QStringLiteral("startup_sdo_sha256"),
+                 deviceDigestHex("-sdo")},
+                {QStringLiteral("station_address"),
+                 int(slave.stationAddress)},
+            });
+        }
+        effectiveProjectCompanion
+            = QJsonDocument(QJsonObject{
+                                {QStringLiteral("adapter_bundle_sha256"),
+                                 digestHex("adapter-bundle")},
+                                {QStringLiteral("compiled_project_sha256"),
+                                 digestHex(projectBytes)},
+                                {QStringLiteral("configuration_id"),
+                                 qint64(artifact.configurationId)},
+                                {QStringLiteral("devices"),
+                                 companionDevices},
+                                {QStringLiteral("document_revision"), 1},
+                                {QStringLiteral("format"),
+                                 QStringLiteral(
+                                     "ethercat-effective-project-companion-v1")},
+                                {QStringLiteral("format_version"), 1},
+                                {QStringLiteral("intent_sha256"),
+                                 digestHex("activation-intent")},
+                                {QStringLiteral("master"),
+                                 QJsonObject{
+                                     {QStringLiteral("cycle_period_ns"),
+                                      qint64(evidence->cyclePeriodNs())},
+                                     {QStringLiteral("link_speed_mbps"), 100},
+                                     {QStringLiteral("timing_mode"),
+                                      QStringLiteral("dc")},
+                                 }},
+                                {QStringLiteral("master_node_id"),
+                                 scope.masterId.toString()},
+                                {QStringLiteral("project_id"),
+                                 scope.projectId.toString()},
+                                {QStringLiteral("target_profile_sha256"),
+                                 digestHex("target-profile")},
+                                {QStringLiteral("topology_evidence_sha256"),
+                                 digestHex("topology-evidence")},
+                            })
+                  .toJson(QJsonDocument::Compact)
+              + '\n';
+        identity = Data::RuntimePackageActivationIdentity{
+            Data::RuntimePackageActivationOperationId{std::move(operationId)},
+            scope,
+            documentRevision,
+            originalBinding,
+            targetBinding,
+            targetReference.artifactId,
+            artifact.configurationId,
+            artifact.catalogRevision,
+            factoryOpaqueId(artifact.topologyIdentity),
+            Data::RuntimePackageActivationSha256{
+                evidence->semanticMappingProof().packageSha256},
+            Data::RuntimePackageActivationSha256{
+                evidence->projectConfigurationSha256()},
+            Data::RuntimePackageActivationSha256{QCryptographicHash::hash(
+                effectiveProjectCompanion, QCryptographicHash::Sha256)},
+            evidence->semanticMappingProof(),
+        };
+        request = Data::RuntimePackageActivationRequest{
+            identity,
+            packageBytes,
+            projectBytes,
+            effectiveProjectCompanion,
+            true,
+        };
+        if (!request.isValid())
+            return Utils::ResultError("The activation request is invalid");
+
+        projects.addProject(project);
+        projects.activationCapture
+            = Data::RuntimePackageActivationProjectCapture{
+                project,
+                projectBytes,
+                1,
+                documentRevision,
+                originalBinding,
+            };
+        if (!projects.activationCapture->isValid())
+            return Utils::ResultError("The activation project capture is invalid");
+
+        catalog = factoryCatalog(project, *evidence);
+        attestation = factoryAttestation(catalog, *evidence);
+        provider.deploymentMode = deploymentMode;
+        provider.catalog = catalog;
+        provider.attestation = attestation;
+        provider.previousActive
+            = {Data::ControllerSlot::A, 11, 813};
+        provider.candidate = {
+            catalog.epoch.activePackageSlot,
+            catalog.epoch.activePackageGeneration,
+            catalog.epoch.configurationId,
+        };
+        provider.snapshot = connectedSnapshot(scope, catalog.sessionGeneration);
+        provider.snapshot.protocolVersion = {1, 14};
+        provider.snapshot.readOnly = false;
+        provider.snapshot.mock = false;
+        provider.snapshot.connectedAt = QDateTime::currentDateTimeUtc();
+        provider.snapshot.updatedAt = provider.snapshot.connectedAt;
+        provider.snapshot.session = Data::ControllerSessionSummary{
+            0x0102030405060708ULL,
+            catalog.epoch.controllerBootId,
+            0,
+            30000,
+            false,
+        };
+        Data::ControllerStateSummary controllerState;
+        controllerState.serviceState = Data::ControllerServiceState::Shutdown;
+        controllerState.severity = Data::ControllerSeverity::Information;
+        controllerState.ready = true;
+        controllerState.controllerBootId = catalog.epoch.controllerBootId;
+        provider.snapshot.controllerState = controllerState;
+        Data::ControllerPackageSummary package;
+        package.activeSlot = provider.previousActive.slot;
+        package.activeGeneration = provider.previousActive.generation;
+        package.activeConfigurationId
+            = provider.previousActive.configurationId;
+        package.controllerState = Data::ControllerPackageState::Empty;
+        package.controllerBootId = catalog.epoch.controllerBootId;
+        provider.snapshot.package = package;
+        Data::ControllerTopologySnapshot topology;
+        topology.firstStationAddress = artifact.topologyInstances.isEmpty()
+                                           ? 0
+                                           : artifact.topologyInstances.constFirst()
+                                                 .stationAddress;
+        topology.respondingCount = quint32(artifact.topologyInstances.size());
+        topology.result = 0;
+        for (const SemanticBindingTopologyInstance &instance :
+             artifact.topologyInstances) {
+            topology.slaves.append({
+                instance.position,
+                instance.stationAddress,
+                8,
+                0,
+                instance.vendorId,
+                instance.productCode,
+                instance.revision.value_or(0),
+                instance.serial.value_or(0),
+            });
+        }
+        topology.discoveredAt = QDateTime::currentDateTimeUtc();
+        topology.scope = scope;
+        topology.sessionGeneration = catalog.sessionGeneration;
+        topology.sessionId = provider.snapshot.session->sessionId;
+        topology.bootId = provider.snapshot.session->bootId;
+        topology.requestId = 1;
+        topology.responseSequence = 2;
+        topology.receivedAt = topology.discoveredAt;
+        provider.snapshot.topology = topology;
+        provider.setAvailable(true);
+
+        QList<Data::DeviceAdapterManifest> activationManifests
+            = adapterManifests;
+        for (Data::DeviceAdapterManifest &manifest : activationManifests) {
+            manifest.signatureVerified = true;
+            manifest.realHardwareAllowed = true;
+        }
+        ownedAdapterProvider
+            = std::make_unique<ActivationAdapterProvider>(
+                std::move(activationManifests));
+        adapterRegistration
+            = std::make_unique<RegisteredObject>(
+                ownedAdapterProvider.get());
+        registration = std::make_unique<RegisteredObject>(&provider);
+        registry = std::make_unique<Core::ProviderRegistry>();
+        journalRoot = QDir(temporary.path()).filePath("activation-journal");
+        service = std::make_unique<TrustedRuntimePackageActivationService>(
+            &projects,
+            registry.get(),
+            repository,
+            journalRoot,
+            nullptr,
+            15000,
+            45000,
+            std::function<bool()>{},
+            exactProjectProofVerifier());
+        if (prepareForStart)
+            return prepareCurrentRequest();
+        return Utils::ResultOk;
+    }
+
+    Utils::Result<> prepareCurrentRequest()
+    {
+        if (!service)
+            return Utils::ResultError("The activation service is unavailable");
+        const Core::RuntimePackageActivationPreparationResult prepared
+            = service->prepare({
+                identity.operationId(),
+                projectScope(project),
+                packageBytes,
+                projectBytes,
+                effectiveProjectCompanion,
+                compilerVerification(),
+                request.rollbackOnActivationFailure(),
+            });
+        if (!prepared.isValid() || !prepared.request) {
+            return Utils::ResultError(
+                prepared.detail.isEmpty()
+                    ? QStringLiteral(
+                          "The activation request could not be prepared.")
+                    : prepared.detail);
+        }
+        request = *prepared.request;
+        identity = request.identity();
+        targetBinding = identity.targetBindingToken();
+        return Utils::ResultOk;
+    }
+
+    void setAdapterAuthorization(
+        bool signatureVerified, bool realHardwareAllowed)
+    {
+        for (Data::DeviceAdapterManifest &manifest :
+             ownedAdapterProvider->manifests) {
+            manifest.signatureVerified = signatureVerified;
+            manifest.realHardwareAllowed = realHardwareAllowed;
+        }
+    }
+
+    Data::RuntimePackageActivationRequest requestWithPackage(
+        QByteArray changedPackage) const
+    {
+        Data::RuntimeSemanticMappingProof proof
+            = identity.expectedMappingProof();
+        proof.packageSha256 = QCryptographicHash::hash(
+            changedPackage, QCryptographicHash::Sha256);
+        const Data::RuntimePackageActivationIdentity changedIdentity{
+            identity.operationId(),
+            identity.scope(),
+            identity.documentRevisionToken(),
+            identity.originalBindingToken(),
+            identity.targetBindingToken(),
+            identity.bindingArtifactId(),
+            identity.configurationId(),
+            identity.expectedCatalogRevision(),
+            identity.expectedTopologyIdentity(),
+            Data::RuntimePackageActivationSha256{proof.packageSha256},
+            identity.compiledProjectSha256(),
+            identity.effectiveProjectCompanionSha256(),
+            proof,
+        };
+        return {
+            changedIdentity,
+            std::move(changedPackage),
+            projectBytes,
+            effectiveProjectCompanion,
+            true,
+        };
+    }
+
+    Data::RuntimePackageCompilerVerifyResult compilerVerification() const
+    {
+        return compilerVerificationForCompanion(
+            effectiveProjectCompanion);
+    }
+
+    Data::RuntimePackageCompilerVerifyResult
+    compilerVerificationForCompanion(QByteArrayView companion) const
+    {
+        const auto digest = [](QByteArrayView bytes) {
+            return Data::RuntimePackageCompilerSha256{
+                QCryptographicHash::hash(bytes, QCryptographicHash::Sha256)};
+        };
+        const Data::RuntimePackageCompilerSha256 packageSha256{
+            evidence->semanticMappingProof().packageSha256};
+        const Data::RuntimePackageCompilerSha256 companionSha256
+            = digest(companion);
+        const Data::RuntimePackageCompilerSha256 intentSha256
+            = digest("activation-intent");
+        const Data::RuntimePackageCompilerSha256 targetProfileSha256
+            = digest("target-profile");
+        const Data::RuntimePackageCompilerSha256 adapterBundleSha256
+            = digest("adapter-bundle");
+        const Data::RuntimePackageCompilerSha256 topologyEvidenceSha256
+            = digest("topology-evidence");
+        const QByteArray exactResult
+            = QStringLiteral(
+                  "{\"adapter_bundle_sha256\":\"%1\",\"configuration_id\":%2,"
+                  "\"effective_project_companion_sha256\":\"%3\","
+                  "\"format\":\"ethercat-ide-project-compiler-verification-v1\","
+                  "\"intent_sha256\":\"%4\",\"manifest_format_version\":2,"
+                  "\"package_sha256\":\"%5\",\"status\":\"pass\","
+                  "\"target_profile_sha256\":\"%6\",\"topology_evidence_sha256\":\"%7\"}\n")
+                  .arg(
+                      QString::fromLatin1(adapterBundleSha256.value().toHex()),
+                      QString::number(
+                          evidence->semanticBindingArtifact().configurationId),
+                      QString::fromLatin1(companionSha256.value().toHex()),
+                      QString::fromLatin1(intentSha256.value().toHex()),
+                      QString::fromLatin1(packageSha256.value().toHex()),
+                      QString::fromLatin1(targetProfileSha256.value().toHex()),
+                      QString::fromLatin1(topologyEvidenceSha256.value().toHex()))
+                  .toLatin1();
+        const Data::RuntimePackageCompilerResultEnvelope envelope{
+            Data::RuntimePackageCompilerCommand::Verify,
+            Data::RuntimePackageCompilerResultStatus::Succeeded,
+            QStringLiteral("pass"),
+            Data::RuntimePackageCompilerOperationId{
+                QStringLiteral("03803804-2001-4000-8000-000000000001")},
+            evidence->semanticBindingArtifact().configurationId,
+            digest("verify-request"),
+            Data::RuntimePackageCompilerCanonicalJson::fromExactBytes(
+                exactResult),
+            {},
+        };
+        return {
+            envelope,
+            packageSha256,
+            2,
+            intentSha256,
+            companionSha256,
+            targetProfileSha256,
+            adapterBundleSha256,
+            topologyEvidenceSha256,
+            true,
+        };
+    }
+
+    TrustedRuntimePackageActivationService::
+        ExactCompileTimeProjectProofVerifier
+    exactProjectProofVerifier()
+    {
+        return [this](
+                   const Core::RuntimePackageActivationPreparationRequest &candidate,
+                   const Data::RuntimePackageActivationProjectCapture &capture,
+                   const VerifiedRuntimePackageEvidence &verified)
+                   -> Utils::Result<> {
+            if (!projects.activationCapture
+                || capture != *projects.activationCapture
+                || capture.snapshot() != project
+                || capture.documentRevisionNumber() != 1
+                || capture.documentRevision() != documentRevision
+                || capture.originalBinding() != originalBinding
+                || candidate.operationId != identity.operationId()
+                || candidate.scope != projectScope(project)
+                || candidate.packageBytes != packageBytes
+                || candidate.compiledProjectSource != projectBytes
+                || candidate.effectiveProjectCompanion
+                       != effectiveProjectCompanion
+                || candidate.compilerVerification
+                       != compilerVerification()
+                || verified.semanticMappingProof()
+                       != evidence->semanticMappingProof()
+                || verified.projectConfigurationSha256()
+                       != evidence->projectConfigurationSha256()) {
+                return Utils::ResultError(
+                    "The deterministic compile-time project proof does not match");
+            }
+            return Utils::ResultOk;
+        };
+    }
+
+    int pendingGuardCount() const
+    {
+        return QDir(journalRoot).entryList(
+            {QStringLiteral("*.pending.json")},
+            QDir::Files | QDir::NoSymLinks).size();
+    }
+
+    Utils::Result<> resetServiceWithProviderDeadline(int deadlineMs)
+    {
+        service = std::make_unique<TrustedRuntimePackageActivationService>(
+            &projects,
+            registry.get(),
+            repository,
+            journalRoot,
+            nullptr,
+            deadlineMs,
+            deadlineMs,
+            std::function<bool()>{},
+            exactProjectProofVerifier());
+        return prepareCurrentRequest();
+    }
+
+    QTemporaryDir temporary;
+    TestProjectService projects;
+    std::unique_ptr<ActivationControllerProvider> ownedProvider;
+    ActivationControllerProvider &provider;
+    QByteArray packageBytes;
+    QByteArray projectBytes;
+    QByteArray effectiveProjectCompanion;
+    Data::ProjectSnapshot project;
+    Data::SemanticBindingArtifactReference targetReference;
+    Data::RuntimePackageActivationDocumentRevisionToken documentRevision;
+    Data::RuntimePackageActivationOriginalBindingToken originalBinding;
+    Data::RuntimePackageActivationOriginalBindingToken targetBinding;
+    Data::RuntimePackageActivationIdentity identity;
+    Data::RuntimePackageActivationRequest request;
+    Data::RuntimeResourceCatalog catalog;
+    Data::RuntimeSemanticMappingAttestation attestation;
+    QString journalRoot;
+    std::shared_ptr<RuntimePackageEvidenceRepository> repository;
+    std::shared_ptr<const VerifiedRuntimePackageEvidence> evidence;
+    QList<Data::DeviceAdapterManifest> adapterManifests;
+    std::unique_ptr<ActivationAdapterProvider> ownedAdapterProvider;
+    std::unique_ptr<Core::ProviderRegistry> registry;
+    std::unique_ptr<RegisteredObject> adapterRegistration;
+    std::unique_ptr<RegisteredObject> registration;
+    std::unique_ptr<TrustedRuntimePackageActivationService> service;
+};
+
 static Data::RuntimeResourceSnapshot factorySnapshot(
     const Data::RuntimeResourceCatalog &catalog)
 {
@@ -1867,11 +3077,11 @@ static Utils::Result<Data::SemanticRuntimeContext> api038ActionContext(
         return Utils::ResultError("API-038 action definitions are unavailable");
 
     Data::ProjectSnapshot project = factoryProject(evidence);
-    const Utils::Result<QList<Data::DeviceAdapterManifest>> publishedAdapters
-        = publishedApi038V3ActionAdapters();
-    if (!publishedAdapters)
-        return Utils::ResultError(publishedAdapters.error());
-    const QList<Data::DeviceAdapterManifest> adapterManifests = *publishedAdapters;
+    const Utils::Result<QList<Data::DeviceAdapterManifest>> historicalAdapters
+        = api038HistoricalTestAdapters(evidence);
+    if (!historicalAdapters)
+        return Utils::ResultError(historicalAdapters.error());
+    const QList<Data::DeviceAdapterManifest> adapterManifests = *historicalAdapters;
     configureApi038V3ManualProject(project, adapterManifests);
     const Data::RuntimeResourceCatalog catalog = factoryCatalog(project, evidence);
     const Data::RuntimeSemanticMappingAttestation attestation
@@ -2189,6 +3399,8 @@ public:
     {
         executor.reset();
         ownedRegistry.reset();
+        adapterRegistration.reset();
+        ownedAdapterProvider.reset();
         registration.reset();
     }
 
@@ -2232,11 +3444,11 @@ public:
         evidence = std::make_shared<const VerifiedRuntimePackageEvidence>(*imported);
 
         project = factoryProject(*evidence);
-        const Utils::Result<QList<Data::DeviceAdapterManifest>> publishedAdapters
-            = publishedApi038V3ActionAdapters();
-        if (!publishedAdapters)
-            return Utils::ResultError(publishedAdapters.error());
-        adapterManifests = *publishedAdapters;
+        const Utils::Result<QList<Data::DeviceAdapterManifest>> historicalAdapters
+            = api038HistoricalTestAdapters(*evidence);
+        if (!historicalAdapters)
+            return Utils::ResultError(historicalAdapters.error());
+        adapterManifests = *historicalAdapters;
         if (configureManualPolicy)
             configureApi038V3ManualProject(project, adapterManifests);
         catalog = factoryCatalog(project, *evidence);
@@ -2250,6 +3462,10 @@ public:
         provider.setAvailable(true);
 
         projects.addProject(project);
+        ownedAdapterProvider
+            = std::make_unique<ActivationAdapterProvider>(adapterManifests);
+        adapterRegistration
+            = std::make_unique<RegisteredObject>(ownedAdapterProvider.get());
         registration = std::make_unique<RegisteredObject>(&provider);
         Core::ProviderRegistry *registry = nullptr;
         if (privateProviderRegistry) {
@@ -2289,6 +3505,8 @@ public:
     Data::RuntimeResourceCatalog catalog;
     Data::RuntimeSemanticMappingAttestation attestation;
     Data::RuntimeResourceSnapshot snapshot;
+    std::unique_ptr<ActivationAdapterProvider> ownedAdapterProvider;
+    std::unique_ptr<RegisteredObject> adapterRegistration;
     std::unique_ptr<RegisteredObject> registration;
     std::unique_ptr<Core::ProviderRegistry> ownedRegistry;
     std::shared_ptr<RuntimePackageEvidenceRepository> repository;
@@ -4688,6 +5906,1145 @@ void EtherCATSemanticRuntimeTests::testRuntimePackageEvidenceRepositoryRejectsUn
     QVERIFY_RESULT(halfRepository.load(reference));
 }
 
+void EtherCATSemanticRuntimeTests::testTrustedRuntimePackageActivation()
+{
+    {
+        ActivationFixture preparedFixture;
+        const Utils::Result<> preparedInitialized
+            = preparedFixture.initialize(
+                ActivationControllerProvider::DeploymentMode::Succeed,
+                QStringLiteral("operation/runtime-activation/prepared"));
+        QVERIFY_RESULT(preparedInitialized);
+        QVERIFY(std::all_of(
+            preparedFixture.ownedAdapterProvider->manifests.cbegin(),
+            preparedFixture.ownedAdapterProvider->manifests.cend(),
+            [](const Data::DeviceAdapterManifest &manifest) {
+                return manifest.signatureVerified
+                       && manifest.realHardwareAllowed;
+            }));
+        const Data::RuntimePackageCompilerVerifyResult verification
+            = preparedFixture.compilerVerification();
+        QVERIFY(verification.isSuccess());
+        const QByteArray currentQtProjectBytes
+            = QByteArray("current-qt-ecatproject-bytes\n");
+        preparedFixture.projects.activationCapture
+            = Data::RuntimePackageActivationProjectCapture{
+                preparedFixture.project,
+                currentQtProjectBytes,
+                1,
+                preparedFixture.documentRevision,
+                preparedFixture.originalBinding,
+            };
+        QVERIFY(preparedFixture.projects.activationCapture->isValid());
+        QVERIFY(
+            preparedFixture.projects.activationCapture->serializedProject()
+            != preparedFixture.projectBytes);
+        const auto prepare = [&preparedFixture, &verification] {
+            return preparedFixture.service->prepare({
+                Data::RuntimePackageActivationOperationId{
+                    QStringLiteral("operation/runtime-activation/prepared")},
+                projectScope(preparedFixture.project),
+                preparedFixture.packageBytes,
+                preparedFixture.projectBytes,
+                preparedFixture.effectiveProjectCompanion,
+                verification,
+                true,
+            });
+        };
+        preparedFixture.setAdapterAuthorization(false, true);
+        const Core::RuntimePackageActivationPreparationResult unsignedAdapter
+            = prepare();
+        QVERIFY(unsignedAdapter.isValid());
+        QVERIFY(!unsignedAdapter.succeeded());
+        QVERIFY(preparedFixture.provider.controlRequests.isEmpty());
+        QVERIFY(preparedFixture.provider.deploymentRequests.isEmpty());
+        preparedFixture.setAdapterAuthorization(true, false);
+        const Core::RuntimePackageActivationPreparationResult hardwareDenied
+            = prepare();
+        QVERIFY(hardwareDenied.isValid());
+        QVERIFY(!hardwareDenied.succeeded());
+        QVERIFY(preparedFixture.provider.controlRequests.isEmpty());
+        QVERIFY(preparedFixture.provider.deploymentRequests.isEmpty());
+        preparedFixture.setAdapterAuthorization(true, true);
+        const Core::RuntimePackageActivationPreparationResult prepared
+            = prepare();
+        QVERIFY(prepared.isValid());
+        QVERIFY(prepared.succeeded());
+        QVERIFY(prepared.request);
+        QCOMPARE(
+            prepared.request->identity().bindingArtifactId(),
+            QStringLiteral("sha256:%1")
+                .arg(QString::fromLatin1(
+                    preparedFixture.evidence->semanticMappingProof()
+                        .mappingSha256.toHex())));
+        QCOMPARE(
+            prepared.request->compiledProjectSource(),
+            preparedFixture.projectBytes);
+        QCOMPARE(
+            prepared.request->identity().originalBindingToken(),
+            preparedFixture.originalBinding);
+        QVERIFY(preparedFixture.service->start(*prepared.request).accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            preparedFixture.service
+                    ->record(prepared.request->identity().operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    preparedFixture.service
+                        ->record(prepared.request->identity().operationId())
+                        ->outcome()),
+            5000);
+        QCOMPARE(
+            preparedFixture.service
+                ->record(prepared.request->identity().operationId())
+                ->outcome(),
+            Data::RuntimePackageActivationOutcome::
+                SucceededWithActivatedPackage);
+        QCOMPARE(
+            preparedFixture.provider.deploymentRequests.size(),
+            qsizetype(1));
+        QCOMPARE(
+            preparedFixture.provider.deploymentRequests.constFirst()
+                .compiledProjectSource,
+            preparedFixture.projectBytes);
+        QVERIFY(
+            preparedFixture.provider.deploymentRequests.constFirst()
+                .compiledProjectSource
+            != currentQtProjectBytes);
+    }
+
+    ActivationFixture fixture;
+    const Utils::Result<> initialized = fixture.initialize();
+    QVERIFY_RESULT(initialized);
+
+    const Core::RuntimePackageActivationCommandResult accepted
+        = fixture.service->start(fixture.request);
+    QVERIFY(accepted.isValid());
+    QCOMPARE(
+        accepted.disposition,
+        Core::RuntimePackageActivationCommandDisposition::Accepted);
+
+    const Core::RuntimePackageActivationCommandResult earlyReplay
+        = fixture.service->start(fixture.request);
+    QVERIFY(earlyReplay.isValid());
+    QCOMPARE(
+        earlyReplay.disposition,
+        Core::RuntimePackageActivationCommandDisposition::IdempotentReplay);
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        fixture.service->record(fixture.identity.operationId())
+            && Data::runtimePackageActivationOutcomeIsTerminal(
+                fixture.service->record(fixture.identity.operationId())->outcome()),
+        5000);
+    const Data::RuntimePackageActivationRecord record
+        = *fixture.service->record(fixture.identity.operationId());
+    QVERIFY(record.isValid());
+    QCOMPARE(
+        record.outcome(),
+        Data::RuntimePackageActivationOutcome::SucceededWithActivatedPackage);
+    QVERIFY(record.projectCommit());
+    QCOMPARE(record.projectCommit()->resultingBinding(), fixture.targetBinding);
+    QCOMPARE(fixture.projects.activationCaptureCalls, 6);
+    QCOMPARE(fixture.projects.activationCompareAndSetCalls, 1);
+    QCOMPARE(fixture.provider.deploymentRequests.size(), qsizetype(1));
+    QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(2));
+    QCOMPARE(
+        fixture.provider.controlRequests.at(0).command,
+        Data::ControllerControlCommand::AcquireControl);
+    QCOMPARE(
+        fixture.provider.controlRequests.at(1).command,
+        Data::ControllerControlCommand::ReleaseControl);
+    QCOMPARE(fixture.pendingGuardCount(), 0);
+
+    const Core::RuntimePackageActivationCommandResult terminalReplay
+        = fixture.service->start(fixture.request);
+    QVERIFY(terminalReplay.isValid());
+    QCOMPARE(
+        terminalReplay.disposition,
+        Core::RuntimePackageActivationCommandDisposition::IdempotentReplay);
+    QCOMPARE(fixture.provider.deploymentRequests.size(), qsizetype(1));
+    QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(2));
+    QCOMPARE(fixture.projects.activationCompareAndSetCalls, 1);
+
+    ActivationFixture existing;
+    const Utils::Result<> existingInitialized = existing.initialize(
+        ActivationControllerProvider::DeploymentMode::Succeed,
+        QStringLiteral("operation/runtime-activation/existing"));
+    QVERIFY_RESULT(existingInitialized);
+    existing.provider.snapshot.package->activeSlot
+        = existing.provider.candidate.slot;
+    existing.provider.snapshot.package->activeGeneration
+        = existing.provider.candidate.generation;
+    existing.provider.snapshot.package->activeConfigurationId
+        = existing.provider.candidate.configurationId;
+    existing.provider.snapshot.package->controllerState
+        = Data::ControllerPackageState::Active;
+    existing.provider.snapshot.controllerState->serviceState
+        = Data::ControllerServiceState::OperationalSafe;
+    QVERIFY(existing.service->start(existing.request).accepted());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        existing.service->record(existing.identity.operationId())
+            && Data::runtimePackageActivationOutcomeIsTerminal(
+                existing.service->record(existing.identity.operationId())
+                    ->outcome()),
+        5000);
+    const auto existingRecord
+        = existing.service->record(existing.identity.operationId());
+    QVERIFY(existingRecord);
+    QVERIFY(existingRecord->isValid());
+    QCOMPARE(
+        existingRecord->outcome(),
+        Data::RuntimePackageActivationOutcome::
+            SucceededWithExistingPackage);
+    QVERIFY(existing.provider.controlRequests.isEmpty());
+    QVERIFY(existing.provider.deploymentRequests.isEmpty());
+    QCOMPARE(existing.projects.activationCompareAndSetCalls, 1);
+    QCOMPARE(existing.pendingGuardCount(), 0);
+
+    QList<Data::RuntimePackageActivationAuditEvent> journalFailureAudit;
+    for (const Data::RuntimePackageActivationAuditEvent &event :
+         existingRecord->audit()) {
+        journalFailureAudit.append(event);
+        if (event.code() == QStringLiteral("controller-before"))
+            break;
+    }
+    QVERIFY(!journalFailureAudit.isEmpty());
+    QCOMPARE(
+        journalFailureAudit.constLast().code(),
+        QStringLiteral("controller-before"));
+    const QString journalFailureDetail
+        = QStringLiteral("The activation journal could not be committed.");
+    const QDateTime journalFailureAt
+        = journalFailureAudit.constLast().occurredAt().addMSecs(1);
+    journalFailureAudit.append({
+        quint64(journalFailureAudit.size() + 1),
+        Data::RuntimePackageActivationAuditKind::PhaseTransition,
+        Data::RuntimePackageActivationPhase::AwaitingReconciliation,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        Data::RuntimePackageActivationProviderAction::None,
+        Data::RuntimePackageActivationProviderReconciliation::None,
+        {},
+        0,
+        0,
+        0,
+        {},
+        {},
+        {},
+        {},
+        QStringLiteral("activation-journal-update-failed"),
+        journalFailureDetail,
+        journalFailureAt,
+    });
+    const Data::RuntimePackageActivationRecord journalFailureRecord{
+        existingRecord->identity(),
+        existingRecord->requestFingerprint(),
+        existingRecord->rollbackOnActivationFailure(),
+        quint64(journalFailureAudit.size()),
+        Data::RuntimePackageActivationPhase::AwaitingReconciliation,
+        Data::RuntimePackageActivationOutcome::OutcomeUnknown,
+        journalFailureAudit,
+        journalFailureDetail,
+        existingRecord->startedAt(),
+        journalFailureAt,
+        {},
+        existingRecord->beforeController(),
+    };
+    QVERIFY(journalFailureRecord.isValid());
+    QVERIFY(journalFailureRecord.needsReconciliation());
+
+    ActivationFixture recoveredExisting;
+    const Utils::Result<> recoveredExistingInitialized
+        = recoveredExisting.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral(
+                "operation/runtime-activation/existing-crash"));
+    QVERIFY_RESULT(recoveredExistingInitialized);
+    recoveredExisting.provider.snapshot.package->activeSlot
+        = recoveredExisting.provider.candidate.slot;
+    recoveredExisting.provider.snapshot.package->activeGeneration
+        = recoveredExisting.provider.candidate.generation;
+    recoveredExisting.provider.snapshot.package->activeConfigurationId
+        = recoveredExisting.provider.candidate.configurationId;
+    recoveredExisting.provider.snapshot.package->controllerState
+        = Data::ControllerPackageState::Active;
+    recoveredExisting.provider.snapshot.controllerState->serviceState
+        = Data::ControllerServiceState::OperationalSafe;
+    QObject::connect(
+        &recoveredExisting.projects,
+        &Core::ProjectService::projectChanged,
+        &recoveredExisting.provider,
+        [&recoveredExisting] {
+            QTimer::singleShot(
+                0,
+                &recoveredExisting.provider,
+                [&recoveredExisting] {
+                    recoveredExisting.service.reset();
+                });
+        });
+    QVERIFY(
+        recoveredExisting.service->start(recoveredExisting.request).accepted());
+    QTRY_VERIFY_WITH_TIMEOUT(!recoveredExisting.service, 5000);
+    QCOMPARE(recoveredExisting.pendingGuardCount(), 1);
+
+    auto restartedExisting
+        = std::make_unique<TrustedRuntimePackageActivationService>(
+            &recoveredExisting.projects,
+            recoveredExisting.registry.get(),
+            recoveredExisting.repository,
+            recoveredExisting.journalRoot);
+    QVERIFY(restartedExisting->hasUnresolvedRecoveryBarrier());
+    const Core::RuntimePackageActivationCommandResult recoveredResult
+        = restartedExisting->reconcile(
+            recoveredExisting.identity.operationId());
+    QVERIFY(recoveredResult.isValid());
+    QCOMPARE(
+        recoveredResult.disposition,
+        Core::RuntimePackageActivationCommandDisposition::Accepted);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        restartedExisting->record(
+            recoveredExisting.identity.operationId())
+            && Data::runtimePackageActivationOutcomeIsTerminal(
+                restartedExisting
+                    ->record(recoveredExisting.identity.operationId())
+                    ->outcome()),
+        5000);
+    QCOMPARE(
+        restartedExisting
+            ->record(recoveredExisting.identity.operationId())
+            ->outcome(),
+        Data::RuntimePackageActivationOutcome::
+            SucceededWithExistingPackage);
+    QVERIFY(recoveredExisting.provider.controlRequests.isEmpty());
+    QVERIFY(recoveredExisting.provider.deploymentRequests.isEmpty());
+    QCOMPARE(recoveredExisting.pendingGuardCount(), 0);
+}
+
+void EtherCATSemanticRuntimeTests::
+    testTrustedRuntimePackageActivationFailsClosed()
+{
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/no-project-proof"),
+            false);
+        QVERIFY_RESULT(initialized);
+        fixture.service
+            = std::make_unique<TrustedRuntimePackageActivationService>(
+                &fixture.projects,
+                fixture.registry.get(),
+                fixture.repository,
+                fixture.journalRoot);
+        const Core::RuntimePackageActivationPreparationResult prepared
+            = fixture.service->prepare({
+                fixture.identity.operationId(),
+                projectScope(fixture.project),
+                fixture.packageBytes,
+                fixture.projectBytes,
+                fixture.effectiveProjectCompanion,
+                fixture.compilerVerification(),
+                true,
+            });
+        QVERIFY(prepared.isValid());
+        QVERIFY(!prepared.succeeded());
+        QVERIFY(prepared.detail.contains(
+            QStringLiteral(
+                "Compile-time project proof verification is unavailable")));
+        QCOMPARE(fixture.projects.activationCaptureCalls, 0);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+        QCOMPARE(fixture.pendingGuardCount(), 0);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/project-proof-rejected"),
+            false);
+        QVERIFY_RESULT(initialized);
+        fixture.service
+            = std::make_unique<TrustedRuntimePackageActivationService>(
+                &fixture.projects,
+                fixture.registry.get(),
+                fixture.repository,
+                fixture.journalRoot,
+                nullptr,
+                15000,
+                45000,
+                std::function<bool()>{},
+                [](
+                    const Core::RuntimePackageActivationPreparationRequest &,
+                    const Data::RuntimePackageActivationProjectCapture &,
+                    const VerifiedRuntimePackageEvidence &)
+                    -> Utils::Result<> {
+                    return Utils::ResultError(
+                        "The signed project projection receipt differs");
+                });
+        const Core::RuntimePackageActivationPreparationResult prepared
+            = fixture.service->prepare({
+                fixture.identity.operationId(),
+                projectScope(fixture.project),
+                fixture.packageBytes,
+                fixture.projectBytes,
+                fixture.effectiveProjectCompanion,
+                fixture.compilerVerification(),
+                true,
+            });
+        QVERIFY(prepared.isValid());
+        QVERIFY(!prepared.succeeded());
+        QVERIFY(prepared.detail.contains(
+            QStringLiteral(
+                "Compile-time project proof verification failed")));
+        QVERIFY(prepared.detail.contains(
+            QStringLiteral("signed project projection receipt differs")));
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+        QCOMPARE(fixture.pendingGuardCount(), 0);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/journal-update"));
+        QVERIFY_RESULT(initialized);
+        int journalCommits = 0;
+        fixture.service
+            = std::make_unique<TrustedRuntimePackageActivationService>(
+                &fixture.projects,
+                fixture.registry.get(),
+                fixture.repository,
+                fixture.journalRoot,
+                nullptr,
+                15000,
+                45000,
+                [&journalCommits] { return ++journalCommits == 3; },
+                fixture.exactProjectProofVerifier());
+        QVERIFY_RESULT(fixture.prepareCurrentRequest());
+        QVERIFY(fixture.service->start(fixture.request).accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && fixture.service->record(fixture.identity.operationId())
+                           ->needsReconciliation(),
+            5000);
+        const auto record
+            = fixture.service->record(fixture.identity.operationId());
+        QVERIFY(record);
+        QVERIFY(record->isValid());
+        QCOMPARE(
+            record->audit().constLast().code(),
+            QStringLiteral("activation-journal-update-failed"));
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(1));
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+        QCOMPARE(fixture.pendingGuardCount(), 1);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/project-journal"));
+        QVERIFY_RESULT(initialized);
+        fixture.service
+            = std::make_unique<TrustedRuntimePackageActivationService>(
+                &fixture.projects,
+                fixture.registry.get(),
+                fixture.repository,
+                fixture.journalRoot,
+                nullptr,
+                15000,
+                45000,
+                [&fixture] {
+                    return fixture.projects.activationSaveCalls > 0;
+                },
+                fixture.exactProjectProofVerifier());
+        QVERIFY_RESULT(fixture.prepareCurrentRequest());
+        QVERIFY(fixture.service->start(fixture.request).accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && fixture.service->record(fixture.identity.operationId())
+                           ->needsReconciliation(),
+            5000);
+        const auto record
+            = fixture.service->record(fixture.identity.operationId());
+        QVERIFY(record);
+        QVERIFY(record->isValid());
+        QCOMPARE(
+            record->audit().constLast().code(),
+            QStringLiteral("activation-journal-update-failed"));
+        QCOMPARE(fixture.projects.activationCompareAndSetCalls, 1);
+        QCOMPARE(fixture.projects.activationSaveCalls, 1);
+        QCOMPARE(fixture.provider.deploymentRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(1));
+        QCOMPARE(
+            fixture.provider.controlRequests.constFirst().command,
+            Data::ControllerControlCommand::AcquireControl);
+        QCOMPARE(fixture.pendingGuardCount(), 1);
+
+        fixture.service.reset();
+        auto restarted
+            = std::make_unique<TrustedRuntimePackageActivationService>(
+                &fixture.projects,
+                fixture.registry.get(),
+                fixture.repository,
+                fixture.journalRoot);
+        QVERIFY(restarted->hasUnresolvedRecoveryBarrier());
+        const auto reconciliation
+            = restarted->reconcile(fixture.identity.operationId());
+        QVERIFY(reconciliation.isValid());
+        QCOMPARE(
+            reconciliation.disposition,
+            Core::RuntimePackageActivationCommandDisposition::Accepted);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.provider.snapshot.session
+                && !fixture.provider.snapshot.session->ownsControlLease,
+            5000);
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(2));
+        QCOMPARE(
+            fixture.provider.controlRequests.constLast().command,
+            Data::ControllerControlCommand::ReleaseControl);
+        const auto duplicate
+            = restarted->reconcile(fixture.identity.operationId());
+        QVERIFY(duplicate.isValid());
+        QCOMPARE(
+            duplicate.disposition,
+            Core::RuntimePackageActivationCommandDisposition::
+                ReconciliationRequired);
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(2));
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/existing-project-journal"));
+        QVERIFY_RESULT(initialized);
+        fixture.provider.snapshot.package->activeSlot
+            = fixture.provider.candidate.slot;
+        fixture.provider.snapshot.package->activeGeneration
+            = fixture.provider.candidate.generation;
+        fixture.provider.snapshot.package->activeConfigurationId
+            = fixture.provider.candidate.configurationId;
+        fixture.provider.snapshot.package->controllerState
+            = Data::ControllerPackageState::Active;
+        fixture.provider.snapshot.controllerState->serviceState
+            = Data::ControllerServiceState::OperationalSafe;
+        fixture.service
+            = std::make_unique<TrustedRuntimePackageActivationService>(
+                &fixture.projects,
+                fixture.registry.get(),
+                fixture.repository,
+                fixture.journalRoot,
+                nullptr,
+                15000,
+                45000,
+                [&fixture] {
+                    return fixture.projects.activationSaveCalls > 0;
+                },
+                fixture.exactProjectProofVerifier());
+        QVERIFY_RESULT(fixture.prepareCurrentRequest());
+        QVERIFY(fixture.service->start(fixture.request).accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && fixture.service->record(fixture.identity.operationId())
+                           ->needsReconciliation(),
+            5000);
+        const auto record
+            = fixture.service->record(fixture.identity.operationId());
+        QVERIFY(record);
+        QVERIFY(record->isValid());
+        QCOMPARE(fixture.projects.activationCompareAndSetCalls, 1);
+        QCOMPARE(fixture.projects.activationSaveCalls, 1);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+        QCOMPARE(fixture.pendingGuardCount(), 1);
+
+        fixture.service.reset();
+        auto restarted
+            = std::make_unique<TrustedRuntimePackageActivationService>(
+                &fixture.projects,
+                fixture.registry.get(),
+                fixture.repository,
+                fixture.journalRoot);
+        QVERIFY(restarted->hasUnresolvedRecoveryBarrier());
+        const auto reconciliation
+            = restarted->reconcile(fixture.identity.operationId());
+        QVERIFY(reconciliation.isValid());
+        QCOMPARE(
+            reconciliation.disposition,
+            Core::RuntimePackageActivationCommandDisposition::
+                ReconciliationRequired);
+        const auto recovered
+            = restarted->record(fixture.identity.operationId());
+        QVERIFY(recovered);
+        QVERIFY(recovered->isValid());
+        QVERIFY(recovered->needsReconciliation());
+        QCOMPARE(
+            recovered->outcome(),
+            Data::RuntimePackageActivationOutcome::OutcomeUnknown);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+        QCOMPARE(fixture.pendingGuardCount(), 1);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/preparation-missing-lower"));
+        QVERIFY_RESULT(initialized);
+        const Core::RuntimePackageActivationPreparationResult prepared
+            = fixture.service->prepare({
+                fixture.identity.operationId(),
+                projectScope(fixture.project),
+                fixture.packageBytes,
+                {},
+                fixture.effectiveProjectCompanion,
+                fixture.compilerVerification(),
+                true,
+            });
+        QVERIFY(prepared.isValid());
+        QVERIFY(!prepared.succeeded());
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/preparation-wrong-lower"));
+        QVERIFY_RESULT(initialized);
+        QByteArray wrongLowerProject = fixture.projectBytes;
+        wrongLowerProject.append(' ');
+        const Core::RuntimePackageActivationPreparationResult prepared
+            = fixture.service->prepare({
+                fixture.identity.operationId(),
+                projectScope(fixture.project),
+                fixture.packageBytes,
+                wrongLowerProject,
+                fixture.effectiveProjectCompanion,
+                fixture.compilerVerification(),
+                true,
+            });
+        QVERIFY(prepared.isValid());
+        QVERIFY(!prepared.succeeded());
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral(
+                "operation/runtime-activation/preparation-companion-lower"));
+        QVERIFY_RESULT(initialized);
+        QJsonObject companionObject
+            = QJsonDocument::fromJson(
+                  fixture.effectiveProjectCompanion)
+                  .object();
+        companionObject.insert(
+            QStringLiteral("compiled_project_sha256"),
+            QString::fromLatin1(
+                QCryptographicHash::hash(
+                    QByteArrayView("different-lower-project"),
+                    QCryptographicHash::Sha256)
+                    .toHex()));
+        const QByteArray changedCompanion
+            = QJsonDocument(companionObject).toJson(
+                  QJsonDocument::Compact)
+              + '\n';
+        const Data::RuntimePackageCompilerVerifyResult verification
+            = fixture.compilerVerificationForCompanion(
+                changedCompanion);
+        QVERIFY(verification.isSuccess());
+        const Core::RuntimePackageActivationPreparationResult prepared
+            = fixture.service->prepare({
+                fixture.identity.operationId(),
+                projectScope(fixture.project),
+                fixture.packageBytes,
+                fixture.projectBytes,
+                changedCompanion,
+                verification,
+                true,
+            });
+        QVERIFY(prepared.isValid());
+        QVERIFY(!prepared.succeeded());
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral(
+                "operation/runtime-activation/preparation-document-revision"));
+        QVERIFY_RESULT(initialized);
+        fixture.projects.activationCapture
+            = Data::RuntimePackageActivationProjectCapture{
+                fixture.project,
+                QByteArray("newer-current-qt-project\n"),
+                2,
+                fixture.documentRevision,
+                fixture.originalBinding,
+            };
+        const Core::RuntimePackageActivationPreparationResult prepared
+            = fixture.service->prepare({
+                fixture.identity.operationId(),
+                projectScope(fixture.project),
+                fixture.packageBytes,
+                fixture.projectBytes,
+                fixture.effectiveProjectCompanion,
+                fixture.compilerVerification(),
+                true,
+            });
+        QVERIFY(prepared.isValid());
+        QVERIFY(!prepared.succeeded());
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/preparation-companion"));
+        QVERIFY_RESULT(initialized);
+        const Core::RuntimePackageActivationPreparationResult prepared
+            = fixture.service->prepare({
+                fixture.identity.operationId(),
+                projectScope(fixture.project),
+                fixture.packageBytes,
+                fixture.projectBytes,
+                QByteArray("different-effective-project-companion\n"),
+                fixture.compilerVerification(),
+                true,
+            });
+        QVERIFY(prepared.isValid());
+        QVERIFY(!prepared.succeeded());
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/preparation-upper-target"));
+        QVERIFY_RESULT(initialized);
+        Data::ProjectSnapshot changedProject = fixture.project;
+        changedProject.slaves.first().adapterSelection.adapterContentSha256[0]
+            ^= 1;
+        fixture.projects.activationCapture
+            = Data::RuntimePackageActivationProjectCapture{
+                changedProject,
+                fixture.projectBytes,
+                1,
+                fixture.documentRevision,
+                fixture.originalBinding,
+            };
+        const Core::RuntimePackageActivationPreparationResult prepared
+            = fixture.service->prepare({
+                fixture.identity.operationId(),
+                projectScope(fixture.project),
+                fixture.packageBytes,
+                fixture.projectBytes,
+                fixture.effectiveProjectCompanion,
+                fixture.compilerVerification(),
+                true,
+            });
+        QVERIFY(prepared.isValid());
+        QVERIFY(!prepared.succeeded());
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/unprepared"),
+            false);
+        QVERIFY_RESULT(initialized);
+        QVERIFY(fixture.request.isValid());
+        const auto rejected = fixture.service->start(fixture.request);
+        QVERIFY(rejected.isValid());
+        QCOMPARE(
+            rejected.disposition,
+            Core::RuntimePackageActivationCommandDisposition::InvalidRequest);
+        QVERIFY(!fixture.service->record(fixture.identity.operationId()));
+        QCOMPARE(fixture.projects.activationCaptureCalls, 0);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+        QCOMPARE(fixture.pendingGuardCount(), 0);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/signature"));
+        QVERIFY_RESULT(initialized);
+        QByteArray tampered = fixture.packageBytes;
+        tampered[tampered.size() / 2] ^= 1;
+        const Data::RuntimePackageActivationRequest request
+            = fixture.requestWithPackage(tampered);
+        QVERIFY(request.isValid());
+        const auto rejected = fixture.service->start(request);
+        QVERIFY(rejected.isValid());
+        QCOMPARE(
+            rejected.disposition,
+            Core::RuntimePackageActivationCommandDisposition::InvalidRequest);
+        QVERIFY(!fixture.service->record(request.identity().operationId()));
+        QCOMPARE(fixture.projects.activationCaptureCalls, 1);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+        QCOMPARE(fixture.pendingGuardCount(), 0);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/project-stale"));
+        QVERIFY_RESULT(initialized);
+        fixture.projects.activationCapture
+            = Data::RuntimePackageActivationProjectCapture{
+                fixture.project,
+                fixture.projectBytes + QByteArray(" "),
+                1,
+                Data::RuntimePackageActivationDocumentRevisionToken{
+                    QByteArray("different-document-revision")},
+                fixture.originalBinding,
+            };
+        const auto accepted = fixture.service->start(fixture.request);
+        QVERIFY(accepted.accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(fixture.identity.operationId())
+                        ->outcome()),
+            5000);
+        QCOMPARE(
+            fixture.service->record(fixture.identity.operationId())->outcome(),
+            Data::RuntimePackageActivationOutcome::FailedWithoutControllerChange);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/topology-stale"));
+        QVERIFY_RESULT(initialized);
+        ++fixture.provider.snapshot.topology->slaves[0].stationAddress;
+        const auto accepted = fixture.service->start(fixture.request);
+        QVERIFY(accepted.accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(fixture.identity.operationId())
+                        ->outcome()),
+            5000);
+        QCOMPARE(
+            fixture.service->record(fixture.identity.operationId())->outcome(),
+            Data::RuntimePackageActivationOutcome::FailedWithoutControllerChange);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::FailTerminal,
+            QStringLiteral("operation/runtime-activation/deploy-failed"));
+        QVERIFY_RESULT(initialized);
+        const auto accepted = fixture.service->start(fixture.request);
+        QVERIFY(accepted.accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(fixture.identity.operationId())
+                        ->outcome()),
+            5000);
+        const auto record = fixture.service->record(fixture.identity.operationId());
+        QVERIFY(record);
+        QVERIFY(record->isValid());
+        QCOMPARE(
+            record->outcome(),
+            Data::RuntimePackageActivationOutcome::FailedWithoutControllerChange);
+        QCOMPARE(fixture.provider.deploymentRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(2));
+        QCOMPARE(
+            fixture.provider.controlRequests.constLast().command,
+            Data::ControllerControlCommand::ReleaseControl);
+        QCOMPARE(fixture.projects.activationCompareAndSetCalls, 0);
+        QCOMPARE(fixture.pendingGuardCount(), 0);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/cas-stale"));
+        QVERIFY_RESULT(initialized);
+        fixture.projects.activationCompareAndSetStale = true;
+        const auto accepted = fixture.service->start(fixture.request);
+        QVERIFY(accepted.accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(fixture.identity.operationId())
+                        ->outcome()),
+            5000);
+        const auto record = fixture.service->record(fixture.identity.operationId());
+        QVERIFY(record);
+        QVERIFY(record->isValid());
+        QCOMPARE(
+            record->outcome(),
+            Data::RuntimePackageActivationOutcome::
+                FailedControllerChangedWithoutBinding);
+        QCOMPARE(fixture.projects.activationCompareAndSetCalls, 1);
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(2));
+        QCOMPARE(fixture.pendingGuardCount(), 0);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/acquire-timeout"));
+        QVERIFY_RESULT(initialized);
+        fixture.provider.controlMode
+            = ActivationControllerProvider::ControlMode::StallAcquire;
+        QVERIFY_RESULT(fixture.resetServiceWithProviderDeadline(25));
+        QVERIFY(fixture.service->start(fixture.request).accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && fixture.service->record(fixture.identity.operationId())
+                           ->needsReconciliation(),
+            1000);
+        const auto record
+            = fixture.service->record(fixture.identity.operationId());
+        QVERIFY(record);
+        QVERIFY(record->isValid());
+        QCOMPARE(record->audit().constLast().code(), QString("acquire-timeout"));
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.deploymentRequests.size(), qsizetype(0));
+        QCOMPARE(fixture.pendingGuardCount(), 1);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::
+                ProgressThenSucceed,
+            QStringLiteral("operation/runtime-activation/deployment-progress"));
+        QVERIFY_RESULT(initialized);
+        QVERIFY_RESULT(fixture.resetServiceWithProviderDeadline(25));
+        QVERIFY(fixture.service->start(fixture.request).accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(fixture.identity.operationId())
+                        ->outcome()),
+            5000);
+        const auto record
+            = fixture.service->record(fixture.identity.operationId());
+        QVERIFY(record);
+        QVERIFY(record->isValid());
+        QCOMPARE(
+            record->outcome(),
+            Data::RuntimePackageActivationOutcome::
+                SucceededWithActivatedPackage);
+        QCOMPARE(fixture.provider.deploymentRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.pendingGuardCount(), 0);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Stall,
+            QStringLiteral("operation/runtime-activation/deployment-timeout"));
+        QVERIFY_RESULT(initialized);
+        QVERIFY_RESULT(fixture.resetServiceWithProviderDeadline(25));
+        QVERIFY(fixture.service->start(fixture.request).accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && fixture.service->record(fixture.identity.operationId())
+                           ->needsReconciliation(),
+            1000);
+        const auto record
+            = fixture.service->record(fixture.identity.operationId());
+        QVERIFY(record);
+        QVERIFY(record->isValid());
+        QCOMPARE(
+            record->audit().constLast().code(),
+            QString("deployment-timeout"));
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.deploymentRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.pendingGuardCount(), 1);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::FailTerminal,
+            QStringLiteral("operation/runtime-activation/release-timeout"));
+        QVERIFY_RESULT(initialized);
+        fixture.provider.controlMode
+            = ActivationControllerProvider::ControlMode::StallRelease;
+        QVERIFY_RESULT(fixture.resetServiceWithProviderDeadline(25));
+        QVERIFY(fixture.service->start(fixture.request).accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && fixture.service->record(fixture.identity.operationId())
+                           ->needsReconciliation(),
+            1000);
+        const auto record
+            = fixture.service->record(fixture.identity.operationId());
+        QVERIFY(record);
+        QVERIFY(record->isValid());
+        QCOMPARE(record->audit().constLast().code(), QString("release-timeout"));
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(2));
+        QCOMPARE(
+            fixture.provider.controlRequests.constLast().command,
+            Data::ControllerControlCommand::ReleaseControl);
+        QCOMPARE(fixture.pendingGuardCount(), 1);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::OutcomeUnknown,
+            QStringLiteral("operation/runtime-activation/unknown"));
+        QVERIFY_RESULT(initialized);
+        const auto accepted = fixture.service->start(fixture.request);
+        QVERIFY(accepted.accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && fixture.service->record(fixture.identity.operationId())
+                           ->needsReconciliation(),
+            5000);
+        const auto record = fixture.service->record(fixture.identity.operationId());
+        QVERIFY(record);
+        QVERIFY(record->isValid());
+        QCOMPARE(
+            record->outcome(),
+            Data::RuntimePackageActivationOutcome::OutcomeUnknown);
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.deploymentRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.pendingGuardCount(), 1);
+
+        fixture.service.reset();
+        auto restarted
+            = std::make_unique<TrustedRuntimePackageActivationService>(
+                &fixture.projects,
+                fixture.registry.get(),
+                fixture.repository,
+                fixture.journalRoot);
+        QVERIFY(restarted->hasUnresolvedRecoveryBarrier());
+        const auto blocked = restarted->start(fixture.request);
+        QVERIFY(blocked.isValid());
+        QCOMPARE(
+            blocked.disposition,
+            Core::RuntimePackageActivationCommandDisposition::IdempotentReplay);
+        QVERIFY(blocked.record);
+        QVERIFY(blocked.record->needsReconciliation());
+        QCOMPARE(fixture.provider.deploymentRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(1));
+
+        const auto reconciliation
+            = restarted->reconcile(fixture.identity.operationId());
+        QVERIFY(reconciliation.isValid());
+        QCOMPARE(
+            reconciliation.disposition,
+            Core::RuntimePackageActivationCommandDisposition::Accepted);
+        const auto duplicateReconciliation
+            = restarted->reconcile(fixture.identity.operationId());
+        QVERIFY(duplicateReconciliation.isValid());
+        QCOMPARE(
+            duplicateReconciliation.disposition,
+            Core::RuntimePackageActivationCommandDisposition::
+                ReconciliationRequired);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            restarted->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    restarted->record(fixture.identity.operationId())
+                        ->outcome()),
+            5000);
+        const auto reconciled
+            = restarted->record(fixture.identity.operationId());
+        QVERIFY(reconciled);
+        QVERIFY(reconciled->isValid());
+        QCOMPARE(
+            reconciled->outcome(),
+            Data::RuntimePackageActivationOutcome::
+                FailedWithoutControllerChange);
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(2));
+        QCOMPARE(
+            fixture.provider.controlRequests.constLast().command,
+            Data::ControllerControlCommand::ReleaseControl);
+        QCOMPARE(fixture.pendingGuardCount(), 0);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::OutcomeUnknown,
+            QStringLiteral("operation/runtime-activation/recovery-no-target"));
+        QVERIFY_RESULT(initialized);
+        QVERIFY(fixture.service->start(fixture.request).accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && fixture.service->record(fixture.identity.operationId())
+                           ->needsReconciliation(),
+            5000);
+        fixture.service.reset();
+        fixture.projects.activationCapture.reset();
+        fixture.provider.snapshot.package->activeSlot
+            = fixture.provider.candidate.slot;
+        fixture.provider.snapshot.package->activeGeneration
+            = fixture.provider.candidate.generation;
+        fixture.provider.snapshot.package->activeConfigurationId
+            = fixture.provider.candidate.configurationId;
+        fixture.provider.snapshot.package->controllerState
+            = Data::ControllerPackageState::Active;
+        fixture.provider.snapshot.controllerState->serviceState
+            = Data::ControllerServiceState::OperationalSafe;
+
+        auto restarted
+            = std::make_unique<TrustedRuntimePackageActivationService>(
+                &fixture.projects,
+                fixture.registry.get(),
+                fixture.repository,
+                fixture.journalRoot);
+        const auto reconciliation
+            = restarted->reconcile(fixture.identity.operationId());
+        QVERIFY(reconciliation.isValid());
+        QCOMPARE(
+            reconciliation.disposition,
+            Core::RuntimePackageActivationCommandDisposition::Accepted);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            restarted->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    restarted->record(fixture.identity.operationId())
+                        ->outcome()),
+            5000);
+        const auto terminal
+            = restarted->record(fixture.identity.operationId());
+        QVERIFY(terminal);
+        QVERIFY(terminal->isValid());
+        QCOMPARE(
+            terminal->outcome(),
+            Data::RuntimePackageActivationOutcome::
+                FailedControllerChangedWithoutBinding);
+        QCOMPARE(fixture.pendingGuardCount(), 0);
+    }
+}
+
 void EtherCATSemanticRuntimeTests::testInstalledProductionTrustAnchor()
 {
     const QString keyId = QStringLiteral(
@@ -4995,6 +7352,29 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactory()
     const Utils::Result<QList<Data::DeviceAdapterManifest>> publishedV3Manifests
         = publishedApi038V3ActionAdapters();
     QVERIFY_RESULT(publishedV3Manifests);
+    const auto publishedXb6Manifest = std::find_if(
+        publishedV3Manifests->cbegin(),
+        publishedV3Manifests->cend(),
+        [](const Data::DeviceAdapterManifest &candidate) {
+            return candidate.controllerAdapterTarget.adapterId
+                   == QStringLiteral("solidot.xb6_ec0002_rev1_do16");
+        });
+    const auto signedXb6Topology = std::find_if(
+        evidence.semanticBindingArtifact().topologyInstances.cbegin(),
+        evidence.semanticBindingArtifact().topologyInstances.cend(),
+        [](const SemanticBindingTopologyInstance &candidate) {
+            return candidate.adapterId
+                   == QStringLiteral("solidot.xb6_ec0002_rev1_do16");
+        });
+    QVERIFY(publishedXb6Manifest != publishedV3Manifests->cend());
+    QVERIFY(signedXb6Topology
+            != evidence.semanticBindingArtifact().topologyInstances.cend());
+    QCOMPARE(
+        publishedXb6Manifest->controllerAdapterTarget.adapterVersion,
+        QStringLiteral("1.3.0"));
+    QCOMPARE(signedXb6Topology->adapterVersion, QStringLiteral("1.2.0"));
+    QVERIFY(publishedXb6Manifest->controllerAdapterTarget.adapterSha256
+            != signedXb6Topology->adapterSha256);
     const auto publishedProfile =
         [&publishedV3Manifests](QStringView controllerAdapterId)
         -> const Data::ProcessDataProfile * {
@@ -5051,22 +7431,22 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactory()
             *publishedV3Manifests,
             readyGates);
     QVERIFY_RESULT(publishedV3States);
-    qsizetype publishedReady = 0;
+    qsizetype publishedAdapterRejected = 0;
     qsizetype publishedSignedRejected = 0;
     for (const Data::SemanticActionRuntimeState &state : *publishedV3States) {
-        if (state.availability == Data::SemanticActionAvailability::Ready) {
-            ++publishedReady;
-            QVERIFY(state.actionBindingId.startsWith(
-                QStringLiteral("embedlabs:project:action:xb6:")));
+        QCOMPARE(state.availability, Data::SemanticActionAvailability::Rejected);
+        if (state.actionBindingId.startsWith(
+                QStringLiteral("embedlabs:project:action:xb6:"))) {
+            QCOMPARE(state.detail, QStringLiteral("manual_adapter_not_authorized"));
+            ++publishedAdapterRejected;
         } else {
-            QCOMPARE(state.availability, Data::SemanticActionAvailability::Rejected);
             QCOMPARE(
                 state.detail,
                 QStringLiteral("reference_unit_to_rpm_conversion_not_bound"));
             ++publishedSignedRejected;
         }
     }
-    QCOMPARE(publishedReady, qsizetype(2));
+    QCOMPARE(publishedAdapterRejected, qsizetype(2));
     QCOMPARE(publishedSignedRejected, qsizetype(6));
 
     const QList<Data::DeviceAdapterManifest> adapterManifests
@@ -7461,6 +9841,248 @@ void EtherCATSemanticRuntimeTests::testExecutorPublishesVerifiedReadOnlyContext(
                    && state.captureCycle == 101 && state.controllerTimestampNs == 1010;
         }));
     QCOMPARE(provider.mutationCalls, 0);
+}
+
+void EtherCATSemanticRuntimeTests::testRuntimeBootstrapIsSerializedAndIdempotent()
+{
+    RuntimeBootstrapFixture fixture;
+    QVERIFY_RESULT(fixture.initialize());
+    QVERIFY(fixture.evidence);
+
+    auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+    TestProjectService projects;
+    projects.addProject(fixture.project);
+    const Data::ControllerConnectionScope scope = projectScope(fixture.project);
+    const Data::RuntimeResourceCatalog firstCatalog
+        = factoryCatalog(fixture.project, *fixture.evidence);
+
+    CountingControllerProvider provider(
+        "EtherCAT.SemanticRuntime.Tests.RuntimeBootstrap.Idempotent");
+    Data::ControllerConnectionSnapshot disconnected;
+    disconnected.scope = scope;
+    disconnected.state = Data::ControllerConnectionState::Disconnected;
+    provider.publishSnapshot(disconnected);
+    provider.setAvailable(true);
+    RegisteredObject registration(&provider);
+
+    SemanticRuntimeExecutor executor(
+        &projects, registry, nullptr, fixture.repository);
+    QCoreApplication::processEvents();
+    QCOMPARE(provider.runtimeResourceRefreshCalls, 0);
+    QVERIFY(provider.semanticMappingAttestationRequests.isEmpty());
+
+    const Data::ControllerConnectionSnapshot connected
+        = connectedSnapshot(scope, firstCatalog.sessionGeneration);
+    provider.publishSnapshot(connected);
+    QTRY_COMPARE(provider.runtimeResourceRefreshCalls, 1);
+    QVERIFY(provider.semanticMappingAttestationRequests.isEmpty());
+
+    provider.publishCatalog(firstCatalog);
+    QTRY_COMPARE(provider.semanticMappingAttestationRequests.size(), qsizetype(1));
+    const Data::RuntimeSemanticMappingAttestationRequest firstRequest
+        = provider.semanticMappingAttestationRequests.constFirst();
+    QVERIFY(firstRequest.isValid());
+    QCOMPARE(firstRequest.scope, scope);
+    QCOMPARE(firstRequest.sessionGeneration, firstCatalog.sessionGeneration);
+    QCOMPARE(firstRequest.expectedEpoch, firstCatalog.epoch);
+    QCOMPARE(firstRequest.expectedProof, fixture.evidence->semanticMappingProof());
+
+    provider.publishSnapshot(connected);
+    provider.publishCatalog(firstCatalog);
+    provider.publishSemanticMappingAttestation(std::nullopt);
+    QTest::qWait(10);
+    QCOMPARE(provider.runtimeResourceRefreshCalls, 1);
+    QCOMPARE(provider.semanticMappingAttestationRequests.size(), qsizetype(1));
+
+    Data::RuntimeResourceCatalog secondCatalog = firstCatalog;
+    ++secondCatalog.epoch.runtimeGeneration;
+    ++secondCatalog.epoch.catalogRevision;
+    secondCatalog.receivedAt = QDateTime::currentDateTimeUtc();
+    provider.publishCatalog(secondCatalog);
+    QTRY_COMPARE(provider.semanticMappingAttestationRequests.size(), qsizetype(2));
+    QCOMPARE(
+        provider.semanticMappingAttestationRequests.constLast().expectedEpoch,
+        secondCatalog.epoch);
+    QCOMPARE(
+        provider.semanticMappingAttestationRequests.constLast().expectedProof,
+        fixture.evidence->semanticMappingProof());
+    QCOMPARE(provider.runtimeResourceRefreshCalls, 1);
+
+    Data::ControllerConnectionSnapshot packageChanged = connected;
+    packageChanged.package = Data::ControllerPackageSummary{};
+    packageChanged.package->activeSlot = secondCatalog.epoch.activePackageSlot;
+    packageChanged.package->activeGeneration
+        = secondCatalog.epoch.activePackageGeneration;
+    packageChanged.package->activeConfigurationId
+        = secondCatalog.epoch.configurationId;
+    packageChanged.package->controllerBootId = secondCatalog.epoch.controllerBootId;
+    provider.publishSnapshot(packageChanged);
+    QTRY_COMPARE(provider.runtimeResourceRefreshCalls, 2);
+
+    provider.semanticMappingAttestationRequestError = QStringLiteral("refresh still busy");
+    provider.publishCatalog(secondCatalog);
+    QTRY_COMPARE(provider.semanticMappingAttestationRequests.size(), qsizetype(3));
+    provider.publishCatalog(secondCatalog);
+    QTest::qWait(10);
+    QCOMPARE(provider.semanticMappingAttestationRequests.size(), qsizetype(3));
+
+    provider.publishResourceSnapshot(factorySnapshot(secondCatalog));
+    QTRY_COMPARE(provider.semanticMappingAttestationRequests.size(), qsizetype(4));
+    provider.publishResourceSnapshot(factorySnapshot(secondCatalog));
+    QTest::qWait(10);
+    QCOMPARE(provider.semanticMappingAttestationRequests.size(), qsizetype(4));
+
+    provider.semanticMappingAttestationRequestError.reset();
+    Data::ControllerConnectionSnapshot starting = packageChanged;
+    starting.controlProgress.command = Data::ControllerControlCommand::StartDistributedClocks;
+    starting.controlProgress.state = Data::ControllerControlState::Pending;
+    provider.publishSnapshot(starting);
+    QTest::qWait(10);
+    QCOMPARE(provider.runtimeResourceRefreshCalls, 2);
+
+    Data::ControllerConnectionSnapshot running = packageChanged;
+    running.controllerState = Data::ControllerStateSummary{};
+    running.controllerState->controllerBootId = secondCatalog.epoch.controllerBootId;
+    running.controllerState->applicationActive = true;
+    running.controllerState->busOperational = true;
+    provider.publishSnapshot(running);
+    QTRY_COMPARE(provider.runtimeResourceRefreshCalls, 3);
+    provider.publishCatalog(secondCatalog);
+    QTRY_COMPARE(provider.semanticMappingAttestationRequests.size(), qsizetype(5));
+
+    Data::ControllerConnectionSnapshot stopped = running;
+    stopped.controllerState->applicationActive = false;
+    stopped.controllerState->busOperational = false;
+    provider.publishSnapshot(stopped);
+    QTRY_COMPARE(provider.runtimeResourceRefreshCalls, 4);
+    provider.publishCatalog(secondCatalog);
+    QTRY_COMPARE(provider.semanticMappingAttestationRequests.size(), qsizetype(6));
+    QCOMPARE(provider.mutationCalls, 0);
+}
+
+void EtherCATSemanticRuntimeTests::testRuntimeBootstrapRetriesRejectedRefreshOnce()
+{
+    RuntimeBootstrapFixture fixture;
+    QVERIFY_RESULT(fixture.initialize());
+    QVERIFY(fixture.evidence);
+    auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+    const Data::ControllerConnectionScope scope = projectScope(fixture.project);
+    const Data::RuntimeResourceCatalog catalog
+        = factoryCatalog(fixture.project, *fixture.evidence);
+    const Data::ControllerConnectionSnapshot connected
+        = connectedSnapshot(scope, catalog.sessionGeneration);
+    Data::RuntimeResourceSnapshotRequest completedRequest;
+    completedRequest.correlationId = QStringLiteral("runtime-bootstrap/targeted-finished");
+    completedRequest.scope = scope;
+    completedRequest.sessionGeneration = catalog.sessionGeneration;
+    completedRequest.expectedEpoch = catalog.epoch;
+    completedRequest.resourceIds = {catalog.resources.constFirst().id};
+    const Data::RuntimeResourceSnapshotResult completedResult{
+        completedRequest,
+        targetedSnapshot(factorySnapshot(catalog), completedRequest, {}, 2, 100, 1000),
+        {},
+    };
+    QVERIFY(completedResult.isValid());
+
+    {
+        TestProjectService projects;
+        projects.addProject(fixture.project);
+        CountingControllerProvider provider(
+            "EtherCAT.SemanticRuntime.Tests.RuntimeBootstrap.RetrySuccess");
+        provider.runtimeResourceRefreshError = QStringLiteral("provider temporarily busy");
+        provider.publishSnapshot(connected);
+        provider.setAvailable(true);
+        RegisteredObject registration(&provider);
+        SemanticRuntimeExecutor executor(
+            &projects, registry, nullptr, fixture.repository);
+
+        QTRY_COMPARE(provider.runtimeResourceRefreshCalls, 1);
+        QTest::qWait(10);
+        QCOMPARE(provider.runtimeResourceRefreshCalls, 1);
+
+        provider.runtimeResourceRefreshError.reset();
+        provider.publishResourceSnapshotRequestFinished(completedResult);
+        QTRY_COMPARE(provider.runtimeResourceRefreshCalls, 2);
+        provider.publishCatalog(catalog);
+        QTRY_COMPARE(provider.semanticMappingAttestationRequests.size(), qsizetype(1));
+        provider.publishResourceSnapshot(factorySnapshot(catalog));
+        QTest::qWait(10);
+        QCOMPARE(provider.runtimeResourceRefreshCalls, 2);
+        QCOMPARE(provider.mutationCalls, 0);
+    }
+
+    {
+        TestProjectService projects;
+        projects.addProject(fixture.project);
+        CountingControllerProvider provider(
+            "EtherCAT.SemanticRuntime.Tests.RuntimeBootstrap.RetryRejected");
+        provider.runtimeResourceRefreshError = QStringLiteral("provider remains busy");
+        provider.publishSnapshot(connected);
+        provider.setAvailable(true);
+        RegisteredObject registration(&provider);
+        SemanticRuntimeExecutor executor(
+            &projects, registry, nullptr, fixture.repository);
+
+        QTRY_COMPARE(provider.runtimeResourceRefreshCalls, 1);
+        provider.publishResourceSnapshotRequestFinished(completedResult);
+        QTRY_COMPARE(provider.runtimeResourceRefreshCalls, 2);
+        for (int index = 0; index < 5; ++index)
+            provider.publishResourceSnapshotRequestFinished(completedResult);
+        QTest::qWait(10);
+        QCOMPARE(provider.runtimeResourceRefreshCalls, 2);
+        QVERIFY(provider.semanticMappingAttestationRequests.isEmpty());
+        QCOMPARE(provider.mutationCalls, 0);
+    }
+}
+
+void EtherCATSemanticRuntimeTests::testRuntimeBootstrapRequiresEvidenceAndUniqueProvider()
+{
+    RuntimeBootstrapFixture fixture;
+    QVERIFY_RESULT(fixture.initialize());
+    auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+
+    {
+        TestProjectService projects;
+        Data::ProjectSnapshot project = fixture.project;
+        project.masterBindingArtifact = {};
+        projects.addProject(project);
+        CountingControllerProvider provider(
+            "EtherCAT.SemanticRuntime.Tests.RuntimeBootstrap.NoArtifact");
+        provider.publishSnapshot(connectedSnapshot(projectScope(project), 31));
+        provider.setAvailable(true);
+        RegisteredObject registration(&provider);
+        SemanticRuntimeExecutor executor(
+            &projects, registry, nullptr, fixture.repository);
+        QTest::qWait(10);
+        QCOMPARE(provider.runtimeResourceRefreshCalls, 0);
+        QVERIFY(provider.semanticMappingAttestationRequests.isEmpty());
+    }
+
+    {
+        TestProjectService projects;
+        projects.addProject(fixture.project);
+        const Data::ControllerConnectionScope scope = projectScope(fixture.project);
+        CountingControllerProvider first(
+            "EtherCAT.SemanticRuntime.Tests.RuntimeBootstrap.Ambiguous.First");
+        CountingControllerProvider second(
+            "EtherCAT.SemanticRuntime.Tests.RuntimeBootstrap.Ambiguous.Second");
+        first.publishSnapshot(connectedSnapshot(scope, 41));
+        second.publishSnapshot(connectedSnapshot(scope, 42));
+        first.setAvailable(true);
+        second.setAvailable(true);
+        RegisteredObject firstRegistration(&first);
+        RegisteredObject secondRegistration(&second);
+        SemanticRuntimeExecutor executor(
+            &projects, registry, nullptr, fixture.repository);
+        QTest::qWait(10);
+        QCOMPARE(first.runtimeResourceRefreshCalls, 0);
+        QCOMPARE(second.runtimeResourceRefreshCalls, 0);
+        QVERIFY(first.semanticMappingAttestationRequests.isEmpty());
+        QVERIFY(second.semanticMappingAttestationRequests.isEmpty());
+    }
 }
 
 void EtherCATSemanticRuntimeTests::testPublishesOneProductionService()

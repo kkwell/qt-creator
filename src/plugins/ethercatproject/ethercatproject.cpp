@@ -35,9 +35,13 @@ EtherCATProject::EtherCATProject(const Utils::FilePath &filePath)
             emit snapshotChanged(snapshot);
         });
     connect(this, &ProjectExplorer::Project::projectFileIsDirty, this, [this] {
-        if (!m_document->isModified())
-            (void)
-                m_document->reload(::Core::IDocument::FlagReload, ::Core::IDocument::TypeContents);
+        if (m_document->isModified())
+            return;
+        const Utils::Result<QByteArray> diskContents = projectFilePath().fileContents();
+        if (diskContents && *diskContents == m_document->contents())
+            return;
+        (void) m_document->reload(
+            ::Core::IDocument::FlagReload, ::Core::IDocument::TypeContents);
     });
     connect(this, &ProjectExplorer::Project::aboutToSaveSettings, this, [this] {
         if (!m_document->isModified())

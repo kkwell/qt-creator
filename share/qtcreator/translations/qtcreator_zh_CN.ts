@@ -56013,6 +56013,18 @@ AL 状态：%3
         <translation>控制器软件包部署</translation>
     </message>
     <message>
+        <source>Controller package staging</source>
+        <translation>控制器软件包暂存</translation>
+    </message>
+    <message>
+        <source>Stages and validates one already-built ECPKG through the selected controller adapter&apos;s transactional package service.</source>
+        <translation>通过所选控制器适配器的事务性软件包服务，暂存并校验已构建的 ECPKG。</translation>
+    </message>
+    <message>
+        <source>Select an immutable, already-built ECPKG. This page only uploads and validates it. Activation and node control binding require the trusted project workflow, which is not available here.</source>
+        <translation>请选择不可变且已构建的 ECPKG。此页面仅上传并校验。激活与节点控制绑定需要可信项目流程，此处暂不可用。</translation>
+    </message>
+    <message>
         <source>Deploys one already-built and signed ECPKG through the selected controller adapter&apos;s transactional package service.</source>
         <translation>通过所选控制器适配器的事务性软件包服务部署一个已构建并签名的 ECPKG。</translation>
     </message>
@@ -56075,6 +56087,14 @@ AL 状态：%3
     <message>
         <source>Deploy Package</source>
         <translation>部署软件包</translation>
+    </message>
+    <message>
+        <source>Stage Package</source>
+        <translation>暂存软件包</translation>
+    </message>
+    <message>
+        <source>Stage and validate controller package</source>
+        <translation>暂存并校验控制器软件包</translation>
     </message>
     <message>
         <source>Deploy controller package</source>
@@ -56165,6 +56185,18 @@ AL 状态：%3
         <translation>无法部署控制器软件包：%1</translation>
     </message>
     <message>
+        <source>Cannot stage the controller package: enter a nonzero configuration ID.</source>
+        <translation>无法暂存控制器软件包：请输入非零配置 ID。</translation>
+    </message>
+    <message>
+        <source>Cannot stage the controller package: %1</source>
+        <translation>无法暂存控制器软件包：%1</translation>
+    </message>
+    <message>
+        <source>Package staging queued [%1]: configuration %2, SHA-256 %3.</source>
+        <translation>软件包暂存已排队 [%1]：配置 %2，SHA-256 %3。</translation>
+    </message>
+    <message>
         <source>Queued package deployment [%1] from %2: %3 bytes, SHA-256 %4, configuration %5.</source>
         <translation>已将软件包部署 [%1] 加入队列，来源 %2：%3 字节，SHA-256 %4，配置 %5。</translation>
     </message>
@@ -56179,6 +56211,10 @@ AL 状态：%3
     <message>
         <source>Upload, validate, and optionally activate the exact selected ECPKG.</source>
         <translation>上传并校验所选的准确 ECPKG，并可选择激活。</translation>
+    </message>
+    <message>
+        <source>Upload and validate the exact selected ECPKG without activating it.</source>
+        <translation>上传并校验所选的准确 ECPKG，但不激活。</translation>
     </message>
     <message>
         <source>Request BulkAbort before package validation begins.</source>
@@ -56207,6 +56243,10 @@ AL 状态：%3
     <message>
         <source>Select an EtherCAT Master before deploying a package.</source>
         <translation>请先选择 EtherCAT 主站，再部署软件包。</translation>
+    </message>
+    <message>
+        <source>Select an EtherCAT Master before staging a package.</source>
+        <translation>请先选择 EtherCAT 主站，再暂存软件包。</translation>
     </message>
     <message>
         <source>Enter a nonzero package configuration ID.</source>
@@ -56619,6 +56659,10 @@ AL 状态：%3
         <translation>动作结果未知：%1（确认凭据无效）</translation>
     </message>
     <message>
+        <source>Apply the current bus to the project and save it before signed, verified control can be enabled.</source>
+        <translation>请先将当前总线应用到项目并保存，才能启用经过签名验证的控制。</translation>
+    </message>
+    <message>
         <source>Completed.</source>
         <translation>已完成。</translation>
     </message>
@@ -56790,6 +56834,22 @@ AL 状态：%3
         <translation>告警代码 %1</translation>
     </message>
     <message>
+        <source>State changed</source>
+        <translation>状态已切换</translation>
+    </message>
+    <message>
+        <source>state %1 -&gt; %2</source>
+        <translation>状态 %1 -&gt; %2</translation>
+    </message>
+    <message>
+        <source>Command rejected</source>
+        <translation>命令被拒绝</translation>
+    </message>
+    <message>
+        <source>command %1, result %2, state %3</source>
+        <translation>命令 %1，结果 %2，状态 %3</translation>
+    </message>
+    <message>
         <source>Runtime error</source>
         <translation>运行时错误</translation>
     </message>
@@ -56800,6 +56860,62 @@ AL 状态：%3
     <message>
         <source>OSL_ERR_TIMEOUT (%1), phase FAILED (%2)</source>
         <translation>OSL_ERR_TIMEOUT（%1），阶段 FAILED（%2）</translation>
+    </message>
+    <message>
+        <source>OSL_ERR_CYCLE_LATE (%1), phase FAILED (%2)</source>
+        <translation>OSL_ERR_CYCLE_LATE（%1），阶段 FAILED（%2）</translation>
+    </message>
+    <message>
+        <source>DC drift</source>
+        <translation>DC 漂移</translation>
+    </message>
+    <message>
+        <source>measured %1 ns, warning %2 ns, fault %3 ns</source>
+        <translation>测量值 %1 ns，告警阈值 %2 ns，故障阈值 %3 ns</translation>
+    </message>
+    <message>
+        <source>fault mask 0x%1</source>
+        <translation>故障掩码 0x%1</translation>
+    </message>
+    <message>
+        <source>Safe output changed</source>
+        <translation>安全输出已变化</translation>
+    </message>
+    <message>
+        <source>safe output value %1</source>
+        <translation>安全输出值 %1</translation>
+    </message>
+    <message>
+        <source>Configuration failed</source>
+        <translation>配置失败</translation>
+    </message>
+    <message>
+        <source>result %1, generation %2, configuration %3</source>
+        <translation>结果 %1，代次 %2，配置 %3</translation>
+    </message>
+    <message>
+        <source>Configuration accepted</source>
+        <translation>配置已接受</translation>
+    </message>
+    <message>
+        <source>Network quick stop</source>
+        <translation>网络快速停止</translation>
+    </message>
+    <message>
+        <source>operator-requested non-safety stop</source>
+        <translation>操作员请求的非安全停止</translation>
+    </message>
+    <message>
+        <source>Activation diagnostic</source>
+        <translation>激活诊断</translation>
+    </message>
+    <message>
+        <source>phase %1, record %2, detail %3: attempt to write a read-only object</source>
+        <translation>阶段 %1，记录 %2，详情 %3：尝试写入只读对象</translation>
+    </message>
+    <message>
+        <source>phase %1, selector %2, detail %3</source>
+        <translation>阶段 %1，选择项 %2，详情 %3</translation>
     </message>
     <message>
         <source>RX timeout</source>

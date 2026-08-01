@@ -2651,16 +2651,72 @@ std::optional<Data::ControllerAlarmSummary> decodeAlarmEvent(
     }
     QString codeName = Tr::tr("Alarm code %1").arg(code);
     QString detail;
-    if (code == 5) {
-        codeName = Tr::tr("Fault cleared");
+    if (code == 1) {
+        codeName = Tr::tr("State changed");
+        detail = Tr::tr("state %1 -> %2").arg(detail0).arg(detail1);
+    } else if (code == 2) {
+        codeName = Tr::tr("Command rejected");
+        detail = Tr::tr("command %1, result %2, state %3")
+                     .arg(detail0)
+                     .arg(qint32(detail1))
+                     .arg(detail2);
     } else if (code == 3) {
         codeName = Tr::tr("Runtime error");
         const qint32 signedResult = qint32(detail0);
-        detail = signedResult == -2 && detail1 == 255
-                     ? Tr::tr("OSL_ERR_TIMEOUT (%1), phase FAILED (%2)")
-                           .arg(signedResult)
-                           .arg(detail1)
-                     : Tr::tr("result %1, phase %2").arg(signedResult).arg(detail1);
+        if (signedResult == -2 && detail1 == 255) {
+            detail = Tr::tr("OSL_ERR_TIMEOUT (%1), phase FAILED (%2)")
+                         .arg(signedResult)
+                         .arg(detail1);
+        } else if (signedResult == -10 && detail1 == 255) {
+            detail = Tr::tr("OSL_ERR_CYCLE_LATE (%1), phase FAILED (%2)")
+                         .arg(signedResult)
+                         .arg(detail1);
+        } else {
+            detail = Tr::tr("result %1, phase %2").arg(signedResult).arg(detail1);
+        }
+    } else if (code == 4) {
+        codeName = Tr::tr("DC drift");
+        detail = Tr::tr("measured %1 ns, warning %2 ns, fault %3 ns")
+                     .arg(detail0)
+                     .arg(detail1)
+                     .arg(detail2);
+    } else if (code == 5) {
+        codeName = Tr::tr("Fault cleared");
+        detail = Tr::tr("fault mask 0x%1").arg(faultMask, 16, 16, QLatin1Char('0'));
+    } else if (code == 6) {
+        codeName = Tr::tr("Safe output changed");
+        detail = Tr::tr("safe output value %1").arg(detail0);
+    } else if (code == 7) {
+        codeName = Tr::tr("Configuration failed");
+        detail = Tr::tr("result %1, generation %2, configuration %3")
+                     .arg(qint32(detail0))
+                     .arg(detail1)
+                     .arg(detail2);
+    } else if (code == 8) {
+        codeName = Tr::tr("Configuration accepted");
+        detail = Tr::tr("result %1, generation %2, configuration %3")
+                     .arg(qint32(detail0))
+                     .arg(detail1)
+                     .arg(detail2);
+    } else if (code == 9) {
+        codeName = Tr::tr("Network quick stop");
+        detail = Tr::tr("operator-requested non-safety stop");
+    } else if (code == 10) {
+        codeName = Tr::tr("Activation diagnostic");
+        const QString protocolDetail
+            = QStringLiteral("0x%1").arg(detail2, 8, 16, QLatin1Char('0'));
+        if (detail0 == 2 && detail2 == 0x06010002) {
+            detail = Tr::tr("phase %1, record %2, detail %3: "
+                            "attempt to write a read-only object")
+                         .arg(detail0)
+                         .arg(detail1)
+                         .arg(protocolDetail);
+        } else {
+            detail = Tr::tr("phase %1, selector %2, detail %3")
+                         .arg(detail0)
+                         .arg(detail1)
+                         .arg(protocolDetail);
+        }
     } else if (code == 11) {
         codeName = Tr::tr("RX timeout");
         detail = detail0 >= detail1

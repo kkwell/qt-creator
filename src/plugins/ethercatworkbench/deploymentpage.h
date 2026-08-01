@@ -40,6 +40,7 @@ private:
     void clearArtifact();
     void prepareNewOperation();
     void deploy();
+    void activateTrustedPackage();
     void cancelDeployment();
     void refresh();
     void updateStatus(
@@ -65,6 +66,8 @@ private:
     QCheckBox *m_rollback = nullptr;
     QToolButton *m_deploy = nullptr;
     QToolButton *m_cancel = nullptr;
+    QLabel *m_trustedActivationStatus = nullptr;
+    QToolButton *m_trustedActivate = nullptr;
     QLabel *m_deploymentSummary = nullptr;
     QProgressBar *m_progress = nullptr;
     QTreeWidget *m_status = nullptr;

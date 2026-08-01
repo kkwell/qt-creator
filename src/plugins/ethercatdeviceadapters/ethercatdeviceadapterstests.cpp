@@ -373,7 +373,7 @@ void EtherCATDeviceAdaptersTests::testBundledResourcesAndManifests()
     QVERIFY(sv630n);
     QCOMPARE(xb6->contractVersion, Data::DeviceAdapterContractVersion::V3);
     QCOMPARE(sv630n->contractVersion, Data::DeviceAdapterContractVersion::V3);
-    QCOMPARE(xb6->version, QString("0.3.0"));
+    QCOMPARE(xb6->version, QString("0.3.1"));
     QCOMPARE(sv630n->version, QString("0.3.0"));
     QCOMPARE(xb6->match.exactEsiSha256, xb6EsiSha256);
     QCOMPARE(sv630n->match.exactEsiSha256, sv630nEsiSha256);
@@ -590,7 +590,7 @@ void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
 
     const QList<Data::DeviceAdapterManifest> manifests = repository.adapterManifests();
     const Data::DeviceAdapterManifest *xb6
-        = manifestForIdentity(manifests, xb6Identity, "0.3.0");
+        = manifestForIdentity(manifests, xb6Identity, "0.3.1");
     const Data::DeviceAdapterManifest *sv630n
         = manifestForIdentity(manifests, sv630nIdentity, "0.3.0");
     QVERIFY(xb6);
@@ -600,7 +600,7 @@ void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
     QCOMPARE(
         xb6->contentSha256,
         QByteArray::fromHex(
-            "fbc0e1d3f23652c92eafece5753ce652f1b7a4d05caef1f44d776a91c286c510"));
+            "1b95083165cf124054069bd9897837d09bc414e8f375bbd77a0f9ddc1bcfa84c"));
     QCOMPARE(
         sv630n->contentSha256,
         QByteArray::fromHex(
@@ -609,11 +609,11 @@ void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
     QCOMPARE(
         xb6->controllerAdapterTarget.adapterId,
         QString("solidot.xb6_ec0002_rev1_do16"));
-    QCOMPARE(xb6->controllerAdapterTarget.adapterVersion, QString("1.2.0"));
+    QCOMPARE(xb6->controllerAdapterTarget.adapterVersion, QString("1.3.0"));
     QCOMPARE(
         xb6->controllerAdapterTarget.adapterSha256,
         QByteArray::fromHex(
-            "72f9f3ae2b941fd3929e68ec76e506142a26304c507a686de39e29bcbb7baff1"));
+            "1b33847b728585760471384cc6dec4273c7c1fb739e001a0b848229b935e3c42"));
     QCOMPARE(xb6->controllerAdapterTarget.esiSha256, xb6EsiSha256);
     QCOMPARE(xb6->semanticSignals.size(), 18);
     QCOMPARE(xb6->processDataProfiles.size(), 1);

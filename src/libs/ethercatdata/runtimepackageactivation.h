@@ -81,6 +81,13 @@ private:
     QByteArray m_value;
 };
 
+// Computes the opaque project binding token used by ProjectService compare-and-set
+// operations. Keeping this canonicalization in Data lets activation services
+// validate a compiler-provided target token before any controller mutation.
+ETHERCATDATA_EXPORT RuntimePackageActivationOriginalBindingToken
+runtimePackageActivationBindingToken(
+    const SemanticBindingArtifactReference &reference);
+
 // One atomic project-service observation. The serialized bytes are the exact
 // project bytes captured with the snapshot and both opaque compare-and-set
 // tokens; consumers must not reserialize the snapshot to reconstruct them.
@@ -195,9 +202,10 @@ runtimePackageActivationCanonicalRequestFingerprint(
     const RuntimePackageActivationIdentity &identity,
     bool rollbackOnActivationFailure);
 
-// The effective-project companion remains opaque until its signed schema is
-// frozen. Data and Core retain its exact bytes and SHA-256 only; they must not
-// infer fields or implement a provisional canonicalization algorithm.
+// compiledProjectSource is the exact API-042 lower compiler project.json, not
+// the current Qt .ecatproject serialization captured for project CAS. Data
+// retains both the lower source and effective-project companion as exact bytes;
+// their concrete schemas are verified by the SemanticRuntime implementation.
 class ETHERCATDATA_EXPORT RuntimePackageActivationRequest
 {
 public:

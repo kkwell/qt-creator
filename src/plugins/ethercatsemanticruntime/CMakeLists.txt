@@ -24,6 +24,10 @@ add_qtc_plugin(EtherCATSemanticRuntime
     runtimepackageevidence_p.h
     runtimepackageevidencerepository_p.cpp
     runtimepackageevidencerepository_p.h
+    runtimepackageactivationservice_p.cpp
+    runtimepackageactivationservice_p.h
+    runtimepackageactivationjournalcodec_p.cpp
+    runtimepackageactivationjournalcodec_p.h
     semanticactiondefinitions_p.cpp
     semanticactiondefinitions_p.h
     semanticactionplan_p.cpp

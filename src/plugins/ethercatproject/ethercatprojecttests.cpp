@@ -16,6 +16,7 @@
 #include <extensionsystem/pluginspec.h>
 
 #include <ethercatdata/offlineconfiguration.h>
+#include <ethercatdata/runtimepackageactivation.h>
 
 #include <projectexplorer/projectexplorer.h>
 #include <projectexplorer/projectmanager.h>
@@ -2414,6 +2415,20 @@ void EtherCATProjectTests::testRuntimePackageActivationProjectCompareAndSet()
         afterCommit->documentRevision(),
         committed->commit()->resultingDocumentRevision());
     QCOMPARE(afterCommit->originalBinding(), committed->commit()->resultingBinding());
+    QVERIFY(afterCommit->snapshot().modified);
+
+    QVERIFY_RESULT(service->saveProject(projectId));
+    const Utils::Result<Data::RuntimePackageActivationProjectCapture> afterSave
+        = service->captureRuntimePackageActivationProject(projectId);
+    QVERIFY_RESULT(afterSave);
+    QCOMPARE(
+        afterSave->documentRevisionNumber(),
+        afterCommit->documentRevisionNumber() + 1);
+    QVERIFY(afterSave->documentRevision() != afterCommit->documentRevision());
+    QCOMPARE(afterSave->serializedProject(), afterCommit->serializedProject());
+    QCOMPARE(afterSave->originalBinding(), afterCommit->originalBinding());
+    QCOMPARE(afterSave->snapshot().masterBindingArtifact, targetReference);
+    QVERIFY(!afterSave->snapshot().modified);
 
     const int exactCommandCount = project->document()->undoStack()->count();
     const int exactCommandIndex = project->document()->undoStack()->index();
@@ -2421,8 +2436,8 @@ void EtherCATProjectTests::testRuntimePackageActivationProjectCompareAndSet()
     const Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult> exactReplay
         = service->compareAndSetMasterBindingArtifact(
             projectId,
-            afterCommit->documentRevision(),
-            afterCommit->originalBinding(),
+            afterSave->documentRevision(),
+            afterSave->originalBinding(),
             targetReference);
     QVERIFY_RESULT(exactReplay);
     QVERIFY(exactReplay->isValid());
@@ -2442,8 +2457,10 @@ void EtherCATProjectTests::testRuntimePackageActivationProjectCompareAndSet()
         = service->captureRuntimePackageActivationProject(projectId);
     QVERIFY_RESULT(afterCommitUndo);
     QVERIFY(
-        afterCommitUndo->documentRevisionNumber() > afterCommit->documentRevisionNumber());
-    QCOMPARE(afterCommitUndo->snapshot(), beforeCommit->snapshot());
+        afterCommitUndo->documentRevisionNumber() > afterSave->documentRevisionNumber());
+    Data::ProjectSnapshot expectedAfterCommitUndo = beforeCommit->snapshot();
+    expectedAfterCommitUndo.modified = true;
+    QCOMPARE(afterCommitUndo->snapshot(), expectedAfterCommitUndo);
     QCOMPARE(afterCommitUndo->serializedProject(), beforeCommit->serializedProject());
     QCOMPARE(afterCommitUndo->originalBinding(), beforeCommit->originalBinding());
     QVERIFY(
@@ -2470,6 +2487,37 @@ void EtherCATProjectTests::testRuntimePackageActivationProjectCompareAndSet()
     QCOMPARE(project->document()->undoStack()->count(), staleReplayCommandCount);
     QCOMPARE(project->document()->undoStack()->index(), staleReplayCommandIndex);
     QCOMPARE(projectChangedSpy.count(), 0);
+}
+
+void EtherCATProjectTests::testRuntimePackageActivationBindingTokenGolden()
+{
+    const Data::SemanticBindingArtifactReference reference{
+        "binding/com.embedlabs.activation/golden-v1",
+        QByteArray::fromHex(
+            "000102030405060708090a0b0c0d0e0f"
+            "101112131415161718191a1b1c1d1e1f"),
+        QByteArray::fromHex(
+            "202122232425262728292a2b2c2d2e2f"
+            "303132333435363738393a3b3c3d3e3f"),
+        {
+            {
+                Data::NodeId::fromString("00112233-4455-6677-8899-aabbccddeeff"),
+                "embedlabs:project:device:xb6",
+            },
+            {
+                Data::NodeId::fromString("fedcba98-7654-3210-fedc-ba9876543210"),
+                "embedlabs:project:device:sv630n-axis0",
+            },
+        },
+    };
+
+    // This golden value was produced by EtherCATProject's historical implementation:
+    // the domain separator is added as raw bytes, while subsequent fields are
+    // length-prefixed and the binding count is an unsigned big-endian 64-bit value.
+    QCOMPARE(
+        Data::runtimePackageActivationBindingToken(reference).value().toHex(),
+        QByteArray("2d59b890b38455f103f18d400cb59548"
+                   "33360dea746678c42621d9be13b6512c"));
 }
 
 void EtherCATProjectTests::testDuplicateProjectIdCannotOwnStartupContext()

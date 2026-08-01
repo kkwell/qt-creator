@@ -208,6 +208,105 @@ static void appendContextInteger(QByteArray &canonical, quint64 value)
         reinterpret_cast<const char *>(&bigEndianValue), qsizetype(sizeof(bigEndianValue)));
 }
 
+static bool runtimeBootstrapOperationInProgress(
+    const Data::ControllerConnectionSnapshot &snapshot)
+{
+    if (snapshot.controlProgress.state == Data::ControllerControlState::Pending)
+        return true;
+
+    switch (snapshot.packageDeploymentProgress.state) {
+    case Data::ControllerPackageDeploymentState::Uploading:
+    case Data::ControllerPackageDeploymentState::Committing:
+    case Data::ControllerPackageDeploymentState::Validating:
+    case Data::ControllerPackageDeploymentState::Activating:
+    case Data::ControllerPackageDeploymentState::RollingBack:
+    case Data::ControllerPackageDeploymentState::Canceling:
+        return true;
+    case Data::ControllerPackageDeploymentState::Idle:
+    case Data::ControllerPackageDeploymentState::Succeeded:
+    case Data::ControllerPackageDeploymentState::Canceled:
+    case Data::ControllerPackageDeploymentState::Failed:
+    case Data::ControllerPackageDeploymentState::OutcomeUnknown:
+        return false;
+    }
+    return true;
+}
+
+static QByteArray runtimeBootstrapIdentityKey(
+    const Data::ControllerConnectionScope &scope,
+    const Data::ControllerConnectionSnapshot &snapshot,
+    const Data::SemanticBindingArtifactReference &reference,
+    const VerifiedRuntimePackageEvidence &evidence)
+{
+    QByteArray canonical = QByteArrayLiteral("embed-labs.semantic-runtime-bootstrap.v1");
+    appendContextString(canonical, scope.projectId.toString());
+    appendContextString(canonical, scope.masterId.toString());
+    appendContextInteger(canonical, snapshot.sessionGeneration);
+    appendContextInteger(canonical, snapshot.session ? snapshot.session->bootId : 0);
+    appendContextString(canonical, reference.artifactId);
+    appendContextBytes(canonical, reference.artifactSha256);
+    appendContextBytes(canonical, reference.projectConfigurationSha256);
+
+    const Data::RuntimeSemanticMappingProof &proof = evidence.semanticMappingProof();
+    appendContextInteger(canonical, proof.formatVersion);
+    appendContextInteger(canonical, proof.bindingCount);
+    appendContextInteger(canonical, proof.packageSigned ? 1 : 0);
+    appendContextInteger(canonical, proof.signatureVerified ? 1 : 0);
+    appendContextInteger(canonical, proof.semanticBindingVerified ? 1 : 0);
+    appendContextInteger(canonical, quint64(proof.trust));
+    appendContextBytes(canonical, proof.packageSha256);
+    appendContextBytes(canonical, proof.manifestSha256);
+    appendContextBytes(canonical, proof.mappingSha256);
+    appendContextBytes(canonical, proof.resourceRecordsSha256);
+    appendContextBytes(canonical, proof.resourceSectionSha256);
+    appendContextBytes(canonical, proof.topologySha256);
+    appendContextBytes(canonical, proof.signingKeyIdSha256);
+
+    if (snapshot.package) {
+        appendContextInteger(canonical, quint64(snapshot.package->activeSlot));
+        appendContextInteger(canonical, snapshot.package->activeGeneration);
+        appendContextInteger(canonical, snapshot.package->activeConfigurationId);
+        appendContextInteger(canonical, snapshot.package->controllerBootId);
+    } else {
+        appendContextInteger(canonical, 0);
+        appendContextInteger(canonical, 0);
+        appendContextInteger(canonical, 0);
+        appendContextInteger(canonical, 0);
+    }
+
+    if (snapshot.controllerState) {
+        appendContextInteger(canonical, snapshot.controllerState->applicationActive ? 1 : 0);
+        appendContextInteger(canonical, snapshot.controllerState->busOperational ? 1 : 0);
+        appendContextInteger(canonical, snapshot.controllerState->paused ? 1 : 0);
+        appendContextInteger(canonical, snapshot.controllerState->controllerBootId);
+    } else {
+        appendContextInteger(canonical, 0);
+        appendContextInteger(canonical, 0);
+        appendContextInteger(canonical, 0);
+        appendContextInteger(canonical, 0);
+    }
+    return QCryptographicHash::hash(canonical, QCryptographicHash::Sha256);
+}
+
+static QByteArray runtimeBootstrapAttestationKey(
+    QByteArrayView identityKey,
+    const Data::RuntimeResourceCatalogEpoch &epoch,
+    const Data::RuntimeSemanticMappingProof &proof)
+{
+    QByteArray canonical = QByteArrayLiteral("embed-labs.semantic-runtime-attestation.v1");
+    appendContextBytes(canonical, identityKey);
+    appendContextInteger(canonical, epoch.controllerBootId);
+    appendContextInteger(canonical, quint64(epoch.activePackageSlot));
+    appendContextInteger(canonical, epoch.activePackageGeneration);
+    appendContextInteger(canonical, epoch.configurationId);
+    appendContextInteger(canonical, epoch.topologyGeneration);
+    appendContextInteger(canonical, epoch.runtimeGeneration);
+    appendContextInteger(canonical, epoch.catalogRevision);
+    appendContextBytes(canonical, epoch.topologyIdentity);
+    appendContextBytes(canonical, proof.mappingSha256);
+    return QCryptographicHash::hash(canonical, QCryptographicHash::Sha256);
+}
+
 static bool appendContextValue(QByteArray &canonical, const QVariant &value)
 {
     switch (value.metaType().id()) {
@@ -2231,6 +2330,10 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
             }
             m_providerConnections.clear();
             m_adapterProviderConnections.clear();
+            m_runtimeBootstrapStates.clear();
+            m_runtimeBootstrapSignalGenerations.clear();
+            m_runtimeCatalogSignalGenerations.clear();
+            m_runtimeSnapshotSignalGenerations.clear();
             publishContexts();
         });
         for (Core::Provider *provider : m_providerRegistry->providers())
@@ -2238,6 +2341,7 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
     }
 
     m_contexts = buildContexts();
+    scheduleRuntimeBootstrap();
 }
 
 QList<Data::SemanticRuntimeContext> SemanticRuntimeExecutor::contexts() const
@@ -2588,11 +2692,215 @@ Data::SemanticRuntimeContext SemanticRuntimeExecutor::buildContext(
 
 void SemanticRuntimeExecutor::publishContexts()
 {
+    scheduleRuntimeBootstrap();
     const QList<Data::SemanticRuntimeContext> next = buildContexts();
     if (next == m_contexts)
         return;
     m_contexts = next;
     emit contextsChanged();
+}
+
+void SemanticRuntimeExecutor::scheduleRuntimeBootstrap()
+{
+    if (m_runtimeBootstrapScheduled)
+        return;
+    m_runtimeBootstrapScheduled = true;
+    QTimer::singleShot(0, this, [this] {
+        m_runtimeBootstrapScheduled = false;
+        processRuntimeBootstrap();
+    });
+}
+
+void SemanticRuntimeExecutor::processRuntimeBootstrap()
+{
+    struct Candidate
+    {
+        Core::ControllerConnectionProvider *provider = nullptr;
+        Data::ControllerConnectionScope scope;
+        Data::ControllerConnectionSnapshot snapshot;
+        std::shared_ptr<const VerifiedRuntimePackageEvidence> evidence;
+        QByteArray identityKey;
+    };
+
+    QList<Candidate> candidates;
+    QSet<Core::ControllerConnectionProvider *> eligibleProviders;
+    if (m_projectService && m_projectService->isAvailable() && m_providerRegistry
+        && m_evidenceRepository) {
+        for (const Data::ProjectSnapshot &project : m_projectService->projects()) {
+            if (!project.valid || project.id.isNull()
+                || m_projectsBeingRemoved.contains(project.id)
+                || !bindingArtifactIsValid(project.masterBindingArtifact)) {
+                continue;
+            }
+
+            QString evidenceError;
+            const std::shared_ptr<const VerifiedRuntimePackageEvidence> evidence
+                = cachedEvidence(project.masterBindingArtifact, &evidenceError);
+            if (!evidence || !evidence->isValid())
+                continue;
+
+            QList<Data::NodeId> masterIds;
+            for (const Data::ProjectNodeSnapshot &node : project.nodes) {
+                if (node.kind == Data::ProjectNodeKind::Master && !node.id.isNull()
+                    && !masterIds.contains(node.id)) {
+                    masterIds.append(node.id);
+                }
+            }
+            for (const Data::NodeId &masterId : std::as_const(masterIds)) {
+                const Data::ControllerConnectionScope scope{project.id, masterId};
+                QList<Core::ControllerConnectionProvider *> matchingProviders;
+                QHash<Core::ControllerConnectionProvider *, Data::ControllerConnectionSnapshot>
+                    snapshots;
+                for (Core::Provider *provider :
+                     m_providerRegistry->providers(Core::ProviderKind::ControllerConnection)) {
+                    auto *connectionProvider
+                        = qobject_cast<Core::ControllerConnectionProvider *>(provider);
+                    if (!connectionProvider
+                        || m_providersBeingRemoved.contains(connectionProvider)
+                        || !connectionProvider->isAvailable()) {
+                        continue;
+                    }
+                    const Data::ControllerConnectionSnapshot snapshot
+                        = connectionProvider->connectionSnapshot();
+                    if (snapshot.scope != scope)
+                        continue;
+                    matchingProviders.append(connectionProvider);
+                    snapshots.insert(connectionProvider, snapshot);
+                }
+                if (matchingProviders.size() != 1)
+                    continue;
+
+                Core::ControllerConnectionProvider *provider
+                    = matchingProviders.constFirst();
+                const Data::ControllerConnectionSnapshot snapshot = snapshots.value(provider);
+                if (!isConnected(snapshot.state) || !snapshot.sessionGeneration
+                    || runtimeBootstrapOperationInProgress(snapshot)
+                    || !provider->supportsRuntimeResources()
+                    || !provider->supportsRuntimeSemanticMappingAttestation()) {
+                    continue;
+                }
+
+                Candidate candidate;
+                candidate.provider = provider;
+                candidate.scope = scope;
+                candidate.snapshot = snapshot;
+                candidate.evidence = evidence;
+                candidate.identityKey = runtimeBootstrapIdentityKey(
+                    scope, snapshot, project.masterBindingArtifact, *evidence);
+                candidates.append(std::move(candidate));
+                eligibleProviders.insert(provider);
+            }
+        }
+    }
+
+    for (auto state = m_runtimeBootstrapStates.begin();
+         state != m_runtimeBootstrapStates.end();) {
+        if (!eligibleProviders.contains(state.key()))
+            state = m_runtimeBootstrapStates.erase(state);
+        else
+            ++state;
+    }
+
+    for (const Candidate &candidate : std::as_const(candidates)) {
+        QPointer<Core::ControllerConnectionProvider> provider(candidate.provider);
+        RuntimeBootstrapState &state = m_runtimeBootstrapStates[candidate.provider];
+        if (state.identityKey != candidate.identityKey) {
+            state = {};
+            state.identityKey = candidate.identityKey;
+            state.catalogSignalBaseline
+                = m_runtimeCatalogSignalGenerations.value(candidate.provider);
+            state.snapshotSignalBaseline
+                = m_runtimeSnapshotSignalGenerations.value(candidate.provider);
+            state.refreshRetrySignalBaseline
+                = m_runtimeBootstrapSignalGenerations.value(candidate.provider);
+        }
+
+        const quint64 bootstrapSignalGeneration
+            = m_runtimeBootstrapSignalGenerations.value(candidate.provider);
+        const bool firstRefresh = state.refreshAttemptCount == 0;
+        const bool retryRejectedRefresh
+            = !state.refreshAccepted && state.refreshAttemptCount == 1
+              && bootstrapSignalGeneration > state.refreshRetrySignalBaseline;
+        if (firstRefresh || retryRejectedRefresh) {
+            if (firstRefresh) {
+                state.catalogSignalBaseline
+                    = m_runtimeCatalogSignalGenerations.value(candidate.provider);
+                state.snapshotSignalBaseline
+                    = m_runtimeSnapshotSignalGenerations.value(candidate.provider);
+            }
+            ++state.refreshAttemptCount;
+            state.refreshRetrySignalBaseline = bootstrapSignalGeneration;
+            const QByteArray identityKey = state.identityKey;
+            const Utils::Result<> accepted = candidate.provider->refreshRuntimeResources();
+            if (provider) {
+                const auto current = m_runtimeBootstrapStates.find(candidate.provider);
+                if (current != m_runtimeBootstrapStates.end()
+                    && current->identityKey == identityKey && accepted) {
+                    current->refreshAccepted = true;
+                }
+            }
+            continue;
+        }
+        if (!provider
+            || m_runtimeCatalogSignalGenerations.value(candidate.provider)
+                   <= state.catalogSignalBaseline) {
+            continue;
+        }
+
+        const std::optional<Data::RuntimeResourceCatalog> catalog
+            = candidate.provider->runtimeResourceCatalog();
+        if (!catalog || catalog->scope != candidate.scope
+            || catalog->sessionGeneration != candidate.snapshot.sessionGeneration
+            || catalog->resources.isEmpty()
+            || !Core::isCompleteRuntimeResourceCatalogEpoch(catalog->epoch)) {
+            continue;
+        }
+
+        const Data::RuntimeSemanticMappingProof &proof
+            = candidate.evidence->semanticMappingProof();
+        const QByteArray attestationKey = runtimeBootstrapAttestationKey(
+            candidate.identityKey, catalog->epoch, proof);
+        bool issueRequest = false;
+        if (state.attestationAttemptKey != attestationKey) {
+            state.attestationAttemptKey = attestationKey;
+            state.attestationAccepted = false;
+            state.attestationRetryUsed = false;
+            state.snapshotSignalBaseline
+                = m_runtimeSnapshotSignalGenerations.value(candidate.provider);
+            issueRequest = true;
+        } else if (!state.attestationAccepted && !state.attestationRetryUsed
+                   && m_runtimeSnapshotSignalGenerations.value(candidate.provider)
+                          > state.snapshotSignalBaseline) {
+            // Product API publishes the catalog before its initial resource snapshot. The first
+            // attestation call can therefore be rejected locally as busy; retry exactly once
+            // after that same refresh publishes its snapshot.
+            state.attestationRetryUsed = true;
+            issueRequest = true;
+        }
+        if (!issueRequest)
+            continue;
+
+        Data::RuntimeSemanticMappingAttestationRequest request;
+        request.correlationId = QStringLiteral("semantic-runtime-bootstrap/%1")
+                                    .arg(QString::fromLatin1(attestationKey.toHex()));
+        request.scope = candidate.scope;
+        request.sessionGeneration = candidate.snapshot.sessionGeneration;
+        request.expectedEpoch = catalog->epoch;
+        request.expectedProof = proof;
+        if (!request.isValid())
+            continue;
+
+        const Utils::Result<> accepted
+            = candidate.provider->requestRuntimeSemanticMappingAttestation(request);
+        if (provider && accepted) {
+            const auto current = m_runtimeBootstrapStates.find(candidate.provider);
+            if (current != m_runtimeBootstrapStates.end()
+                && current->identityKey == candidate.identityKey
+                && current->attestationAttemptKey == attestationKey) {
+                current->attestationAccepted = true;
+            }
+        }
+    }
 }
 
 void SemanticRuntimeExecutor::trackProvider(Core::Provider *provider)
@@ -2626,31 +2934,52 @@ void SemanticRuntimeExecutor::trackProvider(Core::Provider *provider)
     if (!connectionProvider || m_providerConnections.contains(connectionProvider))
         return;
 
+    m_runtimeBootstrapSignalGenerations.tryInsert(connectionProvider, 0);
+    m_runtimeCatalogSignalGenerations.tryInsert(connectionProvider, 0);
+    m_runtimeSnapshotSignalGenerations.tryInsert(connectionProvider, 0);
+
     QList<QMetaObject::Connection> connections;
-    connections.append(
-        connect(connectionProvider, &Core::Provider::availabilityChanged, this, [this] {
+    connections.append(connect(
+        connectionProvider,
+        &Core::Provider::availabilityChanged,
+        this,
+        [this, connectionProvider] {
+            ++m_runtimeBootstrapSignalGenerations[connectionProvider];
             publishContexts();
         }));
     connections.append(connect(
         connectionProvider,
         &Core::ControllerConnectionProvider::connectionSnapshotChanged,
         this,
-        [this] { publishContexts(); }));
+        [this, connectionProvider] {
+            ++m_runtimeBootstrapSignalGenerations[connectionProvider];
+            publishContexts();
+        }));
     connections.append(connect(
         connectionProvider,
         &Core::ControllerConnectionProvider::runtimeResourceCatalogChanged,
         this,
-        [this] { publishContexts(); }));
+        [this, connectionProvider] {
+            ++m_runtimeCatalogSignalGenerations[connectionProvider];
+            publishContexts();
+        }));
     connections.append(connect(
         connectionProvider,
         &Core::ControllerConnectionProvider::runtimeResourceSnapshotChanged,
         this,
-        [this] { publishContexts(); }));
+        [this, connectionProvider] {
+            ++m_runtimeBootstrapSignalGenerations[connectionProvider];
+            ++m_runtimeSnapshotSignalGenerations[connectionProvider];
+            publishContexts();
+        }));
     connections.append(connect(
         connectionProvider,
         &Core::ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished,
         this,
-        [this](const Data::RuntimeResourceSnapshotResult &) { publishContexts(); }));
+        [this, connectionProvider](const Data::RuntimeResourceSnapshotResult &) {
+            ++m_runtimeBootstrapSignalGenerations[connectionProvider];
+            publishContexts();
+        }));
     connections.append(connect(
         connectionProvider,
         &Core::ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished,
@@ -2694,6 +3023,10 @@ void SemanticRuntimeExecutor::trackProvider(Core::Provider *provider)
             m_execution->providerRemoved(connectionProvider);
             m_providerConnections.remove(connectionProvider);
             m_providersBeingRemoved.remove(connectionProvider);
+            m_runtimeBootstrapStates.remove(connectionProvider);
+            m_runtimeBootstrapSignalGenerations.remove(connectionProvider);
+            m_runtimeCatalogSignalGenerations.remove(connectionProvider);
+            m_runtimeSnapshotSignalGenerations.remove(connectionProvider);
             publishContexts();
         }));
     m_providerConnections.insert(connectionProvider, connections);
@@ -2716,6 +3049,10 @@ void SemanticRuntimeExecutor::untrackProvider(Core::Provider *provider)
         connectionProvider);
     for (const QMetaObject::Connection &connection : connections)
         disconnect(connection);
+    m_runtimeBootstrapStates.remove(connectionProvider);
+    m_runtimeBootstrapSignalGenerations.remove(connectionProvider);
+    m_runtimeCatalogSignalGenerations.remove(connectionProvider);
+    m_runtimeSnapshotSignalGenerations.remove(connectionProvider);
 }
 
 } // namespace EtherCAT::SemanticRuntime::Internal

@@ -503,6 +503,8 @@ WorkbenchNavigationWidget::WorkbenchNavigationWidget(
         [this](const QPoint &position) { showContextMenu(position, true); });
     m_knownNodeIds = sourceNodeIds();
     m_treeView->expandToDepth(2);
+    if (Core::SelectionService *selectionService = controller->selectionService())
+        selectNode(selectionService->currentNodeId());
     updateFilterState();
     updateProjectSummary();
 }

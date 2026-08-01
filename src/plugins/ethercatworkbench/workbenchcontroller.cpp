@@ -160,6 +160,7 @@ struct CurrentBusApplyPlan
     int unknownDevices = 0;
     int ambiguousEsiMatches = 0;
     int unsupportedEsiMatches = 0;
+    int adapterSelectionWarnings = 0;
     int preservedConfigurations = 0;
     int removedConfigurations = 0;
 };
@@ -172,8 +173,163 @@ static Data::DeviceIdentity controllerIdentity(const Data::ControllerTopologySla
 static bool configurationIsEmpty(const Data::OfflineSlaveConfiguration &slave)
 {
     return slave.processData == Data::ProcessDataConfiguration{}
-           && slave.startup == Data::StartupConfiguration{}
-           && slave.dc == Data::DcConfiguration{};
+           && slave.startup == Data::StartupConfiguration{} && slave.dc == Data::DcConfiguration{};
+}
+
+static bool adapterSelectionIsEmpty(const Data::DeviceAdapterProjectSelection &selection)
+{
+    return selection.adapterId.value.isEmpty() && selection.adapterVersion.isEmpty()
+           && selection.adapterContentSha256.isEmpty() && selection.processDataProfileId.isEmpty()
+           && selection.moduleAssignments.isEmpty();
+}
+
+static bool adapterManifestMatchesDevice(
+    const Data::DeviceAdapterManifest &manifest, const Data::DeviceDescription &device)
+{
+    const Data::DeviceIdentity &identity = device.summary.identity;
+    return manifest.match.vendorId == identity.vendorId
+           && manifest.match.productCode == identity.productCode
+           && identity.revisionNumber >= manifest.match.minimumRevision
+           && identity.revisionNumber <= manifest.match.maximumRevision
+           && manifest.match.exactEsiSha256 == device.sourceSha256;
+}
+
+static bool adapterProfileMatchesProcessImage(
+    const Data::ProcessDataProfile &profile, const Data::ProcessImagePreview &processImage)
+{
+    QSet<quint16> rxPdos;
+    for (const Data::ProcessImageEntry &entry : processImage.outputs.entries)
+        rxPdos.insert(entry.pdoIndex);
+    QSet<quint16> txPdos;
+    for (const Data::ProcessImageEntry &entry : processImage.inputs.entries)
+        txPdos.insert(entry.pdoIndex);
+    return std::all_of(
+               profile.rxPdoIndices.cbegin(),
+               profile.rxPdoIndices.cend(),
+               [&rxPdos](quint16 index) { return rxPdos.contains(index); })
+           && std::all_of(
+               profile.txPdoIndices.cbegin(),
+               profile.txPdoIndices.cend(),
+               [&txPdos](quint16 index) { return txPdos.contains(index); });
+}
+
+struct CurrentBusAdapterSelection
+{
+    Data::DeviceAdapterProjectSelection selection;
+    bool productionTrusted = false;
+};
+
+static std::optional<CurrentBusAdapterSelection> resolveCurrentBusAdapterSelection(
+    const Data::OfflineSlaveConfiguration &slave,
+    const Data::DeviceDescription &device,
+    Core::ProviderRegistry *providerRegistry)
+{
+    if (!providerRegistry || device.sourceSha256.size() != 32)
+        return std::nullopt;
+
+    const Data::ConfigurationValidation validation = Data::validateProcessDataConfiguration(
+        slave.processData);
+    if (validation.hasErrors())
+        return std::nullopt;
+
+    const Data::DeviceAdapterProjectSelection &savedSelection = slave.adapterSelection;
+    const bool hasCompleteSavedSelection = !adapterSelectionIsEmpty(savedSelection)
+                                           && !savedSelection.adapterId.value.isEmpty()
+                                           && !savedSelection.adapterVersion.isEmpty()
+                                           && savedSelection.adapterContentSha256.size() == 32
+                                           && !savedSelection.processDataProfileId.isEmpty();
+
+    Data::DeviceAdapterResolutionRequest request;
+    request.slaveId = slave.id;
+    request.device = device;
+    request.processImage = validation.processImage;
+    request.allowCandidate = true;
+    if (hasCompleteSavedSelection) {
+        request.processDataProfileId = savedSelection.processDataProfileId;
+        request.moduleAssignments = savedSelection.moduleAssignments;
+    }
+
+    QList<CurrentBusAdapterSelection> matches;
+    for (Core::Provider *candidate :
+         providerRegistry->providers(Core::ProviderKind::DeviceAdapter)) {
+        auto *provider = qobject_cast<Core::DeviceAdapterProvider *>(candidate);
+        if (!provider || !provider->isAvailable())
+            continue;
+
+        for (const Data::DeviceAdapterManifest &manifest : provider->adapterManifests()) {
+            if (manifest.contractVersion != Data::DeviceAdapterContractVersion::V3
+                || (manifest.qualification != Data::DeviceAdapterQualification::Candidate
+                    && manifest.qualification != Data::DeviceAdapterQualification::Qualified)
+                || manifest.contentSha256.size() != 32
+                || !adapterManifestMatchesDevice(manifest, device)
+                || manifest.controllerAdapterTarget.adapterId.isEmpty()
+                || manifest.controllerAdapterTarget.adapterVersion.isEmpty()
+                || manifest.controllerAdapterTarget.adapterSha256.size() != 32
+                || manifest.controllerAdapterTarget.esiSha256 != device.sourceSha256) {
+                continue;
+            }
+            const std::optional<Data::DeviceAdapterManifest> canonicalManifest
+                = provider->adapterManifest(manifest.id, manifest.version);
+            if (!canonicalManifest || *canonicalManifest != manifest)
+                continue;
+            if (hasCompleteSavedSelection
+                && (manifest.id != savedSelection.adapterId
+                    || manifest.version != savedSelection.adapterVersion
+                    || manifest.contentSha256 != savedSelection.adapterContentSha256)) {
+                continue;
+            }
+
+            Data::DeviceAdapterResolutionRequest manifestRequest = request;
+            manifestRequest.expectedAdapterId = manifest.id;
+            manifestRequest.expectedAdapterVersion = manifest.version;
+            manifestRequest.expectedAdapterContentSha256 = manifest.contentSha256;
+            const Data::DeviceAdapterResolutionResult resolution = provider->resolveDevice(
+                manifestRequest);
+            if (!resolution.resolved)
+                continue;
+
+            const Data::ResolvedDeviceModel &model = resolution.model;
+            const bool profileExists = std::any_of(
+                manifest.processDataProfiles.cbegin(),
+                manifest.processDataProfiles.cend(),
+                [&model, &validation](const Data::ProcessDataProfile &profile) {
+                    return profile.id == model.processDataProfileId
+                           && adapterProfileMatchesProcessImage(profile, validation.processImage);
+                });
+            const bool exactSavedSelection
+                = !hasCompleteSavedSelection
+                  || (model.adapterId == savedSelection.adapterId
+                      && model.adapterVersion == savedSelection.adapterVersion
+                      && model.adapterContentSha256 == savedSelection.adapterContentSha256
+                      && model.processDataProfileId == savedSelection.processDataProfileId
+                      && model.moduleAssignments == savedSelection.moduleAssignments);
+            const bool exactResolution
+                = manifest.id == model.adapterId && manifest.version == model.adapterVersion
+                  && manifest.contentSha256 == model.adapterContentSha256
+                  && model.slaveId == slave.id && model.identity == slave.identity
+                  && model.esiSha256 == device.sourceSha256
+                  && model.qualification == manifest.qualification
+                  && !model.processDataProfileId.isEmpty() && profileExists && model.complete
+                  && (manifest.moduleProfiles.isEmpty() || !model.moduleAssignments.isEmpty())
+                  && exactSavedSelection;
+            if (!exactResolution)
+                continue;
+
+            matches.append(
+                {{manifest.id,
+                  manifest.version,
+                  manifest.contentSha256,
+                  model.processDataProfileId,
+                  model.moduleAssignments},
+                 manifest.qualification == Data::DeviceAdapterQualification::Qualified
+                     && manifest.signatureVerified && manifest.realHardwareAllowed
+                     && manifest.provenance.sourceSha256 == device.sourceSha256});
+        }
+    }
+
+    if (matches.size() != 1)
+        return std::nullopt;
+    return matches.constFirst();
 }
 
 static std::optional<Data::DeviceDescription> matchingDeviceDescription(
@@ -189,8 +345,8 @@ static std::optional<Data::DeviceDescription> matchingDeviceDescription(
 
     const Data::DeviceIdentity identity = controllerIdentity(slave);
     if (existing && !existing->deviceDescriptionId.isNull()) {
-        const std::optional<Data::DeviceDescription> configured
-            = repository->device(existing->deviceDescriptionId);
+        const std::optional<Data::DeviceDescription> configured = repository->device(
+            existing->deviceDescriptionId);
         if (configured && configured->summary.supported
             && configured->summary.identity == identity) {
             return configured;
@@ -216,6 +372,20 @@ static std::optional<Data::DeviceDescription> matchingDeviceDescription(
     }
     return repository->device(matches.constFirst().id);
 }
+
+#ifdef WITH_TESTS
+std::optional<Data::DeviceDescription> WorkbenchController::matchingDeviceDescriptionForCurrentBusTest(
+    Core::DeviceRepositoryProvider *repository,
+    const QList<Data::DeviceSummary> &devices,
+    const Data::ControllerTopologySlave &slave,
+    const Data::OfflineSlaveConfiguration *existing,
+    int *ambiguousMatches,
+    int *unsupportedMatches)
+{
+    return matchingDeviceDescription(
+        repository, devices, slave, existing, ambiguousMatches, unsupportedMatches);
+}
+#endif
 
 enum class FreeRunSupport {
     Unknown,
@@ -366,15 +536,15 @@ static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
     const Data::ControllerConnectionScope &scope,
     const Data::ProjectSnapshot &project,
     const Data::ControllerTopologySnapshot &topology,
-    Core::DeviceRepositoryProvider *repository)
+    Core::DeviceRepositoryProvider *repository,
+    Core::ProviderRegistry *providerRegistry)
 {
     if (!project.valid || project.id != scope.projectId) {
         return Utils::ResultError(
             Tr::tr("The selected EtherCAT project is invalid or no longer available."));
     }
     if (topology.result != 0) {
-        return Utils::ResultError(
-            Tr::tr("The current bus scan did not complete successfully."));
+        return Utils::ResultError(Tr::tr("The current bus scan did not complete successfully."));
     }
     if (!topology.respondingCount || topology.slaves.isEmpty()) {
         return Utils::ResultError(
@@ -389,8 +559,9 @@ static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
     std::sort(
         sortedTopology.begin(),
         sortedTopology.end(),
-        [](const Data::ControllerTopologySlave &left,
-           const Data::ControllerTopologySlave &right) { return left.position < right.position; });
+        [](const Data::ControllerTopologySlave &left, const Data::ControllerTopologySlave &right) {
+            return left.position < right.position;
+        });
     QSet<quint32> positions;
     QHash<quint16, quint32> stationPositions;
     for (const Data::ControllerTopologySlave &slave : std::as_const(sortedTopology)) {
@@ -405,8 +576,7 @@ static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
         }
         if (!slave.stationAddress) {
             return Utils::ResultError(
-                Tr::tr(
-                    "The detected EtherCAT device at bus position %1 has station address 0.")
+                Tr::tr("The detected EtherCAT device at bus position %1 has station address 0.")
                     .arg(slave.position));
         }
         const auto duplicateStation = stationPositions.constFind(slave.stationAddress);
@@ -438,8 +608,8 @@ static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
             });
         const bool preserveExisting = existing != plan.currentSlaves.cend()
                                       && existing->identity == identity;
-        const Data::OfflineSlaveConfiguration *existingPointer
-            = preserveExisting ? &*existing : nullptr;
+        const Data::OfflineSlaveConfiguration *existingPointer = preserveExisting ? &*existing
+                                                                                  : nullptr;
         const std::optional<Data::DeviceDescription> device = matchingDeviceDescription(
             repository,
             devices,
@@ -464,9 +634,8 @@ static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
                 candidate.deviceDescriptionId = {};
             }
         } else if (device) {
-            const QString requestedName = device->summary.name.isEmpty()
-                                              ? device->summary.typeName
-                                              : device->summary.name;
+            const QString requestedName = device->summary.name.isEmpty() ? device->summary.typeName
+                                                                         : device->summary.name;
             const Data::NodeId slaveId = Data::NodeId::create();
             candidate = offlineSlaveFromDevice(
                 *device,
@@ -482,15 +651,28 @@ static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
             candidate.identity = identity;
             candidate.serialNumber = topologySlave.serial;
             candidate.name = uniqueSlaveName(
-                Tr::tr("Unknown EtherCAT Device %1").arg(position + 1),
-                plan.candidateSlaves);
+                Tr::tr("Unknown EtherCAT Device %1").arg(position + 1), plan.candidateSlaves);
         }
         candidate.stationAddress = topologySlave.stationAddress;
 
-        if (device)
+        if (device) {
+            candidate.esiSha256 = device->sourceSha256;
+            const std::optional<CurrentBusAdapterSelection> adapterSelection
+                = resolveCurrentBusAdapterSelection(candidate, *device, providerRegistry);
+            if (adapterSelection) {
+                candidate.adapterSelection = adapterSelection->selection;
+                if (!adapterSelection->productionTrusted)
+                    ++plan.adapterSelectionWarnings;
+            } else {
+                candidate.adapterSelection = {};
+                ++plan.adapterSelectionWarnings;
+            }
             ++plan.esiMatches;
-        else
+        } else {
+            candidate.esiSha256 = {};
+            candidate.adapterSelection = {};
             ++plan.unknownDevices;
+        }
         plan.candidateSlaves.append(candidate);
     }
 
@@ -1378,11 +1560,58 @@ WorkbenchController::WorkbenchController(QObject *parent)
     m_deviceRepository
         = ExtensionSystem::PluginManager::getObject<Core::DeviceRepositoryProvider>();
     m_providerRegistry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    m_runtimePackageActivationService
+        = ExtensionSystem::PluginManager::getObject<Core::RuntimePackageActivationService>();
 
     QTC_ASSERT(m_selectionService, return);
     QTC_ASSERT(m_projectService, return);
     QTC_ASSERT(m_deviceRepository, return);
     QTC_ASSERT(m_providerRegistry, return);
+    QTC_ASSERT(m_runtimePackageActivationService, return);
+
+    m_connections.append(connect(
+        m_runtimePackageActivationService,
+        &Core::RuntimePackageActivationService::recordChanged,
+        this,
+        [this](const Data::RuntimePackageActivationRecord &record) {
+            emit trustedRuntimePackageActivationChanged();
+            if (!Data::runtimePackageActivationOutcomeIsTerminal(record.outcome()))
+                return;
+
+            const QString operationId
+                = record.identity().operationId().value();
+            const quint64 reportedRevision
+                = m_reportedRuntimePackageActivationRevisions.value(operationId);
+            if (reportedRevision >= record.revision())
+                return;
+            m_reportedRuntimePackageActivationRevisions.insert(
+                operationId, record.revision());
+
+            const bool succeeded
+                = record.outcome()
+                      == Data::RuntimePackageActivationOutcome::
+                          SucceededWithExistingPackage
+                  || record.outcome()
+                         == Data::RuntimePackageActivationOutcome::
+                             SucceededWithActivatedPackage;
+            if (succeeded) {
+                writeControllerOutput(
+                    Tr::tr(
+                        "Trusted package activated and the verified project binding was saved "
+                        "[%1].")
+                        .arg(operationId));
+                refreshProjects();
+                return;
+            }
+            writeControllerOutput(
+                Tr::tr("Trusted package activation failed [%1]: %2")
+                    .arg(
+                        operationId,
+                        record.detail().isEmpty()
+                            ? Tr::tr("Review the activation audit before retrying.")
+                            : record.detail()),
+                ControllerOutputLevel::Error);
+        }));
 
     m_connections.append(connect(
         this,
@@ -2077,8 +2306,8 @@ QString WorkbenchController::currentBusApplyUnavailableReason() const
     const std::optional<Data::ProjectSnapshot> project = m_projectService->project(scope->projectId);
     if (!project)
         return Tr::tr("The selected EtherCAT project is no longer available.");
-    const Utils::Result<CurrentBusApplyPlan> plan
-        = currentBusApplyPlan(*scope, *project, *snapshot.topology, m_deviceRepository);
+    const Utils::Result<CurrentBusApplyPlan> plan = currentBusApplyPlan(
+        *scope, *project, *snapshot.topology, m_deviceRepository, m_providerRegistry);
     if (!plan)
         return plan.error();
     if (plan->candidateSlaves == plan->currentSlaves)
@@ -2113,12 +2342,13 @@ Utils::Result<> WorkbenchController::applyCurrentBusToProject()
         return Utils::ResultError(
             Tr::tr("The current bus or EtherCAT project is no longer available.")));
 
-    const Utils::Result<CurrentBusApplyPlan> plan
-        = currentBusApplyPlan(*scope, *project, *snapshot.topology, m_deviceRepository);
+    const Utils::Result<CurrentBusApplyPlan> plan = currentBusApplyPlan(
+        *scope, *project, *snapshot.topology, m_deviceRepository, m_providerRegistry);
     if (!plan)
         return Utils::ResultError(plan.error());
-    const Utils::Result<> applied = m_projectService->replaceOfflineSlaves(
-        scope->projectId, scope->masterId, plan->candidateSlaves);
+    const Utils::Result<> applied
+        = m_projectService
+              ->replaceOfflineSlaves(scope->projectId, scope->masterId, plan->candidateSlaves);
     if (!applied)
         return applied;
 
@@ -2132,10 +2362,12 @@ Utils::Result<> WorkbenchController::applyCurrentBusToProject()
     if (plan->unsupportedEsiMatches) {
         message += Tr::tr(" · %n unsupported", nullptr, plan->unsupportedEsiMatches);
     }
+    if (plan->adapterSelectionWarnings) {
+        message += Tr::tr(" · Manual control requires importing a trusted adapter bundle.");
+    }
+    const bool warning = plan->unknownDevices || plan->adapterSelectionWarnings;
     writeControllerOutput(
-        message,
-        plan->unknownDevices ? ControllerOutputLevel::Warning
-                             : ControllerOutputLevel::Information);
+        message, warning ? ControllerOutputLevel::Warning : ControllerOutputLevel::Information);
     return Utils::ResultOk;
 }
 
@@ -2573,6 +2805,12 @@ Utils::Result<> WorkbenchController::deployControllerPackage(
     const Data::ControllerConnectionScope &scope,
     const Data::ControllerPackageDeploymentRequest &request)
 {
+    if (request.activate || request.rollbackOnActivationFailure) {
+        return Utils::ResultError(
+            Tr::tr(
+                "Legacy package deployment only stages and validates packages; use the "
+                "trusted project activation workflow to activate a runtime."));
+    }
     const QString unavailableReason = packageDeploymentUnavailableReason(scope);
     if (!unavailableReason.isEmpty())
         return Utils::ResultError(unavailableReason);
@@ -2591,6 +2829,170 @@ Utils::Result<> WorkbenchController::cancelControllerPackageDeployment(
     Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
     QTC_ASSERT(provider, return Utils::ResultError(Tr::tr("The controller adapter is unavailable.")));
     return provider->cancelPackageDeployment(operationId);
+}
+
+QString WorkbenchController::trustedRuntimePackageActivationUnavailableReason(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (m_shuttingDown)
+        return Tr::tr("The trusted package activation workflow is shutting down.");
+    if (!controllerConnectionScopeIsValid(scope)) {
+        return Tr::tr(
+            "Select an EtherCAT Master in an open project before trusted activation.");
+    }
+    if (!m_runtimePackageActivationService) {
+        return Tr::tr("The trusted package activation service is unavailable.");
+    }
+    if (!m_runtimePackageActivationPreparation) {
+        bool compilerAvailable = false;
+        if (m_providerRegistry) {
+            for (Core::Provider *provider :
+                 m_providerRegistry->providers(
+                     Core::ProviderKind::RuntimePackageCompiler)) {
+                if (provider && provider->isAvailable()) {
+                    compilerAvailable = true;
+                    break;
+                }
+            }
+        }
+        return compilerAvailable
+                   ? Tr::tr(
+                         "Compile and verify this exact open project before trusted activation.")
+                   : Tr::tr(
+                         "No API-042 project compiler is installed. Configure the trusted "
+                         "compiler workflow, then compile and verify this exact project.");
+    }
+    if (m_runtimePackageActivationPreparation->scope != scope) {
+        return Tr::tr(
+            "The verified compiler result belongs to a different project or EtherCAT Master.");
+    }
+    if (!m_runtimePackageActivationPreparation->isValid()) {
+        return Tr::tr("The verified compiler result is incomplete or invalid.");
+    }
+    return {};
+}
+
+QString WorkbenchController::trustedRuntimePackageActivationStatus(
+    const Data::ControllerConnectionScope &scope) const
+{
+    const QString unavailable
+        = trustedRuntimePackageActivationUnavailableReason(scope);
+    if (!unavailable.isEmpty())
+        return unavailable;
+
+    QTC_ASSERT(
+        m_runtimePackageActivationPreparation,
+        return Tr::tr("Trusted activation preparation is unavailable."));
+    QTC_ASSERT(
+        m_runtimePackageActivationService,
+        return Tr::tr("The trusted package activation service is unavailable."));
+    const auto record = m_runtimePackageActivationService->record(
+        m_runtimePackageActivationPreparation->operationId);
+    if (!record)
+        return Tr::tr("Verified project package ready for trusted activation.");
+    if (!Data::runtimePackageActivationOutcomeIsTerminal(record->outcome()))
+        return Tr::tr("Trusted package activation is in progress.");
+    if (record->outcome()
+            == Data::RuntimePackageActivationOutcome::
+                SucceededWithExistingPackage
+        || record->outcome()
+               == Data::RuntimePackageActivationOutcome::
+                   SucceededWithActivatedPackage) {
+        return Tr::tr("The package is active and its verified binding is saved in the project.");
+    }
+    return record->detail().isEmpty()
+               ? Tr::tr("Trusted package activation did not complete successfully.")
+               : record->detail();
+}
+
+bool WorkbenchController::canStartTrustedRuntimePackageActivation(
+    const Data::ControllerConnectionScope &scope) const
+{
+    return trustedRuntimePackageActivationUnavailableReason(scope).isEmpty();
+}
+
+Utils::Result<>
+WorkbenchController::setTrustedRuntimePackageActivationPreparation(
+    const Core::RuntimePackageActivationPreparationRequest &request)
+{
+    if (!request.isValid())
+        return Utils::ResultError(Tr::tr("The verified compiler result is incomplete or invalid."));
+    if (!controllerConnectionScopeIsValid(request.scope)) {
+        return Utils::ResultError(
+            Tr::tr("The verified compiler result does not identify an open EtherCAT Master."));
+    }
+
+    bool compilerAvailable = false;
+    if (m_providerRegistry) {
+        for (Core::Provider *provider :
+             m_providerRegistry->providers(
+                 Core::ProviderKind::RuntimePackageCompiler)) {
+            if (provider && provider->isAvailable()) {
+                compilerAvailable = true;
+                break;
+            }
+        }
+    }
+    if (!compilerAvailable) {
+        return Utils::ResultError(
+            Tr::tr(
+                "No API-042 project compiler is installed; unverified activation input was "
+                "rejected."));
+    }
+
+    m_runtimePackageActivationPreparation = request;
+    emit trustedRuntimePackageActivationChanged();
+    return Utils::ResultOk;
+}
+
+void WorkbenchController::clearTrustedRuntimePackageActivationPreparation()
+{
+    if (!m_runtimePackageActivationPreparation)
+        return;
+    m_runtimePackageActivationPreparation.reset();
+    emit trustedRuntimePackageActivationChanged();
+}
+
+Utils::Result<> WorkbenchController::startTrustedRuntimePackageActivation(
+    const Data::ControllerConnectionScope &scope)
+{
+    const QString unavailable
+        = trustedRuntimePackageActivationUnavailableReason(scope);
+    if (!unavailable.isEmpty())
+        return Utils::ResultError(unavailable);
+    QTC_ASSERT(
+        m_runtimePackageActivationPreparation,
+        return Utils::ResultError(Tr::tr("Trusted activation preparation is unavailable.")));
+    QTC_ASSERT(
+        m_runtimePackageActivationService,
+        return Utils::ResultError(Tr::tr("The trusted package activation service is unavailable.")));
+
+    const Core::RuntimePackageActivationPreparationResult prepared
+        = m_runtimePackageActivationService->prepare(
+            *m_runtimePackageActivationPreparation);
+    if (!prepared.isValid() || !prepared.request) {
+        return Utils::ResultError(
+            prepared.detail.isEmpty()
+                ? Tr::tr("Trusted activation preparation was rejected.")
+                : prepared.detail);
+    }
+
+    // The Workbench never constructs an activation request and never calls a
+    // controller ActivatePackage command directly. Only the exact request
+    // returned by prepare() is admitted to start().
+    const Core::RuntimePackageActivationCommandResult started
+        = m_runtimePackageActivationService->start(*prepared.request);
+    if (!started.accepted()) {
+        return Utils::ResultError(
+            started.detail.isEmpty()
+                ? Tr::tr("Trusted package activation was not accepted.")
+                : started.detail);
+    }
+    writeControllerOutput(
+        Tr::tr("Trusted package activation started [%1].")
+            .arg(prepared.request->identity().operationId().value()));
+    emit trustedRuntimePackageActivationChanged();
+    return Utils::ResultOk;
 }
 
 void WorkbenchController::writeControllerOutput(
@@ -3010,6 +3412,8 @@ void WorkbenchController::shutdown()
     m_controllerCleanupStates.clear();
     m_controllerOutputFingerprints.clear();
     m_topologyCapabilityFingerprints.clear();
+    m_runtimePackageActivationPreparation.reset();
+    m_reportedRuntimePackageActivationRevisions.clear();
     m_treeModel.setDeviceDropHandler({});
     m_treeModel.clear();
 }
@@ -3345,6 +3749,12 @@ void WorkbenchController::handleProjectAboutToBeRemoved(const Data::NodeId &proj
             = m_treeModel.contextForNodeId(m_selectionService->currentNodeId());
         if (selected.projectId == projectId)
             m_selectionService->clear();
+    }
+    if (m_runtimePackageActivationPreparation
+        && m_runtimePackageActivationPreparation->scope.projectId
+               == projectId) {
+        m_runtimePackageActivationPreparation.reset();
+        emit trustedRuntimePackageActivationChanged();
     }
 
     const QScopedValueRollback suppressChanges(m_suppressControllerConnectionChanges, true);
