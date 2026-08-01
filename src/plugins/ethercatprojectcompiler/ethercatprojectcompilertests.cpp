@@ -20,6 +20,7 @@
 
 #include <QCryptographicHash>
 #include <QDir>
+#include <QDirIterator>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -31,8 +32,10 @@
 #include <QTimer>
 
 #include <optional>
+#include <tuple>
 
 #ifdef Q_OS_UNIX
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -441,6 +444,14 @@ const Data::RuntimePackageCompilerFinalizeResult *finalizeResult(
                : nullptr;
 }
 
+const Data::RuntimePackageCompilerVerifyResult *verifyResult(
+    const Core::RuntimePackageCompilerJob &job)
+{
+    return job.result()
+               ? std::get_if<Data::RuntimePackageCompilerVerifyResult>(&job.result()->value())
+               : nullptr;
+}
+
 Data::RuntimePackageCompilerCanonicalJson signResponse(
     const CompilerFixture &fixture, const Data::RuntimePackageCompilerCompileResult &result)
 {
@@ -487,6 +498,125 @@ Data::RuntimePackageCompilerFinalizeRequest finalizeRequestFor(
         fixture.request.targetProfile.policyRevision,
         signResponse(fixture, result),
     };
+}
+
+std::optional<Data::RuntimePackageCompilerActivationProof> successfulActivationProof(
+    TestEnvironment &environment, ProvisionedRuntimePackageCompilerProvider &provider)
+{
+    const Utils::Result<Core::RuntimePackageCompilerJob *> compileJob = provider.compile(
+        environment.fixture.request);
+    if (!compileJob || !awaitTerminal(*compileJob))
+        return std::nullopt;
+    const Data::RuntimePackageCompilerCompileResult *compiled = compileResult(**compileJob);
+    if (!compiled || !compiled->isSuccess())
+        return std::nullopt;
+    const Data::RuntimePackageCompilerCompileResult compileResultCopy = *compiled;
+
+    const Data::RuntimePackageCompilerFinalizeRequest finalizeRequest
+        = finalizeRequestFor(environment.fixture, compileResultCopy);
+    const Utils::Result<Core::RuntimePackageCompilerJob *> finalizeJob = provider.finalize(
+        finalizeRequest);
+    if (!finalizeJob || !awaitTerminal(*finalizeJob))
+        return std::nullopt;
+    const Data::RuntimePackageCompilerFinalizeResult *finalized = finalizeResult(**finalizeJob);
+    if (!finalized || !finalized->isSuccess())
+        return std::nullopt;
+    const Data::RuntimePackageCompilerFinalizeResult finalizeResultCopy = *finalized;
+
+    const Data::RuntimePackageCompilerVerifyRequest verifyRequest{
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000099")},
+        environment.fixture.request.contractIdentity,
+        finalizeResultCopy.packageBytes,
+        *finalizeResultCopy.packageSha256,
+    };
+    const Utils::Result<Core::RuntimePackageCompilerJob *> verifyJob = provider.verify(
+        verifyRequest);
+    if (!verifyJob || !awaitTerminal(*verifyJob))
+        return std::nullopt;
+    const Data::RuntimePackageCompilerVerifyResult *verified = verifyResult(**verifyJob);
+    if (!verified || !verified->isSuccess())
+        return std::nullopt;
+
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> finalizeCanonical
+        = Core::encodeRuntimePackageCompilerFinalizeRequest(finalizeRequest);
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> verifyCanonical
+        = Core::encodeRuntimePackageCompilerVerifyRequest(verifyRequest);
+    if (!finalizeCanonical || !verifyCanonical)
+        return std::nullopt;
+    const QString outputDirectory = compileResultCopy.outputDirectory;
+    Data::RuntimePackageCompilerActivationProof proof{
+        QString::fromUtf8(Constants::PROJECT_COMPILER_PROVIDER_ID.name()),
+        environment.fixture.request.contractIdentity,
+        environment.fixture.request,
+        compileResultCopy,
+        finalizeRequest,
+        finalizeCanonical->sha256(),
+        finalizeResultCopy,
+        verifyRequest,
+        verifyCanonical->sha256(),
+        *verified,
+        readFile(outputDirectory + QStringLiteral("/project.json")),
+        readFile(outputDirectory + QStringLiteral("/effective-project-companion-v1.json")),
+    };
+    return proof.isValid()
+               ? std::optional<Data::RuntimePackageCompilerActivationProof>{std::move(proof)}
+               : std::nullopt;
+}
+
+QByteArray storeWriteFingerprint(const QString &root)
+{
+    QStringList entries;
+    QDirIterator iterator(
+        root, QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    while (iterator.hasNext())
+        entries.append(QDir(root).relativeFilePath(iterator.next()));
+    entries.sort();
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    for (const QString &relative : std::as_const(entries)) {
+        const QString absolute = QDir(root).filePath(relative);
+        const QFileInfo info(absolute);
+        hash.addData(relative.toUtf8());
+        hash.addData(info.isDir() ? QByteArrayView("D") : QByteArrayView("F"));
+        hash.addData(QByteArray::number(quint64(info.permissions())));
+#ifdef Q_OS_UNIX
+        struct stat metadata = {};
+        if (::lstat(QFile::encodeName(absolute).constData(), &metadata) == 0) {
+            hash.addData(QByteArray::number(quint64(metadata.st_dev)));
+            hash.addData(QByteArray::number(quint64(metadata.st_ino)));
+            hash.addData(QByteArray::number(quint64(metadata.st_size)));
+#ifdef Q_OS_DARWIN
+            hash.addData(QByteArray::number(metadata.st_mtimespec.tv_sec));
+            hash.addData(QByteArray::number(metadata.st_mtimespec.tv_nsec));
+#else
+            hash.addData(QByteArray::number(metadata.st_mtim.tv_sec));
+            hash.addData(QByteArray::number(metadata.st_mtim.tv_nsec));
+#endif
+        }
+#else
+        hash.addData(QByteArray::number(info.size()));
+        hash.addData(QByteArray::number(info.lastModified().toMSecsSinceEpoch()));
+#endif
+        if (info.isFile())
+            hash.addData(readFile(absolute));
+    }
+    return hash.result();
+}
+
+void replaceProofProjectSnapshot(
+    Data::RuntimePackageCompilerActivationProof *proof, Data::ProjectSnapshot snapshot)
+{
+    const Data::RuntimePackageCompilerProjectSnapshotEvidence &current
+        = proof->compileRequest.projectSnapshotEvidence;
+    const Data::RuntimePackageActivationProjectCapture capture{
+        std::move(snapshot),
+        QByteArray("mutated-project-snapshot"),
+        current.documentRevisionNumber(),
+        current.documentRevision(),
+        current.originalBinding(),
+    };
+    proof->compileRequest.projectSnapshotEvidence
+        = Data::RuntimePackageCompilerProjectSnapshotEvidence{capture};
 }
 
 } // namespace
@@ -877,6 +1007,309 @@ void EtherCATProjectCompilerTests::testOperationAndConfigurationConflicts()
     traversal.sourceArtifacts.runtimeSource.relativePath = QStringLiteral("../escape.st");
     QVERIFY(!provider->compile(traversal));
     QVERIFY(!QFileInfo::exists(environment.temporary.filePath(QStringLiteral("escape.st"))));
+}
+
+void EtherCATProjectCompilerTests::testActivationProofProvenanceAndRestart()
+{
+    TestEnvironment environment;
+    auto provider = environment.provider();
+    QVERIFY(provider->isAvailable());
+    const auto proof = successfulActivationProof(environment, *provider);
+    QVERIFY(proof);
+    QVERIFY(proof->isValid());
+
+    const QString calls = environment.root + QStringLiteral("/compiler-ledger.json.calls");
+    const QByteArray callsBefore = readFile(calls);
+    const QByteArray storeBefore = storeWriteFingerprint(environment.root);
+    QVERIFY(provider->validateActivationProof(*proof));
+    QCOMPARE(readFile(calls), callsBefore);
+    QCOMPARE(storeWriteFingerprint(environment.root), storeBefore);
+
+#ifdef Q_OS_UNIX
+    QFile writerLock(environment.root + QStringLiteral("/.compiler.lock"));
+    QVERIFY(writerLock.open(QIODevice::ReadWrite));
+    QCOMPARE(::flock(writerLock.handle(), LOCK_EX | LOCK_NB), 0);
+    QVERIFY(!provider->validateActivationProof(*proof));
+    QCOMPARE(readFile(calls), callsBefore);
+    QCOMPARE(storeWriteFingerprint(environment.root), storeBefore);
+    QCOMPARE(::flock(writerLock.handle(), LOCK_UN), 0);
+    writerLock.close();
+    QVERIFY(provider->validateActivationProof(*proof));
+#endif
+
+    provider->shutdown();
+    provider.reset();
+    provider = environment.provider();
+    QVERIFY(provider->isAvailable());
+    const QByteArray restartedCalls = readFile(calls);
+    const QByteArray restartedStore = storeWriteFingerprint(environment.root);
+    QVERIFY(provider->validateActivationProof(*proof));
+    QCOMPARE(readFile(calls), restartedCalls);
+    QCOMPARE(storeWriteFingerprint(environment.root), restartedStore);
+
+    provider->shutdown();
+    provider.reset();
+    environment.fixture.publicKey = QByteArray(32, '\x51');
+    QVERIFY(writeFile(environment.key, environment.fixture.publicKey));
+    environment.rewriteProfile();
+    provider = environment.provider();
+    QVERIFY(provider->isAvailable());
+    const QByteArray changedKeyCalls = readFile(calls);
+    QVERIFY(!provider->validateActivationProof(*proof));
+    QCOMPARE(readFile(calls), changedKeyCalls);
+}
+
+void EtherCATProjectCompilerTests::testActivationProofRejectsMutationsWithoutProcess()
+{
+    TestEnvironment environment;
+    auto provider = environment.provider();
+    const auto proof = successfulActivationProof(environment, *provider);
+    QVERIFY(proof);
+    const QString calls = environment.root + QStringLiteral("/compiler-ledger.json.calls");
+
+    const auto rejectedWithoutProcess =
+        [&](const Data::RuntimePackageCompilerActivationProof &value) {
+            const QByteArray before = readFile(calls);
+            const bool rejected = !provider->validateActivationProof(value);
+            return rejected && readFile(calls) == before;
+        };
+
+    Data::RuntimePackageCompilerActivationProof changed = *proof;
+    changed.compilerProviderId = QStringLiteral("EtherCAT.ProjectCompiler.Relabeled");
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    changed = *proof;
+    changed.finalizeRequestSha256 = sha256("different-finalize-request");
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    changed = *proof;
+    changed.verifyRequestSha256 = sha256("different-verify-request");
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    changed = *proof;
+    changed.compileRequest.intentId.append(QStringLiteral(".mutated"));
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    changed = *proof;
+    ++changed.compileRequest.buildTimestampNs;
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    changed = *proof;
+    ++changed.compileRequest.projectProjection.devices[0].manualEnvelope.maximumTtlCycles;
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    changed = *proof;
+    Data::ProjectSnapshot pdoProject = changed.compileRequest.projectSnapshotEvidence.snapshot();
+    ++pdoProject.slaves[0].processData.pdos[0].entries[0].index;
+    ++changed.compileRequest.projectProjection.devices[0].pdoMappings[0].entries[0].index;
+    replaceProofProjectSnapshot(&changed, std::move(pdoProject));
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    changed = *proof;
+    Data::ProjectSnapshot sdoProject = changed.compileRequest.projectSnapshotEvidence.snapshot();
+    Data::StartupParameterConfiguration startup;
+    startup.id = Data::NodeId::create();
+    startup.order = 1;
+    startup.transition = QStringLiteral("preop");
+    startup.index = 0x2000;
+    startup.subIndex = 1;
+    startup.dataType = Data::EtherCATDataType::UnsignedInteger16;
+    startup.rawValue = QByteArray::fromHex("0001");
+    sdoProject.slaves[0].startup.parameters.append(startup);
+    changed.compileRequest.projectProjection.devices[0].startupSdos.append({
+        1,
+        QStringLiteral("startup.fixture"),
+        true,
+        Data::RuntimePackageCompilerStartupStage::PreOperational,
+        0x2000,
+        1,
+        quint64(1),
+        2,
+        false,
+        1'000'000,
+        0,
+        Data::RuntimePackageCompilerStartupFailureAction::Abort,
+        false,
+        false,
+    });
+    replaceProofProjectSnapshot(&changed, std::move(sdoProject));
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    changed = *proof;
+    changed.compileRequest.projectProjection.devices[0].adapterId.append(QStringLiteral(".mutated"));
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    changed = *proof;
+    changed.verifyRequest.operationId = changed.compileRequest.operationId;
+    changed.verifyResult.envelope.operationId = changed.compileRequest.operationId;
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> sameOperationVerify
+        = Core::encodeRuntimePackageCompilerVerifyRequest(changed.verifyRequest);
+    QVERIFY(sameOperationVerify);
+    changed.verifyRequestSha256 = sameOperationVerify->sha256();
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    TestEnvironment foreignEnvironment;
+    auto foreignProvider = foreignEnvironment.provider();
+    const auto foreignProof = successfulActivationProof(foreignEnvironment, *foreignProvider);
+    QVERIFY(foreignProof);
+    QVERIFY(rejectedWithoutProcess(*foreignProof));
+
+    changed = *proof;
+    changed.compileResult = foreignProof->compileResult;
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+}
+
+void EtherCATProjectCompilerTests::testActivationProofRejectsUnsafeEvidence()
+{
+    TestEnvironment environment;
+    auto provider = environment.provider();
+    const auto proof = successfulActivationProof(environment, *provider);
+    QVERIFY(proof);
+    const Utils::FilePath compileRoot = provider->operationRoot(proof->compileRequest.operationId);
+    const Utils::FilePath verifyRoot = provider->operationRoot(proof->verifyRequest.operationId);
+    const Utils::FilePath compilerRoot = compileRoot.parentDir().parentDir();
+    const QString calls = environment.root + QStringLiteral("/compiler-ledger.json.calls");
+
+    const auto rejectsCurrentStore = [&] {
+        const QByteArray before = readFile(calls);
+        const bool rejected = !provider->validateActivationProof(*proof);
+        return rejected && readFile(calls) == before;
+    };
+    const auto corruptAndRestore = [&](const Utils::FilePath &file) {
+        const QByteArray original = readFile(file.path());
+        if (original.isEmpty() || !writeFile(file.path(), original + 'x'))
+            return false;
+        const bool rejected = rejectsCurrentStore();
+        return writeFile(file.path(), original) && rejected;
+    };
+
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> compileRequest
+        = Core::encodeRuntimePackageCompilerCompileRequest(proof->compileRequest);
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> finalizeRequest
+        = Core::encodeRuntimePackageCompilerFinalizeRequest(proof->finalizeRequest);
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> verifyRequest
+        = Core::encodeRuntimePackageCompilerVerifyRequest(proof->verifyRequest);
+    QVERIFY(compileRequest);
+    QVERIFY(finalizeRequest);
+    QVERIFY(verifyRequest);
+
+    const auto evidenceFile = [](const Utils::FilePath &root,
+                                 const Data::RuntimePackageCompilerSha256 &digest,
+                                 const QString &suffix) {
+        return root / "evidence" / (QString::fromLatin1(digest.value().toHex()) + suffix);
+    };
+
+    QList<Utils::FilePath> criticalFiles{
+        compileRoot / "reservation.json",
+        compilerRoot / "configurations" / QString::number(proof->compileRequest.configurationId)
+            / "reservation.json",
+        compileRoot / "compile-request.json",
+        evidenceFile(compileRoot, compileRequest->sha256(), QStringLiteral(".json")),
+        compileRoot / "finalize-request.json",
+        evidenceFile(compileRoot, finalizeRequest->sha256(), QStringLiteral(".json")),
+        compileRoot / "sign-request.json",
+        evidenceFile(compileRoot, proof->compileResult.signRequest->sha256(), QStringLiteral(".json")),
+        compileRoot / "sign-response.json",
+        evidenceFile(
+            compileRoot,
+            proof->finalizeRequest.detachedSigningResponse.sha256(),
+            QStringLiteral(".json")),
+        evidenceFile(
+            compileRoot,
+            proof->compileResult.envelope.canonicalResult.sha256(),
+            QStringLiteral(".json")),
+        evidenceFile(
+            compileRoot,
+            proof->finalizeResult.envelope.canonicalResult.sha256(),
+            QStringLiteral(".json")),
+        compileRoot / "production-public-key.bin",
+        compileRoot / "output" / "project.json",
+        evidenceFile(compileRoot, *proof->compileResult.compiledProjectSha256, QStringLiteral(".bin")),
+        compileRoot / "output" / "packages" / "compile_report.json",
+        evidenceFile(compileRoot, *proof->compileResult.compileReportSha256, QStringLiteral(".bin")),
+        compileRoot / "output" / "effective-project-companion-v1.json",
+        evidenceFile(
+            compileRoot,
+            *proof->compileResult.effectiveProjectCompanionSha256,
+            QStringLiteral(".bin")),
+        compileRoot / "output" / "signing_stage" / "manifest.json",
+        evidenceFile(compileRoot, *proof->compileResult.manifestSha256, QStringLiteral(".bin")),
+        compileRoot / "output" / "sign-request.json",
+        evidenceFile(compileRoot, proof->compileResult.signRequest->sha256(), QStringLiteral(".bin")),
+        compileRoot / "package.ecpkg",
+        evidenceFile(compileRoot, *proof->finalizeResult.packageSha256, QStringLiteral(".ecpkg")),
+        verifyRoot / "reservation.json",
+        verifyRoot / "verify-request.json",
+        evidenceFile(verifyRoot, verifyRequest->sha256(), QStringLiteral(".json")),
+        evidenceFile(
+            verifyRoot,
+            proof->verifyResult.envelope.canonicalResult.sha256(),
+            QStringLiteral(".json")),
+        verifyRoot / "package.ecpkg",
+        evidenceFile(verifyRoot, *proof->finalizeResult.packageSha256, QStringLiteral(".ecpkg")),
+    };
+    const QList<Data::RuntimePackageCompilerSourceArtifact> fixedSourceArtifacts{
+        proof->compileRequest.sourceArtifacts.topologyEvidence,
+        proof->compileRequest.sourceArtifacts.targetProfile,
+        proof->compileRequest.sourceArtifacts.targetProfileSignature,
+        proof->compileRequest.sourceArtifacts.productionPublicKey,
+        proof->compileRequest.sourceArtifacts.adapterBundle,
+        proof->compileRequest.sourceArtifacts.policyTemplate,
+        proof->compileRequest.sourceArtifacts.controllerFeatures,
+        proof->compileRequest.sourceArtifacts.runtimeSource,
+    };
+    for (const Data::RuntimePackageCompilerSourceArtifact &artifact : fixedSourceArtifacts)
+        criticalFiles.append(compileRoot / "artifacts" / artifact.relativePath);
+    for (const Data::RuntimePackageCompilerDeviceSourceEvidence &device :
+         proof->compileRequest.deviceSourceEvidence) {
+        criticalFiles.append(compileRoot / "artifacts" / device.originalEsi.relativePath);
+        criticalFiles.append(compileRoot / "artifacts" / device.adapterSourceFile.relativePath);
+    }
+    for (const Utils::FilePath &file : criticalFiles)
+        QVERIFY2(corruptAndRestore(file), qPrintable(file.toUserOutput()));
+
+    const Utils::FilePath removable
+        = evidenceFile(verifyRoot, verifyRequest->sha256(), QStringLiteral(".json"));
+    const QString removedBackup = removable.path() + QStringLiteral(".removed");
+    QVERIFY(QFile::rename(removable.path(), removedBackup));
+    QVERIFY(rejectsCurrentStore());
+    QVERIFY(QFile::rename(removedBackup, removable.path()));
+
+    const Utils::FilePath manifest = compileRoot / "output" / "signing_stage" / "manifest.json";
+    const QByteArray originalManifest = readFile(manifest.path());
+    QVERIFY(!originalManifest.isEmpty());
+    QVERIFY(writeFile(manifest.path(), QByteArray(16 * 1024 * 1024 + 1, 'x')));
+    QVERIFY(rejectsCurrentStore());
+    QVERIFY(writeFile(manifest.path(), originalManifest));
+
+#ifdef Q_OS_UNIX
+    const Utils::FilePath target = compileRoot / "compile-request.json";
+    const QString backup = target.path() + QStringLiteral(".original");
+    QVERIFY(QFile::rename(target.path(), backup));
+    QCOMPARE(
+        ::link(QFile::encodeName(backup).constData(), QFile::encodeName(target.path()).constData()),
+        0);
+    QVERIFY(rejectsCurrentStore());
+    QVERIFY(QFile::remove(target.path()));
+    QVERIFY(QFile::rename(backup, target.path()));
+
+    QVERIFY(QFile::rename(target.path(), backup));
+    QCOMPARE(
+        ::symlink(QFile::encodeName(backup).constData(), QFile::encodeName(target.path()).constData()),
+        0);
+    QVERIFY(rejectsCurrentStore());
+    QVERIFY(QFile::remove(target.path()));
+    QVERIFY(QFile::rename(backup, target.path()));
+#endif
 }
 
 } // namespace EtherCAT::ProjectCompiler::Internal

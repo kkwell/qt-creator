@@ -528,6 +528,50 @@ RuntimePackageCompilerCanonicalJson encodeCompileRequestUnchecked(
     }));
 }
 
+JsonValue contractIdentityValue(const RuntimePackageCompilerContractIdentity &identity)
+{
+    return objectValue({
+        {QStringLiteral("contract_id"), stringValue(identity.contractId)},
+        {QStringLiteral("contract_version"), unsignedValue(identity.contractVersion)},
+        {QStringLiteral("schema_bundle_sha256"), shaValue(identity.schemaBundleSha256)},
+    });
+}
+
+RuntimePackageCompilerCanonicalJson encodeFinalizeRequestUnchecked(
+    const RuntimePackageCompilerFinalizeRequest &request)
+{
+    QByteArray detachedSigningResponse = request.detachedSigningResponse.exactBytes();
+    detachedSigningResponse.chop(1);
+    return canonicalObject(objectValue({
+        {QStringLiteral("compile_request_sha256"), shaValue(request.compileRequestSha256)},
+        {QStringLiteral("configuration_id"), unsignedValue(request.configurationId)},
+        {QStringLiteral("contract"), contractIdentityValue(request.contractIdentity)},
+        {QStringLiteral("detached_signing_response"), rawValue(std::move(detachedSigningResponse))},
+        {QStringLiteral("format"),
+         stringValue(QStringLiteral("ethercat-ide-project-compiler-finalize-request-v1"))},
+        {QStringLiteral("format_version"), unsignedValue(1)},
+        {QStringLiteral("manifest_sha256"), shaValue(request.manifestSha256)},
+        {QStringLiteral("operation_id"), stringValue(request.operationId.value())},
+        {QStringLiteral("sign_request_sha256"), shaValue(request.signRequestSha256)},
+        {QStringLiteral("signing_key_id_sha256"), shaValue(request.signingKeyIdSha256)},
+        {QStringLiteral("signing_policy_revision"), unsignedValue(request.signingPolicyRevision)},
+    }));
+}
+
+RuntimePackageCompilerCanonicalJson encodeVerifyRequestUnchecked(
+    const RuntimePackageCompilerVerifyRequest &request)
+{
+    return canonicalObject(objectValue({
+        {QStringLiteral("contract"), contractIdentityValue(request.contractIdentity)},
+        {QStringLiteral("format"),
+         stringValue(QStringLiteral("ethercat-ide-project-compiler-verify-request-v1"))},
+        {QStringLiteral("format_version"), unsignedValue(1)},
+        {QStringLiteral("operation_id"), stringValue(request.operationId.value())},
+        {QStringLiteral("package_bytes"), unsignedValue(quint64(request.packageBytes.size()))},
+        {QStringLiteral("package_sha256"), shaValue(request.packageSha256)},
+    }));
+}
+
 bool skipString(QByteArrayView bytes, qsizetype *offset)
 {
     if (*offset >= bytes.size() || bytes[*offset] != '"')
@@ -882,6 +926,32 @@ Utils::Result<RuntimePackageCompilerCanonicalJson> encodeRuntimePackageCompilerC
     if (!result.isValid()) {
         return Utils::ResultError(
             QStringLiteral("The typed API-042 compile request could not be encoded canonically."));
+    }
+    return result;
+}
+
+Utils::Result<RuntimePackageCompilerCanonicalJson> encodeRuntimePackageCompilerFinalizeRequest(
+    const RuntimePackageCompilerFinalizeRequest &request)
+{
+    if (!request.isValid())
+        return Utils::ResultError(QStringLiteral("The finalize request is incomplete."));
+    RuntimePackageCompilerCanonicalJson result = encodeFinalizeRequestUnchecked(request);
+    if (!result.isValid()) {
+        return Utils::ResultError(
+            QStringLiteral("The finalize request could not be encoded canonically."));
+    }
+    return result;
+}
+
+Utils::Result<RuntimePackageCompilerCanonicalJson> encodeRuntimePackageCompilerVerifyRequest(
+    const RuntimePackageCompilerVerifyRequest &request)
+{
+    if (!request.isValid())
+        return Utils::ResultError(QStringLiteral("The verify request is incomplete."));
+    RuntimePackageCompilerCanonicalJson result = encodeVerifyRequestUnchecked(request);
+    if (!result.isValid()) {
+        return Utils::ResultError(
+            QStringLiteral("The verify request could not be encoded canonically."));
     }
     return result;
 }

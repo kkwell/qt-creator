@@ -67,9 +67,10 @@ struct CompilerStoreLock
 
     int descriptor = -1;
 #else
-    bool isLocked() const { return lock && lock->isLocked(); }
+    bool isLocked() const { return readOnly || (lock && lock->isLocked()); }
 
     std::unique_ptr<QLockFile> lock;
+    bool readOnly = false;
 #endif
 };
 
@@ -964,6 +965,27 @@ QString evidenceFileName(CompilerCanonicalEvidenceKind kind)
     return {};
 }
 
+Utils::FilePath canonicalEvidencePath(
+    const CompilerOperationPaths &paths, const Data::RuntimePackageCompilerSha256 &sha256)
+{
+    return paths.operationRoot / "evidence"
+           / (QString::fromLatin1(shaHex(sha256)) + QStringLiteral(".json"));
+}
+
+Utils::FilePath binaryEvidencePath(
+    const CompilerOperationPaths &paths, const Data::RuntimePackageCompilerSha256 &sha256)
+{
+    return paths.operationRoot / "evidence"
+           / (QString::fromLatin1(shaHex(sha256)) + QStringLiteral(".bin"));
+}
+
+Utils::FilePath packageEvidencePath(
+    const CompilerOperationPaths &paths, const Data::RuntimePackageCompilerSha256 &sha256)
+{
+    return paths.operationRoot / "evidence"
+           / (QString::fromLatin1(shaHex(sha256)) + QStringLiteral(".ecpkg"));
+}
+
 struct StoredCompileReservation
 {
     QString operationId;
@@ -1161,6 +1183,33 @@ Utils::Result<CompilerOperationLease> CompilerOperationStore::acquireLease() con
     return CompilerOperationLease(std::move(lock), m_storeIdentity);
 }
 
+Utils::Result<CompilerOperationLease> CompilerOperationStore::acquireReadLease() const
+{
+    if (const Utils::Result<> store = validateStore(); !store)
+        return Utils::ResultError(store.error());
+    auto lock = std::make_unique<CompilerStoreLock>();
+#ifdef Q_OS_UNIX
+    int flags = O_RDONLY | O_CLOEXEC;
+#ifdef O_NOFOLLOW
+    flags |= O_NOFOLLOW;
+#endif
+    lock->descriptor = ::openat(m_rootHandle->descriptor, ".compiler.lock", flags);
+    struct stat info = {};
+    if (lock->descriptor < 0 || ::fstat(lock->descriptor, &info) != 0 || !S_ISREG(info.st_mode)
+        || info.st_uid != ::geteuid() || info.st_nlink != 1 || (info.st_mode & 0777) != 0600) {
+        return Utils::ResultError(QStringLiteral("Compiler read lock is unsafe."));
+    }
+    if (::flock(lock->descriptor, LOCK_SH | LOCK_NB) != 0)
+        return Utils::ResultError(QStringLiteral("Compiler operation store is busy."));
+#else
+    // Non-Unix immutable writes are atomic. A concurrent incomplete view can
+    // only reject because every expected fixed and content-addressed file is
+    // compared byte-for-byte; validation never creates a lock file or retries.
+    lock->readOnly = true;
+#endif
+    return CompilerOperationLease(std::move(lock), m_storeIdentity);
+}
+
 Utils::Result<CompilerOperationPaths> CompilerOperationStore::reserveCompile(
     const CompilerOperationLease &lease,
     const Data::RuntimePackageCompilerCompileRequest &request,
@@ -1264,6 +1313,16 @@ Utils::Result<CompilerOperationPaths> CompilerOperationStore::reserveCompile(
         !written) {
         return Utils::ResultError(written.error());
     }
+    if (const Utils::Result<> written = writeAtomicFile(
+            m_rootHandle,
+            m_compilerRoot,
+            canonicalEvidencePath(operationPaths, canonicalRequest.sha256()),
+            canonicalRequest.exactBytes(),
+            true,
+            maximumCanonicalBytes);
+        !written) {
+        return Utils::ResultError(written.error());
+    }
     if (const Utils::Result<> materialized
         = materializeCompileArtifacts(lease, request, operationPaths);
         !materialized) {
@@ -1273,9 +1332,11 @@ Utils::Result<CompilerOperationPaths> CompilerOperationStore::reserveCompile(
 }
 
 Utils::Result<CompilerOperationPaths> CompilerOperationStore::reserveVerify(
-    const CompilerOperationLease &lease, const Data::RuntimePackageCompilerVerifyRequest &request)
+    const CompilerOperationLease &lease,
+    const Data::RuntimePackageCompilerVerifyRequest &request,
+    const Data::RuntimePackageCompilerCanonicalJson &canonicalRequest)
 {
-    if (!ownsLease(lease) || !request.isValid())
+    if (!ownsLease(lease) || !request.isValid() || !canonicalRequest.isValid())
         return Utils::ResultError(QStringLiteral("Invalid compiler verification reservation."));
     const CompilerOperationPaths operationPaths = paths(request.operationId);
     Utils::FilePath ignored;
@@ -1293,8 +1354,15 @@ Utils::Result<CompilerOperationPaths> CompilerOperationStore::reserveVerify(
     if (!compileReservationExists)
         return Utils::ResultError(compileReservationExists.error());
     if (*compileReservationExists) {
-        return Utils::ResultError(
-            QStringLiteral("Operation ID is already reserved for compilation."));
+        const Utils::Result<QByteArray> existing = readRegularLeaf(
+            m_rootHandle,
+            m_compilerRoot,
+            operationPaths.operationRoot / "reservation.json",
+            maximumCanonicalBytes);
+        if (!existing || *existing != verifyReservation(request)) {
+            return Utils::ResultError(
+                QStringLiteral("Operation ID is already reserved for different work."));
+        }
     }
     for (const QString &directory :
          {QStringLiteral("artifacts"), QStringLiteral("output"), QStringLiteral("evidence")}) {
@@ -1307,8 +1375,28 @@ Utils::Result<CompilerOperationPaths> CompilerOperationStore::reserveVerify(
     if (const Utils::Result<> written = writeAtomicFile(
             m_rootHandle,
             m_compilerRoot,
-            operationPaths.verifyRequest,
+            operationPaths.operationRoot / "reservation.json",
             verifyReservation(request),
+            true,
+            maximumCanonicalBytes);
+        !written) {
+        return Utils::ResultError(written.error());
+    }
+    if (const Utils::Result<> written = writeAtomicFile(
+            m_rootHandle,
+            m_compilerRoot,
+            operationPaths.verifyRequest,
+            canonicalRequest.exactBytes(),
+            true,
+            maximumCanonicalBytes);
+        !written) {
+        return Utils::ResultError(written.error());
+    }
+    if (const Utils::Result<> written = writeAtomicFile(
+            m_rootHandle,
+            m_compilerRoot,
+            canonicalEvidencePath(operationPaths, canonicalRequest.sha256()),
+            canonicalRequest.exactBytes(),
             true,
             maximumCanonicalBytes);
         !written) {
@@ -1322,11 +1410,12 @@ Utils::Result<CompilerOperationPaths> CompilerOperationStore::reserveVerify(
     return operationPaths;
 }
 
-Utils::Result<CompilerOperationPaths> CompilerOperationStore::validateFinalize(
+Utils::Result<CompilerOperationPaths> CompilerOperationStore::reserveFinalize(
     const CompilerOperationLease &lease,
-    const Data::RuntimePackageCompilerFinalizeRequest &request) const
+    const Data::RuntimePackageCompilerFinalizeRequest &request,
+    const Data::RuntimePackageCompilerCanonicalJson &canonicalRequest)
 {
-    if (!ownsLease(lease) || !request.isValid())
+    if (!ownsLease(lease) || !request.isValid() || !canonicalRequest.isValid())
         return Utils::ResultError(QStringLiteral("Invalid compiler finalize request or lease."));
     const CompilerOperationPaths operationPaths = paths(request.operationId);
     if (const Utils::Result<> store = validateStore(); !store)
@@ -1388,6 +1477,26 @@ Utils::Result<CompilerOperationPaths> CompilerOperationStore::validateFinalize(
                != QString::fromLatin1(shaHex(request.signingKeyIdSha256))
         || rootUnsigned(*signBytes, "policy_revision") != request.signingPolicyRevision) {
         return Utils::ResultError(QStringLiteral("Finalize evidence is stale or mismatched."));
+    }
+    if (const Utils::Result<> written = writeAtomicFile(
+            m_rootHandle,
+            m_compilerRoot,
+            operationPaths.finalizeRequest,
+            canonicalRequest.exactBytes(),
+            true,
+            maximumCanonicalBytes);
+        !written) {
+        return Utils::ResultError(written.error());
+    }
+    if (const Utils::Result<> written = writeAtomicFile(
+            m_rootHandle,
+            m_compilerRoot,
+            canonicalEvidencePath(operationPaths, canonicalRequest.sha256()),
+            canonicalRequest.exactBytes(),
+            true,
+            maximumCanonicalBytes);
+        !written) {
+        return Utils::ResultError(written.error());
     }
     return operationPaths;
 }
@@ -1655,6 +1764,326 @@ Utils::Result<QByteArray> CompilerOperationStore::readProviderFile(
         m_rootHandle, m_compilerRoot, file, maximumBytes, DirectoryPolicy::CompilerOwned);
 }
 
+Utils::Result<> CompilerOperationStore::validateActivationProofEvidence(
+    const Data::RuntimePackageCompilerActivationProof &proof,
+    const Data::RuntimePackageCompilerCanonicalJson &canonicalCompileRequest,
+    const Data::RuntimePackageCompilerCanonicalJson &canonicalFinalizeRequest,
+    const Data::RuntimePackageCompilerCanonicalJson &canonicalVerifyRequest,
+    qsizetype maximumArtifactBytes) const
+{
+    if (!proof.isValid() || !canonicalCompileRequest.isValid()
+        || !canonicalFinalizeRequest.isValid() || !canonicalVerifyRequest.isValid()
+        || maximumArtifactBytes <= 0 || maximumArtifactBytes > maximumPackageBytes
+        || proof.compileRequest.operationId == proof.verifyRequest.operationId
+        || canonicalCompileRequest.sha256() != proof.compileResult.envelope.requestSha256
+        || canonicalFinalizeRequest.sha256() != proof.finalizeRequestSha256
+        || canonicalVerifyRequest.sha256() != proof.verifyRequestSha256) {
+        return Utils::ResultError(QStringLiteral("Activation proof encoding is inconsistent."));
+    }
+    Utils::Result<CompilerOperationLease> acquiredReadLease = acquireReadLease();
+    if (!acquiredReadLease)
+        return Utils::ResultError(acquiredReadLease.error());
+    CompilerOperationLease readLease = std::move(*acquiredReadLease);
+    if (!readLease.isValid())
+        return Utils::ResultError(QStringLiteral("Compiler read lease is invalid."));
+
+    const CompilerOperationPaths compilePaths = paths(proof.compileRequest.operationId);
+    const CompilerOperationPaths verifyPaths = paths(proof.verifyRequest.operationId);
+    for (const Utils::FilePath &directory :
+         {compilePaths.operationRoot,
+          compilePaths.operationRoot / "evidence",
+          verifyPaths.operationRoot,
+          verifyPaths.operationRoot / "evidence"}) {
+        if (const Utils::Result<> valid
+            = validatePrivateDirectory(m_rootHandle, m_compilerRoot, directory);
+            !valid) {
+            return Utils::ResultError(valid.error());
+        }
+    }
+
+    const auto readPrivate =
+        [this](const Utils::FilePath &file, qsizetype maximumBytes) -> Utils::Result<QByteArray> {
+        return readRegularLeaf(
+            m_rootHandle, m_compilerRoot, file, maximumBytes, DirectoryPolicy::Private);
+    };
+    const auto readCompiler =
+        [this](const Utils::FilePath &file, qsizetype maximumBytes) -> Utils::Result<QByteArray> {
+        if (const Utils::Result<> ancestors
+            = validateProviderDirectoryChain(m_rootHandle, m_compilerRoot, file.parentDir());
+            !ancestors) {
+            return Utils::ResultError(ancestors.error());
+        }
+        return readRegularLeaf(
+            m_rootHandle, m_compilerRoot, file, maximumBytes, DirectoryPolicy::CompilerOwned);
+    };
+    const auto expectExact = [](const Utils::Result<QByteArray> &stored,
+                                QByteArrayView expected,
+                                QStringView description) -> Utils::Result<> {
+        if (!stored || QByteArrayView(*stored) != expected) {
+            return Utils::ResultError(
+                QStringLiteral("Stored %1 evidence is missing or different.").arg(description));
+        }
+        return Utils::ResultOk;
+    };
+    const auto expectDigest = [](const Utils::Result<QByteArray> &stored,
+                                 const Data::RuntimePackageCompilerSha256 &expected,
+                                 QStringView description) -> Utils::Result<> {
+        if (!stored || stored->isEmpty() || sha256(*stored) != expected) {
+            return Utils::ResultError(
+                QStringLiteral("Stored %1 digest is missing or different.").arg(description));
+        }
+        return Utils::ResultOk;
+    };
+    const auto expectPrivateExact = [&](const Utils::FilePath &file,
+                                        QByteArrayView expected,
+                                        qsizetype maximumBytes,
+                                        QStringView description) -> Utils::Result<> {
+        return expectExact(readPrivate(file, maximumBytes), expected, description);
+    };
+    const auto expectCompilerExact = [&](const Utils::FilePath &file,
+                                         QByteArrayView expected,
+                                         qsizetype maximumBytes,
+                                         QStringView description) -> Utils::Result<> {
+        return expectExact(readCompiler(file, maximumBytes), expected, description);
+    };
+
+    const QByteArray expectedCompileReservation
+        = compileReservation(proof.compileRequest, canonicalCompileRequest.sha256());
+    if (const Utils::Result<> valid = expectPrivateExact(
+            compilePaths.operationRoot / "reservation.json",
+            expectedCompileReservation,
+            maximumCanonicalBytes,
+            QStringLiteral("compile reservation"));
+        !valid) {
+        return valid;
+    }
+    const Utils::FilePath configurationReservation = m_compilerRoot / "configurations"
+                                                     / QString::number(
+                                                         proof.compileRequest.configurationId)
+                                                     / "reservation.json";
+    if (const Utils::Result<> valid = expectPrivateExact(
+            configurationReservation,
+            configurationIndex(
+                proof.compileRequest.configurationId, proof.compileRequest.operationId.value()),
+            maximumCanonicalBytes,
+            QStringLiteral("configuration reservation"));
+        !valid) {
+        return valid;
+    }
+    if (const Utils::Result<> valid = expectPrivateExact(
+            verifyPaths.operationRoot / "reservation.json",
+            verifyReservation(proof.verifyRequest),
+            maximumCanonicalBytes,
+            QStringLiteral("verify reservation"));
+        !valid) {
+        return valid;
+    }
+
+    const QList<std::tuple<Utils::FilePath, QByteArray, QString>> canonicalEvidence{
+        {compilePaths.compileRequest,
+         canonicalCompileRequest.exactBytes(),
+         QStringLiteral("compile request")},
+        {canonicalEvidencePath(compilePaths, canonicalCompileRequest.sha256()),
+         canonicalCompileRequest.exactBytes(),
+         QStringLiteral("content-addressed compile request")},
+        {compilePaths.finalizeRequest,
+         canonicalFinalizeRequest.exactBytes(),
+         QStringLiteral("finalize request")},
+        {canonicalEvidencePath(compilePaths, canonicalFinalizeRequest.sha256()),
+         canonicalFinalizeRequest.exactBytes(),
+         QStringLiteral("content-addressed finalize request")},
+        {verifyPaths.verifyRequest,
+         canonicalVerifyRequest.exactBytes(),
+         QStringLiteral("verify request")},
+        {canonicalEvidencePath(verifyPaths, canonicalVerifyRequest.sha256()),
+         canonicalVerifyRequest.exactBytes(),
+         QStringLiteral("content-addressed verify request")},
+        {canonicalEvidencePath(compilePaths, proof.compileResult.envelope.canonicalResult.sha256()),
+         proof.compileResult.envelope.canonicalResult.exactBytes(),
+         QStringLiteral("compile result")},
+        {canonicalEvidencePath(compilePaths, proof.finalizeResult.envelope.canonicalResult.sha256()),
+         proof.finalizeResult.envelope.canonicalResult.exactBytes(),
+         QStringLiteral("finalize result")},
+        {canonicalEvidencePath(verifyPaths, proof.verifyResult.envelope.canonicalResult.sha256()),
+         proof.verifyResult.envelope.canonicalResult.exactBytes(),
+         QStringLiteral("verify result")},
+        {compilePaths.signRequest,
+         proof.compileResult.signRequest->exactBytes(),
+         QStringLiteral("sign request")},
+        {canonicalEvidencePath(compilePaths, proof.compileResult.signRequest->sha256()),
+         proof.compileResult.signRequest->exactBytes(),
+         QStringLiteral("content-addressed sign request")},
+        {compilePaths.signResponse,
+         proof.finalizeRequest.detachedSigningResponse.exactBytes(),
+         QStringLiteral("sign response")},
+        {canonicalEvidencePath(compilePaths, proof.finalizeRequest.detachedSigningResponse.sha256()),
+         proof.finalizeRequest.detachedSigningResponse.exactBytes(),
+         QStringLiteral("content-addressed sign response")},
+    };
+    for (const auto &[file, expected, description] : canonicalEvidence) {
+        if (const Utils::Result<> valid
+            = expectPrivateExact(file, expected, maximumCanonicalBytes, description);
+            !valid) {
+            return valid;
+        }
+    }
+
+    QList<Data::RuntimePackageCompilerSourceArtifact> sourceArtifacts{
+        proof.compileRequest.sourceArtifacts.topologyEvidence,
+        proof.compileRequest.sourceArtifacts.targetProfile,
+        proof.compileRequest.sourceArtifacts.targetProfileSignature,
+        proof.compileRequest.sourceArtifacts.productionPublicKey,
+        proof.compileRequest.sourceArtifacts.adapterBundle,
+        proof.compileRequest.sourceArtifacts.policyTemplate,
+        proof.compileRequest.sourceArtifacts.controllerFeatures,
+        proof.compileRequest.sourceArtifacts.runtimeSource,
+    };
+    for (const Data::RuntimePackageCompilerDeviceSourceEvidence &device :
+         proof.compileRequest.deviceSourceEvidence) {
+        sourceArtifacts.append(device.originalEsi);
+        sourceArtifacts.append(device.adapterSourceFile);
+    }
+    QHash<QString, QByteArray> sourceByPath;
+    for (const Data::RuntimePackageCompilerSourceArtifact &artifact :
+         std::as_const(sourceArtifacts)) {
+        const auto previous = sourceByPath.constFind(artifact.relativePath);
+        if (previous != sourceByPath.cend() && *previous != artifact.exactBytes) {
+            return Utils::ResultError(
+                QStringLiteral("Activation proof source artifact paths collide."));
+        }
+        sourceByPath.insert(artifact.relativePath, artifact.exactBytes);
+        if (const Utils::Result<> valid = expectPrivateExact(
+                compilePaths.artifactRoot / artifact.relativePath,
+                artifact.exactBytes,
+                maximumPackageBytes,
+                QStringLiteral("source artifact"));
+            !valid) {
+            return valid;
+        }
+    }
+    if (const Utils::Result<> valid = expectPrivateExact(
+            compilePaths.publicKey,
+            proof.compileRequest.sourceArtifacts.productionPublicKey.exactBytes,
+            32,
+            QStringLiteral("operation public key"));
+        !valid) {
+        return valid;
+    }
+
+    if (Utils::FilePath::fromString(proof.compileResult.outputDirectory).toFSPathString()
+            != compilePaths.outputDir.toFSPathString()
+        || Utils::FilePath::fromString(proof.finalizeResult.packagePath).toFSPathString()
+               != compilePaths.package.toFSPathString()) {
+        return Utils::ResultError(
+            QStringLiteral("Activation proof paths do not belong to the provider store."));
+    }
+    if (const Utils::Result<> valid = expectCompilerExact(
+            compilePaths.outputDir / "project.json",
+            proof.compiledProjectSource,
+            maximumArtifactBytes,
+            QStringLiteral("compiled project"));
+        !valid) {
+        return valid;
+    }
+    if (const Utils::Result<> valid = expectPrivateExact(
+            binaryEvidencePath(compilePaths, *proof.compileResult.compiledProjectSha256),
+            proof.compiledProjectSource,
+            maximumArtifactBytes,
+            QStringLiteral("sealed compiled project"));
+        !valid) {
+        return valid;
+    }
+    if (const Utils::Result<> valid = expectCompilerExact(
+            compilePaths.outputDir / "effective-project-companion-v1.json",
+            proof.effectiveProjectCompanion,
+            maximumArtifactBytes,
+            QStringLiteral("effective project companion"));
+        !valid) {
+        return valid;
+    }
+    if (const Utils::Result<> valid = expectPrivateExact(
+            binaryEvidencePath(compilePaths, *proof.compileResult.effectiveProjectCompanionSha256),
+            proof.effectiveProjectCompanion,
+            maximumArtifactBytes,
+            QStringLiteral("sealed effective project companion"));
+        !valid) {
+        return valid;
+    }
+    const Utils::Result<QByteArray> compileReport = readCompiler(
+        compilePaths.outputDir / "packages" / "compile_report.json", maximumArtifactBytes);
+    if (const Utils::Result<> valid = expectDigest(
+            compileReport,
+            *proof.compileResult.compileReportSha256,
+            QStringLiteral("compile report"));
+        !valid) {
+        return valid;
+    }
+    if (const Utils::Result<> valid = expectPrivateExact(
+            binaryEvidencePath(compilePaths, *proof.compileResult.compileReportSha256),
+            *compileReport,
+            maximumArtifactBytes,
+            QStringLiteral("sealed compile report"));
+        !valid) {
+        return valid;
+    }
+    const Utils::Result<QByteArray> manifest = readCompiler(
+        compilePaths.outputDir / "signing_stage" / "manifest.json", maximumArtifactBytes);
+    if (const Utils::Result<> valid
+        = expectDigest(manifest, *proof.compileResult.manifestSha256, QStringLiteral("manifest"));
+        !valid) {
+        return valid;
+    }
+    if (const Utils::Result<> valid = expectPrivateExact(
+            binaryEvidencePath(compilePaths, *proof.compileResult.manifestSha256),
+            *manifest,
+            maximumArtifactBytes,
+            QStringLiteral("sealed manifest"));
+        !valid) {
+        return valid;
+    }
+    if (const Utils::Result<> valid = expectCompilerExact(
+            compilePaths.outputDir / "sign-request.json",
+            proof.compileResult.signRequest->exactBytes(),
+            maximumCanonicalBytes,
+            QStringLiteral("compiler sign request"));
+        !valid) {
+        return valid;
+    }
+    if (const Utils::Result<> valid = expectPrivateExact(
+            binaryEvidencePath(compilePaths, proof.compileResult.signRequest->sha256()),
+            proof.compileResult.signRequest->exactBytes(),
+            maximumArtifactBytes,
+            QStringLiteral("sealed sign request"));
+        !valid) {
+        return valid;
+    }
+
+    const QByteArray &packageBytes = proof.finalizeResult.packageBytes;
+    const Data::RuntimePackageCompilerSha256 packageSha = *proof.finalizeResult.packageSha256;
+    if (packageBytes.isEmpty() || packageBytes.size() > maximumPackageBytes
+        || sha256(packageBytes) != packageSha) {
+        return Utils::ResultError(QStringLiteral("Activation proof package digest is invalid."));
+    }
+    const QList<std::tuple<Utils::FilePath, qsizetype, QString>> packageEvidence{
+        {compilePaths.package, maximumPackageBytes, QStringLiteral("compile package")},
+        {packageEvidencePath(compilePaths, packageSha),
+         maximumPackageBytes,
+         QStringLiteral("sealed compile package")},
+        {verifyPaths.package, maximumPackageBytes, QStringLiteral("verify package")},
+        {packageEvidencePath(verifyPaths, packageSha),
+         maximumPackageBytes,
+         QStringLiteral("sealed verify package")},
+    };
+    for (const auto &[file, maximumBytes, description] : packageEvidence) {
+        if (const Utils::Result<> valid
+            = expectPrivateExact(file, packageBytes, maximumBytes, description);
+            !valid) {
+            return valid;
+        }
+    }
+    return Utils::ResultOk;
+}
+
 Utils::FilePath CompilerOperationStore::compilerRoot() const
 {
     return m_compilerRoot;
@@ -1682,6 +2111,11 @@ Utils::FilePath CompilerOperationStore::compileRequest(
     const Data::RuntimePackageCompilerOperationId &operationId) const
 {
     return operationRoot(operationId) / "compile-request.json";
+}
+Utils::FilePath CompilerOperationStore::finalizeRequest(
+    const Data::RuntimePackageCompilerOperationId &operationId) const
+{
+    return operationRoot(operationId) / "finalize-request.json";
 }
 Utils::FilePath CompilerOperationStore::verifyRequest(
     const Data::RuntimePackageCompilerOperationId &operationId) const
@@ -1724,6 +2158,7 @@ CompilerOperationPaths CompilerOperationStore::paths(
         artifactRoot(operationId),
         outputDir(operationId),
         compileRequest(operationId),
+        finalizeRequest(operationId),
         verifyRequest(operationId),
         signRequest(operationId),
         signResponse(operationId),

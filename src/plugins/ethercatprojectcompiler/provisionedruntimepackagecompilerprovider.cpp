@@ -614,10 +614,15 @@ Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompil
 {
     if (const Utils::Result<> current = d->validateProfile(request.contractIdentity); !current)
         return Utils::ResultError(current.error());
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> canonical
+        = Core::encodeRuntimePackageCompilerFinalizeRequest(request);
+    if (!canonical)
+        return Utils::ResultError(canonical.error());
     Utils::Result<CompilerOperationLease> lease = d->store.acquireLease();
     if (!lease)
         return Utils::ResultError(lease.error());
-    const Utils::Result<CompilerOperationPaths> paths = d->store.validateFinalize(*lease, request);
+    const Utils::Result<CompilerOperationPaths> paths
+        = d->store.reserveFinalize(*lease, request, *canonical);
     if (!paths)
         return Utils::ResultError(paths.error());
     const Utils::Result<Utils::FilePath> signResponse = d->store.persistCanonicalResponse(
@@ -745,10 +750,15 @@ Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompil
 {
     if (const Utils::Result<> current = d->validateProfile(request.contractIdentity); !current)
         return Utils::ResultError(current.error());
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> canonical
+        = Core::encodeRuntimePackageCompilerVerifyRequest(request);
+    if (!canonical)
+        return Utils::ResultError(canonical.error());
     Utils::Result<CompilerOperationLease> lease = d->store.acquireLease();
     if (!lease)
         return Utils::ResultError(lease.error());
-    const Utils::Result<CompilerOperationPaths> paths = d->store.reserveVerify(*lease, request);
+    const Utils::Result<CompilerOperationPaths> paths
+        = d->store.reserveVerify(*lease, request, *canonical);
     if (!paths)
         return Utils::ResultError(paths.error());
     JobResultDecoder decoder = [store = &d->store, request](
@@ -789,6 +799,38 @@ Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompil
         {},
         {},
     });
+}
+
+Utils::Result<> ProvisionedRuntimePackageCompilerProvider::validateActivationProof(
+    const Data::RuntimePackageCompilerActivationProof &proof) const
+{
+    const QString providerId = QString::fromUtf8(Constants::PROJECT_COMPILER_PROVIDER_ID.name());
+    if (!proof.isValid() || proof.compilerProviderId != providerId)
+        return Utils::ResultError(Tr::tr("Activation proof names a different compiler provider."));
+    if (const Utils::Result<> current = d->validateProfile(proof.contractIdentity); !current)
+        return Utils::ResultError(current.error());
+    if (proof.compileRequest.sourceArtifacts.productionPublicKey.sha256
+            != d->profile->productionPublicKeySha256()
+        || proof.compileRequest.targetProfile.signingKeyIdSha256
+               != d->profile->productionPublicKeySha256()
+        || proof.compileRequest.sourceArtifacts.productionPublicKey.exactBytes
+               != d->profile->exactProductionPublicKeyBytes()) {
+        return Utils::ResultError(
+            Tr::tr("Activation proof does not match the provisioned production key."));
+    }
+
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> compileRequest
+        = Core::encodeRuntimePackageCompilerCompileRequest(proof.compileRequest);
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> finalizeRequest
+        = Core::encodeRuntimePackageCompilerFinalizeRequest(proof.finalizeRequest);
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> verifyRequest
+        = Core::encodeRuntimePackageCompilerVerifyRequest(proof.verifyRequest);
+    if (!compileRequest || !finalizeRequest || !verifyRequest) {
+        return Utils::ResultError(
+            Tr::tr("Activation proof requests cannot be encoded canonically."));
+    }
+    return d->store.validateActivationProofEvidence(
+        proof, *compileRequest, *finalizeRequest, *verifyRequest, d->limits.maximumArtifactBytes);
 }
 
 void ProvisionedRuntimePackageCompilerProvider::shutdown()

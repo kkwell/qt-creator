@@ -47,6 +47,8 @@ public:
         const Data::RuntimePackageCompilerQueryRequest &request) final;
     Utils::Result<Core::RuntimePackageCompilerJob *> verify(
         const Data::RuntimePackageCompilerVerifyRequest &request) final;
+    Utils::Result<> validateActivationProof(
+        const Data::RuntimePackageCompilerActivationProof &proof) const final;
 
     void shutdown();
 

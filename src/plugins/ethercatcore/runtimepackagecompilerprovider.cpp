@@ -148,4 +148,11 @@ RuntimePackageCompilerProvider::RuntimePackageCompilerProvider(
     : Provider(ProviderKind::RuntimePackageCompiler, id, displayName, parent)
 {}
 
+Utils::Result<> RuntimePackageCompilerProvider::validateActivationProof(
+    const Data::RuntimePackageCompilerActivationProof &) const
+{
+    return Utils::ResultError(
+        QStringLiteral("This compiler provider cannot validate activation proof provenance."));
+}
+
 } // namespace EtherCAT::Core

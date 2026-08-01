@@ -21,6 +21,9 @@ private slots:
     void testShutdownReapsCompilerBeforeUnlock();
     void testFinalizeQueryVerifyAndRestart();
     void testOperationAndConfigurationConflicts();
+    void testActivationProofProvenanceAndRestart();
+    void testActivationProofRejectsMutationsWithoutProcess();
+    void testActivationProofRejectsUnsafeEvidence();
 };
 
 } // namespace EtherCAT::ProjectCompiler::Internal

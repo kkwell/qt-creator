@@ -47,6 +47,7 @@ struct CompilerOperationPaths
     Utils::FilePath artifactRoot;
     Utils::FilePath outputDir;
     Utils::FilePath compileRequest;
+    Utils::FilePath finalizeRequest;
     Utils::FilePath verifyRequest;
     Utils::FilePath signRequest;
     Utils::FilePath signResponse;
@@ -81,10 +82,12 @@ public:
         const Data::RuntimePackageCompilerCanonicalJson &canonicalRequest);
     Utils::Result<CompilerOperationPaths> reserveVerify(
         const CompilerOperationLease &lease,
-        const Data::RuntimePackageCompilerVerifyRequest &request);
-    Utils::Result<CompilerOperationPaths> validateFinalize(
+        const Data::RuntimePackageCompilerVerifyRequest &request,
+        const Data::RuntimePackageCompilerCanonicalJson &canonicalRequest);
+    Utils::Result<CompilerOperationPaths> reserveFinalize(
         const CompilerOperationLease &lease,
-        const Data::RuntimePackageCompilerFinalizeRequest &request) const;
+        const Data::RuntimePackageCompilerFinalizeRequest &request,
+        const Data::RuntimePackageCompilerCanonicalJson &canonicalRequest);
     Utils::Result<CompilerOperationPaths> validateQuery(
         const CompilerOperationLease &lease,
         const Data::RuntimePackageCompilerQueryRequest &request) const;
@@ -122,12 +125,20 @@ public:
         const Utils::FilePath &file,
         qsizetype maximumBytes) const;
 
+    Utils::Result<> validateActivationProofEvidence(
+        const Data::RuntimePackageCompilerActivationProof &proof,
+        const Data::RuntimePackageCompilerCanonicalJson &canonicalCompileRequest,
+        const Data::RuntimePackageCompilerCanonicalJson &canonicalFinalizeRequest,
+        const Data::RuntimePackageCompilerCanonicalJson &canonicalVerifyRequest,
+        qsizetype maximumArtifactBytes) const;
+
     Utils::FilePath compilerRoot() const;
     Utils::FilePath compilerLedger() const;
     Utils::FilePath operationRoot(const Data::RuntimePackageCompilerOperationId &operationId) const;
     Utils::FilePath artifactRoot(const Data::RuntimePackageCompilerOperationId &operationId) const;
     Utils::FilePath outputDir(const Data::RuntimePackageCompilerOperationId &operationId) const;
     Utils::FilePath compileRequest(const Data::RuntimePackageCompilerOperationId &operationId) const;
+    Utils::FilePath finalizeRequest(const Data::RuntimePackageCompilerOperationId &operationId) const;
     Utils::FilePath verifyRequest(const Data::RuntimePackageCompilerOperationId &operationId) const;
     Utils::FilePath signRequest(const Data::RuntimePackageCompilerOperationId &operationId) const;
     Utils::FilePath signResponse(const Data::RuntimePackageCompilerOperationId &operationId) const;
@@ -140,6 +151,7 @@ public:
 
 private:
     bool ownsLease(const CompilerOperationLease &lease) const;
+    Utils::Result<CompilerOperationLease> acquireReadLease() const;
     CompilerOperationPaths paths(const Data::RuntimePackageCompilerOperationId &operationId) const;
     Utils::Result<> validateStore() const;
     Utils::Result<> materializeCompileArtifacts(

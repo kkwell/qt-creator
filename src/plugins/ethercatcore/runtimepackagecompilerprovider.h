@@ -99,6 +99,14 @@ public:
         const Data::RuntimePackageCompilerQueryRequest &request) = 0;
     virtual Utils::Result<RuntimePackageCompilerJob *> verify(
         const Data::RuntimePackageCompilerVerifyRequest &request) = 0;
+
+    // This is a read-only provider-provenance gate. It binds a proof to the
+    // provider's immutable evidence and trusted external verifier result; it
+    // is not an independent in-process cryptographic ECPKG verification. The
+    // base implementation rejects because only the store owner can establish
+    // provenance.
+    virtual Utils::Result<> validateActivationProof(
+        const Data::RuntimePackageCompilerActivationProof &proof) const;
 };
 
 } // namespace EtherCAT::Core

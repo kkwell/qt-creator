@@ -24,6 +24,13 @@ struct ETHERCATCORE_EXPORT RuntimePackageCompilerProcessOutput
 ETHERCATCORE_EXPORT Utils::Result<Data::RuntimePackageCompilerCanonicalJson>
 encodeRuntimePackageCompilerCompileRequest(const Data::RuntimePackageCompilerCompileRequest &request);
 
+ETHERCATCORE_EXPORT Utils::Result<Data::RuntimePackageCompilerCanonicalJson>
+encodeRuntimePackageCompilerFinalizeRequest(
+    const Data::RuntimePackageCompilerFinalizeRequest &request);
+
+ETHERCATCORE_EXPORT Utils::Result<Data::RuntimePackageCompilerCanonicalJson>
+encodeRuntimePackageCompilerVerifyRequest(const Data::RuntimePackageCompilerVerifyRequest &request);
+
 ETHERCATCORE_EXPORT Utils::Result<Data::RuntimePackageCompilerCompileResult>
 decodeRuntimePackageCompilerCompileResult(
     const Data::RuntimePackageCompilerCompileRequest &request,
