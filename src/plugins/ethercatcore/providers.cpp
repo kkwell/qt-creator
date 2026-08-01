@@ -77,6 +77,11 @@ DeviceAdapterProvider::DeviceAdapterProvider(
     : Provider(ProviderKind::DeviceAdapter, id, displayName, parent)
 {}
 
+QList<ProviderStartupDiagnostic> DeviceAdapterProvider::startupDiagnostics() const
+{
+    return {};
+}
+
 DeviceImportJob::DeviceImportJob(QObject *parent)
     : QObject(parent)
 {}

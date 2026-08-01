@@ -10044,6 +10044,7 @@ void EtherCATCoreTests::testDeviceAdapterProviderContract()
 
     QCOMPARE(int(ProviderKind::DeviceAdapter), 6);
     QCOMPARE(provider.kind(), ProviderKind::DeviceAdapter);
+    QVERIFY(provider.startupDiagnostics().isEmpty());
     QCOMPARE(provider.adapterManifests(), QList<Data::DeviceAdapterManifest>({qualified, candidate}));
     const std::optional<Data::DeviceAdapterManifest> exact
         = provider.adapterManifest(qualified.id, qualified.version);

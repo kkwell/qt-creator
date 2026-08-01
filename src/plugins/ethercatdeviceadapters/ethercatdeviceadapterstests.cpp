@@ -886,6 +886,19 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     AdapterPackageRepository unsignedRepository(packageRoot, authorizationRootPath, trustRootPath);
     QVERIFY(unsignedRepository.isAvailable());
     QCOMPARE(unsignedRepository.authorizationDiagnostics(), QStringList{});
+    QCOMPARE(unsignedRepository.authorizationStatus().state, AdapterAuthorizationState::NotInstalled);
+    QCOMPARE(unsignedRepository.authorizationStatus().authorizedAdapterCount, 0);
+    QCOMPARE(unsignedRepository.authorizationStatus().validationFailureCount, 0);
+    QVERIFY(adapterAuthorizationStartupMessage(unsignedRepository.authorizationStatus())
+                .contains("not installed"));
+    const QList<Core::ProviderStartupDiagnostic> unsignedStartupDiagnostics
+        = unsignedRepository.startupDiagnostics();
+    QCOMPARE(unsignedStartupDiagnostics.size(), 1);
+    QCOMPARE(
+        unsignedStartupDiagnostics.constFirst().code,
+        Utils::Id("EtherCAT.AdapterAuthorization.NotInstalled"));
+    QCOMPARE(
+        unsignedStartupDiagnostics.constFirst().severity, Core::ProviderDiagnosticSeverity::Warning);
     QCOMPARE(unsignedRepository.loadedPackageCount(), 2);
     const auto unsignedXb6
         = unsignedRepository
@@ -969,12 +982,16 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
         Data::DeviceAdapterManifest xb6;
         Data::DeviceAdapterManifest sv;
         QStringList diagnostics;
+        AdapterAuthorizationStatus authorizationStatus;
+        QList<Core::ProviderStartupDiagnostic> startupDiagnostics;
     };
     const auto evaluate = [&] {
         AdapterPackageRepository repository(packageRoot, authorizationRootPath, trustRootPath);
         Evaluation result;
         result.available = repository.isAvailable();
         result.diagnostics = repository.authorizationDiagnostics();
+        result.authorizationStatus = repository.authorizationStatus();
+        result.startupDiagnostics = repository.startupDiagnostics();
         result.xb6 = *repository.adapterManifest(unsignedXb6->id, unsignedXb6->version);
         result.sv = *repository.adapterManifest(unsignedSv->id, unsignedSv->version);
         return result;
@@ -986,6 +1003,10 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     QVERIFY2(result.diagnostics.isEmpty(), qPrintable(result.diagnostics.join('\n')));
     QVERIFY(result.xb6.signatureVerified);
     QVERIFY(result.xb6.realHardwareAllowed);
+    QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::Authorized);
+    QCOMPARE(result.authorizationStatus.authorizedAdapterCount, 1);
+    QCOMPARE(result.authorizationStatus.validationFailureCount, 0);
+    QVERIFY(result.startupDiagnostics.isEmpty());
     QCOMPARE(result.xb6.contentSha256, immutableContentSha256);
     QVERIFY(!result.sv.signatureVerified);
     QVERIFY(!result.sv.realHardwareAllowed);
@@ -999,6 +1020,32 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     QVERIFY(result.available);
     QVERIFY(!result.xb6.realHardwareAllowed);
     QVERIFY(result.diagnostics.join('\n').contains("authorization signature is invalid"));
+    QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::ValidationFailed);
+    QCOMPARE(result.authorizationStatus.firstFailure, AdapterAuthorizationFailure::InvalidSignature);
+    QCOMPARE(result.authorizationStatus.authorizedAdapterCount, 0);
+    QCOMPARE(result.authorizationStatus.validationFailureCount, 1);
+    const QString invalidSignatureMessage = adapterAuthorizationStartupMessage(
+        result.authorizationStatus);
+    QVERIFY(invalidSignatureMessage.contains("signature check failed"));
+    QVERIFY(invalidSignatureMessage.contains("1 issues"));
+    QVERIFY(!invalidSignatureMessage.contains(temporaryDirectory.path()));
+    QVERIFY(!invalidSignatureMessage.contains("xb6.authorization.json"));
+    QCOMPARE(result.startupDiagnostics.size(), 1);
+    QCOMPARE(
+        result.startupDiagnostics.constFirst().code,
+        Utils::Id("EtherCAT.AdapterAuthorization.ValidationFailed"));
+    QCOMPARE(result.startupDiagnostics.constFirst().severity, Core::ProviderDiagnosticSeverity::Error);
+    QCOMPARE(result.startupDiagnostics.constFirst().message, invalidSignatureMessage);
+
+    install(policy(1), authorization(1));
+    const QString invalidExtraAuthorizationPath
+        = authorizationRoot + "/authorizations/invalid-extra.authorization.json";
+    QVERIFY(writeBytes(invalidExtraAuthorizationPath, QByteArray("not-json\n")));
+    result = evaluate();
+    QVERIFY(!result.xb6.signatureVerified);
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::ValidationFailed);
+    QFile::remove(invalidExtraAuthorizationPath);
 
     install(policy(1), authorization(1), policyDomain);
     result = evaluate();
@@ -1063,6 +1110,15 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     QVERIFY2(result.diagnostics.isEmpty(), qPrintable(result.diagnostics.join('\n')));
     QVERIFY(!result.xb6.signatureVerified);
     QVERIFY(!result.xb6.realHardwareAllowed);
+    QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::Denied);
+    QVERIFY(adapterAuthorizationStartupMessage(result.authorizationStatus)
+                .contains("installed adapters are not authorized"));
+    QCOMPARE(result.startupDiagnostics.size(), 1);
+    QCOMPARE(
+        result.startupDiagnostics.constFirst().code,
+        Utils::Id("EtherCAT.AdapterAuthorization.Denied"));
+    QCOMPARE(
+        result.startupDiagnostics.constFirst().severity, Core::ProviderDiagnosticSeverity::Warning);
 
     QJsonObject badKey = authorization(1);
     badKey.insert("signerKeyId", QString::fromLatin1(rootKey.keyId.toHex()));
@@ -1088,6 +1144,7 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     result = evaluate();
     QVERIFY(!result.xb6.realHardwareAllowed);
     QVERIFY(result.diagnostics.join('\n').contains("symbolic-link authorizations"));
+    QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::ValidationFailed);
     QVERIFY(QFile::remove(authorizationPath));
 
     install(policy(1), authorization(1));
@@ -1098,6 +1155,7 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     result = evaluate();
     QVERIFY(!result.xb6.realHardwareAllowed);
     QVERIFY(result.diagnostics.join('\n').contains("non-symlink"));
+    QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::ValidationFailed);
     QVERIFY(QFile::remove(authorizationSignaturePath));
 
     install(policy(1), authorization(1));
@@ -1121,6 +1179,22 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     QVERIFY(!rollbackRepository.adapterManifest(unsignedXb6->id, unsignedXb6->version)
                  ->realHardwareAllowed);
     QVERIFY(rollbackRepository.authorizationDiagnostics().join('\n').contains("rollback"));
+}
+
+void EtherCATDeviceAdaptersTests::testAuthorizationStartupMessage()
+{
+    AdapterAuthorizationStatus partialFailure;
+    partialFailure.state = AdapterAuthorizationState::ValidationFailed;
+    partialFailure.firstFailure = AdapterAuthorizationFailure::BindingMismatch;
+    partialFailure.authorizedAdapterCount = 1;
+    partialFailure.validationFailureCount = 3;
+
+    const QString message = adapterAuthorizationStartupMessage(partialFailure);
+    QVERIFY(message.contains("does not match the installed adapter"));
+    QVERIFY(message.contains("3 issues"));
+    QVERIFY(message.startsWith("Manual control unavailable"));
+    QVERIFY(!message.contains('/'));
+    QVERIFY(!message.contains('\\'));
 }
 
 void EtherCATDeviceAdaptersTests::testV2StrictParserAndCanonicalDigest()

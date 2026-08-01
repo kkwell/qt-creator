@@ -8,6 +8,7 @@
 
 #include <utils/id.h>
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDirIterator>
 #include <QJsonArray>
@@ -41,6 +42,155 @@ struct Package
     DeviceAdapterManifest manifest;
     Utils::FilePath sourcePath;
 };
+
+struct AuthorizationMaterialCounts
+{
+    int rootKeys = 0;
+    int policies = 0;
+    int policySignatures = 0;
+    int authorizations = 0;
+    int authorizationSignatures = 0;
+
+    bool hasMaterial() const
+    {
+        return rootKeys != 0 || policies != 0 || policySignatures != 0 || authorizations != 0
+               || authorizationSignatures != 0;
+    }
+
+    bool isComplete() const
+    {
+        return rootKeys != 0 && policies != 0 && policies == policySignatures && authorizations != 0
+               && authorizations == authorizationSignatures;
+    }
+};
+
+static int matchingAuthorizationFiles(const Utils::FilePath &root, const QStringList &nameFilters)
+{
+    if (root.isEmpty() || !root.exists() || !root.isDir())
+        return 0;
+
+    int count = 0;
+    QDirIterator iterator(
+        root.toFSPathString(),
+        nameFilters,
+        QDir::Files | QDir::NoSymLinks,
+        QDirIterator::Subdirectories);
+    while (iterator.hasNext()) {
+        iterator.next();
+        ++count;
+    }
+    return count;
+}
+
+static AuthorizationMaterialCounts authorizationMaterialCounts(
+    const DeviceAdapterAuthorizationRoots &roots)
+{
+    AuthorizationMaterialCounts counts;
+    counts.rootKeys = matchingAuthorizationFiles(roots.trustRoot, {"*.pub"});
+    counts.policies = matchingAuthorizationFiles(roots.authorizationRoot, {"*.policy.json"});
+    counts.policySignatures = matchingAuthorizationFiles(roots.authorizationRoot, {"*.policy.sig"});
+    counts.authorizations
+        = matchingAuthorizationFiles(roots.authorizationRoot, {"*.authorization.json"});
+    counts.authorizationSignatures
+        = matchingAuthorizationFiles(roots.authorizationRoot, {"*.authorization.sig"});
+    return counts;
+}
+
+static AdapterAuthorizationFailure authorizationFailureCategory(const QString &diagnostic)
+{
+    const auto contains = [&diagnostic](const char *needle) {
+        return diagnostic.contains(QString::fromLatin1(needle), Qt::CaseInsensitive);
+    };
+    if (contains("signature"))
+        return AdapterAuthorizationFailure::InvalidSignature;
+    if (contains("trust root") || contains("trust key") || contains("rootKeyId"))
+        return AdapterAuthorizationFailure::InvalidTrustRoot;
+    if (contains("revoked"))
+        return AdapterAuthorizationFailure::Revoked;
+    if (contains("rollback") || contains("changed identity") || contains("duplicate revision")
+        || contains("duplicate or conflicting")) {
+        return AdapterAuthorizationFailure::PolicyConflict;
+    }
+    if (contains("does not match") || contains("binding"))
+        return AdapterAuthorizationFailure::BindingMismatch;
+    if (contains("outside policy") || contains("exceeds signer scope")
+        || contains("policy identity") || contains("signer")) {
+        return AdapterAuthorizationFailure::InvalidSignerScope;
+    }
+    if (contains("canonical") || contains("json") || contains("field set")
+        || contains("unsupported") || contains("must be") || contains("array")) {
+        return AdapterAuthorizationFailure::InvalidDocument;
+    }
+    if (contains("file") || contains("symbolic-link") || contains("cannot open")
+        || contains("missing") || contains("changed while")) {
+        return AdapterAuthorizationFailure::InvalidFile;
+    }
+    return AdapterAuthorizationFailure::Unknown;
+}
+
+static QString authorizationFailureName(AdapterAuthorizationFailure failure)
+{
+    const auto translate = [](const char *text) {
+        return QCoreApplication::translate("EtherCATDeviceAdapters", text);
+    };
+    switch (failure) {
+    case AdapterAuthorizationFailure::None:
+        return {};
+    case AdapterAuthorizationFailure::IncompleteBundle:
+        return translate("the authorization bundle is incomplete");
+    case AdapterAuthorizationFailure::InvalidSignature:
+        return translate("a signature check failed");
+    case AdapterAuthorizationFailure::InvalidTrustRoot:
+        return translate("the authorization trust root is invalid");
+    case AdapterAuthorizationFailure::InvalidDocument:
+        return translate("an authorization document is invalid");
+    case AdapterAuthorizationFailure::Revoked:
+        return translate("an authorization or signer is revoked");
+    case AdapterAuthorizationFailure::PolicyConflict:
+        return translate("the authorization policy conflicts with an accepted revision");
+    case AdapterAuthorizationFailure::BindingMismatch:
+        return translate("an authorization does not match the installed adapter");
+    case AdapterAuthorizationFailure::InvalidSignerScope:
+        return translate("the authorization policy or signer scope is invalid");
+    case AdapterAuthorizationFailure::InvalidFile:
+        return translate("an authorization file is missing or invalid");
+    case AdapterAuthorizationFailure::Unknown:
+        return translate("an authorization could not be verified");
+    }
+    return translate("an authorization could not be verified");
+}
+
+static AdapterAuthorizationStatus makeAuthorizationStatus(
+    const DeviceAdapterAuthorizationRoots &roots,
+    const QList<Package> &packages,
+    const QStringList &diagnostics)
+{
+    AdapterAuthorizationStatus status;
+    status.authorizedAdapterCount = int(
+        std::count_if(packages.cbegin(), packages.cend(), [](const Package &package) {
+            return package.manifest.signatureVerified && package.manifest.realHardwareAllowed;
+        }));
+
+    const AuthorizationMaterialCounts counts = authorizationMaterialCounts(roots);
+    if (diagnostics.isEmpty() && !counts.hasMaterial())
+        return status;
+
+    if (!diagnostics.isEmpty()) {
+        status.state = AdapterAuthorizationState::ValidationFailed;
+        status.validationFailureCount = diagnostics.size();
+        status.firstFailure = authorizationFailureCategory(diagnostics.constFirst());
+        return status;
+    }
+    if (!counts.isComplete()) {
+        status.state = AdapterAuthorizationState::ValidationFailed;
+        status.validationFailureCount = 1;
+        status.firstFailure = AdapterAuthorizationFailure::IncompleteBundle;
+        return status;
+    }
+    status.state = status.authorizedAdapterCount == 0 ? AdapterAuthorizationState::Denied
+                                                      : AdapterAuthorizationState::Authorized;
+    return status;
+}
 
 static bool fail(QString *error, const QString &message)
 {
@@ -3646,6 +3796,31 @@ static DeviceAdapterResolutionResult resolvePackage(
 
 } // namespace
 
+QString adapterAuthorizationStartupMessage(const AdapterAuthorizationStatus &status)
+{
+    const auto translate = [](const char *text) {
+        return QCoreApplication::translate("EtherCATDeviceAdapters", text);
+    };
+    switch (status.state) {
+    case AdapterAuthorizationState::NotInstalled:
+        return translate(
+            "Manual control unavailable: production adapter authorization is not installed.");
+    case AdapterAuthorizationState::Authorized:
+        return {};
+    case AdapterAuthorizationState::Denied:
+        return translate("Manual control unavailable: installed adapters are not authorized.");
+    case AdapterAuthorizationState::ValidationFailed: {
+        const QString reason = authorizationFailureName(status.firstFailure);
+        const int issueCount = std::max(status.validationFailureCount, 1);
+        return translate(
+                   "Manual control unavailable: adapter authorization failed (%1; %2 issues).")
+            .arg(reason)
+            .arg(issueCount);
+    }
+    }
+    return {};
+}
+
 class AdapterPackageRepository::Private
 {
 public:
@@ -3662,6 +3837,7 @@ public:
     QList<Package> packages;
     QStringList loadErrors;
     QStringList authorizationDiagnostics;
+    AdapterAuthorizationStatus authorizationStatus;
     QHash<QString, AcceptedDeviceAdapterPolicy> acceptedPolicies;
 };
 
@@ -3789,6 +3965,29 @@ DeviceAdapterResolutionResult AdapterPackageRepository::resolveDevice(
     return successes.constFirst().resolution;
 }
 
+QList<Core::ProviderStartupDiagnostic> AdapterPackageRepository::startupDiagnostics() const
+{
+    Core::ProviderStartupDiagnostic diagnostic;
+    diagnostic.message = adapterAuthorizationStartupMessage(d->authorizationStatus);
+    switch (d->authorizationStatus.state) {
+    case AdapterAuthorizationState::NotInstalled:
+        diagnostic.code = Utils::Id("EtherCAT.AdapterAuthorization.NotInstalled");
+        diagnostic.severity = Core::ProviderDiagnosticSeverity::Warning;
+        break;
+    case AdapterAuthorizationState::Authorized:
+        return {};
+    case AdapterAuthorizationState::Denied:
+        diagnostic.code = Utils::Id("EtherCAT.AdapterAuthorization.Denied");
+        diagnostic.severity = Core::ProviderDiagnosticSeverity::Warning;
+        break;
+    case AdapterAuthorizationState::ValidationFailed:
+        diagnostic.code = Utils::Id("EtherCAT.AdapterAuthorization.ValidationFailed");
+        diagnostic.severity = Core::ProviderDiagnosticSeverity::Error;
+        break;
+    }
+    return diagnostic.isValid() ? QList{diagnostic} : QList<Core::ProviderStartupDiagnostic>{};
+}
+
 Utils::FilePath AdapterPackageRepository::packageRoot() const
 {
     return d->packageRoot;
@@ -3802,6 +4001,11 @@ QStringList AdapterPackageRepository::loadErrors() const
 QStringList AdapterPackageRepository::authorizationDiagnostics() const
 {
     return d->authorizationDiagnostics;
+}
+
+AdapterAuthorizationStatus AdapterPackageRepository::authorizationStatus() const
+{
+    return d->authorizationStatus;
 }
 
 int AdapterPackageRepository::loadedPackageCount() const
@@ -3869,9 +4073,18 @@ void AdapterPackageRepository::reload()
             manifests.append(package.manifest);
         applyDeviceAdapterAuthorizations(
             d->authorizationRoots, &manifests, &d->acceptedPolicies, &d->authorizationDiagnostics);
+        if (!d->authorizationDiagnostics.isEmpty()) {
+            for (DeviceAdapterManifest &manifest : manifests) {
+                manifest.signatureVerified = false;
+                manifest.realHardwareAllowed = false;
+            }
+        }
         for (qsizetype index = 0; index < d->packages.size(); ++index)
             d->packages[index].manifest = manifests.at(index);
     }
+
+    d->authorizationStatus
+        = makeAuthorizationStatus(d->authorizationRoots, d->packages, d->authorizationDiagnostics);
 
     setAvailable(d->loadErrors.isEmpty() && !d->packages.isEmpty());
     if (oldManifests != adapterManifests())

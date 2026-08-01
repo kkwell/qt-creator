@@ -57,6 +57,7 @@ private slots:
     void testConfiguredSlaveStateIcon();
     void testBundledEsiOnlineTopologyPresentation();
     void testNavigationHeaderResizePersistence();
+    void testProviderStartupDiagnosticsPresentation();
     void testProviderStateTreeAndNavigation();
     void testProjectScopedLocateNavigation();
     void testNavigationSelectionAndFiltering();

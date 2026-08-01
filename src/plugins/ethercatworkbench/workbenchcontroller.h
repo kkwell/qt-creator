@@ -19,6 +19,7 @@
 
 namespace EtherCAT::Core {
 class ControllerConnectionProvider;
+class Provider;
 class ProviderRegistry;
 class SelectionService;
 } // namespace EtherCAT::Core
@@ -84,6 +85,17 @@ enum class ControllerOutputLevel {
     Warning,
     Error,
 };
+
+struct ProviderStartupOutput
+{
+    QString message;
+    ControllerOutputLevel level = ControllerOutputLevel::Information;
+    bool reveal = false;
+
+    friend bool operator==(const ProviderStartupOutput &, const ProviderStartupOutput &) = default;
+};
+
+QList<ProviderStartupOutput> providerStartupOutput(Core::Provider *provider);
 
 class WorkbenchController final : public QObject
 {

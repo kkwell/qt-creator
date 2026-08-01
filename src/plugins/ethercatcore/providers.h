@@ -40,6 +40,20 @@ enum class ProviderKind {
     RuntimePackageCompiler = 7,
 };
 enum class DeviceImportState { Pending, Running, Canceling, Finished };
+enum class ProviderDiagnosticSeverity { Information, Warning, Error };
+
+struct ETHERCATCORE_EXPORT ProviderStartupDiagnostic
+{
+    Utils::Id code;
+    QString message;
+    ProviderDiagnosticSeverity severity = ProviderDiagnosticSeverity::Information;
+
+    bool isValid() const { return code.isValid() && !message.trimmed().isEmpty(); }
+
+    friend bool operator==(const ProviderStartupDiagnostic &, const ProviderStartupDiagnostic &)
+        = default;
+};
+
 enum class WorkbenchNodeKind {
     None = 0,
     Project = 1,
@@ -214,6 +228,7 @@ public:
         const Data::DeviceAdapterId &adapterId, const QString &version) const = 0;
     virtual Data::DeviceAdapterResolutionResult resolveDevice(
         const Data::DeviceAdapterResolutionRequest &request) const = 0;
+    virtual QList<ProviderStartupDiagnostic> startupDiagnostics() const;
 
 signals:
     void adapterManifestsChanged();

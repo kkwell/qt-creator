@@ -24,6 +24,7 @@
 
 #include <debugger/debuggerconstants.h>
 
+#include <ethercatcore/providerregistry.h>
 #include <ethercatcore/providers.h>
 #include <ethercatcore/runtimepackagecompilerpreparationcoordinator.h>
 #include <ethercatcore/selectionservice.h>
@@ -45,6 +46,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPointer>
+#include <QSet>
 #include <QStringList>
 #include <QTimer>
 
@@ -147,6 +149,7 @@ private:
     void triggerQuickControllerAction(ControllerQuickControlAction action);
     void scheduleProjectPresentation();
     void activateProjectPresentation();
+    void postProviderStartupDiagnostics(Core::Provider *provider);
     void shutdown();
 
     std::unique_ptr<WorkbenchController> m_controller;
@@ -162,6 +165,7 @@ private:
     bool m_controllerControlContextActive = false;
     bool m_projectPresentationPending = false;
     bool m_projectPresentationScheduled = false;
+    QSet<Core::Provider *> m_reportedStartupDiagnosticProviders;
     bool m_providerRegistered = false;
     bool m_automationServiceRegistered = false;
     bool m_shuttingDown = false;
@@ -200,6 +204,22 @@ void EtherCATWorkbenchPlugin::initialize()
                 channelId, Tr::tr("Output"), message + QLatin1Char('\n'), format);
             ProjectExplorer::ProjectExplorerPlugin::showApplicationOutput(channelId);
         });
+    if (Core::ProviderRegistry *registry = m_controller->providerRegistry()) {
+        connect(
+            registry,
+            &Core::ProviderRegistry::providerAdded,
+            this,
+            &EtherCATWorkbenchPlugin::postProviderStartupDiagnostics);
+        connect(
+            registry,
+            &Core::ProviderRegistry::providerAboutToBeRemoved,
+            this,
+            [this](Core::Provider *provider) {
+                m_reportedStartupDiagnosticProviders.remove(provider);
+            });
+        for (Core::Provider *provider : registry->providers())
+            postProviderStartupDiagnostics(provider);
+    }
     m_builtinPages = std::make_unique<BuiltinPropertyPageProvider>(m_controller.get());
     ExtensionSystem::PluginManager::addObject(m_builtinPages.get());
     m_providerRegistered = true;
@@ -226,6 +246,32 @@ ExtensionSystem::IPlugin::ShutdownFlag EtherCATWorkbenchPlugin::aboutToShutdown(
 {
     shutdown();
     return SynchronousShutdown;
+}
+
+void EtherCATWorkbenchPlugin::postProviderStartupDiagnostics(Core::Provider *provider)
+{
+    if (!provider || m_reportedStartupDiagnosticProviders.contains(provider))
+        return;
+
+    const QList<ProviderStartupOutput> outputs = providerStartupOutput(provider);
+    if (outputs.isEmpty())
+        return;
+    m_reportedStartupDiagnosticProviders.insert(provider);
+    Core::Provider *const providerAddress = provider;
+    connect(provider, &QObject::destroyed, this, [this, providerAddress] {
+        m_reportedStartupDiagnosticProviders.remove(providerAddress);
+    });
+
+    const Utils::Id channelId(Constants::CONTROLLER_OUTPUT_CHANNEL_ID);
+    for (const ProviderStartupOutput &output : outputs) {
+        const Utils::OutputFormat format = output.level == ControllerOutputLevel::Error
+                                               ? Utils::ErrorMessageFormat
+                                               : Utils::NormalMessageFormat;
+        ProjectExplorer::ProjectExplorerPlugin::postApplicationOutput(
+            channelId, Tr::tr("Output"), output.message + QLatin1Char('\n'), format);
+        if (output.reveal)
+            ProjectExplorer::ProjectExplorerPlugin::showApplicationOutput(channelId);
+    }
 }
 
 void EtherCATWorkbenchPlugin::setupQuickControllerActions()
@@ -1219,6 +1265,7 @@ void EtherCATWorkbenchPlugin::shutdown()
     if (m_shuttingDown)
         return;
     m_shuttingDown = true;
+    m_reportedStartupDiagnosticProviders.clear();
     updateControllerControlContext();
     if (m_statusWidget) {
         ::Core::StatusBarManager::destroyStatusBarWidget(m_statusWidget);

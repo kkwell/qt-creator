@@ -32,6 +32,36 @@
 
 namespace EtherCAT::Workbench::Internal {
 
+QList<ProviderStartupOutput> providerStartupOutput(Core::Provider *provider)
+{
+    auto adapterProvider = qobject_cast<Core::DeviceAdapterProvider *>(provider);
+    if (!adapterProvider)
+        return {};
+
+    QList<ProviderStartupOutput> result;
+    for (const Core::ProviderStartupDiagnostic &diagnostic : adapterProvider->startupDiagnostics()) {
+        if (!diagnostic.isValid())
+            continue;
+
+        ProviderStartupOutput output;
+        output.message = diagnostic.message.trimmed();
+        switch (diagnostic.severity) {
+        case Core::ProviderDiagnosticSeverity::Information:
+            output.level = ControllerOutputLevel::Information;
+            break;
+        case Core::ProviderDiagnosticSeverity::Warning:
+            output.level = ControllerOutputLevel::Warning;
+            break;
+        case Core::ProviderDiagnosticSeverity::Error:
+            output.level = ControllerOutputLevel::Error;
+            output.reveal = true;
+            break;
+        }
+        result.append(output);
+    }
+    return result;
+}
+
 struct ActiveMasterContext
 {
     Data::ProjectSnapshot project;

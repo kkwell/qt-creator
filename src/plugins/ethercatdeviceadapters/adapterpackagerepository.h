@@ -11,6 +11,37 @@
 
 namespace EtherCAT::DeviceAdapters::Internal {
 
+enum class AdapterAuthorizationState {
+    NotInstalled,
+    Authorized,
+    Denied,
+    ValidationFailed,
+};
+
+enum class AdapterAuthorizationFailure {
+    None,
+    IncompleteBundle,
+    InvalidSignature,
+    InvalidTrustRoot,
+    InvalidDocument,
+    Revoked,
+    PolicyConflict,
+    BindingMismatch,
+    InvalidSignerScope,
+    InvalidFile,
+    Unknown,
+};
+
+struct AdapterAuthorizationStatus
+{
+    AdapterAuthorizationState state = AdapterAuthorizationState::NotInstalled;
+    AdapterAuthorizationFailure firstFailure = AdapterAuthorizationFailure::None;
+    int authorizedAdapterCount = 0;
+    int validationFailureCount = 0;
+};
+
+QString adapterAuthorizationStartupMessage(const AdapterAuthorizationStatus &status);
+
 class AdapterPackageRepository final : public Core::DeviceAdapterProvider
 {
     Q_OBJECT
@@ -29,10 +60,12 @@ public:
         const Data::DeviceAdapterId &adapterId, const QString &version) const final;
     Data::DeviceAdapterResolutionResult resolveDevice(
         const Data::DeviceAdapterResolutionRequest &request) const final;
+    QList<Core::ProviderStartupDiagnostic> startupDiagnostics() const final;
 
     Utils::FilePath packageRoot() const;
     QStringList loadErrors() const;
     QStringList authorizationDiagnostics() const;
+    AdapterAuthorizationStatus authorizationStatus() const;
     int loadedPackageCount() const;
     void reload();
 

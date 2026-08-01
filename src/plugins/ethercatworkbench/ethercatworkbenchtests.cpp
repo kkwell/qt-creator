@@ -900,6 +900,14 @@ public:
         m_resolvedContentSha256Override = contentSha256;
     }
     void notifyManifestsChanged() { emit adapterManifestsChanged(); }
+    void setStartupDiagnostics(const QList<Core::ProviderStartupDiagnostic> &diagnostics)
+    {
+        m_startupDiagnostics = diagnostics;
+    }
+    QList<Core::ProviderStartupDiagnostic> startupDiagnostics() const final
+    {
+        return m_startupDiagnostics;
+    }
 
     mutable int resolveCalls = 0;
     mutable Data::DeviceAdapterResolutionRequest lastRequest;
@@ -907,6 +915,7 @@ public:
 private:
     Data::DeviceAdapterManifest m_manifest;
     Data::DeviceAdapterManifest m_newerManifest;
+    QList<Core::ProviderStartupDiagnostic> m_startupDiagnostics;
     std::optional<QByteArray> m_resolvedContentSha256Override;
 };
 
@@ -10128,6 +10137,37 @@ void EtherCATWorkbenchTests::testNavigationHeaderResizePersistence()
         WorkbenchNavigationWidget restored(&controller);
         QCOMPARE(restored.treeView()->header()->sectionSize(0), nodeColumnWidth);
     }
+}
+
+void EtherCATWorkbenchTests::testProviderStartupDiagnosticsPresentation()
+{
+    TestDeviceAdapterProvider provider;
+    QVERIFY(providerStartupOutput(nullptr).isEmpty());
+    QVERIFY(providerStartupOutput(&provider).isEmpty());
+
+    provider.setStartupDiagnostics(
+        {{Utils::Id("EtherCAT.AdapterAuthorization.NotInstalled"),
+          "  Manual control unavailable: production adapter authorization is not installed.  ",
+          Core::ProviderDiagnosticSeverity::Warning},
+         {Utils::Id("EtherCAT.AdapterAuthorization.ValidationFailed"),
+          "Manual control unavailable: adapter authorization failed (signature check failed; 2 "
+          "issues).",
+          Core::ProviderDiagnosticSeverity::Error},
+         {{}, "Ignored invalid startup diagnostic", Core::ProviderDiagnosticSeverity::Error}});
+
+    const QList<ProviderStartupOutput> outputs = providerStartupOutput(&provider);
+    QCOMPARE(outputs.size(), 2);
+    QCOMPARE(
+        outputs.at(0).message,
+        QString("Manual control unavailable: production adapter authorization is not installed."));
+    QCOMPARE(outputs.at(0).level, ControllerOutputLevel::Warning);
+    QVERIFY(!outputs.at(0).reveal);
+    QCOMPARE(
+        outputs.at(1).message,
+        QString("Manual control unavailable: adapter authorization failed (signature check "
+                "failed; 2 issues)."));
+    QCOMPARE(outputs.at(1).level, ControllerOutputLevel::Error);
+    QVERIFY(outputs.at(1).reveal);
 }
 
 void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
