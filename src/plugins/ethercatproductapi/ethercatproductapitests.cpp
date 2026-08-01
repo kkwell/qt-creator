@@ -3840,6 +3840,7 @@ void logSnapshotOnlyHeartbeat(const SnapshotOnlyHeartbeatEvidence &evidence)
             << "codeId=" << it->code << "source=" << int(it->source)
             << "severity=" << int(it->severity) << "mask="
             << QStringLiteral("0x%1").arg(it->faultMask, 16, 16, QLatin1Char('0'))
+            << "reason=" << it->detail
             << "detail="
             << QStringLiteral("%1/%2/%3")
                    .arg(qint32(it->detail0))
@@ -3847,6 +3848,19 @@ void logSnapshotOnlyHeartbeat(const SnapshotOnlyHeartbeatEvidence &evidence)
                    .arg(it->detail2)
             << "cycle=" << it->cycleCount;
         ++reportedAlarms;
+    }
+    if (relevantFaults && evidence.after.performance) {
+        const Data::ControllerPerformanceSummary &performance = *evidence.after.performance;
+        qInfo().noquote()
+            << "[Product API hardware] fault-performance"
+            << "maxSubmitLateNs=" << performance.maximumSubmitLatenessNs
+            << "cycleLateCount=" << performance.cycleLateCount
+            << "timeoutCount=" << performance.timeoutCount
+            << "rxDropCount=" << performance.receiveDropCount
+            << "rxOverflowCount=" << performance.receiveOverflowCount
+            << "txUnavailableCount=" << performance.transmitUnavailableCount
+            << "wkcBadCount=" << performance.badWorkingCounterCount
+            << "protocolErrorCount=" << performance.protocolErrorCount;
     }
 }
 
