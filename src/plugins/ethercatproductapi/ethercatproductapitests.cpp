@@ -1319,12 +1319,14 @@ public:
         m_nextOutputStatus = status;
     }
     void rejectNextOutputStateTyped(qint32 status = -17) { m_nextOutputStateStatus = status; }
-    void rejectNextOutputApply(quint16 stage, qint32 status, qint32 operationResult)
+    void rejectNextOutputApply(
+        quint16 stage, qint32 status, qint32 operationResult, quint64 detail = 0)
     {
         m_nextOutputFailure = stage == 2 ? OutputTransactionFailure::ApplyStage2
                                          : OutputTransactionFailure::ApplyStage3;
         m_nextOutputStatus = status;
         m_nextOutputOperationResult = operationResult;
+        m_nextOutputDetail = detail;
     }
     void holdNextOutputApplyResult()
     {
@@ -2336,12 +2338,13 @@ private:
                         stage,
                         m_serviceState,
                         m_nextOutputStatus,
-                        0,
+                        m_nextOutputDetail,
                         m_nextOutputOperationResult),
                     Protocol::Flag::Response | Protocol::Flag::Error);
                 m_nextOutputFailure = OutputTransactionFailure::None;
                 m_nextOutputStatus = -41;
                 m_nextOutputOperationResult = -10;
+                m_nextOutputDetail = 0;
                 return;
             }
             sendResponse(
@@ -3315,6 +3318,7 @@ private:
     OutputTransactionFailure m_nextOutputFailure = OutputTransactionFailure::None;
     qint32 m_nextOutputStatus = -41;
     qint32 m_nextOutputOperationResult = -10;
+    quint64 m_nextOutputDetail = 0;
     qint32 m_nextOutputStateStatus = 0;
     quint64 m_outputGeneration = 1;
     QByteArray m_outputOperationId;
@@ -13475,6 +13479,23 @@ void EtherCATProductApiTests::testOutputTransactionFailuresAndGuards()
         applyFinished.constLast().constFirst());
     QVERIFY(rejected.isValid());
     QCOMPARE(rejected.error->code, std::optional<qint32>(-40));
+
+    const quint64 cycleLateDetail = quint64(quint32(qint32(-10)));
+    controller.rejectNextOutputApply(3, -15, -2, cycleLateDetail);
+    QVERIFY(provider.applyRuntimeOutputTransaction(applyRequest));
+    QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 5, 1000);
+    rejected = qvariant_cast<Data::RuntimeOutputTransactionResult>(
+        applyFinished.constLast().constFirst());
+    QVERIFY(rejected.isValid());
+    QCOMPARE(rejected.outcome, Data::RuntimeOutputTransactionOutcome::Rejected);
+    QCOMPARE(rejected.error->code, std::optional<qint32>(-15));
+    QCOMPARE(rejected.error->operationResult, std::optional<qint32>(-2));
+    QCOMPARE(rejected.error->sourceDetail, std::optional<quint64>(cycleLateDetail));
+    QCOMPARE(
+        rejected.error->summary,
+        Tr::tr("The first cycle carrying the output missed its real-time deadline; the "
+               "controller entered the safe-output fault path."));
+    QVERIFY(rejected.error->detail.isEmpty());
 
     Data::RuntimeOutputTransactionRequest conflicting = applyRequest;
     conflicting.ttlCycles = 6;

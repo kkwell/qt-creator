@@ -187,6 +187,24 @@ QString statusName(qint32 status)
     return QStringLiteral("PRODUCT_API_STATUS_%1").arg(status);
 }
 
+QString outputCarryingCycleFailureSummary(
+    qint32 status, std::optional<qint32> operationResult, std::optional<quint64> sourceDetail)
+{
+    if (status != -15 || operationResult != -2 || !sourceDetail || (*sourceDetail >> 32))
+        return {};
+
+    const qint32 cycleResult = qint32(quint32(*sourceDetail));
+    if (cycleResult == -10) {
+        return Tr::tr("The first cycle carrying the output missed its real-time deadline; the "
+                      "controller entered the safe-output fault path.");
+    }
+    if (cycleResult == -2) {
+        return Tr::tr("The first cycle carrying the output timed out; the controller entered the "
+                      "safe-output fault path.");
+    }
+    return {};
+}
+
 QString timingModeName(quint32 mode)
 {
     if (mode == 1)
@@ -5496,11 +5514,15 @@ public:
         std::optional<quint64> detail,
         const QString &summary)
     {
+        const QString diagnosticSummary
+            = pending.kind == PendingKind::RuntimeOutputTransactionApply
+                  ? outputCarryingCycleFailureSummary(status, operationResult, detail)
+                  : QString();
         const auto error = runtimeOutputError(
             Data::ControllerErrorSource::Controller,
             pending.role,
             pending.operation,
-            summary,
+            diagnosticSummary.isEmpty() ? summary : diagnosticSummary,
             {},
             status,
             operationResult,
