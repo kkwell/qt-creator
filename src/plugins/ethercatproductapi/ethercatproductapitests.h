@@ -35,6 +35,9 @@ private slots:
     void testConnectionProfileEndpointReconfigurationGuards();
     void testConnectionProfileEndpointPersistence();
     void testThreeChannelInitialSnapshot();
+    void testSnapshotOnlyHeartbeatGate();
+    void testSnapshotOnlyHeartbeatGateFailures_data();
+    void testSnapshotOnlyHeartbeatGateFailures();
     void testLiveStatePolling();
     void testLeaseOwnershipRequiresAcquireOrResume();
     void testProtocolMinorDowngrade();

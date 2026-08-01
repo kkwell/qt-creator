@@ -1118,6 +1118,13 @@ public:
         OutputTransactions,
     };
 
+    enum class SnapshotStateBehavior {
+        Frozen,
+        Increment,
+        WrongBootOnSecondRead,
+        DisconnectOnSecondRead,
+    };
+
     explicit LoopbackController(Behavior behavior = Behavior::Normal)
         : m_behavior(behavior)
     {
@@ -1233,6 +1240,11 @@ public:
         m_roleFeatureBits.at(size_t(quint32(role) - 1)) = featureBits;
     }
     void setBootId(quint64 bootId) { m_bootId = bootId; }
+    void setSnapshotStateBehavior(SnapshotStateBehavior behavior)
+    {
+        m_snapshotStateBehavior = behavior;
+    }
+    void setControllerHeartbeat(quint64 heartbeat) { m_controllerHeartbeat = heartbeat; }
     void setRuntimeResourceCount(quint32 count) { m_runtimeResourceCount = count; }
     void includeSecondOutputInPolicyGroup()
     {
@@ -2407,6 +2419,16 @@ private:
             putU32(payload, 36, 0);
             break;
         default: {
+            ++m_stateResponseCount;
+            if (m_stateResponseCount > 1
+                && m_snapshotStateBehavior == SnapshotStateBehavior::DisconnectOnSecondRead) {
+                QTimer::singleShot(0, peer.socket, [socket = peer.socket] { socket->abort(); });
+                return;
+            }
+            if (m_stateResponseCount > 1
+                && m_snapshotStateBehavior == SnapshotStateBehavior::Increment) {
+                ++m_controllerHeartbeat;
+            }
             QByteArray statePayload = m_behavior == Behavior::ControlLifecycle
                                               || m_behavior == Behavior::FaultReset
                                               || m_behavior == Behavior::PackageDeployment
@@ -2422,11 +2444,25 @@ private:
                                                 m_behavior == Behavior::FaultReset
                                                     && m_faultResetSafeCyclicRuntime)
                                           : controllerStatePayload();
+            putU64(statePayload, 32, m_controllerHeartbeat);
             if (m_behavior == Behavior::FaultReset && m_serviceState == 6
                 && !m_faultResetSafeCyclicRuntime) {
                 putU32(statePayload, 4, 0x19); // READY | SAFE_OUTPUT | FAULT
             }
             putU64(statePayload, 48, m_bootId);
+            if (m_stateResponseCount > 1
+                && m_snapshotStateBehavior == SnapshotStateBehavior::WrongBootOnSecondRead) {
+                Protocol::Frame responseFrame = response(
+                    peer,
+                    Protocol::MessageType::ControllerState,
+                    request.header.requestId,
+                    statePayload);
+                responseFrame.header.bootId = m_bootId + 1;
+                const QByteArray wire = wireFor(responseFrame);
+                if (!wire.isEmpty())
+                    peer.socket->write(wire);
+                return;
+            }
             sendResponse(
                 peer,
                 Protocol::MessageType::ControllerState,
@@ -3250,6 +3286,9 @@ private:
     quint32 m_defaultLeaseDurationMs = 5000;
     quint64 m_helloLeaseOwnerSessionId = 0;
     quint64 m_bootId = TestBootId;
+    SnapshotStateBehavior m_snapshotStateBehavior = SnapshotStateBehavior::Frozen;
+    quint64 m_controllerHeartbeat = 101;
+    int m_stateResponseCount = 0;
     quint16 m_protocolMinor = Protocol::CurrentMinor;
     std::optional<quint32> m_featureBits;
     std::array<std::optional<quint32>, 3> m_roleFeatureBits;
@@ -3561,6 +3600,230 @@ QString hardwareSlotName(Data::ControllerSlot slot)
         return QStringLiteral("B");
     }
     return QStringLiteral("invalid");
+}
+
+struct SnapshotOnlyHeartbeatEvidence
+{
+    QString error;
+    Data::ControllerConnectionSnapshot before;
+    Data::ControllerConnectionSnapshot after;
+    quint32 controlFeatures = 0;
+    quint32 pushFeatures = 0;
+    quint32 bulkFeatures = 0;
+    qint64 intervalMs = 0;
+
+    bool isValid() const { return error.isEmpty(); }
+};
+
+constexpr quint32 SnapshotOnlyFeatureMask
+    = Protocol::OutputTransactionFeature | (Protocol::OutputTransactionFeature - 1U);
+
+constexpr std::array SnapshotOnlyMutationRequests{
+    Protocol::MessageType::AcquireControl,
+    Protocol::MessageType::ReleaseControl,
+    Protocol::MessageType::Start,
+    Protocol::MessageType::Pause,
+    Protocol::MessageType::Resume,
+    Protocol::MessageType::ControlledStop,
+    Protocol::MessageType::ResetFault,
+    Protocol::MessageType::Heartbeat,
+    Protocol::MessageType::EnterConfigurationMode,
+    Protocol::MessageType::StartFreeRun,
+    Protocol::MessageType::StartDc,
+    Protocol::MessageType::ApplyOutputTransaction,
+    Protocol::MessageType::BulkBegin,
+    Protocol::MessageType::BulkChunk,
+    Protocol::MessageType::BulkCommit,
+    Protocol::MessageType::BulkAbort,
+    Protocol::MessageType::DiscoverTopology,
+    Protocol::MessageType::ValidatePackage,
+    Protocol::MessageType::ActivatePackage,
+    Protocol::MessageType::RollbackPackage,
+    Protocol::MessageType::RestoreActivePackage,
+};
+
+SnapshotOnlyHeartbeatEvidence verifySnapshotOnlyHeartbeat(
+    ProductApiConnectionProvider &provider, int timeoutMs)
+{
+    SnapshotOnlyHeartbeatEvidence evidence;
+    evidence.before = provider.connectionSnapshot();
+    evidence.after = evidence.before;
+    evidence.controlFeatures = provider.sessionForTests()->controlFeatureBitsForTests();
+    evidence.pushFeatures = provider.sessionForTests()->pushFeatureBitsForTests();
+    evidence.bulkFeatures = provider.sessionForTests()->bulkFeatureBitsForTests();
+
+    const auto reject = [&evidence](const QString &error) {
+        evidence.error = error;
+        return evidence;
+    };
+    if (evidence.before.state != Data::ControllerConnectionState::Connected) {
+        return reject(QStringLiteral(
+            "The snapshot-only heartbeat gate requires a fully connected session."));
+    }
+    if (evidence.before.channels.size() != 3
+        || std::any_of(
+            evidence.before.channels.cbegin(),
+            evidence.before.channels.cend(),
+            [](const Data::ControllerChannelStatus &channel) {
+                return channel.state != Data::ControllerChannelState::Connected;
+            })) {
+        return reject(QStringLiteral(
+            "The snapshot-only heartbeat gate requires all three channels."));
+    }
+    if (evidence.before.protocolVersion.major != Protocol::CurrentMajor
+        || evidence.before.protocolVersion.minor != Protocol::CurrentMinor) {
+        return reject(QStringLiteral(
+                          "The snapshot-only heartbeat gate requires Product API %1.%2.")
+                          .arg(Protocol::CurrentMajor)
+                          .arg(Protocol::CurrentMinor));
+    }
+    if (evidence.controlFeatures != SnapshotOnlyFeatureMask
+        || evidence.pushFeatures != SnapshotOnlyFeatureMask
+        || evidence.bulkFeatures != SnapshotOnlyFeatureMask) {
+        return reject(QStringLiteral(
+            "The snapshot-only heartbeat gate requires the current three-channel feature set."));
+    }
+    if (!evidence.before.session || !evidence.before.session->sessionId
+        || !evidence.before.session->bootId) {
+        return reject(QStringLiteral(
+            "The snapshot-only heartbeat gate has no complete session identity."));
+    }
+    if (evidence.before.session->ownsControlLease) {
+        return reject(QStringLiteral(
+            "The snapshot-only heartbeat gate must not own the control lease."));
+    }
+    if (!evidence.before.controllerState
+        || !evidence.before.controllerState->controllerHeartbeat) {
+        return reject(QStringLiteral(
+            "The initial controller heartbeat is unavailable."));
+    }
+    if (evidence.before.controllerState->controllerBootId
+        != evidence.before.session->bootId) {
+        return reject(QStringLiteral(
+            "The initial controller-state BootId does not match the session."));
+    }
+
+    const quint64 sessionGeneration = evidence.before.sessionGeneration;
+    const quint64 sessionId = evidence.before.session->sessionId;
+    const quint64 bootId = evidence.before.session->bootId;
+    const quint64 heartbeat = evidence.before.controllerState->controllerHeartbeat;
+    QElapsedTimer timer;
+    timer.start();
+    bool completedRefresh = false;
+    while (timer.elapsed() < timeoutMs) {
+        const int waitMs = std::min(250, timeoutMs - int(timer.elapsed()));
+        if (waitMs > 0)
+            QTest::qWait(waitMs);
+        if (timer.elapsed() >= timeoutMs)
+            break;
+        if (provider.connectionSnapshot().state != Data::ControllerConnectionState::Connected)
+            break;
+        const Utils::Result<> refresh = provider.refreshController();
+        if (!refresh) {
+            return reject(
+                QStringLiteral("The read-only heartbeat refresh could not start: %1")
+                    .arg(refresh.error()));
+        }
+        const bool refreshCompleted = waitForHardwareCondition(
+            [&provider] {
+                const Data::ControllerConnectionState state = provider.connectionSnapshot().state;
+                return state == Data::ControllerConnectionState::Disconnected
+                       || state == Data::ControllerConnectionState::Failed
+                       || (!provider.sessionForTests()->refreshInProgressForTests()
+                           && provider.sessionForTests()->pendingRequestCountForTests() == 0);
+            },
+            std::max(1, std::min(timeoutMs, 1000)));
+        if (!refreshCompleted) {
+            return reject(QStringLiteral(
+                "The read-only heartbeat refresh did not finish within its bounded interval."));
+        }
+        completedRefresh = true;
+        evidence.after = provider.connectionSnapshot();
+        if (evidence.after.state != Data::ControllerConnectionState::Connected
+            || evidence.after.sessionGeneration != sessionGeneration || !evidence.after.session
+            || evidence.after.session->sessionId != sessionId
+            || evidence.after.session->bootId != bootId || !evidence.after.controllerState
+            || evidence.after.controllerState->controllerBootId != bootId
+            || evidence.after.controllerState->controllerHeartbeat > heartbeat) {
+            break;
+        }
+    }
+    evidence.intervalMs = timer.elapsed();
+    evidence.after = provider.connectionSnapshot();
+    if (!completedRefresh) {
+        return reject(QStringLiteral(
+            "The read-only heartbeat refresh did not finish within the bounded interval."));
+    }
+    if (evidence.after.state != Data::ControllerConnectionState::Connected) {
+        return reject(QStringLiteral(
+            "The controller disconnected during the read-only heartbeat refresh."));
+    }
+    if (evidence.after.sessionGeneration != sessionGeneration || !evidence.after.session
+        || evidence.after.session->sessionId != sessionId
+        || evidence.after.session->bootId != bootId) {
+        return reject(QStringLiteral(
+            "The session epoch changed during the read-only heartbeat refresh."));
+    }
+    if (evidence.after.session->ownsControlLease) {
+        return reject(QStringLiteral(
+            "The read-only heartbeat refresh unexpectedly acquired control."));
+    }
+    if (!evidence.after.controllerState) {
+        return reject(QStringLiteral(
+            "The refreshed controller heartbeat is unavailable."));
+    }
+    if (evidence.after.controllerState->controllerBootId != bootId) {
+        return reject(QStringLiteral(
+            "The controller-state BootId changed during the read-only heartbeat refresh."));
+    }
+    if (evidence.after.controllerState->controllerHeartbeat <= heartbeat) {
+        return reject(QStringLiteral(
+            "The controller heartbeat did not advance during the bounded read-only refresh."));
+    }
+    return evidence;
+}
+
+void logSnapshotOnlyHeartbeat(const SnapshotOnlyHeartbeatEvidence &evidence)
+{
+    if (!evidence.isValid() || !evidence.before.session || !evidence.before.controllerState
+        || !evidence.after.controllerState) {
+        return;
+    }
+    const Data::ControllerSessionSummary &session = *evidence.before.session;
+    const Data::ControllerStateSummary &before = *evidence.before.controllerState;
+    const Data::ControllerStateSummary &after = *evidence.after.controllerState;
+    qInfo().noquote()
+        << "[Product API hardware] snapshot-only"
+        << "boot="
+        << QStringLiteral("0x%1").arg(session.bootId, 16, 16, QLatin1Char('0'))
+        << "protocol="
+        << QStringLiteral("%1.%2")
+               .arg(evidence.before.protocolVersion.major)
+               .arg(evidence.before.protocolVersion.minor)
+        << "features="
+        << QStringLiteral("0x%1/0x%2/0x%3")
+               .arg(evidence.controlFeatures, 8, 16, QLatin1Char('0'))
+               .arg(evidence.pushFeatures, 8, 16, QLatin1Char('0'))
+               .arg(evidence.bulkFeatures, 8, 16, QLatin1Char('0'))
+        << "service=" << hardwareServiceStateName(after.serviceState)
+        << "faults="
+        << QStringLiteral("0x%1/0x%2")
+               .arg(after.currentFaults, 16, 16, QLatin1Char('0'))
+               .arg(after.latchedFaults, 16, 16, QLatin1Char('0'))
+        << "leaseOwner="
+        << (session.controlLeaseOwnerSessionId ? QStringLiteral("occupied")
+                                               : QStringLiteral("free"))
+        << "AL="
+        << QStringLiteral("0x%1").arg(after.ethercatAlStateBits, 2, 16, QLatin1Char('0'))
+        << "WKC="
+        << QStringLiteral("%1/%2")
+               .arg(after.actualWorkingCounter)
+               .arg(after.expectedWorkingCounter)
+        << "cycle=" << after.cycleCount << "heartbeat="
+        << QStringLiteral("%1->%2")
+               .arg(before.controllerHeartbeat)
+               .arg(after.controllerHeartbeat)
+        << "intervalMs=" << evidence.intervalMs;
 }
 
 void logHardwareSnapshot(const QString &label, const Data::ControllerConnectionSnapshot &snapshot)
@@ -6447,6 +6710,147 @@ void EtherCATProductApiTests::testThreeChannelInitialSnapshot()
     QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
 }
 
+void EtherCATProductApiTests::testSnapshotOnlyHeartbeatGate()
+{
+    LoopbackController controller(LoopbackController::Behavior::ControlLifecycle);
+    controller.setSnapshotStateBehavior(
+        LoopbackController::SnapshotStateBehavior::Increment);
+    QVERIFY(controller.start());
+
+    ProductApiSession::Options options = testOptions();
+    options.reconnectAttempts = 0;
+    ProductApiConnectionProvider provider(controller.endpoints(), options);
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.connectionSnapshot().controllerState);
+    QCOMPARE(
+        provider.connectionSnapshot().controllerState->serviceState,
+        Data::ControllerServiceState::Shutdown);
+    QVERIFY(provider.connectionSnapshot().package);
+    QCOMPARE(
+        provider.connectionSnapshot().package->controllerState,
+        Data::ControllerPackageState::Unavailable);
+
+    const SnapshotOnlyHeartbeatEvidence evidence
+        = verifySnapshotOnlyHeartbeat(provider, 1000);
+    QVERIFY2(evidence.isValid(), qPrintable(evidence.error));
+    QVERIFY(evidence.before.controllerState);
+    QVERIFY(evidence.after.controllerState);
+    QCOMPARE(evidence.before.controllerState->controllerHeartbeat, quint64(101));
+    QCOMPARE(evidence.after.controllerState->controllerHeartbeat, quint64(102));
+    QCOMPARE(evidence.before.sessionGeneration, evidence.after.sessionGeneration);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::GetState), 2);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::GetCapability), 2);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::GetPackageState), 2);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::GetFirmwareState), 2);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ResumeEvents), 2);
+
+    for (const Protocol::MessageType request : SnapshotOnlyMutationRequests)
+        QCOMPARE(controller.requestCount(request), 0);
+    QVERIFY(controller.violations().isEmpty());
+
+    QVERIFY(provider.disconnectFromController());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        1000);
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    for (const Protocol::MessageType request : SnapshotOnlyMutationRequests)
+        QCOMPARE(controller.requestCount(request), 0);
+}
+
+void EtherCATProductApiTests::testSnapshotOnlyHeartbeatGateFailures_data()
+{
+    QTest::addColumn<int>("behavior");
+    QTest::addColumn<int>("minor");
+    QTest::addColumn<quint64>("initialHeartbeat");
+    QTest::addColumn<quint32>("controlFeatures");
+    QTest::addColumn<quint32>("pushFeatures");
+    QTest::addColumn<quint32>("bulkFeatures");
+    QTest::addColumn<QString>("errorText");
+    QTest::addColumn<int>("minimumStateReads");
+
+    using Behavior = LoopbackController::SnapshotStateBehavior;
+    QTest::newRow("heartbeat-frozen")
+        << int(Behavior::Frozen) << int(Protocol::CurrentMinor) << quint64(101)
+        << SnapshotOnlyFeatureMask << SnapshotOnlyFeatureMask << SnapshotOnlyFeatureMask
+        << QStringLiteral("did not advance") << 2;
+    QTest::newRow("boot-changed")
+        << int(Behavior::WrongBootOnSecondRead) << int(Protocol::CurrentMinor) << quint64(101)
+        << SnapshotOnlyFeatureMask << SnapshotOnlyFeatureMask << SnapshotOnlyFeatureMask
+        << QStringLiteral("disconnected") << 2;
+    QTest::newRow("disconnected")
+        << int(Behavior::DisconnectOnSecondRead) << int(Protocol::CurrentMinor) << quint64(101)
+        << SnapshotOnlyFeatureMask << SnapshotOnlyFeatureMask << SnapshotOnlyFeatureMask
+        << QStringLiteral("disconnected") << 2;
+    QTest::newRow("old-protocol")
+        << int(Behavior::Increment) << int(Protocol::CurrentMinor - 1) << quint64(101)
+        << SnapshotOnlyFeatureMask << SnapshotOnlyFeatureMask << SnapshotOnlyFeatureMask
+        << QStringLiteral("requires Product API") << 1;
+    QTest::newRow("heartbeat-missing")
+        << int(Behavior::Increment) << int(Protocol::CurrentMinor) << quint64(0)
+        << SnapshotOnlyFeatureMask << SnapshotOnlyFeatureMask << SnapshotOnlyFeatureMask
+        << QStringLiteral("heartbeat is unavailable") << 1;
+    QTest::newRow("control-feature-missing")
+        << int(Behavior::Increment) << int(Protocol::CurrentMinor) << quint64(101)
+        << (SnapshotOnlyFeatureMask & ~Protocol::OutputTransactionFeature)
+        << SnapshotOnlyFeatureMask << SnapshotOnlyFeatureMask
+        << QStringLiteral("three-channel feature set") << 1;
+    QTest::newRow("push-feature-unknown")
+        << int(Behavior::Increment) << int(Protocol::CurrentMinor) << quint64(101)
+        << SnapshotOnlyFeatureMask << (SnapshotOnlyFeatureMask | 0x00010000U)
+        << SnapshotOnlyFeatureMask << QStringLiteral("three-channel feature set") << 1;
+    QTest::newRow("bulk-feature-missing")
+        << int(Behavior::Increment) << int(Protocol::CurrentMinor) << quint64(101)
+        << SnapshotOnlyFeatureMask << SnapshotOnlyFeatureMask
+        << (SnapshotOnlyFeatureMask & ~Protocol::OutputTransactionFeature)
+        << QStringLiteral("three-channel feature set") << 1;
+}
+
+void EtherCATProductApiTests::testSnapshotOnlyHeartbeatGateFailures()
+{
+    QFETCH(int, behavior);
+    QFETCH(int, minor);
+    QFETCH(quint64, initialHeartbeat);
+    QFETCH(quint32, controlFeatures);
+    QFETCH(quint32, pushFeatures);
+    QFETCH(quint32, bulkFeatures);
+    QFETCH(QString, errorText);
+    QFETCH(int, minimumStateReads);
+
+    LoopbackController controller(LoopbackController::Behavior::ControlLifecycle);
+    controller.setSnapshotStateBehavior(
+        LoopbackController::SnapshotStateBehavior(behavior));
+    controller.setProtocolMinor(quint16(minor));
+    controller.setControllerHeartbeat(initialHeartbeat);
+    controller.setRoleFeatureBits(Protocol::Role::Control, controlFeatures);
+    controller.setRoleFeatureBits(Protocol::Role::Push, pushFeatures);
+    controller.setRoleFeatureBits(Protocol::Role::Bulk, bulkFeatures);
+    QVERIFY(controller.start());
+
+    ProductApiSession::Options options = testOptions();
+    options.reconnectAttempts = 0;
+    ProductApiConnectionProvider provider(controller.endpoints(), options);
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+    const SnapshotOnlyHeartbeatEvidence evidence
+        = verifySnapshotOnlyHeartbeat(provider, 1000);
+    QVERIFY(!evidence.isValid());
+    QVERIFY2(evidence.error.contains(errorText), qPrintable(evidence.error));
+    QVERIFY(controller.requestCount(Protocol::MessageType::GetState) >= minimumStateReads);
+    for (const Protocol::MessageType request : SnapshotOnlyMutationRequests)
+        QCOMPARE(controller.requestCount(request), 0);
+
+    if (provider.connectionSnapshot().state == Data::ControllerConnectionState::Connected)
+        QVERIFY(provider.disconnectFromController());
+    QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
+    for (const Protocol::MessageType request : SnapshotOnlyMutationRequests)
+        QCOMPARE(controller.requestCount(request), 0);
+}
+
 void EtherCATProductApiTests::testLiveStatePolling()
 {
     LoopbackController controller;
@@ -8159,10 +8563,16 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
     options.reconnectInitialDelayMs = 250;
     options.reconnectMaximumDelayMs = 1000;
     options.reconnectAttempts = 0;
+    if (snapshotOnly)
+        options.liveStatePollIntervalMs = 0;
 
-    qInfo().noquote() << "[Product API hardware] enabled endpoint=" << endpoints.endpointSummary
-                      << "pushPort=" << endpoints.pushPort << "bulkPort=" << endpoints.bulkPort
-                      << "timingMode=" << timingMode;
+    if (snapshotOnly) {
+        qInfo().noquote() << "[Product API hardware] snapshot-only headless gate enabled";
+    } else {
+        qInfo().noquote() << "[Product API hardware] enabled endpoint="
+                          << endpoints.endpointSummary << "pushPort=" << endpoints.pushPort
+                          << "bulkPort=" << endpoints.bulkPort << "timingMode=" << timingMode;
+    }
 
     ProductApiConnectionProvider provider(endpoints, options);
     const Data::ControllerConnectionRequest connectionRequest = requestFor(provider);
@@ -8327,7 +8737,8 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
                 },
                 ConnectStepTimeoutMs);
             const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
-            logHardwareSnapshot(QStringLiteral("initial snapshot"), snapshot);
+            if (!snapshotOnly)
+                logHardwareSnapshot(QStringLiteral("initial snapshot"), snapshot);
             if (!connectionFinished) {
                 recordFailure(
                     QStringLiteral("The three-channel connection did not complete within %1 ms.")
@@ -8343,20 +8754,12 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
     }
 
     if (snapshotOnly && failure.isEmpty()) {
-        const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
-        if (!snapshot.session || !snapshot.session->sessionId || !snapshot.session->bootId) {
-            recordFailure(QStringLiteral("The read-only snapshot has no complete session identity."));
-        } else if (snapshot.session->ownsControlLease) {
-            recordFailure(QStringLiteral("The snapshot-only session unexpectedly owns control."));
-        } else if (!snapshot.controllerState) {
-            recordFailure(QStringLiteral("The read-only snapshot has no controller state."));
-        } else if (snapshot.controllerState->controllerBootId != snapshot.session->bootId) {
-            recordFailure(
-                QStringLiteral("The read-only controller-state BootId does not match the session."));
-        } else {
-            qInfo().noquote()
-                << "[Product API hardware] snapshot-only gate confirmed without acquiring control";
-        }
+        const SnapshotOnlyHeartbeatEvidence evidence
+            = verifySnapshotOnlyHeartbeat(provider, StateStepTimeoutMs);
+        if (!evidence.isValid())
+            recordFailure(evidence.error);
+        else
+            logSnapshotOnlyHeartbeat(evidence);
     }
 
     if (snapshotOnly && connectionStarted
