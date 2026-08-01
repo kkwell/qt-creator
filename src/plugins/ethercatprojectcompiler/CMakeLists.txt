@@ -6,11 +6,15 @@ add_qtc_plugin(EtherCATProjectCompiler
     compileroperationstore.h
     compilerprovisioningprofile.cpp
     compilerprovisioningprofile.h
+    durableruntimepackagecompilerpreparationcoordinator.cpp
+    durableruntimepackagecompilerpreparationcoordinator.h
     ethercatprojectcompilerconstants.h
     ethercatprojectcompilerplugin.cpp
     ethercatprojectcompilertr.h
     provisionedruntimepackagecompilerprovider.cpp
     provisionedruntimepackagecompilerprovider.h
+    runtimepackagecompilerpreparationjournal.cpp
+    runtimepackagecompilerpreparationjournal.h
 )
 
 if (WITH_TESTS AND TARGET EtherCATProjectCompiler)

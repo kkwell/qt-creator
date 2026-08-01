@@ -4,8 +4,10 @@
 
 #include "compileroperationstore.h"
 #include "compilerprovisioningprofile.h"
+#include "durableruntimepackagecompilerpreparationcoordinator.h"
 #include "ethercatprojectcompilerconstants.h"
 #include "provisionedruntimepackagecompilerprovider.h"
+#include "runtimepackagecompilerpreparationjournal.h"
 
 #include <ethercatdata/deviceadapter.h>
 #include <ethercatdata/offlineconfiguration.h>
@@ -13,20 +15,25 @@
 #include <ethercatdata/runtimepackageactivation.h>
 #include <ethercatdata/runtimepackagecompiler.h>
 
+#include <ethercatcore/providerregistry.h>
 #include <ethercatcore/runtimepackagecompilercodec.h>
 #include <ethercatcore/runtimepackagecompilerprovider.h>
+
+#include <extensionsystem/pluginmanager.h>
 
 #include <utils/filepath.h>
 
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPointer>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -572,6 +579,139 @@ std::optional<Data::RuntimePackageCompilerActivationProof> successfulActivationP
         = provider.assembleActivationProof(assemblyRequest);
     return proof ? std::optional<Data::RuntimePackageCompilerActivationProof>{*proof}
                  : std::nullopt;
+}
+
+Data::RuntimePackageActivationProjectCapture projectCapture(const CompilerFixture &fixture)
+{
+    const Data::RuntimePackageCompilerProjectSnapshotEvidence &evidence
+        = fixture.request.projectSnapshotEvidence;
+    return {
+        evidence.snapshot(),
+        fixture.serializedProject,
+        evidence.documentRevisionNumber(),
+        evidence.documentRevision(),
+        evidence.originalBinding(),
+    };
+}
+
+Core::RuntimePackageCompilerPreparationStartRequest preparationRequest(
+    const CompilerFixture &fixture, quint64 ordinal)
+{
+    Data::RuntimePackageCompilerCompileRequest compileRequest = fixture.request;
+    if (ordinal != 1) {
+        compileRequest.operationId = Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-%1").arg(ordinal, 12, 10, QLatin1Char('0'))};
+        compileRequest.configurationId = 4200 + ordinal;
+        compileRequest.intentId = QStringLiteral("embedlabs:compile-intent:test-%1").arg(ordinal);
+    }
+    return {
+        compileRequest,
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8001-%1").arg(ordinal, 12, 10, QLatin1Char('0'))},
+        Data::RuntimePackageActivationOperationId{
+            QStringLiteral("operation/compiler-preparation-%1").arg(ordinal)},
+        true,
+    };
+}
+
+bool awaitPreparationPhase(
+    Core::RuntimePackageCompilerPreparationCoordinator &coordinator,
+    const Data::RuntimePackageCompilerOperationId &operationId,
+    Core::RuntimePackageCompilerPreparationPhase phase,
+    int timeoutMs = 15000)
+{
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (elapsed.elapsed() < timeoutMs) {
+        const auto current = coordinator.record(operationId);
+        if (current && *current && (*current)->phase == phase)
+            return true;
+        QTest::qWait(10);
+    }
+    return false;
+}
+
+class ScopedCompilerProviderRegistration
+{
+public:
+    ScopedCompilerProviderRegistration(
+        Core::ProviderRegistry *registry, Core::RuntimePackageCompilerProvider *provider)
+        : m_registry(registry)
+        , m_provider(provider)
+    {
+        if (!m_registry || !m_provider)
+            return;
+        m_displaced = m_registry->providers(Core::ProviderKind::RuntimePackageCompiler);
+        for (Core::Provider *candidate : std::as_const(m_displaced))
+            ExtensionSystem::PluginManager::removeObject(candidate);
+        ExtensionSystem::PluginManager::addObject(m_provider);
+        m_registered = m_registry->provider(m_provider->id()) == m_provider;
+    }
+
+    ~ScopedCompilerProviderRegistration()
+    {
+        if (m_registered)
+            ExtensionSystem::PluginManager::removeObject(m_provider);
+        for (Core::Provider *candidate : std::as_const(m_displaced))
+            ExtensionSystem::PluginManager::addObject(candidate);
+    }
+
+    bool isValid() const
+    {
+        return m_registered
+               && m_registry->providers(Core::ProviderKind::RuntimePackageCompiler)
+                      == QList<Core::Provider *>({m_provider});
+    }
+
+    void unregisterProvider()
+    {
+        if (!m_registered)
+            return;
+        ExtensionSystem::PluginManager::removeObject(m_provider);
+        m_registered = false;
+    }
+
+private:
+    Core::ProviderRegistry *m_registry = nullptr;
+    Core::RuntimePackageCompilerProvider *m_provider = nullptr;
+    QList<Core::Provider *> m_displaced;
+    bool m_registered = false;
+};
+
+RuntimePackageCompilerPreparationJournalEntry journalEntry(
+    const Core::RuntimePackageCompilerPreparationStartRequest &request,
+    Core::RuntimePackageCompilerPreparationPhase phase,
+    quint64 revision,
+    QString detail = {})
+{
+    const Utils::Result<Data::RuntimePackageCompilerSha256> fingerprint
+        = Core::runtimePackageCompilerPreparationStartRequestFingerprint(request);
+    if (!fingerprint)
+        return {};
+    RuntimePackageCompilerPreparationJournalEntry entry;
+    entry.compileOperationId = request.compileRequest.operationId;
+    entry.startRequestFingerprint = *fingerprint;
+    entry.verifyOperationId = request.verifyOperationId;
+    entry.activationOperationId = request.activationOperationId;
+    entry.compilerProviderId = QString::fromUtf8(Constants::PROJECT_COMPILER_PROVIDER_ID.name());
+    entry.contractIdentity = request.compileRequest.contractIdentity;
+    entry.configurationId = request.compileRequest.configurationId;
+    entry.buildTimestampNs = request.compileRequest.buildTimestampNs;
+    entry.revision = revision;
+    entry.phase = phase;
+    entry.detail = std::move(detail);
+    return entry;
+}
+
+const RuntimePackageCompilerPreparationJournalEntry *journalEntryFor(
+    const RuntimePackageCompilerPreparationJournalState &state,
+    const Data::RuntimePackageCompilerOperationId &operationId)
+{
+    const auto found
+        = std::find_if(state.entries.cbegin(), state.entries.cend(), [&](const auto &entry) {
+              return entry.compileOperationId == operationId;
+          });
+    return found == state.entries.cend() ? nullptr : &*found;
 }
 
 QByteArray storeWriteFingerprint(const QString &root)
@@ -1537,6 +1677,420 @@ void EtherCATProjectCompilerTests::testActivationProofRejectsUnsafeEvidence()
     QVERIFY(rejectsCurrentStore());
     QVERIFY(QFile::remove(target.path()));
     QVERIFY(QFile::rename(backup, target.path()));
+#endif
+}
+
+void EtherCATProjectCompilerTests::testPreparationCoordinatorSuccessAndCancellation()
+{
+    auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+    TestEnvironment environment;
+    auto provider = environment.provider();
+    QVERIFY(provider->isAvailable());
+    ScopedCompilerProviderRegistration registration(registry, provider.get());
+    QVERIFY(registration.isValid());
+
+    QTemporaryDir journalTemporary;
+    const Utils::FilePath journalRoot = Utils::FilePath::fromString(
+        journalTemporary.filePath(QStringLiteral("preparations")));
+    const RuntimePackageCompilerCurrentProjectCapture capture =
+        [&environment](const Data::NodeId &projectId)
+        -> Utils::Result<Data::RuntimePackageActivationProjectCapture> {
+        if (projectId != environment.fixture.projectId)
+            return Utils::ResultError(QStringLiteral("Unexpected project capture request."));
+        return projectCapture(environment.fixture);
+    };
+    DurableRuntimePackageCompilerPreparationCoordinator coordinator(registry, journalRoot, capture);
+    QVERIFY2(
+        coordinator.initializationError().isEmpty(), qPrintable(coordinator.initializationError()));
+    QSignalSpy signingSpy(
+        &coordinator, &Core::RuntimePackageCompilerPreparationCoordinator::detachedSigningRequested);
+    QSignalSpy readySpy(
+        &coordinator, &Core::RuntimePackageCompilerPreparationCoordinator::preparationReady);
+
+    const Core::RuntimePackageCompilerPreparationStartRequest first
+        = preparationRequest(environment.fixture, 1);
+    QVERIFY(first.isValid());
+    const auto started = coordinator.start(first);
+    QVERIFY(started);
+    QCOMPARE(*started, Core::RuntimePackageCompilerPreparationDisposition::Started);
+    QVERIFY(awaitPreparationPhase(
+        coordinator,
+        first.compileRequest.operationId,
+        Core::RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature));
+    QCOMPARE(signingSpy.count(), 1);
+    auto firstRecord = coordinator.record(first.compileRequest.operationId);
+    QVERIFY(firstRecord);
+    QVERIFY(*firstRecord);
+    QVERIFY((*firstRecord)->compileResult);
+    const Data::RuntimePackageCompilerCanonicalJson detachedResponse
+        = signResponse(environment.fixture, *(*firstRecord)->compileResult);
+    const auto accepted
+        = coordinator
+              .submitDetachedSigningResponse(first.compileRequest.operationId, detachedResponse);
+    QVERIFY(accepted);
+    QCOMPARE(*accepted, Core::RuntimePackageCompilerPreparationDisposition::Accepted);
+    QVERIFY(awaitPreparationPhase(
+        coordinator,
+        first.compileRequest.operationId,
+        Core::RuntimePackageCompilerPreparationPhase::Ready,
+        20000));
+    QCOMPARE(readySpy.count(), 1);
+    firstRecord = coordinator.record(first.compileRequest.operationId);
+    QVERIFY(firstRecord);
+    QVERIFY(*firstRecord);
+    QVERIFY((*firstRecord)->preparation);
+    QVERIFY((*firstRecord)->preparation->compilerActivationProof);
+    QVERIFY(!(*firstRecord)->preparation->packageBytes.isEmpty());
+
+    RuntimePackageCompilerPreparationJournal journal(journalRoot);
+    const auto durableReady = journal.load();
+    QVERIFY(durableReady);
+    const RuntimePackageCompilerPreparationJournalEntry *readyEntry
+        = journalEntryFor(*durableReady, first.compileRequest.operationId);
+    QVERIFY(readyEntry);
+    QCOMPARE(readyEntry->phase, Core::RuntimePackageCompilerPreparationPhase::Ready);
+    QCOMPARE(readyEntry->detachedSigningResponse, std::optional(detachedResponse));
+    QVERIFY(readyEntry->compileResultSha256);
+    QVERIFY(readyEntry->finalizeResultSha256);
+    QVERIFY(readyEntry->verifyResultSha256);
+
+    const Core::RuntimePackageCompilerPreparationStartRequest second
+        = preparationRequest(environment.fixture, 5);
+    QVERIFY(second.isValid());
+    QVERIFY(coordinator.start(second));
+    QVERIFY(awaitPreparationPhase(
+        coordinator,
+        second.compileRequest.operationId,
+        Core::RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature));
+    const auto canceled = coordinator.cancel(second.compileRequest.operationId);
+    QVERIFY(canceled);
+    QCOMPARE(*canceled, Core::RuntimePackageCompilerPreparationDisposition::Accepted);
+    QVERIFY(awaitPreparationPhase(
+        coordinator,
+        second.compileRequest.operationId,
+        Core::RuntimePackageCompilerPreparationPhase::Canceled));
+
+    const Core::RuntimePackageCompilerPreparationStartRequest interrupted
+        = preparationRequest(environment.fixture, 6);
+    QVERIFY(interrupted.isValid());
+    QVERIFY(coordinator.start(interrupted));
+    QVERIFY(awaitPreparationPhase(
+        coordinator,
+        interrupted.compileRequest.operationId,
+        Core::RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature));
+    coordinator.shutdown();
+    QVERIFY(awaitPreparationPhase(
+        coordinator,
+        interrupted.compileRequest.operationId,
+        Core::RuntimePackageCompilerPreparationPhase::ReconciliationRequired));
+
+    DurableRuntimePackageCompilerPreparationCoordinator restarted(registry, journalRoot, capture);
+    QVERIFY2(restarted.initializationError().isEmpty(), qPrintable(restarted.initializationError()));
+    QSignalSpy restartedSigningSpy(
+        &restarted, &Core::RuntimePackageCompilerPreparationCoordinator::detachedSigningRequested);
+    QSignalSpy restartedReadySpy(
+        &restarted, &Core::RuntimePackageCompilerPreparationCoordinator::preparationReady);
+    QCOMPARE(restartedSigningSpy.count(), 0);
+    QCOMPARE(restartedReadySpy.count(), 0);
+    auto interruptedRecord = restarted.record(interrupted.compileRequest.operationId);
+    QVERIFY(interruptedRecord);
+    QVERIFY(*interruptedRecord);
+    QCOMPARE(
+        (*interruptedRecord)->phase,
+        Core::RuntimePackageCompilerPreparationPhase::ReconciliationRequired);
+    QVERIFY(!(*interruptedRecord)->startRequest);
+    const auto resumed = restarted.resume(interrupted);
+    QVERIFY(resumed);
+    QCOMPARE(*resumed, Core::RuntimePackageCompilerPreparationDisposition::Accepted);
+    QVERIFY(awaitPreparationPhase(
+        restarted,
+        interrupted.compileRequest.operationId,
+        Core::RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature));
+    QCOMPARE(restartedSigningSpy.count(), 1);
+    QVERIFY(restarted.cancel(interrupted.compileRequest.operationId));
+    QVERIFY(awaitPreparationPhase(
+        restarted,
+        interrupted.compileRequest.operationId,
+        Core::RuntimePackageCompilerPreparationPhase::Canceled));
+}
+
+void EtherCATProjectCompilerTests::testPreparationCoordinatorRejectsConcurrentInvalidation()
+{
+    auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+
+    {
+        TestEnvironment environment;
+        auto provider = environment.provider();
+        QVERIFY(provider->isAvailable());
+        ScopedCompilerProviderRegistration registration(registry, provider.get());
+        QVERIFY(registration.isValid());
+        QTemporaryDir journalTemporary;
+        const Utils::FilePath journalRoot = Utils::FilePath::fromString(
+            journalTemporary.filePath(QStringLiteral("preparations")));
+        DurableRuntimePackageCompilerPreparationCoordinator coordinator(
+            registry,
+            journalRoot,
+            [&environment](const Data::NodeId &)
+            -> Utils::Result<Data::RuntimePackageActivationProjectCapture> {
+                return projectCapture(environment.fixture);
+            });
+        QVERIFY(coordinator.initializationError().isEmpty());
+        bool profileInvalidated = false;
+        bool profileWriteSucceeded = false;
+        connect(
+            &coordinator,
+            &Core::RuntimePackageCompilerPreparationCoordinator::recordChanged,
+            &coordinator,
+            [&](const Core::RuntimePackageCompilerPreparationRecord &record) {
+                if (profileInvalidated
+                    || record.phase
+                           != Core::RuntimePackageCompilerPreparationPhase::Compiling) {
+                    return;
+                }
+                profileInvalidated = true;
+                profileWriteSucceeded = writeFile(environment.provisioning, QByteArray("{}\n"));
+            },
+            Qt::DirectConnection);
+        const Core::RuntimePackageCompilerPreparationStartRequest request
+            = preparationRequest(environment.fixture, 21);
+        QVERIFY(coordinator.start(request));
+        QVERIFY(profileInvalidated);
+        QVERIFY(profileWriteSucceeded);
+        QVERIFY(awaitPreparationPhase(
+            coordinator,
+            request.compileRequest.operationId,
+            Core::RuntimePackageCompilerPreparationPhase::ReconciliationRequired));
+        const auto record = coordinator.record(request.compileRequest.operationId);
+        QVERIFY(record);
+        QVERIFY(*record);
+        QCOMPARE(
+            (*record)->phase,
+            Core::RuntimePackageCompilerPreparationPhase::ReconciliationRequired);
+    }
+
+    {
+        TestEnvironment environment;
+        auto provider = environment.provider();
+        QVERIFY(provider->isAvailable());
+        ScopedCompilerProviderRegistration registration(registry, provider.get());
+        QVERIFY(registration.isValid());
+        QTemporaryDir journalTemporary;
+        const Utils::FilePath journalRoot = Utils::FilePath::fromString(
+            journalTemporary.filePath(QStringLiteral("preparations")));
+        DurableRuntimePackageCompilerPreparationCoordinator coordinator(
+            registry,
+            journalRoot,
+            [&environment](const Data::NodeId &)
+            -> Utils::Result<Data::RuntimePackageActivationProjectCapture> {
+                return projectCapture(environment.fixture);
+            });
+        QVERIFY(coordinator.initializationError().isEmpty());
+        bool providerRemoved = false;
+        connect(
+            &coordinator,
+            &Core::RuntimePackageCompilerPreparationCoordinator::recordChanged,
+            &coordinator,
+            [&](const Core::RuntimePackageCompilerPreparationRecord &record) {
+                if (providerRemoved
+                    || record.phase != Core::RuntimePackageCompilerPreparationPhase::Reserved) {
+                    return;
+                }
+                providerRemoved = true;
+                registration.unregisterProvider();
+            },
+            Qt::DirectConnection);
+        const Core::RuntimePackageCompilerPreparationStartRequest request
+            = preparationRequest(environment.fixture, 22);
+        QVERIFY(coordinator.start(request));
+        QVERIFY(providerRemoved);
+        QVERIFY(awaitPreparationPhase(
+            coordinator,
+            request.compileRequest.operationId,
+            Core::RuntimePackageCompilerPreparationPhase::ReconciliationRequired));
+    }
+}
+
+void EtherCATProjectCompilerTests::testPreparationCoordinatorRestartAndTerminalTombstones()
+{
+    auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+    CompilerFixture fixture;
+    QTemporaryDir journalTemporary;
+    const Utils::FilePath journalRoot = Utils::FilePath::fromString(
+        journalTemporary.filePath(QStringLiteral("preparations")));
+    RuntimePackageCompilerPreparationJournal journal(journalRoot);
+    auto state = journal.initialize();
+    QVERIFY(state);
+
+    const QList<Core::RuntimePackageCompilerPreparationStartRequest> requests{
+        preparationRequest(fixture, 11),
+        preparationRequest(fixture, 12),
+        preparationRequest(fixture, 13),
+    };
+    QList<RuntimePackageCompilerPreparationJournalEntry> entries{
+        journalEntry(requests.at(0), Core::RuntimePackageCompilerPreparationPhase::Ready, 1),
+        journalEntry(
+            requests.at(1),
+            Core::RuntimePackageCompilerPreparationPhase::Canceled,
+            1,
+            QStringLiteral("Canceled before restart.")),
+        journalEntry(
+            requests.at(2),
+            Core::RuntimePackageCompilerPreparationPhase::Failed,
+            1,
+            QStringLiteral("Failed before restart.")),
+    };
+    entries[0].compileResultSha256 = sha256("terminal-compile");
+    entries[0].signRequestSha256 = sha256("terminal-sign-request");
+    entries[0].detachedSigningResponse = canonical(QByteArray("{}\n"));
+    entries[0].finalizeResultSha256 = sha256("terminal-finalize");
+    entries[0].packageSha256 = sha256("terminal-package");
+    entries[0].verifyResultSha256 = sha256("terminal-verify");
+    for (const RuntimePackageCompilerPreparationJournalEntry &entry : std::as_const(entries)) {
+        QVERIFY(entry.isValid());
+        state = journal.commit(entry, state->sequence, std::nullopt);
+        QVERIFY(state);
+    }
+
+    const RuntimePackageCompilerCurrentProjectCapture capture =
+        [&fixture](const Data::NodeId &projectId)
+        -> Utils::Result<Data::RuntimePackageActivationProjectCapture> {
+        if (projectId != fixture.projectId)
+            return Utils::ResultError(QStringLiteral("Unexpected project capture request."));
+        return projectCapture(fixture);
+    };
+    DurableRuntimePackageCompilerPreparationCoordinator coordinator(registry, journalRoot, capture);
+    QVERIFY2(
+        coordinator.initializationError().isEmpty(), qPrintable(coordinator.initializationError()));
+    QSignalSpy
+        changedSpy(&coordinator, &Core::RuntimePackageCompilerPreparationCoordinator::recordChanged);
+    QSignalSpy signingSpy(
+        &coordinator, &Core::RuntimePackageCompilerPreparationCoordinator::detachedSigningRequested);
+    QSignalSpy readySpy(
+        &coordinator, &Core::RuntimePackageCompilerPreparationCoordinator::preparationReady);
+
+    const QList<Core::RuntimePackageCompilerPreparationPhase> expectedPhases{
+        Core::RuntimePackageCompilerPreparationPhase::Ready,
+        Core::RuntimePackageCompilerPreparationPhase::Canceled,
+        Core::RuntimePackageCompilerPreparationPhase::Failed,
+    };
+    for (qsizetype index = 0; index < requests.size(); ++index) {
+        const auto restored = coordinator.record(requests.at(index).compileRequest.operationId);
+        QVERIFY(restored);
+        QVERIFY(*restored);
+        QCOMPARE((*restored)->phase, expectedPhases.at(index));
+        QVERIFY((*restored)->terminalSummary);
+        QVERIFY(!(*restored)->startRequest);
+        const auto replayedStart = coordinator.start(requests.at(index));
+        QVERIFY(replayedStart);
+        QCOMPARE(*replayedStart, Core::RuntimePackageCompilerPreparationDisposition::AlreadyTerminal);
+        const auto replayedResume = coordinator.resume(requests.at(index));
+        QVERIFY(replayedResume);
+        QCOMPARE(*replayedResume, Core::RuntimePackageCompilerPreparationDisposition::AlreadyTerminal);
+    }
+    QCOMPARE(changedSpy.count(), 0);
+    QCOMPARE(signingSpy.count(), 0);
+    QCOMPARE(readySpy.count(), 0);
+    const auto snapshot = coordinator.snapshot();
+    QVERIFY(snapshot);
+    QCOMPARE(snapshot->records.size(), 3);
+    QCOMPARE(snapshot->sequence, quint64(3));
+}
+
+void EtherCATProjectCompilerTests::testPreparationJournalCasRequiresExactPredecessor()
+{
+    CompilerFixture fixture;
+    QTemporaryDir temporary;
+    const Utils::FilePath root = Utils::FilePath::fromString(
+        temporary.filePath(QStringLiteral("preparations")));
+    RuntimePackageCompilerPreparationJournal journal(root);
+    auto state = journal.initialize();
+    QVERIFY(state);
+
+    const Core::RuntimePackageCompilerPreparationStartRequest request
+        = preparationRequest(fixture, 31);
+    RuntimePackageCompilerPreparationJournalEntry reserved = journalEntry(
+        request, Core::RuntimePackageCompilerPreparationPhase::Reserved, 1);
+    state = journal.commit(reserved, state->sequence, std::nullopt);
+    QVERIFY(state);
+
+    RuntimePackageCompilerPreparationJournalEntry compiling = reserved;
+    compiling.revision = 2;
+    compiling.phase = Core::RuntimePackageCompilerPreparationPhase::Compiling;
+    QVERIFY(compiling.isValid());
+    RuntimePackageCompilerPreparationJournalEntry forgedPredecessor = reserved;
+    forgedPredecessor.phase = Core::RuntimePackageCompilerPreparationPhase::Compiling;
+    QVERIFY(forgedPredecessor.isValid());
+    QVERIFY(!journal.commit(compiling, state->sequence, forgedPredecessor));
+
+    state = journal.commit(compiling, state->sequence, reserved);
+    QVERIFY(state);
+    const quint64 staleSequence = state->sequence;
+    RuntimePackageCompilerPreparationJournalEntry reconciliation = compiling;
+    reconciliation.revision = 3;
+    reconciliation.phase
+        = Core::RuntimePackageCompilerPreparationPhase::ReconciliationRequired;
+    reconciliation.detail = QStringLiteral("Reconcile exact durable evidence.");
+    QVERIFY(reconciliation.isValid());
+    const auto committed = journal.commit(reconciliation, staleSequence, compiling);
+    QVERIFY(committed);
+
+    RuntimePackageCompilerPreparationJournalEntry competing = compiling;
+    competing.revision = 3;
+    competing.phase = Core::RuntimePackageCompilerPreparationPhase::Failed;
+    competing.detail = QStringLiteral("Competing terminal update.");
+    QVERIFY(competing.isValid());
+    QVERIFY(!journal.commit(competing, staleSequence, compiling));
+}
+
+void EtherCATProjectCompilerTests::testPreparationJournalRejectsUnsafeStorage()
+{
+    QTemporaryDir temporary;
+    const Utils::FilePath root = Utils::FilePath::fromString(
+        temporary.filePath(QStringLiteral("preparations")));
+    RuntimePackageCompilerPreparationJournal journal(root);
+    const auto initialized = journal.initialize();
+    QVERIFY(initialized);
+    const QString journalFile = journal.journalFile().path();
+    const QByteArray original = readFile(journalFile);
+    QVERIFY(!original.isEmpty());
+
+    QByteArray nonCanonical = original;
+    nonCanonical.insert(nonCanonical.size() - 1, ' ');
+    QVERIFY(writeFile(journalFile, nonCanonical));
+    QVERIFY(!journal.load());
+    QVERIFY(writeFile(journalFile, original));
+    QVERIFY(journal.load());
+
+    QJsonObject rootObject = QJsonDocument::fromJson(original).object();
+    rootObject.insert(QStringLiteral("unexpected"), true);
+    QByteArray unknownField = QJsonDocument(rootObject).toJson(QJsonDocument::Compact);
+    unknownField.append('\n');
+    QVERIFY(writeFile(journalFile, unknownField));
+    QVERIFY(!journal.load());
+    QVERIFY(writeFile(journalFile, original));
+    QVERIFY(journal.load());
+
+#ifdef Q_OS_UNIX
+    const QString backup = journalFile + QStringLiteral(".original");
+    QVERIFY(QFile::rename(journalFile, backup));
+    QCOMPARE(
+        ::symlink(QFile::encodeName(backup).constData(), QFile::encodeName(journalFile).constData()),
+        0);
+    QVERIFY(!journal.load());
+    QVERIFY(QFile::remove(journalFile));
+    QVERIFY(QFile::rename(backup, journalFile));
+
+    QVERIFY(QFile::rename(journalFile, backup));
+    QCOMPARE(
+        ::link(QFile::encodeName(backup).constData(), QFile::encodeName(journalFile).constData()),
+        0);
+    QVERIFY(!journal.load());
+    QVERIFY(QFile::remove(journalFile));
+    QVERIFY(QFile::rename(backup, journalFile));
+    QVERIFY(journal.load());
 #endif
 }
 

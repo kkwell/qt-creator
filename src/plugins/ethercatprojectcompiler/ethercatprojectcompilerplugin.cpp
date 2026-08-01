@@ -1,5 +1,6 @@
 // Copyright (C) 2026 Embed Labs
 
+#include "durableruntimepackagecompilerpreparationcoordinator.h"
 #include "provisionedruntimepackagecompilerprovider.h"
 
 #ifdef WITH_TESTS
@@ -8,8 +9,14 @@
 
 #include <coreplugin/icore.h>
 
+#include <ethercatcore/providerregistry.h>
+#include <ethercatcore/providers.h>
+
 #include <extensionsystem/iplugin.h>
 #include <extensionsystem/pluginmanager.h>
+
+#include <QPointer>
+#include <QThread>
 
 #include <memory>
 
@@ -30,7 +37,9 @@ private:
     void shutdown();
 
     std::unique_ptr<ProvisionedRuntimePackageCompilerProvider> m_provider;
-    bool m_registered = false;
+    std::unique_ptr<DurableRuntimePackageCompilerPreparationCoordinator> m_coordinator;
+    bool m_providerRegistered = false;
+    bool m_coordinatorRegistered = false;
 };
 
 EtherCATProjectCompilerPlugin::~EtherCATProjectCompilerPlugin()
@@ -44,7 +53,38 @@ void EtherCATProjectCompilerPlugin::initialize()
     m_provider = std::make_unique<ProvisionedRuntimePackageCompilerProvider>(
         compilerRoot / "provisioning.json", compilerRoot);
     ExtensionSystem::PluginManager::addObject(m_provider.get());
-    m_registered = true;
+    m_providerRegistered = true;
+
+    auto *providerRegistry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    if (providerRegistry) {
+        const QPointer<Core::ProviderRegistry> registryGuard(providerRegistry);
+        const RuntimePackageCompilerCurrentProjectCapture currentProjectCapture =
+            [registryGuard](const Data::NodeId &projectId)
+            -> Utils::Result<Data::RuntimePackageActivationProjectCapture> {
+            if (!registryGuard || QThread::currentThread() != registryGuard->thread()) {
+                return Utils::ResultError(
+                    QStringLiteral("Project provider registry belongs to another thread."));
+            }
+            QList<Core::ProjectService *> matches;
+            for (Core::Provider *provider :
+                 registryGuard->providers(Core::ProviderKind::Project)) {
+                auto *projectService = qobject_cast<Core::ProjectService *>(provider);
+                if (projectService && projectService->isAvailable()
+                    && projectService->project(projectId)) {
+                    matches.append(projectService);
+                }
+            }
+            if (matches.size() != 1) {
+                return Utils::ResultError(
+                    QStringLiteral("The EtherCAT project owner is unavailable or ambiguous."));
+            }
+            return matches.constFirst()->captureRuntimePackageActivationProject(projectId);
+        };
+        m_coordinator = std::make_unique<DurableRuntimePackageCompilerPreparationCoordinator>(
+            providerRegistry, compilerRoot / "preparations", currentProjectCapture);
+        ExtensionSystem::PluginManager::addObject(m_coordinator.get());
+        m_coordinatorRegistered = true;
+    }
 
 #ifdef WITH_TESTS
     addTest<EtherCATProjectCompilerTests>();
@@ -59,12 +99,20 @@ ExtensionSystem::IPlugin::ShutdownFlag EtherCATProjectCompilerPlugin::aboutToShu
 
 void EtherCATProjectCompilerPlugin::shutdown()
 {
+    if (m_coordinator) {
+        m_coordinator->shutdown();
+        if (m_coordinatorRegistered) {
+            ExtensionSystem::PluginManager::removeObject(m_coordinator.get());
+            m_coordinatorRegistered = false;
+        }
+        m_coordinator.reset();
+    }
     if (!m_provider)
         return;
     m_provider->shutdown();
-    if (m_registered) {
+    if (m_providerRegistered) {
         ExtensionSystem::PluginManager::removeObject(m_provider.get());
-        m_registered = false;
+        m_providerRegistered = false;
     }
     m_provider.reset();
 }

@@ -24,6 +24,11 @@ private slots:
     void testActivationProofProvenanceAndRestart();
     void testActivationProofRejectsMutationsWithoutProcess();
     void testActivationProofRejectsUnsafeEvidence();
+    void testPreparationCoordinatorSuccessAndCancellation();
+    void testPreparationCoordinatorRejectsConcurrentInvalidation();
+    void testPreparationCoordinatorRestartAndTerminalTombstones();
+    void testPreparationJournalCasRequiresExactPredecessor();
+    void testPreparationJournalRejectsUnsafeStorage();
 };
 
 } // namespace EtherCAT::ProjectCompiler::Internal
