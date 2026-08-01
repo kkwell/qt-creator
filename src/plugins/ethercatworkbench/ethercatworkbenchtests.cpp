@@ -13,6 +13,7 @@
 #include "ethercatworkbenchconstants.h"
 #include "ethercatworkbenchtr.h"
 #include "generalpage.h"
+#include "runtimepackagecompilerpreparationbridge.h"
 #include "semanticcontrolpage.h"
 #include "workbenchcontroller.h"
 #include "workbenchnavigation.h"
@@ -34,7 +35,11 @@
 
 #include <debugger/debuggerconstants.h>
 
+#include <ethercatcore/ethercatcoretests.h>
 #include <ethercatcore/providerregistry.h>
+#include <ethercatcore/runtimepackagecompilercodec.h>
+#include <ethercatcore/runtimepackagecompilerpreparationcoordinator.h>
+#include <ethercatcore/runtimepackagecompilerprovider.h>
 #include <ethercatcore/selectionservice.h>
 #include <ethercatcore/semanticruntimeservice.h>
 #include <ethercatcore/stateservice.h>
@@ -309,15 +314,16 @@ static TestProjectFile writeProjectWithSlave(
     const QTemporaryDir &directory,
     const Data::DeviceSummary &device,
     const QString &fileName = "process-data.ecatproject",
-    const QString &projectName = "Process Data Workflow")
+    const QString &projectName = "Process Data Workflow",
+    const std::optional<Data::ControllerConnectionScope> &fixedScope = std::nullopt)
 {
     TestProjectFile result;
     result.path = Utils::FilePath::fromString(directory.path())
                       .canonicalPath()
                       .pathAppended(fileName);
-    result.projectId = Data::NodeId::create();
+    result.projectId = fixedScope ? fixedScope->projectId : Data::NodeId::create();
     result.targetId = Data::NodeId::create();
-    result.masterId = Data::NodeId::create();
+    result.masterId = fixedScope ? fixedScope->masterId : Data::NodeId::create();
     result.slaveId = Data::NodeId::create();
 
     const QJsonObject processData{{"syncManagers", QJsonArray()}, {"pdos", QJsonArray()}};
@@ -1692,6 +1698,243 @@ private:
     std::optional<Data::DiagnosticsSnapshot> m_snapshot;
 };
 
+class BridgeRuntimePackageCompilerProvider final
+    : public Core::RuntimePackageCompilerProvider
+{
+public:
+    explicit BridgeRuntimePackageCompilerProvider(
+        Utils::Id providerId
+        = Utils::Id("org.embedlabs.runtime-package-compiler.api042"))
+        : RuntimePackageCompilerProvider(
+              providerId,
+              QStringLiteral("Bridge compiler provider"))
+    {}
+
+    Utils::Result<Core::RuntimePackageCompilerJob *> compile(
+        const Data::RuntimePackageCompilerCompileRequest &) final
+    {
+        return Utils::ResultError(QStringLiteral("Compile is outside this bridge test."));
+    }
+
+    Utils::Result<Core::RuntimePackageCompilerJob *> finalize(
+        const Data::RuntimePackageCompilerFinalizeRequest &) final
+    {
+        return Utils::ResultError(QStringLiteral("Finalize is outside this bridge test."));
+    }
+
+    Utils::Result<Core::RuntimePackageCompilerJob *> query(
+        const Data::RuntimePackageCompilerQueryRequest &) final
+    {
+        return Utils::ResultError(QStringLiteral("Query is outside this bridge test."));
+    }
+
+    Utils::Result<Core::RuntimePackageCompilerJob *> verify(
+        const Data::RuntimePackageCompilerVerifyRequest &) final
+    {
+        return Utils::ResultError(QStringLiteral("Verify is outside this bridge test."));
+    }
+
+    Utils::Result<> validateActivationProof(
+        const Data::RuntimePackageCompilerActivationProof &proof) const final
+    {
+        ++validationCalls;
+        if (!acceptProof)
+            return Utils::ResultError(QStringLiteral("The immutable compiler proof was rejected."));
+        if (!proof.isValid())
+            return Utils::ResultError(QStringLiteral("The compiler proof is invalid."));
+        return Utils::ResultOk;
+    }
+
+    mutable int validationCalls = 0;
+    bool acceptProof = true;
+};
+
+class BridgeRuntimePackageCompilerPreparationCoordinator final
+    : public Core::RuntimePackageCompilerPreparationCoordinator
+{
+public:
+    explicit BridgeRuntimePackageCompilerPreparationCoordinator(Core::ProviderRegistry *registry)
+        : RuntimePackageCompilerPreparationCoordinator(registry)
+    {}
+
+    void publishPreparation(
+        const Core::RuntimePackageActivationPreparationRequest &preparation)
+    {
+        emit preparationReady(preparation);
+    }
+
+    void publishRecord(const Core::RuntimePackageCompilerPreparationRecord &record)
+    {
+        emit recordChanged(record);
+    }
+
+protected:
+    Utils::Result<Core::RuntimePackageCompilerPreparationDisposition> doStart(
+        const Core::RuntimePackageCompilerPreparationStartRequest &,
+        Core::RuntimePackageCompilerProvider *) final
+    {
+        return Utils::ResultError(QStringLiteral("Start is outside this bridge test."));
+    }
+
+    Utils::Result<Core::RuntimePackageCompilerPreparationDisposition>
+    doSubmitDetachedSigningResponse(
+        const Core::RuntimePackageCompilerPreparationRecord &,
+        const Data::RuntimePackageCompilerCanonicalJson &,
+        Core::RuntimePackageCompilerProvider *) final
+    {
+        return Utils::ResultError(QStringLiteral("Signing is outside this bridge test."));
+    }
+
+    Utils::Result<Core::RuntimePackageCompilerPreparationDisposition> doCancel(
+        const Core::RuntimePackageCompilerPreparationRecord &) final
+    {
+        return Utils::ResultError(QStringLiteral("Cancel is outside this bridge test."));
+    }
+
+    Utils::Result<Core::RuntimePackageCompilerPreparationDisposition> doResume(
+        const Core::RuntimePackageCompilerPreparationRecord &,
+        const Core::RuntimePackageCompilerPreparationStartRequest &,
+        Core::RuntimePackageCompilerProvider *) final
+    {
+        return Utils::ResultError(QStringLiteral("Resume is outside this bridge test."));
+    }
+
+    Utils::Result<std::optional<Core::RuntimePackageCompilerPreparationRecord>> doRecord(
+        const Data::RuntimePackageCompilerOperationId &) const final
+    {
+        return Utils::ResultError(QStringLiteral("Record lookup is outside this bridge test."));
+    }
+
+    Utils::Result<Core::RuntimePackageCompilerPreparationSnapshot> doSnapshot() const final
+    {
+        return Utils::ResultError(QStringLiteral("Snapshot is outside this bridge test."));
+    }
+};
+
+static Data::RuntimePackageCompilerActivationProof bridgeCompilerProof()
+{
+    Data::RuntimePackageCompilerActivationProof proof
+        = Core::Internal::syntheticRuntimePackageCompilerActivationProof();
+    const auto encodedCompileRequest
+        = Core::encodeRuntimePackageCompilerCompileRequest(proof.compileRequest);
+    if (!encodedCompileRequest)
+        return {};
+    proof.compileResult.envelope.requestSha256 = encodedCompileRequest->sha256();
+    proof.finalizeRequest.compileRequestSha256 = encodedCompileRequest->sha256();
+    proof.finalizeResult.envelope.requestSha256 = encodedCompileRequest->sha256();
+    const auto encodedFinalizeRequest
+        = Core::encodeRuntimePackageCompilerFinalizeRequest(proof.finalizeRequest);
+    if (!encodedFinalizeRequest)
+        return {};
+    proof.finalizeRequestSha256 = encodedFinalizeRequest->sha256();
+    const auto encodedVerifyRequest
+        = Core::encodeRuntimePackageCompilerVerifyRequest(proof.verifyRequest);
+    if (!encodedVerifyRequest)
+        return {};
+    proof.verifyRequestSha256 = encodedVerifyRequest->sha256();
+    return proof;
+}
+
+static Data::RuntimePackageActivationProjectCapture bridgeProjectCapture(
+    const Data::RuntimePackageCompilerActivationProof &proof)
+{
+    const Data::RuntimePackageCompilerProjectSnapshotEvidence &evidence
+        = proof.compileRequest.projectSnapshotEvidence;
+    return {
+        evidence.snapshot(),
+        QByteArray("{\"format\":\"embed-labs-ethercat-project\"}\n"),
+        evidence.documentRevisionNumber(),
+        evidence.documentRevision(),
+        evidence.originalBinding(),
+    };
+}
+
+static Core::RuntimePackageActivationPreparationRequest bridgePreparation(
+    const Data::RuntimePackageCompilerActivationProof &proof,
+    const QString &operationId)
+{
+    return {
+        Data::RuntimePackageActivationOperationId{operationId},
+        proof.compileRequest.topologyEvidence.scope,
+        proof.finalizeResult.packageBytes,
+        proof.compiledProjectSource,
+        proof.effectiveProjectCompanion,
+        proof.verifyResult,
+        true,
+        proof,
+    };
+}
+
+static Core::RuntimePackageCompilerPreparationRecord bridgePreparationRecord(
+    Core::RuntimePackageCompilerPreparationPhase phase,
+    const Core::RuntimePackageActivationPreparationRequest &preparation,
+    const std::optional<Data::RuntimePackageCompilerOperationId> &compileOperationId
+        = std::nullopt)
+{
+    Data::RuntimePackageCompilerActivationProof proof
+        = *preparation.compilerActivationProof;
+    if (compileOperationId) {
+        proof.compileRequest.operationId = *compileOperationId;
+        proof.compileResult.envelope.operationId = *compileOperationId;
+        proof.finalizeRequest.operationId = *compileOperationId;
+        proof.finalizeResult.envelope.operationId = *compileOperationId;
+        const auto encodedCompileRequest
+            = Core::encodeRuntimePackageCompilerCompileRequest(proof.compileRequest);
+        if (encodedCompileRequest) {
+            proof.compileResult.envelope.requestSha256 = encodedCompileRequest->sha256();
+            proof.finalizeRequest.compileRequestSha256 = encodedCompileRequest->sha256();
+            proof.finalizeResult.envelope.requestSha256 = encodedCompileRequest->sha256();
+        }
+    }
+    const Core::RuntimePackageCompilerPreparationStartRequest startRequest{
+        proof.compileRequest,
+        proof.verifyRequest.operationId,
+        preparation.operationId,
+        true,
+    };
+    const auto fingerprint
+        = Core::runtimePackageCompilerPreparationStartRequestFingerprint(startRequest);
+
+    Core::RuntimePackageCompilerPreparationRecord record;
+    record.compileOperationId = proof.compileRequest.operationId;
+    if (fingerprint)
+        record.startRequestFingerprint = *fingerprint;
+    record.verifyOperationId = proof.verifyRequest.operationId;
+    record.activationOperationId = preparation.operationId;
+    record.startRequest = startRequest;
+    const auto encodedCompileRequest
+        = Core::encodeRuntimePackageCompilerCompileRequest(proof.compileRequest);
+    if (encodedCompileRequest)
+        record.compileRequestSha256 = encodedCompileRequest->sha256();
+    record.compilerProviderId = proof.compilerProviderId;
+    record.contractIdentity = proof.contractIdentity;
+    record.revision = 2;
+    record.phase = phase;
+    if (phase
+        == Core::RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature) {
+        record.compileResult = proof.compileResult;
+        if (record.compileRequestSha256)
+            record.compileResult->envelope.requestSha256 = *record.compileRequestSha256;
+        record.detachedSigningRequest = proof.compileResult.signRequest;
+    }
+    if (phase == Core::RuntimePackageCompilerPreparationPhase::Ready) {
+        record.compileResult = proof.compileResult;
+        record.detachedSigningRequest = proof.compileResult.signRequest;
+        record.finalizeRequest = proof.finalizeRequest;
+        record.finalizeRequestSha256 = proof.finalizeRequestSha256;
+        record.finalizeResult = proof.finalizeResult;
+        record.verifyRequest = proof.verifyRequest;
+        record.verifyRequestSha256 = proof.verifyRequestSha256;
+        record.verifyResult = proof.verifyResult;
+        record.preparation = preparation;
+    }
+    if (phase == Core::RuntimePackageCompilerPreparationPhase::Canceled)
+        record.detail = QStringLiteral("Canceled by the user.");
+    if (phase == Core::RuntimePackageCompilerPreparationPhase::Failed)
+        record.detail = QStringLiteral("Compiler verification failed.");
+    return record;
+}
+
 void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
 {
     const ExtensionSystem::PluginSpec *spec = ExtensionSystem::PluginManager::specById(
@@ -1712,6 +1955,7 @@ void EtherCATWorkbenchTests::testMetadataModeActionsAndProvider()
     QVERIFY(hasDependency("ethercatcore"));
     QVERIFY(hasDependency("ethercatdevices"));
     QVERIFY(hasDependency("ethercatproject"));
+    QVERIFY(hasDependency("ethercatprojectcompiler"));
     QVERIFY(hasDependency("ethercatsemanticruntime"));
     QVERIFY(hasDependency("projectexplorer"));
 
@@ -22727,6 +22971,461 @@ void EtherCATWorkbenchTests::testControllerPackageDeploymentWorkflow()
     QVERIFY(!provider.lastDeploymentRequest.operationId.isEmpty());
     QVERIFY(!provider.lastDeploymentRequest.activate);
     QVERIFY(!provider.lastDeploymentRequest.rollbackOnActivationFailure);
+}
+
+void EtherCATWorkbenchTests::testRuntimePackageCompilerPreparationBridge()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    Core::ProviderRegistry *registry
+        = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(projectService);
+    QVERIFY(registry);
+    controller.selectionService()->clear();
+
+    const Data::RuntimePackageCompilerActivationProof proof = bridgeCompilerProof();
+    QVERIFY(proof.isValid());
+    const Data::RuntimePackageActivationProjectCapture proofCapture
+        = bridgeProjectCapture(proof);
+    QVERIFY(proofCapture.isValid());
+    QCOMPARE(
+        Data::RuntimePackageCompilerProjectSnapshotEvidence{proofCapture},
+        proof.compileRequest.projectSnapshotEvidence);
+    const Data::ControllerConnectionScope scope = proof.compileRequest.topologyEvidence.scope;
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        deviceSummaries(1).constFirst(),
+        "compiler-preparation-bridge.ecatproject",
+        "Compiler Preparation Bridge",
+        scope);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    ProjectExplorer::ProjectManager::setStartupProject(opened.project());
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+
+    QCOMPARE(Data::ControllerConnectionScope(file.projectId, file.masterId), scope);
+    const Core::RuntimePackageActivationPreparationRequest preparation
+        = bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-001"));
+    QVERIFY(preparation.isValid());
+    QVERIFY(controller.trustedRuntimePackageActivationUnavailableReason(scope).contains(
+        QStringLiteral("coordinator"), Qt::CaseInsensitive));
+    QVERIFY(!controller.setTrustedRuntimePackageActivationPreparation(preparation));
+
+    BridgeRuntimePackageCompilerProvider compilerProvider{
+        Utils::Id::fromString(proof.compilerProviderId)};
+    QCOMPARE(compilerProvider.id().toString(), proof.compilerProviderId);
+    compilerProvider.setAvailable(true);
+    ControlledControllerConnectionProvider controllerProvider(
+        Utils::Id("EtherCAT.Workbench.TestControllerConnection.CompilerBridge"),
+        QStringLiteral("Compiler bridge controller"));
+    controllerProvider.setAvailable(true);
+    controllerProvider.setPackageDeploymentSupported(true);
+    bool compilerProviderRegistered = false;
+    bool controllerProviderRegistered = false;
+    bool projectRemoved = false;
+    const QScopeGuard cleanup([&] {
+        controller.selectionService()->clear();
+        if (controllerProviderRegistered)
+            ExtensionSystem::PluginManager::removeObject(&controllerProvider);
+        if (compilerProviderRegistered)
+            ExtensionSystem::PluginManager::removeObject(&compilerProvider);
+        if (!projectRemoved
+            && ProjectExplorer::ProjectManager::projects().contains(opened.project())) {
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        }
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    ExtensionSystem::PluginManager::addObject(&compilerProvider);
+    compilerProviderRegistered = true;
+    ExtensionSystem::PluginManager::addObject(&controllerProvider);
+    controllerProviderRegistered = true;
+
+    BridgeRuntimePackageCompilerPreparationCoordinator coordinator(registry);
+    {
+        Data::RuntimePackageActivationProjectCapture currentCapture = proofCapture;
+        RuntimePackageCompilerPreparationBridge bridge(
+            &controller,
+            &coordinator,
+            [&](const Data::NodeId &projectId)
+                -> Utils::Result<Data::RuntimePackageActivationProjectCapture> {
+                if (projectId != scope.projectId) {
+                    return Utils::ResultError(
+                        QStringLiteral("The requested project capture is unavailable."));
+                }
+                return currentCapture;
+            });
+        QSignalSpy output(&controller, &WorkbenchController::controllerOutputRequested);
+        QVERIFY(output.isValid());
+
+        const auto publishReady = [&](
+                                      const Core::RuntimePackageActivationPreparationRequest
+                                          &candidate) {
+            const auto ready = bridgePreparationRecord(
+                Core::RuntimePackageCompilerPreparationPhase::Ready, candidate);
+            QVERIFY(ready.isValid());
+            coordinator.publishRecord(ready);
+            coordinator.publishPreparation(candidate);
+        };
+
+        const auto awaiting = bridgePreparationRecord(
+            Core::RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature,
+            preparation);
+        QVERIFY(awaiting.startRequest.has_value());
+        QVERIFY(awaiting.startRequest->isValid());
+        QVERIFY(awaiting.startRequestFingerprint.isValid());
+        QVERIFY(awaiting.compileRequestSha256.has_value());
+        QVERIFY(awaiting.compileRequestSha256->isValid());
+        QVERIFY(awaiting.compileResult.has_value());
+        QVERIFY(awaiting.compileResult->isSuccess());
+        QVERIFY(awaiting.detachedSigningRequest.has_value());
+        QCOMPARE(
+            awaiting.compileResult->envelope.operationId,
+            awaiting.startRequest->compileRequest.operationId);
+        QCOMPARE(
+            awaiting.compileResult->envelope.configurationId,
+            awaiting.startRequest->compileRequest.configurationId);
+        QCOMPARE(
+            awaiting.compileResult->envelope.requestSha256,
+            *awaiting.compileRequestSha256);
+        QCOMPARE(
+            *awaiting.detachedSigningRequest,
+            *awaiting.compileResult->signRequest);
+        QVERIFY(awaiting.isValid());
+        coordinator.publishRecord(awaiting);
+        QCOMPARE(output.count(), 1);
+        QVERIFY(output.constLast().constFirst().toString().contains(
+            QStringLiteral("signature"), Qt::CaseInsensitive));
+        QCOMPARE(controllerProvider.deploymentCalls, 0);
+
+        coordinator.publishPreparation(preparation);
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+        QVERIFY(output.constLast().constFirst().toString().contains(
+            QStringLiteral("matching"), Qt::CaseInsensitive));
+
+        publishReady(preparation);
+        QVERIFY(controller.m_runtimePackageActivationPreparation.has_value());
+        QCOMPARE(*controller.m_runtimePackageActivationPreparation, preparation);
+        QVERIFY(controller.canStartTrustedRuntimePackageActivation(scope));
+        QVERIFY(compilerProvider.validationCalls >= 2);
+        QCOMPARE(controllerProvider.deploymentCalls, 0);
+
+        const auto replacementCompile = bridgePreparationRecord(
+            Core::RuntimePackageCompilerPreparationPhase::Reserved,
+            preparation,
+            Data::RuntimePackageCompilerOperationId{
+                QStringLiteral("04204204-2001-4000-8000-000000000098")});
+        QVERIFY(replacementCompile.startRequest.has_value());
+        QVERIFY(replacementCompile.startRequest->compileRequest.isValid());
+        QVERIFY(replacementCompile.startRequest->verifyOperationId.isValid());
+        QVERIFY(replacementCompile.startRequest->activationOperationId.isValid());
+        QVERIFY(replacementCompile.startRequest->compileRequest.operationId.value()
+                != replacementCompile.startRequest->verifyOperationId.value());
+        QVERIFY(replacementCompile.startRequest->compileRequest.operationId.value()
+                != replacementCompile.startRequest->activationOperationId.value());
+        QVERIFY(replacementCompile.startRequest->verifyOperationId.value()
+                != replacementCompile.startRequest->activationOperationId.value());
+        QVERIFY(replacementCompile.startRequest->isValid());
+        const auto replacementFingerprint
+            = Core::runtimePackageCompilerPreparationStartRequestFingerprint(
+                *replacementCompile.startRequest);
+        QVERIFY_RESULT(replacementFingerprint);
+        QCOMPARE(*replacementFingerprint, replacementCompile.startRequestFingerprint);
+        const auto replacementCanonical
+            = Core::encodeRuntimePackageCompilerCompileRequest(
+                replacementCompile.startRequest->compileRequest);
+        QVERIFY_RESULT(replacementCanonical);
+        QCOMPARE(replacementCanonical->sha256(), replacementCompile.compileRequestSha256);
+        QVERIFY(replacementCompile.isValid());
+        QCOMPARE(replacementCompile.activationOperationId, preparation.operationId);
+        QVERIFY(replacementCompile.compileOperationId
+                != preparation.compilerActivationProof->compileRequest.operationId);
+        coordinator.publishRecord(replacementCompile);
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+
+        coordinator.publishPreparation(preparation);
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+        QCOMPARE(controllerProvider.deploymentCalls, 0);
+
+        const Core::RuntimePackageActivationPreparationRequest second
+            = bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-002"));
+        QVERIFY(second.isValid());
+        publishReady(second);
+        QCOMPARE(*controller.m_runtimePackageActivationPreparation, second);
+
+        const Core::RuntimePackageActivationPreparationRequest third
+            = bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-003"));
+        const auto thirdReady = bridgePreparationRecord(
+            Core::RuntimePackageCompilerPreparationPhase::Ready, third);
+        QVERIFY(thirdReady.isValid());
+        coordinator.publishRecord(thirdReady);
+        Core::RuntimePackageActivationPreparationRequest invalid = third;
+        invalid.packageBytes.clear();
+        QVERIFY(!invalid.isValid());
+        coordinator.publishPreparation(invalid);
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+        QVERIFY(output.constLast().constFirst().toString().contains(
+            QStringLiteral("rejected"), Qt::CaseInsensitive));
+        QCOMPARE(controllerProvider.deploymentCalls, 0);
+
+        const Core::RuntimePackageActivationPreparationRequest fourth
+            = bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-004"));
+        publishReady(fourth);
+        QCOMPARE(*controller.m_runtimePackageActivationPreparation, fourth);
+
+        const Core::RuntimePackageActivationPreparationRequest reentrantOuter
+            = bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-005"));
+        const Core::RuntimePackageActivationPreparationRequest reentrantInner
+            = bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-006"));
+        const auto outerReady = bridgePreparationRecord(
+            Core::RuntimePackageCompilerPreparationPhase::Ready, reentrantOuter);
+        QVERIFY(outerReady.isValid());
+        coordinator.publishRecord(outerReady);
+        bool reentered = false;
+        const QMetaObject::Connection reentrantConnection = connect(
+            &controller,
+            &WorkbenchController::trustedRuntimePackageActivationChanged,
+            &controller,
+            [&] {
+                if (reentered)
+                    return;
+                reentered = true;
+                const auto innerReady = bridgePreparationRecord(
+                    Core::RuntimePackageCompilerPreparationPhase::Ready, reentrantInner);
+                QVERIFY(innerReady.isValid());
+                coordinator.publishRecord(innerReady);
+                coordinator.publishPreparation(reentrantInner);
+            });
+        coordinator.publishPreparation(reentrantOuter);
+        disconnect(reentrantConnection);
+        QVERIFY(reentered);
+        QVERIFY(controller.m_runtimePackageActivationPreparation.has_value());
+        QCOMPARE(*controller.m_runtimePackageActivationPreparation, reentrantInner);
+
+        const Core::RuntimePackageActivationPreparationRequest unavailableDuringAdmission
+            = bridgePreparation(
+                proof, QStringLiteral("activation/compiler-bridge-reentrant-unavailable"));
+        coordinator.publishRecord(bridgePreparationRecord(
+            Core::RuntimePackageCompilerPreparationPhase::Ready, unavailableDuringAdmission));
+        bool unavailableReentered = false;
+        const QMetaObject::Connection unavailableConnection = connect(
+            &controller,
+            &WorkbenchController::trustedRuntimePackageActivationChanged,
+            &controller,
+            [&] {
+                if (unavailableReentered)
+                    return;
+                unavailableReentered = true;
+                QVERIFY(controller.m_runtimePackageActivationPreparation.has_value());
+                QCOMPARE(
+                    *controller.m_runtimePackageActivationPreparation, unavailableDuringAdmission);
+                compilerProvider.setAvailable(false);
+            });
+        coordinator.publishPreparation(unavailableDuringAdmission);
+        disconnect(unavailableConnection);
+        QVERIFY(unavailableReentered);
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+        QVERIFY(!bridge.m_pendingReadyPreparation.has_value());
+        QVERIFY(!bridge.m_trustedPreparation.has_value());
+        QVERIFY(!controller.canStartTrustedRuntimePackageActivation(scope));
+        compilerProvider.setAvailable(true);
+
+        const Core::RuntimePackageActivationPreparationRequest removalDuringAdmission
+            = bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-reentrant-removal"));
+        coordinator.publishRecord(bridgePreparationRecord(
+            Core::RuntimePackageCompilerPreparationPhase::Ready, removalDuringAdmission));
+        bool removalReentered = false;
+        const QMetaObject::Connection removalConnection = connect(
+            &controller,
+            &WorkbenchController::trustedRuntimePackageActivationChanged,
+            &controller,
+            [&] {
+                if (removalReentered)
+                    return;
+                removalReentered = true;
+                QVERIFY(controller.m_runtimePackageActivationPreparation.has_value());
+                QCOMPARE(*controller.m_runtimePackageActivationPreparation, removalDuringAdmission);
+                ExtensionSystem::PluginManager::removeObject(&compilerProvider);
+                compilerProviderRegistered = false;
+            });
+        coordinator.publishPreparation(removalDuringAdmission);
+        disconnect(removalConnection);
+        QVERIFY(removalReentered);
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+        QVERIFY(!bridge.m_pendingReadyPreparation.has_value());
+        QVERIFY(!bridge.m_trustedPreparation.has_value());
+        QVERIFY(!controller.canStartTrustedRuntimePackageActivation(scope));
+        ExtensionSystem::PluginManager::addObject(&compilerProvider);
+        compilerProviderRegistered = true;
+
+        BridgeRuntimePackageCompilerProvider admissionAmbiguousProvider{
+            Utils::Id("org.embedlabs.runtime-package-compiler.admission-ambiguous")};
+        admissionAmbiguousProvider.setAvailable(true);
+        bool admissionAmbiguousProviderRegistered = false;
+        const QScopeGuard admissionAmbiguousProviderCleanup([&] {
+            if (admissionAmbiguousProviderRegistered) {
+                ExtensionSystem::PluginManager::removeObject(&admissionAmbiguousProvider);
+            }
+        });
+        const Core::RuntimePackageActivationPreparationRequest ambiguityDuringAdmission
+            = bridgePreparation(
+                proof, QStringLiteral("activation/compiler-bridge-reentrant-ambiguity"));
+        coordinator.publishRecord(bridgePreparationRecord(
+            Core::RuntimePackageCompilerPreparationPhase::Ready, ambiguityDuringAdmission));
+        bool ambiguityReentered = false;
+        const QMetaObject::Connection ambiguityConnection = connect(
+            &controller,
+            &WorkbenchController::trustedRuntimePackageActivationChanged,
+            &controller,
+            [&] {
+                if (ambiguityReentered)
+                    return;
+                ambiguityReentered = true;
+                QVERIFY(controller.m_runtimePackageActivationPreparation.has_value());
+                QCOMPARE(*controller.m_runtimePackageActivationPreparation, ambiguityDuringAdmission);
+                ExtensionSystem::PluginManager::addObject(&admissionAmbiguousProvider);
+                admissionAmbiguousProviderRegistered = true;
+            });
+        coordinator.publishPreparation(ambiguityDuringAdmission);
+        disconnect(ambiguityConnection);
+        QVERIFY(ambiguityReentered);
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+        QVERIFY(!bridge.m_pendingReadyPreparation.has_value());
+        QVERIFY(!bridge.m_trustedPreparation.has_value());
+        QVERIFY(!controller.canStartTrustedRuntimePackageActivation(scope));
+        ExtensionSystem::PluginManager::removeObject(&admissionAmbiguousProvider);
+        admissionAmbiguousProviderRegistered = false;
+
+        QVERIFY_RESULT(controller.renameProject(file.projectId, QStringLiteral("Changed project")));
+        QTRY_VERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+        QCOMPARE(
+            controller.startTrustedRuntimePackageActivation(scope).error(),
+            controller.trustedRuntimePackageActivationUnavailableReason(scope));
+        QCOMPARE(controllerProvider.deploymentCalls, 0);
+
+        const auto replayedReady = bridgePreparationRecord(
+            Core::RuntimePackageCompilerPreparationPhase::Ready, reentrantInner);
+        QVERIFY(replayedReady.isValid());
+        coordinator.publishRecord(replayedReady);
+        coordinator.publishPreparation(reentrantInner);
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+
+        const Core::RuntimePackageActivationPreparationRequest afterProjectChange
+            = bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-007"));
+        publishReady(afterProjectChange);
+        QCOMPARE(*controller.m_runtimePackageActivationPreparation, afterProjectChange);
+
+        compilerProvider.setAvailable(false);
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+        compilerProvider.setAvailable(true);
+        coordinator.publishRecord(bridgePreparationRecord(
+            Core::RuntimePackageCompilerPreparationPhase::Ready, afterProjectChange));
+        coordinator.publishPreparation(afterProjectChange);
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+
+        const Core::RuntimePackageActivationPreparationRequest afterAvailability
+            = bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-008"));
+        publishReady(afterAvailability);
+        QCOMPARE(*controller.m_runtimePackageActivationPreparation, afterAvailability);
+
+        BridgeRuntimePackageCompilerProvider ambiguousProvider{
+            Utils::Id("org.embedlabs.runtime-package-compiler.ambiguous")};
+        ambiguousProvider.setAvailable(true);
+        bool ambiguousProviderRegistered = false;
+        const QScopeGuard ambiguousProviderCleanup([&] {
+            if (ambiguousProviderRegistered)
+                ExtensionSystem::PluginManager::removeObject(&ambiguousProvider);
+        });
+        ExtensionSystem::PluginManager::addObject(&ambiguousProvider);
+        ambiguousProviderRegistered = true;
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+        ExtensionSystem::PluginManager::removeObject(&ambiguousProvider);
+        ambiguousProviderRegistered = false;
+
+        const Core::RuntimePackageActivationPreparationRequest afterAmbiguity
+            = bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-009"));
+        publishReady(afterAmbiguity);
+        QCOMPARE(*controller.m_runtimePackageActivationPreparation, afterAmbiguity);
+
+        ExtensionSystem::PluginManager::removeObject(&compilerProvider);
+        compilerProviderRegistered = false;
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+
+        ExtensionSystem::PluginManager::addObject(&ambiguousProvider);
+        ambiguousProviderRegistered = true;
+        const Core::RuntimePackageActivationPreparationRequest wrongOwner
+            = bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-wrong-owner"));
+        const auto wrongOwnerReady = bridgePreparationRecord(
+            Core::RuntimePackageCompilerPreparationPhase::Ready, wrongOwner);
+        QVERIFY(wrongOwnerReady.isValid());
+        coordinator.publishRecord(wrongOwnerReady);
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+        QVERIFY(output.constLast().constFirst().toString().contains(
+            QStringLiteral("own"), Qt::CaseInsensitive));
+        coordinator.publishPreparation(wrongOwner);
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+        ExtensionSystem::PluginManager::removeObject(&ambiguousProvider);
+        ambiguousProviderRegistered = false;
+
+        ExtensionSystem::PluginManager::addObject(&compilerProvider);
+        compilerProviderRegistered = true;
+
+        Data::RuntimePackageActivationProjectCapture staleCapture{
+            proofCapture.snapshot(),
+            QByteArray("{\"format\":\"changed-project\"}\n"),
+            proofCapture.documentRevisionNumber(),
+            proofCapture.documentRevision(),
+            proofCapture.originalBinding(),
+        };
+        QVERIFY(staleCapture.isValid());
+        currentCapture = staleCapture;
+        const Core::RuntimePackageActivationPreparationRequest staleProject
+            = bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-010"));
+        const auto staleReady = bridgePreparationRecord(
+            Core::RuntimePackageCompilerPreparationPhase::Ready, staleProject);
+        QVERIFY(staleReady.isValid());
+        coordinator.publishRecord(staleReady);
+        coordinator.publishPreparation(staleProject);
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+        currentCapture = proofCapture;
+
+        const auto canceled = bridgePreparationRecord(
+            Core::RuntimePackageCompilerPreparationPhase::Canceled,
+            bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-011")));
+        QVERIFY(canceled.isValid());
+        coordinator.publishRecord(canceled);
+        QVERIFY(output.constLast().constFirst().toString().contains(
+            QStringLiteral("canceled"), Qt::CaseInsensitive));
+
+        const auto failed = bridgePreparationRecord(
+            Core::RuntimePackageCompilerPreparationPhase::Failed,
+            bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-012")));
+        QVERIFY(failed.isValid());
+        coordinator.publishRecord(failed);
+        QVERIFY(output.constLast().constFirst().toString().contains(
+            QStringLiteral("failed"), Qt::CaseInsensitive));
+
+        const Core::RuntimePackageActivationPreparationRequest beforeClose
+            = bridgePreparation(proof, QStringLiteral("activation/compiler-bridge-013"));
+        publishReady(beforeClose);
+        QCOMPARE(*controller.m_runtimePackageActivationPreparation, beforeClose);
+        ProjectExplorer::ProjectManager::removeProject(opened.project());
+        projectRemoved = true;
+        QTRY_VERIFY(!projectService->project(file.projectId).has_value());
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+        coordinator.publishRecord(bridgePreparationRecord(
+            Core::RuntimePackageCompilerPreparationPhase::Ready, beforeClose));
+        coordinator.publishPreparation(beforeClose);
+        QVERIFY(!controller.m_runtimePackageActivationPreparation.has_value());
+        QCOMPARE(controllerProvider.deploymentCalls, 0);
+    }
+
+    QCOMPARE(controllerProvider.deploymentCalls, 0);
 }
 
 void EtherCATWorkbenchTests::testControllerFreeRunCapabilityWarnings()

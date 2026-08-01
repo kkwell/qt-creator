@@ -106,6 +106,7 @@ private slots:
     void testControllerCommunicationPagePresentation();
     void testControllerCommunicationControlWorkflow();
     void testControllerPackageDeploymentWorkflow();
+    void testRuntimePackageCompilerPreparationBridge();
     void testControllerFreeRunCapabilityWarnings();
     void testControllerQuickStopToShutdown();
     void testControllerQuickStartupAndLivePresentation();

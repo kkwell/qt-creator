@@ -6,6 +6,7 @@
 #ifdef WITH_TESTS
 #include "ethercatworkbenchtests.h"
 #endif
+#include "runtimepackagecompilerpreparationbridge.h"
 #include "workbenchautomationservice.h"
 #include "workbenchcontroller.h"
 #include "workbenchmode.h"
@@ -24,6 +25,7 @@
 #include <debugger/debuggerconstants.h>
 
 #include <ethercatcore/providers.h>
+#include <ethercatcore/runtimepackagecompilerpreparationcoordinator.h>
 #include <ethercatcore/selectionservice.h>
 #include <ethercatcore/stateservice.h>
 
@@ -148,6 +150,7 @@ private:
     void shutdown();
 
     std::unique_ptr<WorkbenchController> m_controller;
+    std::unique_ptr<RuntimePackageCompilerPreparationBridge> m_compilerPreparationBridge;
     std::unique_ptr<WorkbenchAutomationService> m_automationService;
     std::unique_ptr<BuiltinPropertyPageProvider> m_builtinPages;
     std::unique_ptr<WorkbenchNavigationFactory> m_navigationFactory;
@@ -176,6 +179,10 @@ void EtherCATWorkbenchPlugin::initialize()
     QTC_ASSERT(stateService, return);
 
     m_controller = std::make_unique<WorkbenchController>();
+    m_compilerPreparationBridge = std::make_unique<RuntimePackageCompilerPreparationBridge>(
+        m_controller.get(),
+        ExtensionSystem::PluginManager::getObject<
+            Core::RuntimePackageCompilerPreparationCoordinator>());
     m_automationService = std::make_unique<WorkbenchAutomationService>(m_controller.get());
     ExtensionSystem::PluginManager::addObject(m_automationService.get());
     m_automationServiceRegistered = true;
@@ -1229,6 +1236,7 @@ void EtherCATWorkbenchPlugin::shutdown()
         m_providerRegistered = false;
     }
     m_builtinPages.reset();
+    m_compilerPreparationBridge.reset();
     if (m_controller)
         m_controller->shutdown();
     m_controller.reset();

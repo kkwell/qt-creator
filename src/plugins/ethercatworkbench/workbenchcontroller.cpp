@@ -8,6 +8,7 @@
 #include <coreplugin/messagemanager.h>
 
 #include <ethercatcore/providerregistry.h>
+#include <ethercatcore/runtimepackagecompilerprovider.h>
 #include <ethercatcore/selectionservice.h>
 
 #include <extensionsystem/pluginmanager.h>
@@ -1646,7 +1647,13 @@ WorkbenchController::WorkbenchController(QObject *parent)
         m_projectService,
         &Core::ProjectService::projectChanged,
         this,
-        [this] { refreshProjects(); }));
+        [this](const Data::ProjectSnapshot &project) {
+            if (m_runtimePackageActivationPreparation
+                && m_runtimePackageActivationPreparation->scope.projectId == project.id) {
+                clearTrustedRuntimePackageActivationPreparation();
+            }
+            refreshProjects();
+        }));
     m_connections.append(connect(
         m_projectService,
         &Core::ProjectService::activeProjectChanged,
@@ -2843,6 +2850,11 @@ QString WorkbenchController::trustedRuntimePackageActivationUnavailableReason(
     if (!m_runtimePackageActivationService) {
         return Tr::tr("The trusted package activation service is unavailable.");
     }
+    if (!m_runtimePackageCompilerPreparationCoordinatorAvailable) {
+        return Tr::tr(
+            "No API-042 compiler preparation coordinator is available. Configure the trusted "
+            "compiler workflow before activation.");
+    }
     if (!m_runtimePackageActivationPreparation) {
         bool compilerAvailable = false;
         if (m_providerRegistry) {
@@ -2915,6 +2927,10 @@ Utils::Result<>
 WorkbenchController::setTrustedRuntimePackageActivationPreparation(
     const Core::RuntimePackageActivationPreparationRequest &request)
 {
+    if (!m_runtimePackageCompilerPreparationCoordinatorAvailable) {
+        return Utils::ResultError(
+            Tr::tr("The trusted compiler preparation coordinator is unavailable."));
+    }
     if (!request.isValid())
         return Utils::ResultError(Tr::tr("The verified compiler result is incomplete or invalid."));
     if (!controllerConnectionScopeIsValid(request.scope)) {
@@ -2922,22 +2938,29 @@ WorkbenchController::setTrustedRuntimePackageActivationPreparation(
             Tr::tr("The verified compiler result does not identify an open EtherCAT Master."));
     }
 
-    bool compilerAvailable = false;
+    QList<Core::RuntimePackageCompilerProvider *> availableCompilers;
     if (m_providerRegistry) {
         for (Core::Provider *provider :
              m_providerRegistry->providers(
                  Core::ProviderKind::RuntimePackageCompiler)) {
-            if (provider && provider->isAvailable()) {
-                compilerAvailable = true;
-                break;
-            }
+            auto *compiler = qobject_cast<Core::RuntimePackageCompilerProvider *>(provider);
+            if (compiler && compiler->isAvailable())
+                availableCompilers.append(compiler);
         }
     }
-    if (!compilerAvailable) {
+    if (availableCompilers.size() != 1) {
         return Utils::ResultError(
-            Tr::tr(
-                "No API-042 project compiler is installed; unverified activation input was "
-                "rejected."));
+            availableCompilers.isEmpty()
+                ? Tr::tr(
+                      "No API-042 project compiler is installed; unverified activation input was "
+                      "rejected.")
+                : Tr::tr("Project compiler selection is ambiguous; activation was rejected."));
+    }
+    if (!request.compilerActivationProof
+        || availableCompilers.constFirst()->id().toString()
+               != request.compilerActivationProof->compilerProviderId) {
+        return Utils::ResultError(
+            Tr::tr("The available project compiler does not own this verified package."));
     }
 
     m_runtimePackageActivationPreparation = request;
@@ -2950,6 +2973,16 @@ void WorkbenchController::clearTrustedRuntimePackageActivationPreparation()
     if (!m_runtimePackageActivationPreparation)
         return;
     m_runtimePackageActivationPreparation.reset();
+    emit trustedRuntimePackageActivationChanged();
+}
+
+void WorkbenchController::setRuntimePackageCompilerPreparationCoordinatorAvailable(bool available)
+{
+    if (m_runtimePackageCompilerPreparationCoordinatorAvailable == available)
+        return;
+    m_runtimePackageCompilerPreparationCoordinatorAvailable = available;
+    if (!available)
+        m_runtimePackageActivationPreparation.reset();
     emit trustedRuntimePackageActivationChanged();
 }
 

@@ -26,6 +26,7 @@ class SelectionService;
 namespace EtherCAT::Workbench::Internal {
 
 class EtherCATWorkbenchTests;
+class RuntimePackageCompilerPreparationBridge;
 
 struct OfflineSlaveRemovalCandidate
 {
@@ -184,9 +185,6 @@ public:
         const Data::ControllerConnectionScope &scope) const;
     bool canStartTrustedRuntimePackageActivation(
         const Data::ControllerConnectionScope &scope) const;
-    Utils::Result<> setTrustedRuntimePackageActivationPreparation(
-        const Core::RuntimePackageActivationPreparationRequest &request);
-    void clearTrustedRuntimePackageActivationPreparation();
     Utils::Result<> startTrustedRuntimePackageActivation(
         const Data::ControllerConnectionScope &scope);
     void writeControllerOutput(
@@ -247,6 +245,12 @@ signals:
 
 private:
     friend class EtherCATWorkbenchTests;
+    friend class RuntimePackageCompilerPreparationBridge;
+
+    Utils::Result<> setTrustedRuntimePackageActivationPreparation(
+        const Core::RuntimePackageActivationPreparationRequest &request);
+    void clearTrustedRuntimePackageActivationPreparation();
+    void setRuntimePackageCompilerPreparationCoordinatorAvailable(bool available);
 
 #ifdef WITH_TESTS
     static std::optional<Data::DeviceDescription> matchingDeviceDescriptionForCurrentBusTest(
@@ -436,6 +440,7 @@ private:
     QPointer<Core::RuntimePackageActivationService> m_runtimePackageActivationService;
     std::optional<Core::RuntimePackageActivationPreparationRequest>
         m_runtimePackageActivationPreparation;
+    bool m_runtimePackageCompilerPreparationCoordinatorAvailable = false;
     QHash<QString, quint64> m_reportedRuntimePackageActivationRevisions;
     QList<QMetaObject::Connection> m_connections;
     bool m_shuttingDown = false;
