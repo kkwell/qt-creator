@@ -8548,6 +8548,9 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
     constexpr auto TimingModeVariable = "QTC_ETHER_CAT_TIMING_MODE";
     constexpr auto HostVariable = "QTC_ETHER_CAT_PRODUCT_API_HOST";
     constexpr auto PortVariable = "QTC_ETHER_CAT_PRODUCT_API_PORT";
+    constexpr auto SoakDurationVariable = "QTC_ETHER_CAT_HARDWARE_SOAK_MS";
+    constexpr int MinimumSoakDurationMs = 2000;
+    constexpr int SoakProgressTimeoutMs = 2000;
     constexpr int ConnectStepTimeoutMs = 20000;
     constexpr int ControlStepTimeoutMs = 55000;
     constexpr int StateStepTimeoutMs = 15000;
@@ -8572,6 +8575,24 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
     const bool scanOnly = timingMode == QStringLiteral("scan_only");
     const bool expectFreeRunRejection = timingMode == QStringLiteral("free_run_rejection");
     const bool faultResetOnly = timingMode == QStringLiteral("fault_reset");
+
+    int soakDurationMs = 0;
+    const QString soakDurationValue = qEnvironmentVariable(SoakDurationVariable).trimmed();
+    if (!soakDurationValue.isEmpty()) {
+        bool validDuration = false;
+        soakDurationMs = soakDurationValue.toInt(&validDuration);
+        if (!validDuration || soakDurationMs < 0 || soakDurationMs > 300000
+            || (soakDurationMs > 0 && soakDurationMs < MinimumSoakDurationMs)) {
+            QFAIL(
+                "QTC_ETHER_CAT_HARDWARE_SOAK_MS must be 0 or between 2000 and 300000 "
+                "milliseconds.");
+        }
+        if (soakDurationMs
+            && (snapshotOnly || scanOnly || expectFreeRunRejection || faultResetOnly)) {
+            QFAIL(
+                "QTC_ETHER_CAT_HARDWARE_SOAK_MS is available only for a running lifecycle.");
+        }
+    }
 
     QString host = qEnvironmentVariable(HostVariable).trimmed();
     if (host.isEmpty())
@@ -9034,20 +9055,34 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
                    && state.actualWorkingCounter == state.expectedWorkingCounter
                    && !state.currentFaults && !state.latchedFaults;
         };
-    const auto strictRunningGate =
-        [&provider, &ownsLease, &exactActivePackage, &timingMode, initialBootId] {
-            const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
-            if (!ownsLease() || !exactActivePackage() || !snapshot.controllerState)
-                return false;
-            const Data::ControllerStateSummary &state = *snapshot.controllerState;
-            return state.serviceState == Data::ControllerServiceState::Running && state.ready
-                   && state.busOperational && state.applicationActive && !state.safeOutput
-                   && state.controllerBootId == initialBootId && (state.ethercatAlStateBits & 0x08)
-                   && state.expectedWorkingCounter
-                   && state.actualWorkingCounter == state.expectedWorkingCounter
-                   && !state.currentFaults && !state.latchedFaults
-                   && (timingMode != QStringLiteral("dc") || state.distributedClocksLocked);
-        };
+    const auto strictRunningSnapshotGate = [&timingMode,
+                                            initialActiveSlot,
+                                            initialActiveGeneration,
+                                            initialActiveConfigurationId,
+                                            initialBootId](
+                                               const Data::ControllerConnectionSnapshot &snapshot) {
+        if (snapshot.state != Data::ControllerConnectionState::Connected || !snapshot.session
+            || snapshot.session->bootId != initialBootId
+            || !snapshot.session->ownsControlLease || !snapshot.package
+            || snapshot.package->activeSlot != initialActiveSlot
+            || snapshot.package->activeGeneration != initialActiveGeneration
+            || snapshot.package->activeConfigurationId != initialActiveConfigurationId
+            || snapshot.package->controllerState != Data::ControllerPackageState::Active
+            || snapshot.package->controllerBootId != initialBootId || !snapshot.controllerState) {
+            return false;
+        }
+        const Data::ControllerStateSummary &state = *snapshot.controllerState;
+        return state.serviceState == Data::ControllerServiceState::Running && state.ready
+               && state.busOperational && state.applicationActive && !state.safeOutput
+               && state.controllerBootId == initialBootId && (state.ethercatAlStateBits & 0x08)
+               && state.expectedWorkingCounter
+               && state.actualWorkingCounter == state.expectedWorkingCounter
+               && !state.currentFaults && !state.latchedFaults
+               && (timingMode != QStringLiteral("dc") || state.distributedClocksLocked);
+    };
+    const auto strictRunningGate = [&provider, &strictRunningSnapshotGate] {
+        return strictRunningSnapshotGate(provider.connectionSnapshot());
+    };
     const auto strictPausedGate = [&provider, &ownsLease, &exactActivePackage, initialBootId] {
         const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
         if (!ownsLease() || !exactActivePackage() || !snapshot.controllerState)
@@ -9259,6 +9294,90 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         control.command = Data::ControllerControlCommand::Resume;
         executeMainCommand(control, QStringLiteral("resume"));
         waitForMainGate(QStringLiteral("resumed RUNNING"), strictRunningGate);
+    }
+
+    if (failure.isEmpty() && soakDurationMs > 0) {
+        const Data::ControllerConnectionSnapshot initialSnapshot = provider.connectionSnapshot();
+        if (!strictRunningSnapshotGate(initialSnapshot)) {
+            recordFailure(QStringLiteral(
+                "The controller was not in the strict RUNNING gate when the soak began."));
+        } else {
+            const quint64 initialCycle = initialSnapshot.controllerState->cycleCount;
+            const quint64 initialHeartbeat
+                = initialSnapshot.controllerState->controllerHeartbeat;
+            quint64 previousCycle = initialCycle;
+            quint64 previousHeartbeat = initialHeartbeat;
+            quint64 maximumDcDifference
+                = initialSnapshot.controllerState->distributedClockDifferenceNs;
+            QElapsedTimer soakTimer;
+            qint64 lastCycleProgressElapsedMs = 0;
+            qint64 lastHeartbeatProgressElapsedMs = 0;
+            soakTimer.start();
+            while (failure.isEmpty() && soakTimer.elapsed() < soakDurationMs) {
+                const int remainingMs = soakDurationMs - int(soakTimer.elapsed());
+                if (remainingMs <= 0)
+                    break;
+                QTest::qWait(std::min(250, remainingMs));
+                const Data::ControllerConnectionSnapshot snapshot
+                    = provider.connectionSnapshot();
+                if (!strictRunningSnapshotGate(snapshot)) {
+                    recordFailure(QStringLiteral(
+                        "The controller left the strict RUNNING gate during the soak interval."));
+                    break;
+                }
+                const Data::ControllerStateSummary &state = *snapshot.controllerState;
+                if (state.cycleCount < previousCycle
+                    || state.controllerHeartbeat < previousHeartbeat) {
+                    recordFailure(QStringLiteral(
+                        "The controller cycle or CPU1 heartbeat regressed during the soak."));
+                    break;
+                }
+                if (state.cycleCount > previousCycle)
+                    lastCycleProgressElapsedMs = soakTimer.elapsed();
+                if (state.controllerHeartbeat > previousHeartbeat)
+                    lastHeartbeatProgressElapsedMs = soakTimer.elapsed();
+                if (soakTimer.elapsed() - lastCycleProgressElapsedMs
+                    >= SoakProgressTimeoutMs) {
+                    recordFailure(QStringLiteral(
+                        "The controller cycle stopped advancing during the soak."));
+                    break;
+                }
+                if (soakTimer.elapsed() - lastHeartbeatProgressElapsedMs
+                    >= SoakProgressTimeoutMs) {
+                    recordFailure(QStringLiteral(
+                        "The CPU1 heartbeat stopped advancing during the soak."));
+                    break;
+                }
+                previousCycle = state.cycleCount;
+                previousHeartbeat = state.controllerHeartbeat;
+                maximumDcDifference
+                    = std::max(maximumDcDifference, quint64(state.distributedClockDifferenceNs));
+            }
+            const Data::ControllerConnectionSnapshot finalSnapshot
+                = provider.connectionSnapshot();
+            if (failure.isEmpty()
+                && (!strictRunningSnapshotGate(finalSnapshot)
+                    || finalSnapshot.controllerState->cycleCount <= initialCycle
+                    || finalSnapshot.controllerState->controllerHeartbeat <= initialHeartbeat)) {
+                recordFailure(QStringLiteral(
+                    "The controller cycle or CPU1 heartbeat did not advance during the soak."));
+            }
+            if (failure.isEmpty()) {
+                const Data::ControllerStateSummary &state = *finalSnapshot.controllerState;
+                qInfo().noquote()
+                    << "[Product API hardware] running soak confirmed"
+                    << "durationMs=" << soakTimer.elapsed()
+                    << "cycles=" << QStringLiteral("%1->%2").arg(initialCycle).arg(state.cycleCount)
+                    << "heartbeat="
+                    << QStringLiteral("%1->%2")
+                           .arg(initialHeartbeat)
+                           .arg(state.controllerHeartbeat)
+                    << "maxDcDifferenceNs=" << maximumDcDifference << "WKC="
+                    << QStringLiteral("%1/%2")
+                           .arg(state.actualWorkingCounter)
+                           .arg(state.expectedWorkingCounter);
+            }
+        }
     }
 
     if (failure.isEmpty() && !snapshotOnly && !scanOnly && !faultResetOnly
