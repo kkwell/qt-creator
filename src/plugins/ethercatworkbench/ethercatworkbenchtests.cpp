@@ -3749,8 +3749,14 @@ void EtherCATWorkbenchTests::testDeviceAdapterSelectionBuildsModuleChannelTree()
         QList<Data::SemanticSignalId>(
             {{"org.embedlabs.test.slot.1.digital-output.channel.1"}}));
     QVERIFY(!outputChannelSelection->wholeDevice);
-    QVERIFY(!model.semanticControlSelection(
-        modules.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>()));
+    const std::optional<SemanticControlSelection> modulesSelection
+        = model.semanticControlSelection(
+            modules.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
+    QVERIFY(modulesSelection);
+    QCOMPARE(modulesSelection->scope, expectedScope);
+    QCOMPARE(modulesSelection->deviceId, fixture.slaveId);
+    QVERIFY(modulesSelection->signalIds.isEmpty());
+    QVERIFY(modulesSelection->wholeDevice);
 
     const QIcon outputIcon = outputChannel.data(Qt::DecorationRole).value<QIcon>();
     const QIcon inputIcon = inputChannel.data(Qt::DecorationRole).value<QIcon>();
@@ -3817,6 +3823,14 @@ void EtherCATWorkbenchTests::testControlPageSelectionPolicy()
             Core::WorkbenchNodeKind::Modules,
             configuredSlave);
         QVERIFY(modules.isValid());
+        const Data::NodeId modulesId
+            = modules.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+        const std::optional<SemanticControlSelection> modulesSelection
+            = ordinaryController.treeModel()->semanticControlSelection(modulesId);
+        QVERIFY(modulesSelection);
+        QCOMPARE(modulesSelection->deviceId, fixture.slaveId);
+        QVERIFY(modulesSelection->wholeDevice);
+        QVERIFY(modulesSelection->signalIds.isEmpty());
         const QModelIndex ordinaryModule = ordinaryController.treeModel()->index(0, 0, modules);
         QVERIFY(ordinaryModule.isValid());
         QCOMPARE(
@@ -3831,6 +3845,16 @@ void EtherCATWorkbenchTests::testControlPageSelectionPolicy()
         QVERIFY(ordinaryChannel.isValid());
 
         BuiltinPropertyPageProvider ordinaryPages(&ordinaryController);
+        const QList<Core::PropertyPageDescriptor> modulesDescriptors = ordinaryPages.pages(
+            ordinaryController.treeModel()->contextForIndex(modules));
+        QCOMPARE(modulesDescriptors.size(), 2);
+        QCOMPARE(
+            modulesDescriptors.constFirst().id,
+            Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID));
+        QCOMPARE(modulesDescriptors.constFirst().priority, 50);
+        QVERIFY(shouldDefaultToControlPageForTest(
+            &ordinaryController,
+            ordinaryController.treeModel()->contextForIndex(modules)));
         const QList<Core::PropertyPageDescriptor> moduleDescriptors = ordinaryPages.pages(
             ordinaryController.treeModel()->contextForIndex(ordinaryModule));
         QCOMPARE(moduleDescriptors.size(), 2);
@@ -3838,6 +3862,9 @@ void EtherCATWorkbenchTests::testControlPageSelectionPolicy()
             moduleDescriptors.constFirst().id,
             Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID));
         QCOMPARE(moduleDescriptors.constFirst().priority, 50);
+        QVERIFY(shouldDefaultToControlPageForTest(
+            &ordinaryController,
+            ordinaryController.treeModel()->contextForIndex(ordinaryModule)));
         const QList<Core::PropertyPageDescriptor> channelDescriptors = ordinaryPages.pages(
             ordinaryController.treeModel()->contextForIndex(ordinaryChannel));
         QCOMPARE(channelDescriptors.size(), 2);
@@ -3845,6 +3872,9 @@ void EtherCATWorkbenchTests::testControlPageSelectionPolicy()
             channelDescriptors.constFirst().id,
             Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID));
         QCOMPARE(channelDescriptors.constFirst().priority, 50);
+        QVERIFY(shouldDefaultToControlPageForTest(
+            &ordinaryController,
+            ordinaryController.treeModel()->contextForIndex(ordinaryChannel)));
     }
 
     WorkbenchController controller;
@@ -4664,11 +4694,31 @@ void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()
 
     const QModelIndex configuredSlave = controller.treeModel()->indexForNodeId(fixture.slaveId);
     QVERIFY(configuredSlave.isValid());
+    const QModelIndex modules = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Modules, configuredSlave);
+    QVERIFY(modules.isValid());
+    const QModelIndex outputModule = controller.treeModel()->index(0, 0, modules);
+    QVERIFY(outputModule.isValid());
+    const QModelIndex outputChannel = findByDisplayText(
+        controller.treeModel(), "Digital output 1", outputModule);
+    QVERIFY(outputChannel.isValid());
     const Core::PropertyPageContext slaveContext
         = controller.treeModel()->contextForIndex(configuredSlave);
+    const Core::PropertyPageContext channelContext
+        = controller.treeModel()->contextForIndex(outputChannel);
     const std::optional<SemanticControlSelection> selection
         = controller.treeModel()->semanticControlSelection(fixture.slaveId);
+    const std::optional<SemanticControlSelection> moduleSelection
+        = controller.treeModel()->semanticControlSelection(
+            outputModule.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
+    const std::optional<SemanticControlSelection> channelSelection
+        = controller.treeModel()->semanticControlSelection(
+            outputChannel.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
     QVERIFY(selection);
+    QVERIFY(moduleSelection);
+    QVERIFY(channelSelection);
+    QCOMPARE(moduleSelection->signalIds.size(), 2);
+    QCOMPARE(channelSelection->signalIds.size(), 1);
 
     const Data::SemanticRuntimeDigest mappingDigest{
         "sha256", QByteArray(32, '\x71')};
@@ -4694,7 +4744,7 @@ void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()
     signalTarget.scope = selection->scope;
     signalTarget.deviceId = selection->deviceId;
     signalTarget.kind = Data::SemanticRuntimeTargetKind::Signal;
-    signalTarget.signalId = {"org.embedlabs.signed.output"};
+    signalTarget.signalId = channelSelection->signalIds.constFirst();
 
     Data::SemanticRuntimeBinding binding;
     binding.target = signalTarget;
@@ -4745,6 +4795,24 @@ void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()
     signalState.captureCycle = 8100;
     signalState.controllerTimestampNs = 9100;
 
+    const auto otherSignal = std::find_if(
+        moduleSelection->signalIds.cbegin(),
+        moduleSelection->signalIds.cend(),
+        [&channelSelection](const Data::SemanticSignalId &candidate) {
+            return candidate != channelSelection->signalIds.constFirst();
+        });
+    QVERIFY(otherSignal != moduleSelection->signalIds.cend());
+    Data::SemanticRuntimeBinding secondBinding = binding;
+    secondBinding.target.signalId = *otherSignal;
+    secondBinding.semanticBindingId = "hidden-semantic-binding-2";
+    secondBinding.resourceId = {QByteArrayLiteral("hidden-resource-id-2")};
+
+    Data::SemanticSignalRuntimeState secondSignalState = signalState;
+    secondSignalState.target = secondBinding.target;
+    secondSignalState.definition.id = secondSignalState.target.signalId;
+    secondSignalState.definition.displayName = "Output state 2";
+    secondSignalState.binding = secondBinding;
+
     Data::SemanticActionRuntimeState action;
     action.target.controllerId = signalTarget.controllerId;
     action.target.scope = selection->scope;
@@ -4763,7 +4831,7 @@ void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()
     action.actionDefinitionDigest = actionDefinitionDigest;
     action.qualification = Data::SemanticActionQualification::Qualified;
     action.availability = Data::SemanticActionAvailability::Ready;
-    action.bindings = {binding};
+    action.bindings = {binding, secondBinding};
     action.requiresApproval = true;
     action.requiresExclusiveControl = true;
     action.maximumTtlCycles = 1000;
@@ -4825,6 +4893,19 @@ void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()
     unqualifiedAction.disabledReason
         = "reference_unit_to_rpm_conversion_not_bound";
 
+    Data::SemanticActionRuntimeState unauthorizedAction = action;
+    unauthorizedAction.target.actionId = {"org.embedlabs.action.locked-output"};
+    unauthorizedAction.definition.id = unauthorizedAction.target.actionId;
+    unauthorizedAction.definition.displayName = "Locked output";
+    unauthorizedAction.definition.enabled = false;
+    unauthorizedAction.actionBindingId = unauthorizedAction.target.actionId.value;
+    unauthorizedAction.actionDefinitionId = "org.embedlabs.definition.locked-output";
+    unauthorizedAction.actionDefinitionDigest = {
+        "sha256", QByteArray(32, '\x7a')};
+    unauthorizedAction.availability = Data::SemanticActionAvailability::Rejected;
+    unauthorizedAction.maximumTtlCycles = 0;
+    unauthorizedAction.detail = "manual_adapter_not_authorized";
+
     Data::SemanticRuntimeContext runtimeContext;
     runtimeContext.controllerId = signalTarget.controllerId;
     runtimeContext.scope = selection->scope;
@@ -4836,8 +4917,8 @@ void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()
     runtimeContext.cyclePeriodNs = 125000;
     runtimeContext.bindingVerification = binding.verification;
     runtimeContext.contextHash = QByteArray(32, '\x79');
-    runtimeContext.signalStates = {signalState};
-    runtimeContext.actionStates = {action, unqualifiedAction};
+    runtimeContext.signalStates = {signalState, secondSignalState};
+    runtimeContext.actionStates = {action, unqualifiedAction, unauthorizedAction};
     runtimeContext.complete = true;
 
     TestSemanticRuntimeService runtime;
@@ -4864,24 +4945,33 @@ void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()
     QVERIFY(ttlCycles);
     QVERIFY(apply);
 
-    QTRY_COMPARE(signalTree->topLevelItemCount(), 1);
-    QCOMPARE(signalTree->topLevelItem(0)->text(0), QString("Output state"));
-    QCOMPARE(signalTree->topLevelItem(0)->text(1), Tr::tr("On"));
-    QTRY_COMPARE(actionTree->topLevelItemCount(), 2);
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 2);
+    QTreeWidgetItem *firstSignal = nullptr;
+    for (int row = 0; row < signalTree->topLevelItemCount(); ++row) {
+        if (signalTree->topLevelItem(row)->text(0) == "Output state")
+            firstSignal = signalTree->topLevelItem(row);
+    }
+    QVERIFY(firstSignal);
+    QCOMPARE(firstSignal->text(1), Tr::tr("On"));
+    QTRY_COMPARE(actionTree->topLevelItemCount(), 3);
     for (int column = 0; column < actionTree->columnCount(); ++column)
         QCOMPARE(actionTree->header()->sectionResizeMode(column), QHeaderView::Interactive);
 
     QTreeWidgetItem *readyItem = nullptr;
     QTreeWidgetItem *unqualifiedItem = nullptr;
+    QTreeWidgetItem *unauthorizedItem = nullptr;
     for (int row = 0; row < actionTree->topLevelItemCount(); ++row) {
         QTreeWidgetItem *item = actionTree->topLevelItem(row);
         if (item->text(0) == "Set outputs")
             readyItem = item;
         else if (item->text(0) == "Move axis")
             unqualifiedItem = item;
+        else if (item->text(0) == "Locked output")
+            unauthorizedItem = item;
     }
     QVERIFY(readyItem);
     QVERIFY(unqualifiedItem);
+    QVERIFY(unauthorizedItem);
     QCOMPARE(readyItem->text(1), Tr::tr("Ready"));
     QVERIFY(readyItem->flags().testFlag(Qt::ItemIsEnabled));
     QVERIFY(readyItem->flags().testFlag(Qt::ItemIsSelectable));
@@ -4891,11 +4981,30 @@ void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()
         Tr::tr("Speed unit conversion is not configured."));
     QVERIFY(!unqualifiedItem->flags().testFlag(Qt::ItemIsEnabled));
     QVERIFY(!unqualifiedItem->flags().testFlag(Qt::ItemIsSelectable));
+    QCOMPARE(
+        unauthorizedItem->text(2),
+        Tr::tr("Adapter hardware authorization is missing."));
+    QVERIFY(!unauthorizedItem->flags().testFlag(Qt::ItemIsEnabled));
+    QVERIFY(!unauthorizedItem->flags().testFlag(Qt::ItemIsSelectable));
     QCOMPARE(actionTree->currentItem(), readyItem);
     QCOMPARE(actionDetail->text(), Tr::tr("Ready for local confirmation."));
     QCOMPARE(ttlCycles->maximum(), 1000);
     QCOMPARE(ttlCycles->value(), 1000);
     QVERIFY(apply->isEnabled());
+
+    SemanticControlPage channelPage(&controller, &runtime);
+    channelPage.setContext(channelContext);
+    QLabel *channelStatus
+        = channelPage.findChild<QLabel *>("EtherCATSemanticControlStatus");
+    QTreeWidget *channelActions
+        = channelPage.findChild<QTreeWidget *>("EtherCATSemanticControlActions");
+    QVERIFY(channelStatus);
+    QVERIFY(channelActions);
+    QTRY_COMPARE(channelActions->topLevelItemCount(), 0);
+    QTRY_COMPARE(
+        channelStatus->text(),
+        Tr::tr("This signal belongs to an atomic output group. Select Modules / Channels "
+               "to control the complete group."));
 
     QWidget *boolEditor = nullptr;
     QWidget *signedEditor = nullptr;
@@ -4918,6 +5027,7 @@ void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()
     qobject_cast<QLineEdit *>(unsignedEditor)->setText("7");
     QVERIFY(apply->isEnabled());
 
+    QSignalSpy controllerOutput(&controller, &WorkbenchController::controllerOutputRequested);
     apply->click();
     QPointer<QMessageBox> confirmation;
     QTRY_VERIFY(
@@ -4931,6 +5041,23 @@ void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()
 
     QTRY_COMPARE(runtime.submitCalls, 1);
     QTRY_COMPARE(runtime.approveCalls, 1);
+    QTRY_COMPARE(controllerOutput.count(), 1);
+    QCOMPARE(
+        controllerOutput.constFirst().at(0).toString(),
+        Tr::tr("Action queued: Set outputs"));
+    QCOMPARE(
+        controllerOutput.constFirst().at(1).value<ControllerOutputLevel>(),
+        ControllerOutputLevel::Information);
+    const auto approvedRecord = runtime.operation(runtime.lastRequest.operationId);
+    QVERIFY(approvedRecord);
+    Data::SemanticOperationRecord submitted = *approvedRecord;
+    submitted.state = Data::SemanticOperationState::Submitted;
+    runtime.publishOperation(submitted);
+    QTRY_COMPARE(operationStatus->text(), Tr::tr("Queued."));
+    QCOMPARE(controllerOutput.count(), 1);
+    runtime.publishOperation(*approvedRecord);
+    QTRY_COMPARE(operationStatus->text(), Tr::tr("Queued."));
+    QCOMPARE(controllerOutput.count(), 1);
     QVERIFY(Core::isCanonicalSemanticOperationId(runtime.lastRequest.operationId));
     QVERIFY(runtime.lastRequest.operationId.value.startsWith("workbench-ui-"));
     QCOMPARE(runtime.lastRequest.kind, Data::SemanticOperationKind::InvokeAction);
@@ -4989,12 +5116,23 @@ void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()
     unknown.state = Data::SemanticOperationState::OutcomeUnknown;
     runtime.publishOperation(unknown);
     QTRY_COMPARE(operationStatus->text(), Tr::tr("Result unknown."));
+    QTRY_COMPARE(controllerOutput.count(), 2);
+    QCOMPARE(
+        controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
+        ControllerOutputLevel::Error);
     QVERIFY(!apply->isEnabled());
 
     Data::SemanticOperationRecord succeeded = unknown;
     succeeded.state = Data::SemanticOperationState::Succeeded;
     runtime.publishOperation(succeeded);
     QTRY_COMPARE(operationStatus->text(), Tr::tr("Completed."));
+    QTRY_COMPARE(controllerOutput.count(), 3);
+    QCOMPARE(
+        controllerOutput.constLast().at(0).toString(),
+        Tr::tr("Action completed: Set outputs"));
+    QCOMPARE(
+        controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
+        ControllerOutputLevel::Information);
     QVERIFY(apply->isEnabled());
 
     QString visibleText;
@@ -12938,7 +13076,8 @@ void EtherCATWorkbenchTests::testTwinCatProcessDataTree()
     QCOMPARE(
         pages.pages(modulesContext),
         QList<Core::PropertyPageDescriptor>(
-            {{Utils::Id(Constants::GENERAL_PAGE_ID), "General", 100}}));
+            {{Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID), "Control", 50},
+             {Utils::Id(Constants::GENERAL_PAGE_ID), "General", 100}}));
 
     Data::ProjectSnapshot compactProject = fixture.project;
     const QString longSlaveName

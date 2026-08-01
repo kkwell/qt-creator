@@ -82,6 +82,7 @@ private:
     QString m_activeActionName;
     QByteArray m_localAuthenticationDigest;
     Data::SemanticOperationId m_lastReportedOperationId;
+    QString m_lastReportedOperationMessage;
     Data::SemanticOperationState m_lastReportedOperationState
         = Data::SemanticOperationState::Rejected;
     bool m_hasReportedOperation = false;

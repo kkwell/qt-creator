@@ -182,6 +182,11 @@ QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
         }
         return {{Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100}};
     case Kind::Modules:
+        if (m_controller && m_controller->treeModel()
+            && m_controller->treeModel()->semanticControlSelection(context.nodeId)) {
+            return {{Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID), Tr::tr("Control"), 50},
+                    {Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100}};
+        }
         return {{Utils::Id(Constants::GENERAL_PAGE_ID), Tr::tr("General"), 100}};
     case Kind::Channel:
         if (m_controller && m_controller->treeModel()

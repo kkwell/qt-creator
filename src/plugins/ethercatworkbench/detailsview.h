@@ -18,6 +18,11 @@ namespace EtherCAT::Workbench::Internal {
 
 class WorkbenchController;
 
+#ifdef WITH_TESTS
+bool shouldDefaultToControlPageForTest(
+    WorkbenchController *controller, const Core::PropertyPageContext &context);
+#endif
+
 class DetailsView final : public QWidget
 {
     Q_OBJECT

@@ -9,8 +9,6 @@
 #include <ethercatcore/manualcontrolcontract.h>
 #include <ethercatcore/semanticruntimeservice.h>
 
-#include <coreplugin/messagemanager.h>
-
 #include <utils/stylehelper.h>
 
 #include <QCheckBox>
@@ -270,6 +268,20 @@ static QString actionAvailabilityName(const Data::SemanticActionRuntimeState &ac
 
 static QString compactActionReason(const Data::SemanticActionRuntimeState &action)
 {
+    if (action.detail == QStringLiteral("manual_adapter_not_authorized"))
+        return Tr::tr("Adapter hardware authorization is missing.");
+    if (action.detail == QStringLiteral("manual_adapter_contract_version_unsupported"))
+        return Tr::tr("The adapter control contract is not supported.");
+    if (action.detail == QStringLiteral("manual_adapter_identity_mismatch"))
+        return Tr::tr("The adapter does not match this device.");
+    if (action.detail == QStringLiteral("runtime_output_transactions_unavailable"))
+        return Tr::tr("Manual output is not supported by this controller.");
+    if (action.detail == QStringLiteral("exclusive_control_not_owned"))
+        return Tr::tr("Exclusive controller access is required.");
+    if (action.detail == QStringLiteral("controller_state_disallows_output_transactions"))
+        return Tr::tr("The controller state does not allow manual output.");
+    if (action.detail == QStringLiteral("distributed_clocks_not_active"))
+        return Tr::tr("DC mode is not running.");
     if (action.disabledReason
         == QStringLiteral("reference_unit_to_rpm_conversion_not_bound")) {
         return Tr::tr("Speed unit conversion is not configured.");
@@ -1006,9 +1018,12 @@ void SemanticControlPage::submitConfirmedAction(
         || record.approvalChallenge.size() != 32) {
         m_activeOperationState = Data::SemanticOperationState::OutcomeUnknown;
         m_operationStatus->setText(Tr::tr("Result unknown."));
-        ::Core::MessageManager::writeSilently(
-            Tr::tr("Action result is unknown: %1 (approval evidence invalid)")
-                .arg(m_activeActionName));
+        if (m_controller) {
+            m_controller->writeControllerOutput(
+                Tr::tr("Action result is unknown: %1 (approval evidence invalid)")
+                    .arg(m_activeActionName),
+                ControllerOutputLevel::Error);
+        }
         updateApplyEnabled();
         return;
     }
@@ -1032,10 +1047,13 @@ void SemanticControlPage::presentOperation(const Data::SemanticOperationRecord &
     m_operationStatus->setText(operationStateText(record.state));
     updateApplyEnabled();
 
-    if (m_hasReportedOperation && m_lastReportedOperationId == record.request.operationId
-        && m_lastReportedOperationState == record.state) {
+    const bool sameOperation
+        = m_hasReportedOperation && m_lastReportedOperationId == record.request.operationId;
+    if (sameOperation && m_lastReportedOperationState == record.state) {
         return;
     }
+    if (!sameOperation)
+        m_lastReportedOperationMessage.clear();
     m_hasReportedOperation = true;
     m_lastReportedOperationId = record.request.operationId;
     m_lastReportedOperationState = record.state;
@@ -1071,8 +1089,17 @@ void SemanticControlPage::presentOperation(const Data::SemanticOperationRecord &
     case State::Executing:
         break;
     }
+    if (!message.isEmpty() && message != m_lastReportedOperationMessage && m_controller) {
+        const bool failed = record.state == State::Rejected || record.state == State::Failed
+                            || record.state == State::TimedOut
+                            || record.state == State::Canceled
+                            || record.state == State::Expired
+                            || record.state == State::OutcomeUnknown;
+        m_controller->writeControllerOutput(
+            message, failed ? ControllerOutputLevel::Error : ControllerOutputLevel::Information);
+    }
     if (!message.isEmpty())
-        ::Core::MessageManager::writeSilently(message);
+        m_lastReportedOperationMessage = message;
 }
 
 void SemanticControlPage::refreshOperation()
@@ -1128,7 +1155,8 @@ void SemanticControlPage::refresh()
 
     if (selection->wholeDevice) {
         const bool selectedDevice
-            = m_context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave;
+            = m_context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave
+              || m_context.nodeKind == Core::WorkbenchNodeKind::Modules;
         m_selectionScope->setText(
             selectedDevice
                 ? Tr::tr("Whole-device control")
@@ -1256,6 +1284,35 @@ void SemanticControlPage::refresh()
 
     m_signals->setVisible(!states.isEmpty());
 
+    const bool requiresWholeDeviceControl
+        = !selectedSignalIds.isEmpty()
+          && std::any_of(
+              runtimeContext.actionStates.cbegin(),
+              runtimeContext.actionStates.cend(),
+              [&runtimeContext, &selection, &selectedSignalIds](
+                  const Data::SemanticActionRuntimeState &action) {
+                  if (action.target.controllerId != runtimeContext.controllerId
+                      || action.target.scope != selection->scope
+                      || action.target.deviceId != selection->deviceId
+                      || action.target.kind != Data::SemanticRuntimeTargetKind::Action
+                      || action.bindings.isEmpty()) {
+                      return false;
+                  }
+                  const bool includesSelectedSignal = std::any_of(
+                      action.bindings.cbegin(),
+                      action.bindings.cend(),
+                      [&selectedSignalIds](const Data::SemanticRuntimeBinding &binding) {
+                          return selectedSignalIds.contains(binding.target.signalId.value);
+                      });
+                  const bool extendsPastSelection = std::any_of(
+                      action.bindings.cbegin(),
+                      action.bindings.cend(),
+                      [&selectedSignalIds](const Data::SemanticRuntimeBinding &binding) {
+                          return !selectedSignalIds.contains(binding.target.signalId.value);
+                      });
+                  return includesSelectedSignal && extendsPastSelection;
+              });
+
     std::copy_if(
         runtimeContext.actionStates.cbegin(),
         runtimeContext.actionStates.cend(),
@@ -1344,6 +1401,10 @@ void SemanticControlPage::refresh()
         m_status->setText(Tr::tr("No live values or signed actions are available."));
     } else if (states.isEmpty()) {
         m_status->setText(Tr::tr("Signed actions are available."));
+    } else if (allReady && m_actionStates.isEmpty() && requiresWholeDeviceControl) {
+        m_status->setText(
+            Tr::tr("This signal belongs to an atomic output group. Select Modules / Channels "
+                   "to control the complete group."));
     } else if (allReady && m_actionStates.isEmpty()) {
         m_status->setText(
             Tr::tr("Live values are available. Manual output is not enabled yet."));

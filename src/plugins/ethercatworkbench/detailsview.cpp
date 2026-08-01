@@ -37,12 +37,21 @@ static QString semanticControlPageKey()
 static bool shouldDefaultToControlPage(
     WorkbenchController *controller, const Core::PropertyPageContext &context)
 {
-    if (context.nodeKind == Core::WorkbenchNodeKind::ConfiguredSlave)
+    if (!controller || !controller->treeModel())
+        return false;
+    if (controller->treeModel()->semanticControlSelection(context.nodeId))
         return true;
-    return context.nodeKind == Core::WorkbenchNodeKind::Module && controller
-           && controller->treeModel()
+    return context.nodeKind == Core::WorkbenchNodeKind::Module
            && controller->treeModel()->controllerTopologySlave(context.nodeId);
 }
+
+#ifdef WITH_TESTS
+bool shouldDefaultToControlPageForTest(
+    WorkbenchController *controller, const Core::PropertyPageContext &context)
+{
+    return shouldDefaultToControlPage(controller, context);
+}
+#endif
 
 struct PageCandidate
 {

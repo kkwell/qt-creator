@@ -1918,6 +1918,7 @@ std::optional<SemanticControlSelection> WorkbenchTreeModel::semanticControlSelec
     const Node *node = findNode(nodeId);
     if (!node
         || (node->kind != Core::WorkbenchNodeKind::ConfiguredSlave
+            && node->kind != Core::WorkbenchNodeKind::Modules
             && node->kind != Core::WorkbenchNodeKind::Module
             && node->kind != Core::WorkbenchNodeKind::Channel)
         || node->projectId.isNull() || node->ownerSlaveId.isNull()) {
