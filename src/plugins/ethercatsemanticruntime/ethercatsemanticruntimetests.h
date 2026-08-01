@@ -39,6 +39,8 @@ private slots:
     void testRuntimePackageEvidenceRejectsMismatches();
     void testRuntimePackageEvidenceRepository();
     void testRuntimePackageEvidenceRepositoryRejectsUnsafeInputs();
+    void testHardwareApi038SemanticPreflight();
+    void testHardwareApi038SemanticAdmissionFailsClosed();
     void testTrustedRuntimePackageActivation();
     void testTrustedRuntimePackageActivationFailsClosed();
     void testInstalledProductionTrustAnchor();

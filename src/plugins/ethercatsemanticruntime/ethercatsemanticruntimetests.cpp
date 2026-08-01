@@ -1840,6 +1840,209 @@ static Utils::Result<QList<Data::DeviceAdapterManifest>> publishedApi038V3Action
     return result;
 }
 
+constexpr auto api038HardwareEnableVariable = "QTC_ETHER_CAT_API038_HARDWARE";
+constexpr auto api038HardwareConfirmationVariable = "QTC_ETHER_CAT_API038_CONFIRM";
+constexpr auto api038HardwareConfirmation
+    = "API038_CFG3701_D0B8EDD70B5ECEC53252AC4B09DC9665_XB6_DO16";
+constexpr auto api038PackageSha256
+    = "d0b8edd70b5ecec53252ac4b09dc9665ac82b91178d18e2d94222b9a538165d0";
+
+enum class Api038HardwareAuthorization {
+    Disabled,
+    Invalid,
+    Authorized,
+};
+
+static Api038HardwareAuthorization api038HardwareAuthorization(
+    QByteArrayView enabled, QByteArrayView confirmation)
+{
+    if (enabled != QByteArrayView("1"))
+        return Api038HardwareAuthorization::Disabled;
+    if (confirmation != QByteArrayView(api038HardwareConfirmation))
+        return Api038HardwareAuthorization::Invalid;
+    return Api038HardwareAuthorization::Authorized;
+}
+
+static Utils::Result<> validateApi038LocalEvidence(
+    const VerifiedRuntimePackageEvidence &evidence)
+{
+    const VerifiedSemanticBindingArtifact &artifact = evidence.semanticBindingArtifact();
+    const QByteArray expectedPackageSha256 = QByteArray::fromHex(api038PackageSha256);
+    if (!evidence.isValid() || artifact.trust != EcpkgTrustClass::Production
+        || artifact.packageSha256 != expectedPackageSha256) {
+        return Utils::ResultError(
+            "API-038 evidence is not the exact production-trusted package");
+    }
+    if (artifact.configurationId != 3701 || artifact.formatVersion != 2
+        || evidence.semanticMappingProof().formatVersion != 2
+        || artifact.bindings.size() != 56 || artifact.devices.size() != 3
+        || artifact.actions.size() != 8 || evidence.cyclePeriodNs() != 125000) {
+        return Utils::ResultError(
+            "API-038 signed configuration, semantic mapping, or timing differs");
+    }
+    if (!evidence.actionDefinitions()
+        || evidence.actionDefinitions()->definitionCount != 5
+        || evidence.actionDefinitions()->actionCount != 8
+        || !evidence.permitsWritableActions()) {
+        return Utils::ResultError(
+            "API-038 signed semantic action definitions are incomplete");
+    }
+
+    const QStringList xb6Actions{
+        QStringLiteral("embedlabs:project:action:xb6:set-outputs"),
+        QStringLiteral("embedlabs:project:action:xb6:clear-outputs"),
+    };
+    const QStringList svActions{
+        QStringLiteral("embedlabs:project:action:axis0:prepare-csv"),
+        QStringLiteral("embedlabs:project:action:axis0:set-csv-velocity"),
+        QStringLiteral("embedlabs:project:action:axis0:stop-csv"),
+        QStringLiteral("embedlabs:project:action:axis1:prepare-csv"),
+        QStringLiteral("embedlabs:project:action:axis1:set-csv-velocity"),
+        QStringLiteral("embedlabs:project:action:axis1:stop-csv"),
+    };
+    QSet<QString> expectedActions;
+    for (const QString &actionId : xb6Actions)
+        expectedActions.insert(actionId);
+    for (const QString &actionId : svActions)
+        expectedActions.insert(actionId);
+    QSet<QString> actualActions;
+    for (const VerifiedSemanticAction &action : artifact.actions)
+        actualActions.insert(action.actionBindingId);
+    if (actualActions != expectedActions) {
+        return Utils::ResultError(
+            "API-038 signed semantic action instance set differs");
+    }
+
+    for (const QString &actionId : xb6Actions) {
+        const VerifiedSemanticAction *action = artifact.findAction(actionId);
+        if (!action || !action->enabled
+            || action->qualification
+                   != VerifiedSemanticActionQualification::Qualified
+            || action->disabledReason || action->dcRequired
+            || !evidence.invocableAction(actionId, false)) {
+            return Utils::ResultError(
+                "API-038 XB6 set/clear action is not signed and qualified");
+        }
+    }
+    for (const QString &actionId : svActions) {
+        const VerifiedSemanticAction *action = artifact.findAction(actionId);
+        if (!action || action->enabled
+            || action->qualification
+                   != VerifiedSemanticActionQualification::Unqualified
+            || action->disabledReason
+                   != QStringLiteral(
+                       "reference_unit_to_rpm_conversion_not_bound")
+            || evidence.invocableAction(actionId, false)
+            || evidence.invocableAction(actionId, true)) {
+            return Utils::ResultError(
+                "API-038 SV630N motion qualification boundary differs");
+        }
+    }
+    return Utils::ResultOk;
+}
+
+static Utils::Result<VerifiedRuntimePackageEvidence> importApi038LocalEvidence(
+    QByteArrayView packageBytes,
+    QByteArrayView projectBytes,
+    const QString &packageStoreRoot,
+    const QString &productionTrustDirectory,
+    const QString &projectStoreRoot)
+{
+    const QByteArray packageSha256
+        = QCryptographicHash::hash(packageBytes, QCryptographicHash::Sha256);
+    if (packageSha256 != QByteArray::fromHex(api038PackageSha256)) {
+        return Utils::ResultError(
+            "API-038 package SHA-256 differs from the fixed cfg3701 fixture");
+    }
+
+    const RuntimePackageEvidenceRepository repository{
+        packageStoreRoot,
+        productionTrustDirectory,
+        projectStoreRoot,
+    };
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidence
+        = repository.import(packageBytes, projectBytes);
+    if (!evidence) {
+        return Utils::ResultError(
+            QStringLiteral("API-038 repository verification failed: %1")
+                .arg(evidence.error()));
+    }
+    const Utils::Result<> validation = validateApi038LocalEvidence(*evidence);
+    if (!validation)
+        return Utils::ResultError(validation.error());
+    return evidence;
+}
+
+static QStringList api038HardwareAdmissionBlockers(
+    const VerifiedRuntimePackageEvidence &evidence,
+    const QList<Data::DeviceAdapterManifest> &publishedAdapters)
+{
+    QStringList blockers;
+    QSet<QString> checkedAdapterIds;
+    for (const SemanticBindingTopologyInstance &topology :
+         evidence.semanticBindingArtifact().topologyInstances) {
+        if (checkedAdapterIds.contains(topology.adapterId))
+            continue;
+        checkedAdapterIds.insert(topology.adapterId);
+
+        QList<const Data::DeviceAdapterManifest *> matches;
+        for (const Data::DeviceAdapterManifest &manifest : publishedAdapters) {
+            if (manifest.controllerAdapterTarget.adapterId == topology.adapterId)
+                matches.append(&manifest);
+        }
+        if (matches.size() != 1) {
+            blockers.append(
+                QStringLiteral("published adapter %1 is missing or ambiguous")
+                    .arg(topology.adapterId));
+            continue;
+        }
+
+        const Data::DeviceAdapterManifest &manifest = *matches.constFirst();
+        const Data::DeviceAdapterControllerTarget &target
+            = manifest.controllerAdapterTarget;
+        if (!manifest.signatureVerified || !manifest.realHardwareAllowed
+            || manifest.qualification
+                   != Data::DeviceAdapterQualification::Qualified) {
+            blockers.append(
+                QStringLiteral("published adapter %1 is not hardware-qualified")
+                    .arg(topology.adapterId));
+        }
+        if (target.adapterVersion != topology.adapterVersion
+            || target.adapterSha256 != topology.adapterSha256
+            || target.esiSha256 != topology.esiSha256) {
+            blockers.append(
+                QStringLiteral(
+                    "published adapter %1 target %2 does not match signed cfg3701 target %3")
+                    .arg(
+                        topology.adapterId,
+                        target.adapterVersion,
+                        topology.adapterVersion));
+            continue;
+        }
+        const qsizetype profileMatches = std::count_if(
+            manifest.processDataProfiles.cbegin(),
+            manifest.processDataProfiles.cend(),
+            [&topology](const Data::ProcessDataProfile &profile) {
+                return profile.signedPdoProfileId == topology.pdoProfile
+                       && profile.signedDcProfileId
+                              == topology.dcProfile.value_or(QString());
+            });
+        if (profileMatches != 1) {
+            blockers.append(
+                QStringLiteral("published adapter %1 lacks the exact signed PDO/DC profile")
+                    .arg(topology.adapterId));
+        }
+    }
+
+    // The fixed API-038 package predates API-042. No environment value or
+    // package metadata can substitute for a compiler-provider-owned activation
+    // proof validated against the current project capture.
+    blockers.append(
+        QStringLiteral(
+            "API-042 compiler activation proof and current project capture are absent"));
+    return blockers;
+}
+
 static Utils::Result<QList<Data::DeviceAdapterManifest>> api038HistoricalTestAdapters(
     const VerifiedRuntimePackageEvidence &evidence)
 {
@@ -5917,6 +6120,177 @@ void EtherCATSemanticRuntimeTests::testRuntimePackageEvidenceRepositoryRejectsUn
         recovered->semanticBindingArtifact().packageSha256,
         imported->semanticBindingArtifact().packageSha256);
     QVERIFY_RESULT(halfRepository.load(reference));
+}
+
+void EtherCATSemanticRuntimeTests::testHardwareApi038SemanticPreflight()
+{
+    QCOMPARE(
+        api038HardwareAuthorization({}, {}),
+        Api038HardwareAuthorization::Disabled);
+    QCOMPARE(
+        api038HardwareAuthorization("0", api038HardwareConfirmation),
+        Api038HardwareAuthorization::Disabled);
+    QCOMPARE(
+        api038HardwareAuthorization("1", "wrong-confirmation"),
+        Api038HardwareAuthorization::Invalid);
+    QCOMPARE(
+        api038HardwareAuthorization("1", api038HardwareConfirmation),
+        Api038HardwareAuthorization::Authorized);
+
+    const QByteArray packageBytes = readTestData(
+        "testdata/api038/three-slave-manual-control-cfg3701.ecpkg");
+    const QByteArray projectBytes = readTestData("testdata/api038/project.json");
+    const QByteArray publicKey = readTestData(
+        "testdata/api038/"
+        "eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub");
+    QVERIFY(!packageBytes.isEmpty());
+    QVERIFY(!projectBytes.isEmpty());
+    QCOMPARE(publicKey.size(), qsizetype(32));
+
+    QTemporaryDir temporary(
+        systemTemporaryDirectoryTemplate(u"embed-labs-api038-hardware-preflight"));
+    QVERIFY(temporary.isValid());
+    const QString trustRoot = QDir(temporary.path()).filePath("trust");
+    QVERIFY(QDir().mkpath(trustRoot));
+    const QByteArray keyId
+        = QCryptographicHash::hash(publicKey, QCryptographicHash::Sha256);
+    QVERIFY(writeFile(
+        QDir(trustRoot).filePath(QString::fromLatin1(keyId.toHex()) + ".pub"),
+        publicKey));
+
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidence
+        = importApi038LocalEvidence(
+            packageBytes,
+            projectBytes,
+            QDir(temporary.path()).filePath("packages"),
+            trustRoot,
+            QDir(temporary.path()).filePath("projects"));
+    QVERIFY_RESULT(evidence);
+
+    QByteArray wrongPackage = packageBytes;
+    wrongPackage[0] ^= 1;
+    const Utils::Result<VerifiedRuntimePackageEvidence> wrongPackageResult
+        = importApi038LocalEvidence(
+            wrongPackage,
+            projectBytes,
+            QDir(temporary.path()).filePath("wrong-package-store"),
+            trustRoot,
+            QDir(temporary.path()).filePath("wrong-package-projects"));
+    QVERIFY(!wrongPackageResult);
+    QVERIFY(wrongPackageResult.error().contains(QStringLiteral("SHA-256 differs")));
+
+    const QString wrongTrustRoot = QDir(temporary.path()).filePath("wrong-trust");
+    QVERIFY(QDir().mkpath(wrongTrustRoot));
+    const QByteArray wrongPublicKey(32, '\x5a');
+    const QByteArray wrongKeyId
+        = QCryptographicHash::hash(wrongPublicKey, QCryptographicHash::Sha256);
+    QVERIFY(writeFile(
+        QDir(wrongTrustRoot)
+            .filePath(QString::fromLatin1(wrongKeyId.toHex()) + ".pub"),
+        wrongPublicKey));
+    const Utils::Result<VerifiedRuntimePackageEvidence> wrongTrustResult
+        = importApi038LocalEvidence(
+            packageBytes,
+            projectBytes,
+            QDir(temporary.path()).filePath("wrong-trust-packages"),
+            wrongTrustRoot,
+            QDir(temporary.path()).filePath("wrong-trust-projects"));
+    QVERIFY(!wrongTrustResult);
+    QVERIFY(wrongTrustResult.error().contains(
+        QStringLiteral("repository verification failed")));
+
+    const Utils::Result<QList<Data::DeviceAdapterManifest>> publishedAdapters
+        = publishedApi038V3ActionAdapters();
+    QVERIFY_RESULT(publishedAdapters);
+    const QStringList blockers
+        = api038HardwareAdmissionBlockers(*evidence, *publishedAdapters);
+    QVERIFY(std::any_of(
+        blockers.cbegin(),
+        blockers.cend(),
+        [](const QString &blocker) {
+            return blocker.contains(
+                QStringLiteral("target 1.3.0 does not match signed cfg3701 target 1.2.0"));
+        }));
+    QCOMPARE(
+        std::count_if(
+            blockers.cbegin(),
+            blockers.cend(),
+            [](const QString &blocker) {
+                return blocker.contains(QStringLiteral("is not hardware-qualified"));
+            }),
+        2);
+    QVERIFY(blockers.contains(
+        QStringLiteral(
+            "API-042 compiler activation proof and current project capture are absent")));
+}
+
+void EtherCATSemanticRuntimeTests::testHardwareApi038SemanticAdmissionFailsClosed()
+{
+    const Api038HardwareAuthorization authorization = api038HardwareAuthorization(
+        qgetenv(api038HardwareEnableVariable),
+        qgetenv(api038HardwareConfirmationVariable));
+    if (authorization == Api038HardwareAuthorization::Disabled) {
+        QSKIP(
+            "API-038 semantic hardware acceptance is disabled; no Product API session "
+            "or mutation was attempted");
+    }
+    if (authorization == Api038HardwareAuthorization::Invalid) {
+        QFAIL(
+            "QTC_ETHER_CAT_API038_CONFIRM does not authorize the exact fixed cfg3701 "
+            "semantic acceptance fixture");
+    }
+
+    const QByteArray packageBytes = readTestData(
+        "testdata/api038/three-slave-manual-control-cfg3701.ecpkg");
+    const QByteArray projectBytes = readTestData("testdata/api038/project.json");
+    if (packageBytes.isEmpty() || projectBytes.isEmpty())
+        QFAIL("The fixed API-038 ECPKG or compiled project source is missing");
+
+    QTemporaryDir temporary(
+        systemTemporaryDirectoryTemplate(u"embed-labs-api038-hardware-acceptance"));
+    if (!temporary.isValid())
+        QFAIL("The API-038 local evidence repository could not be created");
+    const Utils::FilePath trustDirectory
+        = ::Core::ICore::resourcePath("ethercat/production-trust");
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidence
+        = importApi038LocalEvidence(
+            packageBytes,
+            projectBytes,
+            QDir(temporary.path()).filePath("packages"),
+            trustDirectory.toFSPathString(),
+            QDir(temporary.path()).filePath("projects"));
+    if (!evidence) {
+        const QByteArray detail
+            = QStringLiteral("API-038 local evidence preflight failed: %1")
+                  .arg(evidence.error())
+                  .toUtf8();
+        QFAIL(detail.constData());
+    }
+
+    const Utils::Result<QList<Data::DeviceAdapterManifest>> publishedAdapters
+        = publishedApi038V3ActionAdapters();
+    if (!publishedAdapters) {
+        const QByteArray detail
+            = QStringLiteral(
+                  "API-038 stopped before controller access: %1")
+                  .arg(publishedAdapters.error())
+                  .toUtf8();
+        QSKIP(detail.constData());
+    }
+    const QStringList blockers
+        = api038HardwareAdmissionBlockers(*evidence, *publishedAdapters);
+    if (!blockers.isEmpty()) {
+        const QByteArray detail
+            = QStringLiteral(
+                  "API-038 stopped before any Product API session, lease, or mutation: %1")
+                  .arg(blockers.join(QStringLiteral("; ")))
+                  .toUtf8();
+        QSKIP(detail.constData());
+    }
+
+    QFAIL(
+        "API-038 admission unexpectedly passed without a product activation preparation; "
+        "controller access remains deliberately unimplemented");
 }
 
 void EtherCATSemanticRuntimeTests::testTrustedRuntimePackageActivation()
