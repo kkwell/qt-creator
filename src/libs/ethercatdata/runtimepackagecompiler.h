@@ -689,6 +689,36 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerVerifyResult
         = default;
 };
 
+// Complete typed evidence for one compile -> finalize -> verify chain. The
+// compiler provider still owns provenance validation against its immutable
+// operation store; this value type rejects incomplete, failed, or internally
+// spliced evidence before that provider-specific check is attempted.
+struct ETHERCATDATA_EXPORT RuntimePackageCompilerActivationProof
+{
+    QString compilerProviderId;
+    RuntimePackageCompilerContractIdentity contractIdentity;
+    RuntimePackageCompilerCompileRequest compileRequest;
+    RuntimePackageCompilerCompileResult compileResult;
+    RuntimePackageCompilerFinalizeRequest finalizeRequest;
+    // Provider-store provenance digest for the exact canonical finalize
+    // request. Data validates its shape; the provider must recompute it.
+    RuntimePackageCompilerSha256 finalizeRequestSha256;
+    RuntimePackageCompilerFinalizeResult finalizeResult;
+    // Verify may use an independent OperationId. This is its provider-store
+    // provenance digest; the provider must recompute it from the exact request.
+    RuntimePackageCompilerVerifyRequest verifyRequest;
+    RuntimePackageCompilerSha256 verifyRequestSha256;
+    RuntimePackageCompilerVerifyResult verifyResult;
+    QByteArray compiledProjectSource;
+    QByteArray effectiveProjectCompanion;
+
+    bool isValid() const;
+
+    friend bool operator==(
+        const RuntimePackageCompilerActivationProof &,
+        const RuntimePackageCompilerActivationProof &) = default;
+};
+
 class ETHERCATDATA_EXPORT RuntimePackageCompilerJobResult
 {
 public:
@@ -758,4 +788,5 @@ Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerCompileResult)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerFinalizeResult)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerQueryResult)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerVerifyResult)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerActivationProof)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerJobResult)

@@ -1622,7 +1622,7 @@ static Data::RuntimePackageCompilerFinalizeResult successfulFinalizeResult(
         QStringLiteral("complete"),
         request.operationId,
         request.configurationId,
-        compilerRequestSha256(request),
+        request.compileRequestSha256,
         {},
         RuntimePackageCompilerFixture::canonical(exactResult));
     return {
@@ -1632,6 +1632,94 @@ static Data::RuntimePackageCompilerFinalizeResult successfulFinalizeResult(
         packageSha256,
         request.manifestSha256,
         signingReceiptSha256,
+    };
+}
+
+static Data::RuntimePackageCompilerVerifyResult successfulVerifyResult(
+    const Data::RuntimePackageCompilerVerifyRequest &request,
+    const Data::RuntimePackageCompilerCompileRequest &compileRequest,
+    const Data::RuntimePackageCompilerCompileResult &compileResult)
+{
+    const QByteArray exactResult
+        = QStringLiteral("{\"adapter_bundle_sha256\":\"%1\",\"configuration_id\":%2,"
+                         "\"effective_project_companion_sha256\":\"%3\","
+                         "\"format\":\"ethercat-ide-project-compiler-verification-v1\","
+                         "\"intent_sha256\":\"%4\",\"manifest_format_version\":2,"
+                         "\"package_sha256\":\"%5\",\"status\":\"pass\","
+                         "\"target_profile_sha256\":\"%6\","
+                         "\"topology_evidence_sha256\":\"%7\"}\n")
+              .arg(
+                  QString::fromLatin1(compileResult.adapterBundleSha256->value().toHex()),
+                  QString::number(compileRequest.configurationId),
+                  QString::fromLatin1(
+                      compileResult.effectiveProjectCompanionSha256->value().toHex()),
+                  QString::fromLatin1(compileResult.intentSha256->value().toHex()),
+                  QString::fromLatin1(request.packageSha256.value().toHex()),
+                  QString::fromLatin1(compileResult.targetProfileSha256->value().toHex()),
+                  QString::fromLatin1(
+                      compileRequest.topologyEvidence.canonicalEvidence.sha256().value().toHex()))
+              .toLatin1();
+    return {
+        compilerEnvelope(
+            Data::RuntimePackageCompilerCommand::Verify,
+            Data::RuntimePackageCompilerResultStatus::Succeeded,
+            QStringLiteral("pass"),
+            request.operationId,
+            compileRequest.configurationId,
+            request.packageSha256,
+            {},
+            RuntimePackageCompilerFixture::canonical(exactResult)),
+        request.packageSha256,
+        compileRequest.manifestFormatVersion,
+        *compileResult.intentSha256,
+        *compileResult.effectiveProjectCompanionSha256,
+        *compileResult.targetProfileSha256,
+        *compileResult.adapterBundleSha256,
+        compileRequest.topologyEvidence.canonicalEvidence.sha256(),
+        true,
+    };
+}
+
+static Data::RuntimePackageCompilerActivationProof successfulActivationProof(
+    Data::RuntimePackageCompilerCompileRequest compileRequest)
+{
+    const Data::RuntimePackageCompilerCompileResult compileResult
+        = successfulCompileResult(compileRequest);
+    const Data::RuntimePackageCompilerFinalizeRequest finalizeRequest{
+        compileRequest.operationId,
+        compileRequest.configurationId,
+        compileRequest.contractIdentity,
+        compileResult.envelope.requestSha256,
+        compileResult.signRequest->sha256(),
+        *compileResult.manifestSha256,
+        compileRequest.targetProfile.signingKeyIdSha256,
+        compileRequest.targetProfile.policyRevision,
+        detachedSigningResponse(compileRequest, compileResult),
+    };
+    const Data::RuntimePackageCompilerFinalizeResult finalizeResult
+        = successfulFinalizeResult(finalizeRequest);
+    const Data::RuntimePackageCompilerVerifyRequest verifyRequest{
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000099")},
+        compileRequest.contractIdentity,
+        finalizeResult.packageBytes,
+        *finalizeResult.packageSha256,
+    };
+    const Data::RuntimePackageCompilerVerifyResult verifyResult
+        = successfulVerifyResult(verifyRequest, compileRequest, compileResult);
+    return {
+        QStringLiteral("org.embedlabs.runtime-package-compiler.api042"),
+        compileRequest.contractIdentity,
+        compileRequest,
+        compileResult,
+        finalizeRequest,
+        compilerRequestSha256(finalizeRequest),
+        finalizeResult,
+        verifyRequest,
+        compilerRequestSha256(verifyRequest),
+        verifyResult,
+        QByteArray("compiled-project"),
+        QByteArray("effective-project-companion"),
     };
 }
 
@@ -5695,12 +5783,290 @@ void EtherCATCoreTests::testRuntimePackageCompilerValueSemantics()
     };
     QVERIFY(!invalidVerifyResult.isValid());
 
+    const Data::RuntimePackageCompilerActivationProof activationProof
+        = successfulActivationProof(fixture.request);
+    QVERIFY(activationProof.isValid());
+    QCOMPARE(activationProof, activationProof);
+    QVERIFY(
+        activationProof.verifyRequest.operationId
+        != activationProof.compileRequest.operationId);
+
+    Data::RuntimePackageCompilerActivationProof invalidActivationProof;
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.compilerProviderId.clear();
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.compilerProviderId = QStringLiteral(" provider");
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.contractIdentity.contractId.append(QStringLiteral(".different"));
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.compileRequest.operationId
+        = Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000002")};
+    QVERIFY(invalidActivationProof.compileRequest.isValid());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    ++invalidActivationProof.compileRequest.configurationId;
+    QVERIFY(invalidActivationProof.compileRequest.isValid());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.compileRequest.contractIdentity.contractId.append(
+        QStringLiteral(".different"));
+    QVERIFY(invalidActivationProof.compileRequest.isValid());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.compileResult.envelope.requestSha256
+        = RuntimePackageCompilerFixture::sha256("different-compile-request");
+    QVERIFY(invalidActivationProof.compileResult.isSuccess());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.compileResult.envelope.status
+        = Data::RuntimePackageCompilerResultStatus::DomainFailed;
+    QVERIFY(!invalidActivationProof.isValid());
+
+    const auto proofWithCoordinatedSignRequestMutation =
+        [&](const QString &key, const QJsonValue &value) {
+            Data::RuntimePackageCompilerActivationProof changed = activationProof;
+            QJsonObject signRequestObject = QJsonDocument::fromJson(
+                                                changed.compileResult.signRequest->exactBytes())
+                                                .object();
+            signRequestObject.insert(key, value);
+            changed.compileResult.signRequest = RuntimePackageCompilerFixture::canonical(
+                QJsonDocument(signRequestObject).toJson(QJsonDocument::Compact) + '\n');
+
+            QJsonObject compileResultObject = QJsonDocument::fromJson(
+                                                  changed.compileResult.envelope.canonicalResult
+                                                      .exactBytes())
+                                                  .object();
+            compileResultObject.insert(
+                QStringLiteral("sign_request_sha256"),
+                QString::fromLatin1(
+                    changed.compileResult.signRequest->sha256().value().toHex()));
+            changed.compileResult.envelope.canonicalResult
+                = RuntimePackageCompilerFixture::canonical(
+                    QJsonDocument(compileResultObject).toJson(QJsonDocument::Compact) + '\n');
+
+            changed.finalizeRequest.signRequestSha256
+                = changed.compileResult.signRequest->sha256();
+            changed.finalizeRequest.detachedSigningResponse
+                = detachedSigningResponse(changed.compileRequest, changed.compileResult);
+            const QJsonObject signingResponse = QJsonDocument::fromJson(
+                                                    changed.finalizeRequest
+                                                        .detachedSigningResponse.exactBytes())
+                                                    .object();
+            changed.finalizeResult.signingReceiptSha256 = Data::RuntimePackageCompilerSha256{
+                QByteArray::fromHex(
+                    signingResponse.value(QStringLiteral("receipt_sha256"))
+                        .toString()
+                        .toLatin1())};
+            QJsonObject finalizeResultObject = QJsonDocument::fromJson(
+                                                   changed.finalizeResult.envelope.canonicalResult
+                                                       .exactBytes())
+                                                   .object();
+            finalizeResultObject.insert(
+                QStringLiteral("signing_receipt_sha256"),
+                QString::fromLatin1(
+                    changed.finalizeResult.signingReceiptSha256->value().toHex()));
+            changed.finalizeResult.envelope.canonicalResult
+                = RuntimePackageCompilerFixture::canonical(
+                    QJsonDocument(finalizeResultObject).toJson(QJsonDocument::Compact) + '\n');
+            return changed;
+        };
+
+    invalidActivationProof = proofWithCoordinatedSignRequestMutation(
+        QStringLiteral("signing_key_id"),
+        QString::fromLatin1(
+            RuntimePackageCompilerFixture::sha256("different-signing-key").value().toHex()));
+    QVERIFY(invalidActivationProof.compileResult.isSuccess());
+    QVERIFY(invalidActivationProof.finalizeRequest.isValid());
+    QVERIFY(invalidActivationProof.finalizeResult.isSuccess());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = proofWithCoordinatedSignRequestMutation(
+        QStringLiteral("policy_revision"), 2);
+    QVERIFY(invalidActivationProof.compileResult.isSuccess());
+    QVERIFY(invalidActivationProof.finalizeRequest.isValid());
+    QVERIFY(invalidActivationProof.finalizeResult.isSuccess());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.finalizeRequest.contractIdentity.contractId.append(
+        QStringLiteral(".different"));
+    QVERIFY(invalidActivationProof.finalizeRequest.isValid());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.finalizeRequest.compileRequestSha256
+        = RuntimePackageCompilerFixture::sha256("different-compile-request");
+    QVERIFY(invalidActivationProof.finalizeRequest.isValid());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.finalizeRequestSha256 = {};
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.finalizeRequestSha256
+        = RuntimePackageCompilerFixture::sha256("different-finalize-request");
+    QVERIFY(invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.finalizeResult.envelope.requestSha256
+        = RuntimePackageCompilerFixture::sha256("different-finalize-request");
+    QVERIFY(invalidActivationProof.finalizeResult.isSuccess());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.finalizeResult.envelope.status
+        = Data::RuntimePackageCompilerResultStatus::DomainFailed;
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.finalizeResult.manifestSha256
+        = RuntimePackageCompilerFixture::sha256("different-manifest");
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.verifyRequest.operationId
+        = Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000098")};
+    QVERIFY(invalidActivationProof.verifyRequest.isValid());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.verifyRequest.contractIdentity.contractId.append(
+        QStringLiteral(".different"));
+    QVERIFY(invalidActivationProof.verifyRequest.isValid());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.verifyRequest.packageBytes.append("-different");
+    invalidActivationProof.verifyRequest.packageSha256
+        = RuntimePackageCompilerFixture::sha256(
+            invalidActivationProof.verifyRequest.packageBytes);
+    QVERIFY(invalidActivationProof.verifyRequest.isValid());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.verifyRequestSha256 = {};
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.verifyRequestSha256
+        = RuntimePackageCompilerFixture::sha256("different-verify-request");
+    QVERIFY(invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.verifyResult.envelope.requestSha256
+        = RuntimePackageCompilerFixture::sha256("different-verify-request");
+    QVERIFY(invalidActivationProof.verifyResult.isSuccess());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.verifyResult.envelope.operationId
+        = Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000098")};
+    QVERIFY(invalidActivationProof.verifyResult.isSuccess());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.verifyResult.trusted = false;
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.verifyResult.intentSha256
+        = RuntimePackageCompilerFixture::sha256("different-intent");
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.verifyResult.effectiveProjectCompanionSha256
+        = RuntimePackageCompilerFixture::sha256("different-companion");
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.verifyResult.targetProfileSha256
+        = RuntimePackageCompilerFixture::sha256("different-target");
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.verifyResult.adapterBundleSha256
+        = RuntimePackageCompilerFixture::sha256("different-bundle");
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.verifyResult.topologyEvidenceSha256
+        = RuntimePackageCompilerFixture::sha256("different-topology");
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.compiledProjectSource.append("-changed");
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.effectiveProjectCompanion.append("-changed");
+    QVERIFY(!invalidActivationProof.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest alternateRequest = fixture.request;
+    alternateRequest.intentId.append(QStringLiteral(".alternate"));
+    QVERIFY(alternateRequest.isValid());
+    const Data::RuntimePackageCompilerActivationProof alternateProof
+        = successfulActivationProof(alternateRequest);
+    QVERIFY(alternateProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.compileResult = alternateProof.compileResult;
+    QVERIFY(invalidActivationProof.compileResult.isSuccess());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.finalizeResult = alternateProof.finalizeResult;
+    QVERIFY(invalidActivationProof.finalizeResult.isSuccess());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.verifyResult = alternateProof.verifyResult;
+    QVERIFY(invalidActivationProof.verifyResult.isSuccess());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    invalidActivationProof.compileResult = alternateProof.compileResult;
+    invalidActivationProof.finalizeResult = alternateProof.finalizeResult;
+    invalidActivationProof.verifyResult = alternateProof.verifyResult;
+    QVERIFY(!invalidActivationProof.isValid());
+
+    Data::RuntimePackageCompilerActivationProof independentVerifyProof = activationProof;
+    independentVerifyProof.verifyRequest.operationId
+        = Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000097")};
+    independentVerifyProof.verifyRequestSha256
+        = compilerRequestSha256(independentVerifyProof.verifyRequest);
+    independentVerifyProof.verifyResult = successfulVerifyResult(
+        independentVerifyProof.verifyRequest,
+        independentVerifyProof.compileRequest,
+        independentVerifyProof.compileResult);
+    QVERIFY(independentVerifyProof.isValid());
+    QVERIFY(
+        independentVerifyProof.verifyRequest.operationId
+        != independentVerifyProof.compileRequest.operationId);
+
     QVERIFY(QMetaType::fromType<Data::RuntimePackageCompilerCompileRequest>().isValid());
     QVERIFY(
         QMetaType::fromType<Data::RuntimePackageCompilerProjectSnapshotEvidence>().isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimePackageCompilerFinalizeRequest>().isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimePackageCompilerQueryRequest>().isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimePackageCompilerVerifyRequest>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimePackageCompilerActivationProof>().isValid());
     QVERIFY(QMetaType::fromType<Data::RuntimePackageCompilerJobResult>().isValid());
     QVERIFY(QMetaType::fromType<RuntimePackageCompilerJobState>().isValid());
     QVERIFY(QMetaType::fromType<RuntimePackageCompilerJobCompletionError>().isValid());
@@ -5987,6 +6353,71 @@ void EtherCATCoreTests::testRuntimePackageCompilerCodec()
     QVERIFY_RESULT(verifyResult);
     QVERIFY(verifyResult->isSuccess());
     QCOMPARE(verifyResult->packageSha256, packageSha256);
+
+    const Data::RuntimePackageCompilerCompileResult proofCompileSeed
+        = successfulCompileResult(request);
+    const Utils::Result<Data::RuntimePackageCompilerCompileResult> proofCompileResult
+        = decodeRuntimePackageCompilerCompileResult(
+            request,
+            {true, 0, proofCompileSeed.envelope.canonicalResult.exactBytes(), {}},
+            *proofCompileSeed.signRequest);
+    QVERIFY_RESULT(proofCompileResult);
+    QCOMPARE(proofCompileResult->envelope.requestSha256, encoded->sha256());
+
+    const Data::RuntimePackageCompilerFinalizeRequest proofFinalizeRequest{
+        request.operationId,
+        request.configurationId,
+        request.contractIdentity,
+        proofCompileResult->envelope.requestSha256,
+        proofCompileResult->signRequest->sha256(),
+        *proofCompileResult->manifestSha256,
+        request.targetProfile.signingKeyIdSha256,
+        request.targetProfile.policyRevision,
+        detachedSigningResponse(request, *proofCompileResult),
+    };
+    const Data::RuntimePackageCompilerFinalizeResult proofFinalizeSeed
+        = successfulFinalizeResult(proofFinalizeRequest);
+    const Utils::Result<Data::RuntimePackageCompilerFinalizeResult> proofFinalizeResult
+        = decodeRuntimePackageCompilerFinalizeResult(
+            proofFinalizeRequest,
+            {true, 0, proofFinalizeSeed.envelope.canonicalResult.exactBytes(), {}},
+            proofFinalizeSeed.packageBytes);
+    QVERIFY_RESULT(proofFinalizeResult);
+    QCOMPARE(
+        proofFinalizeResult->envelope.requestSha256,
+        proofFinalizeRequest.compileRequestSha256);
+
+    const Data::RuntimePackageCompilerVerifyRequest proofVerifyRequest{
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000096")},
+        request.contractIdentity,
+        proofFinalizeResult->packageBytes,
+        *proofFinalizeResult->packageSha256,
+    };
+    const Data::RuntimePackageCompilerVerifyResult proofVerifySeed
+        = successfulVerifyResult(proofVerifyRequest, request, *proofCompileResult);
+    const Utils::Result<Data::RuntimePackageCompilerVerifyResult> proofVerifyResult
+        = decodeRuntimePackageCompilerVerifyResult(
+            proofVerifyRequest,
+            {true, 0, proofVerifySeed.envelope.canonicalResult.exactBytes(), {}});
+    QVERIFY_RESULT(proofVerifyResult);
+    QCOMPARE(proofVerifyResult->envelope.requestSha256, proofVerifyRequest.packageSha256);
+
+    const Data::RuntimePackageCompilerActivationProof codecActivationProof{
+        QStringLiteral("org.embedlabs.runtime-package-compiler.api042"),
+        request.contractIdentity,
+        request,
+        *proofCompileResult,
+        proofFinalizeRequest,
+        RuntimePackageCompilerFixture::sha256("finalize-store-evidence"),
+        *proofFinalizeResult,
+        proofVerifyRequest,
+        RuntimePackageCompilerFixture::sha256("verify-store-evidence"),
+        *proofVerifyResult,
+        QByteArray("compiled-project"),
+        QByteArray("effective-project-companion"),
+    };
+    QVERIFY(codecActivationProof.isValid());
 
     const QByteArray failureJson(
         "{\"diagnostics\":[{\"code\":\"ECOMP-REQUEST-SCHEMA\","

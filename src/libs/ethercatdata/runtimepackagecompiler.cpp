@@ -2089,6 +2089,91 @@ bool RuntimePackageCompilerVerifyResult::isSuccess() const
     return isValid() && envelope.isSuccess() && trusted;
 }
 
+bool RuntimePackageCompilerActivationProof::isValid() const
+{
+    if (!isStableId(compilerProviderId) || !contractIdentity.isValid()
+        || !compileRequest.isValid() || !compileResult.isSuccess()
+        || !finalizeRequest.isValid() || !finalizeRequestSha256.isValid()
+        || !finalizeResult.isSuccess() || !verifyRequest.isValid()
+        || !verifyRequestSha256.isValid() || !verifyResult.isSuccess()) {
+        return false;
+    }
+
+    if (compileRequest.contractIdentity != contractIdentity
+        || finalizeRequest.contractIdentity != contractIdentity
+        || verifyRequest.contractIdentity != contractIdentity
+        || compileResult.envelope.operationId != compileRequest.operationId
+        || compileResult.envelope.configurationId != compileRequest.configurationId
+        || finalizeRequest.operationId != compileRequest.operationId
+        || finalizeRequest.configurationId != compileRequest.configurationId
+        || finalizeRequest.compileRequestSha256 != compileResult.envelope.requestSha256
+        || finalizeRequest.signRequestSha256 != compileResult.signRequest->sha256()
+        || finalizeRequest.manifestSha256 != *compileResult.manifestSha256
+        || finalizeRequest.signingKeyIdSha256
+               != compileRequest.targetProfile.signingKeyIdSha256
+        || finalizeRequest.signingPolicyRevision
+               != compileRequest.targetProfile.policyRevision
+        || finalizeResult.envelope.operationId != finalizeRequest.operationId
+        || finalizeResult.envelope.configurationId != finalizeRequest.configurationId
+        || finalizeResult.envelope.requestSha256
+               != finalizeRequest.compileRequestSha256
+        || *finalizeResult.manifestSha256 != finalizeRequest.manifestSha256
+        || verifyRequest.packageBytes != finalizeResult.packageBytes
+        || verifyRequest.packageSha256 != *finalizeResult.packageSha256
+        || verifyResult.envelope.operationId != verifyRequest.operationId
+        || verifyResult.envelope.configurationId != compileRequest.configurationId
+        || verifyResult.envelope.requestSha256 != verifyRequest.packageSha256
+        || verifyResult.packageSha256 != verifyRequest.packageSha256
+        || verifyResult.manifestFormatVersion != compileRequest.manifestFormatVersion
+        || verifyResult.intentSha256 != *compileResult.intentSha256
+        || verifyResult.effectiveProjectCompanionSha256
+               != *compileResult.effectiveProjectCompanionSha256
+        || verifyResult.targetProfileSha256 != *compileResult.targetProfileSha256
+        || verifyResult.adapterBundleSha256 != *compileResult.adapterBundleSha256
+        || verifyResult.topologyEvidenceSha256
+               != compileRequest.topologyEvidence.canonicalEvidence.sha256()
+        || *compileResult.targetProfileSha256
+               != compileRequest.targetProfile.canonicalProfile.sha256()
+        || *compileResult.adapterBundleSha256
+               != compileRequest.sourceArtifacts.adapterBundle.sha256
+        || *compileResult.adapterBundleSha256
+               != compileRequest.targetProfile.adapterBundleSha256
+        || verifyResult.topologyEvidenceSha256
+               != compileRequest.sourceArtifacts.topologyEvidence.sha256
+        || !sha256Matches(compiledProjectSource, *compileResult.compiledProjectSha256)
+        || !sha256Matches(
+            effectiveProjectCompanion,
+            *compileResult.effectiveProjectCompanionSha256)) {
+        return false;
+    }
+
+    const QJsonObject signingRequest = canonicalObject(*compileResult.signRequest);
+    if (!jsonSha256Matches(
+            signingRequest,
+            QStringLiteral("signing_key_id"),
+            compileRequest.targetProfile.signingKeyIdSha256)
+        || !jsonSha256Matches(
+            signingRequest,
+            QStringLiteral("signing_key_id"),
+            finalizeRequest.signingKeyIdSha256)
+        || !jsonUnsignedIntegerMatches(
+            *compileResult.signRequest,
+            QByteArray("policy_revision"),
+            compileRequest.targetProfile.policyRevision)
+        || !jsonUnsignedIntegerMatches(
+            *compileResult.signRequest,
+            QByteArray("policy_revision"),
+            finalizeRequest.signingPolicyRevision)) {
+        return false;
+    }
+
+    const QJsonObject signingResponse = canonicalObject(finalizeRequest.detachedSigningResponse);
+    return jsonSha256Matches(
+        signingResponse,
+        QStringLiteral("receipt_sha256"),
+        *finalizeResult.signingReceiptSha256);
+}
+
 RuntimePackageCompilerJobResult::RuntimePackageCompilerJobResult(
     RuntimePackageCompilerCompileResult result)
     : m_value(std::move(result))
