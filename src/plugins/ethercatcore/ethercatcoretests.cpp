@@ -54,6 +54,7 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <future>
 #include <limits>
 #include <type_traits>
 
@@ -1723,6 +1724,13 @@ static Data::RuntimePackageCompilerActivationProof successfulActivationProof(
     };
 }
 
+Data::RuntimePackageCompilerActivationProof
+syntheticRuntimePackageCompilerActivationProof()
+{
+    RuntimePackageCompilerFixture fixture;
+    return successfulActivationProof(fixture.request);
+}
+
 static Data::RuntimePackageCompilerCanonicalJson compilerLedgerRecord(
     const Data::RuntimePackageCompilerCompileRequest &request,
     const std::optional<Data::RuntimePackageCompilerCompileResult> &compileResult,
@@ -1810,9 +1818,9 @@ private:
 class TestRuntimePackageCompilerProvider final : public RuntimePackageCompilerProvider
 {
 public:
-    TestRuntimePackageCompilerProvider()
-        : RuntimePackageCompilerProvider(
-              "EtherCAT.Compiler.Test", QStringLiteral("Test runtime package compiler"))
+    explicit TestRuntimePackageCompilerProvider(
+        Utils::Id id = Utils::Id("EtherCAT.Compiler.Test"))
+        : RuntimePackageCompilerProvider(id, QStringLiteral("Test runtime package compiler"))
     {}
 
     Utils::Result<RuntimePackageCompilerJob *> compile(
@@ -2193,9 +2201,27 @@ public:
         return schedule(Data::RuntimePackageCompilerJobResult{result}, canceled);
     }
 
+    Utils::Result<> validateActivationProof(
+        const Data::RuntimePackageCompilerActivationProof &proof) const final
+    {
+        ++activationProofValidationCount;
+        activationProofs.append(proof);
+        if (activationProofValidationError)
+            return Utils::ResultError(*activationProofValidationError);
+        if (expectedActivationProof && proof != *expectedActivationProof) {
+            return Utils::ResultError(
+                QStringLiteral("Compiler activation proof provenance differs."));
+        }
+        return Utils::ResultOk;
+    }
+
     bool failScheduling = false;
     int ledgerMutationCount = 0;
     int verifyCallCount = 0;
+    std::optional<Data::RuntimePackageCompilerActivationProof> expectedActivationProof;
+    std::optional<QString> activationProofValidationError;
+    mutable int activationProofValidationCount = 0;
+    mutable QList<Data::RuntimePackageCompilerActivationProof> activationProofs;
 
 private:
     RuntimePackageCompilerJob *schedule(
@@ -4144,8 +4170,12 @@ void EtherCATCoreTests::testRuntimePackageActivationContract()
         companion,
         compilerVerification,
         true,
+        syntheticRuntimePackageCompilerActivationProof(),
     };
     QVERIFY(preparation.isValid());
+    RuntimePackageActivationPreparationRequest missingProof = preparation;
+    missingProof.compilerActivationProof.reset();
+    QVERIFY(!missingProof.isValid());
     RuntimePackageActivationPreparationRequest missingLower = preparation;
     missingLower.compiledProjectSource.clear();
     QVERIFY(!missingLower.isValid());
@@ -6985,6 +7015,256 @@ void EtherCATCoreTests::testRuntimePackageCompilerProviderContract()
     removeProvider.dismiss();
     QVERIFY(!registry->provider(provider.id()));
     QCOMPARE(removedSpy.count(), 1);
+}
+
+void EtherCATCoreTests::testRuntimePackageCompilerActivationProofRouting()
+{
+    RuntimePackageCompilerFixture fixture;
+    TestRuntimePackageCompilerProvider provider;
+    Data::RuntimePackageCompilerActivationProof proof
+        = successfulActivationProof(fixture.request);
+    proof.compilerProviderId = provider.id().toString();
+    QVERIFY(proof.isValid());
+    provider.expectedActivationProof = proof;
+
+    const Data::RuntimePackageCompilerProjectSnapshotEvidence &snapshotEvidence
+        = proof.compileRequest.projectSnapshotEvidence;
+    const Data::RuntimePackageActivationProjectCapture capture{
+        snapshotEvidence.snapshot(),
+        QByteArray("{\"format\":\"embed-labs-ethercat-project\"}\n"),
+        snapshotEvidence.documentRevisionNumber(),
+        snapshotEvidence.documentRevision(),
+        snapshotEvidence.originalBinding(),
+    };
+    QVERIFY(capture.isValid());
+
+    RuntimePackageActivationPreparationRequest request{
+        Data::RuntimePackageActivationOperationId{
+            QStringLiteral("operation/runtime-compiler-proof-routing")},
+        proof.compileRequest.topologyEvidence.scope,
+        proof.finalizeResult.packageBytes,
+        proof.compiledProjectSource,
+        proof.effectiveProjectCompanion,
+        proof.verifyResult,
+        true,
+        proof,
+    };
+    QVERIFY(request.isValid());
+
+    ProviderRegistry *registry
+        = ExtensionSystem::PluginManager::getObject<ProviderRegistry>();
+    QVERIFY(registry);
+    QVERIFY(registry->providers(ProviderKind::RuntimePackageCompiler).isEmpty());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(registry, request, capture));
+    QCOMPARE(provider.activationProofValidationCount, 0);
+
+    ExtensionSystem::PluginManager::addObject(&provider);
+    auto removeProvider = qScopeGuard(
+        [&] { ExtensionSystem::PluginManager::removeObject(&provider); });
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(registry, request, capture));
+    QCOMPARE(provider.activationProofValidationCount, 0);
+
+    provider.setAvailable(true);
+    const Utils::Result<> accepted
+        = validateRuntimePackageCompilerActivationProof(registry, request, capture);
+    QVERIFY_RESULT(accepted);
+    QCOMPARE(provider.activationProofValidationCount, 1);
+    QCOMPARE(provider.activationProofs.constLast(), proof);
+
+    std::future<Utils::Result<>> crossThreadValidation = std::async(
+        std::launch::async,
+        [registry, request, capture] {
+            return validateRuntimePackageCompilerActivationProof(
+                registry, request, capture);
+        });
+    const Utils::Result<> wrongThread = crossThreadValidation.get();
+    QVERIFY(!wrongThread);
+    QCOMPARE(
+        wrongThread.error(),
+        QStringLiteral("Compiler provider registry belongs to a different thread."));
+    QCOMPARE(provider.activationProofValidationCount, 1);
+
+    RuntimePackageActivationPreparationRequest missingProof = request;
+    missingProof.compilerActivationProof.reset();
+    QVERIFY(!missingProof.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(registry, missingProof, capture));
+    QCOMPARE(provider.activationProofValidationCount, 1);
+
+    RuntimePackageActivationPreparationRequest invalidInput = request;
+    invalidInput.operationId = {};
+    QVERIFY(!invalidInput.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(registry, invalidInput, capture));
+    QCOMPARE(provider.activationProofValidationCount, 1);
+
+    provider.activationProofValidationError
+        = QStringLiteral("Provisioned compiler key evidence was rejected.");
+    const Utils::Result<> providerRejected
+        = validateRuntimePackageCompilerActivationProof(registry, request, capture);
+    QVERIFY(!providerRejected);
+    QCOMPARE(
+        providerRejected.error(),
+        QStringLiteral("Provisioned compiler key evidence was rejected."));
+    QCOMPARE(provider.activationProofValidationCount, 2);
+    provider.activationProofValidationError.reset();
+
+    RuntimePackageActivationPreparationRequest changedProof = request;
+    changedProof.compilerActivationProof->finalizeRequestSha256
+        = RuntimePackageCompilerFixture::sha256("changed-finalize-request");
+    QVERIFY(changedProof.compilerActivationProof->isValid());
+    QVERIFY(changedProof.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(registry, changedProof, capture));
+    QCOMPARE(provider.activationProofValidationCount, 3);
+    QCOMPARE(provider.activationProofs.constLast(), *changedProof.compilerActivationProof);
+
+    RuntimePackageActivationPreparationRequest changedCompileRequest = request;
+    changedCompileRequest.compilerActivationProof->compileRequest.intentId.append(
+        QStringLiteral(".changed"));
+    QVERIFY(changedCompileRequest.compilerActivationProof->isValid());
+    QVERIFY(changedCompileRequest.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(
+        registry, changedCompileRequest, capture));
+    QCOMPARE(provider.activationProofValidationCount, 4);
+    QCOMPARE(
+        provider.activationProofs.constLast(),
+        *changedCompileRequest.compilerActivationProof);
+
+    RuntimePackageActivationPreparationRequest changedVerifyRequest = request;
+    changedVerifyRequest.compilerActivationProof->verifyRequestSha256
+        = RuntimePackageCompilerFixture::sha256("changed-verify-request");
+    QVERIFY(changedVerifyRequest.compilerActivationProof->isValid());
+    QVERIFY(changedVerifyRequest.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(
+        registry, changedVerifyRequest, capture));
+    QCOMPARE(provider.activationProofValidationCount, 5);
+    QCOMPARE(
+        provider.activationProofs.constLast(),
+        *changedVerifyRequest.compilerActivationProof);
+
+    Data::RuntimePackageCompilerCompileRequest alternateCompileRequest = fixture.request;
+    alternateCompileRequest.intentId.append(QStringLiteral(".alternate"));
+    const Data::RuntimePackageCompilerActivationProof alternateProof
+        = successfulActivationProof(alternateCompileRequest);
+    QVERIFY(alternateProof.isValid());
+    RuntimePackageActivationPreparationRequest changedVerification = request;
+    changedVerification.compilerVerification = alternateProof.verifyResult;
+    QVERIFY(changedVerification.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(
+        registry, changedVerification, capture));
+    QCOMPARE(provider.activationProofValidationCount, 5);
+
+    RuntimePackageActivationPreparationRequest changedPackage = request;
+    changedPackage.packageBytes.append("-changed");
+    QVERIFY(changedPackage.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(registry, changedPackage, capture));
+    QCOMPARE(provider.activationProofValidationCount, 5);
+
+    RuntimePackageActivationPreparationRequest changedProject = request;
+    changedProject.compiledProjectSource.append("-changed");
+    QVERIFY(changedProject.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(registry, changedProject, capture));
+    QCOMPARE(provider.activationProofValidationCount, 5);
+
+    RuntimePackageActivationPreparationRequest changedCompanion = request;
+    changedCompanion.effectiveProjectCompanion.append("-changed");
+    QVERIFY(changedCompanion.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(registry, changedCompanion, capture));
+    QCOMPARE(provider.activationProofValidationCount, 5);
+
+    RuntimePackageActivationPreparationRequest changedProjectScope = request;
+    changedProjectScope.scope.projectId = Data::NodeId::create();
+    QVERIFY(changedProjectScope.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(
+        registry, changedProjectScope, capture));
+    QCOMPARE(provider.activationProofValidationCount, 5);
+
+    RuntimePackageActivationPreparationRequest changedMasterScope = request;
+    changedMasterScope.scope.masterId = Data::NodeId::create();
+    QVERIFY(changedMasterScope.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(
+        registry, changedMasterScope, capture));
+    QCOMPARE(provider.activationProofValidationCount, 5);
+
+    QByteArray changedSerializedProject = capture.serializedProject();
+    changedSerializedProject.append(' ');
+    const Data::RuntimePackageActivationProjectCapture changedSerializedProjectCapture{
+        capture.snapshot(),
+        changedSerializedProject,
+        capture.documentRevisionNumber(),
+        capture.documentRevision(),
+        capture.originalBinding(),
+    };
+    QVERIFY(changedSerializedProjectCapture.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(
+        registry, request, changedSerializedProjectCapture));
+    QCOMPARE(provider.activationProofValidationCount, 5);
+
+    const Data::RuntimePackageActivationProjectCapture changedRevisionNumberCapture{
+        capture.snapshot(),
+        capture.serializedProject(),
+        capture.documentRevisionNumber() + 1,
+        capture.documentRevision(),
+        capture.originalBinding(),
+    };
+    QVERIFY(changedRevisionNumberCapture.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(
+        registry, request, changedRevisionNumberCapture));
+    QCOMPARE(provider.activationProofValidationCount, 5);
+
+    const Data::RuntimePackageActivationProjectCapture changedDocumentRevisionCapture{
+        capture.snapshot(),
+        capture.serializedProject(),
+        capture.documentRevisionNumber(),
+        Data::RuntimePackageActivationDocumentRevisionToken{"changed-document-revision"},
+        capture.originalBinding(),
+    };
+    QVERIFY(changedDocumentRevisionCapture.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(
+        registry, request, changedDocumentRevisionCapture));
+    QCOMPARE(provider.activationProofValidationCount, 5);
+
+    const Data::RuntimePackageActivationProjectCapture changedOriginalBindingCapture{
+        capture.snapshot(),
+        capture.serializedProject(),
+        capture.documentRevisionNumber(),
+        capture.documentRevision(),
+        Data::RuntimePackageActivationOriginalBindingToken{"changed-original-binding"},
+    };
+    QVERIFY(changedOriginalBindingCapture.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(
+        registry, request, changedOriginalBindingCapture));
+    QCOMPARE(provider.activationProofValidationCount, 5);
+
+    RuntimePackageActivationPreparationRequest foreignProvider = request;
+    foreignProvider.compilerActivationProof->compilerProviderId
+        = QStringLiteral("EtherCAT.Compiler.Foreign");
+    QVERIFY(foreignProvider.compilerActivationProof->isValid());
+    QVERIFY(foreignProvider.isValid());
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(registry, foreignProvider, capture));
+    QCOMPARE(provider.activationProofValidationCount, 5);
+
+    provider.setAvailable(false);
+    {
+        Provider incompatibleProvider(
+            ProviderKind::RuntimePackageCompiler,
+            Utils::Id("EtherCAT.Compiler.Incompatible"),
+            QStringLiteral("Incompatible compiler provider"));
+        incompatibleProvider.setAvailable(true);
+        ExtensionSystem::PluginManager::addObject(&incompatibleProvider);
+        auto removeIncompatibleProvider = qScopeGuard(
+            [&] { ExtensionSystem::PluginManager::removeObject(&incompatibleProvider); });
+        QVERIFY(!validateRuntimePackageCompilerActivationProof(registry, request, capture));
+        QCOMPARE(provider.activationProofValidationCount, 5);
+    }
+    provider.setAvailable(true);
+
+    TestRuntimePackageCompilerProvider secondProvider(Utils::Id("EtherCAT.Compiler.Second"));
+    secondProvider.setAvailable(true);
+    ExtensionSystem::PluginManager::addObject(&secondProvider);
+    auto removeSecondProvider = qScopeGuard(
+        [&] { ExtensionSystem::PluginManager::removeObject(&secondProvider); });
+    QVERIFY(!validateRuntimePackageCompilerActivationProof(registry, request, capture));
+    QCOMPARE(provider.activationProofValidationCount, 5);
+    QCOMPARE(secondProvider.activationProofValidationCount, 0);
 }
 
 void EtherCATCoreTests::testSemanticRuntimeValueSemantics()

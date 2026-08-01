@@ -1539,6 +1539,8 @@ RuntimePackageCompilerProjectSnapshotEvidence::RuntimePackageCompilerProjectSnap
     const RuntimePackageActivationProjectCapture &capture)
     : m_validCapture(capture.isValid())
     , m_snapshot(capture.snapshot())
+    , m_serializedProjectSha256(
+          QCryptographicHash::hash(capture.serializedProject(), QCryptographicHash::Sha256))
     , m_documentRevisionNumber(capture.documentRevisionNumber())
     , m_documentRevision(capture.documentRevision())
     , m_originalBinding(capture.originalBinding())
@@ -1547,6 +1549,12 @@ RuntimePackageCompilerProjectSnapshotEvidence::RuntimePackageCompilerProjectSnap
 const ProjectSnapshot &RuntimePackageCompilerProjectSnapshotEvidence::snapshot() const
 {
     return m_snapshot;
+}
+
+const RuntimePackageCompilerSha256 &
+RuntimePackageCompilerProjectSnapshotEvidence::serializedProjectSha256() const
+{
+    return m_serializedProjectSha256;
 }
 
 quint64 RuntimePackageCompilerProjectSnapshotEvidence::documentRevisionNumber() const
@@ -1569,7 +1577,7 @@ RuntimePackageCompilerProjectSnapshotEvidence::originalBinding() const
 bool RuntimePackageCompilerProjectSnapshotEvidence::isValid() const
 {
     return m_validCapture && m_snapshot.valid && !m_snapshot.id.isNull()
-           && m_documentRevisionNumber != 0
+           && m_serializedProjectSha256.isValid() && m_documentRevisionNumber != 0
            && m_documentRevision.isValid() && m_originalBinding.isValid();
 }
 

@@ -15,6 +15,9 @@
 
 namespace EtherCAT::Core {
 
+class ProviderRegistry;
+struct RuntimePackageActivationPreparationRequest;
+
 enum class RuntimePackageCompilerJobState {
     Pending,
     Running,
@@ -108,6 +111,15 @@ public:
     virtual Utils::Result<> validateActivationProof(
         const Data::RuntimePackageCompilerActivationProof &proof) const;
 };
+
+// Binds one activation preparation to the exact compiler proof, selects one
+// unambiguous available compiler provider, and delegates the read-only
+// provenance decision to that provider. This does not parse or authenticate
+// an ECPKG independently.
+ETHERCATCORE_EXPORT Utils::Result<> validateRuntimePackageCompilerActivationProof(
+    const ProviderRegistry *providerRegistry,
+    const RuntimePackageActivationPreparationRequest &request,
+    const Data::RuntimePackageActivationProjectCapture &capture);
 
 } // namespace EtherCAT::Core
 

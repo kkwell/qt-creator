@@ -10,6 +10,7 @@
 #include <QObject>
 
 #include <optional>
+#include <utility>
 
 namespace EtherCAT::Core {
 
@@ -19,9 +20,30 @@ namespace EtherCAT::Core {
 // current Qt .ecatproject bytes captured by ProjectService. Callers supply no
 // binding token, artifact ID, catalog identity, or semantic proof; the
 // activation service captures and derives those values from the current project
-// and independently verified production package.
+// and independently verified production package. The complete compiler proof
+// remains opaque here and is admitted only by its named compiler provider.
 struct ETHERCATCORE_EXPORT RuntimePackageActivationPreparationRequest
 {
+    RuntimePackageActivationPreparationRequest() = default;
+    RuntimePackageActivationPreparationRequest(
+        Data::RuntimePackageActivationOperationId operationId,
+        Data::ControllerConnectionScope scope,
+        QByteArray packageBytes,
+        QByteArray compiledProjectSource,
+        QByteArray effectiveProjectCompanion,
+        Data::RuntimePackageCompilerVerifyResult compilerVerification,
+        bool rollbackOnActivationFailure,
+        Data::RuntimePackageCompilerActivationProof compilerActivationProof)
+        : operationId(std::move(operationId))
+        , scope(std::move(scope))
+        , packageBytes(std::move(packageBytes))
+        , compiledProjectSource(std::move(compiledProjectSource))
+        , effectiveProjectCompanion(std::move(effectiveProjectCompanion))
+        , compilerVerification(std::move(compilerVerification))
+        , rollbackOnActivationFailure(rollbackOnActivationFailure)
+        , compilerActivationProof(std::move(compilerActivationProof))
+    {}
+
     Data::RuntimePackageActivationOperationId operationId;
     Data::ControllerConnectionScope scope;
     QByteArray packageBytes;
@@ -29,13 +51,19 @@ struct ETHERCATCORE_EXPORT RuntimePackageActivationPreparationRequest
     QByteArray effectiveProjectCompanion;
     Data::RuntimePackageCompilerVerifyResult compilerVerification;
     bool rollbackOnActivationFailure = true;
+    // Activation always requires the complete provider-owned provenance proof.
+    // The optional representation lets invalid input be represented and
+    // rejected without manufacturing placeholder evidence.
+    std::optional<Data::RuntimePackageCompilerActivationProof> compilerActivationProof
+        = std::nullopt;
 
     bool isValid() const
     {
         return operationId.isValid() && !scope.projectId.isNull() && !scope.masterId.isNull()
                && !packageBytes.isEmpty() && !compiledProjectSource.isEmpty()
                && !effectiveProjectCompanion.isEmpty()
-               && compilerVerification.isSuccess();
+               && compilerVerification.isSuccess() && compilerActivationProof
+               && compilerActivationProof->isValid();
     }
 
     friend bool operator==(

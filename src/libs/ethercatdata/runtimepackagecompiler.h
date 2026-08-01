@@ -427,7 +427,8 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerSignedTargetProfileEvidence
 
 // The compiler receives one typed snapshot and its atomic CAS identity. Raw
 // project-document bytes intentionally stop at this boundary so they cannot
-// become a second execution source of truth.
+// become a second execution source of truth; their digest preserves an exact
+// capture identity for provider-local provenance checks.
 class ETHERCATDATA_EXPORT RuntimePackageCompilerProjectSnapshotEvidence
 {
 public:
@@ -436,6 +437,7 @@ public:
         const RuntimePackageActivationProjectCapture &capture);
 
     const ProjectSnapshot &snapshot() const;
+    const RuntimePackageCompilerSha256 &serializedProjectSha256() const;
     quint64 documentRevisionNumber() const;
     const RuntimePackageActivationDocumentRevisionToken &documentRevision() const;
     const RuntimePackageActivationOriginalBindingToken &originalBinding() const;
@@ -449,6 +451,7 @@ public:
 private:
     bool m_validCapture = false;
     ProjectSnapshot m_snapshot;
+    RuntimePackageCompilerSha256 m_serializedProjectSha256;
     quint64 m_documentRevisionNumber = 0;
     RuntimePackageActivationDocumentRevisionToken m_documentRevision;
     RuntimePackageActivationOriginalBindingToken m_originalBinding;

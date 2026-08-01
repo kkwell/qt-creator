@@ -92,6 +92,63 @@ Data::RuntimePackageCompilerSha256 sha256(const QByteArray &bytes)
         QCryptographicHash::hash(bytes, QCryptographicHash::Sha256));
 }
 
+void appendU32BigEndian(QByteArray *destination, quint32 value)
+{
+    for (int shift = 24; shift >= 0; shift -= 8)
+        destination->append(char((value >> shift) & 0xff));
+}
+
+QByteArray u64BigEndian(quint64 value)
+{
+    QByteArray result(8, Qt::Uninitialized);
+    for (int index = 7; index >= 0; --index) {
+        result[index] = char(value & 0xff);
+        value >>= 8;
+    }
+    return result;
+}
+
+bool appendLengthPrefixed(QByteArray *destination, QByteArrayView value)
+{
+    if (!destination || value.size() < 0
+        || quint64(value.size()) > std::numeric_limits<quint32>::max()) {
+        return false;
+    }
+    appendU32BigEndian(destination, quint32(value.size()));
+    destination->append(value.data(), value.size());
+    return true;
+}
+
+Utils::Result<QByteArray> activationCaptureEvidence(
+    const Data::RuntimePackageCompilerCompileRequest &request,
+    const Data::RuntimePackageCompilerSha256 &canonicalCompileRequestSha256)
+{
+    static constexpr QByteArrayView domain(
+        "embed-labs.runtime-package-compiler.activation-capture-evidence.v1");
+    const Data::RuntimePackageCompilerProjectSnapshotEvidence &capture
+        = request.projectSnapshotEvidence;
+    if (!request.isValid() || !canonicalCompileRequestSha256.isValid() || !capture.isValid()) {
+        return Utils::ResultError(QStringLiteral("Compiler activation capture is invalid."));
+    }
+
+    QByteArray result;
+    result.reserve(512);
+    const QByteArray projectId = request.topologyEvidence.scope.projectId.toString().toUtf8();
+    const QByteArray masterId = request.topologyEvidence.scope.masterId.toString().toUtf8();
+    const QByteArray documentRevision = u64BigEndian(capture.documentRevisionNumber());
+    if (!appendLengthPrefixed(&result, domain)
+        || !appendLengthPrefixed(&result, canonicalCompileRequestSha256.value())
+        || !appendLengthPrefixed(&result, capture.serializedProjectSha256().value())
+        || !appendLengthPrefixed(&result, projectId) || !appendLengthPrefixed(&result, masterId)
+        || !appendLengthPrefixed(&result, documentRevision)
+        || !appendLengthPrefixed(&result, capture.documentRevision().value())
+        || !appendLengthPrefixed(&result, capture.originalBinding().value())) {
+        return Utils::ResultError(
+            QStringLiteral("Compiler activation capture exceeds its binary evidence limits."));
+    }
+    return result;
+}
+
 QByteArray quotedJsonAscii(const QString &value)
 {
     QByteArray result(1, '"');
@@ -1224,6 +1281,10 @@ Utils::Result<CompilerOperationPaths> CompilerOperationStore::reserveCompile(
         return Utils::ResultError(
             QStringLiteral("Canonical compile request does not match typed input."));
     }
+    const Utils::Result<QByteArray> captureEvidence
+        = activationCaptureEvidence(request, canonicalRequest.sha256());
+    if (!captureEvidence)
+        return Utils::ResultError(captureEvidence.error());
     if (const Utils::Result<> store = validateStore(); !store)
         return Utils::ResultError(store.error());
 
@@ -1318,6 +1379,26 @@ Utils::Result<CompilerOperationPaths> CompilerOperationStore::reserveCompile(
             m_compilerRoot,
             canonicalEvidencePath(operationPaths, canonicalRequest.sha256()),
             canonicalRequest.exactBytes(),
+            true,
+            maximumCanonicalBytes);
+        !written) {
+        return Utils::ResultError(written.error());
+    }
+    if (const Utils::Result<> written = writeAtomicFile(
+            m_rootHandle,
+            m_compilerRoot,
+            operationPaths.activationCapture,
+            *captureEvidence,
+            true,
+            maximumCanonicalBytes);
+        !written) {
+        return Utils::ResultError(written.error());
+    }
+    if (const Utils::Result<> written = writeAtomicFile(
+            m_rootHandle,
+            m_compilerRoot,
+            binaryEvidencePath(operationPaths, sha256(*captureEvidence)),
+            *captureEvidence,
             true,
             maximumCanonicalBytes);
         !written) {
@@ -1928,6 +2009,27 @@ Utils::Result<> CompilerOperationStore::validateActivationProofEvidence(
         }
     }
 
+    const Utils::Result<QByteArray> captureEvidence
+        = activationCaptureEvidence(proof.compileRequest, canonicalCompileRequest.sha256());
+    if (!captureEvidence)
+        return Utils::ResultError(captureEvidence.error());
+    if (const Utils::Result<> valid = expectPrivateExact(
+            compilePaths.activationCapture,
+            *captureEvidence,
+            maximumCanonicalBytes,
+            QStringLiteral("activation capture"));
+        !valid) {
+        return valid;
+    }
+    if (const Utils::Result<> valid = expectPrivateExact(
+            binaryEvidencePath(compilePaths, sha256(*captureEvidence)),
+            *captureEvidence,
+            maximumCanonicalBytes,
+            QStringLiteral("content-addressed activation capture"));
+        !valid) {
+        return valid;
+    }
+
     QList<Data::RuntimePackageCompilerSourceArtifact> sourceArtifacts{
         proof.compileRequest.sourceArtifacts.topologyEvidence,
         proof.compileRequest.sourceArtifacts.targetProfile,
@@ -2112,6 +2214,11 @@ Utils::FilePath CompilerOperationStore::compileRequest(
 {
     return operationRoot(operationId) / "compile-request.json";
 }
+Utils::FilePath CompilerOperationStore::activationCapture(
+    const Data::RuntimePackageCompilerOperationId &operationId) const
+{
+    return operationRoot(operationId) / "activation-capture-v1.bin";
+}
 Utils::FilePath CompilerOperationStore::finalizeRequest(
     const Data::RuntimePackageCompilerOperationId &operationId) const
 {
@@ -2158,6 +2265,7 @@ CompilerOperationPaths CompilerOperationStore::paths(
         artifactRoot(operationId),
         outputDir(operationId),
         compileRequest(operationId),
+        activationCapture(operationId),
         finalizeRequest(operationId),
         verifyRequest(operationId),
         signRequest(operationId),

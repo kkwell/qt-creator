@@ -87,6 +87,7 @@ struct CompilerFixture
     Data::NodeId slaveId = Data::NodeId::fromString("33333333-3333-4333-8333-333333333333");
     QByteArray publicKey = QByteArray(32, '\x31');
     QByteArray signature = QByteArray(64, '\x32');
+    QByteArray serializedProject = QByteArray("{\"format\":\"embed-labs-ethercat-project\"}\n");
     Data::RuntimePackageCompilerCompileRequest request;
 
     CompilerFixture()
@@ -179,7 +180,7 @@ struct CompilerFixture
 
         const Data::RuntimePackageActivationProjectCapture capture{
             project,
-            QByteArray("{\"format\":\"embed-labs-ethercat-project\"}\n"),
+            serializedProject,
             7,
             Data::RuntimePackageActivationDocumentRevisionToken{"revision-7"},
             Data::RuntimePackageActivationOriginalBindingToken{"binding-empty"},
@@ -501,7 +502,11 @@ Data::RuntimePackageCompilerFinalizeRequest finalizeRequestFor(
 }
 
 std::optional<Data::RuntimePackageCompilerActivationProof> successfulActivationProof(
-    TestEnvironment &environment, ProvisionedRuntimePackageCompilerProvider &provider)
+    TestEnvironment &environment,
+    ProvisionedRuntimePackageCompilerProvider &provider,
+    Data::RuntimePackageCompilerOperationId verifyOperationId
+    = Data::RuntimePackageCompilerOperationId{
+        QStringLiteral("04204204-2001-4000-8000-000000000099")})
 {
     const Utils::Result<Core::RuntimePackageCompilerJob *> compileJob = provider.compile(
         environment.fixture.request);
@@ -524,8 +529,7 @@ std::optional<Data::RuntimePackageCompilerActivationProof> successfulActivationP
     const Data::RuntimePackageCompilerFinalizeResult finalizeResultCopy = *finalized;
 
     const Data::RuntimePackageCompilerVerifyRequest verifyRequest{
-        Data::RuntimePackageCompilerOperationId{
-            QStringLiteral("04204204-2001-4000-8000-000000000099")},
+        std::move(verifyOperationId),
         environment.fixture.request.contractIdentity,
         finalizeResultCopy.packageBytes,
         *finalizeResultCopy.packageSha256,
@@ -603,20 +607,37 @@ QByteArray storeWriteFingerprint(const QString &root)
     return hash.result();
 }
 
-void replaceProofProjectSnapshot(
-    Data::RuntimePackageCompilerActivationProof *proof, Data::ProjectSnapshot snapshot)
+void replaceProofProjectCapture(
+    Data::RuntimePackageCompilerActivationProof *proof,
+    Data::ProjectSnapshot snapshot,
+    QByteArray serializedProject,
+    Data::RuntimePackageActivationDocumentRevisionToken documentRevision,
+    Data::RuntimePackageActivationOriginalBindingToken originalBinding)
 {
     const Data::RuntimePackageCompilerProjectSnapshotEvidence &current
         = proof->compileRequest.projectSnapshotEvidence;
     const Data::RuntimePackageActivationProjectCapture capture{
         std::move(snapshot),
-        QByteArray("mutated-project-snapshot"),
+        std::move(serializedProject),
         current.documentRevisionNumber(),
-        current.documentRevision(),
-        current.originalBinding(),
+        std::move(documentRevision),
+        std::move(originalBinding),
     };
     proof->compileRequest.projectSnapshotEvidence
         = Data::RuntimePackageCompilerProjectSnapshotEvidence{capture};
+}
+
+void replaceProofProjectSnapshot(
+    Data::RuntimePackageCompilerActivationProof *proof, Data::ProjectSnapshot snapshot)
+{
+    const Data::RuntimePackageCompilerProjectSnapshotEvidence &current
+        = proof->compileRequest.projectSnapshotEvidence;
+    replaceProofProjectCapture(
+        proof,
+        std::move(snapshot),
+        QByteArray("mutated-project-snapshot"),
+        current.documentRevision(),
+        current.originalBinding());
 }
 
 } // namespace
@@ -1017,6 +1038,9 @@ void EtherCATProjectCompilerTests::testActivationProofProvenanceAndRestart()
     const auto proof = successfulActivationProof(environment, *provider);
     QVERIFY(proof);
     QVERIFY(proof->isValid());
+    QVERIFY(
+        proof->compileRequest.projectSnapshotEvidence.serializedProjectSha256()
+        == sha256(environment.fixture.serializedProject));
 
     const QString calls = environment.root + QStringLiteral("/compiler-ledger.json.calls");
     const QByteArray callsBefore = readFile(calls);
@@ -1147,6 +1171,137 @@ void EtherCATProjectCompilerTests::testActivationProofRejectsMutationsWithoutPro
     QVERIFY(rejectedWithoutProcess(changed));
 
     changed = *proof;
+    {
+        const Data::RuntimePackageCompilerProjectSnapshotEvidence &current
+            = changed.compileRequest.projectSnapshotEvidence;
+        replaceProofProjectCapture(
+            &changed,
+            current.snapshot(),
+            environment.fixture.serializedProject + QByteArray("changed"),
+            current.documentRevision(),
+            current.originalBinding());
+    }
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    changed = *proof;
+    {
+        const Data::RuntimePackageCompilerProjectSnapshotEvidence &current
+            = changed.compileRequest.projectSnapshotEvidence;
+        replaceProofProjectCapture(
+            &changed,
+            current.snapshot(),
+            environment.fixture.serializedProject,
+            Data::RuntimePackageActivationDocumentRevisionToken{"revision-spliced"},
+            current.originalBinding());
+    }
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    changed = *proof;
+    {
+        const Data::RuntimePackageCompilerProjectSnapshotEvidence &current
+            = changed.compileRequest.projectSnapshotEvidence;
+        replaceProofProjectCapture(
+            &changed,
+            current.snapshot(),
+            environment.fixture.serializedProject,
+            current.documentRevision(),
+            Data::RuntimePackageActivationOriginalBindingToken{"binding-spliced"});
+    }
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    changed = *proof;
+    {
+        const Data::NodeId oldProjectId = changed.compileRequest.topologyEvidence.scope.projectId;
+        const Data::NodeId newProjectId = Data::NodeId::create();
+        Data::ProjectSnapshot snapshot = changed.compileRequest.projectSnapshotEvidence.snapshot();
+        snapshot.id = newProjectId;
+        for (Data::ProjectNodeSnapshot &node : snapshot.nodes) {
+            if (node.id == oldProjectId)
+                node.id = newProjectId;
+            if (node.parentId == oldProjectId)
+                node.parentId = newProjectId;
+        }
+        changed.compileRequest.topologyEvidence.scope.projectId = newProjectId;
+        changed.compileRequest.projectProjection.projectNodeId = newProjectId;
+        const Data::RuntimePackageCompilerProjectSnapshotEvidence &current
+            = changed.compileRequest.projectSnapshotEvidence;
+        replaceProofProjectCapture(
+            &changed,
+            std::move(snapshot),
+            environment.fixture.serializedProject,
+            current.documentRevision(),
+            current.originalBinding());
+    }
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    changed = *proof;
+    {
+        const Data::NodeId oldMasterId = changed.compileRequest.topologyEvidence.scope.masterId;
+        const Data::NodeId newMasterId = Data::NodeId::create();
+        Data::ProjectSnapshot snapshot = changed.compileRequest.projectSnapshotEvidence.snapshot();
+        for (Data::ProjectNodeSnapshot &node : snapshot.nodes) {
+            if (node.id == oldMasterId)
+                node.id = newMasterId;
+            if (node.parentId == oldMasterId)
+                node.parentId = newMasterId;
+        }
+        for (Data::OfflineSlaveConfiguration &slave : snapshot.slaves) {
+            if (slave.masterId == oldMasterId)
+                slave.masterId = newMasterId;
+        }
+        changed.compileRequest.topologyEvidence.scope.masterId = newMasterId;
+        changed.compileRequest.projectProjection.masterProjectNodeId = newMasterId;
+        const Data::RuntimePackageCompilerProjectSnapshotEvidence &current
+            = changed.compileRequest.projectSnapshotEvidence;
+        replaceProofProjectCapture(
+            &changed,
+            std::move(snapshot),
+            environment.fixture.serializedProject,
+            current.documentRevision(),
+            current.originalBinding());
+    }
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    const Data::RuntimePackageCompilerCompileRequest originalRequest = environment.fixture.request;
+    environment.fixture.request.operationId = Data::RuntimePackageCompilerOperationId{
+        QStringLiteral("04204204-2001-4000-8000-000000000012")};
+    environment.fixture.request.configurationId = 4202;
+    environment.fixture.request.intentId.append(QStringLiteral(".second-operation"));
+    {
+        const Data::RuntimePackageCompilerProjectSnapshotEvidence &current
+            = environment.fixture.request.projectSnapshotEvidence;
+        const Data::RuntimePackageActivationProjectCapture secondCapture{
+            current.snapshot(),
+            environment.fixture.serializedProject + QByteArray("second-operation"),
+            current.documentRevisionNumber(),
+            Data::RuntimePackageActivationDocumentRevisionToken{"revision-second-operation"},
+            Data::RuntimePackageActivationOriginalBindingToken{"binding-second-operation"},
+        };
+        environment.fixture.request.projectSnapshotEvidence
+            = Data::RuntimePackageCompilerProjectSnapshotEvidence{secondCapture};
+    }
+    const auto secondOperationProof = successfulActivationProof(
+        environment,
+        *provider,
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000098")});
+    environment.fixture.request = originalRequest;
+    QVERIFY(secondOperationProof);
+    QCOMPARE(
+        secondOperationProof->compileRequest.projectProjection,
+        proof->compileRequest.projectProjection);
+    changed = *proof;
+    changed.compileRequest.projectSnapshotEvidence
+        = secondOperationProof->compileRequest.projectSnapshotEvidence;
+    QVERIFY(changed.isValid());
+    QVERIFY(rejectedWithoutProcess(changed));
+
+    changed = *proof;
     changed.verifyRequest.operationId = changed.compileRequest.operationId;
     changed.verifyResult.envelope.operationId = changed.compileRequest.operationId;
     const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> sameOperationVerify
@@ -1207,6 +1362,17 @@ void EtherCATProjectCompilerTests::testActivationProofRejectsUnsafeEvidence()
                                  const QString &suffix) {
         return root / "evidence" / (QString::fromLatin1(digest.value().toHex()) + suffix);
     };
+    const Utils::FilePath activationCapture = compileRoot / "activation-capture-v1.bin";
+    const QByteArray activationCaptureBytes = readFile(activationCapture.path());
+    QVERIFY(!activationCaptureBytes.isEmpty());
+    const Utils::FilePath sealedActivationCapture
+        = evidenceFile(compileRoot, sha256(activationCaptureBytes), QStringLiteral(".bin"));
+    const QByteArray activationCaptureDomain = QByteArray(
+        "embed-labs.runtime-package-compiler.activation-capture-evidence.v1");
+    QByteArray activationCapturePrefix(4, '\0');
+    activationCapturePrefix[3] = char(activationCaptureDomain.size());
+    activationCapturePrefix += activationCaptureDomain;
+    QVERIFY(activationCaptureBytes.startsWith(activationCapturePrefix));
 
     QList<Utils::FilePath> criticalFiles{
         compileRoot / "reservation.json",
@@ -1214,6 +1380,8 @@ void EtherCATProjectCompilerTests::testActivationProofRejectsUnsafeEvidence()
             / "reservation.json",
         compileRoot / "compile-request.json",
         evidenceFile(compileRoot, compileRequest->sha256(), QStringLiteral(".json")),
+        activationCapture,
+        sealedActivationCapture,
         compileRoot / "finalize-request.json",
         evidenceFile(compileRoot, finalizeRequest->sha256(), QStringLiteral(".json")),
         compileRoot / "sign-request.json",
@@ -1277,22 +1445,25 @@ void EtherCATProjectCompilerTests::testActivationProofRejectsUnsafeEvidence()
     for (const Utils::FilePath &file : criticalFiles)
         QVERIFY2(corruptAndRestore(file), qPrintable(file.toUserOutput()));
 
-    const Utils::FilePath removable
-        = evidenceFile(verifyRoot, verifyRequest->sha256(), QStringLiteral(".json"));
+    const Utils::FilePath removable = activationCapture;
     const QString removedBackup = removable.path() + QStringLiteral(".removed");
     QVERIFY(QFile::rename(removable.path(), removedBackup));
+    provider->shutdown();
+    provider.reset();
+    provider = environment.provider();
+    QVERIFY(provider->isAvailable());
     QVERIFY(rejectsCurrentStore());
     QVERIFY(QFile::rename(removedBackup, removable.path()));
+    QVERIFY(provider->validateActivationProof(*proof));
 
-    const Utils::FilePath manifest = compileRoot / "output" / "signing_stage" / "manifest.json";
-    const QByteArray originalManifest = readFile(manifest.path());
-    QVERIFY(!originalManifest.isEmpty());
-    QVERIFY(writeFile(manifest.path(), QByteArray(16 * 1024 * 1024 + 1, 'x')));
+    const QByteArray originalActivationCapture = readFile(activationCapture.path());
+    QVERIFY(!originalActivationCapture.isEmpty());
+    QVERIFY(writeFile(activationCapture.path(), QByteArray(1024 * 1024 + 1, 'x')));
     QVERIFY(rejectsCurrentStore());
-    QVERIFY(writeFile(manifest.path(), originalManifest));
+    QVERIFY(writeFile(activationCapture.path(), originalActivationCapture));
 
 #ifdef Q_OS_UNIX
-    const Utils::FilePath target = compileRoot / "compile-request.json";
+    const Utils::FilePath target = activationCapture;
     const QString backup = target.path() + QStringLiteral(".original");
     QVERIFY(QFile::rename(target.path(), backup));
     QCOMPARE(

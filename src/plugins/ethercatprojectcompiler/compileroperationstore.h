@@ -47,6 +47,7 @@ struct CompilerOperationPaths
     Utils::FilePath artifactRoot;
     Utils::FilePath outputDir;
     Utils::FilePath compileRequest;
+    Utils::FilePath activationCapture;
     Utils::FilePath finalizeRequest;
     Utils::FilePath verifyRequest;
     Utils::FilePath signRequest;
@@ -138,6 +139,8 @@ public:
     Utils::FilePath artifactRoot(const Data::RuntimePackageCompilerOperationId &operationId) const;
     Utils::FilePath outputDir(const Data::RuntimePackageCompilerOperationId &operationId) const;
     Utils::FilePath compileRequest(const Data::RuntimePackageCompilerOperationId &operationId) const;
+    Utils::FilePath activationCapture(
+        const Data::RuntimePackageCompilerOperationId &operationId) const;
     Utils::FilePath finalizeRequest(const Data::RuntimePackageCompilerOperationId &operationId) const;
     Utils::FilePath verifyRequest(const Data::RuntimePackageCompilerOperationId &operationId) const;
     Utils::FilePath signRequest(const Data::RuntimePackageCompilerOperationId &operationId) const;

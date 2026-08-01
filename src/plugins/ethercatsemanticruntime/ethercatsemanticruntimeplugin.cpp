@@ -4,6 +4,8 @@
 #include "runtimepackageactivationservice_p.h"
 #include "runtimepackageevidencerepository_p.h"
 
+#include <ethercatcore/runtimepackagecompilerprovider.h>
+
 #ifdef WITH_TESTS
 #include "ethercatsemanticruntimetests.h"
 #endif
@@ -67,22 +69,11 @@ void EtherCATSemanticRuntimePlugin::initialize()
         projectService, providerRegistry, nullptr, m_evidenceRepository);
     const auto exactProjectProofVerifier
         = [providerRegistry](
-              const Core::RuntimePackageActivationPreparationRequest &,
-              const Data::RuntimePackageActivationProjectCapture &,
+              const Core::RuntimePackageActivationPreparationRequest &request,
+              const Data::RuntimePackageActivationProjectCapture &capture,
               const VerifiedRuntimePackageEvidence &) -> Utils::Result<> {
-        for (Core::Provider *provider : providerRegistry->providers(
-                 Core::ProviderKind::RuntimePackageCompiler)) {
-            if (provider && provider->isAvailable()) {
-                return Utils::ResultError(
-                    QStringLiteral(
-                        "The API-042 compiler provider does not expose the exact typed compile "
-                        "request evidence required to recompute the current project proof."));
-            }
-        }
-        return Utils::ResultError(
-            QStringLiteral(
-                "No API-042 compiler provider is installed; the exact compile-time project "
-                "proof cannot be reconstructed."));
+        return Core::validateRuntimePackageCompilerActivationProof(
+            providerRegistry, request, capture);
     };
     m_activation = std::make_unique<TrustedRuntimePackageActivationService>(
         projectService,

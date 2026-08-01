@@ -2,9 +2,18 @@
 
 #pragma once
 
+#include "ethercatcore_global.h"
+
+#include <ethercatdata/runtimepackagecompiler.h>
+
 #include <QObject>
 
 namespace EtherCAT::Core::Internal {
+
+// Shared by plugin tests that inject an exact-project verifier. Production
+// code never consumes this synthetic compiler chain.
+ETHERCATCORE_EXPORT Data::RuntimePackageCompilerActivationProof
+syntheticRuntimePackageCompilerActivationProof();
 
 class EtherCATCoreTests final : public QObject
 {
@@ -24,6 +33,7 @@ private slots:
     void testRuntimePackageCompilerValueSemantics();
     void testRuntimePackageCompilerCodec();
     void testRuntimePackageCompilerProviderContract();
+    void testRuntimePackageCompilerActivationProofRouting();
     void testSemanticRuntimeValueSemantics();
     void testSemanticRuntimeEpochValidation();
     void testSemanticRuntimeReadValidation();

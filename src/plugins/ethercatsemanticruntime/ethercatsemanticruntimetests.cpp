@@ -22,6 +22,7 @@
 
 #include <coreplugin/icore.h>
 
+#include <ethercatcore/ethercatcoretests.h>
 #include <ethercatcore/providerregistry.h>
 #include <ethercatcore/providers.h>
 
@@ -2798,6 +2799,7 @@ public:
                 effectiveProjectCompanion,
                 compilerVerification(),
                 request.rollbackOnActivationFailure(),
+                compilerActivationProof(),
             });
         if (!prepared.isValid() || !prepared.request) {
             return Utils::ResultError(
@@ -2857,6 +2859,12 @@ public:
     {
         return compilerVerificationForCompanion(
             effectiveProjectCompanion);
+    }
+
+    Data::RuntimePackageCompilerActivationProof compilerActivationProof() const
+    {
+        return EtherCAT::Core::Internal::
+            syntheticRuntimePackageCompilerActivationProof();
     }
 
     Data::RuntimePackageCompilerVerifyResult
@@ -2944,6 +2952,8 @@ public:
                        != effectiveProjectCompanion
                 || candidate.compilerVerification
                        != compilerVerification()
+                || !candidate.compilerActivationProof
+                || !candidate.compilerActivationProof->isValid()
                 || verified.semanticMappingProof()
                        != evidence->semanticMappingProof()
                 || verified.projectConfigurationSha256()
@@ -5949,6 +5959,7 @@ void EtherCATSemanticRuntimeTests::testTrustedRuntimePackageActivation()
                 preparedFixture.effectiveProjectCompanion,
                 verification,
                 true,
+                preparedFixture.compilerActivationProof(),
             });
         };
         preparedFixture.setAdapterAuthorization(false, true);
@@ -6242,6 +6253,7 @@ void EtherCATSemanticRuntimeTests::
                 fixture.effectiveProjectCompanion,
                 fixture.compilerVerification(),
                 true,
+                fixture.compilerActivationProof(),
             });
         QVERIFY(prepared.isValid());
         QVERIFY(!prepared.succeeded());
@@ -6288,6 +6300,7 @@ void EtherCATSemanticRuntimeTests::
                 fixture.effectiveProjectCompanion,
                 fixture.compilerVerification(),
                 true,
+                fixture.compilerActivationProof(),
             });
         QVERIFY(prepared.isValid());
         QVERIFY(!prepared.succeeded());
@@ -6501,6 +6514,7 @@ void EtherCATSemanticRuntimeTests::
                 fixture.effectiveProjectCompanion,
                 fixture.compilerVerification(),
                 true,
+                fixture.compilerActivationProof(),
             });
         QVERIFY(prepared.isValid());
         QVERIFY(!prepared.succeeded());
@@ -6525,6 +6539,7 @@ void EtherCATSemanticRuntimeTests::
                 fixture.effectiveProjectCompanion,
                 fixture.compilerVerification(),
                 true,
+                fixture.compilerActivationProof(),
             });
         QVERIFY(prepared.isValid());
         QVERIFY(!prepared.succeeded());
@@ -6567,6 +6582,7 @@ void EtherCATSemanticRuntimeTests::
                 changedCompanion,
                 verification,
                 true,
+                fixture.compilerActivationProof(),
             });
         QVERIFY(prepared.isValid());
         QVERIFY(!prepared.succeeded());
@@ -6598,6 +6614,7 @@ void EtherCATSemanticRuntimeTests::
                 fixture.effectiveProjectCompanion,
                 fixture.compilerVerification(),
                 true,
+                fixture.compilerActivationProof(),
             });
         QVERIFY(prepared.isValid());
         QVERIFY(!prepared.succeeded());
@@ -6620,6 +6637,7 @@ void EtherCATSemanticRuntimeTests::
                 QByteArray("different-effective-project-companion\n"),
                 fixture.compilerVerification(),
                 true,
+                fixture.compilerActivationProof(),
             });
         QVERIFY(prepared.isValid());
         QVERIFY(!prepared.succeeded());
@@ -6653,6 +6671,7 @@ void EtherCATSemanticRuntimeTests::
                 fixture.effectiveProjectCompanion,
                 fixture.compilerVerification(),
                 true,
+                fixture.compilerActivationProof(),
             });
         QVERIFY(prepared.isValid());
         QVERIFY(!prepared.succeeded());

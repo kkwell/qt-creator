@@ -2,8 +2,12 @@
 
 #include "runtimepackagecompilerprovider.h"
 
+#include "providerregistry.h"
+#include "runtimepackageactivationservice.h"
+
 #include <utils/qtcassert.h>
 
+#include <QCryptographicHash>
 #include <QMetaObject>
 #include <QPointer>
 #include <QThread>
@@ -153,6 +157,69 @@ Utils::Result<> RuntimePackageCompilerProvider::validateActivationProof(
 {
     return Utils::ResultError(
         QStringLiteral("This compiler provider cannot validate activation proof provenance."));
+}
+
+Utils::Result<> validateRuntimePackageCompilerActivationProof(
+    const ProviderRegistry *providerRegistry,
+    const RuntimePackageActivationPreparationRequest &request,
+    const Data::RuntimePackageActivationProjectCapture &capture)
+{
+    if (!providerRegistry)
+        return Utils::ResultError(QStringLiteral("Compiler provider registry is unavailable."));
+    if (QThread::currentThread() != providerRegistry->thread()) {
+        return Utils::ResultError(
+            QStringLiteral("Compiler provider registry belongs to a different thread."));
+    }
+    if (!request.compilerActivationProof)
+        return Utils::ResultError(QStringLiteral("Compiler activation proof is missing."));
+    if (!request.isValid())
+        return Utils::ResultError(QStringLiteral("Compiler activation input is invalid."));
+
+    const Data::RuntimePackageCompilerActivationProof &proof = *request.compilerActivationProof;
+    const Data::RuntimePackageCompilerSha256 packageSha256{
+        QCryptographicHash::hash(request.packageBytes, QCryptographicHash::Sha256)};
+    if (!proof.isValid())
+        return Utils::ResultError(QStringLiteral("Compiler activation proof is invalid."));
+    if (!capture.isValid()
+        || proof.compileRequest.topologyEvidence.scope != request.scope
+        || proof.compileRequest.projectSnapshotEvidence
+               != Data::RuntimePackageCompilerProjectSnapshotEvidence{capture}
+        || proof.verifyResult != request.compilerVerification
+        || proof.finalizeResult.packageBytes != request.packageBytes
+        || *proof.finalizeResult.packageSha256 != packageSha256
+        || proof.verifyRequest.packageBytes != request.packageBytes
+        || proof.verifyRequest.packageSha256 != packageSha256
+        || proof.compiledProjectSource != request.compiledProjectSource
+        || proof.effectiveProjectCompanion != request.effectiveProjectCompanion) {
+        return Utils::ResultError(
+            QStringLiteral(
+                "Compiler activation proof differs from the project capture or activation input."));
+    }
+
+    QList<Provider *> availableProviders;
+    for (Provider *candidate : providerRegistry->providers(
+             ProviderKind::RuntimePackageCompiler)) {
+        if (candidate && candidate->isAvailable())
+            availableProviders.append(candidate);
+    }
+    if (availableProviders.size() != 1) {
+        return Utils::ResultError(
+            availableProviders.isEmpty()
+                ? QStringLiteral("No available compiler provider can validate the proof.")
+                : QStringLiteral("Compiler provider selection is ambiguous."));
+    }
+
+    auto *provider = qobject_cast<RuntimePackageCompilerProvider *>(
+        availableProviders.constFirst());
+    if (!provider) {
+        return Utils::ResultError(
+            QStringLiteral("The selected compiler provider cannot validate activation proof."));
+    }
+    if (provider->id().toString() != proof.compilerProviderId) {
+        return Utils::ResultError(
+            QStringLiteral("The available compiler provider does not own this proof."));
+    }
+    return provider->validateActivationProof(proof);
 }
 
 } // namespace EtherCAT::Core
