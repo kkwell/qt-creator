@@ -10,6 +10,7 @@
 #include "providerregistry.h"
 #include "providers.h"
 #include "runtimepackageactivationservice.h"
+#include "runtimepackagecompilercodec.h"
 #include "runtimepackagecompilerprovider.h"
 #include "selectionservice.h"
 #include "semanticruntimeservice.h"
@@ -35,7 +36,11 @@
 #include <ethercatdata/semanticruntime.h>
 
 #include <QCryptographicHash>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPointer>
@@ -530,6 +535,23 @@ struct RuntimePackageCompilerFixture
             = sha256("upper-v3-adapter-manifest").value();
         slave.adapterSelection.processDataProfileId
             = QStringLiteral("org.embedlabs.solidot.xb6.do16");
+        Data::PdoEntryConfiguration pdoEntry;
+        pdoEntry.id = Data::NodeId::create();
+        pdoEntry.index = 0x7000;
+        pdoEntry.subIndex = 1;
+        pdoEntry.name = QStringLiteral("do0");
+        pdoEntry.bitLength = 1;
+        pdoEntry.dataType = Data::EtherCATDataType::Boolean;
+        Data::PdoConfiguration pdo;
+        pdo.id = Data::NodeId::create();
+        pdo.index = 0x1600;
+        pdo.name = QStringLiteral("do16");
+        pdo.direction = Data::PdoDirection::Rx;
+        pdo.syncManager = 2;
+        pdo.selected = true;
+        pdo.fixed = true;
+        pdo.entries = {pdoEntry};
+        slave.processData.pdos = {pdo};
         slave.dc.enabled = false;
         project.slaves = {slave};
 
@@ -613,7 +635,7 @@ struct RuntimePackageCompilerFixture
             QByteArray("PROGRAM PLC_PRG\nEND_PROGRAM\n"));
 
         Data::RuntimePackageCompilerDeviceSourceEvidence deviceSource;
-        deviceSource.projectDeviceId = slaveId;
+        deviceSource.projectSlaveNodeId = slaveId;
         deviceSource.originalEsi = artifact(
             Data::RuntimePackageCompilerSourceArtifactKind::OriginalEsi,
             QStringLiteral("esi/xb6.xml"),
@@ -658,6 +680,62 @@ struct RuntimePackageCompilerFixture
         target.signingKeyIdSha256 = signingKeyIdSha256;
         target.productionSigned = true;
 
+        Data::RuntimePackageCompilerDeviceProjection deviceProjection;
+        deviceProjection.projectSlaveNodeId = slaveId;
+        deviceProjection.slaveNodeId = QStringLiteral("ide:slave:xb6-fixture");
+        deviceProjection.projectDeviceId = QStringLiteral("embedlabs:project:device:xb6-fixture");
+        deviceProjection.position = slave.position;
+        deviceProjection.stationAddress = slave.stationAddress;
+        deviceProjection.alias = slave.alias;
+        deviceProjection.identity = slave.identity;
+        deviceProjection.serialNumber = slave.serialNumber;
+        deviceProjection.esiSha256 = sha256(esiBytes);
+        deviceProjection.targetProfileId = target.profileId;
+        deviceProjection.adapterId = deviceSource.adapterId;
+        deviceProjection.adapterVersion = deviceSource.adapterVersion;
+        deviceProjection.adapterSha256 = deviceSource.adapterCanonicalSha256;
+        deviceProjection.pdoProfileId = deviceSource.pdoProfileId;
+        deviceProjection.pdoMappings = {
+            {QStringLiteral("do16"),
+             Data::RuntimePackageCompilerPdoDirection::Output,
+             pdo.index,
+             quint8(pdo.syncManager),
+             pdo.fixed,
+             {{QStringLiteral("do0"),
+               pdoEntry.index,
+               pdoEntry.subIndex,
+               quint16(pdoEntry.bitLength),
+               QStringLiteral("BOOL")}}},
+        };
+        deviceProjection.dc = {};
+        deviceProjection.componentBindingIds
+            .insert(QStringLiteral("0"), QStringLiteral("embedlabs:project:component:xb6-fixture"));
+        deviceProjection.semanticBindingIds.insert(
+            QStringLiteral("io.digital_output"),
+            QStringLiteral("embedlabs:project:binding:xb6-fixture:do0"));
+        deviceProjection.symbolMode = Data::RuntimePackageCompilerSymbolMode::ReportOnly;
+        deviceProjection.manualEnvelope = {
+            false,
+            1,
+            1,
+            1,
+            Data::RuntimePackageCompilerManualRecoveryAction::HoldSafe,
+            Data::RuntimePackageCompilerManualRecoveryAction::HoldSafe,
+            Data::RuntimePackageCompilerManualRecoveryAction::HoldSafe,
+        };
+
+        Data::RuntimePackageCompilerProjectProjection projectProjection;
+        projectProjection.projectNodeId = projectId;
+        projectProjection.masterProjectNodeId = masterId;
+        projectProjection.projectId = QStringLiteral("embedlabs:project:compiler-fixture");
+        projectProjection.masterNodeId = QStringLiteral("ide:master:compiler-fixture");
+        projectProjection.documentRevision = 7;
+        projectProjection.timingMode = Data::MasterTimingMode::FreeRun;
+        projectProjection.cyclePeriodNs = 125000;
+        projectProjection.linkSpeedMbps = 100;
+        projectProjection.devices = {deviceProjection};
+        projectProjection.uiMetadata = canonical(QByteArray("{}\n"));
+
         request.operationId = Data::RuntimePackageCompilerOperationId{
             QStringLiteral("04204204-2001-4000-8000-000000000001")};
         request.intentId = QStringLiteral("embedlabs:compile-intent:test");
@@ -671,12 +749,541 @@ struct RuntimePackageCompilerFixture
         };
         request.projectSnapshotEvidence
             = Data::RuntimePackageCompilerProjectSnapshotEvidence{capture};
+        request.projectProjection = projectProjection;
         request.topologyEvidence = topology;
         request.sourceArtifacts = sources;
         request.deviceSourceEvidence = {deviceSource};
         request.targetProfile = target;
     }
 };
+
+static QByteArray readExactFile(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    return file.readAll();
+}
+
+static QByteArray api042TestData(const QString &fileName)
+{
+    const QDir sourceDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath());
+    return readExactFile(sourceDir.filePath(QStringLiteral("testdata/api042/") + fileName));
+}
+
+static QByteArray api042RepositoryData(const QString &relativePath)
+{
+    const QDir sourceDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath());
+    return readExactFile(sourceDir.filePath(QStringLiteral("../../../") + relativePath));
+}
+
+static Data::RuntimePackageCompilerSha256 api042Sha(const QString &hex)
+{
+    return Data::RuntimePackageCompilerSha256{QByteArray::fromHex(hex.toLatin1())};
+}
+
+static Data::EtherCATDataType api042DataType(const QString &name)
+{
+    static const QHash<QString, Data::EtherCATDataType> types{
+        {QStringLiteral("BOOL"), Data::EtherCATDataType::Boolean},
+        {QStringLiteral("SINT"), Data::EtherCATDataType::Integer8},
+        {QStringLiteral("USINT"), Data::EtherCATDataType::UnsignedInteger8},
+        {QStringLiteral("INT"), Data::EtherCATDataType::Integer16},
+        {QStringLiteral("UINT"), Data::EtherCATDataType::UnsignedInteger16},
+        {QStringLiteral("DINT"), Data::EtherCATDataType::Integer32},
+        {QStringLiteral("UDINT"), Data::EtherCATDataType::UnsignedInteger32},
+        {QStringLiteral("LINT"), Data::EtherCATDataType::Integer64},
+        {QStringLiteral("ULINT"), Data::EtherCATDataType::UnsignedInteger64},
+    };
+    return types.value(name, Data::EtherCATDataType::Unknown);
+}
+
+static Data::RuntimePackageCompilerStartupStage api042StartupStage(const QString &name)
+{
+    if (name == QStringLiteral("preop"))
+        return Data::RuntimePackageCompilerStartupStage::PreOperational;
+    if (name == QStringLiteral("safeop"))
+        return Data::RuntimePackageCompilerStartupStage::SafeOperational;
+    if (name == QStringLiteral("op"))
+        return Data::RuntimePackageCompilerStartupStage::Operational;
+    return Data::RuntimePackageCompilerStartupStage::Unknown;
+}
+
+static Data::RuntimePackageCompilerStartupFailureAction api042FailureAction(const QString &name)
+{
+    if (name == QStringLiteral("abort"))
+        return Data::RuntimePackageCompilerStartupFailureAction::Abort;
+    if (name == QStringLiteral("warn"))
+        return Data::RuntimePackageCompilerStartupFailureAction::Warn;
+    if (name == QStringLiteral("continue"))
+        return Data::RuntimePackageCompilerStartupFailureAction::Continue;
+    return Data::RuntimePackageCompilerStartupFailureAction::Unknown;
+}
+
+static Data::RuntimePackageCompilerManualRecoveryAction api042RecoveryAction(const QString &name)
+{
+    if (name == QStringLiteral("hold_safe"))
+        return Data::RuntimePackageCompilerManualRecoveryAction::HoldSafe;
+    if (name == QStringLiteral("return_to_task"))
+        return Data::RuntimePackageCompilerManualRecoveryAction::ReturnToTask;
+    if (name == QStringLiteral("stop"))
+        return Data::RuntimePackageCompilerManualRecoveryAction::Stop;
+    return Data::RuntimePackageCompilerManualRecoveryAction::Unknown;
+}
+
+static QMap<QString, QString> api042StringMap(const QJsonObject &object)
+{
+    QMap<QString, QString> result;
+    for (auto it = object.constBegin(); it != object.constEnd(); ++it)
+        result.insert(it.key(), it.value().toString());
+    return result;
+}
+
+static QByteArray api042StartupBytes(qint64 value, quint8 valueBytes)
+{
+    QByteArray result(valueBytes, '\0');
+    quint64 bits = quint64(value);
+    for (qsizetype index = result.size(); index > 0; --index) {
+        result[index - 1] = char(bits & 0xff);
+        bits >>= 8;
+    }
+    return result;
+}
+
+static Data::RuntimePackageCompilerSourceArtifact api042Artifact(
+    Data::RuntimePackageCompilerSourceArtifactKind kind,
+    const QString &relativePath,
+    const QByteArray &bytes)
+{
+    return {kind, relativePath, bytes, RuntimePackageCompilerFixture::sha256(bytes)};
+}
+
+static Data::RuntimePackageCompilerCompileRequest api042GoldenCompileRequest()
+{
+    const QByteArray requestBytes = api042TestData(QStringLiteral("compile-request.json"));
+    const QJsonObject requestObject = QJsonDocument::fromJson(requestBytes).object();
+    const QJsonObject projectObject
+        = requestObject.value(QStringLiteral("project_snapshot")).toObject();
+    const QJsonObject masterObject = projectObject.value(QStringLiteral("master")).toObject();
+    const QJsonArray deviceObjects = projectObject.value(QStringLiteral("devices")).toArray();
+
+    const Data::NodeId projectNodeId = Data::NodeId::fromString(
+        QStringLiteral("11111111-1111-4111-8111-111111111111"));
+    const Data::NodeId masterNodeId = Data::NodeId::fromString(
+        QStringLiteral("22222222-2222-4222-8222-222222222222"));
+    const QList<Data::NodeId> slaveNodeIds{
+        Data::NodeId::fromString(QStringLiteral("33333333-3333-4333-8333-333333333333")),
+        Data::NodeId::fromString(QStringLiteral("44444444-4444-4444-8444-444444444444")),
+        Data::NodeId::fromString(QStringLiteral("55555555-5555-4555-8555-555555555555")),
+    };
+
+    Data::ProjectSnapshot project;
+    project.id = projectNodeId;
+    project.name = QStringLiteral("API-042 golden project");
+    project.formatVersion = 7;
+    project.valid = true;
+    project.masterConfiguration.timingMode = Data::MasterTimingMode::DistributedClocks;
+    project.masterConfiguration.cyclePeriodNs = quint32(
+        masterObject.value(QStringLiteral("cycle_period_ns")).toInteger());
+    project.nodes = {
+        {projectNodeId, {}, Data::ProjectNodeKind::Project, QStringLiteral("Project")},
+        {masterNodeId, projectNodeId, Data::ProjectNodeKind::Master, QStringLiteral("Master")},
+    };
+
+    Data::RuntimePackageCompilerProjectProjection projectProjection;
+    projectProjection.projectNodeId = projectNodeId;
+    projectProjection.masterProjectNodeId = masterNodeId;
+    projectProjection.projectId = projectObject.value(QStringLiteral("project_id")).toString();
+    projectProjection.masterNodeId
+        = projectObject.value(QStringLiteral("master_node_id")).toString();
+    projectProjection.documentRevision = quint64(
+        projectObject.value(QStringLiteral("document_revision")).toInteger());
+    projectProjection.timingMode = Data::MasterTimingMode::DistributedClocks;
+    projectProjection.cyclePeriodNs = project.masterConfiguration.cyclePeriodNs;
+    projectProjection.linkSpeedMbps = quint32(
+        masterObject.value(QStringLiteral("link_speed_mbps")).toInteger());
+    projectProjection.uiMetadata = RuntimePackageCompilerFixture::canonical(QByteArray(
+        "{\"canvas_zoom_percent\":125,\"display_name\":\"Excluded from execution intent\"}\n"));
+
+    QList<Data::RuntimePackageCompilerDeviceSourceEvidence> deviceSources;
+    QList<Data::RuntimePackageCompilerTopologySlaveEvidence> topologySlaves;
+    const QString targetProfileId = QStringLiteral(
+        "embedlabs.zynq.cpu1v2-fpgav1-capability-20260730");
+    for (qsizetype deviceIndex = 0; deviceIndex < deviceObjects.size(); ++deviceIndex) {
+        const QJsonObject object = deviceObjects.at(deviceIndex).toObject();
+        const QJsonObject identityObject = object.value(QStringLiteral("identity")).toObject();
+        const QJsonObject targetObject
+            = object.value(QStringLiteral("controller_adapter_target")).toObject();
+        const QJsonObject pdoObject = object.value(QStringLiteral("pdo")).toObject();
+        const QJsonObject dcObject = object.value(QStringLiteral("dc")).toObject();
+        const QJsonObject manualObject = object.value(QStringLiteral("manual_envelope")).toObject();
+
+        Data::RuntimePackageCompilerDeviceProjection projection;
+        projection.projectSlaveNodeId = slaveNodeIds.at(deviceIndex);
+        projection.slaveNodeId = object.value(QStringLiteral("slave_node_id")).toString();
+        projection.projectDeviceId = object.value(QStringLiteral("project_device_id")).toString();
+        projection.position = int(object.value(QStringLiteral("position")).toInteger());
+        projection.stationAddress = quint16(
+            object.value(QStringLiteral("station_address")).toInteger());
+        projection.alias = quint16(object.value(QStringLiteral("alias")).toInteger());
+        projection.identity = {
+            quint32(identityObject.value(QStringLiteral("vendor_id")).toInteger()),
+            quint32(identityObject.value(QStringLiteral("product_code")).toInteger()),
+            quint32(identityObject.value(QStringLiteral("revision")).toInteger()),
+        };
+        projection.serialNumber = quint32(
+            identityObject.value(QStringLiteral("serial")).toInteger());
+        projection.esiSha256 = api042Sha(object.value(QStringLiteral("esi_sha256")).toString());
+        projection.targetProfileId
+            = targetObject.value(QStringLiteral("target_profile_id")).toString();
+        projection.adapterId = targetObject.value(QStringLiteral("adapter_id")).toString();
+        projection.adapterVersion = targetObject.value(QStringLiteral("adapter_version")).toString();
+        projection.adapterSha256 = api042Sha(
+            targetObject.value(QStringLiteral("adapter_sha256")).toString());
+        projection.pdoProfileId = targetObject.value(QStringLiteral("pdo_profile_id")).toString();
+        if (!targetObject.value(QStringLiteral("signed_dc_profile_id")).isNull()) {
+            projection.signedDcProfileId
+                = targetObject.value(QStringLiteral("signed_dc_profile_id")).toString();
+        }
+
+        Data::OfflineSlaveConfiguration slave;
+        slave.id = projection.projectSlaveNodeId;
+        slave.masterId = masterNodeId;
+        slave.position = projection.position;
+        slave.identity = projection.identity;
+        slave.serialNumber = projection.serialNumber;
+        slave.alias = projection.alias;
+        slave.name = projection.slaveNodeId;
+        slave.stationAddress = projection.stationAddress;
+        slave.esiSha256 = projection.esiSha256.value();
+        slave.manualControlEnvelope.enabled = manualObject.value(QStringLiteral("enabled")).toBool();
+
+        const QJsonArray mappings = pdoObject.value(QStringLiteral("mappings")).toArray();
+        for (const QJsonValue &mappingValue : mappings) {
+            const QJsonObject mappingObject = mappingValue.toObject();
+            Data::RuntimePackageCompilerPdoMapping mapping;
+            mapping.id = mappingObject.value(QStringLiteral("id")).toString();
+            mapping.direction = mappingObject.value(QStringLiteral("direction")).toString()
+                                        == QStringLiteral("input")
+                                    ? Data::RuntimePackageCompilerPdoDirection::Input
+                                    : Data::RuntimePackageCompilerPdoDirection::Output;
+            mapping.pdoIndex = quint16(mappingObject.value(QStringLiteral("pdo_index")).toInteger());
+            mapping.syncManager = quint8(mappingObject.value(QStringLiteral("sm")).toInteger());
+            mapping.fixed = mappingObject.value(QStringLiteral("fixed")).toBool();
+
+            Data::PdoConfiguration pdo;
+            pdo.id = Data::NodeId::create();
+            pdo.index = mapping.pdoIndex;
+            pdo.name = mapping.id;
+            pdo.direction = mapping.direction == Data::RuntimePackageCompilerPdoDirection::Input
+                                ? Data::PdoDirection::Tx
+                                : Data::PdoDirection::Rx;
+            pdo.syncManager = mapping.syncManager;
+            pdo.selected = true;
+            pdo.fixed = mapping.fixed;
+            for (const QJsonValue &entryValue :
+                 mappingObject.value(QStringLiteral("entries")).toArray()) {
+                const QJsonObject entryObject = entryValue.toObject();
+                Data::RuntimePackageCompilerPdoEntry entry;
+                entry.fieldId = entryObject.value(QStringLiteral("field_id")).toString();
+                entry.index = quint16(entryObject.value(QStringLiteral("index")).toInteger());
+                entry.subIndex = quint8(entryObject.value(QStringLiteral("subindex")).toInteger());
+                entry.bitLength = quint16(
+                    entryObject.value(QStringLiteral("bit_length")).toInteger());
+                entry.dataType = entryObject.value(QStringLiteral("data_type")).toString();
+                mapping.entries.append(entry);
+
+                Data::PdoEntryConfiguration pdoEntry;
+                pdoEntry.id = Data::NodeId::create();
+                pdoEntry.index = entry.index;
+                pdoEntry.subIndex = entry.subIndex;
+                pdoEntry.name = entry.fieldId;
+                pdoEntry.bitLength = entry.bitLength;
+                pdoEntry.dataType = api042DataType(entry.dataType);
+                if (pdoEntry.dataType == Data::EtherCATDataType::Unknown)
+                    pdoEntry.rawDataType = entry.dataType;
+                pdo.entries.append(pdoEntry);
+            }
+            projection.pdoMappings.append(mapping);
+            slave.processData.pdos.append(pdo);
+        }
+
+        for (const QJsonValue &startupValue :
+             object.value(QStringLiteral("startup_sdos")).toArray()) {
+            const QJsonObject startupObject = startupValue.toObject();
+            Data::RuntimePackageCompilerStartupSdo startup;
+            startup.sequence = quint16(startupObject.value(QStringLiteral("sequence")).toInteger());
+            startup.id = startupObject.value(QStringLiteral("id")).toString();
+            startup.enabled = startupObject.value(QStringLiteral("enabled")).toBool();
+            startup.stage = api042StartupStage(
+                startupObject.value(QStringLiteral("stage")).toString());
+            startup.index = quint16(startupObject.value(QStringLiteral("index")).toInteger());
+            startup.subIndex = quint8(startupObject.value(QStringLiteral("subindex")).toInteger());
+            const qint64 signedValue = startupObject.value(QStringLiteral("value")).toInteger();
+            startup.value = signedValue;
+            startup.valueBytes = quint8(
+                startupObject.value(QStringLiteral("value_bytes")).toInteger());
+            startup.completeAccess = startupObject.value(QStringLiteral("complete_access")).toBool();
+            startup.timeoutNs = quint64(
+                startupObject.value(QStringLiteral("timeout_ns")).toInteger());
+            startup.retryCount = quint8(
+                startupObject.value(QStringLiteral("retry_count")).toInteger());
+            startup.failureAction = api042FailureAction(
+                startupObject.value(QStringLiteral("failure_action")).toString());
+            startup.persistent = startupObject.value(QStringLiteral("persistent")).toBool();
+            startup.requiresPowerCycle
+                = startupObject.value(QStringLiteral("requires_power_cycle")).toBool();
+            projection.startupSdos.append(startup);
+
+            Data::StartupParameterConfiguration parameter;
+            parameter.id = Data::NodeId::create();
+            parameter.enabled = startup.enabled;
+            parameter.order = startup.sequence;
+            parameter.transition = startupObject.value(QStringLiteral("stage")).toString();
+            parameter.index = startup.index;
+            parameter.subIndex = startup.subIndex;
+            parameter.rawValue = api042StartupBytes(signedValue, startup.valueBytes);
+            slave.startup.parameters.append(parameter);
+        }
+
+        projection.dc.enabled = dcObject.value(QStringLiteral("enabled")).toBool();
+        if (!dcObject.value(QStringLiteral("signed_dc_profile_id")).isNull()) {
+            projection.dc.signedDcProfileId
+                = dcObject.value(QStringLiteral("signed_dc_profile_id")).toString();
+        }
+        if (!dcObject.value(QStringLiteral("mode")).isNull())
+            projection.dc.mode = dcObject.value(QStringLiteral("mode")).toString();
+        projection.dc.assignActivate = quint16(
+            dcObject.value(QStringLiteral("assign_activate")).toInteger());
+        projection.dc.sync0CycleNs = quint64(
+            dcObject.value(QStringLiteral("sync0_cycle_ns")).toInteger());
+        projection.dc.sync0ShiftNs = dcObject.value(QStringLiteral("sync0_shift_ns")).toInteger();
+        projection.dc.sync1CycleNs = quint64(
+            dcObject.value(QStringLiteral("sync1_cycle_ns")).toInteger());
+        projection.dc.sync1ShiftNs = dcObject.value(QStringLiteral("sync1_shift_ns")).toInteger();
+        projection.dc.referenceClock = dcObject.value(QStringLiteral("reference_clock")).toBool();
+        slave.dc.enabled = projection.dc.enabled;
+        slave.dc.modeName = projection.dc.mode.value_or(QString());
+        slave.dc.assignActivate = projection.dc.assignActivate;
+        slave.dc.sync0 = {
+            projection.dc.sync0CycleNs != 0,
+            qint64(projection.dc.sync0CycleNs),
+            projection.dc.sync0ShiftNs,
+        };
+        slave.dc.sync1 = {
+            projection.dc.sync1CycleNs != 0,
+            qint64(projection.dc.sync1CycleNs),
+            projection.dc.sync1ShiftNs,
+        };
+        slave.dc.potentialReferenceClock = projection.dc.referenceClock;
+
+        for (const QJsonValue &moduleValue :
+             object.value(QStringLiteral("module_assignments")).toArray()) {
+            const QJsonObject moduleObject = moduleValue.toObject();
+            projection.moduleAssignments.append(
+                {int(moduleObject.value(QStringLiteral("slot")).toInteger()),
+                 quint32(moduleObject.value(QStringLiteral("module_ident")).toInteger()),
+                 0,
+                 0});
+        }
+        slave.adapterSelection.moduleAssignments = projection.moduleAssignments;
+        projection.componentBindingIds = api042StringMap(
+            object.value(QStringLiteral("component_binding_ids")).toObject());
+        projection.semanticBindingIds = api042StringMap(
+            object.value(QStringLiteral("semantic_binding_ids")).toObject());
+        projection.semanticActionBindingIds = api042StringMap(
+            object.value(QStringLiteral("semantic_action_binding_ids")).toObject());
+        const QString symbolMode = object.value(QStringLiteral("symbol_mode")).toString();
+        projection.symbolMode = symbolMode == QStringLiteral("requested")
+                                    ? Data::RuntimePackageCompilerSymbolMode::Requested
+                                : symbolMode == QStringLiteral("all")
+                                    ? Data::RuntimePackageCompilerSymbolMode::All
+                                    : Data::RuntimePackageCompilerSymbolMode::ReportOnly;
+        projection.symbols = api042StringMap(object.value(QStringLiteral("symbols")).toObject());
+        projection.manualEnvelope = {
+            manualObject.value(QStringLiteral("enabled")).toBool(),
+            quint16(manualObject.value(QStringLiteral("max_ttl_cycles")).toInteger()),
+            quint16(manualObject.value(QStringLiteral("refresh_cycles")).toInteger()),
+            quint16(manualObject.value(QStringLiteral("max_hold_cycles")).toInteger()),
+            api042RecoveryAction(manualObject.value(QStringLiteral("timeout_action")).toString()),
+            api042RecoveryAction(manualObject.value(QStringLiteral("release_action")).toString()),
+            api042RecoveryAction(manualObject.value(QStringLiteral("failure_action")).toString()),
+        };
+
+        const QByteArray upperAdapterIdentity = QByteArray("api042-upper:")
+                                                + projection.projectDeviceId.toUtf8();
+        slave.adapterSelection.adapterId = {
+            QStringLiteral("org.embedlabs.adapter.api042.%1").arg(deviceIndex),
+        };
+        slave.adapterSelection.adapterVersion = QStringLiteral("1.0.0");
+        slave.adapterSelection.adapterContentSha256
+            = RuntimePackageCompilerFixture::sha256(upperAdapterIdentity).value();
+        slave.adapterSelection.processDataProfileId
+            = QStringLiteral("api042.project.profile.%1").arg(deviceIndex);
+
+        const bool isXb6 = deviceIndex == 0;
+        const QByteArray esiBytes = api042RepositoryData(
+            isXb6 ? QStringLiteral(
+                        "share/qtcreator/ethercat/esi/"
+                        "EcatTerminal-XB6_V3.22_ENUM.xml")
+                  : QStringLiteral(
+                        "share/qtcreator/ethercat/esi/"
+                        "INOVANCE_SV630N_1Axis_V16.xml"));
+        const QByteArray adapterBytes = api042TestData(
+            isXb6 ? QStringLiteral("xb6.ecdev.yaml") : QStringLiteral("sv630n.ecdev.yaml"));
+        const QString adapterRelativePath
+            = isXb6 ? QStringLiteral("adapter_bundle/xb6_ec0002_rev1_do16_manual.ecdev.yaml")
+                    : QStringLiteral("adapter_bundle/sv630n_1axis_rev00010000_manual.ecdev.yaml");
+        Data::RuntimePackageCompilerDeviceSourceEvidence source;
+        source.projectSlaveNodeId = projection.projectSlaveNodeId;
+        source.originalEsi = api042Artifact(
+            Data::RuntimePackageCompilerSourceArtifactKind::OriginalEsi,
+            isXb6 ? QStringLiteral("esi/EcatTerminal-XB6_V3.22_ENUM.xml")
+                  : QStringLiteral("esi/INOVANCE_SV630N_1Axis_V16.xml"),
+            esiBytes);
+        source.adapterSourceFile = api042Artifact(
+            Data::RuntimePackageCompilerSourceArtifactKind::AdapterSourceFile,
+            adapterRelativePath,
+            adapterBytes);
+        source.projectAdapterContractVersion = Data::DeviceAdapterContractVersion::V3;
+        source.projectAdapterId = slave.adapterSelection.adapterId;
+        source.projectAdapterVersion = slave.adapterSelection.adapterVersion;
+        source.projectAdapterContentSha256 = Data::RuntimePackageCompilerSha256{
+            slave.adapterSelection.adapterContentSha256};
+        source.projectControllerAdapterTarget = {
+            projection.adapterId,
+            projection.adapterVersion,
+            projection.adapterSha256.value(),
+            projection.esiSha256.value(),
+        };
+        source.projectPdoProfileId = slave.adapterSelection.processDataProfileId;
+        source.projectSignedPdoProfileId = projection.pdoProfileId;
+        source.projectSignedDcProfileId = projection.signedDcProfileId.value_or(QString());
+        source.adapterId = projection.adapterId;
+        source.adapterVersion = projection.adapterVersion;
+        source.adapterCanonicalSha256 = projection.adapterSha256;
+        source.pdoProfileId = projection.pdoProfileId;
+        source.signedDcProfileId = projection.signedDcProfileId;
+        source.explicitNoDc = !projection.dc.enabled;
+
+        project.nodes.append({slave.id, masterNodeId, Data::ProjectNodeKind::Slave, slave.name});
+        project.slaves.append(slave);
+        projectProjection.devices.append(projection);
+        deviceSources.append(source);
+        topologySlaves.append(
+            {projection.projectSlaveNodeId,
+             projection.position,
+             projection.stationAddress,
+             projection.alias,
+             projection.identity,
+             projection.serialNumber,
+             projection.moduleAssignments});
+    }
+
+    const QByteArray topologyBytes = api042TestData(QStringLiteral("topology-evidence.json"));
+    Data::RuntimePackageCompilerFreshTopologyEvidence topology;
+    topology.scope = {projectNodeId, masterNodeId};
+    topology.sessionGeneration = 1;
+    topology.sessionId = 1;
+    topology.evidenceId = QStringLiteral("discover:boot-4f536f408aafbc51:sequence-00000057");
+    topology.captureBootId = 0x4f536f408aafbc51ULL;
+    topology.captureSequence = 57;
+    topology.capturedAtNs = 1'785'542'400'000'000'000ULL;
+    topology.expiresAtNs = 1'785'546'000'000'000'000ULL;
+    topology.cyclePeriodNs = projectProjection.cyclePeriodNs;
+    topology.linkSpeedMbps = projectProjection.linkSpeedMbps;
+    topology.slaves = topologySlaves;
+    topology.canonicalEvidence = RuntimePackageCompilerFixture::canonical(topologyBytes);
+
+    const QByteArray targetBytes = api042TestData(QStringLiteral("target-profile.json"));
+    const QJsonObject targetObject = QJsonDocument::fromJson(targetBytes).object();
+    const QByteArray signature = QByteArray::fromHex(
+        "ccf21cb63e4b8c392046fb1deb4996de6dd84281cbcfd9e33632c12b904ae9b7"
+        "1cfa5869414bc29412b852e88983fc829f9d086d5376e1d4ed82d7f90980c20e");
+    const QByteArray publicKey = QByteArray::fromHex(
+        "bd51c2d7cb14eeabac5de51ca5feb5f36d3d87986b77f19d056a7da4845f7063");
+    Data::RuntimePackageCompilerSourceArtifacts sources;
+    sources.topologyEvidence = api042Artifact(
+        Data::RuntimePackageCompilerSourceArtifactKind::TopologyEvidence,
+        QStringLiteral("topology-evidence-v1.json"),
+        topologyBytes);
+    sources.targetProfile = api042Artifact(
+        Data::RuntimePackageCompilerSourceArtifactKind::TargetProfile,
+        QStringLiteral("target-capability-profile-v1.json"),
+        targetBytes);
+    sources.targetProfileSignature = api042Artifact(
+        Data::RuntimePackageCompilerSourceArtifactKind::TargetProfileSignature,
+        QStringLiteral("target-capability-profile-v1.sig"),
+        signature);
+    sources.productionPublicKey = api042Artifact(
+        Data::RuntimePackageCompilerSourceArtifactKind::ProductionPublicKey,
+        QStringLiteral("production.pub"),
+        publicKey);
+    sources.adapterBundle = api042Artifact(
+        Data::RuntimePackageCompilerSourceArtifactKind::AdapterBundle,
+        QStringLiteral("adapter-bundle-v1.json"),
+        api042TestData(QStringLiteral("adapter-bundle.json")));
+    sources.policyTemplate = api042Artifact(
+        Data::RuntimePackageCompilerSourceArtifactKind::PolicyTemplate,
+        QStringLiteral("policy-template.json"),
+        api042TestData(QStringLiteral("policy-template.json")));
+    sources.controllerFeatures = api042Artifact(
+        Data::RuntimePackageCompilerSourceArtifactKind::ControllerFeatures,
+        QStringLiteral("controller-features-v1.json"),
+        api042TestData(QStringLiteral("controller-features.json")));
+    sources.runtimeSource = api042Artifact(
+        Data::RuntimePackageCompilerSourceArtifactKind::RuntimeSource,
+        QStringLiteral("runtime.st"),
+        api042TestData(QStringLiteral("runtime.st")));
+
+    Data::RuntimePackageCompilerSignedTargetProfileEvidence target;
+    target.profileId = targetProfileId;
+    target.policyRevision = quint64(
+        targetObject.value(QStringLiteral("policy_revision")).toInteger());
+    target.canonicalProfile = RuntimePackageCompilerFixture::canonical(targetBytes);
+    target.capabilityDescriptorSha256 = api042Sha(
+        targetObject.value(QStringLiteral("capability_descriptor_sha256")).toString());
+    target.controllerFeaturesSha256 = api042Sha(
+        targetObject.value(QStringLiteral("controller_features_sha256")).toString());
+    target.adapterBundleSha256 = api042Sha(
+        targetObject.value(QStringLiteral("adapter_bundle_sha256")).toString());
+    target.cpu1AbiVersion = quint32(
+        targetObject.value(QStringLiteral("cpu1_abi_version")).toInteger());
+    target.fpgaAbiVersion = quint32(
+        targetObject.value(QStringLiteral("fpga_abi_version")).toInteger());
+    target.signature = signature;
+    target.signingKeyIdSha256 = api042Sha(
+        targetObject.value(QStringLiteral("signing_key_id")).toString());
+    target.productionSigned = true;
+
+    const Data::RuntimePackageActivationProjectCapture capture{
+        project,
+        QByteArray("{\"format\":\"embed-labs-ethercat-project\"}\n"),
+        projectProjection.documentRevision,
+        Data::RuntimePackageActivationDocumentRevisionToken{"api042-revision-7"},
+        Data::RuntimePackageActivationOriginalBindingToken{"api042-binding-empty"},
+    };
+    Data::RuntimePackageCompilerCompileRequest request;
+    request.operationId = Data::RuntimePackageCompilerOperationId{
+        requestObject.value(QStringLiteral("operation_id")).toString()};
+    request.intentId = requestObject.value(QStringLiteral("intent_id")).toString();
+    request.configurationId = 4201;
+    request.buildTimestampNs = topology.capturedAtNs;
+    request.compileTimeNs = topology.capturedAtNs + 1'000'000'000ULL;
+    request.manifestFormatVersion = 2;
+    request.contractIdentity = {
+        QStringLiteral("ethercat-ide-project-compiler-contract-v1"),
+        1,
+        RuntimePackageCompilerFixture::sha256("api042-schema-bundle"),
+    };
+    request.projectSnapshotEvidence = Data::RuntimePackageCompilerProjectSnapshotEvidence{capture};
+    request.projectProjection = projectProjection;
+    request.topologyEvidence = topology;
+    request.sourceArtifacts = sources;
+    request.deviceSourceEvidence = deviceSources;
+    request.targetProfile = target;
+    return request;
+}
 
 static Data::RuntimePackageCompilerDiagnostic compilerDiagnostic(
     Data::RuntimePackageCompilerDiagnosticCategory category,
@@ -766,7 +1373,10 @@ static Data::RuntimePackageCompilerSha256 compilerRequestSha256(
     identity += '\n';
     identity += QByteArray::number(request.configurationId);
     identity += request.compileRequestSha256.value();
+    identity += request.signRequestSha256.value();
     identity += request.manifestSha256.value();
+    identity += request.signingKeyIdSha256.value();
+    identity += QByteArray::number(request.signingPolicyRevision);
     identity += request.detachedSigningResponse.sha256().value();
     return RuntimePackageCompilerFixture::sha256(identity);
 }
@@ -939,21 +1549,44 @@ static Data::RuntimePackageCompilerCanonicalJson detachedSigningResponse(
     const Data::RuntimePackageCompilerCompileRequest &request,
     const Data::RuntimePackageCompilerCompileResult &compileResult)
 {
+    const QString manifestSha256 = QString::fromLatin1(
+        compileResult.manifestSha256->value().toHex());
+    const QString signRequestSha256 = QString::fromLatin1(
+        compileResult.signRequest->sha256().value().toHex());
+    const QString signature = QString::fromLatin1(QByteArray(64, '\x44').toHex());
+    const QString signingKeyIdSha256 = QString::fromLatin1(
+        request.targetProfile.signingKeyIdSha256.value().toHex());
+    const QByteArray receiptProjection
+        = QStringLiteral(
+              "{\"format\":\"ethercat-ecpkg-sign-response-v1\",\"format_version\":1,"
+              "\"manifest_sha256\":\"%1\",\"operation_id\":\"%2\","
+              "\"policy_revision\":%3,\"request_sha256\":\"%4\","
+              "\"signature_hex\":\"%5\",\"signing_key_id\":\"%6\"}\n")
+              .arg(
+                  manifestSha256,
+                  request.operationId.value(),
+                  QString::number(request.targetProfile.policyRevision),
+                  signRequestSha256,
+                  signature,
+                  signingKeyIdSha256)
+              .toLatin1();
+    const QString receiptSha256 = QString::fromLatin1(
+        RuntimePackageCompilerFixture::sha256(receiptProjection).value().toHex());
     return RuntimePackageCompilerFixture::canonical(
-        QStringLiteral("{\"format\":\"ethercat-ecpkg-sign-response-v1\",\"format_version\":1,"
-                       "\"manifest_sha256\":\"%1\",\"operation_id\":\"%2\","
-                       "\"policy_revision\":%3,\"receipt_sha256\":\"%4\","
-                       "\"request_sha256\":\"%5\",\"signature_hex\":\"%6\","
-                       "\"signing_key_id\":\"%7\"}\n")
+        QStringLiteral(
+            "{\"format\":\"ethercat-ecpkg-sign-response-v1\",\"format_version\":1,"
+            "\"manifest_sha256\":\"%1\",\"operation_id\":\"%2\","
+            "\"policy_revision\":%3,\"receipt_sha256\":\"%4\","
+            "\"request_sha256\":\"%5\",\"signature_hex\":\"%6\","
+            "\"signing_key_id\":\"%7\"}\n")
             .arg(
-                QString::fromLatin1(compileResult.manifestSha256->value().toHex()),
+                manifestSha256,
                 request.operationId.value(),
                 QString::number(request.targetProfile.policyRevision),
-                QString::fromLatin1(
-                    RuntimePackageCompilerFixture::sha256("receipt").value().toHex()),
-                QString::fromLatin1(compileResult.signRequest->sha256().value().toHex()),
-                QString::fromLatin1(QByteArray(64, '\x44').toHex()),
-                QString::fromLatin1(request.targetProfile.signingKeyIdSha256.value().toHex()))
+                receiptSha256,
+                signRequestSha256,
+                signature,
+                signingKeyIdSha256)
             .toLatin1());
 }
 
@@ -962,7 +1595,10 @@ static Data::RuntimePackageCompilerFinalizeResult successfulFinalizeResult(
 {
     const QByteArray packageBytes("deterministic-production-ecpkg");
     const auto packageSha256 = RuntimePackageCompilerFixture::sha256(packageBytes);
-    const auto signingReceiptSha256 = RuntimePackageCompilerFixture::sha256("signing-receipt");
+    const QJsonObject signingResponse
+        = QJsonDocument::fromJson(request.detachedSigningResponse.exactBytes()).object();
+    const Data::RuntimePackageCompilerSha256 signingReceiptSha256{QByteArray::fromHex(
+        signingResponse.value(QStringLiteral("receipt_sha256")).toString().toLatin1())};
     const QString packagePath = QStringLiteral("/tmp/embed-labs-compiler-output/project.ecpkg");
     const QByteArray exactResult
         = QStringLiteral("{\"configuration_id\":%1,"
@@ -4768,6 +5404,19 @@ void EtherCATCoreTests::testRuntimePackageCompilerValueSemantics()
         = QStringLiteral("sync0_125us");
     dcRequest.deviceSourceEvidence[0].signedDcProfileId
         = QStringLiteral("sync0_125us");
+    dcRequest.projectProjection.timingMode = Data::MasterTimingMode::DistributedClocks;
+    dcRequest.projectProjection.devices[0].signedDcProfileId = QStringLiteral("sync0_125us");
+    dcRequest.projectProjection.devices[0].dc = {
+        true,
+        QStringLiteral("sync0_125us"),
+        QStringLiteral("DC"),
+        0x0300,
+        125000,
+        0,
+        0,
+        0,
+        false,
+    };
     QVERIFY(dcRequest.isValid());
 
     Data::RuntimePackageCompilerCompileRequest mismatchedLowerDc = dcRequest;
@@ -4941,7 +5590,10 @@ void EtherCATCoreTests::testRuntimePackageCompilerValueSemantics()
         fixture.request.configurationId,
         fixture.request.contractIdentity,
         compilerRequestSha256(fixture.request),
+        compileResult.signRequest->sha256(),
         *compileResult.manifestSha256,
+        fixture.request.targetProfile.signingKeyIdSha256,
+        fixture.request.targetProfile.policyRevision,
         detachedSigningResponse(fixture.request, compileResult),
     };
     QVERIFY(finalizeRequest.isValid());
@@ -4953,6 +5605,7 @@ void EtherCATCoreTests::testRuntimePackageCompilerValueSemantics()
     const Data::RuntimePackageCompilerQueryRequest queryRequest{
         fixture.request.operationId,
         fixture.request.contractIdentity,
+        compilerRequestSha256(fixture.request),
     };
     QVERIFY(queryRequest.isValid());
     const auto signerOnlyResponse = finalizeRequest.detachedSigningResponse;
@@ -5053,6 +5706,341 @@ void EtherCATCoreTests::testRuntimePackageCompilerValueSemantics()
     QVERIFY(QMetaType::fromType<RuntimePackageCompilerJobCompletionError>().isValid());
 }
 
+void EtherCATCoreTests::testRuntimePackageCompilerCodec()
+{
+    const Data::RuntimePackageCompilerCompileRequest request = api042GoldenCompileRequest();
+    QVERIFY(request.isValid());
+
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> encoded
+        = encodeRuntimePackageCompilerCompileRequest(request);
+    QVERIFY_RESULT(encoded);
+    const QByteArray goldenRequest = api042TestData(QStringLiteral("compile-request.json"));
+    QCOMPARE(encoded->exactBytes(), goldenRequest);
+    QCOMPARE(
+        encoded->sha256().value().toHex(),
+        QByteArray("fcc2821e811c2ec38faa7fe85f3c613db8ded31291a7e953ed3535c431f72887"));
+    QVERIFY(encoded->exactBytes().contains("1785542400000000000"));
+    QVERIFY(encoded->exactBytes().contains("1785542401000000000"));
+    QVERIFY(!encoded->exactBytes().contains("1.7855424e+18"));
+    QVERIFY(encoded->exactBytes().contains("\"slave_node_id\":\"ide:slave:xb6\""));
+    QVERIFY(
+        encoded->exactBytes().contains("\"project_device_id\":\"embedlabs:project:device:xb6\""));
+
+    const auto rejectsCompileRequest = [](Data::RuntimePackageCompilerCompileRequest changed) {
+        QVERIFY(!changed.isValid());
+        QVERIFY(!encodeRuntimePackageCompilerCompileRequest(changed));
+    };
+    Data::RuntimePackageCompilerCompileRequest missing = request;
+    missing.projectProjection.devices[0].projectDeviceId.clear();
+    rejectsCompileRequest(missing);
+    missing = request;
+    missing.projectProjection.devices[0].pdoMappings.clear();
+    rejectsCompileRequest(missing);
+    missing = request;
+    missing.projectProjection.devices[0].semanticBindingIds.clear();
+    rejectsCompileRequest(missing);
+    missing = request;
+    missing.projectProjection.devices[1].startupSdos[0].timeoutNs = 0;
+    rejectsCompileRequest(missing);
+    missing = request;
+    missing.projectProjection.devices[1].manualEnvelope.maximumTtlCycles = 0;
+    rejectsCompileRequest(missing);
+
+    const Data::RuntimePackageCompilerCanonicalJson signRequest
+        = RuntimePackageCompilerFixture::canonical(
+            api042TestData(QStringLiteral("sign-request.json")));
+    QVERIFY(signRequest.isValid());
+    const RuntimePackageCompilerProcessOutput compileOutput{
+        true,
+        0,
+        api042TestData(QStringLiteral("compile-result.json")),
+        {},
+    };
+    const Utils::Result<Data::RuntimePackageCompilerCompileResult> compileResult
+        = decodeRuntimePackageCompilerCompileResult(request, compileOutput, signRequest);
+    QVERIFY_RESULT(compileResult);
+    QVERIFY(compileResult->isSuccess());
+    QCOMPARE(compileResult->envelope.requestSha256, encoded->sha256());
+    QCOMPARE(compileResult->signRequest->exactBytes(), signRequest.exactBytes());
+
+    const QString staleSha256 = QString::fromLatin1(
+        RuntimePackageCompilerFixture::sha256("stale-evidence").value().toHex());
+    const auto changedSignRequest = [&](const QString &key, const QJsonValue &value) {
+        QJsonObject object = QJsonDocument::fromJson(signRequest.exactBytes()).object();
+        if (value.isUndefined())
+            object.remove(key);
+        else
+            object.insert(key, value);
+        return RuntimePackageCompilerFixture::canonical(
+            QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n');
+    };
+    const auto outputForSignRequest = [&](const Data::RuntimePackageCompilerCanonicalJson &changed) {
+        RuntimePackageCompilerProcessOutput output = compileOutput;
+        const QByteArray originalSha256 = signRequest.sha256().value().toHex();
+        output.standardOutput.replace(originalSha256, changed.sha256().value().toHex());
+        return output;
+    };
+    const auto rejectsSignRequest = [&](const Data::RuntimePackageCompilerCanonicalJson &changed) {
+        QVERIFY(changed.isValid());
+        QVERIFY(!decodeRuntimePackageCompilerCompileResult(
+            request, outputForSignRequest(changed), changed));
+    };
+
+    const auto emptySignRequest = RuntimePackageCompilerFixture::canonical(QByteArray("{}\n"));
+    rejectsSignRequest(emptySignRequest);
+    auto malformedTypedCompileResult = *compileResult;
+    const RuntimePackageCompilerProcessOutput emptySignRequestOutput = outputForSignRequest(
+        emptySignRequest);
+    malformedTypedCompileResult.signRequest = emptySignRequest;
+    malformedTypedCompileResult.envelope.canonicalResult = RuntimePackageCompilerFixture::canonical(
+        emptySignRequestOutput.standardOutput);
+    QVERIFY(!malformedTypedCompileResult.isValid());
+
+    rejectsSignRequest(changedSignRequest(
+        QStringLiteral("effective_project_companion_sha256"), QJsonValue(QJsonValue::Undefined)));
+    rejectsSignRequest(changedSignRequest(QStringLiteral("unexpected"), true));
+    rejectsSignRequest(changedSignRequest(
+        QStringLiteral("operation_id"), QStringLiteral("04204204-2001-4000-8000-000000000002")));
+    for (const QString &key :
+         {QStringLiteral("manifest_sha256"),
+          QStringLiteral("intent_sha256"),
+          QStringLiteral("effective_project_companion_sha256"),
+          QStringLiteral("signing_key_id")}) {
+        rejectsSignRequest(changedSignRequest(key, staleSha256));
+    }
+    rejectsSignRequest(changedSignRequest(QStringLiteral("policy_revision"), 2));
+    QByteArray largePolicySignRequest = signRequest.exactBytes();
+    largePolicySignRequest.replace(
+        QByteArray("\"policy_revision\":1"), QByteArray("\"policy_revision\":9223372036854775808"));
+    rejectsSignRequest(RuntimePackageCompilerFixture::canonical(largePolicySignRequest));
+
+    const auto staleTargetSignRequest
+        = changedSignRequest(QStringLiteral("target_profile_sha256"), staleSha256);
+    RuntimePackageCompilerProcessOutput staleTargetOutput = outputForSignRequest(
+        staleTargetSignRequest);
+    staleTargetOutput.standardOutput
+        .replace(compileResult->targetProfileSha256->value().toHex(), staleSha256.toLatin1());
+    QVERIFY(!decodeRuntimePackageCompilerCompileResult(
+        request, staleTargetOutput, staleTargetSignRequest));
+    RuntimePackageCompilerProcessOutput staleAdapterOutput = compileOutput;
+    staleAdapterOutput.standardOutput
+        .replace(compileResult->adapterBundleSha256->value().toHex(), staleSha256.toLatin1());
+    QVERIFY(!decodeRuntimePackageCompilerCompileResult(request, staleAdapterOutput, signRequest));
+
+    const QByteArray packageBytes("api042-codec-package");
+    const Data::RuntimePackageCompilerSha256 packageSha256 = RuntimePackageCompilerFixture::sha256(
+        packageBytes);
+    const Data::RuntimePackageCompilerSha256 receiptSha256 = api042Sha(
+        QStringLiteral("1583f194e24542768a1f999824aff6bd563b54c84c264ff048c3b9751db20f0e"));
+    const Data::RuntimePackageCompilerFinalizeRequest finalizeRequest{
+        request.operationId,
+        request.configurationId,
+        request.contractIdentity,
+        encoded->sha256(),
+        compileResult->signRequest->sha256(),
+        *compileResult->manifestSha256,
+        request.targetProfile.signingKeyIdSha256,
+        request.targetProfile.policyRevision,
+        RuntimePackageCompilerFixture::canonical(
+            api042TestData(QStringLiteral("sign-response.json"))),
+    };
+    QVERIFY(finalizeRequest.isValid());
+    const QByteArray finalizeJson
+        = QStringLiteral(
+              "{\"configuration_id\":4201,"
+              "\"format\":\"ethercat-ide-project-compiler-result-v1\","
+              "\"format_version\":1,\"manifest_sha256\":\"%1\","
+              "\"operation_id\":\"%2\",\"package_bytes\":%3,"
+              "\"package_path\":\"api042-codec-package.ecpkg\","
+              "\"package_sha256\":\"%4\",\"signing_receipt_sha256\":\"%5\","
+              "\"status\":\"complete\"}\n")
+              .arg(
+                  QString::fromLatin1(compileResult->manifestSha256->value().toHex()),
+                  request.operationId.value(),
+                  QString::number(packageBytes.size()),
+                  QString::fromLatin1(packageSha256.value().toHex()),
+                  QString::fromLatin1(receiptSha256.value().toHex()))
+              .toLatin1();
+    const Utils::Result<Data::RuntimePackageCompilerFinalizeResult> finalizeResult
+        = decodeRuntimePackageCompilerFinalizeResult(
+            finalizeRequest, {true, 0, finalizeJson, {}}, packageBytes);
+    QVERIFY_RESULT(finalizeResult);
+    QVERIFY(finalizeResult->isSuccess());
+    QCOMPARE(finalizeResult->packageBytes, packageBytes);
+
+    const auto changedSigningResponse = [&](const QString &key, const QJsonValue &value) {
+        QJsonObject object
+            = QJsonDocument::fromJson(finalizeRequest.detachedSigningResponse.exactBytes()).object();
+        if (value.isUndefined())
+            object.remove(key);
+        else
+            object.insert(key, value);
+        return RuntimePackageCompilerFixture::canonical(
+            QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n');
+    };
+    const auto rejectsFinalizeResponse =
+        [&](const Data::RuntimePackageCompilerCanonicalJson &changed) {
+            QVERIFY(changed.isValid());
+            Data::RuntimePackageCompilerFinalizeRequest changedRequest = finalizeRequest;
+            changedRequest.detachedSigningResponse = changed;
+            QVERIFY(!changedRequest.isValid());
+            QVERIFY(!decodeRuntimePackageCompilerFinalizeResult(
+                changedRequest, {true, 0, finalizeJson, {}}, packageBytes));
+        };
+    rejectsFinalizeResponse(RuntimePackageCompilerFixture::canonical(QByteArray("{}\n")));
+    rejectsFinalizeResponse(
+        changedSigningResponse(QStringLiteral("request_sha256"), QJsonValue(QJsonValue::Undefined)));
+    rejectsFinalizeResponse(changedSigningResponse(QStringLiteral("unexpected"), true));
+    rejectsFinalizeResponse(changedSigningResponse(
+        QStringLiteral("operation_id"), QStringLiteral("04204204-2001-4000-8000-000000000002")));
+    for (const QString &key :
+         {QStringLiteral("request_sha256"),
+          QStringLiteral("manifest_sha256"),
+          QStringLiteral("signing_key_id")}) {
+        rejectsFinalizeResponse(changedSigningResponse(key, staleSha256));
+    }
+    rejectsFinalizeResponse(changedSigningResponse(QStringLiteral("policy_revision"), 2));
+    QString upperCaseSignature = QJsonDocument::fromJson(
+                                     finalizeRequest.detachedSigningResponse.exactBytes())
+                                     .object()
+                                     .value(QStringLiteral("signature_hex"))
+                                     .toString();
+    upperCaseSignature[0] = upperCaseSignature.at(0).toUpper();
+    rejectsFinalizeResponse(
+        changedSigningResponse(QStringLiteral("signature_hex"), upperCaseSignature));
+    rejectsFinalizeResponse(
+        changedSigningResponse(QStringLiteral("receipt_sha256"), QString(64, QLatin1Char('0'))));
+
+    Data::RuntimePackageCompilerFinalizeRequest changedReceiptRequest = finalizeRequest;
+    changedReceiptRequest.detachedSigningResponse
+        = changedSigningResponse(QStringLiteral("receipt_sha256"), staleSha256);
+    QVERIFY(!changedReceiptRequest.isValid());
+    QByteArray changedReceiptFinalizeJson = finalizeJson;
+    changedReceiptFinalizeJson.replace(receiptSha256.value().toHex(), staleSha256.toLatin1());
+    QVERIFY(!decodeRuntimePackageCompilerFinalizeResult(
+        changedReceiptRequest, {true, 0, changedReceiptFinalizeJson, {}}, packageBytes));
+
+    QByteArray staleFinalizeJson = finalizeJson;
+    staleFinalizeJson.replace(compileResult->manifestSha256->value().toHex(), staleSha256.toLatin1());
+    QVERIFY(!decodeRuntimePackageCompilerFinalizeResult(
+        finalizeRequest, {true, 0, staleFinalizeJson, {}}, packageBytes));
+    staleFinalizeJson = finalizeJson;
+    staleFinalizeJson.replace(receiptSha256.value().toHex(), staleSha256.toLatin1());
+    QVERIFY(!decodeRuntimePackageCompilerFinalizeResult(
+        finalizeRequest, {true, 0, staleFinalizeJson, {}}, packageBytes));
+    QVERIFY(!decodeRuntimePackageCompilerFinalizeResult(
+        finalizeRequest, {true, 0, finalizeJson, {}}, packageBytes + '!'));
+
+    const Data::RuntimePackageCompilerQueryRequest queryRequest{
+        request.operationId,
+        request.contractIdentity,
+        encoded->sha256(),
+    };
+    QVERIFY(queryRequest.isValid());
+    const QByteArray queryJson = QStringLiteral(
+                                     "{\"compiler\":{\"configuration_id\":9223372036854775809,"
+                                     "\"state\":\"finalized\"},"
+                                     "\"format\":\"ethercat-ide-compiler-operation-state-v1\","
+                                     "\"operation_id\":\"%1\",\"signer_response\":null}\n")
+                                     .arg(request.operationId.value())
+                                     .toLatin1();
+    const Utils::Result<Data::RuntimePackageCompilerQueryResult> queryResult
+        = decodeRuntimePackageCompilerQueryResult(queryRequest, {true, 0, queryJson, {}});
+    QVERIFY_RESULT(queryResult);
+    QVERIFY(queryResult->isSuccess());
+    QVERIFY(queryResult->compilerRecord);
+    QCOMPARE(
+        queryResult->compilerRecord->exactBytes(),
+        QByteArray(
+            "{\"configuration_id\":9223372036854775809,"
+            "\"state\":\"finalized\"}\n"));
+
+    const Data::RuntimePackageCompilerVerifyRequest verifyRequest{
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000099")},
+        request.contractIdentity,
+        packageBytes,
+        packageSha256,
+    };
+    QVERIFY(verifyRequest.isValid());
+    const QByteArray verifyJson
+        = QStringLiteral(
+              "{\"adapter_bundle_sha256\":\"%1\",\"configuration_id\":4201,"
+              "\"effective_project_companion_sha256\":\"%2\","
+              "\"format\":\"ethercat-ide-project-compiler-verification-v1\","
+              "\"intent_sha256\":\"%3\",\"manifest_format_version\":2,"
+              "\"package_sha256\":\"%4\",\"status\":\"pass\","
+              "\"target_profile_sha256\":\"%5\","
+              "\"topology_evidence_sha256\":\"%6\"}\n")
+              .arg(
+                  QString::fromLatin1(compileResult->adapterBundleSha256->value().toHex()),
+                  QString::fromLatin1(
+                      compileResult->effectiveProjectCompanionSha256->value().toHex()),
+                  QString::fromLatin1(compileResult->intentSha256->value().toHex()),
+                  QString::fromLatin1(packageSha256.value().toHex()),
+                  QString::fromLatin1(compileResult->targetProfileSha256->value().toHex()),
+                  QString::fromLatin1(
+                      request.sourceArtifacts.topologyEvidence.sha256.value().toHex()))
+              .toLatin1();
+    const Utils::Result<Data::RuntimePackageCompilerVerifyResult> verifyResult
+        = decodeRuntimePackageCompilerVerifyResult(verifyRequest, {true, 0, verifyJson, {}});
+    QVERIFY_RESULT(verifyResult);
+    QVERIFY(verifyResult->isSuccess());
+    QCOMPARE(verifyResult->packageSha256, packageSha256);
+
+    const QByteArray failureJson(
+        "{\"diagnostics\":[{\"code\":\"ECOMP-REQUEST-SCHEMA\","
+        "\"format\":\"ethercat-ide-compiler-diagnostic-v1\","
+        "\"message\":\"Request failed schema validation.\",\"path\":\"$\","
+        "\"retryable\":false,\"severity\":\"error\",\"stage\":\"input\"}],"
+        "\"status\":\"fail\"}\n");
+    const RuntimePackageCompilerProcessOutput failureOutput{true, 1, {}, failureJson};
+    const auto compileFailure
+        = decodeRuntimePackageCompilerCompileResult(request, failureOutput, {});
+    QVERIFY_RESULT(compileFailure);
+    QCOMPARE(compileFailure->envelope.status, Data::RuntimePackageCompilerResultStatus::DomainFailed);
+    QVERIFY_RESULT(decodeRuntimePackageCompilerFinalizeResult(finalizeRequest, failureOutput, {}));
+    QVERIFY_RESULT(decodeRuntimePackageCompilerQueryResult(queryRequest, failureOutput));
+    QVERIFY_RESULT(decodeRuntimePackageCompilerVerifyResult(verifyRequest, failureOutput));
+
+    RuntimePackageCompilerProcessOutput malformed = compileOutput;
+    malformed.standardOutput.append("{}\n");
+    QVERIFY(!decodeRuntimePackageCompilerCompileResult(request, malformed, signRequest));
+    malformed = compileOutput;
+    malformed.standardError = "unexpected diagnostic\n";
+    QVERIFY(!decodeRuntimePackageCompilerCompileResult(request, malformed, signRequest));
+    malformed = compileOutput;
+    malformed.standardOutput.replace("\":", "\": ");
+    QVERIFY(!decodeRuntimePackageCompilerCompileResult(request, malformed, signRequest));
+    malformed = compileOutput;
+    malformed.standardOutput.chop(2);
+    malformed.standardOutput.append(",\"unexpected\":true}\n");
+    QVERIFY(!decodeRuntimePackageCompilerCompileResult(request, malformed, signRequest));
+    malformed = compileOutput;
+    malformed.standardOutput.replace("\"status\":\"awaiting_signature\"", "\"status\":\"future\"");
+    QVERIFY(!decodeRuntimePackageCompilerCompileResult(request, malformed, signRequest));
+    malformed = compileOutput;
+    const qsizetype manifestStart = malformed.standardOutput.indexOf(",\"manifest_sha256\":");
+    const qsizetype operationStart
+        = malformed.standardOutput.indexOf(",\"operation_id\":", manifestStart);
+    QVERIFY(manifestStart > 0);
+    QVERIFY(operationStart > manifestStart);
+    malformed.standardOutput.remove(manifestStart, operationStart - manifestStart);
+    QVERIFY(!decodeRuntimePackageCompilerCompileResult(request, malformed, signRequest));
+    malformed = compileOutput;
+    malformed.standardOutput.chop(2);
+    malformed.standardOutput.append(
+        ",\"target_profile_sha256\":"
+        "\"874fa218d7383c5e7aa086f251f65e7ee313eae163ede57a05f6994929ed4ab6\"}\n");
+    QVERIFY(!decodeRuntimePackageCompilerCompileResult(request, malformed, signRequest));
+    malformed = compileOutput;
+    malformed.exitedNormally = false;
+    QVERIFY(!decodeRuntimePackageCompilerCompileResult(request, malformed, signRequest));
+    malformed = compileOutput;
+    malformed.exitCode = 2;
+    QVERIFY(!decodeRuntimePackageCompilerCompileResult(request, malformed, signRequest));
+}
+
 void EtherCATCoreTests::testRuntimePackageCompilerProviderContract()
 {
     RuntimePackageCompilerFixture fixture;
@@ -5137,7 +6125,10 @@ void EtherCATCoreTests::testRuntimePackageCompilerProviderContract()
         firstRequest.configurationId,
         firstRequest.contractIdentity,
         firstCompileForLifecycle.envelope.requestSha256,
+        firstCompileForLifecycle.signRequest->sha256(),
         *firstCompileForLifecycle.manifestSha256,
+        firstRequest.targetProfile.signingKeyIdSha256,
+        firstRequest.targetProfile.policyRevision,
         detachedSigningResponse(firstRequest, firstCompileForLifecycle),
     };
     auto *wrongCommandJob = new TestRuntimePackageCompilerJob(
@@ -5283,6 +6274,7 @@ void EtherCATCoreTests::testRuntimePackageCompilerProviderContract()
     const Data::RuntimePackageCompilerQueryRequest canceledQuery{
         canceledRequest.operationId,
         canceledRequest.contractIdentity,
+        compilerRequestSha256(canceledRequest),
     };
     const Utils::Result<RuntimePackageCompilerJob *> canceledQueryScheduled = provider.query(
         canceledQuery);
@@ -5347,6 +6339,7 @@ void EtherCATCoreTests::testRuntimePackageCompilerProviderContract()
     const Data::RuntimePackageCompilerQueryRequest queryRequest{
         firstRequest.operationId,
         firstRequest.contractIdentity,
+        compilerRequestSha256(firstRequest),
     };
     const int beforeQueryMutations = provider.ledgerMutationCount;
     const Utils::Result<RuntimePackageCompilerJob *> queryScheduled = provider.query(queryRequest);
@@ -5369,6 +6362,7 @@ void EtherCATCoreTests::testRuntimePackageCompilerProviderContract()
         Data::RuntimePackageCompilerOperationId{
             QStringLiteral("04204204-2001-4000-8000-000000000098")},
         firstRequest.contractIdentity,
+        compilerRequestSha256(firstRequest),
     };
     const Utils::Result<RuntimePackageCompilerJob *> missingQueryScheduled = provider.query(
         missingQuery);
@@ -5390,7 +6384,10 @@ void EtherCATCoreTests::testRuntimePackageCompilerProviderContract()
         firstRequest.configurationId,
         firstRequest.contractIdentity,
         firstCompileResult.envelope.requestSha256,
+        firstCompileResult.signRequest->sha256(),
         *firstCompileResult.manifestSha256,
+        firstRequest.targetProfile.signingKeyIdSha256,
+        firstRequest.targetProfile.policyRevision,
         detachedSigningResponse(firstRequest, firstCompileResult),
     };
     Data::RuntimePackageCompilerFinalizeRequest zeroConfigurationFinalize = finalizeRequest;

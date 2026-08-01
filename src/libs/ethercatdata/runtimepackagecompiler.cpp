@@ -439,6 +439,9 @@ bool diagnosticCategoryIsTransportable(RuntimePackageCompilerDiagnosticCategory 
 {
     switch (category) {
     case RuntimePackageCompilerDiagnosticCategory::Unknown:
+    case RuntimePackageCompilerDiagnosticCategory::Input:
+    case RuntimePackageCompilerDiagnosticCategory::Topology:
+    case RuntimePackageCompilerDiagnosticCategory::Esi:
     case RuntimePackageCompilerDiagnosticCategory::Slave:
     case RuntimePackageCompilerDiagnosticCategory::Pdo:
     case RuntimePackageCompilerDiagnosticCategory::Sdo:
@@ -447,6 +450,10 @@ bool diagnosticCategoryIsTransportable(RuntimePackageCompilerDiagnosticCategory 
     case RuntimePackageCompilerDiagnosticCategory::Capability:
     case RuntimePackageCompilerDiagnosticCategory::Timing:
     case RuntimePackageCompilerDiagnosticCategory::Signing:
+    case RuntimePackageCompilerDiagnosticCategory::Configuration:
+    case RuntimePackageCompilerDiagnosticCategory::Security:
+    case RuntimePackageCompilerDiagnosticCategory::Canceled:
+    case RuntimePackageCompilerDiagnosticCategory::Internal:
     case RuntimePackageCompilerDiagnosticCategory::Path:
     case RuntimePackageCompilerDiagnosticCategory::Idempotency:
         return true;
@@ -549,6 +556,191 @@ bool sourceArtifactReferencesAreValid(const RuntimePackageCompilerSourceArtifact
                   == RuntimePackageCompilerSourceArtifactKind::RuntimeSource;
 }
 
+bool pdoDirectionIsKnown(RuntimePackageCompilerPdoDirection direction)
+{
+    return direction == RuntimePackageCompilerPdoDirection::Input
+           || direction == RuntimePackageCompilerPdoDirection::Output;
+}
+
+bool startupStageIsKnown(RuntimePackageCompilerStartupStage stage)
+{
+    return stage == RuntimePackageCompilerStartupStage::PreOperational
+           || stage == RuntimePackageCompilerStartupStage::SafeOperational
+           || stage == RuntimePackageCompilerStartupStage::Operational;
+}
+
+bool startupFailureActionIsKnown(RuntimePackageCompilerStartupFailureAction action)
+{
+    return action == RuntimePackageCompilerStartupFailureAction::Abort
+           || action == RuntimePackageCompilerStartupFailureAction::Warn
+           || action == RuntimePackageCompilerStartupFailureAction::Continue;
+}
+
+bool manualRecoveryActionIsKnown(RuntimePackageCompilerManualRecoveryAction action)
+{
+    return action == RuntimePackageCompilerManualRecoveryAction::HoldSafe
+           || action == RuntimePackageCompilerManualRecoveryAction::ReturnToTask
+           || action == RuntimePackageCompilerManualRecoveryAction::Stop;
+}
+
+bool symbolModeIsKnown(RuntimePackageCompilerSymbolMode mode)
+{
+    return mode == RuntimePackageCompilerSymbolMode::ReportOnly
+           || mode == RuntimePackageCompilerSymbolMode::Requested
+           || mode == RuntimePackageCompilerSymbolMode::All;
+}
+
+bool stableValues(const QMap<QString, QString> &values)
+{
+    return std::all_of(values.cbegin(), values.cend(), [](const QString &value) {
+        return isStableId(value);
+    });
+}
+
+bool componentBindingKeysAreValid(const QMap<QString, QString> &values)
+{
+    return std::all_of(values.keyBegin(), values.keyEnd(), [](const QString &key) {
+        if (key.isEmpty())
+            return false;
+        return std::all_of(key.cbegin(), key.cend(), [](QChar character) {
+            return character.isDigit();
+        });
+    });
+}
+
+QString compilerDataType(EtherCATDataType type, const QString &rawType)
+{
+    switch (type) {
+    case EtherCATDataType::Boolean:
+        return QStringLiteral("BOOL");
+    case EtherCATDataType::Integer8:
+        return QStringLiteral("SINT");
+    case EtherCATDataType::UnsignedInteger8:
+        return QStringLiteral("USINT");
+    case EtherCATDataType::Integer16:
+        return QStringLiteral("INT");
+    case EtherCATDataType::UnsignedInteger16:
+        return QStringLiteral("UINT");
+    case EtherCATDataType::Integer32:
+        return QStringLiteral("DINT");
+    case EtherCATDataType::UnsignedInteger32:
+        return QStringLiteral("UDINT");
+    case EtherCATDataType::Integer64:
+        return QStringLiteral("LINT");
+    case EtherCATDataType::UnsignedInteger64:
+        return QStringLiteral("ULINT");
+    case EtherCATDataType::Real32:
+        return QStringLiteral("REAL");
+    case EtherCATDataType::Real64:
+        return QStringLiteral("LREAL");
+    case EtherCATDataType::VisibleString:
+        return QStringLiteral("STRING");
+    case EtherCATDataType::OctetString:
+        return QStringLiteral("OCTET_STRING");
+    case EtherCATDataType::Unknown:
+        return rawType;
+    }
+    return {};
+}
+
+bool pdoProjectionMatches(
+    const QList<RuntimePackageCompilerPdoMapping> &projection,
+    const ProcessDataConfiguration &configuration)
+{
+    QList<const PdoConfiguration *> selected;
+    for (const PdoConfiguration &pdo : configuration.pdos) {
+        if (pdo.selected)
+            selected.append(&pdo);
+    }
+    if (selected.size() != projection.size())
+        return false;
+    for (qsizetype mappingIndex = 0; mappingIndex < projection.size(); ++mappingIndex) {
+        const RuntimePackageCompilerPdoMapping &typed = projection.at(mappingIndex);
+        const PdoConfiguration &current = *selected.at(mappingIndex);
+        const RuntimePackageCompilerPdoDirection currentDirection
+            = current.direction == PdoDirection::Tx ? RuntimePackageCompilerPdoDirection::Input
+                                                    : RuntimePackageCompilerPdoDirection::Output;
+        if (typed.direction != currentDirection || typed.pdoIndex != current.index
+            || typed.syncManager != current.syncManager || typed.fixed != current.fixed
+            || typed.entries.size() != current.entries.size()) {
+            return false;
+        }
+        for (qsizetype entryIndex = 0; entryIndex < typed.entries.size(); ++entryIndex) {
+            const RuntimePackageCompilerPdoEntry &projected = typed.entries.at(entryIndex);
+            const PdoEntryConfiguration &entry = current.entries.at(entryIndex);
+            if (projected.index != entry.index || projected.subIndex != entry.subIndex
+                || projected.bitLength != entry.bitLength
+                || projected.dataType != compilerDataType(entry.dataType, entry.rawDataType)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+QString startupStageName(RuntimePackageCompilerStartupStage stage)
+{
+    switch (stage) {
+    case RuntimePackageCompilerStartupStage::PreOperational:
+        return QStringLiteral("preop");
+    case RuntimePackageCompilerStartupStage::SafeOperational:
+        return QStringLiteral("safeop");
+    case RuntimePackageCompilerStartupStage::Operational:
+        return QStringLiteral("op");
+    case RuntimePackageCompilerStartupStage::Unknown:
+        return {};
+    }
+    return {};
+}
+
+QByteArray startupValueBytes(const RuntimePackageCompilerStartupSdo &sdo)
+{
+    if (sdo.valueBytes == 0 || sdo.valueBytes > 8)
+        return {};
+    quint64 bits = std::holds_alternative<qint64>(sdo.value) ? quint64(std::get<qint64>(sdo.value))
+                                                             : std::get<quint64>(sdo.value);
+    QByteArray result(sdo.valueBytes, '\0');
+    for (qsizetype index = result.size(); index > 0; --index) {
+        result[index - 1] = char(bits & 0xff);
+        bits >>= 8;
+    }
+    return result;
+}
+
+bool startupProjectionMatches(
+    const QList<RuntimePackageCompilerStartupSdo> &projection,
+    const StartupConfiguration &configuration)
+{
+    if (projection.size() != configuration.parameters.size())
+        return false;
+    for (qsizetype index = 0; index < projection.size(); ++index) {
+        const RuntimePackageCompilerStartupSdo &projected = projection.at(index);
+        const StartupParameterConfiguration &current = configuration.parameters.at(index);
+        if (projected.sequence != current.order || projected.enabled != current.enabled
+            || startupStageName(projected.stage) != current.transition
+            || projected.index != current.index || projected.subIndex != current.subIndex
+            || startupValueBytes(projected) != current.rawValue) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool dcProjectionMatches(
+    const RuntimePackageCompilerDcProjection &projection, const DcConfiguration &configuration)
+{
+    const std::optional<QString> currentMode = configuration.modeName.isEmpty()
+                                                   ? std::nullopt
+                                                   : std::optional<QString>{configuration.modeName};
+    return projection.enabled == configuration.enabled && projection.mode == currentMode
+           && projection.assignActivate == configuration.assignActivate
+           && projection.sync0CycleNs == quint64(configuration.sync0.cycleTimeNs)
+           && projection.sync0ShiftNs == configuration.sync0.shiftTimeNs
+           && projection.sync1CycleNs == quint64(configuration.sync1.cycleTimeNs)
+           && projection.sync1ShiftNs == configuration.sync1.shiftTimeNs
+           && projection.referenceClock == configuration.potentialReferenceClock;
+}
+
 bool projectContainsMaster(const ProjectSnapshot &project, const NodeId &masterId)
 {
     return std::any_of(project.nodes.cbegin(), project.nodes.cend(), [&masterId](const auto &node) {
@@ -557,11 +749,12 @@ bool projectContainsMaster(const ProjectSnapshot &project, const NodeId &masterI
 }
 
 const RuntimePackageCompilerDeviceSourceEvidence *findDeviceSourceEvidence(
-    const QList<RuntimePackageCompilerDeviceSourceEvidence> &sources, const NodeId &projectDeviceId)
+    const QList<RuntimePackageCompilerDeviceSourceEvidence> &sources,
+    const NodeId &projectSlaveNodeId)
 {
     const auto found
-        = std::find_if(sources.cbegin(), sources.cend(), [&projectDeviceId](const auto &source) {
-              return source.projectDeviceId == projectDeviceId;
+        = std::find_if(sources.cbegin(), sources.cend(), [&projectSlaveNodeId](const auto &source) {
+              return source.projectSlaveNodeId == projectSlaveNodeId;
           });
     return found == sources.cend() ? nullptr : &*found;
 }
@@ -635,6 +828,118 @@ bool jsonUnsignedIntegerMatches(
                             QByteArrayView(bytes.constData(), bytes.size() - 1))
                             .rootUnsignedInteger(QByteArrayView(key));
     return actual && *actual == expected;
+}
+
+bool jsonSha256IsValid(const QJsonObject &object, const QString &key)
+{
+    const QString value = object.value(key).toString();
+    const RuntimePackageCompilerSha256 sha256{QByteArray::fromHex(value.toLatin1())};
+    return sha256.isValid() && value == QString::fromLatin1(sha256.value().toHex());
+}
+
+QByteArray detachedSigningReceiptProjection(const QJsonObject &object, quint64 signingPolicyRevision)
+{
+    QByteArray result{"{\"format\":\"ethercat-ecpkg-sign-response-v1\",\"format_version\":1,"};
+    result += "\"manifest_sha256\":\"";
+    result += object.value(QStringLiteral("manifest_sha256")).toString().toLatin1();
+    result += "\",\"operation_id\":\"";
+    result += object.value(QStringLiteral("operation_id")).toString().toLatin1();
+    result += "\",\"policy_revision\":";
+    result += QByteArray::number(signingPolicyRevision);
+    result += ",\"request_sha256\":\"";
+    result += object.value(QStringLiteral("request_sha256")).toString().toLatin1();
+    result += "\",\"signature_hex\":\"";
+    result += object.value(QStringLiteral("signature_hex")).toString().toLatin1();
+    result += "\",\"signing_key_id\":\"";
+    result += object.value(QStringLiteral("signing_key_id")).toString().toLatin1();
+    result += "\"}\n";
+    return result;
+}
+
+bool detachedSigningRequestMatches(
+    const RuntimePackageCompilerCanonicalJson &canonical,
+    const RuntimePackageCompilerOperationId &operationId,
+    const RuntimePackageCompilerSha256 &manifestSha256,
+    const RuntimePackageCompilerSha256 &intentSha256,
+    const RuntimePackageCompilerSha256 &targetProfileSha256,
+    const RuntimePackageCompilerSha256 &effectiveProjectCompanionSha256)
+{
+    const QJsonObject object = canonicalObject(canonical);
+    static const QSet<QString> expectedKeys{
+        QStringLiteral("effective_project_companion_sha256"),
+        QStringLiteral("format"),
+        QStringLiteral("format_version"),
+        QStringLiteral("intent_sha256"),
+        QStringLiteral("manifest_sha256"),
+        QStringLiteral("operation_id"),
+        QStringLiteral("policy_revision"),
+        QStringLiteral("signing_key_id"),
+        QStringLiteral("target_profile_sha256"),
+    };
+    const QByteArray &bytes = canonical.exactBytes();
+    const auto policyRevision = CanonicalJsonParser(
+                                    QByteArrayView(bytes.constData(), bytes.size() - 1))
+                                    .rootUnsignedInteger(QByteArrayView("policy_revision"));
+    return objectHasExactKeys(object, expectedKeys)
+           && object.value(QStringLiteral("format")).toString()
+                  == QStringLiteral("ethercat-ecpkg-sign-request-v1")
+           && object.value(QStringLiteral("format_version")).toInt() == 1
+           && object.value(QStringLiteral("operation_id")).toString() == operationId.value()
+           && jsonSha256Matches(object, QStringLiteral("manifest_sha256"), manifestSha256)
+           && jsonSha256Matches(object, QStringLiteral("intent_sha256"), intentSha256)
+           && jsonSha256Matches(object, QStringLiteral("target_profile_sha256"), targetProfileSha256)
+           && jsonSha256Matches(
+               object,
+               QStringLiteral("effective_project_companion_sha256"),
+               effectiveProjectCompanionSha256)
+           && jsonSha256IsValid(object, QStringLiteral("signing_key_id")) && policyRevision
+           && *policyRevision != 0;
+}
+
+bool detachedSigningResponseMatches(
+    const RuntimePackageCompilerCanonicalJson &canonical,
+    const RuntimePackageCompilerOperationId &operationId,
+    const RuntimePackageCompilerSha256 &signRequestSha256,
+    const RuntimePackageCompilerSha256 &manifestSha256,
+    const RuntimePackageCompilerSha256 &signingKeyIdSha256,
+    quint64 signingPolicyRevision)
+{
+    const QJsonObject object = canonicalObject(canonical);
+    static const QSet<QString> expectedKeys{
+        QStringLiteral("format"),
+        QStringLiteral("format_version"),
+        QStringLiteral("manifest_sha256"),
+        QStringLiteral("operation_id"),
+        QStringLiteral("policy_revision"),
+        QStringLiteral("receipt_sha256"),
+        QStringLiteral("request_sha256"),
+        QStringLiteral("signature_hex"),
+        QStringLiteral("signing_key_id"),
+    };
+    const QString signature = object.value(QStringLiteral("signature_hex")).toString();
+    const bool signatureIsLowerHex
+        = signature.size() == 128
+          && std::all_of(signature.cbegin(), signature.cend(), [](QChar character) {
+                 return (character >= QLatin1Char('0') && character <= QLatin1Char('9'))
+                        || (character >= QLatin1Char('a') && character <= QLatin1Char('f'));
+             });
+    const QByteArray receiptProjection
+        = detachedSigningReceiptProjection(object, signingPolicyRevision);
+    const QString expectedReceipt = QString::fromLatin1(
+        QCryptographicHash::hash(receiptProjection, QCryptographicHash::Sha256).toHex());
+    return objectHasExactKeys(object, expectedKeys)
+           && object.value(QStringLiteral("format")).toString()
+                  == QStringLiteral("ethercat-ecpkg-sign-response-v1")
+           && object.value(QStringLiteral("format_version")).toInt() == 1
+           && object.value(QStringLiteral("operation_id")).toString() == operationId.value()
+           && jsonUnsignedIntegerMatches(
+               canonical, QByteArray("policy_revision"), signingPolicyRevision)
+           && jsonSha256Matches(object, QStringLiteral("request_sha256"), signRequestSha256)
+           && jsonSha256Matches(object, QStringLiteral("manifest_sha256"), manifestSha256)
+           && jsonSha256Matches(object, QStringLiteral("signing_key_id"), signingKeyIdSha256)
+           && jsonSha256IsValid(object, QStringLiteral("receipt_sha256"))
+           && object.value(QStringLiteral("receipt_sha256")).toString() == expectedReceipt
+           && signatureIsLowerHex;
 }
 
 bool canonicalTopologyMatchesTyped(
@@ -1017,6 +1322,137 @@ bool RuntimePackageCompilerSourceArtifacts::isValid() const
            && runtimeSource.kind == RuntimePackageCompilerSourceArtifactKind::RuntimeSource;
 }
 
+bool RuntimePackageCompilerPdoEntry::isValid() const
+{
+    return isStableId(fieldId) && bitLength != 0 && isCanonicalText(dataType, 32);
+}
+
+bool RuntimePackageCompilerPdoMapping::isValid() const
+{
+    return isStableId(id) && pdoDirectionIsKnown(direction) && syncManager <= 15
+           && !entries.isEmpty() && entries.size() <= 1024
+           && std::all_of(entries.cbegin(), entries.cend(), [](const auto &entry) {
+                  return entry.isValid();
+              });
+}
+
+bool RuntimePackageCompilerStartupSdo::isValid() const
+{
+    if (!isStableId(id) || !startupStageIsKnown(stage) || valueBytes == 0 || valueBytes > 8
+        || timeoutNs == 0 || !startupFailureActionIsKnown(failureAction)) {
+        return false;
+    }
+    const int valueBits = int(valueBytes) * 8;
+    if (std::holds_alternative<quint64>(value)) {
+        const quint64 unsignedValue = std::get<quint64>(value);
+        return valueBits == 64 || unsignedValue < (quint64(1) << valueBits);
+    }
+    const qint64 signedValue = std::get<qint64>(value);
+    if (valueBits == 64)
+        return true;
+    const qint64 minimum = -(qint64(1) << (valueBits - 1));
+    const qint64 maximum = (qint64(1) << (valueBits - 1)) - 1;
+    return signedValue >= minimum && signedValue <= maximum;
+}
+
+bool RuntimePackageCompilerDcProjection::isValid() const
+{
+    if (enabled) {
+        return signedDcProfileId && isStableId(*signedDcProfileId) && mode
+               && isCanonicalText(*mode, 96) && assignActivate != 0 && sync0CycleNs != 0;
+    }
+    return !signedDcProfileId && !mode && assignActivate == 0 && sync0CycleNs == 0
+           && sync0ShiftNs == 0 && sync1CycleNs == 0 && sync1ShiftNs == 0 && !referenceClock;
+}
+
+bool RuntimePackageCompilerManualEnvelope::isValid() const
+{
+    return maximumTtlCycles != 0 && refreshCycles != 0 && maximumHoldCycles != 0
+           && refreshCycles <= maximumHoldCycles && manualRecoveryActionIsKnown(timeoutAction)
+           && manualRecoveryActionIsKnown(releaseAction)
+           && manualRecoveryActionIsKnown(failureAction);
+}
+
+bool RuntimePackageCompilerDeviceProjection::isValid() const
+{
+    if (projectSlaveNodeId.isNull() || !isStableId(slaveNodeId) || !isStableId(projectDeviceId)
+        || position < 0 || position > 65535 || stationAddress == 0 || identity.vendorId == 0
+        || identity.productCode == 0 || !esiSha256.isValid() || !isStableId(targetProfileId)
+        || !isStableId(adapterId) || !isCanonicalText(adapterVersion, 64)
+        || !adapterSha256.isValid() || !isStableId(pdoProfileId) || pdoMappings.isEmpty()
+        || pdoMappings.size() > 64 || startupSdos.size() > 4096 || moduleAssignments.size() > 256
+        || semanticBindingIds.isEmpty() || !componentBindingKeysAreValid(componentBindingIds)
+        || !stableValues(componentBindingIds) || !stableValues(semanticBindingIds)
+        || !stableValues(semanticActionBindingIds) || !symbolModeIsKnown(symbolMode)
+        || !dc.isValid() || !manualEnvelope.isValid()) {
+        return false;
+    }
+    if (signedDcProfileId != dc.signedDcProfileId)
+        return false;
+    if (!std::all_of(
+            pdoMappings.cbegin(),
+            pdoMappings.cend(),
+            [](const auto &mapping) { return mapping.isValid(); })
+        || !std::all_of(startupSdos.cbegin(), startupSdos.cend(), [](const auto &sdo) {
+               return sdo.isValid();
+           })) {
+        return false;
+    }
+    quint16 previousSequence = 0;
+    bool firstSdo = true;
+    for (const RuntimePackageCompilerStartupSdo &sdo : startupSdos) {
+        if (!firstSdo && sdo.sequence <= previousSequence)
+            return false;
+        previousSequence = sdo.sequence;
+        firstSdo = false;
+    }
+    QSet<quint16> moduleSlots;
+    for (const DeviceModuleAssignment &module : moduleAssignments) {
+        if (module.slot < 0 || module.slot > 65535 || moduleSlots.contains(quint16(module.slot))) {
+            return false;
+        }
+        moduleSlots.insert(quint16(module.slot));
+    }
+    return std::all_of(symbols.cbegin(), symbols.cend(), [](const QString &symbol) {
+        return isCanonicalText(symbol, 128);
+    });
+}
+
+bool RuntimePackageCompilerProjectProjection::isValid() const
+{
+    if (projectNodeId.isNull() || masterProjectNodeId.isNull() || !isStableId(projectId)
+        || !isStableId(masterNodeId) || documentRevision == 0
+        || (timingMode != MasterTimingMode::FreeRun
+            && timingMode != MasterTimingMode::DistributedClocks)
+        || cyclePeriodNs < 1000 || linkSpeedMbps != 100 || devices.isEmpty() || devices.size() > 256
+        || !uiMetadata.isValid()) {
+        return false;
+    }
+    QSet<NodeId> projectSlaveNodeIds;
+    QSet<QString> slaveNodeIds;
+    QSet<QString> projectDeviceIds;
+    QSet<int> positions;
+    QSet<quint16> stationAddresses;
+    int previousPosition = -1;
+    for (const RuntimePackageCompilerDeviceProjection &device : devices) {
+        if (!device.isValid() || projectSlaveNodeIds.contains(device.projectSlaveNodeId)
+            || slaveNodeIds.contains(device.slaveNodeId)
+            || projectDeviceIds.contains(device.projectDeviceId)
+            || positions.contains(device.position)
+            || stationAddresses.contains(device.stationAddress)
+            || device.position <= previousPosition) {
+            return false;
+        }
+        projectSlaveNodeIds.insert(device.projectSlaveNodeId);
+        slaveNodeIds.insert(device.slaveNodeId);
+        projectDeviceIds.insert(device.projectDeviceId);
+        positions.insert(device.position);
+        stationAddresses.insert(device.stationAddress);
+        previousPosition = device.position;
+    }
+    return true;
+}
+
 bool RuntimePackageCompilerDeviceSourceEvidence::isValid() const
 {
     const bool dcDecisionIsExact = explicitNoDc
@@ -1032,32 +1468,29 @@ bool RuntimePackageCompilerDeviceSourceEvidence::isValid() const
         projectControllerAdapterTarget.adapterSha256};
     const RuntimePackageCompilerSha256 controllerEsiSha256{
         projectControllerAdapterTarget.esiSha256};
-    return !projectDeviceId.isNull() && originalEsi.isValid()
+    return !projectSlaveNodeId.isNull() && originalEsi.isValid()
            && originalEsi.kind == RuntimePackageCompilerSourceArtifactKind::OriginalEsi
            && adapterSourceFile.isValid()
            && adapterSourceFile.kind == RuntimePackageCompilerSourceArtifactKind::AdapterSourceFile
            && projectAdapterContractVersion == DeviceAdapterContractVersion::V3
-           && isStableId(projectAdapterId.value)
-           && isCanonicalText(projectAdapterVersion, 64)
-           && projectAdapterContentSha256.isValid()
-           && isStableId(projectPdoProfileId)
+           && isStableId(projectAdapterId.value) && isCanonicalText(projectAdapterVersion, 64)
+           && projectAdapterContentSha256.isValid() && isStableId(projectPdoProfileId)
            && isStableId(projectControllerAdapterTarget.adapterId)
            && isCanonicalText(projectControllerAdapterTarget.adapterVersion, 64)
            && controllerAdapterSha256.isValid() && controllerEsiSha256.isValid()
-           && isStableId(projectSignedPdoProfileId)
-           && isStableId(adapterId) && isCanonicalText(adapterVersion, 64)
-           && adapterCanonicalSha256.isValid() && isStableId(pdoProfileId) && dcDecisionIsExact
+           && isStableId(projectSignedPdoProfileId) && isStableId(adapterId)
+           && isCanonicalText(adapterVersion, 64) && adapterCanonicalSha256.isValid()
+           && isStableId(pdoProfileId) && dcDecisionIsExact
            && projectControllerAdapterTarget.adapterId == adapterId
            && projectControllerAdapterTarget.adapterVersion == adapterVersion
-           && projectControllerAdapterTarget.adapterSha256
-                  == adapterCanonicalSha256.value()
+           && projectControllerAdapterTarget.adapterSha256 == adapterCanonicalSha256.value()
            && projectControllerAdapterTarget.esiSha256 == originalEsi.sha256.value()
            && projectSignedPdoProfileId == pdoProfileId && upperDcBridgeIsExact;
 }
 
 bool RuntimePackageCompilerTopologySlaveEvidence::isValid() const
 {
-    return !projectDeviceId.isNull() && position >= 0 && stationAddress != 0
+    return !projectSlaveNodeId.isNull() && position >= 0 && stationAddress != 0
            && identity.vendorId != 0 && identity.productCode != 0;
 }
 
@@ -1075,13 +1508,12 @@ bool RuntimePackageCompilerFreshTopologyEvidence::isValid() const
     QSet<quint16> stationAddresses;
     int previousPosition = -1;
     for (const RuntimePackageCompilerTopologySlaveEvidence &slave : slaves) {
-        if (!slave.isValid() || deviceIds.contains(slave.projectDeviceId)
-            || positions.contains(slave.position)
-            || stationAddresses.contains(slave.stationAddress)
+        if (!slave.isValid() || deviceIds.contains(slave.projectSlaveNodeId)
+            || positions.contains(slave.position) || stationAddresses.contains(slave.stationAddress)
             || slave.position <= previousPosition) {
             return false;
         }
-        deviceIds.insert(slave.projectDeviceId);
+        deviceIds.insert(slave.projectSlaveNodeId);
         positions.insert(slave.position);
         stationAddresses.insert(slave.stationAddress);
         previousPosition = slave.position;
@@ -1263,7 +1695,7 @@ bool RuntimePackageCompilerCompileRequest::hasValidReservationInputs() const
     return operationId.isValid() && isStableId(intentId) && configurationId != 0
            && buildTimestampNs != 0 && compileTimeNs != 0 && manifestFormatVersion == 2
            && contractIdentity.isValid() && projectSnapshotEvidence.isValid()
-           && sourceArtifactReferencesAreValid(sourceArtifacts);
+           && projectProjection.isValid() && sourceArtifactReferencesAreValid(sourceArtifacts);
 }
 
 bool RuntimePackageCompilerCompileRequest::isValid() const
@@ -1287,7 +1719,13 @@ bool RuntimePackageCompilerCompileRequest::isValid() const
     }
 
     const ProjectSnapshot &project = projectSnapshotEvidence.snapshot();
-    if (topologyEvidence.scope.projectId != project.id
+    if (projectProjection.projectNodeId != project.id
+        || projectProjection.masterProjectNodeId != topologyEvidence.scope.masterId
+        || projectProjection.documentRevision != projectSnapshotEvidence.documentRevisionNumber()
+        || projectProjection.timingMode != project.masterConfiguration.timingMode
+        || projectProjection.cyclePeriodNs != quint64(project.masterConfiguration.cyclePeriodNs)
+        || projectProjection.linkSpeedMbps != topologyEvidence.linkSpeedMbps
+        || topologyEvidence.scope.projectId != project.id
         || !projectContainsMaster(project, topologyEvidence.scope.masterId)
         || project.masterConfiguration.cyclePeriodNs != topologyEvidence.cyclePeriodNs) {
         return false;
@@ -1299,15 +1737,16 @@ bool RuntimePackageCompilerCompileRequest::isValid() const
             masterSlaves.append(slave);
     }
     if (masterSlaves.isEmpty() || masterSlaves.size() != topologyEvidence.slaves.size()
-        || masterSlaves.size() != deviceSourceEvidence.size()) {
+        || masterSlaves.size() != deviceSourceEvidence.size()
+        || masterSlaves.size() != projectProjection.devices.size()) {
         return false;
     }
 
     QSet<NodeId> sourceDeviceIds;
     for (const RuntimePackageCompilerDeviceSourceEvidence &source : deviceSourceEvidence) {
-        if (!source.isValid() || sourceDeviceIds.contains(source.projectDeviceId))
+        if (!source.isValid() || sourceDeviceIds.contains(source.projectSlaveNodeId))
             return false;
-        sourceDeviceIds.insert(source.projectDeviceId);
+        sourceDeviceIds.insert(source.projectSlaveNodeId);
     }
     if (!adapterBundleBindsDeviceSources(
             sourceArtifacts.adapterBundle, deviceSourceEvidence)) {
@@ -1316,6 +1755,8 @@ bool RuntimePackageCompilerCompileRequest::isValid() const
 
     for (qsizetype slaveIndex = 0; slaveIndex < masterSlaves.size(); ++slaveIndex) {
         const OfflineSlaveConfiguration &slave = masterSlaves.at(slaveIndex);
+        const RuntimePackageCompilerDeviceProjection &projection = projectProjection.devices.at(
+            slaveIndex);
         if (slave.id.isNull() || slave.position < 0 || slave.stationAddress == 0
             || !RuntimePackageCompilerSha256(slave.esiSha256).isValid()
             || slave.adapterSelection.adapterId.value.isEmpty()
@@ -1325,9 +1766,24 @@ bool RuntimePackageCompilerCompileRequest::isValid() const
             return false;
         }
 
+        if (projection.projectSlaveNodeId != slave.id
+            || projection.targetProfileId != targetProfile.profileId
+            || projection.position != slave.position
+            || projection.stationAddress != slave.stationAddress || projection.alias != slave.alias
+            || projection.identity != slave.identity
+            || projection.serialNumber != slave.serialNumber
+            || projection.esiSha256.value() != slave.esiSha256
+            || projection.moduleAssignments != slave.adapterSelection.moduleAssignments
+            || projection.manualEnvelope.enabled != slave.manualControlEnvelope.enabled
+            || !pdoProjectionMatches(projection.pdoMappings, slave.processData)
+            || !startupProjectionMatches(projection.startupSdos, slave.startup)
+            || !dcProjectionMatches(projection.dc, slave.dc)) {
+            return false;
+        }
+
         const RuntimePackageCompilerTopologySlaveEvidence *topology
             = &topologyEvidence.slaves.at(slaveIndex);
-        if (topology->projectDeviceId != slave.id || topology->position != slave.position
+        if (topology->projectSlaveNodeId != slave.id || topology->position != slave.position
             || topology->stationAddress != slave.stationAddress || topology->alias != slave.alias
             || topology->identity != slave.identity || topology->serialNumber != slave.serialNumber
             || topology->moduleAssignments != slave.adapterSelection.moduleAssignments) {
@@ -1341,8 +1797,12 @@ bool RuntimePackageCompilerCompileRequest::isValid() const
             || source->projectAdapterVersion != slave.adapterSelection.adapterVersion
             || source->projectAdapterContentSha256.value()
                    != slave.adapterSelection.adapterContentSha256
-            || source->projectPdoProfileId
-                   != slave.adapterSelection.processDataProfileId
+            || source->projectPdoProfileId != slave.adapterSelection.processDataProfileId
+            || source->adapterId != projection.adapterId
+            || source->adapterVersion != projection.adapterVersion
+            || source->adapterCanonicalSha256 != projection.adapterSha256
+            || source->pdoProfileId != projection.pdoProfileId
+            || source->signedDcProfileId != projection.signedDcProfileId
             || source->explicitNoDc == slave.dc.enabled) {
             return false;
         }
@@ -1353,13 +1813,21 @@ bool RuntimePackageCompilerCompileRequest::isValid() const
 bool RuntimePackageCompilerFinalizeRequest::isValid() const
 {
     return operationId.isValid() && configurationId != 0 && contractIdentity.isValid()
-           && compileRequestSha256.isValid() && manifestSha256.isValid()
-           && detachedSigningResponse.isValid();
+           && compileRequestSha256.isValid() && signRequestSha256.isValid()
+           && manifestSha256.isValid() && signingKeyIdSha256.isValid() && signingPolicyRevision != 0
+           && detachedSigningResponse.isValid()
+           && detachedSigningResponseMatches(
+               detachedSigningResponse,
+               operationId,
+               signRequestSha256,
+               manifestSha256,
+               signingKeyIdSha256,
+               signingPolicyRevision);
 }
 
 bool RuntimePackageCompilerQueryRequest::isValid() const
 {
-    return operationId.isValid() && contractIdentity.isValid();
+    return operationId.isValid() && contractIdentity.isValid() && compileRequestSha256.isValid();
 }
 
 bool RuntimePackageCompilerVerifyRequest::isValid() const
@@ -1421,7 +1889,14 @@ bool RuntimePackageCompilerCompileResult::isValid() const
                    object, QStringLiteral("target_profile_sha256"), *targetProfileSha256)
                && jsonSha256Matches(
                    object, QStringLiteral("adapter_bundle_sha256"), *adapterBundleSha256)
-               && object.value(QStringLiteral("output_dir")).toString() == outputDirectory;
+               && object.value(QStringLiteral("output_dir")).toString() == outputDirectory
+               && detachedSigningRequestMatches(
+                   *signRequest,
+                   envelope.operationId,
+                   *manifestSha256,
+                   *intentSha256,
+                   *targetProfileSha256,
+                   *effectiveProjectCompanionSha256);
     }
     return !intentSha256 && !compiledProjectSha256 && !compileReportSha256
            && !effectiveProjectCompanionSha256 && !signRequest && !manifestSha256

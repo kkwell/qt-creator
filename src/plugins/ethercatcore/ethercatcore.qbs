@@ -24,6 +24,8 @@ QtcPlugin {
         "providers.cpp",
         "providers.h",
         "runtimepackageactivationservice.h",
+        "runtimepackagecompilercodec.cpp",
+        "runtimepackagecompilercodec.h",
         "runtimepackagecompilerprovider.cpp",
         "runtimepackagecompilerprovider.h",
         "selectionservice.cpp",
@@ -38,6 +40,18 @@ QtcPlugin {
         files: [
             "ethercatcoretests.cpp",
             "ethercatcoretests.h",
+            "testdata/api042/adapter-bundle.json",
+            "testdata/api042/compile-request.json",
+            "testdata/api042/compile-result.json",
+            "testdata/api042/controller-features.json",
+            "testdata/api042/policy-template.json",
+            "testdata/api042/runtime.st",
+            "testdata/api042/sign-request.json",
+            "testdata/api042/sign-response.json",
+            "testdata/api042/sv630n.ecdev.yaml",
+            "testdata/api042/target-profile.json",
+            "testdata/api042/topology-evidence.json",
+            "testdata/api042/xb6.ecdev.yaml",
         ]
     }
 }

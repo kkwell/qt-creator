@@ -1,0 +1,244 @@
+schema_version: 1
+adapter_id: solidot.xb6_ec0002_rev1_do16
+adapter_version: 1.2.0
+vendor_namespace: solidot
+identity:
+  vendor_id: 8930371
+  product_code: 182
+  revision: {kind: exact, value: 1}
+  firmware:
+    source: {protocol: sii, field: revision, value_type: u32}
+    match: {kind: exact, values: [1]}
+sources:
+  esi:
+    - sha256: "5b0bfbfffdfde1fd293589deb4a1c59f974aa79dcd9206ac0a695ab00f395bf7"
+      file: EcatTerminal-XB6_V3.22_ENUM.xml
+      version: V3.22
+  manuals: []
+capabilities:
+  mailbox_protocols: [coe, foe]
+  required_mailbox_protocols: [coe]
+  profiles: [io.digital]
+  supported_modes: []
+  minimum_cycle_ns: 125000
+  supported_cycles_ns: [125000]
+  required_controller_features: [modular_device]
+  restrictions:
+    - Exact module layout is one 16 channel NPN digital output module.
+    - This ESI exposes no DC mode; the slave is not a distributed-clock reference.
+    - SII revision 0x00000001 is the only available firmware marker; no vendor software-version claim is made.
+    - Hardware trust is limited to the declared DO16 layout and exact tested topology.
+startup: []
+pdo_profiles:
+  - id: do16
+    mode: fixed
+    default: true
+    supported_cycles_ns: [125000]
+    mappings:
+      - id: coupler_control
+        direction: output
+        pdo_index: 5887
+        sm: 2
+        fixed: true
+        entries:
+          - {field_id: coupler_control, index: 61952, subindex: 1, bit_length: 16, data_type: UINT}
+      - id: coupler_state
+        direction: input
+        pdo_index: 6911
+        sm: 3
+        fixed: true
+        entries:
+          - {field_id: coupler_state, index: 61696, subindex: 1, bit_length: 16, data_type: UINT}
+      - id: do16
+        direction: output
+        pdo_index: 5632
+        sm: 2
+        fixed: true
+        entries:
+          - {field_id: do0, index: 28672, subindex: 1, bit_length: 1, data_type: BOOL}
+          - {field_id: do1, index: 28672, subindex: 2, bit_length: 1, data_type: BOOL}
+          - {field_id: do2, index: 28672, subindex: 3, bit_length: 1, data_type: BOOL}
+          - {field_id: do3, index: 28672, subindex: 4, bit_length: 1, data_type: BOOL}
+          - {field_id: do4, index: 28672, subindex: 5, bit_length: 1, data_type: BOOL}
+          - {field_id: do5, index: 28672, subindex: 6, bit_length: 1, data_type: BOOL}
+          - {field_id: do6, index: 28672, subindex: 7, bit_length: 1, data_type: BOOL}
+          - {field_id: do7, index: 28672, subindex: 8, bit_length: 1, data_type: BOOL}
+          - {field_id: do8, index: 28672, subindex: 9, bit_length: 1, data_type: BOOL}
+          - {field_id: do9, index: 28672, subindex: 10, bit_length: 1, data_type: BOOL}
+          - {field_id: do10, index: 28672, subindex: 11, bit_length: 1, data_type: BOOL}
+          - {field_id: do11, index: 28672, subindex: 12, bit_length: 1, data_type: BOOL}
+          - {field_id: do12, index: 28672, subindex: 13, bit_length: 1, data_type: BOOL}
+          - {field_id: do13, index: 28672, subindex: 14, bit_length: 1, data_type: BOOL}
+          - {field_id: do14, index: 28672, subindex: 15, bit_length: 1, data_type: BOOL}
+          - {field_id: do15, index: 28672, subindex: 16, bit_length: 1, data_type: BOOL}
+dc_profiles: []
+application_interface:
+  symbols:
+    - {name: "io.digital_output[0]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.0, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do0}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[1]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.1, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do1}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[2]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.2, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do2}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[3]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.3, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do3}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[4]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.4, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do4}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[5]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.5, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do5}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[6]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.6, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do6}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[7]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.7, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do7}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[8]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.8, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do8}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[9]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.9, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do9}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[10]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.10, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do10}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[11]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.11, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do11}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[12]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.12, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do12}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[13]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.13, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do13}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[14]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.14, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do14}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: "io.digital_output[15]", semantic_definition_id: org.embedlabs.solidot.xb6.slot.1.digital-output.channel.15, data_type: bool, direction: output, pdo_ref: {profile_id: do16, field_id: do15}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_do16, safe_value: 0}
+    - {name: vendor.solidot.coupler_control, semantic_definition_id: org.embedlabs.solidot.xb6.coupler.control, data_type: u16, direction: output, pdo_ref: {profile_id: do16, field_id: coupler_control}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: vendor.solidot.coupler_state, semantic_definition_id: org.embedlabs.solidot.xb6.coupler.state, data_type: u16, direction: input, pdo_ref: {profile_id: do16, field_id: coupler_state}, scale: {numerator: 1, denominator: 1, offset: 0}}
+runtime_output_groups:
+  - {id: manual_do16, recovery_policy: hold_safe, max_ttl_cycles: 1000}
+semantic_actions:
+  - id: set_outputs
+    definition_id: org.embedlabs.solidot.xb6.action.set-digital-outputs
+    enabled: true
+    qualification: qualified
+    pdo_profiles: [do16]
+    dc_required: false
+    required_symbols:
+      - "io.digital_output[0]"
+      - "io.digital_output[1]"
+      - "io.digital_output[2]"
+      - "io.digital_output[3]"
+      - "io.digital_output[4]"
+      - "io.digital_output[5]"
+      - "io.digital_output[6]"
+      - "io.digital_output[7]"
+      - "io.digital_output[8]"
+      - "io.digital_output[9]"
+      - "io.digital_output[10]"
+      - "io.digital_output[11]"
+      - "io.digital_output[12]"
+      - "io.digital_output[13]"
+      - "io.digital_output[14]"
+      - "io.digital_output[15]"
+    optional_symbols: []
+    parameters:
+      - {id: do0, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do1, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do2, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do3, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do4, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do5, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do6, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do7, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do8, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do9, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do10, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do11, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do12, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do13, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do14, data_type: bool, minimum: 0, maximum: 1}
+      - {id: do15, data_type: bool, minimum: 0, maximum: 1}
+    steps:
+      - kind: write_group
+        consistency_group: manual_do16
+        assignments:
+          - {symbol: "io.digital_output[0]", parameter: do0}
+          - {symbol: "io.digital_output[1]", parameter: do1}
+          - {symbol: "io.digital_output[2]", parameter: do2}
+          - {symbol: "io.digital_output[3]", parameter: do3}
+          - {symbol: "io.digital_output[4]", parameter: do4}
+          - {symbol: "io.digital_output[5]", parameter: do5}
+          - {symbol: "io.digital_output[6]", parameter: do6}
+          - {symbol: "io.digital_output[7]", parameter: do7}
+          - {symbol: "io.digital_output[8]", parameter: do8}
+          - {symbol: "io.digital_output[9]", parameter: do9}
+          - {symbol: "io.digital_output[10]", parameter: do10}
+          - {symbol: "io.digital_output[11]", parameter: do11}
+          - {symbol: "io.digital_output[12]", parameter: do12}
+          - {symbol: "io.digital_output[13]", parameter: do13}
+          - {symbol: "io.digital_output[14]", parameter: do14}
+          - {symbol: "io.digital_output[15]", parameter: do15}
+  - id: clear_outputs
+    definition_id: org.embedlabs.solidot.xb6.action.clear-digital-outputs
+    enabled: true
+    qualification: qualified
+    pdo_profiles: [do16]
+    dc_required: false
+    required_symbols:
+      - "io.digital_output[0]"
+      - "io.digital_output[1]"
+      - "io.digital_output[2]"
+      - "io.digital_output[3]"
+      - "io.digital_output[4]"
+      - "io.digital_output[5]"
+      - "io.digital_output[6]"
+      - "io.digital_output[7]"
+      - "io.digital_output[8]"
+      - "io.digital_output[9]"
+      - "io.digital_output[10]"
+      - "io.digital_output[11]"
+      - "io.digital_output[12]"
+      - "io.digital_output[13]"
+      - "io.digital_output[14]"
+      - "io.digital_output[15]"
+    optional_symbols: []
+    parameters: []
+    steps:
+      - kind: write_group
+        consistency_group: manual_do16
+        assignments:
+          - {symbol: "io.digital_output[0]", constant: 0}
+          - {symbol: "io.digital_output[1]", constant: 0}
+          - {symbol: "io.digital_output[2]", constant: 0}
+          - {symbol: "io.digital_output[3]", constant: 0}
+          - {symbol: "io.digital_output[4]", constant: 0}
+          - {symbol: "io.digital_output[5]", constant: 0}
+          - {symbol: "io.digital_output[6]", constant: 0}
+          - {symbol: "io.digital_output[7]", constant: 0}
+          - {symbol: "io.digital_output[8]", constant: 0}
+          - {symbol: "io.digital_output[9]", constant: 0}
+          - {symbol: "io.digital_output[10]", constant: 0}
+          - {symbol: "io.digital_output[11]", constant: 0}
+          - {symbol: "io.digital_output[12]", constant: 0}
+          - {symbol: "io.digital_output[13]", constant: 0}
+          - {symbol: "io.digital_output[14]", constant: 0}
+          - {symbol: "io.digital_output[15]", constant: 0}
+fault_policy:
+  link_loss: safe_output
+  wkc_error: safe_output
+  dc_drift: safe_output
+  rx_timeout: safe_output
+  slave_fault: latch
+  queue_empty: safe_output
+  recovery: latch
+  controlled_stop_cycles: 100
+  watchdog_ns: 1000000
+  safe_outputs:
+    - {symbol: vendor.solidot.coupler_control, value: 0}
+    - {symbol: "io.digital_output[0]", value: 0}
+    - {symbol: "io.digital_output[1]", value: 0}
+    - {symbol: "io.digital_output[2]", value: 0}
+    - {symbol: "io.digital_output[3]", value: 0}
+    - {symbol: "io.digital_output[4]", value: 0}
+    - {symbol: "io.digital_output[5]", value: 0}
+    - {symbol: "io.digital_output[6]", value: 0}
+    - {symbol: "io.digital_output[7]", value: 0}
+    - {symbol: "io.digital_output[8]", value: 0}
+    - {symbol: "io.digital_output[9]", value: 0}
+    - {symbol: "io.digital_output[10]", value: 0}
+    - {symbol: "io.digital_output[11]", value: 0}
+    - {symbol: "io.digital_output[12]", value: 0}
+    - {symbol: "io.digital_output[13]", value: 0}
+    - {symbol: "io.digital_output[14]", value: 0}
+    - {symbol: "io.digital_output[15]", value: 0}
+qualification:
+  trust_level: hardware_tested
+  evidence:
+    - id: kvell.test_hw_058
+      kind: hardware
+      date: "2026-07-20"
+      artifact_sha256: "12db6e1b45c39a00ec2a363f4a6acf4a3e4bd423eab215765c629f573ec4e9d5"
+      notes: Exact XB6 plus dual-SV630N configuration 803 completed the one-hour 125 us management cell at WKC 11/11 with zero listed realtime-fault growth.
+  tested_configurations:
+    - revision: 1
+      firmware: 1
+      cycle_ns: 125000
+      topology: "XB6 DO16 plus two SV630N drives, configuration 803, non-motion"

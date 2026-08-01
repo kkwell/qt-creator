@@ -1,0 +1,451 @@
+schema_version: 1
+adapter_id: inovance.sv630n_1axis_rev00010000_csp
+adapter_version: 1.6.0
+vendor_namespace: inovance
+identity:
+  vendor_id: 1048576
+  product_code: 786706
+  revision: {kind: exact, value: 65536}
+  firmware:
+    source: {protocol: sii, field: revision, value_type: u32}
+    match: {kind: exact, values: [65536]}
+sources:
+  esi:
+    - sha256: "e6f39fd4e0f8801c83ec3ac796e138fe3ee1566cb94bb28285b93538fdb9e4a1"
+      file: INOVANCE_SV630N_1Axis_V16.xml
+      version: V16
+  manuals:
+    - document_id: 19011627-SC_A00
+      version: EN
+      sha256: "29b97567c7c4f03ceb03dae24eef4b91702abfa8db01dec6dd8d67180d30ab37"
+capabilities:
+  mailbox_protocols: [coe, eoe]
+  required_mailbox_protocols: [coe]
+  profiles: [iec61800.cia402]
+  supported_modes: [csp]
+  minimum_cycle_ns: 125000
+  supported_cycles_ns: [125000]
+  required_controller_features: [dc, cia402_runtime, pdo_assignment]
+  restrictions:
+    - Only the declared fixed 0x1704/0x1b04 and 0x1701/0x1b01 PDO profiles are supported.
+    - SII revision 0x00010000 is the only available firmware marker; no vendor software-version claim is made.
+    - Hardware trust is limited to the declared fixed PDO profiles and exact tested topologies.
+    - 0x60FF and 0x606C are signed Int32 values in reference_unit_per_second. Conversion to RPM requires the active 0x6091 gear ratio and the actual motor encoder resolution.
+    - Manual CSV actions remain disabled until the project binds and verifies both conversion inputs; raw values must not be treated as RPM.
+startup:
+  - sequence: 0
+    id: clear_resettable_fault
+    kind: sdo_download
+    stage: preop
+    timeout_ns: 100000000
+    retry_count: 2
+    failure_action: abort
+    persistent: false
+    requires_power_cycle: false
+    index: 8205
+    subindex: 2
+    value: 1
+    value_bytes: 2
+    complete_access: false
+  - sequence: 1
+    id: quick_stop_option_code
+    kind: sdo_download
+    stage: preop
+    timeout_ns: 100000000
+    retry_count: 2
+    failure_action: abort
+    persistent: false
+    requires_power_cycle: false
+    index: 24666
+    subindex: 0
+    value: 2
+    value_bytes: 2
+    complete_access: false
+  - sequence: 2
+    id: quick_stop_deceleration
+    kind: sdo_download
+    stage: preop
+    timeout_ns: 100000000
+    retry_count: 2
+    failure_action: abort
+    persistent: false
+    requires_power_cycle: false
+    index: 24709
+    subindex: 0
+    value: 2147483647
+    value_bytes: 4
+    complete_access: false
+pdo_profiles:
+  - id: csp_1704_1b04
+    mode: fixed
+    default: true
+    operation_modes: [csp]
+    supported_cycles_ns: [125000]
+    mappings:
+      - id: rxpdo_1704
+        direction: output
+        pdo_index: 5892
+        sm: 2
+        fixed: true
+        entries:
+          - {field_id: controlword, index: 24640, subindex: 0, bit_length: 16, data_type: UINT}
+          - {field_id: target_position, index: 24698, subindex: 0, bit_length: 32, data_type: DINT}
+          - {field_id: target_velocity, index: 24831, subindex: 0, bit_length: 32, data_type: DINT}
+          - {field_id: target_torque, index: 24689, subindex: 0, bit_length: 16, data_type: INT}
+          - {field_id: mode, index: 24672, subindex: 0, bit_length: 8, data_type: SINT}
+          - {field_id: touch_probe_function, index: 24760, subindex: 0, bit_length: 16, data_type: UINT}
+          - {field_id: max_profile_velocity, index: 24703, subindex: 0, bit_length: 32, data_type: UDINT}
+          - {field_id: positive_torque_limit, index: 24800, subindex: 0, bit_length: 16, data_type: UINT}
+          - {field_id: negative_torque_limit, index: 24801, subindex: 0, bit_length: 16, data_type: UINT}
+      - id: txpdo_1b04
+        direction: input
+        pdo_index: 6916
+        sm: 3
+        fixed: true
+        entries:
+          - {field_id: error_code, index: 24639, subindex: 0, bit_length: 16, data_type: UINT}
+          - {field_id: statusword, index: 24641, subindex: 0, bit_length: 16, data_type: UINT}
+          - {field_id: actual_position, index: 24676, subindex: 0, bit_length: 32, data_type: DINT}
+          - {field_id: actual_torque, index: 24695, subindex: 0, bit_length: 16, data_type: INT}
+          - {field_id: mode_display, index: 24673, subindex: 0, bit_length: 8, data_type: SINT}
+          - {field_id: following_error, index: 24820, subindex: 0, bit_length: 32, data_type: DINT}
+          - {field_id: touch_probe_status, index: 24761, subindex: 0, bit_length: 16, data_type: UINT}
+          - {field_id: touch_probe_position_1, index: 24762, subindex: 0, bit_length: 32, data_type: DINT}
+          - {field_id: touch_probe_position_2, index: 24764, subindex: 0, bit_length: 32, data_type: DINT}
+          - {field_id: actual_velocity, index: 24684, subindex: 0, bit_length: 32, data_type: DINT}
+  - id: csp_1701_1b01
+    mode: fixed
+    default: false
+    operation_modes: [csp]
+    supported_cycles_ns: [125000]
+    mappings:
+      - id: rxpdo_1701
+        direction: output
+        pdo_index: 5889
+        sm: 2
+        fixed: true
+        entries:
+          - {field_id: controlword, index: 24640, subindex: 0, bit_length: 16, data_type: UINT}
+          - {field_id: target_position, index: 24698, subindex: 0, bit_length: 32, data_type: DINT}
+          - {field_id: touch_probe_function, index: 24760, subindex: 0, bit_length: 16, data_type: UINT}
+          - {field_id: physical_outputs, index: 24830, subindex: 1, bit_length: 32, data_type: UDINT}
+      - id: txpdo_1b01
+        direction: input
+        pdo_index: 6913
+        sm: 3
+        fixed: true
+        entries:
+          - {field_id: error_code, index: 24639, subindex: 0, bit_length: 16, data_type: UINT}
+          - {field_id: statusword, index: 24641, subindex: 0, bit_length: 16, data_type: UINT}
+          - {field_id: actual_position, index: 24676, subindex: 0, bit_length: 32, data_type: DINT}
+          - {field_id: actual_torque, index: 24695, subindex: 0, bit_length: 16, data_type: INT}
+          - {field_id: following_error, index: 24820, subindex: 0, bit_length: 32, data_type: DINT}
+          - {field_id: touch_probe_status, index: 24761, subindex: 0, bit_length: 16, data_type: UINT}
+          - {field_id: touch_probe_position_1, index: 24762, subindex: 0, bit_length: 32, data_type: DINT}
+          - {field_id: touch_probe_position_2, index: 24764, subindex: 0, bit_length: 32, data_type: DINT}
+          - {field_id: digital_inputs, index: 24829, subindex: 0, bit_length: 32, data_type: UDINT}
+dc_profiles:
+  - id: sync0_125us
+    assign_activate: 768
+    minimum_cycle_ns: 125000
+    supported_cycles_ns: [125000]
+    sync0: {cycle_factor: 1, base_ns: 0, shift_default_ns: 0, shift_min_ns: 0, shift_max_ns: 0}
+application_interface:
+  symbols:
+    - {name: axis.controlword, semantic_definition_id: org.embedlabs.inovance.sv630n.controlword, data_type: u16, direction: output, pdo_ref: {profile_id: csp_1704_1b04, field_id: controlword}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_velocity, safe_value: 0}
+    - {name: axis.target_position, semantic_definition_id: org.embedlabs.inovance.sv630n.target-position, data_type: s32, direction: output, pdo_ref: {profile_id: csp_1704_1b04, field_id: target_position}, unit: encoder_count, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.target_velocity, semantic_definition_id: org.embedlabs.inovance.sv630n.target-velocity, data_type: s32, direction: output, pdo_ref: {profile_id: csp_1704_1b04, field_id: target_velocity}, unit: reference_unit_per_second, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_velocity, safe_value: 0}
+    - {name: axis.target_torque, semantic_definition_id: org.embedlabs.inovance.sv630n.target-torque, data_type: s16, direction: output, pdo_ref: {profile_id: csp_1704_1b04, field_id: target_torque}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.mode, semantic_definition_id: org.embedlabs.inovance.sv630n.mode-command, data_type: s8, direction: output, pdo_ref: {profile_id: csp_1704_1b04, field_id: mode}, scale: {numerator: 1, denominator: 1, offset: 0}, access: read_write, consistency_group: manual_velocity, safe_value: 0}
+    - {name: vendor.inovance.touch_probe_function, semantic_definition_id: org.embedlabs.inovance.sv630n.touch-probe-function, data_type: u16, direction: output, pdo_ref: {profile_id: csp_1704_1b04, field_id: touch_probe_function}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: vendor.inovance.max_profile_velocity, semantic_definition_id: org.embedlabs.inovance.sv630n.max-profile-velocity, data_type: u32, direction: output, pdo_ref: {profile_id: csp_1704_1b04, field_id: max_profile_velocity}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: vendor.inovance.positive_torque_limit, semantic_definition_id: org.embedlabs.inovance.sv630n.positive-torque-limit, data_type: u16, direction: output, pdo_ref: {profile_id: csp_1704_1b04, field_id: positive_torque_limit}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: vendor.inovance.negative_torque_limit, semantic_definition_id: org.embedlabs.inovance.sv630n.negative-torque-limit, data_type: u16, direction: output, pdo_ref: {profile_id: csp_1704_1b04, field_id: negative_torque_limit}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.error_code, semantic_definition_id: org.embedlabs.inovance.sv630n.error-code, data_type: u16, direction: input, pdo_ref: {profile_id: csp_1704_1b04, field_id: error_code}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.statusword, semantic_definition_id: org.embedlabs.inovance.sv630n.statusword, data_type: u16, direction: input, pdo_ref: {profile_id: csp_1704_1b04, field_id: statusword}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.actual_position, semantic_definition_id: org.embedlabs.inovance.sv630n.actual-position, data_type: s32, direction: input, pdo_ref: {profile_id: csp_1704_1b04, field_id: actual_position}, unit: encoder_count, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.actual_torque, semantic_definition_id: org.embedlabs.inovance.sv630n.actual-torque, data_type: s16, direction: input, pdo_ref: {profile_id: csp_1704_1b04, field_id: actual_torque}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.mode_display, semantic_definition_id: org.embedlabs.inovance.sv630n.mode-display, data_type: s8, direction: input, pdo_ref: {profile_id: csp_1704_1b04, field_id: mode_display}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.following_error, semantic_definition_id: org.embedlabs.inovance.sv630n.following-error, data_type: s32, direction: input, pdo_ref: {profile_id: csp_1704_1b04, field_id: following_error}, unit: encoder_count, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: vendor.inovance.touch_probe_status, semantic_definition_id: org.embedlabs.inovance.sv630n.touch-probe-status, data_type: u16, direction: input, pdo_ref: {profile_id: csp_1704_1b04, field_id: touch_probe_status}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: vendor.inovance.touch_probe_position_1, semantic_definition_id: org.embedlabs.inovance.sv630n.touch-probe-position-1, data_type: s32, direction: input, pdo_ref: {profile_id: csp_1704_1b04, field_id: touch_probe_position_1}, unit: encoder_count, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: vendor.inovance.touch_probe_position_2, semantic_definition_id: org.embedlabs.inovance.sv630n.touch-probe-position-2, data_type: s32, direction: input, pdo_ref: {profile_id: csp_1704_1b04, field_id: touch_probe_position_2}, unit: encoder_count, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.actual_velocity, semantic_definition_id: org.embedlabs.inovance.sv630n.actual-velocity, data_type: s32, direction: input, pdo_ref: {profile_id: csp_1704_1b04, field_id: actual_velocity}, unit: reference_unit_per_second, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.controlword, semantic_definition_id: org.embedlabs.inovance.sv630n.controlword, data_type: u16, direction: output, pdo_ref: {profile_id: csp_1701_1b01, field_id: controlword}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.target_position, semantic_definition_id: org.embedlabs.inovance.sv630n.target-position, data_type: s32, direction: output, pdo_ref: {profile_id: csp_1701_1b01, field_id: target_position}, unit: encoder_count, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: vendor.inovance.touch_probe_function, semantic_definition_id: org.embedlabs.inovance.sv630n.touch-probe-function, data_type: u16, direction: output, pdo_ref: {profile_id: csp_1701_1b01, field_id: touch_probe_function}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: vendor.inovance.physical_outputs, semantic_definition_id: org.embedlabs.inovance.sv630n.physical-outputs, data_type: u32, direction: output, pdo_ref: {profile_id: csp_1701_1b01, field_id: physical_outputs}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.error_code, semantic_definition_id: org.embedlabs.inovance.sv630n.error-code, data_type: u16, direction: input, pdo_ref: {profile_id: csp_1701_1b01, field_id: error_code}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.statusword, semantic_definition_id: org.embedlabs.inovance.sv630n.statusword, data_type: u16, direction: input, pdo_ref: {profile_id: csp_1701_1b01, field_id: statusword}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.actual_position, semantic_definition_id: org.embedlabs.inovance.sv630n.actual-position, data_type: s32, direction: input, pdo_ref: {profile_id: csp_1701_1b01, field_id: actual_position}, unit: encoder_count, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.actual_torque, semantic_definition_id: org.embedlabs.inovance.sv630n.actual-torque, data_type: s16, direction: input, pdo_ref: {profile_id: csp_1701_1b01, field_id: actual_torque}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: axis.following_error, semantic_definition_id: org.embedlabs.inovance.sv630n.following-error, data_type: s32, direction: input, pdo_ref: {profile_id: csp_1701_1b01, field_id: following_error}, unit: encoder_count, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: vendor.inovance.touch_probe_status, semantic_definition_id: org.embedlabs.inovance.sv630n.touch-probe-status, data_type: u16, direction: input, pdo_ref: {profile_id: csp_1701_1b01, field_id: touch_probe_status}, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: vendor.inovance.touch_probe_position_1, semantic_definition_id: org.embedlabs.inovance.sv630n.touch-probe-position-1, data_type: s32, direction: input, pdo_ref: {profile_id: csp_1701_1b01, field_id: touch_probe_position_1}, unit: encoder_count, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: vendor.inovance.touch_probe_position_2, semantic_definition_id: org.embedlabs.inovance.sv630n.touch-probe-position-2, data_type: s32, direction: input, pdo_ref: {profile_id: csp_1701_1b01, field_id: touch_probe_position_2}, unit: encoder_count, scale: {numerator: 1, denominator: 1, offset: 0}}
+    - {name: vendor.inovance.digital_inputs, semantic_definition_id: org.embedlabs.inovance.sv630n.digital-inputs, data_type: u32, direction: input, pdo_ref: {profile_id: csp_1701_1b01, field_id: digital_inputs}, scale: {numerator: 1, denominator: 1, offset: 0}}
+runtime_output_groups:
+  - {id: manual_velocity, recovery_policy: hold_safe, max_ttl_cycles: 1000}
+semantic_actions:
+  - id: prepare_csv
+    definition_id: org.embedlabs.inovance.sv630n.action.prepare-csv
+    enabled: true
+    qualification: qualified
+    pdo_profiles: [csp_1704_1b04]
+    dc_required: true
+    required_symbols: [axis.controlword, axis.mode, axis.target_velocity, axis.statusword]
+    optional_symbols: [axis.mode_display]
+    parameters: []
+    steps:
+      - kind: write_group
+        consistency_group: manual_velocity
+        assignments:
+          - {symbol: axis.controlword, constant: 6}
+          - {symbol: axis.mode, constant: 9}
+          - {symbol: axis.target_velocity, constant: 0}
+      - {kind: wait_masked, symbol: axis.statusword, mask: 111, value: 33, timeout_cycles: 1000}
+      - kind: write_group
+        consistency_group: manual_velocity
+        assignments:
+          - {symbol: axis.controlword, constant: 7}
+          - {symbol: axis.mode, constant: 9}
+          - {symbol: axis.target_velocity, constant: 0}
+      - {kind: wait_masked, symbol: axis.statusword, mask: 111, value: 35, timeout_cycles: 1000}
+      - kind: write_group
+        consistency_group: manual_velocity
+        assignments:
+          - {symbol: axis.controlword, constant: 15}
+          - {symbol: axis.mode, constant: 9}
+          - {symbol: axis.target_velocity, constant: 0}
+      - {kind: wait_masked, symbol: axis.statusword, mask: 111, value: 39, timeout_cycles: 1000}
+  - id: set_csv_velocity
+    definition_id: org.embedlabs.inovance.sv630n.action.set-csv-velocity
+    enabled: false
+    qualification: unqualified
+    disabled_reason: physical_velocity_conversion_parameters_unbound
+    pdo_profiles: [csp_1704_1b04]
+    dc_required: true
+    required_symbols: [axis.controlword, axis.mode, axis.target_velocity, axis.statusword]
+    optional_symbols: [axis.actual_velocity]
+    parameters:
+      - {id: target_velocity, data_type: s32, unit: reference_unit_per_second, minimum: -1000, maximum: 1000}
+    steps:
+      - {kind: wait_masked, symbol: axis.statusword, mask: 111, value: 39, timeout_cycles: 1000}
+      - kind: write_group
+        consistency_group: manual_velocity
+        assignments:
+          - {symbol: axis.controlword, constant: 15}
+          - {symbol: axis.mode, constant: 9}
+          - {symbol: axis.target_velocity, parameter: target_velocity}
+  - id: stop_csv
+    definition_id: org.embedlabs.inovance.sv630n.action.stop-csv
+    enabled: true
+    qualification: qualified
+    pdo_profiles: [csp_1704_1b04]
+    dc_required: true
+    required_symbols: [axis.controlword, axis.mode, axis.target_velocity, axis.statusword, axis.actual_velocity]
+    optional_symbols: [axis.mode_display]
+    parameters: []
+    steps:
+      - kind: write_group
+        consistency_group: manual_velocity
+        assignments:
+          - {symbol: axis.controlword, constant: 11}
+          - {symbol: axis.mode, constant: 9}
+          - {symbol: axis.target_velocity, constant: 0}
+      - {kind: wait_masked, symbol: axis.statusword, mask: 111, value: 64, timeout_cycles: 8000}
+      - {kind: wait_absolute_limit, symbol: axis.actual_velocity, limit: 10, timeout_cycles: 8000}
+      - kind: write_group
+        consistency_group: manual_velocity
+        assignments:
+          - {symbol: axis.controlword, constant: 0}
+          - {symbol: axis.mode, constant: 0}
+          - {symbol: axis.target_velocity, constant: 0}
+engineering_unit_qualification:
+  conversions:
+    - id: org.embedlabs.units.velocity.reference-unit-per-second.identity-v1
+      definition:
+        quantity: rotational_velocity
+        source_unit: reference_unit_per_second
+        target_unit: reference_unit_per_second
+        source_primitive: s32
+        source_minimum: -2147483648
+        source_maximum: 2147483647
+        forward:
+          numerator_constant: 1
+          denominator_constant: 1
+          numerator_parameters: []
+          denominator_parameters: []
+          rounding: exact
+        reverse:
+          numerator_constant: 1
+          denominator_constant: 1
+          numerator_parameters: []
+          denominator_parameters: []
+          rounding: exact
+        parameters: []
+        qualification: qualified
+        disabled_reason: null
+        source_evidence:
+          - evidence_id: inovance.sv630n.esi-v16.velocity-objects
+            kind: esi
+            document: INOVANCE_SV630N_1Axis_V16.xml
+            sha256: "e6f39fd4e0f8801c83ec3ac796e138fe3ee1566cb94bb28285b93538fdb9e4a1"
+            locator: "Objects 0x60FF and 0x606C are signed DINT; PDO profile csp_1704_1b04 maps both as 32-bit values."
+          - evidence_id: inovance.sv630n.manual.velocity-units
+            kind: manual
+            document: 19011627-SC_A00
+            sha256: "29b97567c7c4f03ceb03dae24eef4b91702abfa8db01dec6dd8d67180d30ab37"
+            locator: "Object dictionary: 0x60FF Target velocity and 0x606C Velocity actual value use Reference unit/s."
+    - id: org.embedlabs.units.velocity.reference-unit-per-second-to-rpm-v1
+      definition:
+        quantity: rotational_velocity
+        source_unit: reference_unit_per_second
+        target_unit: rpm
+        source_primitive: s32
+        source_minimum: -2147483648
+        source_maximum: 2147483647
+        forward:
+          numerator_constant: 60
+          denominator_constant: 1
+          numerator_parameters: [gear_ratio_numerator]
+          denominator_parameters: [gear_ratio_denominator, encoder_resolution_counts_per_revolution]
+          rounding: exact
+        reverse:
+          numerator_constant: 1
+          denominator_constant: 60
+          numerator_parameters: [gear_ratio_denominator, encoder_resolution_counts_per_revolution]
+          denominator_parameters: [gear_ratio_numerator]
+          rounding: reject_non_integral
+        parameters:
+          - parameter_id: gear_ratio_numerator
+            primitive: u32
+            minimum: 1
+            maximum: 4294967295
+            source: {kind: protocol_object, protocol: coe, index: 24721, subindex: 1}
+            binding_requirement: explicit_package_parameter_or_startup_sdo
+            bound_value: null
+            startup_operation_id: null
+          - parameter_id: gear_ratio_denominator
+            primitive: u32
+            minimum: 1
+            maximum: 4294967295
+            source: {kind: protocol_object, protocol: coe, index: 24721, subindex: 2}
+            binding_requirement: explicit_package_parameter_or_startup_sdo
+            bound_value: null
+            startup_operation_id: null
+          - parameter_id: encoder_resolution_counts_per_revolution
+            primitive: u32
+            minimum: 1
+            maximum: 4294967295
+            source: {kind: project_parameter, parameter_key: motor.encoder_resolution_counts_per_revolution}
+            binding_requirement: explicit_package_parameter_or_startup_sdo
+            bound_value: null
+            startup_operation_id: null
+        qualification: unqualified
+        disabled_reason: active_gear_ratio_and_encoder_resolution_not_attested
+        source_evidence:
+          - evidence_id: inovance.sv630n.esi-v16.gear-ratio
+            kind: esi
+            document: INOVANCE_SV630N_1Axis_V16.xml
+            sha256: "e6f39fd4e0f8801c83ec3ac796e138fe3ee1566cb94bb28285b93538fdb9e4a1"
+            locator: "Object 0x6091 subindex 1 Motor revolutions and subindex 2 Shaft revolutions are UDINT; defaults do not attest active runtime values."
+          - evidence_id: inovance.sv630n.manual.conversion-factor
+            kind: manual
+            document: 19011627-SC_A00
+            sha256: "29b97567c7c4f03ceb03dae24eef4b91702abfa8db01dec6dd8d67180d30ab37"
+            locator: "Section 5.7: motor RPM = load-shaft reference-unit/s * (0x6091:01 / 0x6091:02) * 60 / motor encoder resolution."
+  actions:
+    - action_id: prepare_csv
+      command_scope: zero_velocity_only
+      required_conversion_ids: [org.embedlabs.units.velocity.reference-unit-per-second.identity-v1]
+      zero_velocity_symbols: [axis.target_velocity]
+      parameters: []
+    - action_id: set_csv_velocity
+      command_scope: bounded_nonzero_velocity
+      required_conversion_ids:
+        - org.embedlabs.units.velocity.reference-unit-per-second.identity-v1
+        - org.embedlabs.units.velocity.reference-unit-per-second-to-rpm-v1
+      zero_velocity_symbols: [axis.target_velocity]
+      parameters:
+        - parameter_id: target_velocity
+          source_unit: reference_unit_per_second
+          ui_unit: reference_unit_per_second
+          minimum: -1000
+          maximum: 1000
+          conversion_id: org.embedlabs.units.velocity.reference-unit-per-second.identity-v1
+          nonzero_allowed: false
+    - action_id: stop_csv
+      command_scope: zero_velocity_only
+      required_conversion_ids: [org.embedlabs.units.velocity.reference-unit-per-second.identity-v1]
+      zero_velocity_symbols: [axis.target_velocity]
+      parameters: []
+axis_stop_policies:
+  - axis: 0
+    pdo_profiles: [csp_1704_1b04]
+    mode: cia402_quick_stop
+    command_controlword: 11
+    final_controlword: 0
+    statusword_mask: 111
+    statusword_value: 64
+    require_velocity: true
+    velocity_tolerance: 10
+    timeout_cycles: 8000
+    timeout_action: hold_op_fault
+    mode_startup_operation_id: quick_stop_option_code
+    deceleration_startup_operation_id: quick_stop_deceleration
+  - axis: 0
+    pdo_profiles: [csp_1701_1b01]
+    mode: cia402_quick_stop
+    command_controlword: 11
+    final_controlword: 0
+    statusword_mask: 111
+    statusword_value: 64
+    require_velocity: false
+    velocity_tolerance: 0
+    timeout_cycles: 8000
+    timeout_action: hold_op_fault
+    mode_startup_operation_id: quick_stop_option_code
+    deceleration_startup_operation_id: quick_stop_deceleration
+fault_policy:
+  link_loss: safe_output
+  wkc_error: safe_output
+  dc_drift: safe_output
+  rx_timeout: safe_output
+  slave_fault: latch
+  queue_empty: safe_output
+  recovery: latch
+  controlled_stop_cycles: 100
+  watchdog_ns: 1000000
+  safe_outputs:
+    - {symbol: axis.controlword, value: 0}
+    - {symbol: axis.target_position, value: 0}
+    - {symbol: axis.target_velocity, value: 0}
+    - {symbol: axis.target_torque, value: 0}
+    - {symbol: axis.mode, value: 0}
+    - {symbol: vendor.inovance.touch_probe_function, value: 0}
+    - {symbol: vendor.inovance.max_profile_velocity, value: 0}
+    - {symbol: vendor.inovance.positive_torque_limit, value: 0}
+    - {symbol: vendor.inovance.negative_torque_limit, value: 0}
+qualification:
+  trust_level: hardware_tested
+  evidence:
+    - id: kvell.test_hw_055
+      kind: hardware
+      date: "2026-07-19"
+      artifact_sha256: "ed2ed87b60d34d4cd1e829b0ae5018dec40f855fea2cd4388efd059e4d809bac"
+      notes: Two unloaded SV630N axes passed low-speed motion, bounded ControlledStop, OP hold, WKC 11/11 and zero drive errors at 125 us.
+    - id: kvell.test_hw_058
+      kind: hardware
+      date: "2026-07-20"
+      artifact_sha256: "12db6e1b45c39a00ec2a363f4a6acf4a3e4bd423eab215765c629f573ec4e9d5"
+      notes: Exact XB6 plus dual-SV630N configuration 803 completed the one-hour non-motion 125 us management cell with zero listed realtime-fault growth.
+  tested_configurations:
+    - revision: 65536
+      firmware: 65536
+      cycle_ns: 125000
+      topology: "XB6 plus two unloaded SV630N drives, low-speed motion and stop"
+    - revision: 65536
+      firmware: 65536
+      cycle_ns: 125000
+      topology: "XB6 plus two SV630N drives, configuration 803, non-motion"

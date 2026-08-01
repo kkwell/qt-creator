@@ -1,0 +1,94 @@
+{
+  "build_timestamp": 1785542400000000000,
+  "configuration_id": 3701,
+  "capability": {
+    "flags": [
+      "dc",
+      "multi_slave_dc",
+      "multi_frame",
+      "runtime_program"
+    ],
+    "mailbox_protocols": [
+      "coe"
+    ],
+    "max_slaves": 64,
+    "max_cyclic_frames": 8,
+    "max_frame_bytes": 1518,
+    "max_sdo_startup_ops": 1024,
+    "max_pdo_input_bytes": 4096,
+    "max_pdo_output_bytes": 4096,
+    "max_config_package_bytes": 1048576,
+    "max_runtime_package_bytes": 1048576,
+    "max_job_instructions": 16384,
+    "max_trajectory_segments": 8192,
+    "min_cycle_ns": 125000,
+    "fpga_abi_version": 1,
+    "cpu1_abi_version": 2,
+    "max_patch_records": 4096,
+    "max_startup_operations": 4096,
+    "max_runtime_variables": 8192,
+    "max_call_depth": 16,
+    "max_axes": 32,
+    "max_safe_output_bytes": 4096,
+    "max_runtime_stack_bytes": 4096,
+    "max_section_records": 65536
+  },
+  "cycle": {
+    "cycle_period_ns": 125000,
+    "link_speed_mbps": 100,
+    "propagation_budget_ns": 10000,
+    "cpu_budget_ns": 15000,
+    "submit_budget_ns": 10000,
+    "latest_submit_lead_ns": 10000,
+    "response_timeout_ns": 50000
+  },
+  "pdo_policy": {
+    "representation": "packed",
+    "include_optional": false,
+    "selections": {}
+  },
+  "dc": {
+    "enabled": true,
+    "mode": "DC",
+    "convergence_threshold_ns": 1000,
+    "warmup_cycles": 15000,
+    "runtime_fault_threshold_ns": 10000,
+    "stable_cycles": 256
+  },
+  "fault_policy": {
+    "link_loss": "safe_output",
+    "wkc_error": "safe_output",
+    "dc_drift": "safe_output",
+    "rx_timeout": "safe_output",
+    "queue_empty": "safe_output",
+    "recovery": "latch",
+    "dc_threshold_ns": 10000,
+    "controlled_stop_cycles": 100,
+    "watchdog_ns": 1000000,
+    "wkc_consecutive": 3,
+    "rx_consecutive": 3,
+    "dc_consecutive": 1,
+    "recovery_retries": 0
+  },
+  "runtime": {
+    "st_source_file": "three_slave_xb6_sv630n_binding_safe_hold.production.st",
+    "bindings": {},
+    "st_limits": {
+      "max_job_instructions": 16384,
+      "max_runtime_variables": 8192,
+      "max_loop_iterations": 65535
+    },
+    "fault_policy": {
+      "link_loss": "latch",
+      "wkc_error": "latch",
+      "dc_drift": "latch",
+      "rx_timeout": "latch",
+      "queue_empty": "latch",
+      "recovery": "latch",
+      "dc_threshold_ns": 10000,
+      "watchdog_ns": 1000000,
+      "wkc_consecutive": 3,
+      "rx_consecutive": 3
+    }
+  }
+}

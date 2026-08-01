@@ -10,6 +10,7 @@
 
 #include <QByteArray>
 #include <QList>
+#include <QMap>
 #include <QMetaType>
 #include <QString>
 
@@ -142,11 +143,185 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerSourceArtifacts
         = default;
 };
 
+enum class RuntimePackageCompilerPdoDirection { Unknown, Input, Output };
+
+struct ETHERCATDATA_EXPORT RuntimePackageCompilerPdoEntry
+{
+    QString fieldId;
+    quint16 index = 0;
+    quint8 subIndex = 0;
+    quint16 bitLength = 0;
+    QString dataType;
+
+    bool isValid() const;
+
+    friend bool operator==(
+        const RuntimePackageCompilerPdoEntry &, const RuntimePackageCompilerPdoEntry &) = default;
+};
+
+struct ETHERCATDATA_EXPORT RuntimePackageCompilerPdoMapping
+{
+    QString id;
+    RuntimePackageCompilerPdoDirection direction = RuntimePackageCompilerPdoDirection::Unknown;
+    quint16 pdoIndex = 0;
+    quint8 syncManager = 0;
+    bool fixed = false;
+    QList<RuntimePackageCompilerPdoEntry> entries;
+
+    bool isValid() const;
+
+    friend bool operator==(
+        const RuntimePackageCompilerPdoMapping &,
+        const RuntimePackageCompilerPdoMapping &) = default;
+};
+
+enum class RuntimePackageCompilerStartupStage {
+    Unknown,
+    PreOperational,
+    SafeOperational,
+    Operational
+};
+enum class RuntimePackageCompilerStartupFailureAction { Unknown, Abort, Warn, Continue };
+
+struct ETHERCATDATA_EXPORT RuntimePackageCompilerStartupSdo
+{
+    quint16 sequence = 0;
+    QString id;
+    bool enabled = true;
+    RuntimePackageCompilerStartupStage stage = RuntimePackageCompilerStartupStage::Unknown;
+    quint16 index = 0;
+    quint8 subIndex = 0;
+    std::variant<qint64, quint64> value = qint64(0);
+    quint8 valueBytes = 0;
+    bool completeAccess = false;
+    quint64 timeoutNs = 0;
+    quint8 retryCount = 0;
+    RuntimePackageCompilerStartupFailureAction failureAction
+        = RuntimePackageCompilerStartupFailureAction::Unknown;
+    bool persistent = false;
+    bool requiresPowerCycle = false;
+
+    bool isValid() const;
+
+    friend bool operator==(
+        const RuntimePackageCompilerStartupSdo &,
+        const RuntimePackageCompilerStartupSdo &) = default;
+};
+
+struct ETHERCATDATA_EXPORT RuntimePackageCompilerDcProjection
+{
+    bool enabled = false;
+    std::optional<QString> signedDcProfileId;
+    std::optional<QString> mode;
+    quint16 assignActivate = 0;
+    quint64 sync0CycleNs = 0;
+    qint64 sync0ShiftNs = 0;
+    quint64 sync1CycleNs = 0;
+    qint64 sync1ShiftNs = 0;
+    bool referenceClock = false;
+
+    bool isValid() const;
+
+    friend bool operator==(
+        const RuntimePackageCompilerDcProjection &,
+        const RuntimePackageCompilerDcProjection &) = default;
+};
+
+enum class RuntimePackageCompilerManualRecoveryAction {
+    Unknown,
+    HoldSafe,
+    ReturnToTask,
+    Stop,
+};
+
+struct ETHERCATDATA_EXPORT RuntimePackageCompilerManualEnvelope
+{
+    bool enabled = false;
+    quint16 maximumTtlCycles = 0;
+    quint16 refreshCycles = 0;
+    quint16 maximumHoldCycles = 0;
+    RuntimePackageCompilerManualRecoveryAction timeoutAction
+        = RuntimePackageCompilerManualRecoveryAction::Unknown;
+    RuntimePackageCompilerManualRecoveryAction releaseAction
+        = RuntimePackageCompilerManualRecoveryAction::Unknown;
+    RuntimePackageCompilerManualRecoveryAction failureAction
+        = RuntimePackageCompilerManualRecoveryAction::Unknown;
+
+    bool isValid() const;
+
+    friend bool operator==(
+        const RuntimePackageCompilerManualEnvelope &,
+        const RuntimePackageCompilerManualEnvelope &) = default;
+};
+
+enum class RuntimePackageCompilerSymbolMode { Unknown, ReportOnly, Requested, All };
+
+// This is the complete, typed API-042 projection for one current Qt project
+// slave. projectSlaveNodeId is the local immutable join key and is never
+// encoded. slaveNodeId and projectDeviceId are independent signed identifiers;
+// neither may be inferred from the other or from position/station address.
+struct ETHERCATDATA_EXPORT RuntimePackageCompilerDeviceProjection
+{
+    NodeId projectSlaveNodeId;
+    QString slaveNodeId;
+    QString projectDeviceId;
+    int position = -1;
+    quint16 stationAddress = 0;
+    quint16 alias = 0;
+    DeviceIdentity identity;
+    quint32 serialNumber = 0;
+    RuntimePackageCompilerSha256 esiSha256;
+    QString targetProfileId;
+    QString adapterId;
+    QString adapterVersion;
+    RuntimePackageCompilerSha256 adapterSha256;
+    QString pdoProfileId;
+    std::optional<QString> signedDcProfileId;
+    QList<RuntimePackageCompilerPdoMapping> pdoMappings;
+    QList<RuntimePackageCompilerStartupSdo> startupSdos;
+    RuntimePackageCompilerDcProjection dc;
+    QList<DeviceModuleAssignment> moduleAssignments;
+    QMap<QString, QString> componentBindingIds;
+    QMap<QString, QString> semanticBindingIds;
+    QMap<QString, QString> semanticActionBindingIds;
+    RuntimePackageCompilerSymbolMode symbolMode = RuntimePackageCompilerSymbolMode::Unknown;
+    QMap<QString, QString> symbols;
+    RuntimePackageCompilerManualEnvelope manualEnvelope;
+
+    bool isValid() const;
+
+    friend bool operator==(
+        const RuntimePackageCompilerDeviceProjection &,
+        const RuntimePackageCompilerDeviceProjection &) = default;
+};
+
+// The encoded IDs remain API-042 stable strings while the local NodeIds bind
+// the projection to exactly one captured Qt project and master.
+struct ETHERCATDATA_EXPORT RuntimePackageCompilerProjectProjection
+{
+    NodeId projectNodeId;
+    NodeId masterProjectNodeId;
+    QString projectId;
+    QString masterNodeId;
+    quint64 documentRevision = 0;
+    MasterTimingMode timingMode = MasterTimingMode::Unassigned;
+    quint64 cyclePeriodNs = 0;
+    quint32 linkSpeedMbps = 0;
+    QList<RuntimePackageCompilerDeviceProjection> devices;
+    RuntimePackageCompilerCanonicalJson uiMetadata;
+
+    bool isValid() const;
+
+    friend bool operator==(
+        const RuntimePackageCompilerProjectProjection &,
+        const RuntimePackageCompilerProjectProjection &) = default;
+};
+
 // Exact lower source bytes used to prove that the ProjectSnapshot selection is
 // present in the adapter bundle. This is evidence, not another project model.
 struct ETHERCATDATA_EXPORT RuntimePackageCompilerDeviceSourceEvidence
 {
-    NodeId projectDeviceId;
+    NodeId projectSlaveNodeId;
     RuntimePackageCompilerSourceArtifact originalEsi;
     RuntimePackageCompilerSourceArtifact adapterSourceFile;
 
@@ -183,7 +358,7 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerDeviceSourceEvidence
 
 struct ETHERCATDATA_EXPORT RuntimePackageCompilerTopologySlaveEvidence
 {
-    NodeId projectDeviceId;
+    NodeId projectSlaveNodeId;
     int position = -1;
     quint16 stationAddress = 0;
     quint16 alias = 0;
@@ -289,6 +464,9 @@ enum class RuntimePackageCompilerCommand {
 
 enum class RuntimePackageCompilerDiagnosticCategory {
     Unknown,
+    Input,
+    Topology,
+    Esi,
     Slave,
     Pdo,
     Sdo,
@@ -297,6 +475,10 @@ enum class RuntimePackageCompilerDiagnosticCategory {
     Capability,
     Timing,
     Signing,
+    Configuration,
+    Security,
+    Canceled,
+    Internal,
     Path,
     Idempotency,
 };
@@ -369,6 +551,7 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerCompileRequest
     quint32 manifestFormatVersion = 2;
     RuntimePackageCompilerContractIdentity contractIdentity;
     RuntimePackageCompilerProjectSnapshotEvidence projectSnapshotEvidence;
+    RuntimePackageCompilerProjectProjection projectProjection;
     RuntimePackageCompilerFreshTopologyEvidence topologyEvidence;
     RuntimePackageCompilerSourceArtifacts sourceArtifacts;
     QList<RuntimePackageCompilerDeviceSourceEvidence> deviceSourceEvidence;
@@ -391,7 +574,10 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerFinalizeRequest
     quint64 configurationId = 0;
     RuntimePackageCompilerContractIdentity contractIdentity;
     RuntimePackageCompilerSha256 compileRequestSha256;
+    RuntimePackageCompilerSha256 signRequestSha256;
     RuntimePackageCompilerSha256 manifestSha256;
+    RuntimePackageCompilerSha256 signingKeyIdSha256;
+    quint64 signingPolicyRevision = 0;
     RuntimePackageCompilerCanonicalJson detachedSigningResponse;
 
     bool isValid() const;
@@ -405,6 +591,7 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerQueryRequest
 {
     RuntimePackageCompilerOperationId operationId;
     RuntimePackageCompilerContractIdentity contractIdentity;
+    RuntimePackageCompilerSha256 compileRequestSha256;
 
     bool isValid() const;
 
@@ -540,6 +727,18 @@ Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerContractIdentity)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerSourceArtifactKind)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerSourceArtifact)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerSourceArtifacts)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerPdoDirection)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerPdoEntry)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerPdoMapping)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerStartupStage)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerStartupFailureAction)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerStartupSdo)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerDcProjection)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerManualRecoveryAction)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerManualEnvelope)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerSymbolMode)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerDeviceProjection)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerProjectProjection)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerDeviceSourceEvidence)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerTopologySlaveEvidence)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerFreshTopologyEvidence)

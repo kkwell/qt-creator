@@ -1,0 +1,7 @@
+{
+  "mailbox_protocols": ["coe"],
+  "profiles": ["io.digital", "io.analog", "iec61800.cia402"],
+  "startup_kinds": ["al_transition", "sm_config", "sdo_download"],
+  "features": ["dc", "cia402_runtime", "modular_device", "pdo_assignment"],
+  "cycle_period_ns": 125000
+}
