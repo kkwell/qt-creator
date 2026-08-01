@@ -8272,12 +8272,141 @@ void EtherCATCoreTests::testSemanticRuntimeValueSemantics()
     QVERIFY(QMetaType::fromType<Data::SemanticActionParameterRuntimeDefinition>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticActionRuntimeState>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticRuntimeContext>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticLiveRefreshSignal>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticLiveRefreshRequest>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticLiveRefreshOutcome>().isValid());
+    QVERIFY(QMetaType::fromType<Data::SemanticLiveRefreshResult>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticOperationRequest>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticOperationApprovalRequest>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticOperationSignalObservation>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticOperationSnapshot>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticOperationRecord>().isValid());
     QVERIFY(QMetaType::fromType<Data::SemanticRuntimeAuditEvent>().isValid());
+}
+
+void EtherCATCoreTests::testSemanticLiveRefreshContract()
+{
+    const SemanticRuntimeFixture fixture;
+    Data::SemanticLiveRefreshRequest request;
+    request.controllerId = fixture.context.controllerId;
+    request.scope = fixture.context.scope;
+    request.expectedContextHash = fixture.context.contextHash;
+    request.correlationId = QStringLiteral("semantic-refresh-001");
+    request.targets = {{fixture.deviceId, fixture.target.signalId}};
+    QVERIFY(request.isValid());
+    QCOMPARE(request, Data::SemanticLiveRefreshRequest(request));
+
+    Data::SemanticLiveRefreshRequest maximum = request;
+    maximum.targets.clear();
+    for (int index = 0; index < 64; ++index) {
+        maximum.targets.append(
+            {fixture.deviceId, {QStringLiteral("urn:example.test:signal/input.%1").arg(index)}});
+    }
+    QVERIFY(maximum.isValid());
+
+    Data::SemanticLiveRefreshRequest tooMany = maximum;
+    tooMany.targets.append({fixture.deviceId, {QStringLiteral("urn:example.test:signal/input.64")}});
+    QVERIFY(!tooMany.isValid());
+
+    Data::SemanticLiveRefreshRequest duplicate = request;
+    duplicate.targets.append(duplicate.targets.constFirst());
+    QVERIFY(!duplicate.isValid());
+
+    Data::SemanticLiveRefreshRequest missingSignal = request;
+    missingSignal.targets.first().signalId = {};
+    QVERIFY(!missingSignal.isValid());
+    Data::SemanticLiveRefreshRequest missingDevice = request;
+    missingDevice.targets.first().deviceId = {};
+    QVERIFY(!missingDevice.isValid());
+    Data::SemanticLiveRefreshRequest wrongContextHash = request;
+    wrongContextHash.expectedContextHash.chop(1);
+    QVERIFY(!wrongContextHash.isValid());
+    Data::SemanticLiveRefreshRequest invalidCorrelation = request;
+    invalidCorrelation.correlationId.append(QChar::LineFeed);
+    QVERIFY(!invalidCorrelation.isValid());
+    Data::SemanticLiveRefreshRequest paddedController = request;
+    paddedController.controllerId.prepend(' ');
+    QVERIFY(!paddedController.isValid());
+    Data::SemanticLiveRefreshRequest controlledController = request;
+    controlledController.controllerId.append(QChar::LineFeed);
+    QVERIFY(!controlledController.isValid());
+    Data::SemanticLiveRefreshRequest paddedSignal = request;
+    paddedSignal.targets.first().signalId.value.append(' ');
+    QVERIFY(!paddedSignal.isValid());
+    Data::SemanticLiveRefreshRequest controlledSignal = request;
+    controlledSignal.targets.first().signalId.value.append(QChar::LineFeed);
+    QVERIFY(!controlledSignal.isValid());
+
+    const Data::SemanticLiveRefreshResult accepted{
+        request.correlationId,
+        Data::SemanticLiveRefreshOutcome::Accepted,
+        QStringLiteral("semantic-live-refresh-accepted"),
+        {},
+        0,
+    };
+    QVERIFY(accepted.isValid());
+    const Data::SemanticLiveRefreshResult refreshed{
+        request.correlationId,
+        Data::SemanticLiveRefreshOutcome::Refreshed,
+        QStringLiteral("semantic-live-refresh-refreshed"),
+        {},
+        fixture.snapshot.captureCycle,
+    };
+    QVERIFY(refreshed.isValid());
+    QCOMPARE(refreshed, Data::SemanticLiveRefreshResult(refreshed));
+
+    const Data::SemanticLiveRefreshResult unsupported{
+        request.correlationId,
+        Data::SemanticLiveRefreshOutcome::Unsupported,
+        QStringLiteral("semantic-live-refresh-unsupported"),
+        QStringLiteral("Semantic live refresh is unsupported."),
+        0,
+    };
+    QVERIFY(unsupported.isValid());
+    const Data::SemanticLiveRefreshResult deferred{
+        request.correlationId,
+        Data::SemanticLiveRefreshOutcome::Deferred,
+        QStringLiteral("semantic-live-refresh-backpressure"),
+        QStringLiteral("The semantic refresh queue is full."),
+        0,
+    };
+    QVERIFY(deferred.isValid());
+    const Data::SemanticLiveRefreshResult busy{
+        request.correlationId,
+        Data::SemanticLiveRefreshOutcome::Deferred,
+        QStringLiteral("semantic-live-refresh-busy"),
+        QStringLiteral("Another semantic refresh is still in progress."),
+        0,
+    };
+    QVERIFY(busy.isValid());
+    const Data::SemanticLiveRefreshResult contextChanged{
+        request.correlationId,
+        Data::SemanticLiveRefreshOutcome::Rejected,
+        QStringLiteral("semantic-live-refresh-context-changed"),
+        QStringLiteral("The expected semantic runtime context changed."),
+        0,
+    };
+    QVERIFY(contextChanged.isValid());
+    const Data::SemanticLiveRefreshResult providerFailed{
+        request.correlationId,
+        Data::SemanticLiveRefreshOutcome::Failed,
+        QStringLiteral("semantic-live-refresh-provider-failed"),
+        QStringLiteral("The controller provider could not refresh the semantic values."),
+        0,
+    };
+    QVERIFY(providerFailed.isValid());
+    Data::SemanticLiveRefreshResult deferredWithCapture = deferred;
+    deferredWithCapture.captureCycle = fixture.snapshot.captureCycle;
+    QVERIFY(!deferredWithCapture.isValid());
+    Data::SemanticLiveRefreshResult leakedCapture = unsupported;
+    leakedCapture.captureCycle = fixture.snapshot.captureCycle;
+    QVERIFY(!leakedCapture.isValid());
+    Data::SemanticLiveRefreshResult missingDetail = unsupported;
+    missingDetail.detail.clear();
+    QVERIFY(!missingDetail.isValid());
+    Data::SemanticLiveRefreshResult missingCode = accepted;
+    missingCode.code.clear();
+    QVERIFY(!missingCode.isValid());
 }
 
 void EtherCATCoreTests::testSemanticRuntimeEpochValidation()
@@ -8781,6 +8910,11 @@ void EtherCATCoreTests::testSemanticRuntimeOperationContract()
 
 void EtherCATCoreTests::testSemanticRuntimeServiceFailsClosed()
 {
+    using RefreshMethod = Data::SemanticLiveRefreshResult (SemanticRuntimeService::*)(
+        const Data::SemanticLiveRefreshRequest &);
+    static_assert(
+        std::is_same_v<decltype(&SemanticRuntimeService::requestLiveRefresh), RefreshMethod>);
+
     SemanticRuntimeFixture fixture;
     TestSemanticRuntimeService service;
     service.snapshots = {fixture.context};
@@ -8795,6 +8929,23 @@ void EtherCATCoreTests::testSemanticRuntimeServiceFailsClosed()
 
     QSignalSpy operationSpy(&service, &SemanticRuntimeService::operationChanged);
     QSignalSpy auditSpy(&service, &SemanticRuntimeService::auditChanged);
+    QSignalSpy refreshSpy(&service, &SemanticRuntimeService::liveRefreshCompleted);
+
+    Data::SemanticLiveRefreshRequest refreshRequest;
+    refreshRequest.controllerId = fixture.context.controllerId;
+    refreshRequest.scope = fixture.context.scope;
+    refreshRequest.targets = {{fixture.deviceId, fixture.target.signalId}};
+    refreshRequest.expectedContextHash = fixture.context.contextHash;
+    refreshRequest.correlationId = QStringLiteral("semantic-refresh-fail-closed");
+    QVERIFY(refreshRequest.isValid());
+    const Data::SemanticLiveRefreshResult refreshResult = service.requestLiveRefresh(refreshRequest);
+    QVERIFY(refreshResult.isValid());
+    QCOMPARE(refreshResult.correlationId, refreshRequest.correlationId);
+    QCOMPARE(refreshResult.outcome, Data::SemanticLiveRefreshOutcome::Unsupported);
+    QCOMPARE(refreshResult.code, QStringLiteral("semantic-live-refresh-unsupported"));
+    QCOMPARE(refreshResult.detail, QStringLiteral("Semantic live refresh is unsupported."));
+    QCOMPARE(refreshResult.captureCycle, quint64(0));
+    QCOMPARE(refreshSpy.count(), 0);
 
     const Data::SemanticOperationRecord submission = service.submit(fixture.request, fixture.actor);
     QCOMPARE(submission.state, Data::SemanticOperationState::Rejected);
@@ -8823,6 +8974,7 @@ void EtherCATCoreTests::testSemanticRuntimeServiceFailsClosed()
 
     QCOMPARE(operationSpy.count(), 0);
     QCOMPARE(auditSpy.count(), 0);
+    QCOMPARE(refreshSpy.count(), 0);
 }
 
 void EtherCATCoreTests::testExactEngineeringRationalContract()

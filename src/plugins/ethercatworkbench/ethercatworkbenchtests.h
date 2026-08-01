@@ -23,6 +23,8 @@ private slots:
     void testControlPageSelectionPolicy();
     void testSemanticControlPageFailsClosed();
     void testSemanticControlPageSignedActions();
+    void testSemanticControlPagePreservesEditorDuringLiveRefresh();
+    void testSemanticControlPageSchedulesBoundedLiveRefresh();
     void testDeviceAdapterTreeFailsClosed();
     void testDeviceAdapterProviderRemovalInvalidatesTree();
     void testTwinCatInsertDeviceWorkflow();

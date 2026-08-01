@@ -105,6 +105,15 @@ public:
     virtual std::optional<Data::SemanticRuntimeContext> context(
         const QString &controllerId) const;
 
+    // Requests an exact set of public semantic signals. Implementations may
+    // return Accepted and later emit liveRefreshCompleted(), or return a
+    // terminal result directly. Deferred is a terminal no-work-scheduled
+    // response for transient busy/backpressure conditions. Stable result codes
+    // are not translated; detail is presentation text. The base service never
+    // resolves a binding or reaches a controller.
+    virtual Data::SemanticLiveRefreshResult requestLiveRefresh(
+        const Data::SemanticLiveRefreshRequest &request);
+
     // The base implementation is deliberately fail-closed and never attempts execution.
     virtual Data::SemanticOperationRecord submit(
         const Data::SemanticOperationRequest &request,
@@ -119,6 +128,7 @@ public:
 
 signals:
     void contextsChanged();
+    void liveRefreshCompleted(const EtherCAT::Data::SemanticLiveRefreshResult &result);
     void operationChanged(const EtherCAT::Data::SemanticOperationId &operationId);
     void auditChanged(const QString &controllerId);
 };

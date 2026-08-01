@@ -16,15 +16,18 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHeaderView>
+#include <QHideEvent>
 #include <QLabel>
 #include <QLayout>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSet>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStringList>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QUuid>
 #include <QVBoxLayout>
@@ -239,6 +242,144 @@ static bool signalBindingMatchesContext(
            && binding.sessionGeneration == context.sessionGeneration
            && binding.epoch == context.epoch && binding.mappingDigest == context.mappingDigest
            && binding.controllerMappingDigest == context.controllerMappingDigest;
+}
+
+enum class LiveSignalPresentationError { None, Incomplete, BindingUnverified };
+
+struct LiveSignalPresentation
+{
+    QList<Data::SemanticSignalRuntimeState> states;
+    bool requiresWholeDeviceControl = false;
+    LiveSignalPresentationError error = LiveSignalPresentationError::None;
+};
+
+static LiveSignalPresentation liveSignalPresentation(
+    const Data::SemanticRuntimeContext &runtimeContext, const SemanticControlSelection &selection)
+{
+    LiveSignalPresentation presentation;
+    QSet<QString> selectedSignalIds;
+    for (const Data::SemanticSignalId &signalId : selection.signalIds)
+        selectedSignalIds.insert(signalId.value);
+
+    std::copy_if(
+        runtimeContext.signalStates.cbegin(),
+        runtimeContext.signalStates.cend(),
+        std::back_inserter(presentation.states),
+        [&runtimeContext, &selection, &selectedSignalIds](
+            const Data::SemanticSignalRuntimeState &state) {
+            return state.target.controllerId == runtimeContext.controllerId
+                   && state.target.scope == selection.scope
+                   && state.target.deviceId == selection.deviceId
+                   && state.target.kind == Data::SemanticRuntimeTargetKind::Signal
+                   && state.target.actionId.value.isEmpty()
+                   && (selectedSignalIds.isEmpty()
+                       || selectedSignalIds.contains(state.target.signalId.value));
+        });
+    std::sort(
+        presentation.states.begin(),
+        presentation.states.end(),
+        [](const Data::SemanticSignalRuntimeState &left,
+           const Data::SemanticSignalRuntimeState &right) {
+            return left.target.signalId.value < right.target.signalId.value;
+        });
+    const bool invalidSignalSet = presentation.states.isEmpty()
+                                  || (!selectedSignalIds.isEmpty()
+                                      && presentation.states.size() != selectedSignalIds.size())
+                                  || std::any_of(
+                                      presentation.states.cbegin(),
+                                      presentation.states.cend(),
+                                      [](const Data::SemanticSignalRuntimeState &state) {
+                                          return state.target.signalId.value.isEmpty()
+                                                 || state.target.signalId.value
+                                                        != state.target.signalId.value.trimmed();
+                                      })
+                                  || std::adjacent_find(
+                                         presentation.states.cbegin(),
+                                         presentation.states.cend(),
+                                         [](const Data::SemanticSignalRuntimeState &left,
+                                            const Data::SemanticSignalRuntimeState &right) {
+                                             return left.target.signalId == right.target.signalId;
+                                         })
+                                         != presentation.states.cend();
+    if (invalidSignalSet) {
+        presentation.error = LiveSignalPresentationError::Incomplete;
+        return presentation;
+    }
+
+    if (std::any_of(
+            presentation.states.cbegin(),
+            presentation.states.cend(),
+            [&runtimeContext](const Data::SemanticSignalRuntimeState &state) {
+                return !signalBindingMatchesContext(state, runtimeContext);
+            })) {
+        presentation.error = LiveSignalPresentationError::BindingUnverified;
+        return presentation;
+    }
+
+    presentation.requiresWholeDeviceControl
+        = !selectedSignalIds.isEmpty()
+          && std::any_of(
+              runtimeContext.actionStates.cbegin(),
+              runtimeContext.actionStates.cend(),
+              [&runtimeContext, &selection, &selectedSignalIds](
+                  const Data::SemanticActionRuntimeState &action) {
+                  if (action.target.controllerId != runtimeContext.controllerId
+                      || action.target.scope != selection.scope
+                      || action.target.deviceId != selection.deviceId
+                      || action.target.kind != Data::SemanticRuntimeTargetKind::Action
+                      || action.bindings.isEmpty()) {
+                      return false;
+                  }
+                  const bool includesSelectedSignal = std::any_of(
+                      action.bindings.cbegin(),
+                      action.bindings.cend(),
+                      [&selectedSignalIds](const Data::SemanticRuntimeBinding &binding) {
+                          return selectedSignalIds.contains(binding.target.signalId.value);
+                      });
+                  const bool extendsPastSelection = std::any_of(
+                      action.bindings.cbegin(),
+                      action.bindings.cend(),
+                      [&selectedSignalIds](const Data::SemanticRuntimeBinding &binding) {
+                          return !selectedSignalIds.contains(binding.target.signalId.value);
+                      });
+                  return includesSelectedSignal && extendsPastSelection;
+              });
+    return presentation;
+}
+
+static bool runtimeContextAllowsSignalOnlyRefresh(
+    Data::SemanticRuntimeContext previous, Data::SemanticRuntimeContext current)
+{
+    const QList<Data::SemanticSignalRuntimeState> previousSignals = previous.signalStates;
+    const QList<Data::SemanticSignalRuntimeState> currentSignals = current.signalStates;
+    previous.signalStates.clear();
+    current.signalStates.clear();
+    if (previous != current || previousSignals.size() != currentSignals.size())
+        return false;
+
+    for (qsizetype index = 0; index < previousSignals.size(); ++index) {
+        Data::SemanticSignalRuntimeState previousState = previousSignals.at(index);
+        Data::SemanticSignalRuntimeState currentState = currentSignals.at(index);
+        previousState.value.reset();
+        currentState.value.reset();
+        previousState.availability = {};
+        currentState.availability = {};
+        previousState.quality = {};
+        currentState.quality = {};
+        previousState.snapshotComplete = false;
+        currentState.snapshotComplete = false;
+        previousState.captureCycle = 0;
+        currentState.captureCycle = 0;
+        previousState.controllerTimestampNs = 0;
+        currentState.controllerTimestampNs = 0;
+        previousState.observedAt = {};
+        currentState.observedAt = {};
+        previousState.detail.clear();
+        currentState.detail.clear();
+        if (previousState != currentState)
+            return false;
+    }
+    return true;
 }
 
 static QString actionAvailabilityName(const Data::SemanticActionRuntimeState &action)
@@ -526,9 +667,7 @@ static QString operationResultIdentity(const Data::SemanticOperationRecord &reco
 }
 
 SemanticControlPage::SemanticControlPage(
-    WorkbenchController *controller,
-    Core::SemanticRuntimeService *runtimeService,
-    QWidget *parent)
+    WorkbenchController *controller, Core::SemanticRuntimeService *runtimeService, QWidget *parent)
     : QWidget(parent)
     , m_controller(controller)
     , m_runtimeService(runtimeService)
@@ -544,6 +683,7 @@ SemanticControlPage::SemanticControlPage(
     , m_operationStatus(new QLabel(m_manualControl))
     , m_requestedValue(new QLineEdit(m_manualControl))
     , m_apply(new QPushButton(Tr::tr("Run action"), m_manualControl))
+    , m_liveRefreshTimer(new QTimer(this))
 {
     setProperty("EtherCAT.Workbench.SemanticControlPage", true);
 
@@ -620,6 +760,8 @@ SemanticControlPage::SemanticControlPage(
     m_requestedValue->hide();
     m_apply->setObjectName("EtherCATSemanticControlApply");
     m_apply->setAccessibleName(Tr::tr("Run selected signed action"));
+    m_liveRefreshTimer->setObjectName("EtherCATSemanticLiveRefreshTimer");
+    m_liveRefreshTimer->setSingleShot(true);
 
     auto controlLayout = new QVBoxLayout(m_manualControl);
     controlLayout->setContentsMargins(
@@ -674,6 +816,7 @@ SemanticControlPage::SemanticControlPage(
             refreshActionEditor();
         });
     connect(m_apply, &QPushButton::clicked, this, &SemanticControlPage::requestSelectedAction);
+    connect(m_liveRefreshTimer, &QTimer::timeout, this, &SemanticControlPage::requestLiveRefresh);
     connect(
         m_ttlCycles,
         &QSpinBox::valueChanged,
@@ -694,7 +837,23 @@ SemanticControlPage::SemanticControlPage(
                 if (operationId == m_activeOperationId)
                     refreshOperation();
             });
-        connect(m_runtimeService, &QObject::destroyed, this, &SemanticControlPage::refresh);
+        connect(
+            m_runtimeService,
+            &Core::SemanticRuntimeService::liveRefreshCompleted,
+            this,
+            [this](const Data::SemanticLiveRefreshResult &result) {
+                const std::optional<Data::SemanticLiveRefreshResult> normalized
+                    = normalizeLiveRefreshResult(result, true);
+                if (normalized)
+                    handleLiveRefreshResult(*normalized);
+            });
+        connect(m_runtimeService, &QObject::destroyed, this, [this] {
+            stopLiveRefreshScheduler();
+            m_liveRefreshCorrelationId.clear();
+            m_discardLiveRefreshCompletion = false;
+            m_runtimeService = nullptr;
+            refresh();
+        });
     }
     refresh();
 }
@@ -703,8 +862,21 @@ void SemanticControlPage::setContext(const Core::PropertyPageContext &context)
 {
     if (m_context == context)
         return;
+    stopLiveRefreshScheduler();
     m_context = context;
     refresh();
+}
+
+void SemanticControlPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    updateLiveRefreshScheduler();
+}
+
+void SemanticControlPage::hideEvent(QHideEvent *event)
+{
+    stopLiveRefreshScheduler();
+    QWidget::hideEvent(event);
 }
 
 std::optional<Data::SemanticRuntimeContext> SemanticControlPage::selectedRuntimeContext() const
@@ -971,6 +1143,7 @@ void SemanticControlPage::requestSelectedAction()
     m_confirmationOpen = true;
     m_operationStatus->setText(Tr::tr("Waiting for confirmation."));
     updateApplyEnabled();
+    updateLiveRefreshScheduler();
     connect(
         confirmation,
         &QMessageBox::finished,
@@ -979,8 +1152,10 @@ void SemanticControlPage::requestSelectedAction()
             m_confirmationOpen = false;
             if (result == QMessageBox::Yes)
                 submitConfirmedAction(request, displayName);
-            else
+            else {
                 m_operationStatus->setText(Tr::tr("Confirmation canceled."));
+                updateLiveRefreshScheduler();
+            }
             updateApplyEnabled();
         });
     confirmation->open();
@@ -1046,6 +1221,7 @@ void SemanticControlPage::presentOperation(const Data::SemanticOperationRecord &
     m_activeOperationState = record.state;
     m_operationStatus->setText(operationStateText(record.state));
     updateApplyEnabled();
+    updateLiveRefreshScheduler();
 
     const bool sameOperation
         = m_hasReportedOperation && m_lastReportedOperationId == record.request.operationId;
@@ -1112,8 +1288,414 @@ void SemanticControlPage::refreshOperation()
         presentOperation(*record);
 }
 
+bool SemanticControlPage::liveRefreshBlockedByOperation() const
+{
+    if (!m_activeOperationState)
+        return false;
+
+    using State = Data::SemanticOperationState;
+    switch (*m_activeOperationState) {
+    case State::Rejected:
+    case State::Succeeded:
+    case State::Failed:
+    case State::TimedOut:
+    case State::Canceled:
+    case State::Expired:
+        return false;
+    case State::Submitted:
+    case State::ApprovalRequired:
+    case State::Approved:
+    case State::Executing:
+    case State::OutcomeUnknown:
+        return true;
+    }
+    return true;
+}
+
+void SemanticControlPage::stopLiveRefreshScheduler()
+{
+    m_liveRefreshTimer->stop();
+    // There is no public cancellation operation. Retain the accepted correlation so a hidden,
+    // retargeted, or operation-blocked page cannot admit a second provider request before the
+    // first one reaches a terminal result. Its eventual completion is consumed without applying
+    // values, retry counters, or batch progress to the new presentation.
+    if (!m_liveRefreshCorrelationId.isEmpty())
+        m_discardLiveRefreshCompletion = true;
+}
+
+void SemanticControlPage::scheduleLiveRefresh(int delayMs)
+{
+    if (!isVisible() || !m_runtimeService || !m_runtimePresentation || m_liveRefreshPaused
+        || m_confirmationOpen || liveRefreshBlockedByOperation()
+        || !m_liveRefreshCorrelationId.isEmpty() || m_liveRefreshTargets.isEmpty()) {
+        return;
+    }
+    m_liveRefreshTimer->start(std::max(0, delayMs));
+}
+
+void SemanticControlPage::updateLiveRefreshScheduler()
+{
+    m_liveRefreshTimer->stop();
+    if (!isVisible() || !m_runtimeService || !m_runtimePresentation || m_confirmationOpen
+        || liveRefreshBlockedByOperation() || !m_controller || !m_controller->treeModel()) {
+        if (!m_liveRefreshCorrelationId.isEmpty())
+            m_discardLiveRefreshCompletion = true;
+        return;
+    }
+
+    const std::optional<SemanticControlSelection> selection
+        = m_controller->treeModel()->semanticControlSelection(m_context.nodeId);
+    const std::optional<Data::SemanticRuntimeContext> context = selectedRuntimeContext();
+    if (!selection || !context || m_context != m_runtimePresentation->pageContext
+        || selection->scope != m_runtimePresentation->scope
+        || selection->deviceId != m_runtimePresentation->deviceId
+        || selection->signalIds != m_runtimePresentation->signalIds
+        || selection->wholeDevice != m_runtimePresentation->wholeDevice) {
+        if (!m_liveRefreshCorrelationId.isEmpty())
+            m_discardLiveRefreshCompletion = true;
+        return;
+    }
+
+    const LiveSignalPresentation presentation = liveSignalPresentation(*context, *selection);
+    if (presentation.error != LiveSignalPresentationError::None) {
+        if (!m_liveRefreshCorrelationId.isEmpty())
+            m_discardLiveRefreshCompletion = true;
+        return;
+    }
+
+    QList<Data::SemanticLiveRefreshSignal> targets;
+    targets.reserve(presentation.states.size());
+    for (const Data::SemanticSignalRuntimeState &state : presentation.states)
+        targets.append({state.target.deviceId, state.target.signalId});
+    std::sort(
+        targets.begin(),
+        targets.end(),
+        [](const Data::SemanticLiveRefreshSignal &left,
+           const Data::SemanticLiveRefreshSignal &right) {
+            const QString leftDevice = left.deviceId.toString();
+            const QString rightDevice = right.deviceId.toString();
+            return leftDevice == rightDevice ? left.signalId.value < right.signalId.value
+                                             : leftDevice < rightDevice;
+        });
+    if (targets.isEmpty()
+        || std::adjacent_find(targets.cbegin(), targets.cend()) != targets.cend()) {
+        if (!m_liveRefreshCorrelationId.isEmpty())
+            m_discardLiveRefreshCompletion = true;
+        return;
+    }
+
+    const bool runtimeIdentityChanged = m_liveRefreshControllerId != context->controllerId
+                                        || m_liveRefreshScope != context->scope
+                                        || m_liveRefreshSessionGeneration
+                                               != context->sessionGeneration
+                                        || m_liveRefreshContextHash != context->contextHash;
+    const bool targetsChanged = m_liveRefreshTargets != targets;
+    if ((runtimeIdentityChanged || targetsChanged) && !m_liveRefreshCorrelationId.isEmpty())
+        m_discardLiveRefreshCompletion = true;
+    if (runtimeIdentityChanged) {
+        m_liveRefreshDeferredCount = 0;
+        m_liveRefreshFailureCount = 0;
+        m_liveRefreshPaused = false;
+        clearLiveRefreshPauseIndication();
+        m_liveRefreshBatchOffset = 0;
+    } else if (targetsChanged) {
+        m_liveRefreshDeferredCount = 0;
+        m_liveRefreshBatchOffset = 0;
+    }
+
+    m_liveRefreshControllerId = context->controllerId;
+    m_liveRefreshScope = context->scope;
+    m_liveRefreshSessionGeneration = context->sessionGeneration;
+    m_liveRefreshContextHash = context->contextHash;
+    m_liveRefreshTargets = std::move(targets);
+    if (m_liveRefreshBatchOffset >= m_liveRefreshTargets.size())
+        m_liveRefreshBatchOffset = 0;
+    scheduleLiveRefresh(0);
+}
+
+void SemanticControlPage::requestLiveRefresh()
+{
+    m_liveRefreshTimer->stop();
+    if (!isVisible() || !m_runtimeService || !m_runtimePresentation || m_liveRefreshPaused
+        || m_confirmationOpen || liveRefreshBlockedByOperation()
+        || !m_liveRefreshCorrelationId.isEmpty() || m_liveRefreshTargets.isEmpty()) {
+        return;
+    }
+
+    const std::optional<Data::SemanticRuntimeContext> context = selectedRuntimeContext();
+    if (!context || context->controllerId != m_liveRefreshControllerId
+        || context->scope != m_liveRefreshScope
+        || context->sessionGeneration != m_liveRefreshSessionGeneration
+        || context->contextHash != m_liveRefreshContextHash) {
+        stopLiveRefreshScheduler();
+        return;
+    }
+
+    const qsizetype count
+        = std::min<qsizetype>(64, m_liveRefreshTargets.size() - m_liveRefreshBatchOffset);
+    if (count <= 0) {
+        m_liveRefreshBatchOffset = 0;
+        scheduleLiveRefresh(0);
+        return;
+    }
+
+    Data::SemanticLiveRefreshRequest request;
+    request.controllerId = m_liveRefreshControllerId;
+    request.scope = m_liveRefreshScope;
+    request.targets = m_liveRefreshTargets.mid(m_liveRefreshBatchOffset, count);
+    request.expectedContextHash = m_liveRefreshContextHash;
+    request.correlationId = QStringLiteral("workbench-live-%1-%2")
+                                .arg(++m_liveRefreshRequestSequence)
+                                .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    if (!request.isValid()) {
+        pauseLiveRefresh(Data::SemanticLiveRefreshOutcome::Failed);
+        return;
+    }
+
+    m_liveRefreshCorrelationId = request.correlationId;
+    m_discardLiveRefreshCompletion = false;
+    const Data::SemanticLiveRefreshResult directResult = m_runtimeService->requestLiveRefresh(
+        request);
+    const std::optional<Data::SemanticLiveRefreshResult> normalized
+        = normalizeLiveRefreshResult(directResult, false);
+    if (normalized && normalized->outcome != Data::SemanticLiveRefreshOutcome::Accepted) {
+        handleLiveRefreshResult(*normalized);
+    }
+}
+
+std::optional<Data::SemanticLiveRefreshResult> SemanticControlPage::normalizeLiveRefreshResult(
+    const Data::SemanticLiveRefreshResult &result, bool completionSignal) const
+{
+    if (m_liveRefreshCorrelationId.isEmpty())
+        return std::nullopt;
+    if (result.correlationId != m_liveRefreshCorrelationId) {
+        if (completionSignal)
+            return std::nullopt;
+        return Data::SemanticLiveRefreshResult{
+            m_liveRefreshCorrelationId,
+            Data::SemanticLiveRefreshOutcome::Failed,
+            QStringLiteral("semantic-live-refresh-invalid-result"),
+            QStringLiteral("The semantic runtime returned an invalid refresh result."),
+            0,
+        };
+    }
+    if (result.isValid()
+        && (!completionSignal || result.outcome != Data::SemanticLiveRefreshOutcome::Accepted)) {
+        return result;
+    }
+    return Data::SemanticLiveRefreshResult{
+        m_liveRefreshCorrelationId,
+        Data::SemanticLiveRefreshOutcome::Failed,
+        QStringLiteral("semantic-live-refresh-invalid-result"),
+        QStringLiteral("The semantic runtime returned an invalid refresh result."),
+        0,
+    };
+}
+
+void SemanticControlPage::handleLiveRefreshResult(const Data::SemanticLiveRefreshResult &result)
+{
+    if (m_liveRefreshCorrelationId.isEmpty() || result.correlationId != m_liveRefreshCorrelationId) {
+        return;
+    }
+
+    using Outcome = Data::SemanticLiveRefreshOutcome;
+    if (result.outcome == Outcome::Accepted)
+        return;
+
+    const bool discardCompletion = m_discardLiveRefreshCompletion;
+    m_liveRefreshCorrelationId.clear();
+    m_discardLiveRefreshCompletion = false;
+    if (discardCompletion) {
+        updateLiveRefreshScheduler();
+        return;
+    }
+    switch (result.outcome) {
+    case Outcome::Refreshed: {
+        m_liveRefreshDeferredCount = 0;
+        m_liveRefreshFailureCount = 0;
+        m_liveRefreshPaused = false;
+        clearLiveRefreshPauseIndication();
+        const qsizetype remaining = m_liveRefreshTargets.size() - m_liveRefreshBatchOffset;
+        const qsizetype completed = std::min<qsizetype>(64, remaining);
+        m_liveRefreshBatchOffset += completed;
+        if (m_liveRefreshBatchOffset >= m_liveRefreshTargets.size())
+            m_liveRefreshBatchOffset = 0;
+        scheduleLiveRefresh(500);
+        break;
+    }
+    case Outcome::Deferred: {
+        m_liveRefreshFailureCount = 0;
+        const int exponent = std::min(m_liveRefreshDeferredCount, 3);
+        ++m_liveRefreshDeferredCount;
+        scheduleLiveRefresh(1000 * (1 << exponent));
+        break;
+    }
+    case Outcome::Failed:
+        m_liveRefreshDeferredCount = 0;
+        ++m_liveRefreshFailureCount;
+        if (m_liveRefreshFailureCount >= 3) {
+            pauseLiveRefresh(result.outcome);
+        } else {
+            scheduleLiveRefresh(1000);
+        }
+        break;
+    case Outcome::Rejected:
+    case Outcome::Unsupported:
+        pauseLiveRefresh(result.outcome);
+        break;
+    case Outcome::Accepted:
+        break;
+    }
+}
+
+void SemanticControlPage::pauseLiveRefresh(Data::SemanticLiveRefreshOutcome outcome)
+{
+    m_liveRefreshPaused = true;
+    m_liveRefreshTimer->stop();
+    QString message;
+    switch (outcome) {
+    case Data::SemanticLiveRefreshOutcome::Unsupported:
+        message = Tr::tr("Live value updates are not supported.");
+        break;
+    case Data::SemanticLiveRefreshOutcome::Rejected:
+        message = Tr::tr("Live value updates were rejected.");
+        break;
+    case Data::SemanticLiveRefreshOutcome::Accepted:
+    case Data::SemanticLiveRefreshOutcome::Refreshed:
+    case Data::SemanticLiveRefreshOutcome::Deferred:
+    case Data::SemanticLiveRefreshOutcome::Failed:
+        message = Tr::tr("Live value updates are paused after repeated failures.");
+        break;
+    }
+    const bool newlyIndicated = m_liveRefreshPauseMessage != message;
+    m_liveRefreshPauseMessage = message;
+    m_status->setText(m_liveRefreshPauseMessage);
+    if (newlyIndicated && m_controller) {
+        m_controller
+            ->writeControllerOutput(m_liveRefreshPauseMessage, ControllerOutputLevel::Warning);
+    }
+}
+
+void SemanticControlPage::clearLiveRefreshPauseIndication()
+{
+    if (m_liveRefreshPauseMessage.isEmpty())
+        return;
+    m_liveRefreshPauseMessage.clear();
+    if (!m_runtimePresentation || !m_controller || !m_controller->treeModel())
+        return;
+    const std::optional<SemanticControlSelection> selection
+        = m_controller->treeModel()->semanticControlSelection(m_context.nodeId);
+    if (!selection)
+        return;
+    const LiveSignalPresentation presentation
+        = liveSignalPresentation(m_runtimePresentation->runtimeContext, *selection);
+    if (presentation.error == LiveSignalPresentationError::None)
+        presentLiveSignals(presentation.states, presentation.requiresWholeDeviceControl);
+}
+
+void SemanticControlPage::presentLiveSignals(
+    const QList<Data::SemanticSignalRuntimeState> &states, bool requiresWholeDeviceControl)
+{
+    m_signals->clear();
+    bool allReady = true;
+    for (const Data::SemanticSignalRuntimeState &state : states) {
+        const DisplayValue displayValue = signalDisplayValue(state);
+        allReady = allReady && state.availability == Data::SemanticSignalAvailability::Ready
+                   && state.snapshotComplete
+                   && state.quality.state == Data::RuntimeResourceQualityState::Good
+                   && state.captureCycle != 0 && displayValue.converted;
+        const QString displayName = state.definition.displayName.trimmed().isEmpty()
+                                        ? Tr::tr("Signal")
+                                        : state.definition.displayName.trimmed();
+        auto item = new QTreeWidgetItem(
+            {displayName,
+             displayValue.value,
+             displayValue.unit,
+             qualityName(state.quality.state),
+             QString::number(state.captureCycle),
+             displayValue.converted || state.availability != Data::SemanticSignalAvailability::Ready
+                 ? signalAvailabilityName(state.availability)
+                 : Tr::tr("Unavailable")});
+        item->setTextAlignment(4, Qt::AlignRight | Qt::AlignVCenter);
+        m_signals->addTopLevelItem(item);
+    }
+
+    m_signals->setVisible(!states.isEmpty());
+    if (states.isEmpty() && m_actionStates.isEmpty()) {
+        m_status->setText(Tr::tr("No live values or signed actions are available."));
+    } else if (states.isEmpty()) {
+        m_status->setText(Tr::tr("Signed actions are available."));
+    } else if (allReady && m_actionStates.isEmpty() && requiresWholeDeviceControl) {
+        m_status->setText(
+            Tr::tr("This signal belongs to an atomic output group. Select Modules / Channels "
+                   "to control the complete group."));
+    } else if (allReady && m_actionStates.isEmpty()) {
+        m_status->setText(Tr::tr("Live values are available. Manual output is not enabled yet."));
+    } else if (allReady) {
+        m_status->setText(Tr::tr("Live values and signed actions are available."));
+    } else if (m_actionStates.isEmpty()) {
+        m_status->setText(Tr::tr("Some live values are unavailable. Manual output is disabled."));
+    } else {
+        m_status->setText(
+            Tr::tr("Some live values are unavailable. Signed actions remain state-gated."));
+    }
+    if (!m_liveRefreshPauseMessage.isEmpty())
+        m_status->setText(m_liveRefreshPauseMessage);
+}
+
+bool SemanticControlPage::refreshLiveSignalsOnly()
+{
+    if (!m_runtimePresentation || !m_runtimeService || !m_controller || !m_controller->treeModel()
+        || m_context != m_runtimePresentation->pageContext) {
+        return false;
+    }
+
+    const std::optional<SemanticControlSelection> selection
+        = m_controller->treeModel()->semanticControlSelection(m_context.nodeId);
+    if (!selection || selection->scope != m_runtimePresentation->scope
+        || selection->deviceId != m_runtimePresentation->deviceId
+        || selection->signalIds != m_runtimePresentation->signalIds
+        || selection->wholeDevice != m_runtimePresentation->wholeDevice) {
+        return false;
+    }
+
+    QList<Data::SemanticRuntimeContext> scopeContexts;
+    const QList<Data::SemanticRuntimeContext> contexts = m_runtimeService->contexts();
+    std::copy_if(
+        contexts.cbegin(),
+        contexts.cend(),
+        std::back_inserter(scopeContexts),
+        [&selection](const Data::SemanticRuntimeContext &context) {
+            return context.scope == selection->scope;
+        });
+    if (scopeContexts.size() != 1 || !contextIsVerifiedAndComplete(scopeContexts.constFirst()))
+        return false;
+
+    const Data::SemanticRuntimeContext &runtimeContext = scopeContexts.constFirst();
+    if (!runtimeContextAllowsSignalOnlyRefresh(m_runtimePresentation->runtimeContext, runtimeContext)) {
+        return false;
+    }
+
+    const LiveSignalPresentation presentation = liveSignalPresentation(runtimeContext, *selection);
+    if (presentation.error != LiveSignalPresentationError::None)
+        return false;
+
+    m_runtimePresentation->runtimeContext = runtimeContext;
+    presentLiveSignals(presentation.states, presentation.requiresWholeDeviceControl);
+    updateApplyEnabled();
+    refreshOperation();
+    return true;
+}
+
 void SemanticControlPage::refresh()
 {
+    if (refreshLiveSignalsOnly()) {
+        updateLiveRefreshScheduler();
+        return;
+    }
+
+    stopLiveRefreshScheduler();
+    m_runtimePresentation.reset();
     const Data::SemanticActionId preferredActionId = m_selectedActionId;
     const QSignalBlocker actionTreeBlocker(m_actions);
     m_signals->clear();
@@ -1203,115 +1785,20 @@ void SemanticControlPage::refresh()
         return;
     }
 
-    QSet<QString> selectedSignalIds;
-    for (const Data::SemanticSignalId &signalId : selection->signalIds)
-        selectedSignalIds.insert(signalId.value);
-
-    QList<Data::SemanticSignalRuntimeState> states;
-    std::copy_if(
-        runtimeContext.signalStates.cbegin(),
-        runtimeContext.signalStates.cend(),
-        std::back_inserter(states),
-        [&runtimeContext, &selection, &selectedSignalIds](
-            const Data::SemanticSignalRuntimeState &state) {
-            return state.target.controllerId == runtimeContext.controllerId
-                   && state.target.scope == selection->scope
-                   && state.target.deviceId == selection->deviceId
-                   && state.target.kind == Data::SemanticRuntimeTargetKind::Signal
-                   && state.target.actionId.value.isEmpty()
-                   && (selectedSignalIds.isEmpty()
-                       || selectedSignalIds.contains(state.target.signalId.value));
-        });
-    std::sort(
-        states.begin(),
-        states.end(),
-        [](const Data::SemanticSignalRuntimeState &left,
-           const Data::SemanticSignalRuntimeState &right) {
-            return left.target.signalId.value < right.target.signalId.value;
-        });
-    const bool invalidSignalSet
-        = states.isEmpty()
-          || (!selectedSignalIds.isEmpty() && states.size() != selectedSignalIds.size())
-          || std::any_of(
-              states.cbegin(),
-              states.cend(),
-              [](const Data::SemanticSignalRuntimeState &state) {
-                  return state.target.signalId.value.isEmpty()
-                         || state.target.signalId.value != state.target.signalId.value.trimmed();
-              })
-          || std::adjacent_find(
-                 states.cbegin(),
-                 states.cend(),
-                 [](const Data::SemanticSignalRuntimeState &left,
-                    const Data::SemanticSignalRuntimeState &right) {
-                     return left.target.signalId == right.target.signalId;
-                 })
-                 != states.cend();
-    if (invalidSignalSet) {
+    const LiveSignalPresentation signalPresentation
+        = liveSignalPresentation(runtimeContext, *selection);
+    if (signalPresentation.error == LiveSignalPresentationError::Incomplete) {
         m_status->setText(Tr::tr("Runtime signal set is incomplete."));
         return;
     }
-
-    for (const Data::SemanticSignalRuntimeState &state : std::as_const(states)) {
-        if (!signalBindingMatchesContext(state, runtimeContext)) {
-            m_status->setText(Tr::tr("Runtime signal binding is not verified."));
-            return;
-        }
+    if (signalPresentation.error == LiveSignalPresentationError::BindingUnverified) {
+        m_status->setText(Tr::tr("Runtime signal binding is not verified."));
+        return;
     }
 
-    bool allReady = true;
-    for (const Data::SemanticSignalRuntimeState &state : std::as_const(states)) {
-        const DisplayValue displayValue = signalDisplayValue(state);
-        allReady = allReady && state.availability == Data::SemanticSignalAvailability::Ready
-                   && state.snapshotComplete
-                   && state.quality.state == Data::RuntimeResourceQualityState::Good
-                   && state.captureCycle != 0 && displayValue.converted;
-        const QString displayName = state.definition.displayName.trimmed().isEmpty()
-                                        ? Tr::tr("Signal")
-                                        : state.definition.displayName.trimmed();
-        auto item = new QTreeWidgetItem(
-            {displayName,
-             displayValue.value,
-             displayValue.unit,
-             qualityName(state.quality.state),
-             QString::number(state.captureCycle),
-             displayValue.converted
-                 ? signalAvailabilityName(state.availability)
-                 : Tr::tr("Unavailable")});
-        item->setTextAlignment(4, Qt::AlignRight | Qt::AlignVCenter);
-        m_signals->addTopLevelItem(item);
-    }
-
-    m_signals->setVisible(!states.isEmpty());
-
-    const bool requiresWholeDeviceControl
-        = !selectedSignalIds.isEmpty()
-          && std::any_of(
-              runtimeContext.actionStates.cbegin(),
-              runtimeContext.actionStates.cend(),
-              [&runtimeContext, &selection, &selectedSignalIds](
-                  const Data::SemanticActionRuntimeState &action) {
-                  if (action.target.controllerId != runtimeContext.controllerId
-                      || action.target.scope != selection->scope
-                      || action.target.deviceId != selection->deviceId
-                      || action.target.kind != Data::SemanticRuntimeTargetKind::Action
-                      || action.bindings.isEmpty()) {
-                      return false;
-                  }
-                  const bool includesSelectedSignal = std::any_of(
-                      action.bindings.cbegin(),
-                      action.bindings.cend(),
-                      [&selectedSignalIds](const Data::SemanticRuntimeBinding &binding) {
-                          return selectedSignalIds.contains(binding.target.signalId.value);
-                      });
-                  const bool extendsPastSelection = std::any_of(
-                      action.bindings.cbegin(),
-                      action.bindings.cend(),
-                      [&selectedSignalIds](const Data::SemanticRuntimeBinding &binding) {
-                          return !selectedSignalIds.contains(binding.target.signalId.value);
-                      });
-                  return includesSelectedSignal && extendsPastSelection;
-              });
+    QSet<QString> selectedSignalIds;
+    for (const Data::SemanticSignalId &signalId : selection->signalIds)
+        selectedSignalIds.insert(signalId.value);
 
     std::copy_if(
         runtimeContext.actionStates.cbegin(),
@@ -1397,28 +1884,18 @@ void SemanticControlPage::refresh()
             selectedItem->data(0, Qt::UserRole).toString()};
     }
 
-    if (states.isEmpty() && m_actionStates.isEmpty()) {
-        m_status->setText(Tr::tr("No live values or signed actions are available."));
-    } else if (states.isEmpty()) {
-        m_status->setText(Tr::tr("Signed actions are available."));
-    } else if (allReady && m_actionStates.isEmpty() && requiresWholeDeviceControl) {
-        m_status->setText(
-            Tr::tr("This signal belongs to an atomic output group. Select Modules / Channels "
-                   "to control the complete group."));
-    } else if (allReady && m_actionStates.isEmpty()) {
-        m_status->setText(
-            Tr::tr("Live values are available. Manual output is not enabled yet."));
-    } else if (allReady) {
-        m_status->setText(Tr::tr("Live values and signed actions are available."));
-    } else if (m_actionStates.isEmpty()) {
-        m_status->setText(
-            Tr::tr("Some live values are unavailable. Manual output is disabled."));
-    } else {
-        m_status->setText(
-            Tr::tr("Some live values are unavailable. Signed actions remain state-gated."));
-    }
+    presentLiveSignals(signalPresentation.states, signalPresentation.requiresWholeDeviceControl);
+    m_runtimePresentation = RuntimePresentation{
+        m_context,
+        selection->scope,
+        selection->deviceId,
+        selection->signalIds,
+        selection->wholeDevice,
+        runtimeContext,
+    };
     refreshActionEditor();
     refreshOperation();
+    updateLiveRefreshScheduler();
 }
 
 } // namespace EtherCAT::Workbench::Internal

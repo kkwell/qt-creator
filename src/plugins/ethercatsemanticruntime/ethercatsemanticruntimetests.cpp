@@ -47,6 +47,7 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <future>
 #include <limits>
 #include <utility>
@@ -899,9 +900,15 @@ public:
         pendingSnapshotRequest = request;
         snapshotRequests.append(request);
         requestTrace.append(
-            request.correlationId.endsWith(QStringLiteral("-after"))
-                ? QStringLiteral("snapshot-after")
-                : QStringLiteral("snapshot-before"));
+            request.correlationId.startsWith(QStringLiteral("semantic-live-"))
+                ? QStringLiteral("snapshot-live")
+                : (request.correlationId.endsWith(QStringLiteral("-after"))
+                       ? QStringLiteral("snapshot-after")
+                       : QStringLiteral("snapshot-before")));
+        if (snapshotRequestStarted)
+            snapshotRequestStarted(request);
+        if (failSnapshotStartAfterCallback)
+            return Utils::ResultError(snapshotStartError);
         return Utils::ResultOk;
     }
 
@@ -1039,6 +1046,10 @@ public:
     QStringList requestTrace;
     int maximumConcurrentRequests = 0;
     bool allowReadsWhileApplyPending = false;
+    std::function<void(const Data::RuntimeResourceSnapshotRequest &)> snapshotRequestStarted;
+    bool failSnapshotStartAfterCallback = false;
+    QString snapshotStartError = QStringLiteral(
+        "The deterministic snapshot start failed after callback");
 
 private:
     Utils::Result<> beginRequest(bool mutation)
@@ -4275,7 +4286,10 @@ public:
 
     Utils::Result<> initialize(
         bool privateProviderRegistry = false,
-        bool configureManualPolicy = true)
+        bool configureManualPolicy = true,
+        int liveRefreshTimeoutMs = 5000,
+        int liveSampleFreshnessMs = 5000,
+        std::function<QDateTime()> utcNow = {})
     {
         if (!temporary.isValid())
             return Utils::ResultError("The semantic executor temporary directory is invalid");
@@ -4339,7 +4353,13 @@ public:
         if (!registry)
             return Utils::ResultError("The controller provider registry is unavailable");
         executor = std::make_unique<SemanticRuntimeExecutor>(
-            &projects, registry, nullptr, repository);
+            &projects,
+            registry,
+            nullptr,
+            repository,
+            liveRefreshTimeoutMs,
+            liveSampleFreshnessMs,
+            std::move(utcNow));
         if (executor->contexts().size() != 1 || !executor->contexts().constFirst().complete)
             return Utils::ResultError("The API-038 semantic execution context is incomplete");
         const Data::SemanticRuntimeContext &context = executor->contexts().constFirst();
@@ -9813,6 +9833,10 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactory()
     displayChange.actionStates.first().definition.displayName = QStringLiteral(
         "Localized display name");
     displayChange.actionStates.first().availability = Data::SemanticActionAvailability::Unavailable;
+    displayChange.signalStates.first().captureCycle = 42;
+    displayChange.signalStates.first().controllerTimestampNs = 43;
+    displayChange.signalStates.first().observedAt
+        = QDateTime::fromString(QStringLiteral("2026-08-01T12:00:00Z"), Qt::ISODate);
     QCOMPARE(semanticRuntimeContextHash(displayChange), contextHash);
 
     Data::SemanticRuntimeContext reordered = context;
@@ -11096,6 +11120,760 @@ void EtherCATSemanticRuntimeTests::testExecutorRejectsUnauthorizedManualActionBe
     QCOMPARE(contextsSpy.count(), afterRegistryRemoval);
     fixture.unregisterProviders();
     QVERIFY(fixture.providersAreUnregistered());
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorRefreshesVerifiedSignals()
+{
+    SemanticExecutorFixture fixture;
+    const Utils::Result<> initialized = fixture.initialize();
+    QVERIFY_RESULT(initialized);
+    const Data::SemanticRuntimeContext before = fixture.executor->contexts().constFirst();
+    QVERIFY(before.signalStates.size() >= 3);
+
+    const Data::SemanticSignalRuntimeState &first = before.signalStates.at(0);
+    const Data::SemanticSignalRuntimeState &second = before.signalStates.at(1);
+    const Data::SemanticSignalRuntimeState &unselected = before.signalStates.at(2);
+    QVERIFY(first.binding);
+    QVERIFY(second.binding);
+
+    Data::SemanticLiveRefreshRequest request;
+    request.controllerId = before.controllerId;
+    request.scope = before.scope;
+    request.targets = {
+        {second.target.deviceId, second.target.signalId},
+        {first.target.deviceId, first.target.signalId},
+    };
+    request.expectedContextHash = before.contextHash;
+    request.correlationId = QStringLiteral("semantic-refresh/verified-signals");
+    QVERIFY(request.isValid());
+
+    QSignalSpy contextsSpy(fixture.executor.get(), &Core::SemanticRuntimeService::contextsChanged);
+    QSignalSpy
+        completedSpy(fixture.executor.get(), &Core::SemanticRuntimeService::liveRefreshCompleted);
+    QVERIFY(contextsSpy.isValid());
+    QVERIFY(completedSpy.isValid());
+
+    const Data::SemanticLiveRefreshResult accepted = fixture.executor->requestLiveRefresh(request);
+    QVERIFY(accepted.isValid());
+    QCOMPARE(accepted.outcome, Data::SemanticLiveRefreshOutcome::Accepted);
+    QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+    const Data::RuntimeResourceSnapshotRequest providerRequest
+        = *fixture.provider.pendingSnapshotRequest;
+    QCOMPARE(providerRequest.resourceIds.size(), qsizetype(2));
+    QVERIFY(providerRequest.resourceIds.at(0).value < providerRequest.resourceIds.at(1).value);
+    QList<Data::RuntimeResourceId> expectedIds{first.binding->resourceId, second.binding->resourceId};
+    std::sort(
+        expectedIds.begin(),
+        expectedIds.end(),
+        [](const Data::RuntimeResourceId &left, const Data::RuntimeResourceId &right) {
+            return left.value < right.value;
+        });
+    QCOMPARE(providerRequest.resourceIds, expectedIds);
+
+    const quint64 captureCycle = fixture.snapshot.captureCycle + 100;
+    const Data::RuntimeResourceSnapshot liveSnapshot = targetedSnapshot(
+        fixture.snapshot,
+        providerRequest,
+        {},
+        fixture.snapshot.snapshotSequence + 100,
+        captureCycle,
+        fixture.snapshot.controllerTimestampNs + 1000);
+    const Data::RuntimeResourceSnapshotResult result{providerRequest, liveSnapshot, {}};
+    QVERIFY(result.isValid());
+    fixture.provider.sendSnapshotResult(result);
+
+    QTRY_COMPARE(completedSpy.count(), 1);
+    const Data::SemanticLiveRefreshResult completed
+        = qvariant_cast<Data::SemanticLiveRefreshResult>(completedSpy.constFirst().constFirst());
+    QVERIFY(completed.isValid());
+    QCOMPARE(completed.outcome, Data::SemanticLiveRefreshOutcome::Refreshed);
+    QCOMPARE(completed.captureCycle, captureCycle);
+    QTRY_VERIFY(contextsSpy.count() >= 1);
+
+    const Data::SemanticRuntimeContext after = fixture.executor->contexts().constFirst();
+    QCOMPARE(after.contextHash, before.contextHash);
+    const auto stateFor = [&after](const Data::SemanticRuntimeTarget &target) {
+        return std::find_if(
+            after.signalStates.cbegin(),
+            after.signalStates.cend(),
+            [&target](const Data::SemanticSignalRuntimeState &state) {
+                return state.target == target;
+            });
+    };
+    const auto firstAfter = stateFor(first.target);
+    const auto secondAfter = stateFor(second.target);
+    const auto unselectedAfter = stateFor(unselected.target);
+    QVERIFY(firstAfter != after.signalStates.cend());
+    QVERIFY(secondAfter != after.signalStates.cend());
+    QVERIFY(unselectedAfter != after.signalStates.cend());
+    QCOMPARE(firstAfter->captureCycle, captureCycle);
+    QCOMPARE(secondAfter->captureCycle, captureCycle);
+    QCOMPARE(unselectedAfter->captureCycle, unselected.captureCycle);
+    QCOMPARE(unselectedAfter->value, unselected.value);
+    QCOMPARE(fixture.provider.maximumConcurrentRequests, 1);
+    QCOMPARE(fixture.provider.pendingRequestCount(), 0);
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorSerializesLiveRefreshWithActions()
+{
+    SemanticExecutorFixture fixture;
+    const Utils::Result<> initialized = fixture.initialize();
+    QVERIFY_RESULT(initialized);
+    const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+    QVERIFY(!context.signalStates.isEmpty());
+    const Data::SemanticSignalRuntimeState &signal = context.signalStates.constFirst();
+
+    Data::SemanticLiveRefreshRequest refresh;
+    refresh.controllerId = context.controllerId;
+    refresh.scope = context.scope;
+    refresh.targets = {{signal.target.deviceId, signal.target.signalId}};
+    refresh.expectedContextHash = context.contextHash;
+    refresh.correlationId = QStringLiteral("semantic-refresh/serialize/live-first");
+    QCOMPARE(
+        fixture.executor->requestLiveRefresh(refresh).outcome,
+        Data::SemanticLiveRefreshOutcome::Accepted);
+    QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+    const Data::RuntimeResourceSnapshotRequest liveRequest
+        = *fixture.provider.pendingSnapshotRequest;
+
+    Data::SemanticOperationRequest actionRequest = api038ActionRequest(
+        context,
+        u"embedlabs:project:action:xb6:set-outputs",
+        u"operation/api038/executor/live-serialization");
+    setApi038DigitalOutputParameters(actionRequest);
+    const Utils::Result<SemanticActionPlan> plan
+        = buildSemanticActionPlan(*fixture.evidence, actionRequest, context);
+    QVERIFY_RESULT(plan);
+    QCOMPARE(
+        submitAndApprove(*fixture.executor, context, actionRequest).state,
+        Data::SemanticOperationState::Approved);
+    QCoreApplication::processEvents();
+    QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(1));
+    QVERIFY(fixture.provider.pendingSnapshotRequest);
+    QCOMPARE(*fixture.provider.pendingSnapshotRequest, liveRequest);
+
+    const Data::RuntimeResourceSnapshotResult liveResult{
+        liveRequest,
+        targetedSnapshot(
+            fixture.snapshot,
+            liveRequest,
+            {},
+            fixture.snapshot.snapshotSequence + 10,
+            fixture.snapshot.captureCycle + 10,
+            fixture.snapshot.controllerTimestampNs + 100),
+        {},
+    };
+    QVERIFY(liveResult.isValid());
+    fixture.provider.sendSnapshotResult(liveResult);
+    QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+    QTRY_COMPARE(fixture.provider.snapshotRequests.size(), qsizetype(2));
+    QVERIFY(*fixture.provider.pendingSnapshotRequest != liveRequest);
+
+    QVERIFY(advanceExecutorToApply(fixture, *plan));
+    QVERIFY(fixture.provider.pendingApplyRequest);
+    Data::SemanticLiveRefreshRequest blockedRefresh = refresh;
+    blockedRefresh.correlationId = QStringLiteral("semantic-refresh/serialize/action-active");
+    const Data::SemanticLiveRefreshResult deferred = fixture.executor->requestLiveRefresh(
+        blockedRefresh);
+    QVERIFY(deferred.isValid());
+    QCOMPARE(deferred.outcome, Data::SemanticLiveRefreshOutcome::Deferred);
+    QCOMPARE(deferred.code, QStringLiteral("semantic-live-refresh-busy"));
+    QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(2));
+
+    const Data::RuntimeOutputTransactionRequest applyRequest = *fixture.provider.pendingApplyRequest;
+    const Data::RuntimeOutputTransactionState appliedState
+        = completedOutputState(applyRequest, Data::RuntimeOutputTransactionOutcome::Applied, 220);
+    fixture.provider.sendApplyResult({
+        applyRequest,
+        Data::RuntimeOutputTransactionOutcome::Applied,
+        true,
+        appliedState,
+        {},
+    });
+    QVERIFY(fixture.provider.pendingSnapshotRequest);
+    const Data::RuntimeResourceSnapshotRequest afterRequest
+        = *fixture.provider.pendingSnapshotRequest;
+    fixture.provider.sendSnapshotResult({
+        afterRequest,
+        targetedSnapshot(
+            fixture.snapshot,
+            afterRequest,
+            applyRequest.completeGroupWrites,
+            30,
+            appliedState.appliedCycle + 1,
+            3300),
+        {},
+    });
+    QVERIFY(fixture.provider.pendingStateRequest);
+    const Data::RuntimeOutputTransactionStateRequest postStateRequest
+        = *fixture.provider.pendingStateRequest;
+    Data::RuntimeOutputTransactionState confirmedState = appliedState;
+    confirmedState.controllerTimestampNs = 3301;
+    fixture.provider.sendStateResult({postStateRequest, confirmedState, {}});
+
+    QTRY_VERIFY(fixture.executor->operation(actionRequest.operationId).has_value());
+    QCOMPARE(
+        fixture.executor->operation(actionRequest.operationId)->state,
+        Data::SemanticOperationState::Succeeded);
+    QCOMPARE(
+        fixture.provider.requestTrace,
+        QStringList({
+            QStringLiteral("snapshot-live"),
+            QStringLiteral("snapshot-before"),
+            QStringLiteral("policy"),
+            QStringLiteral("state-pre"),
+            QStringLiteral("apply"),
+            QStringLiteral("snapshot-after"),
+            QStringLiteral("state-post"),
+        }));
+    QCOMPARE(fixture.provider.maximumConcurrentRequests, 1);
+    QCOMPARE(fixture.provider.pendingRequestCount(), 0);
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorDefersSynchronousLiveResultUntilAccepted()
+{
+    SemanticExecutorFixture fixture;
+    const Utils::Result<> initialized = fixture.initialize();
+    QVERIFY_RESULT(initialized);
+    const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+    const Data::SemanticSignalRuntimeState signal = context.signalStates.constFirst();
+
+    Data::SemanticLiveRefreshRequest request;
+    request.controllerId = context.controllerId;
+    request.scope = context.scope;
+    request.targets = {{signal.target.deviceId, signal.target.signalId}};
+    request.expectedContextHash = context.contextHash;
+    request.correlationId = QStringLiteral("semantic-refresh/synchronous-result");
+
+    fixture.provider.snapshotRequestStarted =
+        [&fixture](const Data::RuntimeResourceSnapshotRequest &providerRequest) {
+            Data::RuntimeResourceSnapshot snapshot = targetedSnapshot(
+                fixture.snapshot,
+                providerRequest,
+                {},
+                fixture.snapshot.snapshotSequence + 20,
+                fixture.snapshot.captureCycle + 20,
+                fixture.snapshot.controllerTimestampNs + 200);
+            fixture.provider.sendSnapshotResult({providerRequest, snapshot, {}});
+        };
+    fixture.provider.failSnapshotStartAfterCallback = true;
+    QSignalSpy
+        completedSpy(fixture.executor.get(), &Core::SemanticRuntimeService::liveRefreshCompleted);
+    QVERIFY(completedSpy.isValid());
+
+    const Data::SemanticLiveRefreshResult accepted = fixture.executor->requestLiveRefresh(request);
+    QCOMPARE(accepted.outcome, Data::SemanticLiveRefreshOutcome::Accepted);
+    QCOMPARE(completedSpy.count(), 0);
+    QTRY_COMPARE(completedSpy.count(), 1);
+    const Data::SemanticLiveRefreshResult completed
+        = qvariant_cast<Data::SemanticLiveRefreshResult>(completedSpy.constFirst().constFirst());
+    QCOMPARE(completed.outcome, Data::SemanticLiveRefreshOutcome::Refreshed);
+    QCOMPARE(completed.correlationId, request.correlationId);
+    QTest::qWait(20);
+    QCOMPARE(completedSpy.count(), 1);
+    QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(1));
+    QCOMPARE(fixture.provider.pendingRequestCount(), 0);
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorTimesOutLiveRefreshAndUnblocksAction()
+{
+    SemanticExecutorFixture fixture;
+    const Utils::Result<> initialized = fixture.initialize(false, true, 20);
+    QVERIFY_RESULT(initialized);
+    const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+    const Data::SemanticSignalRuntimeState signal = context.signalStates.constFirst();
+
+    Data::SemanticLiveRefreshRequest refresh;
+    refresh.controllerId = context.controllerId;
+    refresh.scope = context.scope;
+    refresh.targets = {{signal.target.deviceId, signal.target.signalId}};
+    refresh.expectedContextHash = context.contextHash;
+    refresh.correlationId = QStringLiteral("semantic-refresh/timeout");
+    QSignalSpy
+        completedSpy(fixture.executor.get(), &Core::SemanticRuntimeService::liveRefreshCompleted);
+    QVERIFY(completedSpy.isValid());
+    QCOMPARE(
+        fixture.executor->requestLiveRefresh(refresh).outcome,
+        Data::SemanticLiveRefreshOutcome::Accepted);
+
+    Data::SemanticOperationRequest actionRequest = api038ActionRequest(
+        context,
+        u"embedlabs:project:action:xb6:set-outputs",
+        u"operation/api038/executor/live-timeout");
+    setApi038DigitalOutputParameters(actionRequest);
+    QCOMPARE(
+        submitAndApprove(*fixture.executor, context, actionRequest).state,
+        Data::SemanticOperationState::Approved);
+
+    QTRY_VERIFY(fixture.provider.pendingSnapshotRequest.has_value());
+    const Data::RuntimeResourceSnapshotRequest timedOutRequest
+        = *fixture.provider.pendingSnapshotRequest;
+    QTRY_COMPARE(completedSpy.count(), 1);
+    const Data::SemanticLiveRefreshResult completion
+        = qvariant_cast<Data::SemanticLiveRefreshResult>(completedSpy.constFirst().constFirst());
+    QCOMPARE(completion.outcome, Data::SemanticLiveRefreshOutcome::Failed);
+    QCOMPARE(completion.code, QStringLiteral("semantic-live-refresh-timeout"));
+    QTRY_VERIFY(fixture.executor->operation(actionRequest.operationId).has_value());
+    QTRY_COMPARE(
+        fixture.executor->operation(actionRequest.operationId)->state,
+        Data::SemanticOperationState::Failed);
+
+    fixture.provider.sendSnapshotResult({
+        timedOutRequest,
+        targetedSnapshot(
+            fixture.snapshot,
+            timedOutRequest,
+            {},
+            fixture.snapshot.snapshotSequence + 30,
+            fixture.snapshot.captureCycle + 30,
+            fixture.snapshot.controllerTimestampNs + 300),
+        {},
+    });
+    QTest::qWait(20);
+    QCOMPARE(completedSpy.count(), 1);
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorFailsLiveRefreshWhenProviderStartFails()
+{
+    SemanticExecutorFixture fixture;
+    const Utils::Result<> initialized = fixture.initialize();
+    QVERIFY_RESULT(initialized);
+    const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+    const Data::SemanticSignalRuntimeState signal = context.signalStates.constFirst();
+
+    Data::SemanticLiveRefreshRequest request;
+    request.controllerId = context.controllerId;
+    request.scope = context.scope;
+    request.targets = {{signal.target.deviceId, signal.target.signalId}};
+    request.expectedContextHash = context.contextHash;
+    request.correlationId = QStringLiteral("semantic-refresh/provider-start-failure");
+    fixture.provider.failSnapshotStartAfterCallback = true;
+    fixture.provider.snapshotStartError = QStringLiteral(
+        "resource_id=0011223344556677 pdo=0x7010 /Users/private/controller.log");
+    QSignalSpy
+        completedSpy(fixture.executor.get(), &Core::SemanticRuntimeService::liveRefreshCompleted);
+    QVERIFY(completedSpy.isValid());
+
+    QCOMPARE(
+        fixture.executor->requestLiveRefresh(request).outcome,
+        Data::SemanticLiveRefreshOutcome::Accepted);
+    QCOMPARE(completedSpy.count(), 0);
+    QTRY_COMPARE(completedSpy.count(), 1);
+    const Data::SemanticLiveRefreshResult completion
+        = qvariant_cast<Data::SemanticLiveRefreshResult>(completedSpy.constFirst().constFirst());
+    QCOMPARE(completion.outcome, Data::SemanticLiveRefreshOutcome::Failed);
+    QCOMPARE(completion.code, QStringLiteral("semantic-live-refresh-provider-failed"));
+    QCOMPARE(
+        completion.detail,
+        QStringLiteral("The controller provider could not start the live snapshot."));
+    QVERIFY(!completion.detail.contains(QStringLiteral("resource_id")));
+    QVERIFY(!completion.detail.contains(QStringLiteral("pdo"), Qt::CaseInsensitive));
+    QVERIFY(!completion.detail.contains(QStringLiteral("/Users/")));
+    QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(1));
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorRejectsMismatchedAndLateLiveResults()
+{
+    SemanticExecutorFixture fixture;
+    const Utils::Result<> initialized = fixture.initialize();
+    QVERIFY_RESULT(initialized);
+    const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+    QVERIFY(context.signalStates.size() >= 2);
+    const Data::SemanticSignalRuntimeState first = context.signalStates.at(0);
+    const Data::SemanticSignalRuntimeState second = context.signalStates.at(1);
+    QVERIFY(first.binding);
+    QVERIFY(second.binding);
+
+    Data::SemanticLiveRefreshRequest request;
+    request.controllerId = context.controllerId;
+    request.scope = context.scope;
+    request.targets = {{first.target.deviceId, first.target.signalId}};
+    request.expectedContextHash = context.contextHash;
+    request.correlationId = QStringLiteral("semantic-refresh/reused-public-correlation");
+    QSignalSpy
+        completedSpy(fixture.executor.get(), &Core::SemanticRuntimeService::liveRefreshCompleted);
+    QVERIFY(completedSpy.isValid());
+
+    QCOMPARE(
+        fixture.executor->requestLiveRefresh(request).outcome,
+        Data::SemanticLiveRefreshOutcome::Accepted);
+    QTRY_VERIFY(fixture.provider.pendingSnapshotRequest.has_value());
+    const Data::RuntimeResourceSnapshotRequest firstAttempt
+        = *fixture.provider.pendingSnapshotRequest;
+    Data::RuntimeResourceSnapshotRequest mismatchedAttempt = firstAttempt;
+    mismatchedAttempt.resourceIds = {second.binding->resourceId};
+    QVERIFY(mismatchedAttempt.isValid());
+    const Data::RuntimeResourceSnapshot mismatchedSnapshot = targetedSnapshot(
+        fixture.snapshot,
+        mismatchedAttempt,
+        {},
+        fixture.snapshot.snapshotSequence + 40,
+        fixture.snapshot.captureCycle + 40,
+        fixture.snapshot.controllerTimestampNs + 400);
+    const Data::RuntimeResourceSnapshotResult
+        mismatchedResult{mismatchedAttempt, mismatchedSnapshot, {}};
+    QVERIFY(mismatchedResult.isValid());
+    fixture.provider.sendSnapshotResult(mismatchedResult);
+    QTRY_COMPARE(completedSpy.count(), 1);
+    QCOMPARE(
+        qvariant_cast<Data::SemanticLiveRefreshResult>(completedSpy.constFirst().constFirst())
+            .outcome,
+        Data::SemanticLiveRefreshOutcome::Failed);
+
+    const Data::RuntimeResourceSnapshotResult lateFirstResult{
+        firstAttempt,
+        targetedSnapshot(
+            fixture.snapshot,
+            firstAttempt,
+            {},
+            fixture.snapshot.snapshotSequence + 41,
+            fixture.snapshot.captureCycle + 41,
+            fixture.snapshot.controllerTimestampNs + 410),
+        {},
+    };
+    QVERIFY(lateFirstResult.isValid());
+    fixture.provider.sendSnapshotResult(lateFirstResult, false);
+    QCoreApplication::processEvents();
+    QCOMPARE(completedSpy.count(), 1);
+
+    QCOMPARE(
+        fixture.executor->requestLiveRefresh(request).outcome,
+        Data::SemanticLiveRefreshOutcome::Accepted);
+    QTRY_VERIFY(fixture.provider.pendingSnapshotRequest.has_value());
+    const Data::RuntimeResourceSnapshotRequest secondAttempt
+        = *fixture.provider.pendingSnapshotRequest;
+    QVERIFY(secondAttempt.correlationId != firstAttempt.correlationId);
+
+    fixture.provider.sendSnapshotResult(lateFirstResult, false);
+    QCoreApplication::processEvents();
+    QCOMPARE(completedSpy.count(), 1);
+    QVERIFY(fixture.provider.pendingSnapshotRequest.has_value());
+    QCOMPARE(*fixture.provider.pendingSnapshotRequest, secondAttempt);
+
+    fixture.provider.sendSnapshotResult({
+        secondAttempt,
+        targetedSnapshot(
+            fixture.snapshot,
+            secondAttempt,
+            {},
+            fixture.snapshot.snapshotSequence + 42,
+            fixture.snapshot.captureCycle + 42,
+            fixture.snapshot.controllerTimestampNs + 420),
+        {},
+    });
+    QTRY_COMPARE(completedSpy.count(), 2);
+    QCOMPARE(
+        qvariant_cast<Data::SemanticLiveRefreshResult>(completedSpy.at(1).constFirst()).outcome,
+        Data::SemanticLiveRefreshOutcome::Refreshed);
+    fixture.provider.sendSnapshotResult(
+        {
+            secondAttempt,
+            targetedSnapshot(
+                fixture.snapshot,
+                secondAttempt,
+                {},
+                fixture.snapshot.snapshotSequence + 42,
+                fixture.snapshot.captureCycle + 42,
+                fixture.snapshot.controllerTimestampNs + 420),
+            {},
+        },
+        false);
+    QCoreApplication::processEvents();
+    QCOMPARE(completedSpy.count(), 2);
+
+    QCOMPARE(
+        fixture.executor->requestLiveRefresh(request).outcome,
+        Data::SemanticLiveRefreshOutcome::Accepted);
+    QTRY_VERIFY(fixture.provider.pendingSnapshotRequest.has_value());
+    const Data::RuntimeResourceSnapshotRequest regressionAttempt
+        = *fixture.provider.pendingSnapshotRequest;
+    fixture.provider.sendSnapshotResult({
+        regressionAttempt,
+        targetedSnapshot(
+            fixture.snapshot,
+            regressionAttempt,
+            {},
+            fixture.snapshot.snapshotSequence + 60,
+            fixture.snapshot.captureCycle + 41,
+            fixture.snapshot.controllerTimestampNs + 410),
+        {},
+    });
+    QTRY_COMPARE(completedSpy.count(), 3);
+    QCOMPARE(
+        qvariant_cast<Data::SemanticLiveRefreshResult>(completedSpy.at(2).constFirst()).outcome,
+        Data::SemanticLiveRefreshOutcome::Failed);
+
+    QCOMPARE(
+        fixture.executor->requestLiveRefresh(request).outcome,
+        Data::SemanticLiveRefreshOutcome::Accepted);
+    QTRY_VERIFY(fixture.provider.pendingSnapshotRequest.has_value());
+    const Data::RuntimeResourceSnapshotRequest equalCycleAttempt
+        = *fixture.provider.pendingSnapshotRequest;
+    fixture.provider.sendSnapshotResult({
+        equalCycleAttempt,
+        targetedSnapshot(
+            fixture.snapshot,
+            equalCycleAttempt,
+            {},
+            fixture.snapshot.snapshotSequence + 61,
+            fixture.snapshot.captureCycle + 42,
+            fixture.snapshot.controllerTimestampNs + 420),
+        {},
+    });
+    QTRY_COMPARE(completedSpy.count(), 4);
+    QCOMPARE(
+        qvariant_cast<Data::SemanticLiveRefreshResult>(completedSpy.at(3).constFirst()).outcome,
+        Data::SemanticLiveRefreshOutcome::Failed);
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorReleasesLiveRefreshOnRemoval()
+{
+    const auto beginRefreshAndAction = [](SemanticExecutorFixture &fixture, QStringView suffix) {
+        const QString suffixString = suffix.toString();
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        const Data::SemanticSignalRuntimeState signal = context.signalStates.constFirst();
+        Data::SemanticLiveRefreshRequest refresh;
+        refresh.controllerId = context.controllerId;
+        refresh.scope = context.scope;
+        refresh.targets = {{signal.target.deviceId, signal.target.signalId}};
+        refresh.expectedContextHash = context.contextHash;
+        refresh.correlationId = QStringLiteral("semantic-refresh/removal/") + suffixString;
+        if (fixture.executor->requestLiveRefresh(refresh).outcome
+            != Data::SemanticLiveRefreshOutcome::Accepted) {
+            return Data::SemanticOperationId{};
+        }
+        const QString operationId = QStringLiteral("operation/api038/executor/removal/")
+                                    + suffixString;
+        Data::SemanticOperationRequest actionRequest
+            = api038ActionRequest(context, u"embedlabs:project:action:xb6:set-outputs", operationId);
+        setApi038DigitalOutputParameters(actionRequest);
+        const Data::SemanticOperationRecord approved
+            = submitAndApprove(*fixture.executor, context, actionRequest);
+        return approved.state == Data::SemanticOperationState::Approved
+                   ? actionRequest.operationId
+                   : Data::SemanticOperationId{};
+    };
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        QSignalSpy completedSpy(
+            fixture.executor.get(), &Core::SemanticRuntimeService::liveRefreshCompleted);
+        const Data::SemanticOperationId operationId = beginRefreshAndAction(fixture, u"provider");
+        QVERIFY(!operationId.value.isEmpty());
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest.has_value());
+        fixture.registration->remove();
+        QTRY_COMPARE(completedSpy.count(), 1);
+        QTRY_VERIFY(fixture.executor->operation(operationId).has_value());
+        QTRY_COMPARE(
+            fixture.executor->operation(operationId)->state, Data::SemanticOperationState::Failed);
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        QSignalSpy completedSpy(
+            fixture.executor.get(), &Core::SemanticRuntimeService::liveRefreshCompleted);
+        const Data::SemanticOperationId operationId = beginRefreshAndAction(fixture, u"project");
+        QVERIFY(!operationId.value.isEmpty());
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest.has_value());
+        fixture.projects.removeProject(fixture.project.id);
+        QTRY_COMPARE(completedSpy.count(), 1);
+        QTRY_VERIFY(fixture.executor->operation(operationId).has_value());
+        QTRY_COMPARE(
+            fixture.executor->operation(operationId)->state, Data::SemanticOperationState::Failed);
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(true);
+        QVERIFY_RESULT(initialized);
+        QSignalSpy completedSpy(
+            fixture.executor.get(), &Core::SemanticRuntimeService::liveRefreshCompleted);
+        const Data::SemanticOperationId operationId = beginRefreshAndAction(fixture, u"registry");
+        QVERIFY(!operationId.value.isEmpty());
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest.has_value());
+        fixture.ownedRegistry.reset();
+        QTRY_COMPARE(completedSpy.count(), 1);
+        QTRY_VERIFY(fixture.executor->operation(operationId).has_value());
+        QTRY_COMPARE(
+            fixture.executor->operation(operationId)->state, Data::SemanticOperationState::Failed);
+    }
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorRejectsRecursiveRefreshDuringProjectRemoval()
+{
+    SemanticExecutorFixture fixture;
+    const Utils::Result<> initialized = fixture.initialize();
+    QVERIFY_RESULT(initialized);
+    const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+    const Data::SemanticSignalRuntimeState signal = context.signalStates.constFirst();
+
+    Data::SemanticLiveRefreshRequest request;
+    request.controllerId = context.controllerId;
+    request.scope = context.scope;
+    request.targets = {{signal.target.deviceId, signal.target.signalId}};
+    request.expectedContextHash = context.contextHash;
+    request.correlationId = QStringLiteral("semantic-refresh/project-removal/initial");
+    std::optional<Data::SemanticLiveRefreshResult> recursiveResult;
+    int completionCount = 0;
+    QObject::connect(
+        fixture.executor.get(),
+        &Core::SemanticRuntimeService::liveRefreshCompleted,
+        fixture.executor.get(),
+        [&fixture, &request, &recursiveResult, &completionCount] {
+            ++completionCount;
+            Data::SemanticLiveRefreshRequest recursiveRequest = request;
+            recursiveRequest.correlationId = QStringLiteral(
+                "semantic-refresh/project-removal/recursive");
+            recursiveResult = fixture.executor->requestLiveRefresh(recursiveRequest);
+        },
+        Qt::DirectConnection);
+
+    QCOMPARE(
+        fixture.executor->requestLiveRefresh(request).outcome,
+        Data::SemanticLiveRefreshOutcome::Accepted);
+    fixture.projects.removeProject(fixture.project.id);
+    QCOMPARE(completionCount, 1);
+    QVERIFY(recursiveResult);
+    QCOMPARE(recursiveResult->outcome, Data::SemanticLiveRefreshOutcome::Rejected);
+    QCOMPARE(recursiveResult->code, QStringLiteral("semantic-live-refresh-context-changed"));
+    QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(0));
+    QCoreApplication::processEvents();
+    QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(0));
+    QCOMPARE(completionCount, 1);
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorSurvivesCompletionDeletingExecutor()
+{
+    SemanticExecutorFixture fixture;
+    const Utils::Result<> initialized = fixture.initialize(false, true, 20);
+    QVERIFY_RESULT(initialized);
+    const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+    const Data::SemanticSignalRuntimeState signal = context.signalStates.constFirst();
+
+    Data::SemanticLiveRefreshRequest request;
+    request.controllerId = context.controllerId;
+    request.scope = context.scope;
+    request.targets = {{signal.target.deviceId, signal.target.signalId}};
+    request.expectedContextHash = context.contextHash;
+    request.correlationId = QStringLiteral("semantic-refresh/delete-executor");
+    fixture.provider.snapshotRequestStarted =
+        [&fixture](const Data::RuntimeResourceSnapshotRequest &providerRequest) {
+            fixture.provider.sendSnapshotResult({
+                providerRequest,
+                targetedSnapshot(
+                    fixture.snapshot,
+                    providerRequest,
+                    {},
+                    fixture.snapshot.snapshotSequence + 70,
+                    fixture.snapshot.captureCycle + 70,
+                    fixture.snapshot.controllerTimestampNs + 700),
+                {},
+            });
+        };
+    fixture.provider.failSnapshotStartAfterCallback = true;
+    bool completionReceived = false;
+    QObject::connect(
+        fixture.executor.get(),
+        &Core::SemanticRuntimeService::liveRefreshCompleted,
+        fixture.executor.get(),
+        [&fixture, &completionReceived] {
+            completionReceived = true;
+            fixture.executor.reset();
+        },
+        Qt::DirectConnection);
+
+    QCOMPARE(
+        fixture.executor->requestLiveRefresh(request).outcome,
+        Data::SemanticLiveRefreshOutcome::Accepted);
+    QTRY_VERIFY(completionReceived);
+    QVERIFY(!fixture.executor);
+    QCOMPARE(fixture.provider.pendingRequestCount(), 0);
+    QTest::qWait(40);
+    QVERIFY(!fixture.executor);
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorExpiresAndSeparatesLiveCaptureCohorts()
+{
+    QDateTime now = QDateTime::currentDateTimeUtc();
+    SemanticExecutorFixture fixture;
+    const Utils::Result<> initialized = fixture.initialize(false, true, 5000, 5000, [&now] {
+        return now;
+    });
+    QVERIFY_RESULT(initialized);
+    const Data::SemanticRuntimeContext initial = fixture.executor->contexts().constFirst();
+    QVERIFY(initial.signalStates.size() >= 2);
+    const Data::SemanticSignalRuntimeState first = initial.signalStates.at(0);
+    const Data::SemanticSignalRuntimeState second = initial.signalStates.at(1);
+
+    const auto refreshOne = [&fixture, &initial, &now](
+                                const Data::SemanticSignalRuntimeState &signal,
+                                QStringView correlation,
+                                quint64 captureCycle,
+                                quint64 timestampNs) {
+        Data::SemanticLiveRefreshRequest request;
+        request.controllerId = initial.controllerId;
+        request.scope = initial.scope;
+        request.targets = {{signal.target.deviceId, signal.target.signalId}};
+        request.expectedContextHash = initial.contextHash;
+        request.correlationId = correlation.toString();
+        if (fixture.executor->requestLiveRefresh(request).outcome
+            != Data::SemanticLiveRefreshOutcome::Accepted) {
+            return false;
+        }
+        QCoreApplication::processEvents();
+        if (!fixture.provider.pendingSnapshotRequest)
+            return false;
+        const Data::RuntimeResourceSnapshotRequest providerRequest
+            = *fixture.provider.pendingSnapshotRequest;
+        Data::RuntimeResourceSnapshot snapshot = targetedSnapshot(
+            fixture.snapshot, providerRequest, {}, captureCycle, captureCycle, timestampNs);
+        snapshot.receivedAt = now;
+        fixture.provider.sendSnapshotResult({providerRequest, snapshot, {}});
+        return true;
+    };
+
+    QVERIFY(refreshOne(first, u"semantic-refresh/cohort/first", 200, 2000));
+    QVERIFY(refreshOne(second, u"semantic-refresh/cohort/second", 201, 2010));
+    const Data::SemanticRuntimeContext mixed = fixture.executor->contexts().constFirst();
+    const auto stateFor = [](const Data::SemanticRuntimeContext &context,
+                             const Data::SemanticRuntimeTarget &target) {
+        return std::find_if(
+            context.signalStates.cbegin(),
+            context.signalStates.cend(),
+            [&target](const Data::SemanticSignalRuntimeState &state) {
+                return state.target == target;
+            });
+    };
+    const auto mixedFirst = stateFor(mixed, first.target);
+    const auto mixedSecond = stateFor(mixed, second.target);
+    QVERIFY(mixedFirst != mixed.signalStates.cend());
+    QVERIFY(mixedSecond != mixed.signalStates.cend());
+    QCOMPARE(mixedFirst->availability, Data::SemanticSignalAvailability::Ready);
+    QCOMPARE(mixedSecond->availability, Data::SemanticSignalAvailability::Ready);
+    QCOMPARE(mixedFirst->captureCycle, quint64(200));
+    QCOMPARE(mixedSecond->captureCycle, quint64(201));
+    QVERIFY(mixed.detail.startsWith(QStringLiteral("runtime-resource-snapshot-incoherent:")));
+    QVERIFY(!mixed.detail.startsWith(QStringLiteral("semantic-runtime-ready:")));
+
+    now = now.addMSecs(5001);
+    fixture.provider.publishConnectionSnapshot(fixture.provider.snapshot);
+    const Data::SemanticRuntimeContext stale = fixture.executor->contexts().constFirst();
+    const auto staleFirst = stateFor(stale, first.target);
+    const auto staleSecond = stateFor(stale, second.target);
+    QVERIFY(staleFirst != stale.signalStates.cend());
+    QVERIFY(staleSecond != stale.signalStates.cend());
+    QCOMPARE(staleFirst->availability, Data::SemanticSignalAvailability::Stale);
+    QCOMPARE(staleSecond->availability, Data::SemanticSignalAvailability::Stale);
+    QCOMPARE(staleFirst->quality.state, Data::RuntimeResourceQualityState::Stale);
+    QCOMPARE(staleSecond->quality.state, Data::RuntimeResourceQualityState::Stale);
+    QVERIFY(!staleFirst->snapshotComplete);
+    QVERIFY(!staleSecond->snapshotComplete);
+    QCOMPARE(staleFirst->observedAt, now.addMSecs(-5001));
+    QCOMPARE(staleSecond->observedAt, now.addMSecs(-5001));
 }
 
 void EtherCATSemanticRuntimeTests::testExecutorExecutesApi038Xb6Action()

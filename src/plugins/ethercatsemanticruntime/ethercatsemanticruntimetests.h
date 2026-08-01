@@ -54,6 +54,16 @@ private slots:
     void testSemanticActionPlan();
     void testSemanticActionPlanFailsClosed();
     void testExecutorRejectsUnauthorizedManualActionBeforeApply();
+    void testExecutorRefreshesVerifiedSignals();
+    void testExecutorSerializesLiveRefreshWithActions();
+    void testExecutorDefersSynchronousLiveResultUntilAccepted();
+    void testExecutorTimesOutLiveRefreshAndUnblocksAction();
+    void testExecutorFailsLiveRefreshWhenProviderStartFails();
+    void testExecutorRejectsMismatchedAndLateLiveResults();
+    void testExecutorReleasesLiveRefreshOnRemoval();
+    void testExecutorRejectsRecursiveRefreshDuringProjectRemoval();
+    void testExecutorSurvivesCompletionDeletingExecutor();
+    void testExecutorExpiresAndSeparatesLiveCaptureCohorts();
     void testExecutorExecutesApi038Xb6Action();
     void testExecutorFailsClosedBeforeApply_data();
     void testExecutorFailsClosedBeforeApply();

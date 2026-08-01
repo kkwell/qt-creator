@@ -111,6 +111,7 @@ struct ETHERCATDATA_EXPORT SemanticSignalRuntimeState
     bool snapshotComplete = false;
     quint64 captureCycle = 0;
     quint64 controllerTimestampNs = 0;
+    QDateTime observedAt;
     QString detail;
 
     friend bool operator==(const SemanticSignalRuntimeState &, const SemanticSignalRuntimeState &)
@@ -188,6 +189,120 @@ struct ETHERCATDATA_EXPORT SemanticRuntimeContext
     QString detail;
 
     friend bool operator==(const SemanticRuntimeContext &, const SemanticRuntimeContext &) = default;
+};
+
+// A live refresh remains entirely in the semantic namespace. The service is
+// responsible for resolving each signal to a verified runtime binding; public
+// callers never supply resource IDs, PDO coordinates, or process-image offsets.
+struct ETHERCATDATA_EXPORT SemanticLiveRefreshSignal
+{
+    NodeId deviceId;
+    SemanticSignalId signalId;
+
+    friend bool operator==(const SemanticLiveRefreshSignal &, const SemanticLiveRefreshSignal &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT SemanticLiveRefreshRequest
+{
+    QString controllerId;
+    ControllerConnectionScope scope;
+    QList<SemanticLiveRefreshSignal> targets;
+    QByteArray expectedContextHash;
+    QString correlationId;
+
+    bool isValid() const
+    {
+        if (controllerId.isEmpty() || controllerId != controllerId.trimmed()
+            || scope.projectId.isNull() || scope.masterId.isNull()
+            || expectedContextHash.size() != 32 || correlationId.isEmpty()
+            || correlationId.size() > 128 || correlationId != correlationId.trimmed()
+            || targets.isEmpty() || targets.size() > 64) {
+            return false;
+        }
+        for (const QChar character : controllerId) {
+            if (character.category() == QChar::Other_Control)
+                return false;
+        }
+        for (const QChar character : correlationId) {
+            if (character.category() == QChar::Other_Control)
+                return false;
+        }
+
+        QList<SemanticLiveRefreshSignal> uniqueSignals;
+        for (const SemanticLiveRefreshSignal &signal : targets) {
+            if (signal.deviceId.isNull() || signal.signalId.value.isEmpty()
+                || signal.signalId.value != signal.signalId.value.trimmed()) {
+                return false;
+            }
+            for (const QChar character : signal.signalId.value) {
+                if (character.category() == QChar::Other_Control)
+                    return false;
+            }
+            if (uniqueSignals.contains(signal))
+                return false;
+            uniqueSignals.append(signal);
+        }
+        return true;
+    }
+
+    friend bool operator==(const SemanticLiveRefreshRequest &, const SemanticLiveRefreshRequest &)
+        = default;
+};
+
+enum class SemanticLiveRefreshOutcome {
+    Accepted,
+    Refreshed,
+    Deferred,
+    Unsupported,
+    Rejected,
+    Failed,
+};
+
+// Refreshed values are published through SemanticRuntimeContext. This result
+// carries only admission/completion state and the immutable capture boundary;
+// it deliberately cannot disclose provider-owned runtime coordinates.
+struct ETHERCATDATA_EXPORT SemanticLiveRefreshResult
+{
+    QString correlationId;
+    SemanticLiveRefreshOutcome outcome = SemanticLiveRefreshOutcome::Unsupported;
+    QString code;
+    QString detail;
+    quint64 captureCycle = 0;
+
+    bool isValid() const
+    {
+        if (correlationId.isEmpty() || correlationId.size() > 128
+            || correlationId != correlationId.trimmed() || code.isEmpty() || code.size() > 128
+            || code != code.trimmed()) {
+            return false;
+        }
+        for (const QChar character : correlationId) {
+            if (character.category() == QChar::Other_Control)
+                return false;
+        }
+        for (const QChar character : code) {
+            if (character.category() == QChar::Other_Control)
+                return false;
+        }
+
+        const bool detailIsValid = !detail.isEmpty() && detail == detail.trimmed();
+        switch (outcome) {
+        case SemanticLiveRefreshOutcome::Accepted:
+            return detail.isEmpty() && captureCycle == 0;
+        case SemanticLiveRefreshOutcome::Refreshed:
+            return detail.isEmpty() && captureCycle != 0;
+        case SemanticLiveRefreshOutcome::Deferred:
+        case SemanticLiveRefreshOutcome::Unsupported:
+        case SemanticLiveRefreshOutcome::Rejected:
+        case SemanticLiveRefreshOutcome::Failed:
+            return detailIsValid && captureCycle == 0;
+        }
+        return false;
+    }
+
+    friend bool operator==(const SemanticLiveRefreshResult &, const SemanticLiveRefreshResult &)
+        = default;
 };
 
 enum class SemanticRuntimeActorKind {
@@ -389,6 +504,10 @@ Q_DECLARE_METATYPE(EtherCAT::Data::SemanticActionQualification)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticActionParameterRuntimeDefinition)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticActionRuntimeState)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticRuntimeContext)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticLiveRefreshSignal)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticLiveRefreshRequest)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticLiveRefreshOutcome)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticLiveRefreshResult)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticRuntimeActorKind)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticRuntimeActor)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationId)

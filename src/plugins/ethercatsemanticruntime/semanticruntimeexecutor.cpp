@@ -689,7 +689,12 @@ public:
         const Data::SemanticOperationId &operationId) const;
     QList<Data::SemanticRuntimeAuditEvent> audit(
         const QString &controllerId, quint64 afterSequence) const;
+    Data::SemanticLiveRefreshResult requestLiveRefresh(
+        const Data::SemanticLiveRefreshRequest &request);
 
+    bool handleLiveSnapshot(
+        Core::ControllerConnectionProvider *provider,
+        const Data::RuntimeResourceSnapshotResult &result);
     void handleSnapshot(
         Core::ControllerConnectionProvider *provider,
         const Data::RuntimeResourceSnapshotResult &result);
@@ -704,6 +709,7 @@ public:
         const Data::RuntimeOutputTransactionResult &result);
     void providerRemoved(Core::ControllerConnectionProvider *provider);
     void providerRegistryRemoved();
+    void projectRemoved(const Data::NodeId &projectId);
     void projectServiceRemoved();
 
 private:
@@ -745,8 +751,18 @@ private:
 
     struct ControllerQueue
     {
+        struct LiveRefresh
+        {
+            Data::SemanticLiveRefreshRequest request;
+            Data::RuntimeResourceSnapshotRequest providerRequest;
+            QList<Data::SemanticRuntimeBinding> bindings;
+            QPointer<Core::ControllerConnectionProvider> provider;
+            quint64 attemptNonce = 0;
+        };
+
         QList<Data::SemanticOperationId> pending;
         std::optional<ActiveExecution> active;
+        std::optional<LiveRefresh> liveRefresh;
     };
 
     struct CurrentExecution
@@ -767,6 +783,14 @@ private:
 
     void publishJournalResult(
         const SemanticOperationJournalResult &result, const QString &controllerId);
+    void dispatchLiveRefresh(const QString &controllerId, quint64 attemptNonce);
+    bool finishLiveRefresh(
+        const QString &controllerId,
+        quint64 attemptNonce,
+        Data::SemanticLiveRefreshOutcome outcome,
+        const QString &code,
+        const QString &detail,
+        quint64 captureCycle = 0);
     void enqueue(const Data::SemanticOperationRecord &record);
     void startNext(const QString &controllerId);
     void beginBeforeSnapshot(const QString &controllerId);
@@ -805,6 +829,7 @@ private:
     SemanticRuntimeExecutor *q = nullptr;
     SemanticOperationJournal m_journal;
     QHash<QString, ControllerQueue> m_queues;
+    quint64 m_nextLiveRefreshAttemptNonce = 0;
 };
 
 std::optional<Data::SemanticRuntimeContext> SemanticRuntimeExecutorExecution::currentContext(
@@ -1034,6 +1059,288 @@ QList<Data::SemanticRuntimeAuditEvent> SemanticRuntimeExecutorExecution::audit(
     return m_journal.audit(controllerId, afterSequence);
 }
 
+Data::SemanticLiveRefreshResult SemanticRuntimeExecutorExecution::requestLiveRefresh(
+    const Data::SemanticLiveRefreshRequest &request)
+{
+    const auto rejected = [&request](const QString &code, const QString &detail) {
+        return Data::SemanticLiveRefreshResult{
+            request.correlationId,
+            Data::SemanticLiveRefreshOutcome::Rejected,
+            code,
+            detail,
+            0,
+        };
+    };
+    const auto deferred = [&request](const QString &code, const QString &detail) {
+        return Data::SemanticLiveRefreshResult{
+            request.correlationId,
+            Data::SemanticLiveRefreshOutcome::Deferred,
+            code,
+            detail,
+            0,
+        };
+    };
+    if (!request.isValid())
+        return rejected(
+            QStringLiteral("semantic-live-refresh-invalid"),
+            QStringLiteral("Semantic live refresh request is invalid."));
+    if (q->m_projectsBeingRemoved.contains(request.scope.projectId))
+        return rejected(
+            QStringLiteral("semantic-live-refresh-context-changed"),
+            QStringLiteral("The refresh project is being removed."));
+    if (!q->m_projectService || !q->m_projectService->isAvailable())
+        return rejected(
+            QStringLiteral("semantic-live-refresh-context-changed"),
+            QStringLiteral("The project service is unavailable."));
+
+    const std::optional<Data::ProjectSnapshot> project = q->m_projectService->project(
+        request.scope.projectId);
+    if (!project || !project->valid)
+        return rejected(
+            QStringLiteral("semantic-live-refresh-context-changed"),
+            QStringLiteral("The refresh project is unavailable."));
+    const Data::SemanticRuntimeContext context = q->buildContext(*project, request.scope.masterId);
+    if (!context.complete || context.controllerId != request.controllerId
+        || context.scope != request.scope || context.contextHash != request.expectedContextHash
+        || semanticRuntimeContextHash(context) != request.expectedContextHash) {
+        return rejected(
+            QStringLiteral("semantic-live-refresh-context-changed"),
+            QStringLiteral("The verified semantic context changed."));
+    }
+
+    QList<Data::SemanticRuntimeBinding> bindings;
+    for (const Data::SemanticLiveRefreshSignal &signal : request.targets) {
+        QList<Data::SemanticRuntimeBinding> matches;
+        for (const Data::SemanticSignalRuntimeState &state : context.signalStates) {
+            if (state.target.controllerId == request.controllerId
+                && state.target.scope == request.scope && state.target.deviceId == signal.deviceId
+                && state.target.kind == Data::SemanticRuntimeTargetKind::Signal
+                && state.target.signalId == signal.signalId && state.target.actionId.value.isEmpty()
+                && state.binding) {
+                matches.append(*state.binding);
+            }
+        }
+        if (matches.size() != 1
+            || !Core::validateSemanticRuntimeBinding(matches.constFirst()).accepted()
+            || (matches.constFirst().access != Data::RuntimeResourceAccess::ReadOnly
+                && matches.constFirst().access != Data::RuntimeResourceAccess::ReadWrite)) {
+            return rejected(
+                QStringLiteral("semantic-live-refresh-binding-invalid"),
+                QStringLiteral("A requested semantic signal is not uniquely readable."));
+        }
+        bindings.append(matches.constFirst());
+    }
+    std::sort(
+        bindings.begin(),
+        bindings.end(),
+        [](const Data::SemanticRuntimeBinding &left, const Data::SemanticRuntimeBinding &right) {
+            return left.resourceId.value < right.resourceId.value;
+        });
+    if (std::adjacent_find(
+            bindings.cbegin(),
+            bindings.cend(),
+            [](const Data::SemanticRuntimeBinding &left, const Data::SemanticRuntimeBinding &right) {
+                return left.resourceId == right.resourceId;
+            })
+        != bindings.cend()) {
+        return rejected(
+            QStringLiteral("semantic-live-refresh-binding-invalid"),
+            QStringLiteral("Requested semantic signals resolve ambiguously."));
+    }
+
+    QString providerError;
+    Core::ControllerConnectionProvider *provider = currentProvider(request.scope, &providerError);
+    if (!provider)
+        return rejected(
+            QStringLiteral("semantic-live-refresh-context-changed"),
+            conciseExecutionText(providerError));
+    const Data::ControllerConnectionSnapshot connection = provider->connectionSnapshot();
+    if (!isConnected(connection.state) || connection.scope != request.scope
+        || connection.sessionGeneration != context.sessionGeneration
+        || !provider->supportsRuntimeResources()) {
+        return rejected(
+            QStringLiteral("semantic-live-refresh-context-changed"),
+            QStringLiteral("The controller runtime-resource session changed."));
+    }
+    const std::optional<Data::RuntimeResourceCatalog> catalog = provider->runtimeResourceCatalog();
+    if (!catalog || catalog->scope != request.scope
+        || catalog->sessionGeneration != context.sessionGeneration
+        || catalog->epoch != context.epoch) {
+        return rejected(
+            QStringLiteral("semantic-live-refresh-context-changed"),
+            QStringLiteral("The runtime-resource catalog changed."));
+    }
+
+    ControllerQueue &queue = m_queues[request.controllerId];
+    if (queue.active || !queue.pending.isEmpty() || queue.liveRefresh) {
+        return deferred(
+            QStringLiteral("semantic-live-refresh-busy"),
+            QStringLiteral("Controller work is already in progress."));
+    }
+
+    quint64 attemptNonce = ++m_nextLiveRefreshAttemptNonce;
+    if (!attemptNonce)
+        attemptNonce = ++m_nextLiveRefreshAttemptNonce;
+
+    Data::RuntimeResourceSnapshotRequest providerRequest;
+    QByteArray correlationMaterial = QByteArrayLiteral(
+        "embed-labs.semantic-live-refresh-attempt.v1");
+    appendContextInteger(correlationMaterial, attemptNonce);
+    appendContextString(correlationMaterial, request.correlationId);
+    appendContextBytes(correlationMaterial, request.expectedContextHash);
+    QList<Data::SemanticLiveRefreshSignal> canonicalTargets = request.targets;
+    std::sort(
+        canonicalTargets.begin(),
+        canonicalTargets.end(),
+        [](const Data::SemanticLiveRefreshSignal &left,
+           const Data::SemanticLiveRefreshSignal &right) {
+            const QString leftDevice = left.deviceId.toString();
+            const QString rightDevice = right.deviceId.toString();
+            if (leftDevice != rightDevice)
+                return leftDevice < rightDevice;
+            return left.signalId.value < right.signalId.value;
+        });
+    appendContextInteger(correlationMaterial, quint64(canonicalTargets.size()));
+    for (const Data::SemanticLiveRefreshSignal &target : std::as_const(canonicalTargets)) {
+        appendContextString(correlationMaterial, target.deviceId.toString());
+        appendContextString(correlationMaterial, target.signalId.value);
+    }
+    for (const Data::SemanticRuntimeBinding &binding : std::as_const(bindings))
+        appendContextBytes(correlationMaterial, binding.resourceId.value);
+    providerRequest.correlationId
+        = QStringLiteral("semantic-live-")
+          + QString::fromLatin1(
+              QCryptographicHash::hash(correlationMaterial, QCryptographicHash::Sha256)
+                  .toHex()
+                  .left(40));
+    providerRequest.scope = request.scope;
+    providerRequest.sessionGeneration = context.sessionGeneration;
+    providerRequest.expectedEpoch = context.epoch;
+    for (const Data::SemanticRuntimeBinding &binding : std::as_const(bindings))
+        providerRequest.resourceIds.append(binding.resourceId);
+    if (!providerRequest.isValid())
+        return rejected(
+            QStringLiteral("semantic-live-refresh-binding-invalid"),
+            QStringLiteral("The verified runtime snapshot request is invalid."));
+
+    queue.liveRefresh.emplace(
+        ControllerQueue::LiveRefresh{request, providerRequest, bindings, provider, attemptNonce});
+    QTimer::singleShot(0, q, [this, controllerId = request.controllerId, attemptNonce] {
+        dispatchLiveRefresh(controllerId, attemptNonce);
+    });
+    return {
+        request.correlationId,
+        Data::SemanticLiveRefreshOutcome::Accepted,
+        QStringLiteral("semantic-live-refresh-accepted"),
+        {},
+        0,
+    };
+}
+
+void SemanticRuntimeExecutorExecution::dispatchLiveRefresh(
+    const QString &controllerId, quint64 attemptNonce)
+{
+    auto queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->liveRefresh
+        || queue->liveRefresh->attemptNonce != attemptNonce) {
+        return;
+    }
+    const QPointer<Core::ControllerConnectionProvider> provider = queue->liveRefresh->provider;
+    const Data::RuntimeResourceSnapshotRequest providerRequest = queue->liveRefresh->providerRequest;
+    const Data::SemanticLiveRefreshRequest request = queue->liveRefresh->request;
+    if (!provider) {
+        finishLiveRefresh(
+            controllerId,
+            attemptNonce,
+            Data::SemanticLiveRefreshOutcome::Failed,
+            QStringLiteral("semantic-live-refresh-provider-failed"),
+            QStringLiteral("The controller provider was removed before live refresh started."));
+        return;
+    }
+
+    QString lifecycleError;
+    const std::optional<Data::ProjectSnapshot> project
+        = q->m_projectService && q->m_projectService->isAvailable()
+                  && !q->m_projectsBeingRemoved.contains(request.scope.projectId)
+              ? q->m_projectService->project(request.scope.projectId)
+              : std::nullopt;
+    const Data::SemanticRuntimeContext context
+        = project && project->valid ? q->buildContext(*project, request.scope.masterId)
+                                    : Data::SemanticRuntimeContext{};
+    Core::ControllerConnectionProvider *current
+        = project ? currentProvider(request.scope, &lifecycleError) : nullptr;
+    const Data::ControllerConnectionSnapshot connection = current
+                                                              ? current->connectionSnapshot()
+                                                              : Data::ControllerConnectionSnapshot{};
+    const std::optional<Data::RuntimeResourceCatalog> catalog
+        = current ? current->runtimeResourceCatalog() : std::nullopt;
+    if (!project || !project->valid || current != provider || !context.complete
+        || context.controllerId != request.controllerId || context.scope != request.scope
+        || context.contextHash != request.expectedContextHash
+        || semanticRuntimeContextHash(context) != request.expectedContextHash
+        || !isConnected(connection.state) || connection.scope != request.scope
+        || connection.sessionGeneration != context.sessionGeneration
+        || !current->supportsRuntimeResources() || !catalog || catalog->scope != request.scope
+        || catalog->sessionGeneration != context.sessionGeneration
+        || catalog->epoch != context.epoch || providerRequest.scope != context.scope
+        || providerRequest.sessionGeneration != context.sessionGeneration
+        || providerRequest.expectedEpoch != context.epoch) {
+        finishLiveRefresh(
+            controllerId,
+            attemptNonce,
+            Data::SemanticLiveRefreshOutcome::Failed,
+            QStringLiteral("semantic-live-refresh-context-changed"),
+            lifecycleError.isEmpty()
+                ? QStringLiteral("The semantic runtime lifecycle changed before dispatch.")
+                : conciseExecutionText(lifecycleError));
+        return;
+    }
+
+    QTimer::singleShot(q->m_liveRefreshTimeoutMs, q, [this, controllerId, attemptNonce] {
+        finishLiveRefresh(
+            controllerId,
+            attemptNonce,
+            Data::SemanticLiveRefreshOutcome::Failed,
+            QStringLiteral("semantic-live-refresh-timeout"),
+            QStringLiteral("The controller did not return the live snapshot in time."));
+    });
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    const Utils::Result<> started = provider->requestRuntimeResourceSnapshot(providerRequest);
+    if (!guardedExecutor)
+        return;
+    if (!started) {
+        finishLiveRefresh(
+            controllerId,
+            attemptNonce,
+            Data::SemanticLiveRefreshOutcome::Failed,
+            QStringLiteral("semantic-live-refresh-provider-failed"),
+            QStringLiteral("The controller provider could not start the live snapshot."));
+    }
+}
+
+bool SemanticRuntimeExecutorExecution::finishLiveRefresh(
+    const QString &controllerId,
+    quint64 attemptNonce,
+    Data::SemanticLiveRefreshOutcome outcome,
+    const QString &code,
+    const QString &detail,
+    quint64 captureCycle)
+{
+    auto queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->liveRefresh
+        || queue->liveRefresh->attemptNonce != attemptNonce) {
+        return false;
+    }
+    const QString correlationId = queue->liveRefresh->request.correlationId;
+    queue->liveRefresh.reset();
+    SemanticRuntimeExecutor *executor = q;
+    const Data::SemanticLiveRefreshResult
+        completion{correlationId, outcome, code, detail, captureCycle};
+    QTimer::singleShot(0, executor, [this, controllerId] { startNext(controllerId); });
+    emit executor->liveRefreshCompleted(completion);
+    return true;
+}
+
 void SemanticRuntimeExecutorExecution::enqueue(const Data::SemanticOperationRecord &record)
 {
     ControllerQueue &queue = m_queues[record.request.target.controllerId];
@@ -1050,7 +1357,7 @@ void SemanticRuntimeExecutorExecution::enqueue(const Data::SemanticOperationReco
 void SemanticRuntimeExecutorExecution::startNext(const QString &controllerId)
 {
     auto queue = m_queues.find(controllerId);
-    if (queue == m_queues.end() || queue->active || queue->pending.isEmpty())
+    if (queue == m_queues.end() || queue->active || queue->liveRefresh || queue->pending.isEmpty())
         return;
 
     const Data::SemanticOperationId operationId = queue->pending.takeFirst();
@@ -1561,6 +1868,183 @@ bool SemanticRuntimeExecutorExecution::afterSnapshotMatchesWrites(
             return false;
         }
     }
+    return true;
+}
+
+bool SemanticRuntimeExecutorExecution::handleLiveSnapshot(
+    Core::ControllerConnectionProvider *provider, const Data::RuntimeResourceSnapshotResult &result)
+{
+    QList<QString> correlationMatches;
+    for (auto candidate = m_queues.cbegin(); candidate != m_queues.cend(); ++candidate) {
+        if (candidate->liveRefresh && candidate->liveRefresh->provider == provider
+            && candidate->liveRefresh->providerRequest.correlationId
+                   == result.request.correlationId) {
+            correlationMatches.append(candidate.key());
+        }
+    }
+    if (correlationMatches.isEmpty())
+        return false;
+    if (correlationMatches.size() != 1)
+        return true;
+    const QString controllerId = correlationMatches.constFirst();
+
+    auto queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->liveRefresh)
+        return false;
+    const ControllerQueue::LiveRefresh refresh = *queue->liveRefresh;
+    const auto fail = [this, &refresh, &controllerId](const QString &code, const QString &detail) {
+        finishLiveRefresh(
+            controllerId,
+            refresh.attemptNonce,
+            Data::SemanticLiveRefreshOutcome::Failed,
+            code,
+            detail);
+    };
+
+    if (result.request != refresh.providerRequest) {
+        fail(
+            QStringLiteral("semantic-live-refresh-provider-failed"),
+            QStringLiteral("The live snapshot response did not match its exact attempt."));
+        return true;
+    }
+
+    if (!result.isValid()) {
+        fail(
+            QStringLiteral("semantic-live-refresh-provider-failed"),
+            QStringLiteral("The controller returned an invalid live snapshot."));
+        return true;
+    }
+    if (result.error) {
+        fail(
+            QStringLiteral("semantic-live-refresh-provider-failed"),
+            providerFailureText(QStringLiteral("Live refresh failed"), *result.error));
+        return true;
+    }
+    if (!result.snapshot || !result.snapshot->captureCycle
+        || !result.snapshot->controllerTimestampNs) {
+        fail(
+            QStringLiteral("semantic-live-refresh-provider-failed"),
+            QStringLiteral("The live snapshot has no capture boundary."));
+        return true;
+    }
+
+    if (!q->m_projectService || !q->m_projectService->isAvailable()) {
+        fail(
+            QStringLiteral("semantic-live-refresh-context-changed"),
+            QStringLiteral("The refresh project is unavailable."));
+        return true;
+    }
+    const std::optional<Data::ProjectSnapshot> project = q->m_projectService->project(
+        refresh.request.scope.projectId);
+    if (!project || !project->valid) {
+        fail(
+            QStringLiteral("semantic-live-refresh-context-changed"),
+            QStringLiteral("The refresh project changed."));
+        return true;
+    }
+    const Data::SemanticRuntimeContext context
+        = q->buildContext(*project, refresh.request.scope.masterId);
+    if (!context.complete || context.controllerId != refresh.request.controllerId
+        || context.scope != refresh.request.scope
+        || context.contextHash != refresh.request.expectedContextHash
+        || semanticRuntimeContextHash(context) != refresh.request.expectedContextHash
+        || provider->connectionSnapshot().sessionGeneration != context.sessionGeneration) {
+        fail(
+            QStringLiteral("semantic-live-refresh-context-changed"),
+            QStringLiteral("The verified semantic context changed during refresh."));
+        return true;
+    }
+    const std::optional<Data::RuntimeResourceCatalog> catalog = provider->runtimeResourceCatalog();
+    if (!catalog || catalog->scope != context.scope
+        || catalog->sessionGeneration != context.sessionGeneration
+        || catalog->epoch != context.epoch
+        || refresh.bindings.size() != result.snapshot->samples.size()) {
+        fail(
+            QStringLiteral("semantic-live-refresh-context-changed"),
+            QStringLiteral("The runtime-resource catalog changed during refresh."));
+        return true;
+    }
+
+    QList<Data::RuntimeResourceSample> verifiedSamples;
+    verifiedSamples.reserve(refresh.bindings.size());
+    for (const Data::RuntimeResourceSample &sample : result.snapshot->samples) {
+        if (!sample.controllerTimestampNs
+            || sample.controllerTimestampNs != result.snapshot->controllerTimestampNs) {
+            fail(
+                QStringLiteral("semantic-live-refresh-provider-failed"),
+                QStringLiteral("Live samples do not share one controller capture."));
+            return true;
+        }
+    }
+    for (const Data::SemanticRuntimeBinding &binding : refresh.bindings) {
+        const Core::SemanticRuntimeReadValidation validation
+            = Core::validateSemanticRuntimeRead(binding, *catalog, *result.snapshot);
+        if (!validation.validation.accepted() || !validation.sample) {
+            fail(
+                QStringLiteral("semantic-live-refresh-provider-failed"),
+                QStringLiteral("A live semantic sample failed verified read validation."));
+            return true;
+        }
+        verifiedSamples.append(*validation.sample);
+    }
+
+    const auto currentCache = q->m_liveRuntimeCaches.constFind(provider);
+    const bool reuseCache = currentCache != q->m_liveRuntimeCaches.cend()
+                            && currentCache->controllerId == context.controllerId
+                            && currentCache->scope == context.scope
+                            && currentCache->sessionGeneration == context.sessionGeneration
+                            && currentCache->epoch == context.epoch
+                            && currentCache->mappingDigest == context.mappingDigest
+                            && currentCache->controllerMappingDigest
+                                   == context.controllerMappingDigest
+                            && currentCache->contextHash == context.contextHash;
+    SemanticRuntimeExecutor::LiveRuntimeCache updated;
+    if (reuseCache)
+        updated = *currentCache;
+    else {
+        updated.controllerId = context.controllerId;
+        updated.scope = context.scope;
+        updated.sessionGeneration = context.sessionGeneration;
+        updated.epoch = context.epoch;
+        updated.mappingDigest = context.mappingDigest;
+        updated.controllerMappingDigest = context.controllerMappingDigest;
+        updated.contextHash = context.contextHash;
+    }
+    for (const Data::RuntimeResourceSample &sample : std::as_const(verifiedSamples)) {
+        const auto previous = updated.samples.constFind(sample.resourceId);
+        if (previous != updated.samples.cend()
+            && (previous->captureCycle > result.snapshot->captureCycle
+                || (previous->captureCycle == result.snapshot->captureCycle
+                    && previous->sample != sample))) {
+            fail(
+                QStringLiteral("semantic-live-refresh-provider-failed"),
+                QStringLiteral("The live snapshot capture order regressed."));
+            return true;
+        }
+    }
+    const QDateTime receivedAt = result.snapshot->receivedAt.isValid()
+                                     ? result.snapshot->receivedAt
+                                     : QDateTime::currentDateTimeUtc();
+    for (const Data::RuntimeResourceSample &sample : std::as_const(verifiedSamples)) {
+        updated.samples.insert(
+            sample.resourceId,
+            {
+                sample,
+                result.snapshot->captureCycle,
+                result.snapshot->controllerTimestampNs,
+                receivedAt,
+            });
+    }
+    q->m_liveRuntimeCaches.insert(provider, updated);
+    q->scheduleLiveCacheExpiry(provider, receivedAt);
+    q->publishContexts();
+    finishLiveRefresh(
+        controllerId,
+        refresh.attemptNonce,
+        Data::SemanticLiveRefreshOutcome::Refreshed,
+        QStringLiteral("semantic-live-refresh-refreshed"),
+        {},
+        result.snapshot->captureCycle);
     return true;
 }
 
@@ -2190,10 +2674,15 @@ void SemanticRuntimeExecutorExecution::providerRemoved(
     Core::ControllerConnectionProvider *provider)
 {
     QList<QString> affected;
+    QList<QPair<QString, quint64>> refreshes;
     for (auto queue = m_queues.cbegin(); queue != m_queues.cend(); ++queue) {
         if (queue->active
             && (queue->active->provider == provider || queue->active->provider.isNull())) {
             affected.append(queue.key());
+        }
+        if (queue->liveRefresh
+            && (queue->liveRefresh->provider == provider || queue->liveRefresh->provider.isNull())) {
+            refreshes.append({queue.key(), queue->liveRefresh->attemptNonce});
         }
     }
     for (const QString &controllerId : std::as_const(affected)) {
@@ -2202,14 +2691,28 @@ void SemanticRuntimeExecutorExecution::providerRemoved(
             QStringLiteral("controller-provider-removed"),
             QStringLiteral("The controller provider was removed during execution."));
     }
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    for (const auto &[controllerId, attemptNonce] : std::as_const(refreshes)) {
+        finishLiveRefresh(
+            controllerId,
+            attemptNonce,
+            Data::SemanticLiveRefreshOutcome::Failed,
+            QStringLiteral("semantic-live-refresh-provider-failed"),
+            QStringLiteral("The controller provider was removed during live refresh."));
+        if (!guardedExecutor)
+            return;
+    }
 }
 
 void SemanticRuntimeExecutorExecution::providerRegistryRemoved()
 {
     QList<QString> affected;
+    QList<QPair<QString, quint64>> refreshes;
     for (auto queue = m_queues.cbegin(); queue != m_queues.cend(); ++queue) {
         if (queue->active)
             affected.append(queue.key());
+        if (queue->liveRefresh)
+            refreshes.append({queue.key(), queue->liveRefresh->attemptNonce});
     }
     for (const QString &controllerId : std::as_const(affected)) {
         failActive(
@@ -2217,20 +2720,85 @@ void SemanticRuntimeExecutorExecution::providerRegistryRemoved()
             QStringLiteral("provider-registry-removed"),
             QStringLiteral("The controller provider registry was removed during execution."));
     }
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    for (const auto &[controllerId, attemptNonce] : std::as_const(refreshes)) {
+        finishLiveRefresh(
+            controllerId,
+            attemptNonce,
+            Data::SemanticLiveRefreshOutcome::Failed,
+            QStringLiteral("semantic-live-refresh-provider-failed"),
+            QStringLiteral("The controller provider registry was removed."));
+        if (!guardedExecutor)
+            return;
+    }
+}
+
+void SemanticRuntimeExecutorExecution::projectRemoved(const Data::NodeId &projectId)
+{
+    QList<QString> affected;
+    QList<QPair<QString, quint64>> refreshes;
+    for (auto queue = m_queues.cbegin(); queue != m_queues.cend(); ++queue) {
+        if (queue->active) {
+            const std::optional<Data::SemanticOperationRecord> record = m_journal.operation(
+                queue->active->operationId);
+            if (record && record->request.target.scope.projectId == projectId)
+                affected.append(queue.key());
+        }
+        if (queue->liveRefresh && queue->liveRefresh->request.scope.projectId == projectId) {
+            refreshes.append({queue.key(), queue->liveRefresh->attemptNonce});
+        }
+    }
+    for (const QString &controllerId : std::as_const(affected)) {
+        failActive(
+            controllerId,
+            QStringLiteral("project-removed"),
+            QStringLiteral("The project was removed during execution."));
+    }
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    for (const auto &[controllerId, attemptNonce] : std::as_const(refreshes)) {
+        finishLiveRefresh(
+            controllerId,
+            attemptNonce,
+            Data::SemanticLiveRefreshOutcome::Failed,
+            QStringLiteral("semantic-live-refresh-context-changed"),
+            QStringLiteral("The refresh project was removed."));
+        if (!guardedExecutor)
+            return;
+    }
+    for (auto cache = q->m_liveRuntimeCaches.begin(); cache != q->m_liveRuntimeCaches.end();) {
+        if (cache->scope.projectId == projectId)
+            cache = q->m_liveRuntimeCaches.erase(cache);
+        else
+            ++cache;
+    }
 }
 
 void SemanticRuntimeExecutorExecution::projectServiceRemoved()
 {
     QList<QString> affected;
+    QList<QPair<QString, quint64>> refreshes;
     for (auto queue = m_queues.cbegin(); queue != m_queues.cend(); ++queue) {
         if (queue->active)
             affected.append(queue.key());
+        if (queue->liveRefresh)
+            refreshes.append({queue.key(), queue->liveRefresh->attemptNonce});
     }
     for (const QString &controllerId : std::as_const(affected)) {
         failActive(
             controllerId,
             QStringLiteral("project-service-removed"),
             QStringLiteral("The project service was removed during execution."));
+    }
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    for (const auto &[controllerId, attemptNonce] : std::as_const(refreshes)) {
+        finishLiveRefresh(
+            controllerId,
+            attemptNonce,
+            Data::SemanticLiveRefreshOutcome::Failed,
+            QStringLiteral("semantic-live-refresh-context-changed"),
+            QStringLiteral("The project service was removed during live refresh."));
+        if (!guardedExecutor)
+            return;
     }
 }
 
@@ -2240,11 +2808,17 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
     Core::ProjectService *projectService,
     Core::ProviderRegistry *providerRegistry,
     QObject *parent,
-    std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository)
+    std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository,
+    int liveRefreshTimeoutMs,
+    int liveSampleFreshnessMs,
+    std::function<QDateTime()> utcNow)
     : SemanticRuntimeService(parent)
     , m_projectService(projectService)
     , m_providerRegistry(providerRegistry)
     , m_evidenceRepository(std::move(evidenceRepository))
+    , m_liveRefreshTimeoutMs(qMax(1, liveRefreshTimeoutMs))
+    , m_liveSampleFreshnessMs(qMax(1, liveSampleFreshnessMs))
+    , m_utcNow(utcNow ? std::move(utcNow) : [] { return QDateTime::currentDateTimeUtc(); })
 {
     m_execution = std::make_unique<SemanticRuntimeExecutorExecution>(this);
 
@@ -2276,6 +2850,7 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
             this,
             [this](const Data::NodeId &projectId) {
                 m_projectsBeingRemoved.insert(projectId);
+                m_execution->projectRemoved(projectId);
                 clearEvidenceCache();
                 publishContexts();
             });
@@ -2285,6 +2860,7 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
         connect(m_projectService, &QObject::destroyed, this, [this] {
             m_execution->projectServiceRemoved();
             m_projectService = nullptr;
+            m_liveRuntimeCaches.clear();
             publishContexts();
         });
     }
@@ -2334,6 +2910,7 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
             m_runtimeBootstrapSignalGenerations.clear();
             m_runtimeCatalogSignalGenerations.clear();
             m_runtimeSnapshotSignalGenerations.clear();
+            m_liveRuntimeCaches.clear();
             publishContexts();
         });
         for (Core::Provider *provider : m_providerRegistry->providers())
@@ -2347,6 +2924,40 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
 QList<Data::SemanticRuntimeContext> SemanticRuntimeExecutor::contexts() const
 {
     return m_contexts;
+}
+
+QDateTime SemanticRuntimeExecutor::utcNow() const
+{
+    const QDateTime now = m_utcNow ? m_utcNow() : QDateTime::currentDateTimeUtc();
+    return now.isValid() ? now.toUTC() : QDateTime::currentDateTimeUtc();
+}
+
+bool SemanticRuntimeExecutor::liveSampleIsFresh(const QDateTime &receivedAt) const
+{
+    if (!receivedAt.isValid())
+        return false;
+    const qint64 ageMs = receivedAt.toUTC().msecsTo(utcNow());
+    return ageMs >= 0 && ageMs <= m_liveSampleFreshnessMs;
+}
+
+void SemanticRuntimeExecutor::scheduleLiveCacheExpiry(
+    Core::ControllerConnectionProvider *provider, const QDateTime &receivedAt)
+{
+    const qint64 ageMs = receivedAt.isValid() ? receivedAt.toUTC().msecsTo(utcNow()) : -1;
+    const int delayMs = ageMs < 0
+                            ? 1
+                            : int(qMax<qint64>(1, qint64(m_liveSampleFreshnessMs) - ageMs + 1));
+    QPointer<Core::ControllerConnectionProvider> guardedProvider(provider);
+    QTimer::singleShot(delayMs, this, [this, guardedProvider] {
+        if (guardedProvider && m_liveRuntimeCaches.contains(guardedProvider))
+            publishContexts();
+    });
+}
+
+Data::SemanticLiveRefreshResult SemanticRuntimeExecutor::requestLiveRefresh(
+    const Data::SemanticLiveRefreshRequest &request)
+{
+    return m_execution->requestLiveRefresh(request);
 }
 
 Data::SemanticOperationRecord SemanticRuntimeExecutor::submit(
@@ -2633,60 +3244,129 @@ Data::SemanticRuntimeContext SemanticRuntimeExecutor::buildContext(
 
     const std::optional<Data::RuntimeResourceSnapshot> snapshot
         = candidate.provider->runtimeResourceSnapshot();
-    if (!snapshot) {
-        context.detail = semanticRuntimeContextIssueDetail(
-            ContextIssue::RuntimeResourceSnapshotUnavailable);
-        return context;
-    }
-    if (snapshot->scope != context.scope
-        || snapshot->sessionGeneration != context.sessionGeneration
-        || snapshot->epoch != context.epoch) {
-        context.detail = semanticRuntimeContextIssueDetail(
-            ContextIssue::RuntimeResourceSnapshotStale);
-        for (Data::SemanticSignalRuntimeState &state : context.signalStates)
-            state.detail = context.detail;
-        return context;
-    }
-    if (!snapshotHasExactBindingSet(*snapshot, *bindingCandidates)) {
-        context.detail = semanticRuntimeContextIssueDetail(
-            ContextIssue::RuntimeResourceSnapshotIncomplete);
-        for (Data::SemanticSignalRuntimeState &state : context.signalStates)
-            state.detail = context.detail;
-        return context;
-    }
+    ContextIssue snapshotIssue = ContextIssue::RuntimeResourceSnapshotUnavailable;
+    const bool snapshotIdentityMatches = snapshot && snapshot->scope == context.scope
+                                         && snapshot->sessionGeneration == context.sessionGeneration
+                                         && snapshot->epoch == context.epoch;
+    const bool completeSnapshot = snapshotIdentityMatches
+                                  && snapshotHasExactBindingSet(*snapshot, *bindingCandidates);
+    if (snapshot && !snapshotIdentityMatches)
+        snapshotIssue = ContextIssue::RuntimeResourceSnapshotStale;
+    else if (snapshotIdentityMatches && !completeSnapshot)
+        snapshotIssue = ContextIssue::RuntimeResourceSnapshotIncomplete;
 
-    bool allSamplesReady = true;
+    const auto liveCache = m_liveRuntimeCaches.constFind(candidate.provider);
+    const bool liveCacheMatches = liveCache != m_liveRuntimeCaches.cend()
+                                  && liveCache->controllerId == context.controllerId
+                                  && liveCache->scope == context.scope
+                                  && liveCache->sessionGeneration == context.sessionGeneration
+                                  && liveCache->epoch == context.epoch
+                                  && liveCache->mappingDigest == context.mappingDigest
+                                  && liveCache->controllerMappingDigest
+                                         == context.controllerMappingDigest
+                                  && liveCache->contextHash == context.contextHash;
+
     for (qsizetype index = 0; index < bindingCandidates->bindings.size(); ++index) {
         Data::SemanticSignalRuntimeState &state = context.signalStates[index];
-        const Core::SemanticRuntimeReadValidation validation
-            = Core::validateSemanticRuntimeRead(
-                bindingCandidates->bindings.at(index), *catalog, *snapshot);
-        if (!validation.validation.accepted() || !validation.sample) {
-            allSamplesReady = false;
-            state.availability = Data::SemanticSignalAvailability::Unverified;
-            state.value.reset();
-            state.quality = {};
-            state.snapshotComplete = false;
-            state.captureCycle = 0;
-            state.controllerTimestampNs = 0;
-            state.detail = validation.validation.detail;
-            continue;
+        const Data::SemanticRuntimeBinding &binding = bindingCandidates->bindings.at(index);
+        state.availability = Data::SemanticSignalAvailability::Unverified;
+        state.value.reset();
+        state.quality = {};
+        state.snapshotComplete = false;
+        state.captureCycle = 0;
+        state.controllerTimestampNs = 0;
+        state.observedAt = {};
+        state.detail = semanticRuntimeContextIssueDetail(snapshotIssue);
+
+        const auto applySnapshot = [&state, &binding, &catalog](
+                                       const Data::RuntimeResourceSnapshot &candidateSnapshot,
+                                       const QDateTime &observedAt) {
+            const Core::SemanticRuntimeReadValidation validation
+                = Core::validateSemanticRuntimeRead(binding, *catalog, candidateSnapshot);
+            if (!validation.validation.accepted() || !validation.sample)
+                return false;
+            state.availability = Data::SemanticSignalAvailability::Ready;
+            state.value = validation.sample->value;
+            state.quality = validation.sample->quality;
+            state.snapshotComplete = true;
+            state.captureCycle = candidateSnapshot.captureCycle;
+            state.controllerTimestampNs = validation.sample->controllerTimestampNs;
+            state.observedAt = observedAt;
+            state.detail = QStringLiteral("Verified live runtime sample.");
+            return true;
+        };
+
+        if (completeSnapshot) {
+            if (!applySnapshot(*snapshot, snapshot->receivedAt))
+                state.detail = semanticRuntimeContextIssueDetail(
+                    ContextIssue::RuntimeResourceSnapshotInvalid);
         }
 
-        state.availability = Data::SemanticSignalAvailability::Ready;
-        state.value = validation.sample->value;
-        state.quality = validation.sample->quality;
-        state.snapshotComplete = true;
-        state.captureCycle = snapshot->captureCycle;
-        state.controllerTimestampNs = validation.sample->controllerTimestampNs;
-        state.detail = QStringLiteral("Verified live runtime sample.");
+        if (liveCacheMatches) {
+            const auto liveSample = liveCache->samples.constFind(binding.resourceId);
+            if (liveSample != liveCache->samples.cend()
+                && liveSample->captureCycle >= state.captureCycle) {
+                Data::RuntimeResourceSnapshot targeted;
+                targeted.scope = context.scope;
+                targeted.sessionGeneration = context.sessionGeneration;
+                targeted.epoch = context.epoch;
+                targeted.captureCycle = liveSample->captureCycle;
+                targeted.controllerTimestampNs = liveSample->controllerTimestampNs;
+                targeted.receivedAt = liveSample->receivedAt;
+                targeted.complete = true;
+                targeted.samples = {liveSample->sample};
+                if (applySnapshot(targeted, liveSample->receivedAt)) {
+                    if (!liveSampleIsFresh(liveSample->receivedAt)) {
+                        state.availability = Data::SemanticSignalAvailability::Stale;
+                        state.quality.state = Data::RuntimeResourceQualityState::Stale;
+                        state.quality.detail = QStringLiteral(
+                            "The verified live sample exceeded its freshness budget.");
+                        state.snapshotComplete = false;
+                        state.detail = QStringLiteral(
+                            "semantic-live-sample-stale: The verified live sample is stale.");
+                    }
+                } else {
+                    state.availability = Data::SemanticSignalAvailability::Unverified;
+                    state.value.reset();
+                    state.quality = {};
+                    state.snapshotComplete = false;
+                    state.captureCycle = 0;
+                    state.controllerTimestampNs = 0;
+                    state.observedAt = {};
+                    state.detail = semanticRuntimeContextIssueDetail(
+                        ContextIssue::RuntimeResourceSnapshotInvalid);
+                }
+            }
+        }
     }
 
+    bool allSignalsReady = !context.signalStates.isEmpty();
+    bool captureCohortCoherent = true;
+    std::optional<QPair<quint64, quint64>> readyCohort;
+    for (const Data::SemanticSignalRuntimeState &state : std::as_const(context.signalStates)) {
+        if (state.availability != Data::SemanticSignalAvailability::Ready || !state.snapshotComplete
+            || !state.captureCycle || !state.controllerTimestampNs
+            || state.quality.state != Data::RuntimeResourceQualityState::Good || !state.value) {
+            allSignalsReady = false;
+            continue;
+        }
+        const QPair<quint64, quint64> cohort{state.captureCycle, state.controllerTimestampNs};
+        if (!readyCohort)
+            readyCohort = cohort;
+        else if (*readyCohort != cohort)
+            captureCohortCoherent = false;
+    }
+    const bool allSamplesReady = allSignalsReady && captureCohortCoherent;
     context.detail
         = allSamplesReady
               ? QStringLiteral(
                     "semantic-runtime-ready: Signed bindings and live samples are verified.")
-              : semanticRuntimeContextIssueDetail(ContextIssue::RuntimeResourceSnapshotInvalid);
+              : (allSignalsReady
+                     ? QStringLiteral(
+                           "runtime-resource-snapshot-incoherent: Live samples do not share one "
+                           "capture boundary.")
+                     : semanticRuntimeContextIssueDetail(
+                           ContextIssue::RuntimeResourceSnapshotInvalid));
     return context;
 }
 
@@ -2985,7 +3665,8 @@ void SemanticRuntimeExecutor::trackProvider(Core::Provider *provider)
         &Core::ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished,
         this,
         [this, connectionProvider](const Data::RuntimeResourceSnapshotResult &result) {
-            m_execution->handleSnapshot(connectionProvider, result);
+            if (!m_execution->handleLiveSnapshot(connectionProvider, result))
+                m_execution->handleSnapshot(connectionProvider, result);
         }));
     connections.append(connect(
         connectionProvider,
@@ -3027,6 +3708,7 @@ void SemanticRuntimeExecutor::trackProvider(Core::Provider *provider)
             m_runtimeBootstrapSignalGenerations.remove(connectionProvider);
             m_runtimeCatalogSignalGenerations.remove(connectionProvider);
             m_runtimeSnapshotSignalGenerations.remove(connectionProvider);
+            m_liveRuntimeCaches.remove(connectionProvider);
             publishContexts();
         }));
     m_providerConnections.insert(connectionProvider, connections);
@@ -3053,6 +3735,7 @@ void SemanticRuntimeExecutor::untrackProvider(Core::Provider *provider)
     m_runtimeBootstrapSignalGenerations.remove(connectionProvider);
     m_runtimeCatalogSignalGenerations.remove(connectionProvider);
     m_runtimeSnapshotSignalGenerations.remove(connectionProvider);
+    m_liveRuntimeCaches.remove(connectionProvider);
 }
 
 } // namespace EtherCAT::SemanticRuntime::Internal

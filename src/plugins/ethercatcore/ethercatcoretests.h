@@ -36,6 +36,7 @@ private slots:
     void testRuntimePackageCompilerPreparationCoordinatorContract();
     void testRuntimePackageCompilerActivationProofRouting();
     void testSemanticRuntimeValueSemantics();
+    void testSemanticLiveRefreshContract();
     void testSemanticRuntimeEpochValidation();
     void testSemanticRuntimeReadValidation();
     void testSemanticRuntimeOperationContract();

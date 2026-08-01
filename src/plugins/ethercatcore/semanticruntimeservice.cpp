@@ -782,6 +782,18 @@ std::optional<Data::SemanticRuntimeContext> SemanticRuntimeService::context(
     return *found;
 }
 
+Data::SemanticLiveRefreshResult SemanticRuntimeService::requestLiveRefresh(
+    const Data::SemanticLiveRefreshRequest &request)
+{
+    return {
+        request.correlationId,
+        Data::SemanticLiveRefreshOutcome::Unsupported,
+        QStringLiteral("semantic-live-refresh-unsupported"),
+        QStringLiteral("Semantic live refresh is unsupported."),
+        0,
+    };
+}
+
 Data::SemanticOperationRecord SemanticRuntimeService::submit(
     const Data::SemanticOperationRequest &request, const Data::SemanticRuntimeActor &actor)
 {

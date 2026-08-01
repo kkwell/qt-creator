@@ -1069,6 +1069,59 @@ class TestSemanticRuntimeService final : public Core::SemanticRuntimeService
 public:
     QList<Data::SemanticRuntimeContext> contexts() const final { return m_contexts; }
 
+    Data::SemanticLiveRefreshResult requestLiveRefresh(
+        const Data::SemanticLiveRefreshRequest &request) final
+    {
+        liveRefreshRequests.append(request);
+        const Data::SemanticLiveRefreshOutcome outcome
+            = liveRefreshOutcomes.isEmpty() ? Data::SemanticLiveRefreshOutcome::Unsupported
+                                            : liveRefreshOutcomes.takeFirst();
+        Data::SemanticLiveRefreshResult result;
+        result.correlationId = request.correlationId;
+        result.outcome = outcome;
+        switch (outcome) {
+        case Data::SemanticLiveRefreshOutcome::Accepted:
+            result.code = QStringLiteral("semantic-live-refresh-accepted");
+            break;
+        case Data::SemanticLiveRefreshOutcome::Refreshed:
+            result.code = QStringLiteral("semantic-live-refresh-refreshed");
+            result.captureCycle = ++liveRefreshCaptureCycle;
+            break;
+        case Data::SemanticLiveRefreshOutcome::Deferred:
+            result.code = QStringLiteral("semantic-live-refresh-busy");
+            result.detail = liveRefreshResultDetail.isEmpty()
+                                ? QStringLiteral("Test live refresh is deferred.")
+                                : liveRefreshResultDetail;
+            break;
+        case Data::SemanticLiveRefreshOutcome::Unsupported:
+            result.code = QStringLiteral("semantic-live-refresh-unsupported");
+            result.detail = liveRefreshResultDetail.isEmpty()
+                                ? QStringLiteral("Test live refresh is unsupported.")
+                                : liveRefreshResultDetail;
+            break;
+        case Data::SemanticLiveRefreshOutcome::Rejected:
+            result.code = QStringLiteral("semantic-live-refresh-rejected");
+            result.detail = liveRefreshResultDetail.isEmpty()
+                                ? QStringLiteral("Test live refresh was rejected.")
+                                : liveRefreshResultDetail;
+            break;
+        case Data::SemanticLiveRefreshOutcome::Failed:
+            result.code = QStringLiteral("semantic-live-refresh-failed");
+            result.detail = liveRefreshResultDetail.isEmpty()
+                                ? QStringLiteral("Test live refresh failed.")
+                                : liveRefreshResultDetail;
+            break;
+        }
+        if (liveRefreshCompletionBeforeReturn) {
+            Data::SemanticLiveRefreshResult completion = *liveRefreshCompletionBeforeReturn;
+            liveRefreshCompletionBeforeReturn.reset();
+            if (completion.correlationId.isEmpty())
+                completion.correlationId = request.correlationId;
+            emit liveRefreshCompleted(completion);
+        }
+        return result;
+    }
+
     Data::SemanticOperationRecord submit(
         const Data::SemanticOperationRequest &request, const Data::SemanticRuntimeActor &actor) final
     {
@@ -1132,8 +1185,37 @@ public:
         emit operationChanged(record.request.operationId);
     }
 
+    void publishLiveRefreshResult(
+        const QString &correlationId,
+        Data::SemanticLiveRefreshOutcome outcome,
+        quint64 captureCycle = 0)
+    {
+        Data::SemanticLiveRefreshResult result;
+        result.correlationId = correlationId;
+        result.outcome = outcome;
+        if (outcome == Data::SemanticLiveRefreshOutcome::Refreshed) {
+            result.code = QStringLiteral("semantic-live-refresh-refreshed");
+            result.captureCycle = captureCycle ? captureCycle : ++liveRefreshCaptureCycle;
+        } else {
+            result.code = QStringLiteral("semantic-live-refresh-failed");
+            result.detail = QStringLiteral("Test asynchronous live refresh failed.");
+        }
+        QVERIFY(result.isValid());
+        publishRawLiveRefreshResult(result);
+    }
+
+    void publishRawLiveRefreshResult(const Data::SemanticLiveRefreshResult &result)
+    {
+        emit liveRefreshCompleted(result);
+    }
+
     int submitCalls = 0;
     int approveCalls = 0;
+    quint64 liveRefreshCaptureCycle = 100;
+    QList<Data::SemanticLiveRefreshOutcome> liveRefreshOutcomes;
+    QList<Data::SemanticLiveRefreshRequest> liveRefreshRequests;
+    std::optional<Data::SemanticLiveRefreshResult> liveRefreshCompletionBeforeReturn;
+    QString liveRefreshResultDetail;
     Data::SemanticOperationRequest lastRequest;
     Data::SemanticRuntimeActor lastSubmitActor;
     Data::SemanticOperationApprovalRequest lastApproval;
@@ -5158,6 +5240,685 @@ void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()
             !visibleText.contains(forbidden, Qt::CaseInsensitive),
             qPrintable(QString("Leaked physical identifier: %1").arg(forbidden)));
     }
+}
+
+void EtherCATWorkbenchTests::testSemanticControlPagePreservesEditorDuringLiveRefresh()
+{
+    TestDeviceAdapterProvider adapterProvider;
+    const AdapterTreeFixture fixture = adapterTreeFixture(adapterProvider);
+    WorkbenchController controller;
+    controller.treeModel()->setDeviceAdapterProviders({&adapterProvider});
+    controller.treeModel()->setProjects({fixture.project});
+
+    const QModelIndex configuredSlave = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    QVERIFY(configuredSlave.isValid());
+    const QModelIndex modules = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Modules, configuredSlave);
+    const QModelIndex outputModule = controller.treeModel()->index(0, 0, modules);
+    const QModelIndex outputChannel
+        = findByDisplayText(controller.treeModel(), "Digital output 1", outputModule);
+    QVERIFY(outputModule.isValid());
+    QVERIFY(outputChannel.isValid());
+
+    const Core::PropertyPageContext slaveContext = controller.treeModel()->contextForIndex(
+        configuredSlave);
+    const Core::PropertyPageContext channelContext = controller.treeModel()->contextForIndex(
+        outputChannel);
+    const std::optional<SemanticControlSelection> selection
+        = controller.treeModel()->semanticControlSelection(fixture.slaveId);
+    const std::optional<SemanticControlSelection> channelSelection
+        = controller.treeModel()->semanticControlSelection(
+            outputChannel.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
+    QVERIFY(selection);
+    QVERIFY(channelSelection);
+    QCOMPARE(channelSelection->signalIds.size(), 1);
+
+    const Data::SemanticRuntimeDigest mappingDigest{"sha256", QByteArray(32, '\x41')};
+    const Data::SemanticRuntimeDigest signedManifestDigest{"sha256", QByteArray(32, '\x42')};
+
+    Data::RuntimeResourceCatalogEpoch epoch;
+    epoch.controllerBootId = 21;
+    epoch.activePackageSlot = Data::ControllerSlot::A;
+    epoch.activePackageGeneration = 22;
+    epoch.configurationId = 23;
+    epoch.topologyGeneration = 24;
+    epoch.runtimeGeneration = 25;
+    epoch.catalogRevision = 26;
+    epoch.topologyIdentity = QByteArrayLiteral("live-refresh-topology");
+
+    Data::SemanticRuntimeTarget signalTarget;
+    signalTarget.controllerId = "live-refresh-controller";
+    signalTarget.scope = selection->scope;
+    signalTarget.deviceId = selection->deviceId;
+    signalTarget.kind = Data::SemanticRuntimeTargetKind::Signal;
+    signalTarget.signalId = channelSelection->signalIds.constFirst();
+
+    Data::SemanticBindingVerification verification;
+    verification.state = Data::SemanticBindingVerificationState::Verified;
+    verification.verifierId = "live-refresh-verifier";
+    verification.signedManifestDigest = signedManifestDigest;
+    verification.verifiedAt = QDateTime::fromString("2026-08-02T01:02:03Z", Qt::ISODate);
+
+    Data::SemanticRuntimeBinding binding;
+    binding.target = signalTarget;
+    binding.semanticBindingId = "live-refresh-binding";
+    binding.componentBindingId = "live-refresh-component";
+    binding.adapterId = {"test.live-refresh.adapter"};
+    binding.adapterVersion = "1.0";
+    binding.adapterContentSha256 = QByteArray(32, '\x43');
+    binding.esiSha256 = QByteArray(32, '\x44');
+    binding.bindingArtifactSha256 = QByteArray(32, '\x45');
+    binding.sessionGeneration = 27;
+    binding.epoch = epoch;
+    binding.mappingDigest = mappingDigest;
+    binding.controllerMappingDigest = mappingDigest;
+    binding.verification = verification;
+    binding.resourceId = {QByteArrayLiteral("live-refresh-resource")};
+    binding.componentInstanceId = {QByteArrayLiteral("live-refresh-instance")};
+    binding.consistencyGroupId = {QByteArrayLiteral("live-refresh-group")};
+    binding.primitiveType = Data::RuntimeResourcePrimitiveType::Boolean;
+    binding.valueTypeIdentity = QByteArrayLiteral("BOOL");
+    binding.bitWidth = 1;
+    binding.direction = Data::RuntimeResourceDirection::Output;
+    binding.access = Data::RuntimeResourceAccess::ReadWrite;
+
+    Data::SemanticSignalRuntimeState signalState;
+    signalState.target = signalTarget;
+    signalState.definition.id = signalTarget.signalId;
+    signalState.definition.displayName = "Output state";
+    Data::EngineeringTransform engineeringTransform;
+    engineeringTransform.unit = "state";
+    engineeringTransform.rounding = Data::EngineeringRounding::RejectInexact;
+    signalState.definition.engineeringTransform = engineeringTransform;
+    signalState.availability = Data::SemanticSignalAvailability::Ready;
+    signalState.binding = binding;
+    signalState.value = Data::RuntimeResourceTypedValue{
+        Data::RuntimeResourcePrimitiveType::Boolean,
+        true,
+        QByteArrayLiteral("BOOL"),
+        {},
+    };
+    signalState.quality.state = Data::RuntimeResourceQualityState::Good;
+    signalState.snapshotComplete = true;
+    signalState.captureCycle = 100;
+    signalState.controllerTimestampNs = 200;
+    signalState.observedAt = QDateTime::fromString("2026-08-02T01:02:04Z", Qt::ISODate);
+
+    Data::SemanticActionRuntimeState action;
+    action.target.controllerId = signalTarget.controllerId;
+    action.target.scope = selection->scope;
+    action.target.deviceId = selection->deviceId;
+    action.target.kind = Data::SemanticRuntimeTargetKind::Action;
+    action.target.actionId = {"org.embedlabs.action.live-refresh"};
+    action.definition.id = action.target.actionId;
+    action.definition.displayName = "Set output";
+    action.definition.enabled = true;
+    action.actionBindingId = action.target.actionId.value;
+    action.actionDefinitionId = "org.embedlabs.definition.live-refresh";
+    action.actionDefinitionDigest = {"sha256", QByteArray(32, '\x46')};
+    action.qualification = Data::SemanticActionQualification::Qualified;
+    action.availability = Data::SemanticActionAvailability::Ready;
+    action.bindings = {binding};
+    action.requiresApproval = true;
+    action.requiresExclusiveControl = true;
+    action.maximumTtlCycles = 1000;
+
+    Data::SemanticActionParameterRuntimeDefinition parameter;
+    parameter.id = "signed_value";
+    parameter.primitiveType = Data::RuntimeResourcePrimitiveType::SignedInteger;
+    parameter.minimum = QVariant::fromValue<qlonglong>(-100);
+    parameter.maximum = QVariant::fromValue<qlonglong>(100);
+    action.parameters = {parameter};
+    Data::DeviceControlActionParameter publicParameter;
+    publicParameter.id = parameter.id;
+    publicParameter.displayName = "Signed value";
+    publicParameter.hasDefaultValue = true;
+    publicParameter.defaultValue = QVariant::fromValue<qlonglong>(0);
+    action.definition.parameters = {publicParameter};
+
+    Data::SemanticRuntimeContext runtimeContext;
+    runtimeContext.controllerId = signalTarget.controllerId;
+    runtimeContext.scope = selection->scope;
+    runtimeContext.sessionGeneration = binding.sessionGeneration;
+    runtimeContext.epoch = epoch;
+    runtimeContext.mappingDigest = mappingDigest;
+    runtimeContext.controllerMappingDigest = mappingDigest;
+    runtimeContext.actionDefinitionsDigest = {"sha256", QByteArray(32, '\x47')};
+    runtimeContext.cyclePeriodNs = 125000;
+    runtimeContext.bindingVerification = verification;
+    runtimeContext.contextHash = QByteArray(32, '\x48');
+    runtimeContext.signalStates = {signalState};
+    runtimeContext.actionStates = {action};
+    runtimeContext.complete = true;
+
+    TestSemanticRuntimeService runtime;
+    SemanticControlPage page(&controller, &runtime);
+    page.setContext(slaveContext);
+    page.resize(800, 600);
+    page.show();
+    runtime.publish({runtimeContext});
+
+    QTreeWidget *signalTree = page.findChild<QTreeWidget *>("EtherCATSemanticControlSignals");
+    QTreeWidget *actionTree = page.findChild<QTreeWidget *>("EtherCATSemanticControlActions");
+    QSpinBox *ttlCycles = page.findChild<QSpinBox *>("EtherCATSemanticActionTtlCycles");
+    QPointer<QLineEdit> editor = page.findChild<QLineEdit *>(
+        "EtherCATSemanticActionSignedParameter");
+    QVERIFY(signalTree);
+    QVERIFY(actionTree);
+    QVERIFY(ttlCycles);
+    QVERIFY(editor);
+    QTRY_COMPARE(signalTree->topLevelItemCount(), 1);
+    QTRY_COMPARE(actionTree->topLevelItemCount(), 1);
+
+    QTreeWidgetItem *selectedActionItem = actionTree->currentItem();
+    QVERIFY(selectedActionItem);
+    editor->setText("42");
+    ttlCycles->setValue(77);
+    page.activateWindow();
+    editor->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), editor.data());
+
+    Data::SemanticRuntimeContext liveRefresh = runtimeContext;
+    liveRefresh.signalStates[0].value->value = false;
+    liveRefresh.signalStates[0].quality.flags = 3;
+    liveRefresh.signalStates[0].quality.detail = "fresh-value";
+    liveRefresh.signalStates[0].captureCycle = 101;
+    liveRefresh.signalStates[0].controllerTimestampNs = 201;
+    liveRefresh.signalStates[0].observedAt
+        = QDateTime::fromString("2026-08-02T01:02:05Z", Qt::ISODate);
+    runtime.publish({liveRefresh});
+
+    QTRY_COMPARE(signalTree->topLevelItem(0)->text(1), Tr::tr("Off"));
+    QCOMPARE(signalTree->topLevelItem(0)->text(4), QString("101"));
+    QCOMPARE(page.findChild<QLineEdit *>("EtherCATSemanticActionSignedParameter"), editor.data());
+    QCOMPARE(actionTree->currentItem(), selectedActionItem);
+    QCOMPARE(editor->text(), QString("42"));
+    QCOMPARE(ttlCycles->value(), 77);
+    QTRY_COMPARE(QApplication::focusWidget(), editor.data());
+
+    Data::SemanticRuntimeContext staleRefresh = liveRefresh;
+    staleRefresh.signalStates[0].availability = Data::SemanticSignalAvailability::Stale;
+    staleRefresh.signalStates[0].snapshotComplete = false;
+    staleRefresh.signalStates[0].detail = "provider-resource-should-stay-private";
+    runtime.publish({staleRefresh});
+    QTRY_COMPARE(signalTree->topLevelItem(0)->text(5), Tr::tr("Stale"));
+    QCOMPARE(page.findChild<QLineEdit *>("EtherCATSemanticActionSignedParameter"), editor.data());
+    QCOMPARE(editor->text(), QString("42"));
+    QCOMPARE(ttlCycles->value(), 77);
+    QTRY_COMPARE(QApplication::focusWidget(), editor.data());
+
+    Data::SemanticRuntimeContext unavailableRefresh = staleRefresh;
+    unavailableRefresh.signalStates[0].availability = Data::SemanticSignalAvailability::Unavailable;
+    unavailableRefresh.signalStates[0].detail = "provider-resource-still-private";
+    runtime.publish({unavailableRefresh});
+    QTRY_COMPARE(signalTree->topLevelItem(0)->text(5), Tr::tr("Unavailable"));
+    QCOMPARE(page.findChild<QLineEdit *>("EtherCATSemanticActionSignedParameter"), editor.data());
+    QCOMPARE(editor->text(), QString("42"));
+    QCOMPARE(ttlCycles->value(), 77);
+    QTRY_COMPARE(QApplication::focusWidget(), editor.data());
+
+    Data::SemanticRuntimeContext changedHash = unavailableRefresh;
+    changedHash.contextHash = QByteArray(32, '\x49');
+    runtime.publish({changedHash});
+    QTRY_VERIFY(editor.isNull());
+
+    QPointer<QLineEdit> selectionEditor = page.findChild<QLineEdit *>(
+        "EtherCATSemanticActionSignedParameter");
+    QVERIFY(selectionEditor);
+    page.setContext(channelContext);
+    QTRY_VERIFY(selectionEditor.isNull());
+
+    QPointer<QLineEdit> actionEditor = page.findChild<QLineEdit *>(
+        "EtherCATSemanticActionSignedParameter");
+    QVERIFY(actionEditor);
+    Data::SemanticRuntimeContext actionChanged = changedHash;
+    actionChanged.actionStates[0].availability = Data::SemanticActionAvailability::Unavailable;
+    actionChanged.actionStates[0].detail = "exclusive_control_not_owned";
+    runtime.publish({actionChanged});
+    QTRY_VERIFY(actionEditor.isNull());
+    QTRY_COMPARE(actionTree->topLevelItemCount(), 1);
+    QVERIFY(!actionTree->topLevelItem(0)->flags().testFlag(Qt::ItemIsEnabled));
+}
+
+void EtherCATWorkbenchTests::testSemanticControlPageSchedulesBoundedLiveRefresh()
+{
+    TestDeviceAdapterProvider adapterProvider;
+    const AdapterTreeFixture fixture = adapterTreeFixture(adapterProvider);
+    WorkbenchController controller;
+    controller.treeModel()->setDeviceAdapterProviders({&adapterProvider});
+    controller.treeModel()->setProjects({fixture.project});
+
+    const QModelIndex configuredSlave = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    QVERIFY(configuredSlave.isValid());
+    const Core::PropertyPageContext slaveContext = controller.treeModel()->contextForIndex(
+        configuredSlave);
+    const std::optional<SemanticControlSelection> selection
+        = controller.treeModel()->semanticControlSelection(fixture.slaveId);
+    QVERIFY(selection);
+    QVERIFY(selection->wholeDevice);
+
+    const Data::SemanticRuntimeDigest mappingDigest{"sha256", QByteArray(32, '\x51')};
+    const Data::SemanticRuntimeDigest signedManifestDigest{"sha256", QByteArray(32, '\x52')};
+
+    Data::RuntimeResourceCatalogEpoch epoch;
+    epoch.controllerBootId = 31;
+    epoch.activePackageSlot = Data::ControllerSlot::A;
+    epoch.activePackageGeneration = 32;
+    epoch.configurationId = 33;
+    epoch.topologyGeneration = 34;
+    epoch.runtimeGeneration = 35;
+    epoch.catalogRevision = 36;
+    epoch.topologyIdentity = QByteArrayLiteral("scheduler-topology");
+
+    Data::SemanticBindingVerification verification;
+    verification.state = Data::SemanticBindingVerificationState::Verified;
+    verification.verifierId = "scheduler-verifier";
+    verification.signedManifestDigest = signedManifestDigest;
+    verification.verifiedAt = QDateTime::fromString("2026-08-02T02:03:04Z", Qt::ISODate);
+
+    Data::SemanticRuntimeTarget signalTarget;
+    signalTarget.controllerId = "scheduler-controller";
+    signalTarget.scope = selection->scope;
+    signalTarget.deviceId = selection->deviceId;
+    signalTarget.kind = Data::SemanticRuntimeTargetKind::Signal;
+    signalTarget.signalId = {"org.embedlabs.signal.scheduler-000"};
+
+    Data::SemanticRuntimeBinding binding;
+    binding.target = signalTarget;
+    binding.semanticBindingId = "scheduler-binding-000";
+    binding.componentBindingId = "scheduler-component";
+    binding.adapterId = {"test.scheduler.adapter"};
+    binding.adapterVersion = "1.0";
+    binding.adapterContentSha256 = QByteArray(32, '\x53');
+    binding.esiSha256 = QByteArray(32, '\x54');
+    binding.bindingArtifactSha256 = QByteArray(32, '\x55');
+    binding.sessionGeneration = 37;
+    binding.epoch = epoch;
+    binding.mappingDigest = mappingDigest;
+    binding.controllerMappingDigest = mappingDigest;
+    binding.verification = verification;
+    binding.resourceId = {QByteArrayLiteral("scheduler-resource-000")};
+    binding.componentInstanceId = {QByteArrayLiteral("scheduler-instance")};
+    binding.consistencyGroupId = {QByteArrayLiteral("scheduler-group")};
+    binding.primitiveType = Data::RuntimeResourcePrimitiveType::Boolean;
+    binding.valueTypeIdentity = QByteArrayLiteral("BOOL");
+    binding.bitWidth = 1;
+    binding.direction = Data::RuntimeResourceDirection::Output;
+    binding.access = Data::RuntimeResourceAccess::ReadWrite;
+
+    Data::SemanticSignalRuntimeState signalState;
+    signalState.target = signalTarget;
+    signalState.definition.id = signalTarget.signalId;
+    signalState.definition.displayName = "Output state";
+    Data::EngineeringTransform engineeringTransform;
+    engineeringTransform.unit = "state";
+    engineeringTransform.rounding = Data::EngineeringRounding::RejectInexact;
+    signalState.definition.engineeringTransform = engineeringTransform;
+    signalState.availability = Data::SemanticSignalAvailability::Ready;
+    signalState.binding = binding;
+    signalState.value = Data::RuntimeResourceTypedValue{
+        Data::RuntimeResourcePrimitiveType::Boolean,
+        true,
+        QByteArrayLiteral("BOOL"),
+        {},
+    };
+    signalState.quality.state = Data::RuntimeResourceQualityState::Good;
+    signalState.snapshotComplete = true;
+    signalState.captureCycle = 100;
+    signalState.controllerTimestampNs = 200;
+    signalState.observedAt = QDateTime::fromString("2026-08-02T02:03:05Z", Qt::ISODate);
+
+    Data::SemanticActionRuntimeState action;
+    action.target.controllerId = signalTarget.controllerId;
+    action.target.scope = selection->scope;
+    action.target.deviceId = selection->deviceId;
+    action.target.kind = Data::SemanticRuntimeTargetKind::Action;
+    action.target.actionId = {"org.embedlabs.action.scheduler"};
+    action.definition.id = action.target.actionId;
+    action.definition.displayName = "Set output";
+    action.definition.enabled = true;
+    action.actionBindingId = action.target.actionId.value;
+    action.actionDefinitionId = "org.embedlabs.definition.scheduler";
+    action.actionDefinitionDigest = {"sha256", QByteArray(32, '\x56')};
+    action.qualification = Data::SemanticActionQualification::Qualified;
+    action.availability = Data::SemanticActionAvailability::Ready;
+    action.bindings = {binding};
+    action.requiresApproval = true;
+    action.requiresExclusiveControl = true;
+    action.maximumTtlCycles = 1000;
+
+    Data::SemanticRuntimeContext runtimeContext;
+    runtimeContext.controllerId = signalTarget.controllerId;
+    runtimeContext.scope = selection->scope;
+    runtimeContext.sessionGeneration = binding.sessionGeneration;
+    runtimeContext.epoch = epoch;
+    runtimeContext.mappingDigest = mappingDigest;
+    runtimeContext.controllerMappingDigest = mappingDigest;
+    runtimeContext.actionDefinitionsDigest = {"sha256", QByteArray(32, '\x57')};
+    runtimeContext.cyclePeriodNs = 125000;
+    runtimeContext.bindingVerification = verification;
+    runtimeContext.contextHash = QByteArray(32, '\x58');
+    runtimeContext.signalStates = {signalState};
+    runtimeContext.actionStates = {action};
+    runtimeContext.complete = true;
+
+    TestSemanticRuntimeService runtime;
+    QSignalSpy controllerOutput(&controller, &WorkbenchController::controllerOutputRequested);
+    SemanticControlPage page(&controller, &runtime);
+    page.setContext(slaveContext);
+    page.resize(800, 600);
+    runtime.publish({runtimeContext});
+    QCOMPARE(runtime.liveRefreshRequests.size(), 0);
+
+    runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Accepted);
+    page.show();
+    QTRY_COMPARE(runtime.liveRefreshRequests.size(), 1);
+    QTimer *timer = page.findChild<QTimer *>("EtherCATSemanticLiveRefreshTimer");
+    QLabel *status = page.findChild<QLabel *>("EtherCATSemanticControlStatus");
+    QVERIFY(timer);
+    QVERIFY(status);
+    const Data::SemanticLiveRefreshRequest firstRequest = runtime.liveRefreshRequests.constFirst();
+    QVERIFY(firstRequest.isValid());
+    QCOMPARE(firstRequest.controllerId, runtimeContext.controllerId);
+    QCOMPARE(firstRequest.scope, selection->scope);
+    QCOMPARE(firstRequest.expectedContextHash, runtimeContext.contextHash);
+    QCOMPARE(firstRequest.targets.size(), 1);
+    QCOMPARE(firstRequest.targets.constFirst().deviceId, selection->deviceId);
+    QCOMPARE(firstRequest.targets.constFirst().signalId, signalTarget.signalId);
+    QVERIFY(!firstRequest.correlationId.contains("resource", Qt::CaseInsensitive));
+    QVERIFY(!timer->isActive());
+
+    runtime.publishLiveRefreshResult(
+        QStringLiteral("mismatched-correlation"), Data::SemanticLiveRefreshOutcome::Refreshed, 101);
+    QCoreApplication::processEvents();
+    QCOMPARE(runtime.liveRefreshRequests.size(), 1);
+    QVERIFY(!timer->isActive());
+
+    runtime.publishLiveRefreshResult(
+        firstRequest.correlationId, Data::SemanticLiveRefreshOutcome::Refreshed, 102);
+    QTRY_VERIFY(timer->isActive());
+    QCOMPARE(timer->interval(), 500);
+
+    page.hide();
+    QTRY_VERIFY(!page.isVisible());
+    QVERIFY(!timer->isActive());
+    runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Accepted);
+    page.show();
+    QTRY_COMPARE(runtime.liveRefreshRequests.size(), 2);
+    const QString shownCorrelation = runtime.liveRefreshRequests.constLast().correlationId;
+    runtime
+        .publishLiveRefreshResult(shownCorrelation, Data::SemanticLiveRefreshOutcome::Refreshed, 103);
+    QTRY_VERIFY(timer->isActive());
+    QCOMPARE(timer->interval(), 500);
+
+    const QList<int> deferredIntervals{1000, 2000, 4000, 8000};
+    for (const int expectedInterval : deferredIntervals) {
+        const qsizetype previousCount = runtime.liveRefreshRequests.size();
+        runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Deferred);
+        timer->start(0);
+        QTRY_COMPARE(runtime.liveRefreshRequests.size(), previousCount + 1);
+        QTRY_VERIFY(timer->isActive());
+        QCOMPARE(timer->interval(), expectedInterval);
+    }
+
+    runtime.liveRefreshResultDetail = "provider-resource-private-detail";
+    for (int failure = 1; failure <= 3; ++failure) {
+        const qsizetype previousCount = runtime.liveRefreshRequests.size();
+        runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Failed);
+        timer->start(0);
+        QTRY_COMPARE(runtime.liveRefreshRequests.size(), previousCount + 1);
+        if (failure < 3) {
+            QTRY_VERIFY(timer->isActive());
+            QCOMPARE(timer->interval(), 1000);
+        } else {
+            QTRY_VERIFY(!timer->isActive());
+        }
+    }
+    const qsizetype pausedRequestCount = runtime.liveRefreshRequests.size();
+    const QString repeatedFailureMessage = Tr::tr(
+        "Live value updates are paused after repeated failures.");
+    QTRY_COMPARE(status->text(), repeatedFailureMessage);
+    QTRY_COMPARE(controllerOutput.count(), 1);
+    QCOMPARE(controllerOutput.constFirst().at(0).toString(), repeatedFailureMessage);
+    QCOMPARE(
+        controllerOutput.constFirst().at(1).value<ControllerOutputLevel>(),
+        ControllerOutputLevel::Warning);
+    int pauseLabelCount = 0;
+    for (QLabel *label : page.findChildren<QLabel *>()) {
+        if (label->text() == repeatedFailureMessage)
+            ++pauseLabelCount;
+    }
+    QCOMPARE(pauseLabelCount, 1);
+
+    Data::SemanticRuntimeContext pausedPresentation = runtimeContext;
+    pausedPresentation.signalStates[0].availability = Data::SemanticSignalAvailability::Stale;
+    pausedPresentation.signalStates[0].snapshotComplete = false;
+    pausedPresentation.signalStates[0].detail = "provider-resource-private-detail";
+    runtime.publish({pausedPresentation});
+    QTRY_COMPARE(status->text(), repeatedFailureMessage);
+    QCOMPARE(controllerOutput.count(), 1);
+    QVERIFY(!status->text().contains("provider", Qt::CaseInsensitive));
+    QVERIFY(!status->text().contains("resource", Qt::CaseInsensitive));
+    timer->start(0);
+    QTest::qWait(20);
+    QCOMPARE(runtime.liveRefreshRequests.size(), pausedRequestCount);
+
+    Data::SemanticRuntimeContext resumedContext = runtimeContext;
+    ++resumedContext.sessionGeneration;
+    resumedContext.contextHash = QByteArray(32, '\x59');
+    resumedContext.signalStates[0].binding->sessionGeneration = resumedContext.sessionGeneration;
+    resumedContext.actionStates[0].bindings = {*resumedContext.signalStates[0].binding};
+    runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Accepted);
+    runtime.publish({resumedContext});
+    QTRY_COMPARE(runtime.liveRefreshRequests.size(), pausedRequestCount + 1);
+    QTRY_VERIFY(status->text() != repeatedFailureMessage);
+
+    const QString malformedCorrelation = runtime.liveRefreshRequests.constLast().correlationId;
+    runtime.publishRawLiveRefreshResult({
+        malformedCorrelation,
+        Data::SemanticLiveRefreshOutcome::Refreshed,
+        {},
+        QStringLiteral("provider-resource-private-detail"),
+        0,
+    });
+    QTRY_VERIFY(timer->isActive());
+    QCOMPARE(timer->interval(), 1000);
+    QCOMPARE(controllerOutput.count(), 1);
+
+    qsizetype previousRequestCount = runtime.liveRefreshRequests.size();
+    runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Accepted);
+    timer->start(0);
+    QTRY_COMPARE(runtime.liveRefreshRequests.size(), previousRequestCount + 1);
+    const QString acceptedCompletionCorrelation
+        = runtime.liveRefreshRequests.constLast().correlationId;
+    runtime.publishRawLiveRefreshResult({
+        acceptedCompletionCorrelation,
+        Data::SemanticLiveRefreshOutcome::Accepted,
+        QStringLiteral("semantic-live-refresh-accepted"),
+        {},
+        0,
+    });
+    QTRY_VERIFY(timer->isActive());
+    QCOMPARE(timer->interval(), 1000);
+    QCOMPARE(controllerOutput.count(), 1);
+
+    previousRequestCount = runtime.liveRefreshRequests.size();
+    runtime.liveRefreshCompletionBeforeReturn = Data::SemanticLiveRefreshResult{
+        {},
+        Data::SemanticLiveRefreshOutcome::Refreshed,
+        QStringLiteral("semantic-live-refresh-refreshed"),
+        {},
+        104,
+    };
+    runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Accepted);
+    timer->start(0);
+    QTRY_COMPARE(runtime.liveRefreshRequests.size(), previousRequestCount + 1);
+    QTRY_VERIFY(timer->isActive());
+    QCOMPARE(timer->interval(), 500);
+    QCOMPARE(controllerOutput.count(), 1);
+
+    previousRequestCount = runtime.liveRefreshRequests.size();
+    runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Accepted);
+    timer->start(0);
+    QTRY_COMPARE(runtime.liveRefreshRequests.size(), previousRequestCount + 1);
+    const QString resumedCorrelation = runtime.liveRefreshRequests.constLast().correlationId;
+
+    QPushButton *apply = page.findChild<QPushButton *>("EtherCATSemanticControlApply");
+    QVERIFY(apply);
+    QTRY_VERIFY(apply->isEnabled());
+    apply->click();
+    QPointer<QMessageBox> confirmation;
+    QTRY_VERIFY((confirmation = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())));
+    const qsizetype beforeConfirmation = runtime.liveRefreshRequests.size();
+    timer->start(0);
+    QTest::qWait(20);
+    QCOMPARE(runtime.liveRefreshRequests.size(), beforeConfirmation);
+    QAbstractButton *yes = confirmation->button(QMessageBox::Yes);
+    QVERIFY(yes);
+    yes->click();
+    QTRY_COMPARE(runtime.submitCalls, 1);
+    QTRY_COMPARE(runtime.approveCalls, 1);
+    const qsizetype beforeApproved = runtime.liveRefreshRequests.size();
+    timer->start(0);
+    QTest::qWait(20);
+    QCOMPARE(runtime.liveRefreshRequests.size(), beforeApproved);
+    runtime.publishLiveRefreshResult(
+        resumedCorrelation, Data::SemanticLiveRefreshOutcome::Refreshed, 104);
+    QCoreApplication::processEvents();
+    QCOMPARE(runtime.liveRefreshRequests.size(), beforeApproved);
+    QVERIFY(!timer->isActive());
+
+    const std::optional<Data::SemanticOperationRecord> approved = runtime.operation(
+        runtime.lastRequest.operationId);
+    QVERIFY(approved);
+    Data::SemanticOperationRecord succeeded = *approved;
+    succeeded.state = Data::SemanticOperationState::Succeeded;
+    runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Accepted);
+    runtime.publishOperation(succeeded);
+    QTRY_COMPARE(runtime.liveRefreshRequests.size(), beforeApproved + 1);
+    const QString terminalCorrelation = runtime.liveRefreshRequests.constLast().correlationId;
+    runtime.publishLiveRefreshResult(
+        terminalCorrelation, Data::SemanticLiveRefreshOutcome::Refreshed, 105);
+    QTRY_VERIFY(timer->isActive());
+
+    const qsizetype beforeUnsupportedRequest = runtime.liveRefreshRequests.size();
+    const int beforeUnsupportedOutput = controllerOutput.count();
+    runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Unsupported);
+    timer->start(0);
+    QTRY_COMPARE(runtime.liveRefreshRequests.size(), beforeUnsupportedRequest + 1);
+    QTRY_COMPARE(status->text(), Tr::tr("Live value updates are not supported."));
+    QTRY_COMPARE(controllerOutput.count(), beforeUnsupportedOutput + 1);
+    QCOMPARE(
+        controllerOutput.constLast().at(0).toString(),
+        Tr::tr("Live value updates are not supported."));
+    QCOMPARE(
+        controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
+        ControllerOutputLevel::Warning);
+    runtime.publish({resumedContext});
+    QTRY_COMPARE(status->text(), Tr::tr("Live value updates are not supported."));
+    QCOMPARE(controllerOutput.count(), beforeUnsupportedOutput + 1);
+
+    Data::SemanticRuntimeContext rejectedContext = resumedContext;
+    ++rejectedContext.sessionGeneration;
+    rejectedContext.contextHash = QByteArray(32, '\x5a');
+    rejectedContext.signalStates[0].binding->sessionGeneration = rejectedContext.sessionGeneration;
+    rejectedContext.actionStates[0].bindings = {*rejectedContext.signalStates[0].binding};
+    const qsizetype beforeRejectedRequest = runtime.liveRefreshRequests.size();
+    const int beforeRejectedOutput = controllerOutput.count();
+    runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Rejected);
+    runtime.publish({rejectedContext});
+    QTRY_COMPARE(runtime.liveRefreshRequests.size(), beforeRejectedRequest + 1);
+    QTRY_COMPARE(status->text(), Tr::tr("Live value updates were rejected."));
+    QTRY_COMPARE(controllerOutput.count(), beforeRejectedOutput + 1);
+    QCOMPARE(
+        controllerOutput.constLast().at(0).toString(), Tr::tr("Live value updates were rejected."));
+    timer->start(0);
+    QTest::qWait(20);
+    QCOMPARE(runtime.liveRefreshRequests.size(), beforeRejectedRequest + 1);
+    QCOMPARE(controllerOutput.count(), beforeRejectedOutput + 1);
+
+    Data::SemanticRuntimeContext batchedContext = rejectedContext;
+    ++batchedContext.sessionGeneration;
+    batchedContext.contextHash = QByteArray(32, '\x5b');
+    batchedContext.signalStates.clear();
+    batchedContext.actionStates.clear();
+    for (int index = 0; index < 130; ++index) {
+        Data::SemanticSignalRuntimeState state = signalState;
+        const QString suffix = QStringLiteral("%1").arg(index, 3, 10, QLatin1Char('0'));
+        state.target.signalId = {QStringLiteral("org.embedlabs.signal.scheduler-%1").arg(suffix)};
+        state.definition.id = state.target.signalId;
+        state.definition.displayName = QStringLiteral("Signal %1").arg(suffix);
+        state.binding->target = state.target;
+        state.binding->semanticBindingId = QStringLiteral("scheduler-binding-%1").arg(suffix);
+        state.binding->resourceId = {QStringLiteral("scheduler-resource-%1").arg(suffix).toUtf8()};
+        state.binding->sessionGeneration = batchedContext.sessionGeneration;
+        state.captureCycle = quint64(200 + index);
+        batchedContext.signalStates.append(state);
+    }
+    const qsizetype beforeBatchedRequestCount = runtime.liveRefreshRequests.size();
+    runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Accepted);
+    runtime.publish({batchedContext});
+    QTRY_COMPARE(runtime.liveRefreshRequests.size(), beforeBatchedRequestCount + 1);
+
+    const Data::SemanticLiveRefreshRequest firstBatch = runtime.liveRefreshRequests.constLast();
+    QCOMPARE(firstBatch.targets.size(), 64);
+    QCOMPARE(
+        firstBatch.targets.constFirst().signalId.value,
+        QString("org.embedlabs.signal.scheduler-000"));
+    QCOMPARE(
+        firstBatch.targets.constLast().signalId.value,
+        QString("org.embedlabs.signal.scheduler-063"));
+
+    runtime.publishLiveRefreshResult(
+        firstBatch.correlationId, Data::SemanticLiveRefreshOutcome::Refreshed, 106);
+    QTRY_VERIFY(timer->isActive());
+    runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Accepted);
+    timer->start(0);
+    QTRY_COMPARE(runtime.liveRefreshRequests.size(), beforeBatchedRequestCount + 2);
+    const Data::SemanticLiveRefreshRequest secondBatch = runtime.liveRefreshRequests.constLast();
+    QCOMPARE(secondBatch.targets.size(), 64);
+    QCOMPARE(
+        secondBatch.targets.constFirst().signalId.value,
+        QString("org.embedlabs.signal.scheduler-064"));
+    QCOMPARE(
+        secondBatch.targets.constLast().signalId.value,
+        QString("org.embedlabs.signal.scheduler-127"));
+
+    runtime.publishLiveRefreshResult(
+        secondBatch.correlationId, Data::SemanticLiveRefreshOutcome::Refreshed, 107);
+    QTRY_VERIFY(timer->isActive());
+    runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Accepted);
+    timer->start(0);
+    QTRY_COMPARE(runtime.liveRefreshRequests.size(), beforeBatchedRequestCount + 3);
+    const Data::SemanticLiveRefreshRequest finalBatch = runtime.liveRefreshRequests.constLast();
+    QCOMPARE(finalBatch.targets.size(), 2);
+    QCOMPARE(
+        finalBatch.targets.constFirst().signalId.value,
+        QString("org.embedlabs.signal.scheduler-128"));
+    QCOMPARE(
+        finalBatch.targets.constLast().signalId.value,
+        QString("org.embedlabs.signal.scheduler-129"));
+
+    page.hide();
+    QVERIFY(!timer->isActive());
+    const qsizetype hiddenRequestCount = runtime.liveRefreshRequests.size();
+    runtime.liveRefreshOutcomes.append(Data::SemanticLiveRefreshOutcome::Accepted);
+    page.show();
+    QTest::qWait(20);
+    QCOMPARE(runtime.liveRefreshRequests.size(), hiddenRequestCount);
+    runtime.publishLiveRefreshResult(
+        finalBatch.correlationId, Data::SemanticLiveRefreshOutcome::Refreshed, 108);
+    QTRY_COMPARE(runtime.liveRefreshRequests.size(), hiddenRequestCount + 1);
+    const Data::SemanticLiveRefreshRequest resumedFinalBatch
+        = runtime.liveRefreshRequests.constLast();
+    QCOMPARE(resumedFinalBatch.targets, finalBatch.targets);
+
+    page.setContext({});
+    QVERIFY(!timer->isActive());
+    runtime.publishLiveRefreshResult(
+        resumedFinalBatch.correlationId, Data::SemanticLiveRefreshOutcome::Refreshed, 109);
+    QCoreApplication::processEvents();
+    QCOMPARE(runtime.liveRefreshRequests.size(), hiddenRequestCount + 1);
 }
 
 void EtherCATWorkbenchTests::testDeviceAdapterTreeFailsClosed()

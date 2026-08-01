@@ -9,6 +9,7 @@
 #include <QPointer>
 #include <QSet>
 
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -54,10 +55,15 @@ public:
         Core::ProjectService *projectService,
         Core::ProviderRegistry *providerRegistry,
         QObject *parent = nullptr,
-        std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository = {});
+        std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository = {},
+        int liveRefreshTimeoutMs = 5000,
+        int liveSampleFreshnessMs = 5000,
+        std::function<QDateTime()> utcNow = {});
     ~SemanticRuntimeExecutor() final;
 
     QList<Data::SemanticRuntimeContext> contexts() const final;
+    Data::SemanticLiveRefreshResult requestLiveRefresh(
+        const Data::SemanticLiveRefreshRequest &request) final;
     Data::SemanticOperationRecord submit(
         const Data::SemanticOperationRequest &request,
         const Data::SemanticRuntimeActor &actor) final;
@@ -83,6 +89,26 @@ private:
         bool attestationRetryUsed = false;
     };
 
+    struct LiveRuntimeSample
+    {
+        Data::RuntimeResourceSample sample;
+        quint64 captureCycle = 0;
+        quint64 controllerTimestampNs = 0;
+        QDateTime receivedAt;
+    };
+
+    struct LiveRuntimeCache
+    {
+        QString controllerId;
+        Data::ControllerConnectionScope scope;
+        quint64 sessionGeneration = 0;
+        Data::RuntimeResourceCatalogEpoch epoch;
+        Data::SemanticRuntimeDigest mappingDigest;
+        Data::SemanticRuntimeDigest controllerMappingDigest;
+        QByteArray contextHash;
+        QHash<Data::RuntimeResourceId, LiveRuntimeSample> samples;
+    };
+
     QList<Data::SemanticRuntimeContext> buildContexts() const;
     Data::SemanticRuntimeContext buildContext(
         const Data::ProjectSnapshot &project, const Data::NodeId &masterId) const;
@@ -94,6 +120,10 @@ private:
     void processRuntimeBootstrap();
     void trackProvider(Core::Provider *provider);
     void untrackProvider(Core::Provider *provider);
+    QDateTime utcNow() const;
+    bool liveSampleIsFresh(const QDateTime &receivedAt) const;
+    void scheduleLiveCacheExpiry(
+        Core::ControllerConnectionProvider *provider, const QDateTime &receivedAt);
 
     QPointer<Core::ProjectService> m_projectService;
     QPointer<Core::ProviderRegistry> m_providerRegistry;
@@ -109,6 +139,10 @@ private:
     QHash<Core::ControllerConnectionProvider *, quint64> m_runtimeBootstrapSignalGenerations;
     QHash<Core::ControllerConnectionProvider *, quint64> m_runtimeCatalogSignalGenerations;
     QHash<Core::ControllerConnectionProvider *, quint64> m_runtimeSnapshotSignalGenerations;
+    QHash<Core::ControllerConnectionProvider *, LiveRuntimeCache> m_liveRuntimeCaches;
+    int m_liveRefreshTimeoutMs = 5000;
+    int m_liveSampleFreshnessMs = 5000;
+    std::function<QDateTime()> m_utcNow;
     bool m_runtimeBootstrapScheduled = false;
     QList<Data::SemanticRuntimeContext> m_contexts;
     std::unique_ptr<SemanticRuntimeExecutorExecution> m_execution;
