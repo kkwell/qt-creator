@@ -1184,9 +1184,9 @@ ManualActionAuthorization authorizeManualAction(
         result.rejection = QStringLiteral("manual_adapter_contract_version_unsupported");
         return result;
     }
-    // Bundled V3 adapters are upper-layer descriptions, not controller trust
-    // anchors. Authorization comes from exact equivalence to the production
-    // signed ECPKG evidence checked below.
+    if (!manifest.signatureVerified || !manifest.realHardwareAllowed)
+        return result;
+
     if (manifest.qualification != Data::DeviceAdapterQualification::Qualified
         || manifest.match.vendorId != slave.identity.vendorId
         || manifest.match.productCode != slave.identity.productCode

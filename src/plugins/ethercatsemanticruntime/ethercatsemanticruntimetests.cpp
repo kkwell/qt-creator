@@ -1141,6 +1141,12 @@ public:
         };
     }
 
+    void replaceManifests(QList<Data::DeviceAdapterManifest> replacement)
+    {
+        manifests = std::move(replacement);
+        emit adapterManifestsChanged();
+    }
+
     QList<Data::DeviceAdapterManifest> manifests;
 };
 
@@ -2456,6 +2462,11 @@ static Utils::Result<QList<Data::DeviceAdapterManifest>> api038HistoricalTestAda
         contentIdentity.append(topology->adapterSha256);
         manifest.contentSha256 = QCryptographicHash::hash(
             contentIdentity, QCryptographicHash::Sha256);
+        // This is a test-only projection of the already verified API-038
+        // production evidence. Production providers must independently set
+        // both authorization flags after verifying their adapter package.
+        manifest.signatureVerified = true;
+        manifest.realHardwareAllowed = true;
     }
     return result;
 }
@@ -2503,8 +2514,8 @@ static QList<Data::DeviceAdapterManifest> factoryApi038MutationAdapters(
             topology.esiSha256,
         };
         manifest.contentSha256 = upper->contentSha256;
-        manifest.signatureVerified = false;
-        manifest.realHardwareAllowed = false;
+        manifest.signatureVerified = true;
+        manifest.realHardwareAllowed = true;
 
         QHash<QString, Data::SemanticSignalDefinition> signalDefinitions;
         for (const VerifiedSemanticBinding &binding : artifact.bindings) {
@@ -9651,6 +9662,12 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactory()
     const QList<Data::DeviceAdapterManifest> adapterManifests
         = factoryApi038MutationAdapters(evidence);
     QCOMPARE(adapterManifests.size(), qsizetype(2));
+    QVERIFY(std::all_of(
+        adapterManifests.cbegin(),
+        adapterManifests.cend(),
+        [](const Data::DeviceAdapterManifest &manifest) {
+            return manifest.signatureVerified && manifest.realHardwareAllowed;
+        }));
     configureApi038V3ManualProject(project, adapterManifests);
     const Utils::Result<QList<Data::SemanticActionRuntimeState>> states
         = buildSemanticActionRuntimeStates(
@@ -10091,6 +10108,24 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactoryFailsClosed()
     QVERIFY(setOutputs);
     QCOMPARE(setOutputs->availability, Data::SemanticActionAvailability::Rejected);
     QCOMPARE(setOutputs->detail, QStringLiteral("manual_adapter_not_authorized"));
+
+    QList<Data::DeviceAdapterManifest> unsignedAdapter = adapterManifests;
+    QVERIFY(xb6Manifest(unsignedAdapter));
+    xb6Manifest(unsignedAdapter)->signatureVerified = false;
+    expectRejectedDetail(
+        project,
+        unsignedAdapter,
+        u"embedlabs:project:action:xb6:set-outputs",
+        u"manual_adapter_not_authorized");
+
+    QList<Data::DeviceAdapterManifest> hardwareDeniedAdapter = adapterManifests;
+    QVERIFY(xb6Manifest(hardwareDeniedAdapter));
+    xb6Manifest(hardwareDeniedAdapter)->realHardwareAllowed = false;
+    expectRejectedDetail(
+        project,
+        hardwareDeniedAdapter,
+        u"embedlabs:project:action:xb6:set-outputs",
+        u"manual_adapter_not_authorized");
 
     Data::ProjectSnapshot expandedParameter = project;
     QVERIFY(factoryManualSlave(expandedParameter));
@@ -10888,6 +10923,88 @@ void EtherCATSemanticRuntimeTests::testExecutorRejectsUnauthorizedManualActionBe
     const Utils::Result<> initialized = fixture.initialize(true);
     QVERIFY_RESULT(initialized);
     const Data::ProjectSnapshot authorizedProject = fixture.project;
+
+    const auto xb6Manifest = [](QList<Data::DeviceAdapterManifest> &manifests) {
+        return std::find_if(
+            manifests.begin(),
+            manifests.end(),
+            [](const Data::DeviceAdapterManifest &manifest) {
+                return manifest.controllerAdapterTarget.adapterId
+                       == QStringLiteral("solidot.xb6_ec0002_rev1_do16");
+            });
+    };
+    const auto xb6Action = [](const Data::SemanticRuntimeContext &context) {
+        return std::find_if(
+            context.actionStates.cbegin(),
+            context.actionStates.cend(),
+            [](const Data::SemanticActionRuntimeState &action) {
+                return action.actionBindingId
+                       == QStringLiteral("embedlabs:project:action:xb6:set-outputs");
+            });
+    };
+
+    QList<Data::DeviceAdapterManifest> unsignedManifests = fixture.adapterManifests;
+    auto unsignedXb6 = xb6Manifest(unsignedManifests);
+    QVERIFY(unsignedXb6 != unsignedManifests.end());
+    unsignedXb6->signatureVerified = false;
+    fixture.ownedAdapterProvider->replaceManifests(unsignedManifests);
+    QTRY_VERIFY(!fixture.executor->contexts().isEmpty());
+    const Data::SemanticRuntimeContext unsignedContext
+        = fixture.executor->contexts().constFirst();
+    const auto unsignedAction = xb6Action(unsignedContext);
+    QVERIFY(unsignedAction != unsignedContext.actionStates.cend());
+    QCOMPARE(unsignedAction->availability, Data::SemanticActionAvailability::Rejected);
+    QCOMPARE(unsignedAction->detail, QStringLiteral("manual_adapter_not_authorized"));
+    Data::SemanticOperationRequest unsignedRequest = api038ActionRequest(
+        unsignedContext,
+        u"embedlabs:project:action:xb6:set-outputs",
+        u"operation/api038/executor/unsigned-adapter");
+    setApi038DigitalOutputParameters(unsignedRequest);
+    QVERIFY(!buildSemanticActionPlan(*fixture.evidence, unsignedRequest, unsignedContext));
+    const Data::SemanticOperationRecord unsignedRejected
+        = fixture.executor->submit(unsignedRequest, api038Submitter());
+    QCOMPARE(unsignedRejected.state, Data::SemanticOperationState::Rejected);
+    QVERIFY(!unsignedRejected.executionAttempted);
+    QVERIFY(fixture.provider.applyRequests.isEmpty());
+
+    QList<Data::DeviceAdapterManifest> hardwareDeniedManifests = fixture.adapterManifests;
+    auto hardwareDeniedXb6 = xb6Manifest(hardwareDeniedManifests);
+    QVERIFY(hardwareDeniedXb6 != hardwareDeniedManifests.end());
+    hardwareDeniedXb6->realHardwareAllowed = false;
+    fixture.ownedAdapterProvider->replaceManifests(hardwareDeniedManifests);
+    QTRY_VERIFY(!fixture.executor->contexts().isEmpty());
+    const Data::SemanticRuntimeContext hardwareDeniedContext
+        = fixture.executor->contexts().constFirst();
+    const auto hardwareDeniedAction = xb6Action(hardwareDeniedContext);
+    QVERIFY(hardwareDeniedAction != hardwareDeniedContext.actionStates.cend());
+    QCOMPARE(hardwareDeniedAction->availability, Data::SemanticActionAvailability::Rejected);
+    QCOMPARE(hardwareDeniedAction->detail, QStringLiteral("manual_adapter_not_authorized"));
+    Data::SemanticOperationRequest hardwareDeniedRequest = api038ActionRequest(
+        hardwareDeniedContext,
+        u"embedlabs:project:action:xb6:set-outputs",
+        u"operation/api038/executor/hardware-denied-adapter");
+    setApi038DigitalOutputParameters(hardwareDeniedRequest);
+    QVERIFY(!buildSemanticActionPlan(
+        *fixture.evidence, hardwareDeniedRequest, hardwareDeniedContext));
+    const Data::SemanticOperationRecord hardwareDeniedRejected
+        = fixture.executor->submit(hardwareDeniedRequest, api038Submitter());
+    QCOMPARE(hardwareDeniedRejected.state, Data::SemanticOperationState::Rejected);
+    QVERIFY(!hardwareDeniedRejected.executionAttempted);
+    QVERIFY(fixture.provider.snapshotRequests.isEmpty());
+    QVERIFY(fixture.provider.policyRequests.isEmpty());
+    QVERIFY(fixture.provider.stateRequests.isEmpty());
+    QVERIFY(fixture.provider.applyRequests.isEmpty());
+    QCOMPARE(fixture.provider.pendingRequestCount(), 0);
+
+    fixture.ownedAdapterProvider->replaceManifests(fixture.adapterManifests);
+    QTRY_VERIFY(([&fixture, &xb6Action] {
+        const QList<Data::SemanticRuntimeContext> contexts = fixture.executor->contexts();
+        if (contexts.size() != 1)
+            return false;
+        const auto action = xb6Action(contexts.constFirst());
+        return action != contexts.constFirst().actionStates.cend()
+               && action->availability == Data::SemanticActionAvailability::Ready;
+    }()));
 
     Data::ProjectSnapshot unboundProject = authorizedProject;
     unboundProject.slaves.first().stationAddress = 0;
