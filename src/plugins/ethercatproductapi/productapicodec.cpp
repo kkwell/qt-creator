@@ -3082,12 +3082,15 @@ std::optional<TopologyResult> decodeTopologyResult(const Frame &frame, Error *er
     const qint32 result = readBigEndian<qint32>(payload, 4);
     const quint16 count = readBigEndian<quint16>(payload, 8);
     const quint16 responding = readBigEndian<quint16>(payload, 10);
+    const quint32 cpu1RequestSequence = readBigEndian<quint32>(payload, 12);
     const quint32 flags = readBigEndian<quint32>(payload, 16);
     const quint32 combinedAlState = readBigEndian<quint32>(payload, 20);
+    const quint64 cpu1CompletedTimeNs = readBigEndian<quint64>(payload, 24);
     const qsizetype expectedBytes = 32 + qsizetype(count) * 24;
     if (originalType != quint16(MessageType::DiscoverTopology) || recordBytes != 24 || result
-        || count != responding || count > 64 || flags
+        || count != responding || count > 64 || !cpu1RequestSequence || flags
         || combinedAlState & ~ControllerAlKnownMask
+        || !cpu1CompletedTimeNs
         || frame.payload.size() != expectedBytes) {
         setError(
             error,
@@ -3099,7 +3102,9 @@ std::optional<TopologyResult> decodeTopologyResult(const Frame &frame, Error *er
     TopologyResult topology;
     topology.result = result;
     topology.respondingCount = responding;
+    topology.cpu1RequestSequence = cpu1RequestSequence;
     topology.combinedAlState = combinedAlState;
+    topology.cpu1CompletedTimeNs = cpu1CompletedTimeNs;
     topology.slaves.reserve(count);
     for (quint16 index = 0; index < count; ++index) {
         const qsizetype offset = 32 + qsizetype(index) * 24;

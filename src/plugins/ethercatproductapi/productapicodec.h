@@ -298,7 +298,9 @@ struct TopologyResult
 {
     qint32 result = 0;
     quint16 respondingCount = 0;
+    quint32 cpu1RequestSequence = 0;
     quint32 combinedAlState = 0;
+    quint64 cpu1CompletedTimeNs = 0;
     QList<TopologySlave> slaves;
 };
 

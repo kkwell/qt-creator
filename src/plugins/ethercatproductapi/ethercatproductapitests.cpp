@@ -5305,8 +5305,25 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
     QVERIFY(topology);
     QVERIFY(!error);
     QCOMPARE(topology->respondingCount, quint16(2));
+    QCOMPARE(topology->cpu1RequestSequence, quint32(7));
     QCOMPARE(topology->combinedAlState, quint32(0x01));
+    QCOMPARE(topology->cpu1CompletedTimeNs, quint64(123456789));
     QCOMPARE(topology->slaves.size(), 2);
+
+    QByteArray missingTopologySequence = topologyResultPayload();
+    putU32(missingTopologySequence, 12, 0);
+    error = {};
+    QVERIFY(!Protocol::decodeTopologyResult(
+        responseFrame(Protocol::MessageType::TopologyResult, missingTopologySequence), &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    QByteArray missingTopologyCompletedTime = topologyResultPayload();
+    putU64(missingTopologyCompletedTime, 24, 0);
+    error = {};
+    QVERIFY(!Protocol::decodeTopologyResult(
+        responseFrame(Protocol::MessageType::TopologyResult, missingTopologyCompletedTime),
+        &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
 
     QByteArray invalidTopologyPayload = topologyResultPayload();
     putU32(invalidTopologyPayload, 20, 0x20);
@@ -6815,8 +6832,21 @@ void EtherCATProductApiTests::testTopologyProvenanceLifecycle()
     QCOMPARE(
         first.requestId,
         controller.lastRequestId(Protocol::MessageType::DiscoverTopology));
+    QCOMPARE(first.cpu1RequestSequence, quint32(7));
     QCOMPARE(first.controllerTimestampNs, quint64(900000) + first.responseSequence);
+    QCOMPARE(first.cpu1CompletedTimeNs, quint64(123456789));
+    QVERIFY(first.cpu1RequestSequence != first.responseSequence);
+    QVERIFY(first.cpu1CompletedTimeNs != first.controllerTimestampNs);
     QCOMPARE(first.discoveredAt, first.receivedAt);
+
+    Data::ControllerTopologySnapshot changedCpu1Sequence = first;
+    ++changedCpu1Sequence.cpu1RequestSequence;
+    QVERIFY(changedCpu1Sequence != first);
+    QVERIFY(changedCpu1Sequence.hasCompleteProvenance());
+    Data::ControllerTopologySnapshot missingCpu1CompletedTime = first;
+    missingCpu1CompletedTime.cpu1CompletedTimeNs = 0;
+    QVERIFY(missingCpu1CompletedTime != first);
+    QVERIFY(!missingCpu1CompletedTime.hasCompleteProvenance());
 
     QVERIFY(provider.executeControlCommand(control));
     QVERIFY(!provider.connectionSnapshot().topology);
@@ -6833,7 +6863,9 @@ void EtherCATProductApiTests::testTopologyProvenanceLifecycle()
     QCOMPARE(second.bootId, first.bootId);
     QVERIFY(second.requestId > first.requestId);
     QVERIFY(second.responseSequence > first.responseSequence);
+    QCOMPARE(second.cpu1RequestSequence, quint32(7));
     QCOMPARE(second.controllerTimestampNs, quint64(900000) + second.responseSequence);
+    QCOMPARE(second.cpu1CompletedTimeNs, quint64(123456789));
     QVERIFY(second.receivedAt >= first.receivedAt);
 
     const quint64 topologyGeneration = second.sessionGeneration;

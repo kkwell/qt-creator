@@ -6198,7 +6198,9 @@ public:
             result.bootId = frame.header.bootId;
             result.requestId = frame.header.requestId;
             result.responseSequence = frame.header.sequence;
+            result.cpu1RequestSequence = topology->cpu1RequestSequence;
             result.controllerTimestampNs = frame.header.controllerTimestampNs;
+            result.cpu1CompletedTimeNs = topology->cpu1CompletedTimeNs;
             result.receivedAt = receivedAt;
             result.slaves.reserve(topology->slaves.size());
             for (const Protocol::TopologySlave &slave : topology->slaves) {

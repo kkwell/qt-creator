@@ -337,15 +337,22 @@ struct ETHERCATDATA_EXPORT ControllerTopologySnapshot
     // This is the Product API response frame sequence, not a controller-side
     // topology capture sequence.
     quint64 responseSequence = 0;
+    // This is the CPU1 request_sequence carried by the TopologyResult payload,
+    // not the Product API response frame sequence.
+    quint32 cpu1RequestSequence = 0;
     // This is the ECAP response send timestamp, not a topology capture time.
     // Preserve zero because the current wire contract does not forbid it.
     quint64 controllerTimestampNs = 0;
+    // This is the CPU1 completed_time_ns carried by the TopologyResult payload,
+    // not the ECAP response send timestamp.
+    quint64 cpu1CompletedTimeNs = 0;
     QDateTime receivedAt;
 
     bool hasCompleteProvenance() const
     {
         return !scope.projectId.isNull() && !scope.masterId.isNull() && sessionGeneration
-               && sessionId && bootId && requestId && responseSequence && receivedAt.isValid();
+               && sessionId && bootId && requestId && responseSequence && cpu1RequestSequence
+               && cpu1CompletedTimeNs && receivedAt.isValid();
     }
 
     friend bool operator==(const ControllerTopologySnapshot &,

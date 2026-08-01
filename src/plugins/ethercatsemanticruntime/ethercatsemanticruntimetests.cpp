@@ -2753,6 +2753,8 @@ public:
         topology.bootId = provider.snapshot.session->bootId;
         topology.requestId = 1;
         topology.responseSequence = 2;
+        topology.cpu1RequestSequence = 7;
+        topology.cpu1CompletedTimeNs = 123456789;
         topology.receivedAt = topology.discoveredAt;
         provider.snapshot.topology = topology;
         provider.setAvailable(true);
@@ -6760,6 +6762,50 @@ void EtherCATSemanticRuntimeTests::
             QStringLiteral("operation/runtime-activation/topology-stale"));
         QVERIFY_RESULT(initialized);
         ++fixture.provider.snapshot.topology->slaves[0].stationAddress;
+        const auto accepted = fixture.service->start(fixture.request);
+        QVERIFY(accepted.accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(fixture.identity.operationId())
+                        ->outcome()),
+            5000);
+        QCOMPARE(
+            fixture.service->record(fixture.identity.operationId())->outcome(),
+            Data::RuntimePackageActivationOutcome::FailedWithoutControllerChange);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/topology-no-cpu1-sequence"));
+        QVERIFY_RESULT(initialized);
+        fixture.provider.snapshot.topology->cpu1RequestSequence = 0;
+        const auto accepted = fixture.service->start(fixture.request);
+        QVERIFY(accepted.accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(fixture.identity.operationId())
+                        ->outcome()),
+            5000);
+        QCOMPARE(
+            fixture.service->record(fixture.identity.operationId())->outcome(),
+            Data::RuntimePackageActivationOutcome::FailedWithoutControllerChange);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/runtime-activation/topology-no-cpu1-time"));
+        QVERIFY_RESULT(initialized);
+        fixture.provider.snapshot.topology->cpu1CompletedTimeNs = 0;
         const auto accepted = fixture.service->start(fixture.request);
         QVERIFY(accepted.accepted());
         QTRY_VERIFY_WITH_TIMEOUT(
