@@ -3824,6 +3824,30 @@ void logSnapshotOnlyHeartbeat(const SnapshotOnlyHeartbeatEvidence &evidence)
                .arg(before.controllerHeartbeat)
                .arg(after.controllerHeartbeat)
         << "intervalMs=" << evidence.intervalMs;
+
+    const quint64 relevantFaults = after.currentFaults ? after.currentFaults : after.latchedFaults;
+    int reportedAlarms = 0;
+    for (auto it = evidence.after.recentAlarms.crbegin();
+         it != evidence.after.recentAlarms.crend() && reportedAlarms < 2;
+         ++it) {
+        if (it->state != Data::ControllerAlarmState::Raised
+            || !(it->faultMask & relevantFaults)) {
+            continue;
+        }
+        qInfo().noquote()
+            << "[Product API hardware] fault-evidence"
+            << "sequence=" << it->sequence << "code=" << it->codeName
+            << "codeId=" << it->code << "source=" << int(it->source)
+            << "severity=" << int(it->severity) << "mask="
+            << QStringLiteral("0x%1").arg(it->faultMask, 16, 16, QLatin1Char('0'))
+            << "detail="
+            << QStringLiteral("%1/%2/%3")
+                   .arg(qint32(it->detail0))
+                   .arg(it->detail1)
+                   .arg(it->detail2)
+            << "cycle=" << it->cycleCount;
+        ++reportedAlarms;
+    }
 }
 
 void logHardwareSnapshot(const QString &label, const Data::ControllerConnectionSnapshot &snapshot)
