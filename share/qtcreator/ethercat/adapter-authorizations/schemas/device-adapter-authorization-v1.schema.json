@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "hash": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "identifier": {"pattern": "^[A-Za-z0-9][A-Za-z0-9._:/{}-]{0,255}$", "type": "string"},
+    "stringSet": {"items": {"type": "string"}, "type": "array", "uniqueItems": true}
+  },
+  "additionalProperties": false,
+  "properties": {
+    "adapter": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "disabledReason": {"type": ["string", "null"]},
+              "enabled": {"type": "boolean"},
+              "expectedSignedDefinitionSha256": {"$ref": "#/$defs/hash"},
+              "id": {"$ref": "#/$defs/identifier"},
+              "qualification": {"enum": ["qualified", "unqualified"]},
+              "requiresDc": {"type": "boolean"},
+              "signedPdoProfileIds": {"$ref": "#/$defs/stringSet"}
+            },
+            "required": ["id", "enabled", "qualification", "disabledReason", "requiresDc", "expectedSignedDefinitionSha256", "signedPdoProfileIds"],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "contentSha256": {"$ref": "#/$defs/hash"},
+        "controllerAdapterTarget": {
+          "additionalProperties": false,
+          "properties": {
+            "adapterId": {"type": "string"},
+            "adapterSha256": {"$ref": "#/$defs/hash"},
+            "adapterVersion": {"type": "string"},
+            "esiSha256": {"$ref": "#/$defs/hash"}
+          },
+          "required": ["adapterId", "adapterVersion", "adapterSha256", "esiSha256"],
+          "type": "object"
+        },
+        "evidenceSha256": {"anyOf": [{"$ref": "#/$defs/hash"}, {"const": ""}]},
+        "id": {"$ref": "#/$defs/identifier"},
+        "match": {
+          "additionalProperties": false,
+          "properties": {
+            "exactEsiSha256": {"$ref": "#/$defs/hash"},
+            "maximumRevision": {"minimum": 0, "maximum": 4294967295, "type": "integer"},
+            "minimumRevision": {"minimum": 0, "maximum": 4294967295, "type": "integer"},
+            "productCode": {"minimum": 0, "maximum": 4294967295, "type": "integer"},
+            "vendorId": {"minimum": 0, "maximum": 4294967295, "type": "integer"}
+          },
+          "required": ["vendorId", "productCode", "minimumRevision", "maximumRevision", "exactEsiSha256"],
+          "type": "object"
+        },
+        "processDataProfiles": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {"$ref": "#/$defs/identifier"},
+              "requiredSignals": {"$ref": "#/$defs/stringSet"},
+              "rxPdoIndices": {"items": {"maximum": 65535, "minimum": 0, "type": "integer"}, "type": "array", "uniqueItems": true},
+              "signedDcProfileId": {"type": ["string", "null"]},
+              "signedPdoProfileId": {"type": "string"},
+              "txPdoIndices": {"items": {"maximum": 65535, "minimum": 0, "type": "integer"}, "type": "array", "uniqueItems": true}
+            },
+            "required": ["id", "signedPdoProfileId", "signedDcProfileId", "rxPdoIndices", "txPdoIndices", "requiredSignals"],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "qualification": {"enum": ["unqualified", "candidate", "qualified", "mock-only", "revoked"]},
+        "version": {"type": "string"}
+      },
+      "required": ["id", "version", "contentSha256", "qualification", "match", "controllerAdapterTarget", "processDataProfiles", "actions", "evidenceSha256"],
+      "type": "object"
+    },
+    "authorizationId": {"$ref": "#/$defs/identifier"},
+    "canonicalization": {"const": "kvell-json-ascii-sorted-compact-lf-v1"},
+    "decision": {"enum": ["allow", "deny"]},
+    "format": {"const": "embed-labs.ethercat-device-adapter-authorization-v1"},
+    "formatVersion": {"const": 1},
+    "policyId": {"$ref": "#/$defs/identifier"},
+    "policyRevision": {"minimum": 1, "maximum": 4294967295, "type": "integer"},
+    "signerKeyId": {"$ref": "#/$defs/hash"}
+  },
+  "required": ["format", "formatVersion", "canonicalization", "authorizationId", "policyId", "policyRevision", "signerKeyId", "decision", "adapter"],
+  "title": "Embed Labs device-adapter authorization v1",
+  "type": "object"
+}

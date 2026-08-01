@@ -17,6 +17,11 @@ class AdapterPackageRepository final : public Core::DeviceAdapterProvider
 
 public:
     explicit AdapterPackageRepository(const Utils::FilePath &packageRoot, QObject *parent = nullptr);
+    AdapterPackageRepository(
+        const Utils::FilePath &packageRoot,
+        const Utils::FilePath &authorizationRoot,
+        const Utils::FilePath &authorizationTrustRoot,
+        QObject *parent = nullptr);
     ~AdapterPackageRepository() final;
 
     QList<Data::DeviceAdapterManifest> adapterManifests() const final;
@@ -27,6 +32,7 @@ public:
 
     Utils::FilePath packageRoot() const;
     QStringList loadErrors() const;
+    QStringList authorizationDiagnostics() const;
     int loadedPackageCount() const;
     void reload();
 

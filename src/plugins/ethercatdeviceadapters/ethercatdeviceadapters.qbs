@@ -5,12 +5,15 @@ QtcPlugin {
 
     Depends { name: "EtherCATData" }
     Depends { name: "Utils" }
+    Depends { name: "qtcMonocypher" }
     Depends { name: "Core" }
     Depends { name: "EtherCATCore" }
 
     files: [
         "adapterpackagerepository.cpp",
         "adapterpackagerepository.h",
+        "deviceadapterauthorization_p.cpp",
+        "deviceadapterauthorization_p.h",
         "ethercatdeviceadaptersplugin.cpp",
     ]
 

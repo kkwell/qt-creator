@@ -2,6 +2,8 @@
 
 #include "adapterpackagerepository.h"
 
+#include "deviceadapterauthorization_p.h"
+
 #include <ethercatcore/manualcontrolcontract.h>
 
 #include <utils/id.h>
@@ -1311,8 +1313,8 @@ static bool parseProfiles(
         }
         if (schema == PackageSchema::V3 && !object.value("signedDcProfileId").isNull()
             && !simpleV3Identifier(profile.signedDcProfileId)) {
-            return fail(error, QString("%1.signedDcProfileId must be null or canonical")
-                                   .arg(itemContext));
+            return fail(
+                error, QString("%1.signedDcProfileId must be null or canonical").arg(itemContext));
         }
         if (schema == PackageSchema::V3
             && (!stableV3Identifier(profile.id) || !simpleV3Identifier(profile.signedPdoProfileId)
@@ -3035,23 +3037,24 @@ static std::optional<Package> parsePackage(
                     QString::fromLatin1(schemaVersionV3)));
         return std::nullopt;
     }
-    QStringList rootKeys{"schemaVersion",
-                         "id",
-                         "version",
-                         "displayName",
-                         "description",
-                         "qualification",
-                         "matchPriority",
-                         "match",
-                         "capabilities",
-                         "source",
-                         "evidenceSha256",
-                         "signatureVerified",
-                         "realHardwareAllowed",
-                         "signals",
-                         "processDataProfiles",
-                         "moduleProfiles",
-                         "controlActions"};
+    QStringList rootKeys{
+        "schemaVersion",
+        "id",
+        "version",
+        "displayName",
+        "description",
+        "qualification",
+        "matchPriority",
+        "match",
+        "capabilities",
+        "source",
+        "evidenceSha256",
+        "signatureVerified",
+        "realHardwareAllowed",
+        "signals",
+        "processDataProfiles",
+        "moduleProfiles",
+        "controlActions"};
     if (schema == PackageSchema::V3)
         rootKeys.append("controllerAdapterTarget");
     if (!checkKeys(object, rootKeys, context, error)) {
@@ -3157,11 +3160,7 @@ static std::optional<Package> parsePackage(
                 targetContext,
                 error)
             || !parseString(
-                target,
-                "adapterId",
-                targetContext,
-                &manifest.controllerAdapterTarget.adapterId,
-                error)
+                target, "adapterId", targetContext, &manifest.controllerAdapterTarget.adapterId, error)
             || !parseString(
                 target,
                 "adapterVersion",
@@ -3182,8 +3181,7 @@ static std::optional<Package> parsePackage(
                 error)) {
             return std::nullopt;
         }
-        const DeviceAdapterControllerTarget &controllerTarget
-            = manifest.controllerAdapterTarget;
+        const DeviceAdapterControllerTarget &controllerTarget = manifest.controllerAdapterTarget;
         if (!simpleV3Identifier(controllerTarget.adapterId)
             || !canonicalIdentifier(controllerTarget.adapterVersion)) {
             fail(error, QString("%1 identity must be canonical").arg(targetContext));
@@ -3651,20 +3649,35 @@ static DeviceAdapterResolutionResult resolvePackage(
 class AdapterPackageRepository::Private
 {
 public:
-    explicit Private(const Utils::FilePath &root)
+    Private(
+        const Utils::FilePath &root,
+        const Utils::FilePath &authorization,
+        const Utils::FilePath &authorizationTrust)
         : packageRoot(root)
+        , authorizationRoots{authorization, authorizationTrust}
     {}
 
     Utils::FilePath packageRoot;
+    DeviceAdapterAuthorizationRoots authorizationRoots;
     QList<Package> packages;
     QStringList loadErrors;
+    QStringList authorizationDiagnostics;
+    QHash<QString, AcceptedDeviceAdapterPolicy> acceptedPolicies;
 };
 
 AdapterPackageRepository::AdapterPackageRepository(
     const Utils::FilePath &packageRoot, QObject *parent)
+    : AdapterPackageRepository(packageRoot, {}, {}, parent)
+{}
+
+AdapterPackageRepository::AdapterPackageRepository(
+    const Utils::FilePath &packageRoot,
+    const Utils::FilePath &authorizationRoot,
+    const Utils::FilePath &authorizationTrustRoot,
+    QObject *parent)
     : Core::DeviceAdapterProvider(
           Utils::Id("EtherCAT.DeviceAdapters.Packages"), tr("Device adapter packages"), parent)
-    , d(std::make_unique<Private>(packageRoot))
+    , d(std::make_unique<Private>(packageRoot, authorizationRoot, authorizationTrustRoot))
 {
     reload();
 }
@@ -3786,6 +3799,11 @@ QStringList AdapterPackageRepository::loadErrors() const
     return d->loadErrors;
 }
 
+QStringList AdapterPackageRepository::authorizationDiagnostics() const
+{
+    return d->authorizationDiagnostics;
+}
+
 int AdapterPackageRepository::loadedPackageCount() const
 {
     return d->packages.size();
@@ -3796,6 +3814,7 @@ void AdapterPackageRepository::reload()
     const QList<DeviceAdapterManifest> oldManifests = adapterManifests();
     d->packages.clear();
     d->loadErrors.clear();
+    d->authorizationDiagnostics.clear();
 
     if (!d->packageRoot.exists() || !d->packageRoot.isDir()) {
         d->loadErrors.append(
@@ -3844,6 +3863,14 @@ void AdapterPackageRepository::reload()
             d->packages.append(*package);
         }
         std::sort(d->packages.begin(), d->packages.end(), packageLess);
+        QList<DeviceAdapterManifest> manifests;
+        manifests.reserve(d->packages.size());
+        for (const Package &package : std::as_const(d->packages))
+            manifests.append(package.manifest);
+        applyDeviceAdapterAuthorizations(
+            d->authorizationRoots, &manifests, &d->acceptedPolicies, &d->authorizationDiagnostics);
+        for (qsizetype index = 0; index < d->packages.size(); ++index)
+            d->packages[index].manifest = manifests.at(index);
     }
 
     setAvailable(d->loadErrors.isEmpty() && !d->packages.isEmpty());

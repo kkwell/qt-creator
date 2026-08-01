@@ -41,7 +41,9 @@ EtherCATDeviceAdaptersPlugin::~EtherCATDeviceAdaptersPlugin()
 void EtherCATDeviceAdaptersPlugin::initialize()
 {
     m_repository = std::make_unique<AdapterPackageRepository>(
-        ::Core::ICore::resourcePath("ethercat/adapters"));
+        ::Core::ICore::resourcePath("ethercat/adapters"),
+        ::Core::ICore::resourcePath("ethercat/adapter-authorizations"),
+        ::Core::ICore::resourcePath("ethercat/adapter-authorization-trust"));
     ExtensionSystem::PluginManager::addObject(m_repository.get());
     m_registered = true;
 

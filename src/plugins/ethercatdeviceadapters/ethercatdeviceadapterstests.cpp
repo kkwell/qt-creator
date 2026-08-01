@@ -9,13 +9,18 @@
 #include <ethercatcore/manualcontrolcontract.h>
 #include <ethercatcore/providerregistry.h>
 
+#include <ethercatdata/runtimepackagecompiler.h>
+
 #include <extensionsystem/pluginmanager.h>
 
 #include <utils/filepath.h>
 
+#include <monocypher-ed25519.h>
+
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -23,6 +28,8 @@
 #include <QTest>
 
 #include <algorithm>
+
+#include <array>
 
 namespace EtherCAT::DeviceAdapters::Internal {
 
@@ -77,6 +84,171 @@ static QByteArray jsonWithReverseRootKeys(const QJsonObject &object)
         result.append(compactJsonValue(object.value(keys.at(index))));
     }
     result.append('}');
+    return result;
+}
+
+struct AuthorizationTestKey
+{
+    QByteArray secretKey;
+    QByteArray publicKey;
+    QByteArray keyId;
+};
+
+static AuthorizationTestKey authorizationTestKey(char seedByte)
+{
+    QByteArray seed(32, seedByte);
+    AuthorizationTestKey result;
+    result.secretKey.resize(64);
+    result.publicKey.resize(32);
+    crypto_ed25519_key_pair(
+        reinterpret_cast<uint8_t *>(result.secretKey.data()),
+        reinterpret_cast<uint8_t *>(result.publicKey.data()),
+        reinterpret_cast<uint8_t *>(seed.data()));
+    result.keyId = QCryptographicHash::hash(result.publicKey, QCryptographicHash::Sha256);
+    return result;
+}
+
+static QByteArray canonicalAuthorizationJson(const QJsonObject &object)
+{
+    QByteArray result = QJsonDocument(object).toJson(QJsonDocument::Compact);
+    result.append('\n');
+    return result;
+}
+
+static QByteArray authorizationSignature(
+    const QByteArray &canonical, const QByteArray &secretKey, const QByteArray &domain)
+{
+    QByteArray message = domain;
+    message.append('\0');
+    message.append(canonical);
+    QByteArray signature(64, '\0');
+    crypto_ed25519_sign(
+        reinterpret_cast<uint8_t *>(signature.data()),
+        reinterpret_cast<const uint8_t *>(secretKey.constData()),
+        reinterpret_cast<const uint8_t *>(message.constData()),
+        size_t(message.size()));
+    return signature;
+}
+
+static bool writeSignedAuthorizationDocument(
+    const QString &jsonPath,
+    const QJsonObject &object,
+    const AuthorizationTestKey &key,
+    const QByteArray &domain,
+    const QByteArray &signingDomain = {})
+{
+    const QByteArray canonical = canonicalAuthorizationJson(object);
+    const Data::RuntimePackageCompilerCanonicalJson checked
+        = Data::RuntimePackageCompilerCanonicalJson::fromExactBytes(canonical);
+    QString signaturePath = jsonPath;
+    signaturePath.chop(5);
+    signaturePath.append(".sig");
+    return checked.isValid() && writeBytes(jsonPath, canonical)
+           && writeBytes(
+               signaturePath,
+               authorizationSignature(
+                   canonical, key.secretKey, signingDomain.isEmpty() ? domain : signingDomain));
+}
+
+static QString adapterQualificationString(Data::DeviceAdapterQualification qualification)
+{
+    switch (qualification) {
+    case Data::DeviceAdapterQualification::Unqualified:
+        return "unqualified";
+    case Data::DeviceAdapterQualification::Candidate:
+        return "candidate";
+    case Data::DeviceAdapterQualification::Qualified:
+        return "qualified";
+    case Data::DeviceAdapterQualification::MockOnly:
+        return "mock-only";
+    case Data::DeviceAdapterQualification::Revoked:
+        return "revoked";
+    }
+    return {};
+}
+
+static QJsonArray authorizationStringArray(const QStringList &values)
+{
+    QJsonArray result;
+    for (const QString &value : values)
+        result.append(value);
+    return result;
+}
+
+static QJsonObject authorizationBinding(const Data::DeviceAdapterManifest &manifest)
+{
+    QJsonObject match;
+    match.insert("vendorId", qint64(manifest.match.vendorId));
+    match.insert("productCode", qint64(manifest.match.productCode));
+    match.insert("minimumRevision", qint64(manifest.match.minimumRevision));
+    match.insert("maximumRevision", qint64(manifest.match.maximumRevision));
+    match.insert("exactEsiSha256", QString::fromLatin1(manifest.match.exactEsiSha256.toHex()));
+
+    QJsonObject target;
+    target.insert("adapterId", manifest.controllerAdapterTarget.adapterId);
+    target.insert("adapterVersion", manifest.controllerAdapterTarget.adapterVersion);
+    target.insert(
+        "adapterSha256",
+        QString::fromLatin1(manifest.controllerAdapterTarget.adapterSha256.toHex()));
+    target
+        .insert("esiSha256", QString::fromLatin1(manifest.controllerAdapterTarget.esiSha256.toHex()));
+
+    QJsonArray profiles;
+    for (const Data::ProcessDataProfile &profile : manifest.processDataProfiles) {
+        QJsonObject item;
+        item.insert("id", profile.id);
+        item.insert("signedPdoProfileId", profile.signedPdoProfileId);
+        item.insert(
+            "signedDcProfileId",
+            profile.signedDcProfileId.isEmpty() ? QJsonValue(QJsonValue::Null)
+                                                : QJsonValue(profile.signedDcProfileId));
+        QJsonArray rx;
+        for (quint16 value : profile.rxPdoIndices)
+            rx.append(value);
+        QJsonArray tx;
+        for (quint16 value : profile.txPdoIndices)
+            tx.append(value);
+        QStringList required;
+        for (const Data::SemanticSignalId &id : profile.requiredSignals)
+            required.append(id.value);
+        item.insert("rxPdoIndices", rx);
+        item.insert("txPdoIndices", tx);
+        item.insert("requiredSignals", authorizationStringArray(required));
+        profiles.append(item);
+    }
+
+    QJsonArray actions;
+    for (const Data::DeviceControlAction &action : manifest.controlActions) {
+        QJsonObject item;
+        item.insert("id", action.id.value);
+        item.insert("enabled", action.enabled);
+        item.insert(
+            "qualification",
+            action.signedQualification == Data::DeviceControlActionQualification::Qualified
+                ? QString("qualified")
+                : QString("unqualified"));
+        item.insert(
+            "disabledReason",
+            action.disabledReason.isEmpty() ? QJsonValue(QJsonValue::Null)
+                                            : QJsonValue(action.disabledReason));
+        item.insert("requiresDc", action.requiresDc);
+        item.insert(
+            "expectedSignedDefinitionSha256",
+            QString::fromLatin1(action.expectedSignedDefinitionSha256.toHex()));
+        item.insert("signedPdoProfileIds", authorizationStringArray(action.signedPdoProfileIds));
+        actions.append(item);
+    }
+
+    QJsonObject result;
+    result.insert("id", manifest.id.value);
+    result.insert("version", manifest.version);
+    result.insert("contentSha256", QString::fromLatin1(manifest.contentSha256.toHex()));
+    result.insert("qualification", adapterQualificationString(manifest.qualification));
+    result.insert("match", match);
+    result.insert("controllerAdapterTarget", target);
+    result.insert("processDataProfiles", profiles);
+    result.insert("actions", actions);
+    result.insert("evidenceSha256", QString::fromLatin1(manifest.evidenceSha256.toHex()));
     return result;
 }
 
@@ -471,8 +643,7 @@ void EtherCATDeviceAdaptersTests::testBundledV2ExactContracts()
     AdapterPackageRepository repository(adaptersRoot());
     QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
     const QList<Data::DeviceAdapterManifest> manifests = repository.adapterManifests();
-    const Data::DeviceAdapterManifest *xb6
-        = manifestForIdentity(manifests, xb6Identity, "0.2.0");
+    const Data::DeviceAdapterManifest *xb6 = manifestForIdentity(manifests, xb6Identity, "0.2.0");
     const Data::DeviceAdapterManifest *sv630n
         = manifestForIdentity(manifests, sv630nIdentity, "0.2.0");
     QVERIFY(xb6);
@@ -583,14 +754,12 @@ void EtherCATDeviceAdaptersTests::testBundledV2ExactContracts()
 
 void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
 {
-    AdapterPackageRepository repository(
-        ::Core::ICore::resourcePath("ethercat/adapters/v3"));
+    AdapterPackageRepository repository(::Core::ICore::resourcePath("ethercat/adapters/v3"));
     QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
     QCOMPARE(repository.loadedPackageCount(), 2);
 
     const QList<Data::DeviceAdapterManifest> manifests = repository.adapterManifests();
-    const Data::DeviceAdapterManifest *xb6
-        = manifestForIdentity(manifests, xb6Identity, "0.3.1");
+    const Data::DeviceAdapterManifest *xb6 = manifestForIdentity(manifests, xb6Identity, "0.3.1");
     const Data::DeviceAdapterManifest *sv630n
         = manifestForIdentity(manifests, sv630nIdentity, "0.3.0");
     QVERIFY(xb6);
@@ -599,21 +768,16 @@ void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
     QCOMPARE(sv630n->contractVersion, Data::DeviceAdapterContractVersion::V3);
     QCOMPARE(
         xb6->contentSha256,
-        QByteArray::fromHex(
-            "1b95083165cf124054069bd9897837d09bc414e8f375bbd77a0f9ddc1bcfa84c"));
+        QByteArray::fromHex("1b95083165cf124054069bd9897837d09bc414e8f375bbd77a0f9ddc1bcfa84c"));
     QCOMPARE(
         sv630n->contentSha256,
-        QByteArray::fromHex(
-            "acf63ee7c837cf39e87fa510aeb8aadfac89b393d04b6cf28926037499a825b9"));
+        QByteArray::fromHex("acf63ee7c837cf39e87fa510aeb8aadfac89b393d04b6cf28926037499a825b9"));
 
-    QCOMPARE(
-        xb6->controllerAdapterTarget.adapterId,
-        QString("solidot.xb6_ec0002_rev1_do16"));
+    QCOMPARE(xb6->controllerAdapterTarget.adapterId, QString("solidot.xb6_ec0002_rev1_do16"));
     QCOMPARE(xb6->controllerAdapterTarget.adapterVersion, QString("1.3.0"));
     QCOMPARE(
         xb6->controllerAdapterTarget.adapterSha256,
-        QByteArray::fromHex(
-            "1b33847b728585760471384cc6dec4273c7c1fb739e001a0b848229b935e3c42"));
+        QByteArray::fromHex("1b33847b728585760471384cc6dec4273c7c1fb739e001a0b848229b935e3c42"));
     QCOMPARE(xb6->controllerAdapterTarget.esiSha256, xb6EsiSha256);
     QCOMPARE(xb6->semanticSignals.size(), 18);
     QCOMPARE(xb6->processDataProfiles.size(), 1);
@@ -635,20 +799,15 @@ void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
         }
     }
     QCOMPARE(xb6OutputIds.size(), 16);
-    QVERIFY(xb6OutputIds.contains(
-        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.0"));
-    QVERIFY(xb6OutputIds.contains(
-        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.15"));
-    QVERIFY(!xb6OutputIds.contains(
-        "org.embedlabs.solidot.xb6.slot.1.digital-output.channel.16"));
+    QVERIFY(xb6OutputIds.contains("org.embedlabs.solidot.xb6.slot.1.digital-output.channel.0"));
+    QVERIFY(xb6OutputIds.contains("org.embedlabs.solidot.xb6.slot.1.digital-output.channel.15"));
+    QVERIFY(!xb6OutputIds.contains("org.embedlabs.solidot.xb6.slot.1.digital-output.channel.16"));
 
     const QHash<QString, QByteArray> xb6ActionDigests{
         {"org.embedlabs.solidot.xb6.action.clear-digital-outputs",
-         QByteArray::fromHex(
-             "4e6e1ac0ca79032980f5aab89d8eb7f14905123145b87987c58bdc1a908b4b21")},
+         QByteArray::fromHex("4e6e1ac0ca79032980f5aab89d8eb7f14905123145b87987c58bdc1a908b4b21")},
         {"org.embedlabs.solidot.xb6.action.set-digital-outputs",
-         QByteArray::fromHex(
-             "d7eae9ade36e0d28fde08b36511966072a63a99a5ebb089f50fdfb3d799c72bd")},
+         QByteArray::fromHex("d7eae9ade36e0d28fde08b36511966072a63a99a5ebb089f50fdfb3d799c72bd")},
     };
     for (const Data::DeviceControlAction &action : xb6->controlActions) {
         QVERIFY(action.enabled);
@@ -663,27 +822,20 @@ void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
             Data::DeviceControlGroupRecovery::HoldSafe);
         QCOMPARE(action.consistencyGroups.constFirst().maximumTtlCycles, quint32(1000));
         QCOMPARE(
-            action.failureDisposition,
-            Data::DeviceControlFailureDisposition::HoldOperationalFault);
+            action.failureDisposition, Data::DeviceControlFailureDisposition::HoldOperationalFault);
     }
 
     QCOMPARE(
-        sv630n->controllerAdapterTarget.adapterId,
-        QString("inovance.sv630n_1axis_rev00010000_csp"));
+        sv630n->controllerAdapterTarget.adapterId, QString("inovance.sv630n_1axis_rev00010000_csp"));
     QCOMPARE(sv630n->controllerAdapterTarget.adapterVersion, QString("1.5.0"));
     QCOMPARE(
         sv630n->controllerAdapterTarget.adapterSha256,
-        QByteArray::fromHex(
-            "f5b8d1d579b9804927d9749b8ca61e18f4701ab5be75626aeda7459b9a9db99e"));
+        QByteArray::fromHex("f5b8d1d579b9804927d9749b8ca61e18f4701ab5be75626aeda7459b9a9db99e"));
     QCOMPARE(sv630n->controllerAdapterTarget.esiSha256, sv630nEsiSha256);
     QCOMPARE(sv630n->semanticSignals.size(), 19);
     QCOMPARE(sv630n->processDataProfiles.size(), 1);
-    QCOMPARE(
-        sv630n->processDataProfiles.constFirst().signedPdoProfileId,
-        QString("csp_1704_1b04"));
-    QCOMPARE(
-        sv630n->processDataProfiles.constFirst().signedDcProfileId,
-        QString("sync0_125us"));
+    QCOMPARE(sv630n->processDataProfiles.constFirst().signedPdoProfileId, QString("csp_1704_1b04"));
+    QCOMPARE(sv630n->processDataProfiles.constFirst().signedDcProfileId, QString("sync0_125us"));
     QCOMPARE(sv630n->processDataProfiles.constFirst().rxPdoIndices, QList<quint16>{0x1704});
     QCOMPARE(sv630n->processDataProfiles.constFirst().txPdoIndices, QList<quint16>{0x1b04});
     QCOMPARE(sv630n->controlActions.size(), 3);
@@ -692,21 +844,16 @@ void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
 
     const QHash<QString, QByteArray> svActionDigests{
         {"org.embedlabs.inovance.sv630n.action.prepare-csv",
-         QByteArray::fromHex(
-             "4a8bc220a783e600c25b9842802678712d8f4e3a0eb0a1948f295145105551bd")},
+         QByteArray::fromHex("4a8bc220a783e600c25b9842802678712d8f4e3a0eb0a1948f295145105551bd")},
         {"org.embedlabs.inovance.sv630n.action.set-csv-velocity",
-         QByteArray::fromHex(
-             "1355c4d05de03d96f8064f60706e7eb7f0fb381caa715b5dc3f607164114a90a")},
+         QByteArray::fromHex("1355c4d05de03d96f8064f60706e7eb7f0fb381caa715b5dc3f607164114a90a")},
         {"org.embedlabs.inovance.sv630n.action.stop-csv",
-         QByteArray::fromHex(
-             "df27cc25c14dfb4b6aa435d4ab5d853e051f2e754e3c16093925f5ccf69393d3")},
+         QByteArray::fromHex("df27cc25c14dfb4b6aa435d4ab5d853e051f2e754e3c16093925f5ccf69393d3")},
     };
     for (const Data::DeviceControlAction &action : sv630n->controlActions) {
         QVERIFY(!action.enabled);
         QCOMPARE(action.signedQualification, Data::DeviceControlActionQualification::Unqualified);
-        QCOMPARE(
-            action.disabledReason,
-            QString("reference_unit_to_rpm_conversion_not_bound"));
+        QCOMPARE(action.disabledReason, QString("reference_unit_to_rpm_conversion_not_bound"));
         QVERIFY(action.requiresDc);
         QCOMPARE(action.expectedSignedDefinitionSha256, svActionDigests.value(action.id.value));
         QCOMPARE(action.signedPdoProfileIds, QStringList{"csp_1704_1b04"});
@@ -718,6 +865,262 @@ void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
             Data::DeviceControlGroupRecovery::HoldSafe);
         QCOMPARE(action.consistencyGroups.constFirst().maximumTtlCycles, quint32(1000));
     }
+}
+
+void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
+{
+    constexpr char policyDomain[] = "embed-labs.ethercat-device-adapter-authorization-policy/v1";
+    constexpr char authorizationDomain[] = "embed-labs.ethercat-device-adapter-authorization/v1";
+
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    const QString authorizationRoot = temporaryDirectory.path() + "/authorizations";
+    const QString trustRoot = temporaryDirectory.path() + "/trust";
+    QVERIFY(QDir().mkpath(authorizationRoot + "/policies"));
+    QVERIFY(QDir().mkpath(authorizationRoot + "/authorizations"));
+    QVERIFY(QDir().mkpath(trustRoot));
+
+    const Utils::FilePath packageRoot = adaptersRoot().pathAppended("v3");
+    const Utils::FilePath authorizationRootPath = Utils::FilePath::fromString(authorizationRoot);
+    const Utils::FilePath trustRootPath = Utils::FilePath::fromString(trustRoot);
+    AdapterPackageRepository unsignedRepository(packageRoot, authorizationRootPath, trustRootPath);
+    QVERIFY(unsignedRepository.isAvailable());
+    QCOMPARE(unsignedRepository.authorizationDiagnostics(), QStringList{});
+    QCOMPARE(unsignedRepository.loadedPackageCount(), 2);
+    const auto unsignedXb6
+        = unsignedRepository
+              .adapterManifest({"org.embedlabs.adapter.solidot.xb6-ec0002.rev1"}, "0.3.1");
+    const auto unsignedSv = unsignedRepository.adapterManifest(
+        {"org.embedlabs.adapter.inovance.sv630n-1axis.rev00010000"}, "0.3.0");
+    QVERIFY(unsignedXb6);
+    QVERIFY(unsignedSv);
+    QVERIFY(!unsignedXb6->signatureVerified);
+    QVERIFY(!unsignedXb6->realHardwareAllowed);
+    QVERIFY(!unsignedSv->signatureVerified);
+    QVERIFY(!unsignedSv->realHardwareAllowed);
+    const QByteArray immutableContentSha256 = unsignedXb6->contentSha256;
+
+    const AuthorizationTestKey rootKey = authorizationTestKey('\x11');
+    const AuthorizationTestKey signerKey = authorizationTestKey('\x22');
+    const QString rootKeyPath = trustRoot + '/' + QString::fromLatin1(rootKey.keyId.toHex())
+                                + ".pub";
+    QVERIFY(writeBytes(rootKeyPath, rootKey.publicKey));
+
+    const QString policyPath = authorizationRoot + "/policies/production.policy.json";
+    const QString authorizationPath = authorizationRoot + "/authorizations/xb6.authorization.json";
+    const QString duplicateAuthorizationPath = authorizationRoot
+                                               + "/authorizations/xb6-copy.authorization.json";
+
+    const auto policy = [&](quint32 revision,
+                            const QStringList &revokedSignerIds = {},
+                            const QStringList &revokedAuthorizationIds = {}) {
+        QJsonObject signer;
+        signer.insert("keyId", QString::fromLatin1(signerKey.keyId.toHex()));
+        signer.insert("publicKey", QString::fromLatin1(signerKey.publicKey.toHex()));
+        signer.insert("adapterIds", QJsonArray{unsignedXb6->id.value});
+        signer.insert("decisions", QJsonArray{"allow", "deny"});
+        QJsonObject result;
+        result.insert("format", "embed-labs.ethercat-device-adapter-authorization-policy-v1");
+        result.insert("formatVersion", 1);
+        result.insert("canonicalization", "kvell-json-ascii-sorted-compact-lf-v1");
+        result.insert("policyId", "embed-labs.production-adapter-policy");
+        result.insert("policyRevision", qint64(revision));
+        result.insert("rootKeyId", QString::fromLatin1(rootKey.keyId.toHex()));
+        result.insert("signers", QJsonArray{signer});
+        result.insert("revokedSignerKeyIds", authorizationStringArray(revokedSignerIds));
+        result.insert("revokedAuthorizationIds", authorizationStringArray(revokedAuthorizationIds));
+        return result;
+    };
+    const auto authorization = [&](quint32 revision, const QString &decision = "allow") {
+        QJsonObject result;
+        result.insert("format", "embed-labs.ethercat-device-adapter-authorization-v1");
+        result.insert("formatVersion", 1);
+        result.insert("canonicalization", "kvell-json-ascii-sorted-compact-lf-v1");
+        result.insert("authorizationId", "embed-labs.production.xb6.0-3-1");
+        result.insert("policyId", "embed-labs.production-adapter-policy");
+        result.insert("policyRevision", qint64(revision));
+        result.insert("signerKeyId", QString::fromLatin1(signerKey.keyId.toHex()));
+        result.insert("decision", decision);
+        result.insert("adapter", authorizationBinding(*unsignedXb6));
+        return result;
+    };
+    const auto removeDuplicate = [&] {
+        QFile::remove(duplicateAuthorizationPath);
+        QString signature = duplicateAuthorizationPath;
+        signature.chop(5);
+        signature.append(".sig");
+        QFile::remove(signature);
+    };
+    const auto install = [&](const QJsonObject &policyObject,
+                             const QJsonObject &authorizationObject,
+                             const QByteArray &authorizationSigningDomain = QByteArray{}) {
+        removeDuplicate();
+        QVERIFY(writeSignedAuthorizationDocument(policyPath, policyObject, rootKey, policyDomain));
+        QVERIFY(writeSignedAuthorizationDocument(
+            authorizationPath,
+            authorizationObject,
+            signerKey,
+            authorizationDomain,
+            authorizationSigningDomain));
+    };
+    struct Evaluation
+    {
+        bool available = false;
+        Data::DeviceAdapterManifest xb6;
+        Data::DeviceAdapterManifest sv;
+        QStringList diagnostics;
+    };
+    const auto evaluate = [&] {
+        AdapterPackageRepository repository(packageRoot, authorizationRootPath, trustRootPath);
+        Evaluation result;
+        result.available = repository.isAvailable();
+        result.diagnostics = repository.authorizationDiagnostics();
+        result.xb6 = *repository.adapterManifest(unsignedXb6->id, unsignedXb6->version);
+        result.sv = *repository.adapterManifest(unsignedSv->id, unsignedSv->version);
+        return result;
+    };
+
+    install(policy(1), authorization(1));
+    Evaluation result = evaluate();
+    QVERIFY(result.available);
+    QVERIFY2(result.diagnostics.isEmpty(), qPrintable(result.diagnostics.join('\n')));
+    QVERIFY(result.xb6.signatureVerified);
+    QVERIFY(result.xb6.realHardwareAllowed);
+    QCOMPARE(result.xb6.contentSha256, immutableContentSha256);
+    QVERIFY(!result.sv.signatureVerified);
+    QVERIFY(!result.sv.realHardwareAllowed);
+
+    install(policy(1), authorization(1));
+    QString authorizationSignaturePath = authorizationPath;
+    authorizationSignaturePath.chop(5);
+    authorizationSignaturePath.append(".sig");
+    QVERIFY(writeBytes(authorizationSignaturePath, QByteArray(64, '\0')));
+    result = evaluate();
+    QVERIFY(result.available);
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("authorization signature is invalid"));
+
+    install(policy(1), authorization(1), policyDomain);
+    result = evaluate();
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("authorization signature is invalid"));
+
+    QJsonObject unknown = authorization(1);
+    unknown.insert("unknown", true);
+    install(policy(1), unknown);
+    result = evaluate();
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("invalid field set"));
+
+    install(policy(1), authorization(1));
+    const QByteArray nonCanonical = QJsonDocument(authorization(1)).toJson(QJsonDocument::Indented);
+    QVERIFY(writeBytes(authorizationPath, nonCanonical));
+    QVERIFY(writeBytes(
+        authorizationSignaturePath,
+        authorizationSignature(nonCanonical, signerKey.secretKey, authorizationDomain)));
+    result = evaluate();
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("not kvell-json"));
+
+    install(policy(1), authorization(1));
+    QFile trailingAuthorization(authorizationPath);
+    QVERIFY(trailingAuthorization.open(QIODevice::Append));
+    QCOMPARE(trailingAuthorization.write(" "), qint64(1));
+    trailingAuthorization.close();
+    result = evaluate();
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("not kvell-json"));
+
+    QJsonObject mismatch = authorization(1);
+    QJsonObject mismatchAdapter = mismatch.value("adapter").toObject();
+    QJsonObject mismatchMatch = mismatchAdapter.value("match").toObject();
+    mismatchMatch.insert("vendorId", qint64(1));
+    mismatchAdapter.insert("match", mismatchMatch);
+    mismatch.insert("adapter", mismatchAdapter);
+    install(policy(1), mismatch);
+    result = evaluate();
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("does not exactly match"));
+
+    install(policy(1, {}, {"embed-labs.production.xb6.0-3-1"}), authorization(1));
+    result = evaluate();
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("revoked"));
+
+    install(policy(1), authorization(1));
+    QVERIFY(QFile::copy(authorizationPath, duplicateAuthorizationPath));
+    QString duplicateSignaturePath = duplicateAuthorizationPath;
+    duplicateSignaturePath.chop(5);
+    duplicateSignaturePath.append(".sig");
+    QVERIFY(QFile::copy(authorizationSignaturePath, duplicateSignaturePath));
+    result = evaluate();
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("duplicate or conflicting"));
+
+    install(policy(1), authorization(1, "deny"));
+    result = evaluate();
+    QVERIFY(result.available);
+    QVERIFY2(result.diagnostics.isEmpty(), qPrintable(result.diagnostics.join('\n')));
+    QVERIFY(!result.xb6.signatureVerified);
+    QVERIFY(!result.xb6.realHardwareAllowed);
+
+    QJsonObject badKey = authorization(1);
+    badKey.insert("signerKeyId", QString::fromLatin1(rootKey.keyId.toHex()));
+    install(policy(1), badKey);
+    result = evaluate();
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("outside policy"));
+
+    install(policy(1), authorization(1));
+    QString policySignaturePath = policyPath;
+    policySignaturePath.chop(5);
+    policySignaturePath.append(".sig");
+    QVERIFY(writeBytes(policySignaturePath, QByteArray(64, '\0')));
+    result = evaluate();
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("root policy signature is invalid"));
+
+    install(policy(1), authorization(1));
+    const QString linkedTarget = temporaryDirectory.path() + "/linked.authorization.json";
+    QVERIFY(QFile::rename(authorizationPath, linkedTarget));
+    QVERIFY(QFile::link(linkedTarget, authorizationPath));
+    QVERIFY(QFileInfo(authorizationPath).isSymLink());
+    result = evaluate();
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("symbolic-link authorizations"));
+    QVERIFY(QFile::remove(authorizationPath));
+
+    install(policy(1), authorization(1));
+    const QString linkedSignatureTarget = temporaryDirectory.path() + "/linked.sig";
+    QVERIFY(QFile::rename(authorizationSignaturePath, linkedSignatureTarget));
+    QVERIFY(QFile::link(linkedSignatureTarget, authorizationSignaturePath));
+    QVERIFY(QFileInfo(authorizationSignaturePath).isSymLink());
+    result = evaluate();
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("non-symlink"));
+    QVERIFY(QFile::remove(authorizationSignaturePath));
+
+    install(policy(1), authorization(1));
+    AdapterPackageRepository
+        equivocationRepository(packageRoot, authorizationRootPath, trustRootPath);
+    QVERIFY(equivocationRepository.adapterManifest(unsignedXb6->id, unsignedXb6->version)
+                ->realHardwareAllowed);
+    install(policy(1, {QString::fromLatin1(signerKey.keyId.toHex())}), authorization(1));
+    equivocationRepository.reload();
+    QVERIFY(!equivocationRepository.adapterManifest(unsignedXb6->id, unsignedXb6->version)
+                 ->realHardwareAllowed);
+    QVERIFY(
+        equivocationRepository.authorizationDiagnostics().join('\n').contains("changed identity"));
+
+    install(policy(2), authorization(2));
+    AdapterPackageRepository rollbackRepository(packageRoot, authorizationRootPath, trustRootPath);
+    QVERIFY(rollbackRepository.adapterManifest(unsignedXb6->id, unsignedXb6->version)
+                ->realHardwareAllowed);
+    install(policy(1), authorization(1));
+    rollbackRepository.reload();
+    QVERIFY(!rollbackRepository.adapterManifest(unsignedXb6->id, unsignedXb6->version)
+                 ->realHardwareAllowed);
+    QVERIFY(rollbackRepository.authorizationDiagnostics().join('\n').contains("rollback"));
 }
 
 void EtherCATDeviceAdaptersTests::testV2StrictParserAndCanonicalDigest()
@@ -884,15 +1287,13 @@ void EtherCATDeviceAdaptersTests::testV3SignedActionContract()
     const Data::DeviceAdapterManifest manifest = repository.adapterManifests().constFirst();
     QCOMPARE(manifest.contractVersion, Data::DeviceAdapterContractVersion::V3);
     QVERIFY(Data::isValidDeviceAdapterContractVersion(manifest.contractVersion));
-    QVERIFY(!Data::isValidDeviceAdapterContractVersion(
-        Data::DeviceAdapterContractVersion::Unknown));
+    QVERIFY(!Data::isValidDeviceAdapterContractVersion(Data::DeviceAdapterContractVersion::Unknown));
     QCOMPARE(manifest.id.value, QString("org.embedlabs.adapter.test.atomic-output"));
     QCOMPARE(manifest.controllerAdapterTarget.adapterId, QString("test.atomic_output"));
     QCOMPARE(manifest.controllerAdapterTarget.adapterVersion, QString("1.0.0"));
     QCOMPARE(
         manifest.controllerAdapterTarget.adapterSha256,
-        QByteArray::fromHex(
-            "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"));
+        QByteArray::fromHex("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"));
     QCOMPARE(manifest.controllerAdapterTarget.esiSha256, manifest.match.exactEsiSha256);
     QCOMPARE(manifest.processDataProfiles.size(), 1);
     QCOMPARE(manifest.processDataProfiles.constFirst().signedPdoProfileId, QString("test-profile-v1"));
@@ -989,10 +1390,9 @@ void EtherCATDeviceAdaptersTests::testV3SignedActionContract()
             .toString(),
         QString("#/$defs/sha256"));
     const QJsonObject profileSchema = definitions.value("profile").toObject();
-    QVERIFY(
-        profileSchema.value("required")
-            .toArray()
-            .contains(QJsonValue(QStringLiteral("signedDcProfileId"))));
+    QVERIFY(profileSchema.value("required")
+                .toArray()
+                .contains(QJsonValue(QStringLiteral("signedDcProfileId"))));
     QCOMPARE(
         profileSchema.value("properties")
             .toObject()
@@ -1207,8 +1607,7 @@ void EtherCATDeviceAdaptersTests::testV3RejectsUnsafeContracts()
     profiles.replace(0, profile);
     missingSignedDcProfile.insert("processDataProfiles", profiles);
     QVERIFY(
-        packageLoadError(missingSignedDcProfile)
-            .contains("missing field \"signedDcProfileId\""));
+        packageLoadError(missingSignedDcProfile).contains("missing field \"signedDcProfileId\""));
 
     QJsonObject emptySignedDcProfile = valid;
     profiles = emptySignedDcProfile.value("processDataProfiles").toArray();
@@ -1216,9 +1615,8 @@ void EtherCATDeviceAdaptersTests::testV3RejectsUnsafeContracts()
     profile.insert("signedDcProfileId", "");
     profiles.replace(0, profile);
     emptySignedDcProfile.insert("processDataProfiles", profiles);
-    QVERIFY(
-        packageLoadError(emptySignedDcProfile)
-            .contains("signedDcProfileId must be null or canonical"));
+    QVERIFY(packageLoadError(emptySignedDcProfile)
+                .contains("signedDcProfileId must be null or canonical"));
 
     QJsonObject malformedSignedDcProfile = valid;
     profiles = malformedSignedDcProfile.value("processDataProfiles").toArray();
@@ -1226,9 +1624,8 @@ void EtherCATDeviceAdaptersTests::testV3RejectsUnsafeContracts()
     profile.insert("signedDcProfileId", "invalid:dc");
     profiles.replace(0, profile);
     malformedSignedDcProfile.insert("processDataProfiles", profiles);
-    QVERIFY(
-        packageLoadError(malformedSignedDcProfile)
-            .contains("signedDcProfileId must be null or canonical"));
+    QVERIFY(packageLoadError(malformedSignedDcProfile)
+                .contains("signedDcProfileId must be null or canonical"));
 
     QJsonObject nonDcActionOnDcProfile = valid;
     profiles = nonDcActionOnDcProfile.value("processDataProfiles").toArray();
@@ -1246,9 +1643,7 @@ void EtherCATDeviceAdaptersTests::testV3RejectsUnsafeContracts()
     action.insert("requiresDc", true);
     actions.replace(0, action);
     missingRequiredDcProfile.insert("controlActions", actions);
-    QVERIFY(
-        packageLoadError(missingRequiredDcProfile)
-            .contains("requires a signed DC profile"));
+    QVERIFY(packageLoadError(missingRequiredDcProfile).contains("requires a signed DC profile"));
 
     QJsonObject invalidTtl = valid;
     actions = invalidTtl.value("controlActions").toArray();

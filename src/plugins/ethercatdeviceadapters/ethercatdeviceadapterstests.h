@@ -15,6 +15,7 @@ private slots:
     void testInvalidPackagesAreRejected();
     void testBundledV2ExactContracts();
     void testBundledV3Api038Contracts();
+    void testSignedAdapterAuthorizationProjection();
     void testV2StrictParserAndCanonicalDigest();
     void testV3SignedActionContract();
     void testV3RejectsUnsafeContracts();

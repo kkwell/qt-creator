@@ -1,9 +1,11 @@
 add_qtc_plugin(EtherCATDeviceAdapters
-  DEPENDS EtherCATData Utils
+  DEPENDS EtherCATData Utils qtcMonocypher
   PLUGIN_DEPENDS Core EtherCATCore
   SOURCES
     adapterpackagerepository.cpp
     adapterpackagerepository.h
+    deviceadapterauthorization_p.cpp
+    deviceadapterauthorization_p.h
     ethercatdeviceadaptersplugin.cpp
 )
 
