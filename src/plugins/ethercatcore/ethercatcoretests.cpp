@@ -11,6 +11,7 @@
 #include "providers.h"
 #include "runtimepackageactivationservice.h"
 #include "runtimepackagecompilercodec.h"
+#include "runtimepackagecompilerpreparationcoordinator.h"
 #include "runtimepackagecompilerprovider.h"
 #include "selectionservice.h"
 #include "semanticruntimeservice.h"
@@ -48,6 +49,7 @@
 #include <QSignalSpy>
 #include <QStringList>
 #include <QTest>
+#include <QThread>
 #include <QTimer>
 #include <QWidget>
 
@@ -2254,6 +2256,144 @@ private:
         m_finalizeResults;
     QHash<Data::RuntimePackageCompilerOperationId, RuntimePackageCompilerJob *> m_finalizeJobs;
     QHash<quint64, Data::RuntimePackageCompilerOperationId> m_configurationOwners;
+};
+
+class TestRuntimePackageCompilerPreparationCoordinator final
+    : public RuntimePackageCompilerPreparationCoordinator
+{
+public:
+    explicit TestRuntimePackageCompilerPreparationCoordinator(ProviderRegistry *registry)
+        : RuntimePackageCompilerPreparationCoordinator(registry)
+    {}
+
+    void setRecordForTest(
+        std::optional<RuntimePackageCompilerPreparationRecord> record)
+    {
+        m_record = std::move(record);
+    }
+
+    Utils::Result<> publishTransitionForTest(
+        const std::optional<RuntimePackageCompilerPreparationRecord> &previous,
+        const RuntimePackageCompilerPreparationRecord &current,
+        const RuntimePackageCompilerPreparationSnapshot &snapshot)
+    {
+        m_previousRecordForTransition = previous;
+        return publishRecordTransition(current, snapshot);
+    }
+
+    Utils::Result<> publishSigningRequestForTest(
+        const RuntimePackageCompilerPreparationRecord &record)
+    {
+        return publishDetachedSigningRequest(record);
+    }
+
+    Utils::Result<> publishPreparationForTest(
+        const RuntimePackageCompilerPreparationRecord &record)
+    {
+        return publishPreparationReady(record);
+    }
+
+    RuntimePackageCompilerProvider *lastProvider = nullptr;
+    int startCount = 0;
+    int submitCount = 0;
+    int cancelCount = 0;
+    int resumeCount = 0;
+    bool returnInvalidSnapshot = false;
+    std::optional<quint64> snapshotSequenceOverride;
+    std::optional<RuntimePackageCompilerPreparationStartRequest> lastResumeRequest;
+
+protected:
+    Utils::Result<RuntimePackageCompilerPreparationDisposition> doStart(
+        const RuntimePackageCompilerPreparationStartRequest &request,
+        RuntimePackageCompilerProvider *frozenProvider) final
+    {
+        ++startCount;
+        lastProvider = frozenProvider;
+        const auto fingerprint
+            = runtimePackageCompilerPreparationStartRequestFingerprint(request);
+        if (!fingerprint)
+            return Utils::ResultError(fingerprint.error());
+        RuntimePackageCompilerPreparationRecord record;
+        record.compileOperationId = request.compileRequest.operationId;
+        record.startRequestFingerprint = *fingerprint;
+        record.verifyOperationId = request.verifyOperationId;
+        record.activationOperationId = request.activationOperationId;
+        record.startRequest = request;
+        const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> canonicalRequest
+            = encodeRuntimePackageCompilerCompileRequest(request.compileRequest);
+        if (!canonicalRequest)
+            return Utils::ResultError(canonicalRequest.error());
+        record.compileRequestSha256 = canonicalRequest->sha256();
+        record.compilerProviderId = frozenProvider->id().toString();
+        record.contractIdentity = request.compileRequest.contractIdentity;
+        record.revision = 1;
+        record.phase = RuntimePackageCompilerPreparationPhase::Reserved;
+        m_record = record;
+        return RuntimePackageCompilerPreparationDisposition::Started;
+    }
+
+    Utils::Result<RuntimePackageCompilerPreparationDisposition>
+    doSubmitDetachedSigningResponse(
+        const RuntimePackageCompilerPreparationRecord &,
+        const Data::RuntimePackageCompilerCanonicalJson &,
+        RuntimePackageCompilerProvider *frozenProvider) final
+    {
+        ++submitCount;
+        lastProvider = frozenProvider;
+        return RuntimePackageCompilerPreparationDisposition::Accepted;
+    }
+
+    Utils::Result<RuntimePackageCompilerPreparationDisposition> doCancel(
+        const RuntimePackageCompilerPreparationRecord &) final
+    {
+        ++cancelCount;
+        return RuntimePackageCompilerPreparationDisposition::Accepted;
+    }
+
+    Utils::Result<RuntimePackageCompilerPreparationDisposition> doResume(
+        const RuntimePackageCompilerPreparationRecord &,
+        const RuntimePackageCompilerPreparationStartRequest &exactOriginalRequest,
+        RuntimePackageCompilerProvider *frozenProvider) final
+    {
+        ++resumeCount;
+        lastProvider = frozenProvider;
+        lastResumeRequest = exactOriginalRequest;
+        return RuntimePackageCompilerPreparationDisposition::Accepted;
+    }
+
+    Utils::Result<std::optional<RuntimePackageCompilerPreparationRecord>> doRecord(
+        const Data::RuntimePackageCompilerOperationId &operationId) const final
+    {
+        if (m_record && m_record->compileOperationId == operationId) {
+            return m_record;
+        }
+        return std::optional<RuntimePackageCompilerPreparationRecord>{};
+    }
+
+    Utils::Result<RuntimePackageCompilerPreparationSnapshot> doSnapshot() const final
+    {
+        if (returnInvalidSnapshot) {
+            return RuntimePackageCompilerPreparationSnapshot{
+                0, m_record ? QList{*m_record} : QList<RuntimePackageCompilerPreparationRecord>{}};
+        }
+        return RuntimePackageCompilerPreparationSnapshot{
+            snapshotSequenceOverride.value_or(
+                m_record ? m_record->revision : quint64(0)),
+            m_record ? QList{*m_record} : QList<RuntimePackageCompilerPreparationRecord>{}};
+    }
+
+    Utils::Result<std::optional<RuntimePackageCompilerPreparationRecord>>
+    doPreviousRecordForCommittedTransition(
+        const Data::RuntimePackageCompilerOperationId &,
+        quint64,
+        quint64) const final
+    {
+        return m_previousRecordForTransition;
+    }
+
+private:
+    std::optional<RuntimePackageCompilerPreparationRecord> m_record;
+    std::optional<RuntimePackageCompilerPreparationRecord> m_previousRecordForTransition;
 };
 
 struct SemanticRuntimeFixture
@@ -6509,6 +6649,7 @@ void EtherCATCoreTests::testRuntimePackageCompilerProviderContract()
     QCOMPARE(int(ProviderKind::RuntimePackageCompiler), 7);
     QCOMPARE(provider.kind(), ProviderKind::RuntimePackageCompiler);
     QVERIFY(!provider.isAvailable());
+    QVERIFY(!provider.assembleActivationProof({}));
     provider.setAvailable(true);
 
     ProviderRegistry *registry = ExtensionSystem::PluginManager::getObject<ProviderRegistry>();
@@ -7017,6 +7158,770 @@ void EtherCATCoreTests::testRuntimePackageCompilerProviderContract()
     QCOMPARE(removedSpy.count(), 1);
 }
 
+void EtherCATCoreTests::testRuntimePackageCompilerPreparationCoordinatorContract()
+{
+    RuntimePackageCompilerFixture fixture;
+    TestRuntimePackageCompilerProvider provider;
+    Data::RuntimePackageCompilerActivationProof proof
+        = successfulActivationProof(fixture.request);
+    proof.compilerProviderId = provider.id().toString();
+    const auto encodedCompileRequest
+        = encodeRuntimePackageCompilerCompileRequest(proof.compileRequest);
+    QVERIFY_RESULT(encodedCompileRequest);
+    proof.compileResult.envelope.requestSha256 = encodedCompileRequest->sha256();
+    proof.finalizeRequest.compileRequestSha256 = encodedCompileRequest->sha256();
+    proof.finalizeResult.envelope.requestSha256 = encodedCompileRequest->sha256();
+    const auto encodedFinalizeRequest
+        = encodeRuntimePackageCompilerFinalizeRequest(proof.finalizeRequest);
+    QVERIFY_RESULT(encodedFinalizeRequest);
+    proof.finalizeRequestSha256 = encodedFinalizeRequest->sha256();
+    const auto encodedVerifyRequest = encodeRuntimePackageCompilerVerifyRequest(
+        proof.verifyRequest);
+    QVERIFY_RESULT(encodedVerifyRequest);
+    proof.verifyRequestSha256 = encodedVerifyRequest->sha256();
+    QVERIFY(proof.isValid());
+
+    const RuntimePackageCompilerPreparationStartRequest startRequest{
+        proof.compileRequest,
+        proof.verifyRequest.operationId,
+        Data::RuntimePackageActivationOperationId{
+            QStringLiteral("operation/compiler-preparation-001")},
+        true,
+    };
+    QVERIFY(startRequest.isValid());
+    const auto startRequestFingerprint
+        = runtimePackageCompilerPreparationStartRequestFingerprint(startRequest);
+    QVERIFY_RESULT(startRequestFingerprint);
+
+    RuntimePackageCompilerPreparationStartRequest reusedVerifyId = startRequest;
+    reusedVerifyId.verifyOperationId = reusedVerifyId.compileRequest.operationId;
+    QVERIFY(!reusedVerifyId.isValid());
+    RuntimePackageCompilerPreparationStartRequest reusedActivationId = startRequest;
+    reusedActivationId.activationOperationId = Data::RuntimePackageActivationOperationId{
+        startRequest.verifyOperationId.value()};
+    QVERIFY(!reusedActivationId.isValid());
+
+    const auto makeRecord = [&](RuntimePackageCompilerPreparationPhase phase) {
+        RuntimePackageCompilerPreparationRecord record;
+        record.compileOperationId = startRequest.compileRequest.operationId;
+        record.startRequestFingerprint = *startRequestFingerprint;
+        record.verifyOperationId = startRequest.verifyOperationId;
+        record.activationOperationId = startRequest.activationOperationId;
+        record.startRequest = startRequest;
+        record.compileRequestSha256 = encodedCompileRequest->sha256();
+        record.compilerProviderId = provider.id().toString();
+        record.contractIdentity = startRequest.compileRequest.contractIdentity;
+        record.revision = 1;
+        record.phase = phase;
+        switch (phase) {
+        case RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature:
+            record.compileResult = proof.compileResult;
+            record.detachedSigningRequest = *proof.compileResult.signRequest;
+            break;
+        case RuntimePackageCompilerPreparationPhase::Finalizing:
+            record.compileResult = proof.compileResult;
+            record.detachedSigningRequest = *proof.compileResult.signRequest;
+            record.finalizeRequest = proof.finalizeRequest;
+            record.finalizeRequestSha256 = proof.finalizeRequestSha256;
+            break;
+        case RuntimePackageCompilerPreparationPhase::Verifying:
+            record.compileResult = proof.compileResult;
+            record.detachedSigningRequest = *proof.compileResult.signRequest;
+            record.finalizeRequest = proof.finalizeRequest;
+            record.finalizeRequestSha256 = proof.finalizeRequestSha256;
+            record.finalizeResult = proof.finalizeResult;
+            record.verifyRequest = proof.verifyRequest;
+            record.verifyRequestSha256 = proof.verifyRequestSha256;
+            break;
+        case RuntimePackageCompilerPreparationPhase::AssemblingProof:
+            record.compileResult = proof.compileResult;
+            record.detachedSigningRequest = *proof.compileResult.signRequest;
+            record.finalizeRequest = proof.finalizeRequest;
+            record.finalizeRequestSha256 = proof.finalizeRequestSha256;
+            record.finalizeResult = proof.finalizeResult;
+            record.verifyRequest = proof.verifyRequest;
+            record.verifyRequestSha256 = proof.verifyRequestSha256;
+            record.verifyResult = proof.verifyResult;
+            break;
+        case RuntimePackageCompilerPreparationPhase::Ready:
+            record.compileResult = proof.compileResult;
+            record.detachedSigningRequest = *proof.compileResult.signRequest;
+            record.finalizeRequest = proof.finalizeRequest;
+            record.finalizeRequestSha256 = proof.finalizeRequestSha256;
+            record.finalizeResult = proof.finalizeResult;
+            record.verifyRequest = proof.verifyRequest;
+            record.verifyRequestSha256 = proof.verifyRequestSha256;
+            record.verifyResult = proof.verifyResult;
+            record.preparation = RuntimePackageActivationPreparationRequest{
+                startRequest.activationOperationId,
+                proof.compileRequest.topologyEvidence.scope,
+                proof.finalizeResult.packageBytes,
+                proof.compiledProjectSource,
+                proof.effectiveProjectCompanion,
+                proof.verifyResult,
+                startRequest.rollbackOnActivationFailure,
+                proof,
+            };
+            break;
+        case RuntimePackageCompilerPreparationPhase::ReconciliationRequired:
+            record.detail = QStringLiteral("Compiler terminal state requires reconciliation.");
+            break;
+        case RuntimePackageCompilerPreparationPhase::Canceled:
+            record.detail = QStringLiteral("Compiler preparation was canceled.");
+            break;
+        case RuntimePackageCompilerPreparationPhase::Failed:
+            record.detail = QStringLiteral("Compiler preparation failed.");
+            break;
+        case RuntimePackageCompilerPreparationPhase::Idle:
+        case RuntimePackageCompilerPreparationPhase::Reserved:
+        case RuntimePackageCompilerPreparationPhase::Compiling:
+        case RuntimePackageCompilerPreparationPhase::CancelRequested:
+            break;
+        }
+        return record;
+    };
+
+    for (RuntimePackageCompilerPreparationPhase phase : {
+             RuntimePackageCompilerPreparationPhase::Reserved,
+             RuntimePackageCompilerPreparationPhase::Compiling,
+             RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature,
+             RuntimePackageCompilerPreparationPhase::Finalizing,
+             RuntimePackageCompilerPreparationPhase::Verifying,
+             RuntimePackageCompilerPreparationPhase::AssemblingProof,
+             RuntimePackageCompilerPreparationPhase::Ready,
+             RuntimePackageCompilerPreparationPhase::CancelRequested,
+             RuntimePackageCompilerPreparationPhase::ReconciliationRequired,
+             RuntimePackageCompilerPreparationPhase::Canceled,
+             RuntimePackageCompilerPreparationPhase::Failed,
+         }) {
+        QVERIFY(makeRecord(phase).isValid());
+    }
+    QVERIFY(!makeRecord(RuntimePackageCompilerPreparationPhase::Idle).isValid());
+
+    RuntimePackageCompilerPreparationRecord malformed = makeRecord(
+        RuntimePackageCompilerPreparationPhase::Reserved);
+    malformed.compilerProviderId = QStringLiteral(" invalid provider");
+    QVERIFY(!malformed.isValid());
+    malformed = makeRecord(RuntimePackageCompilerPreparationPhase::Reserved);
+    malformed.contractIdentity.contractId.append(QStringLiteral(".different"));
+    QVERIFY(!malformed.isValid());
+    malformed = makeRecord(RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature);
+    malformed.detachedSigningRequest = RuntimePackageCompilerFixture::canonical(
+        QByteArray("{\"different\":true}\n"));
+    QVERIFY(!malformed.isValid());
+    malformed = makeRecord(RuntimePackageCompilerPreparationPhase::Ready);
+    malformed.preparation->operationId = Data::RuntimePackageActivationOperationId{
+        QStringLiteral("operation/compiler-preparation-different")};
+    QVERIFY(!malformed.isValid());
+    malformed = makeRecord(RuntimePackageCompilerPreparationPhase::Ready);
+    malformed.preparation->packageBytes.append("-different");
+    QVERIFY(!malformed.isValid());
+    malformed = makeRecord(RuntimePackageCompilerPreparationPhase::Ready);
+    malformed.preparation->compiledProjectSource.append("-different");
+    QVERIFY(!malformed.isValid());
+    malformed = makeRecord(RuntimePackageCompilerPreparationPhase::Ready);
+    malformed.preparation->effectiveProjectCompanion.append("-different");
+    QVERIFY(!malformed.isValid());
+    malformed = makeRecord(
+        RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature);
+    malformed.compileResult->envelope.requestSha256
+        = RuntimePackageCompilerFixture::sha256("different-compile-request");
+    QVERIFY(malformed.compileResult->isValid());
+    QVERIFY(!malformed.isValid());
+    malformed = makeRecord(RuntimePackageCompilerPreparationPhase::Finalizing);
+    malformed.finalizeRequestSha256
+        = RuntimePackageCompilerFixture::sha256("different-finalize-request");
+    QVERIFY(malformed.finalizeRequest->isValid());
+    QVERIFY(!malformed.isValid());
+    malformed = makeRecord(RuntimePackageCompilerPreparationPhase::Verifying);
+    malformed.finalizeResult->envelope.requestSha256
+        = RuntimePackageCompilerFixture::sha256("different-finalize-parent");
+    QVERIFY(malformed.finalizeResult->isValid());
+    QVERIFY(!malformed.isValid());
+    malformed = makeRecord(RuntimePackageCompilerPreparationPhase::Verifying);
+    malformed.verifyRequestSha256
+        = RuntimePackageCompilerFixture::sha256("different-verify-request");
+    QVERIFY(malformed.verifyRequest->isValid());
+    QVERIFY(!malformed.isValid());
+    malformed = makeRecord(RuntimePackageCompilerPreparationPhase::AssemblingProof);
+    malformed.verifyResult->envelope.requestSha256
+        = RuntimePackageCompilerFixture::sha256("different-verify-package");
+    QVERIFY(malformed.verifyResult->isValid());
+    QVERIFY(!malformed.isValid());
+
+    QVERIFY(runtimePackageCompilerPreparationTransitionIsAllowed(
+        RuntimePackageCompilerPreparationPhase::Idle,
+        RuntimePackageCompilerPreparationPhase::Reserved));
+    QVERIFY(runtimePackageCompilerPreparationTransitionIsAllowed(
+        RuntimePackageCompilerPreparationPhase::Compiling,
+        RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature));
+    QVERIFY(runtimePackageCompilerPreparationTransitionIsAllowed(
+        RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature,
+        RuntimePackageCompilerPreparationPhase::Canceled));
+    QVERIFY(runtimePackageCompilerPreparationTransitionIsAllowed(
+        RuntimePackageCompilerPreparationPhase::Reserved,
+        RuntimePackageCompilerPreparationPhase::Canceled));
+    QVERIFY(runtimePackageCompilerPreparationTransitionIsAllowed(
+        RuntimePackageCompilerPreparationPhase::Finalizing,
+        RuntimePackageCompilerPreparationPhase::ReconciliationRequired));
+    QVERIFY(runtimePackageCompilerPreparationTransitionIsAllowed(
+        RuntimePackageCompilerPreparationPhase::ReconciliationRequired,
+        RuntimePackageCompilerPreparationPhase::Verifying));
+    QVERIFY(!runtimePackageCompilerPreparationTransitionIsAllowed(
+        RuntimePackageCompilerPreparationPhase::Ready,
+        RuntimePackageCompilerPreparationPhase::Reserved));
+    QVERIFY(!runtimePackageCompilerPreparationTransitionIsAllowed(
+        RuntimePackageCompilerPreparationPhase::Compiling,
+        RuntimePackageCompilerPreparationPhase::Compiling));
+    QVERIFY(runtimePackageCompilerPreparationPhaseAllowsCancel(
+        RuntimePackageCompilerPreparationPhase::Compiling));
+    QVERIFY(!runtimePackageCompilerPreparationPhaseAllowsCancel(
+        RuntimePackageCompilerPreparationPhase::ReconciliationRequired));
+
+    const RuntimePackageCompilerPreparationRecord ready = makeRecord(
+        RuntimePackageCompilerPreparationPhase::Ready);
+    const RuntimePackageCompilerPreparationTerminalSummary completeTerminalSummary{
+        proof.compileResult.envelope.canonicalResult.sha256(),
+        proof.compileResult.signRequest->sha256(),
+        proof.finalizeResult.envelope.canonicalResult.sha256(),
+        proof.finalizeResult.packageSha256,
+        proof.verifyResult.envelope.canonicalResult.sha256(),
+    };
+    QVERIFY(completeTerminalSummary.isValid());
+    RuntimePackageCompilerPreparationRecord readyRestartSummary = ready;
+    readyRestartSummary.startRequest.reset();
+    readyRestartSummary.compileRequestSha256.reset();
+    readyRestartSummary.compileResult.reset();
+    readyRestartSummary.detachedSigningRequest.reset();
+    readyRestartSummary.finalizeRequest.reset();
+    readyRestartSummary.finalizeRequestSha256.reset();
+    readyRestartSummary.finalizeResult.reset();
+    readyRestartSummary.verifyRequest.reset();
+    readyRestartSummary.verifyRequestSha256.reset();
+    readyRestartSummary.verifyResult.reset();
+    readyRestartSummary.preparation.reset();
+    readyRestartSummary.terminalSummary = completeTerminalSummary;
+    readyRestartSummary.detail
+        = QStringLiteral("Ready terminal was restored without activation proof.");
+    QVERIFY(readyRestartSummary.isValid());
+    RuntimePackageCompilerPreparationRecord invalidReadyRestart = readyRestartSummary;
+    invalidReadyRestart.terminalSummary->verifyResultSha256.reset();
+    QVERIFY(!invalidReadyRestart.isValid());
+    RuntimePackageCompilerPreparationRecord canceledRestartSummary = readyRestartSummary;
+    canceledRestartSummary.phase = RuntimePackageCompilerPreparationPhase::Canceled;
+    canceledRestartSummary.terminalSummary
+        = RuntimePackageCompilerPreparationTerminalSummary{};
+    canceledRestartSummary.detail = QStringLiteral("Canceled terminal was restored.");
+    QVERIFY(canceledRestartSummary.isValid());
+    RuntimePackageCompilerPreparationRecord failedRestartSummary = canceledRestartSummary;
+    failedRestartSummary.phase = RuntimePackageCompilerPreparationPhase::Failed;
+    failedRestartSummary.detail = QStringLiteral("Failed terminal was restored.");
+    QVERIFY(failedRestartSummary.isValid());
+    RuntimePackageCompilerPreparationTerminalSummary invalidTerminalSummary;
+    invalidTerminalSummary.verifyResultSha256
+        = proof.verifyResult.envelope.canonicalResult.sha256();
+    QVERIFY(!invalidTerminalSummary.isValid());
+    const RuntimePackageCompilerPreparationSnapshot validSnapshot{1, {ready}};
+    QVERIFY(validSnapshot.isValid());
+    QVERIFY(RuntimePackageCompilerPreparationSnapshot{}.isValid());
+    QVERIFY((!RuntimePackageCompilerPreparationSnapshot{0, {ready}}.isValid()));
+    QVERIFY((!RuntimePackageCompilerPreparationSnapshot{1, {ready, ready}}.isValid()));
+
+    ProviderRegistry *registry
+        = ExtensionSystem::PluginManager::getObject<ProviderRegistry>();
+    QVERIFY(registry);
+    QVERIFY(registry->providers(ProviderKind::RuntimePackageCompiler).isEmpty());
+    TestRuntimePackageCompilerPreparationCoordinator coordinator(registry);
+
+    QVERIFY(!coordinator.start(startRequest));
+    QCOMPARE(coordinator.startCount, 0);
+
+    ExtensionSystem::PluginManager::addObject(&provider);
+    auto removeProvider = qScopeGuard(
+        [&] { ExtensionSystem::PluginManager::removeObject(&provider); });
+    QVERIFY(!coordinator.start(startRequest));
+    QCOMPARE(coordinator.startCount, 0);
+
+    provider.setAvailable(true);
+    const auto started = coordinator.start(startRequest);
+    QVERIFY_RESULT(started);
+    QCOMPARE(*started, RuntimePackageCompilerPreparationDisposition::Started);
+    QCOMPARE(coordinator.startCount, 1);
+    QCOMPARE(coordinator.lastProvider, &provider);
+
+    const auto replay = coordinator.start(startRequest);
+    QVERIFY_RESULT(replay);
+    QCOMPARE(*replay, RuntimePackageCompilerPreparationDisposition::Replayed);
+    QCOMPARE(coordinator.startCount, 1);
+
+    RuntimePackageCompilerPreparationStartRequest conflict = startRequest;
+    conflict.rollbackOnActivationFailure = false;
+    QVERIFY(conflict.isValid());
+    QVERIFY(!coordinator.start(conflict));
+    QCOMPARE(coordinator.startCount, 1);
+
+    const auto currentRecord = coordinator.record(startRequest.compileRequest.operationId);
+    QVERIFY_RESULT(currentRecord);
+    QVERIFY(*currentRecord);
+    QCOMPARE((*currentRecord)->phase, RuntimePackageCompilerPreparationPhase::Reserved);
+    const auto currentSnapshot = coordinator.snapshot();
+    QVERIFY_RESULT(currentSnapshot);
+    QCOMPARE(currentSnapshot->records.size(), 1);
+
+    QSignalSpy recordChangedSpy(
+        &coordinator,
+        &RuntimePackageCompilerPreparationCoordinator::recordChanged);
+    QSignalSpy snapshotChangedSpy(
+        &coordinator,
+        &RuntimePackageCompilerPreparationCoordinator::snapshotChanged);
+    QCOMPARE(recordChangedSpy.count(), 0);
+    QCOMPARE(snapshotChangedSpy.count(), 0);
+    const Utils::Result<> publishedInitial = coordinator.publishTransitionForTest(
+        std::nullopt, **currentRecord, *currentSnapshot);
+    QVERIFY_RESULT(publishedInitial);
+    QCOMPARE(recordChangedSpy.count(), 1);
+    QCOMPARE(snapshotChangedSpy.count(), 1);
+    const Utils::Result<> publishedReplay = coordinator.publishTransitionForTest(
+        std::nullopt, **currentRecord, *currentSnapshot);
+    QVERIFY_RESULT(publishedReplay);
+    QCOMPARE(recordChangedSpy.count(), 1);
+    QCOMPARE(snapshotChangedSpy.count(), 1);
+
+    RuntimePackageCompilerPreparationRecord compiling = **currentRecord;
+    compiling.revision = 2;
+    compiling.phase = RuntimePackageCompilerPreparationPhase::Compiling;
+    QVERIFY(compiling.isValid());
+    coordinator.setRecordForTest(compiling);
+    const auto compilingSnapshot = coordinator.snapshot();
+    QVERIFY_RESULT(compilingSnapshot);
+    const Utils::Result<> publishedCompiling = coordinator.publishTransitionForTest(
+        **currentRecord, compiling, *compilingSnapshot);
+    QVERIFY_RESULT(publishedCompiling);
+    QCOMPARE(recordChangedSpy.count(), 2);
+    QCOMPARE(snapshotChangedSpy.count(), 2);
+
+    RuntimePackageCompilerPreparationRecord evidencePrevious = makeRecord(
+        RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature);
+    evidencePrevious.revision = 3;
+    RuntimePackageCompilerPreparationRecord replacedEvidence = makeRecord(
+        RuntimePackageCompilerPreparationPhase::Finalizing);
+    replacedEvidence.revision = 4;
+    const QString originalOutputDirectory = replacedEvidence.compileResult->outputDirectory;
+    const QString changedOutputDirectory
+        = QStringLiteral("/tmp/embed-labs-compiler-output-replaced");
+    QByteArray changedCompileResult
+        = replacedEvidence.compileResult->envelope.canonicalResult.exactBytes();
+    QVERIFY(changedCompileResult.contains(originalOutputDirectory.toUtf8()));
+    changedCompileResult.replace(
+        originalOutputDirectory.toUtf8(), changedOutputDirectory.toUtf8());
+    replacedEvidence.compileResult->outputDirectory = changedOutputDirectory;
+    replacedEvidence.compileResult->envelope.canonicalResult
+        = RuntimePackageCompilerFixture::canonical(std::move(changedCompileResult));
+    QVERIFY(evidencePrevious.isValid());
+    QVERIFY(replacedEvidence.isValid());
+    TestRuntimePackageCompilerPreparationCoordinator evidenceMutationCoordinator(registry);
+    evidenceMutationCoordinator.setRecordForTest(replacedEvidence);
+    const RuntimePackageCompilerPreparationSnapshot replacedEvidenceSnapshot{
+        4, {replacedEvidence}};
+    QVERIFY(!evidenceMutationCoordinator.publishTransitionForTest(
+        evidencePrevious, replacedEvidence, replacedEvidenceSnapshot));
+
+    RuntimePackageCompilerPreparationRecord evidenceReconciliation = evidencePrevious;
+    evidenceReconciliation.phase
+        = RuntimePackageCompilerPreparationPhase::ReconciliationRequired;
+    evidenceReconciliation.revision = 5;
+    evidenceReconciliation.detail
+        = QStringLiteral("Compiler evidence requires explicit reconstruction.");
+    RuntimePackageCompilerPreparationRecord rebuiltCompiling = makeRecord(
+        RuntimePackageCompilerPreparationPhase::Compiling);
+    rebuiltCompiling.revision = 6;
+    QVERIFY(evidenceReconciliation.isValid());
+    QVERIFY(rebuiltCompiling.isValid());
+    TestRuntimePackageCompilerPreparationCoordinator reconciliationCoordinator(registry);
+    reconciliationCoordinator.setRecordForTest(rebuiltCompiling);
+    const RuntimePackageCompilerPreparationSnapshot rebuiltCompilingSnapshot{
+        6, {rebuiltCompiling}};
+    QVERIFY_RESULT(reconciliationCoordinator.publishTransitionForTest(
+        evidenceReconciliation, rebuiltCompiling, rebuiltCompilingSnapshot));
+
+    RuntimePackageCompilerPreparationRecord reentrantAwaiting = makeRecord(
+        RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature);
+    reentrantAwaiting.revision = 3;
+    RuntimePackageCompilerPreparationRecord reentrantFinalizing = makeRecord(
+        RuntimePackageCompilerPreparationPhase::Finalizing);
+    reentrantFinalizing.revision = 4;
+    QVERIFY(reentrantAwaiting.isValid());
+    QVERIFY(reentrantFinalizing.isValid());
+    QList<quint64> reentrantSnapshotSequences;
+    const QMetaObject::Connection snapshotSequenceConnection = connect(
+        &coordinator,
+        &RuntimePackageCompilerPreparationCoordinator::snapshotChanged,
+        &coordinator,
+        [&reentrantSnapshotSequences](
+            const RuntimePackageCompilerPreparationSnapshot &published) {
+            reentrantSnapshotSequences.append(published.sequence);
+        });
+    bool reentered = false;
+    Utils::Result<> nestedPublication = Utils::ResultError(
+        QStringLiteral("Nested publication did not run."));
+    const QMetaObject::Connection reentrantConnection = connect(
+        &coordinator,
+        &RuntimePackageCompilerPreparationCoordinator::recordChanged,
+        &coordinator,
+        [&](const RuntimePackageCompilerPreparationRecord &published) {
+            if (reentered || published != reentrantAwaiting)
+                return;
+            reentered = true;
+            coordinator.setRecordForTest(reentrantFinalizing);
+            const RuntimePackageCompilerPreparationSnapshot nestedSnapshot{
+                4, {reentrantFinalizing}};
+            nestedPublication = coordinator.publishTransitionForTest(
+                reentrantAwaiting, reentrantFinalizing, nestedSnapshot);
+        },
+        Qt::DirectConnection);
+    coordinator.setRecordForTest(reentrantAwaiting);
+    const RuntimePackageCompilerPreparationSnapshot reentrantAwaitingSnapshot{
+        3, {reentrantAwaiting}};
+    const Utils::Result<> outerPublication = coordinator.publishTransitionForTest(
+        compiling, reentrantAwaiting, reentrantAwaitingSnapshot);
+    QVERIFY_RESULT(outerPublication);
+    QVERIFY(reentered);
+    QVERIFY_RESULT(nestedPublication);
+    QCOMPARE(recordChangedSpy.count(), 4);
+    QCOMPARE(snapshotChangedSpy.count(), 3);
+    QCOMPARE(reentrantSnapshotSequences, QList<quint64>{4});
+    disconnect(reentrantConnection);
+    disconnect(snapshotSequenceConnection);
+
+    RuntimePackageCompilerPreparationRecord sequenceRollback = makeRecord(
+        RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature);
+    sequenceRollback.revision = 3;
+    QVERIFY(sequenceRollback.isValid());
+    coordinator.setRecordForTest(sequenceRollback);
+    coordinator.snapshotSequenceOverride = 2;
+    const auto sequenceRollbackSnapshot = coordinator.snapshot();
+    QVERIFY_RESULT(sequenceRollbackSnapshot);
+    QVERIFY(!coordinator.publishTransitionForTest(
+        compiling, sequenceRollback, *sequenceRollbackSnapshot));
+    QCOMPARE(recordChangedSpy.count(), 4);
+    QCOMPARE(snapshotChangedSpy.count(), 3);
+    coordinator.snapshotSequenceOverride.reset();
+
+    RuntimePackageCompilerPreparationRecord badRevision = compiling;
+    badRevision.revision = 3;
+    badRevision.phase = RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature;
+    badRevision.compileResult = proof.compileResult;
+    badRevision.detachedSigningRequest = *proof.compileResult.signRequest;
+    QVERIFY(badRevision.isValid());
+    coordinator.setRecordForTest(badRevision);
+    const auto badRevisionSnapshot = coordinator.snapshot();
+    QVERIFY_RESULT(badRevisionSnapshot);
+    QVERIFY(!coordinator.publishTransitionForTest(
+        **currentRecord, badRevision, *badRevisionSnapshot));
+
+    RuntimePackageCompilerPreparationRecord changedProvider = compiling;
+    changedProvider.compilerProviderId = QStringLiteral("EtherCAT.Compiler.Different");
+    QVERIFY(changedProvider.isValid());
+    coordinator.setRecordForTest(changedProvider);
+    const auto changedProviderSnapshot = coordinator.snapshot();
+    QVERIFY_RESULT(changedProviderSnapshot);
+    QVERIFY(!coordinator.publishTransitionForTest(
+        **currentRecord, changedProvider, *changedProviderSnapshot));
+
+    RuntimePackageCompilerPreparationRecord changedSamePhase = **currentRecord;
+    changedSamePhase.revision = 2;
+    QVERIFY(changedSamePhase.isValid());
+    coordinator.setRecordForTest(changedSamePhase);
+    const auto changedSamePhaseSnapshot = coordinator.snapshot();
+    QVERIFY_RESULT(changedSamePhaseSnapshot);
+    QVERIFY(!coordinator.publishTransitionForTest(
+        **currentRecord, changedSamePhase, *changedSamePhaseSnapshot));
+
+    RuntimePackageCompilerPreparationRecord wrongInitial = **currentRecord;
+    wrongInitial.revision = 2;
+    coordinator.setRecordForTest(wrongInitial);
+    const auto wrongInitialSnapshot = coordinator.snapshot();
+    QVERIFY_RESULT(wrongInitialSnapshot);
+    QVERIFY(!coordinator.publishTransitionForTest(
+        std::nullopt, wrongInitial, *wrongInitialSnapshot));
+
+    coordinator.setRecordForTest(compiling);
+    RuntimePackageCompilerPreparationSnapshot mismatchedSnapshot = *compilingSnapshot;
+    ++mismatchedSnapshot.sequence;
+    QVERIFY(mismatchedSnapshot.isValid());
+    QVERIFY(!coordinator.publishTransitionForTest(
+        **currentRecord, compiling, mismatchedSnapshot));
+
+    RuntimePackageCompilerPreparationRecord awaiting = makeRecord(
+        RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature);
+    coordinator.setRecordForTest(awaiting);
+    int signingSignalCount = 0;
+    connect(
+        &coordinator,
+        &RuntimePackageCompilerPreparationCoordinator::detachedSigningRequested,
+        &coordinator,
+        [&signingSignalCount](const auto &, const auto &) { ++signingSignalCount; });
+    QSignalSpy signingRequestedSpy(
+        &coordinator,
+        &RuntimePackageCompilerPreparationCoordinator::detachedSigningRequested);
+    QCOMPARE(signingRequestedSpy.count(), 0);
+    const Utils::Result<> publishedSigningRequest
+        = coordinator.publishSigningRequestForTest(awaiting);
+    QVERIFY_RESULT(publishedSigningRequest);
+    QCOMPARE(signingSignalCount, 1);
+    QCOMPARE(signingRequestedSpy.count(), 1);
+    coordinator.setRecordForTest(compiling);
+    QVERIFY(!coordinator.publishSigningRequestForTest(compiling));
+    QCOMPARE(signingRequestedSpy.count(), 1);
+
+    coordinator.setRecordForTest(ready);
+    QSignalSpy preparationReadySpy(
+        &coordinator,
+        &RuntimePackageCompilerPreparationCoordinator::preparationReady);
+    const Utils::Result<> publishedPreparation
+        = coordinator.publishPreparationForTest(ready);
+    QVERIFY_RESULT(publishedPreparation);
+    QCOMPARE(preparationReadySpy.count(), 1);
+    coordinator.setRecordForTest(awaiting);
+    QVERIFY(!coordinator.publishPreparationForTest(awaiting));
+    QCOMPARE(preparationReadySpy.count(), 1);
+
+    coordinator.setRecordForTest(readyRestartSummary);
+    QVERIFY(!coordinator.publishPreparationForTest(readyRestartSummary));
+    QCOMPARE(preparationReadySpy.count(), 1);
+    const auto terminalRestartStart = coordinator.start(startRequest);
+    QVERIFY_RESULT(terminalRestartStart);
+    QCOMPARE(
+        *terminalRestartStart,
+        RuntimePackageCompilerPreparationDisposition::AlreadyTerminal);
+    const auto terminalRestartCancel = coordinator.cancel(
+        startRequest.compileRequest.operationId);
+    QVERIFY_RESULT(terminalRestartCancel);
+    QCOMPARE(
+        *terminalRestartCancel,
+        RuntimePackageCompilerPreparationDisposition::AlreadyTerminal);
+    const auto terminalRestartResume = coordinator.resume(startRequest);
+    QVERIFY_RESULT(terminalRestartResume);
+    QCOMPARE(
+        *terminalRestartResume,
+        RuntimePackageCompilerPreparationDisposition::AlreadyTerminal);
+    const auto terminalRestartSubmit = coordinator.submitDetachedSigningResponse(
+        startRequest.compileRequest.operationId,
+        proof.finalizeRequest.detachedSigningResponse);
+    QVERIFY_RESULT(terminalRestartSubmit);
+    QCOMPARE(
+        *terminalRestartSubmit,
+        RuntimePackageCompilerPreparationDisposition::AlreadyTerminal);
+
+    std::future<Utils::Result<RuntimePackageCompilerPreparationDisposition>> wrongThreadStart
+        = std::async(std::launch::async, [&coordinator, startRequest] {
+              return coordinator.start(startRequest);
+          });
+    QVERIFY(!wrongThreadStart.get());
+    std::future<Utils::Result<RuntimePackageCompilerPreparationSnapshot>> wrongThreadSnapshot
+        = std::async(std::launch::async, [&coordinator] { return coordinator.snapshot(); });
+    QVERIFY(!wrongThreadSnapshot.get());
+    QCOMPARE(coordinator.startCount, 1);
+
+    coordinator.setRecordForTest(makeRecord(
+        RuntimePackageCompilerPreparationPhase::Compiling));
+    QVERIFY(!coordinator.submitDetachedSigningResponse(
+        startRequest.compileRequest.operationId,
+        proof.finalizeRequest.detachedSigningResponse));
+    QCOMPARE(coordinator.submitCount, 0);
+
+    coordinator.setRecordForTest(makeRecord(
+        RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature));
+    const auto submitted = coordinator.submitDetachedSigningResponse(
+        startRequest.compileRequest.operationId,
+        proof.finalizeRequest.detachedSigningResponse);
+    QVERIFY_RESULT(submitted);
+    QCOMPARE(*submitted, RuntimePackageCompilerPreparationDisposition::Accepted);
+    QCOMPARE(coordinator.submitCount, 1);
+    QCOMPARE(coordinator.lastProvider, &provider);
+
+    coordinator.setRecordForTest(makeRecord(
+        RuntimePackageCompilerPreparationPhase::Finalizing));
+    const auto lostResponseReplay = coordinator.submitDetachedSigningResponse(
+        startRequest.compileRequest.operationId,
+        proof.finalizeRequest.detachedSigningResponse);
+    QVERIFY_RESULT(lostResponseReplay);
+    QCOMPARE(*lostResponseReplay, RuntimePackageCompilerPreparationDisposition::Replayed);
+    QCOMPARE(coordinator.submitCount, 1);
+    QVERIFY(!coordinator.submitDetachedSigningResponse(
+        startRequest.compileRequest.operationId,
+        RuntimePackageCompilerFixture::canonical("{\"different\":true}\n")));
+    QCOMPARE(coordinator.submitCount, 1);
+
+    coordinator.setRecordForTest(makeRecord(
+        RuntimePackageCompilerPreparationPhase::Compiling));
+    const auto canceled = coordinator.cancel(startRequest.compileRequest.operationId);
+    QVERIFY_RESULT(canceled);
+    QCOMPARE(*canceled, RuntimePackageCompilerPreparationDisposition::Accepted);
+    QCOMPARE(coordinator.cancelCount, 1);
+    coordinator.setRecordForTest(makeRecord(
+        RuntimePackageCompilerPreparationPhase::CancelRequested));
+    const auto cancelReplay = coordinator.cancel(startRequest.compileRequest.operationId);
+    QVERIFY_RESULT(cancelReplay);
+    QCOMPARE(*cancelReplay, RuntimePackageCompilerPreparationDisposition::Replayed);
+    QCOMPARE(coordinator.cancelCount, 1);
+    coordinator.setRecordForTest(ready);
+    const auto terminalCancel = coordinator.cancel(startRequest.compileRequest.operationId);
+    QVERIFY_RESULT(terminalCancel);
+    QCOMPARE(
+        *terminalCancel,
+        RuntimePackageCompilerPreparationDisposition::AlreadyTerminal);
+
+    const RuntimePackageCompilerPreparationRecord reconciliation = makeRecord(
+        RuntimePackageCompilerPreparationPhase::ReconciliationRequired);
+    coordinator.setRecordForTest(reconciliation);
+    const auto reconcileCancel = coordinator.cancel(startRequest.compileRequest.operationId);
+    QVERIFY_RESULT(reconcileCancel);
+    QCOMPARE(
+        *reconcileCancel,
+        RuntimePackageCompilerPreparationDisposition::ReconciliationRequired);
+    QVERIFY(!coordinator.resume(conflict));
+    QCOMPARE(coordinator.resumeCount, 0);
+    const auto resumed = coordinator.resume(startRequest);
+    QVERIFY_RESULT(resumed);
+    QCOMPARE(*resumed, RuntimePackageCompilerPreparationDisposition::Accepted);
+    QCOMPARE(coordinator.resumeCount, 1);
+    QCOMPARE(coordinator.lastResumeRequest, startRequest);
+
+    RuntimePackageCompilerPreparationRecord restartPlaceholder = reconciliation;
+    restartPlaceholder.startRequest.reset();
+    restartPlaceholder.compileRequestSha256.reset();
+    restartPlaceholder.revision = 9;
+    QVERIFY(restartPlaceholder.isValid());
+    coordinator.setRecordForTest(restartPlaceholder);
+    const auto placeholderStart = coordinator.start(startRequest);
+    QVERIFY_RESULT(placeholderStart);
+    QCOMPARE(
+        *placeholderStart,
+        RuntimePackageCompilerPreparationDisposition::ReconciliationRequired);
+    const auto placeholderResume = coordinator.resume(startRequest);
+    QVERIFY_RESULT(placeholderResume);
+    QCOMPARE(*placeholderResume, RuntimePackageCompilerPreparationDisposition::Accepted);
+    QCOMPARE(coordinator.resumeCount, 2);
+    QCOMPARE(coordinator.lastResumeRequest, startRequest);
+    RuntimePackageCompilerPreparationStartRequest mismatchedResume = startRequest;
+    mismatchedResume.rollbackOnActivationFailure = false;
+    QVERIFY(mismatchedResume.isValid());
+    QVERIFY(!coordinator.resume(mismatchedResume));
+    QCOMPARE(coordinator.resumeCount, 2);
+
+    RuntimePackageCompilerPreparationRecord resumedCompiling = makeRecord(
+        RuntimePackageCompilerPreparationPhase::Compiling);
+    resumedCompiling.revision = 10;
+    coordinator.setRecordForTest(resumedCompiling);
+    const RuntimePackageCompilerPreparationSnapshot resumedCompilingSnapshot{
+        10, {resumedCompiling}};
+    const Utils::Result<> publishedResumedCompiling = coordinator.publishTransitionForTest(
+        restartPlaceholder, resumedCompiling, resumedCompilingSnapshot);
+    QVERIFY_RESULT(publishedResumedCompiling);
+
+    RuntimePackageCompilerPreparationRecord changedFingerprintPlaceholder
+        = restartPlaceholder;
+    QByteArray changedFingerprint
+        = changedFingerprintPlaceholder.startRequestFingerprint.value();
+    changedFingerprint[0] ^= 1;
+    changedFingerprintPlaceholder.startRequestFingerprint
+        = Data::RuntimePackageCompilerSha256{changedFingerprint};
+    QVERIFY(changedFingerprintPlaceholder.isValid());
+    coordinator.setRecordForTest(changedFingerprintPlaceholder);
+    QVERIFY(!coordinator.resume(startRequest));
+    QCOMPARE(coordinator.resumeCount, 2);
+
+    coordinator.setRecordForTest(restartPlaceholder);
+
+    provider.setAvailable(false);
+    const auto frozenProviderUnavailable = coordinator.resume(startRequest);
+    QVERIFY_RESULT(frozenProviderUnavailable);
+    QCOMPARE(
+        *frozenProviderUnavailable,
+        RuntimePackageCompilerPreparationDisposition::ReconciliationRequired);
+    QCOMPARE(coordinator.resumeCount, 2);
+    provider.setAvailable(true);
+
+    QThread compilerProviderThread;
+    compilerProviderThread.start();
+    provider.moveToThread(&compilerProviderThread);
+    QCOMPARE(provider.thread(), &compilerProviderThread);
+    const auto wrongProviderThreadResume = coordinator.resume(startRequest);
+    QVERIFY_RESULT(wrongProviderThreadResume);
+    QCOMPARE(
+        *wrongProviderThreadResume,
+        RuntimePackageCompilerPreparationDisposition::ReconciliationRequired);
+    QCOMPARE(coordinator.resumeCount, 2);
+    coordinator.setRecordForTest(std::nullopt);
+    QVERIFY(!coordinator.start(startRequest));
+    QCOMPARE(coordinator.startCount, 1);
+    QThread *coordinatorThread = QThread::currentThread();
+    bool movedProviderBack = false;
+    QVERIFY(QMetaObject::invokeMethod(
+        &provider,
+        [&provider, coordinatorThread, &movedProviderBack] {
+            provider.moveToThread(coordinatorThread);
+            movedProviderBack = provider.thread() == coordinatorThread;
+        },
+        Qt::BlockingQueuedConnection));
+    QVERIFY(movedProviderBack);
+    compilerProviderThread.quit();
+    QVERIFY(compilerProviderThread.wait(2000));
+
+    coordinator.setRecordForTest(restartPlaceholder);
+    coordinator.returnInvalidSnapshot = true;
+    QVERIFY(!coordinator.snapshot());
+    coordinator.returnInvalidSnapshot = false;
+
+    coordinator.setRecordForTest(std::nullopt);
+    Data::RuntimePackageCompilerCompileRequest alternateCompile = fixture.request;
+    alternateCompile.operationId = Data::RuntimePackageCompilerOperationId{
+        QStringLiteral("04204204-2001-4000-8000-000000000088")};
+    alternateCompile.intentId = QStringLiteral("embedlabs:compile-intent:alternate");
+    alternateCompile.configurationId = 4288;
+    QVERIFY(alternateCompile.isValid());
+    const RuntimePackageCompilerPreparationStartRequest alternateStart{
+        alternateCompile,
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000089")},
+        Data::RuntimePackageActivationOperationId{
+            QStringLiteral("operation/compiler-preparation-088")},
+        true,
+    };
+    QVERIFY(alternateStart.isValid());
+    TestRuntimePackageCompilerProvider secondProvider(
+        Utils::Id("EtherCAT.Compiler.SecondPreparation"));
+    secondProvider.setAvailable(true);
+    ExtensionSystem::PluginManager::addObject(&secondProvider);
+    auto removeSecondProvider = qScopeGuard(
+        [&] { ExtensionSystem::PluginManager::removeObject(&secondProvider); });
+    QVERIFY(!coordinator.start(alternateStart));
+    QCOMPARE(coordinator.startCount, 1);
+
+    QVERIFY(QMetaType::fromType<RuntimePackageCompilerPreparationPhase>().isValid());
+    QVERIFY(
+        QMetaType::fromType<RuntimePackageCompilerPreparationStartRequest>().isValid());
+    QVERIFY(QMetaType::fromType<RuntimePackageCompilerPreparationRecord>().isValid());
+    QVERIFY(QMetaType::fromType<RuntimePackageCompilerPreparationSnapshot>().isValid());
+    QVERIFY(QMetaType::fromType<RuntimePackageCompilerPreparationDisposition>().isValid());
+    QVERIFY(QMetaType::fromName(
+                "EtherCAT::Core::RuntimePackageCompilerPreparationPhase")
+                .isValid());
+    QVERIFY(QMetaType::fromName(
+                "EtherCAT::Core::RuntimePackageCompilerPreparationStartRequest")
+                .isValid());
+    QVERIFY(QMetaType::fromName(
+                "EtherCAT::Core::RuntimePackageCompilerPreparationRecord")
+                .isValid());
+    QVERIFY(QMetaType::fromName(
+                "EtherCAT::Core::RuntimePackageCompilerPreparationSnapshot")
+                .isValid());
+    QVERIFY(QMetaType::fromName(
+                "EtherCAT::Core::RuntimePackageCompilerPreparationDisposition")
+                .isValid());
+}
+
 void EtherCATCoreTests::testRuntimePackageCompilerActivationProofRouting()
 {
     RuntimePackageCompilerFixture fixture;
@@ -7070,6 +7975,30 @@ void EtherCATCoreTests::testRuntimePackageCompilerActivationProofRouting()
     QVERIFY_RESULT(accepted);
     QCOMPARE(provider.activationProofValidationCount, 1);
     QCOMPARE(provider.activationProofs.constLast(), proof);
+
+    QThread proofProviderThread;
+    proofProviderThread.start();
+    provider.moveToThread(&proofProviderThread);
+    QCOMPARE(provider.thread(), &proofProviderThread);
+    const Utils::Result<> wrongProviderThread
+        = validateRuntimePackageCompilerActivationProof(registry, request, capture);
+    QVERIFY(!wrongProviderThread);
+    QCOMPARE(
+        wrongProviderThread.error(),
+        QStringLiteral("A compiler provider belongs to a different thread."));
+    QCOMPARE(provider.activationProofValidationCount, 1);
+    QThread *testThread = QThread::currentThread();
+    bool movedProviderBack = false;
+    QVERIFY(QMetaObject::invokeMethod(
+        &provider,
+        [&provider, testThread, &movedProviderBack] {
+            provider.moveToThread(testThread);
+            movedProviderBack = provider.thread() == testThread;
+        },
+        Qt::BlockingQueuedConnection));
+    QVERIFY(movedProviderBack);
+    proofProviderThread.quit();
+    QVERIFY(proofProviderThread.wait(2000));
 
     std::future<Utils::Result<>> crossThreadValidation = std::async(
         std::launch::async,

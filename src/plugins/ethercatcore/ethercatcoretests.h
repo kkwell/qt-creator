@@ -33,6 +33,7 @@ private slots:
     void testRuntimePackageCompilerValueSemantics();
     void testRuntimePackageCompilerCodec();
     void testRuntimePackageCompilerProviderContract();
+    void testRuntimePackageCompilerPreparationCoordinatorContract();
     void testRuntimePackageCompilerActivationProofRouting();
     void testSemanticRuntimeValueSemantics();
     void testSemanticRuntimeEpochValidation();

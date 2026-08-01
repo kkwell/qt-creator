@@ -26,6 +26,8 @@ QtcPlugin {
         "runtimepackageactivationservice.h",
         "runtimepackagecompilercodec.cpp",
         "runtimepackagecompilercodec.h",
+        "runtimepackagecompilerpreparationcoordinator.cpp",
+        "runtimepackagecompilerpreparationcoordinator.h",
         "runtimepackagecompilerprovider.cpp",
         "runtimepackagecompilerprovider.h",
         "selectionservice.cpp",

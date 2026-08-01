@@ -19,6 +19,8 @@ add_qtc_plugin(EtherCATCore
     runtimepackageactivationservice.h
     runtimepackagecompilercodec.cpp
     runtimepackagecompilercodec.h
+    runtimepackagecompilerpreparationcoordinator.cpp
+    runtimepackagecompilerpreparationcoordinator.h
     runtimepackagecompilerprovider.cpp
     runtimepackagecompilerprovider.h
     selectionservice.cpp
