@@ -6,6 +6,7 @@ add_qtc_plugin(EtherCATSemanticRuntime
     EtherCATProject
   PLUGIN_TEST_DEPENDS
     EtherCATDeviceAdapters
+    EtherCATProductApi
   SOURCES
     canonicaljson_p.cpp
     canonicaljson_p.h

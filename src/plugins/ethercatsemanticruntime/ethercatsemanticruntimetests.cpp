@@ -31,15 +31,18 @@
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
+#include <QUuid>
 #include <QtEndian>
 
 #include <algorithm>
@@ -2043,6 +2046,356 @@ static QStringList api038HardwareAdmissionBlockers(
     return blockers;
 }
 
+constexpr auto api051HardwareEnableVariable = "QTC_ETHER_CAT_API051_HARDWARE";
+constexpr auto api051HardwareConfirmationVariable = "QTC_ETHER_CAT_API051_CONFIRM";
+constexpr auto api051PackagePathVariable = "QTC_ETHER_CAT_API051_PACKAGE";
+constexpr auto api051ProjectPathVariable = "QTC_ETHER_CAT_API051_PROJECT";
+constexpr auto api051HostVariable = "QTC_ETHER_CAT_PRODUCT_API_HOST";
+constexpr auto api051HardwareConfirmation
+    = "API051_CFG3702_1E7F2E41328F8B7EE6E8647A7F1EC468_XB6_DO16_DC";
+constexpr auto api051PackageSha256
+    = "1e7f2e41328f8b7ee6e8647a7f1ec468ac38633186a5a72c589f815c7db8b35b";
+constexpr auto api051ProjectSha256
+    = "4667dca2bb7e46e3db478ec6baf20711545e3b4bb829ba5318393a3c74be1c1b";
+constexpr auto api051MappingSha256
+    = "38c9ee73cc46ee98af09dfc254389bb0aff475726afae41adb96d2edfb863c5a";
+constexpr auto api051SigningKeyId
+    = "eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6";
+constexpr quint64 api051CatalogRevision = 0x1a0b4e3588236c68ULL;
+constexpr quint64 api051TopologyIdentity = 0x697eaf5137ad0da5ULL;
+constexpr quint64 api051ConfigurationId = 3702;
+constexpr quint64 api051PackageGeneration = 18;
+constexpr quint32 api051CyclePeriodNs = 125000;
+constexpr quint32 api051ExpectedWorkingCounter = 11;
+constexpr quint32 api051OutputTtlCycles = 1000;
+
+enum class Api051HardwareAuthorization {
+    Disabled,
+    Invalid,
+    Authorized,
+};
+
+static Api051HardwareAuthorization api051HardwareAuthorization(
+    QByteArrayView enabled, QByteArrayView confirmation)
+{
+    if (enabled != QByteArrayView("1"))
+        return Api051HardwareAuthorization::Disabled;
+    if (confirmation != QByteArrayView(api051HardwareConfirmation))
+        return Api051HardwareAuthorization::Invalid;
+    return Api051HardwareAuthorization::Authorized;
+}
+
+static QString api051DefaultHandoffPath(QStringView relativePath)
+{
+    const QDir sourceDirectory(QString::fromUtf8(ETHERCAT_SEMANTIC_RUNTIME_TEST_SOURCE_DIR));
+    return QDir(sourceDirectory.absoluteFilePath(QStringLiteral("../../..")))
+        .absoluteFilePath(
+            QStringLiteral("build/vendor_api_fixed_handoff/api051/") + relativePath.toString());
+}
+
+static QString api051InputPath(const char *variable, QStringView defaultRelativePath)
+{
+    const QString configured = qEnvironmentVariable(variable).trimmed();
+    return configured.isEmpty() ? api051DefaultHandoffPath(defaultRelativePath)
+                                : QFileInfo(configured).absoluteFilePath();
+}
+
+static Utils::Result<> validateApi051Manifest(QByteArrayView packageBytes)
+{
+    const Utils::Result<EcpkgContainer> container = parseCanonicalEcpkgContainer(packageBytes);
+    if (!container)
+        return Utils::ResultError(container.error());
+    const Utils::Result<StrictJson> manifest
+        = parseCanonicalJson(container->manifestJson, container->manifestJson.size());
+    if (!manifest || !manifest->is_object())
+        return Utils::ResultError("API-051 signed manifest is not canonical");
+
+    const auto configuration = manifest->find("configuration");
+    if (configuration == manifest->end() || !configuration->is_object())
+        return Utils::ResultError("API-051 signed configuration summary is missing");
+    const auto exactUnsigned = [&configuration](const char *field, quint64 expected) {
+        const auto value = configuration->find(field);
+        return value != configuration->end() && value->is_number_unsigned()
+               && value->get<quint64>() == expected;
+    };
+    const auto exactString = [&configuration](const char *field, const char *expected) {
+        const auto value = configuration->find(field);
+        return value != configuration->end() && value->is_string()
+               && value->get<std::string>() == expected;
+    };
+    if (!exactUnsigned("configuration_id", api051ConfigurationId)
+        || !exactUnsigned("configured_cycle_ns", api051CyclePeriodNs)
+        || !exactUnsigned("expected_wkc", api051ExpectedWorkingCounter)
+        || !exactUnsigned("frame_count", 1) || !exactUnsigned("dc_record_count", 2)
+        || !exactString("requested_timing_mode", "dc")
+        || !exactString("effective_timing_mode", "dc")) {
+        return Utils::ResultError(
+            "API-051 signed timing mode, cycle, frame plan, or expected WKC differs");
+    }
+    return Utils::ResultOk;
+}
+
+static const VerifiedSemanticAction *api051Action(
+    const VerifiedRuntimePackageEvidence &evidence, QStringView actionBindingId)
+{
+    return evidence.semanticBindingArtifact().findAction(actionBindingId);
+}
+
+static Utils::Result<> validateApi051LocalEvidence(
+    const VerifiedRuntimePackageEvidence &evidence,
+    QByteArrayView packageBytes,
+    QByteArrayView projectBytes)
+{
+    const VerifiedSemanticBindingArtifact &artifact = evidence.semanticBindingArtifact();
+    const Data::RuntimeSemanticMappingProof &proof = evidence.semanticMappingProof();
+    if (!evidence.isValid() || artifact.trust != EcpkgTrustClass::Production
+        || artifact.packageSha256 != QByteArray::fromHex(api051PackageSha256)
+        || QCryptographicHash::hash(packageBytes, QCryptographicHash::Sha256)
+               != QByteArray::fromHex(api051PackageSha256)
+        || QCryptographicHash::hash(projectBytes, QCryptographicHash::Sha256)
+               != QByteArray::fromHex(api051ProjectSha256)) {
+        return Utils::ResultError(
+            "API-051 evidence is not the exact production-trusted cfg3702 package and project");
+    }
+    if (artifact.configurationId != api051ConfigurationId || artifact.formatVersion != 2
+        || artifact.artifactSha256 != QByteArray::fromHex(api051MappingSha256)
+        || artifact.catalogRevision != api051CatalogRevision
+        || artifact.topologyIdentity != api051TopologyIdentity || artifact.bindings.size() != 56
+        || artifact.devices.size() != 3 || artifact.actions.size() != 8
+        || evidence.cyclePeriodNs() != api051CyclePeriodNs || proof.formatVersion != 2
+        || proof.bindingCount != 56
+        || proof.mappingSha256 != QByteArray::fromHex(api051MappingSha256)
+        || proof.signingKeyIdSha256 != QByteArray::fromHex(api051SigningKeyId)
+        || proof.trust != Data::RuntimeSemanticMappingTrust::Production || !proof.packageSigned
+        || !proof.signatureVerified || !proof.semanticBindingVerified) {
+        return Utils::ResultError(
+            "API-051 signed semantic identity, trust, catalog, topology, or timing differs");
+    }
+    if (!evidence.actionDefinitions() || evidence.actionDefinitions()->definitionCount != 5
+        || evidence.actionDefinitions()->actionCount != 8 || !evidence.permitsWritableActions()) {
+        return Utils::ResultError("API-051 signed semantic action definitions are incomplete");
+    }
+
+    struct TopologyExpectation
+    {
+        quint32 position;
+        quint16 stationAddress;
+        quint32 vendorId;
+        quint32 productCode;
+        quint32 revision;
+        QString adapterId;
+        QString adapterVersion;
+    };
+    const std::array<TopologyExpectation, 3> expectedTopology{
+        TopologyExpectation{
+            0,
+            0x1001,
+            0x00884443,
+            0x000000b6,
+            0x00000001,
+            QStringLiteral("solidot.xb6_ec0002_rev1_do16"),
+            QStringLiteral("1.3.0")},
+        TopologyExpectation{
+            1,
+            0x1002,
+            0x00100000,
+            0x000c0112,
+            0x00010000,
+            QStringLiteral("inovance.sv630n_1axis_rev00010000_csp"),
+            QStringLiteral("1.5.0")},
+        TopologyExpectation{
+            2,
+            0x1003,
+            0x00100000,
+            0x000c0112,
+            0x00010000,
+            QStringLiteral("inovance.sv630n_1axis_rev00010000_csp"),
+            QStringLiteral("1.5.0")},
+    };
+    if (artifact.topologyInstances.size() != qsizetype(expectedTopology.size()))
+        return Utils::ResultError("API-051 signed topology does not contain three devices");
+    for (const TopologyExpectation &expected : expectedTopology) {
+        const auto topology = std::find_if(
+            artifact.topologyInstances.cbegin(),
+            artifact.topologyInstances.cend(),
+            [&expected](const SemanticBindingTopologyInstance &candidate) {
+                return candidate.position == expected.position;
+            });
+        if (topology == artifact.topologyInstances.cend()
+            || topology->stationAddress != expected.stationAddress
+            || topology->vendorId != expected.vendorId
+            || topology->productCode != expected.productCode
+            || topology->revision != expected.revision || topology->adapterId != expected.adapterId
+            || topology->adapterVersion != expected.adapterVersion
+            || (expected.position == 0
+                    ? (topology->pdoProfile != QStringLiteral("do16")
+                       || topology->dcProfile.has_value())
+                    : (topology->pdoProfile != QStringLiteral("csp_1704_1b04")
+                       || topology->dcProfile
+                              != std::optional<QString>(QStringLiteral("sync0_125us"))))) {
+            return Utils::ResultError(
+                "API-051 signed slave identity, PDO profile, or DC profile differs");
+        }
+    }
+
+    const QStringList xb6Actions{
+        QStringLiteral("embedlabs:project:action:xb6:set-outputs"),
+        QStringLiteral("embedlabs:project:action:xb6:clear-outputs"),
+    };
+    const QStringList svActions{
+        QStringLiteral("embedlabs:project:action:axis0:prepare-csv"),
+        QStringLiteral("embedlabs:project:action:axis0:set-csv-velocity"),
+        QStringLiteral("embedlabs:project:action:axis0:stop-csv"),
+        QStringLiteral("embedlabs:project:action:axis1:prepare-csv"),
+        QStringLiteral("embedlabs:project:action:axis1:set-csv-velocity"),
+        QStringLiteral("embedlabs:project:action:axis1:stop-csv"),
+    };
+    quint32 xb6GroupId = 0;
+    for (const QString &actionId : xb6Actions) {
+        const VerifiedSemanticAction *action = api051Action(evidence, actionId);
+        if (!action || !action->enabled
+            || action->qualification != VerifiedSemanticActionQualification::Qualified
+            || action->disabledReason || action->requiredBindings.size() != 16
+            || action->consistencyGroups.size() != 1
+            || action->consistencyGroups.constFirst().recoveryPolicy
+                   != EcfgOutputRecoveryPolicy::HoldSafe
+            || action->consistencyGroups.constFirst().maximumTtlCycles != api051OutputTtlCycles
+            || evidence.invocableAction(actionId, false) != action) {
+            return Utils::ResultError(
+                "API-051 XB6 set/clear action is not signed, complete, and qualified");
+        }
+        const quint32 groupId = action->consistencyGroups.constFirst().consistencyGroupId;
+        if (!groupId || (xb6GroupId && xb6GroupId != groupId)) {
+            return Utils::ResultError("API-051 XB6 action group identity differs");
+        }
+        xb6GroupId = groupId;
+        QSet<QString> bindingIds;
+        for (const VerifiedSemanticActionBindingReference &binding : action->requiredBindings) {
+            if (binding.direction != EcfgResourceDirection::Output
+                || binding.access != EcfgResourceAccess::ReadWrite
+                || binding.primitive != EcfgResourcePrimitive::Bool || binding.bitWidth != 1
+                || binding.consistencyGroupId != xb6GroupId
+                || bindingIds.contains(binding.semanticBindingId)) {
+                return Utils::ResultError(
+                    "API-051 XB6 action does not cover one exact 16-bit Boolean output group");
+            }
+            bindingIds.insert(binding.semanticBindingId);
+        }
+    }
+    const auto policy = std::find_if(
+        evidence.outputPolicies().cbegin(),
+        evidence.outputPolicies().cend(),
+        [xb6GroupId](const EcfgOutputGroupPolicy &candidate) {
+            return candidate.consistencyGroupId == xb6GroupId;
+        });
+    if (policy == evidence.outputPolicies().cend() || policy->resourceCount != 16
+        || policy->resourceIds.size() != 16
+        || policy->recoveryPolicy != EcfgOutputRecoveryPolicy::HoldSafe
+        || policy->maximumTtlCycles != api051OutputTtlCycles
+        || policy->groupResourceRecordsSha256.size() != 32) {
+        return Utils::ResultError("API-051 XB6 signed output policy differs");
+    }
+    for (const QString &actionId : svActions) {
+        const VerifiedSemanticAction *action = api051Action(evidence, actionId);
+        if (!action || action->enabled
+            || action->qualification != VerifiedSemanticActionQualification::Unqualified
+            || action->disabledReason != QStringLiteral("reference_unit_to_rpm_conversion_not_bound")
+            || evidence.invocableAction(actionId, false)
+            || evidence.invocableAction(actionId, true)) {
+            return Utils::ResultError("API-051 SV630N motion qualification boundary differs");
+        }
+    }
+
+    return validateApi051Manifest(packageBytes);
+}
+
+static Utils::Result<VerifiedRuntimePackageEvidence> importApi051LocalEvidence(
+    QByteArrayView packageBytes,
+    QByteArrayView projectBytes,
+    const QString &packageStoreRoot,
+    const QString &productionTrustDirectory,
+    const QString &projectStoreRoot)
+{
+    if (QCryptographicHash::hash(packageBytes, QCryptographicHash::Sha256)
+            != QByteArray::fromHex(api051PackageSha256)
+        || QCryptographicHash::hash(projectBytes, QCryptographicHash::Sha256)
+               != QByteArray::fromHex(api051ProjectSha256)) {
+        return Utils::ResultError(
+            "API-051 package or project SHA-256 differs from the fixed cfg3702 evidence");
+    }
+    const RuntimePackageEvidenceRepository repository{
+        packageStoreRoot,
+        productionTrustDirectory,
+        projectStoreRoot,
+    };
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidence
+        = repository.import(packageBytes, projectBytes);
+    if (!evidence) {
+        return Utils::ResultError(
+            QStringLiteral("API-051 repository verification failed: %1").arg(evidence.error()));
+    }
+    const Utils::Result<> validation
+        = validateApi051LocalEvidence(*evidence, packageBytes, projectBytes);
+    if (!validation)
+        return Utils::ResultError(validation.error());
+    return evidence;
+}
+
+static QStringList api051AdapterAdmissionBlockers(
+    const VerifiedRuntimePackageEvidence &evidence,
+    const QList<Data::DeviceAdapterManifest> &publishedAdapters)
+{
+    QStringList blockers;
+    QSet<QString> checkedAdapterIds;
+    for (const SemanticBindingTopologyInstance &topology :
+         evidence.semanticBindingArtifact().topologyInstances) {
+        if (checkedAdapterIds.contains(topology.adapterId))
+            continue;
+        checkedAdapterIds.insert(topology.adapterId);
+
+        QList<const Data::DeviceAdapterManifest *> matches;
+        for (const Data::DeviceAdapterManifest &manifest : publishedAdapters) {
+            if (manifest.controllerAdapterTarget.adapterId == topology.adapterId)
+                matches.append(&manifest);
+        }
+        if (matches.size() != 1) {
+            blockers.append(QStringLiteral("published adapter %1 is missing or ambiguous")
+                                .arg(topology.adapterId));
+            continue;
+        }
+        const Data::DeviceAdapterManifest &manifest = *matches.constFirst();
+        const Data::DeviceAdapterControllerTarget &target = manifest.controllerAdapterTarget;
+        if (!manifest.signatureVerified || !manifest.realHardwareAllowed) {
+            blockers.append(
+                QStringLiteral(
+                    "published adapter %1 lacks independently verified real-hardware permission")
+                    .arg(topology.adapterId));
+        }
+        if (manifest.contractVersion != Data::DeviceAdapterContractVersion::V3
+            || manifest.qualification != Data::DeviceAdapterQualification::Qualified
+            || target.adapterVersion != topology.adapterVersion
+            || target.adapterSha256 != topology.adapterSha256
+            || target.esiSha256 != topology.esiSha256) {
+            blockers.append(QStringLiteral("published adapter %1 differs from signed cfg3702")
+                                .arg(topology.adapterId));
+            continue;
+        }
+        const qsizetype profileMatches = std::count_if(
+            manifest.processDataProfiles.cbegin(),
+            manifest.processDataProfiles.cend(),
+            [&topology](const Data::ProcessDataProfile &profile) {
+                return profile.signedPdoProfileId == topology.pdoProfile
+                       && profile.signedDcProfileId == topology.dcProfile.value_or(QString());
+            });
+        if (profileMatches != 1) {
+            blockers.append(
+                QStringLiteral("published adapter %1 lacks the exact signed PDO/DC profile")
+                    .arg(topology.adapterId));
+        }
+    }
+    return blockers;
+}
+
 static Utils::Result<QList<Data::DeviceAdapterManifest>> api038HistoricalTestAdapters(
     const VerifiedRuntimePackageEvidence &evidence)
 {
@@ -3383,6 +3736,288 @@ static void setApi038DigitalOutputParameters(Data::SemanticOperationRequest &req
             QStringLiteral("do%1").arg(channel),
             channel % 3 == 0);
     }
+}
+
+static void setApi051DigitalOutputParameters(Data::SemanticOperationRequest &request, bool output0)
+{
+    request.parameters.clear();
+    for (int channel = 0; channel < 16; ++channel) {
+        request.parameters.insert(QStringLiteral("do%1").arg(channel), channel == 0 && output0);
+    }
+    request.ttlCycles = api051OutputTtlCycles;
+    request.reason = QStringLiteral("API-051 cfg3702 headless semantic acceptance");
+}
+
+template<typename Predicate>
+static bool waitForApi051Condition(Predicate &&predicate, int timeoutMs)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < timeoutMs) {
+        if (predicate())
+            return true;
+        QTest::qWait(20);
+    }
+    return predicate();
+}
+
+static bool api051Connected(const Data::ControllerConnectionSnapshot &snapshot)
+{
+    QSet<QString> channelIds;
+    for (const Data::ControllerChannelStatus &channel : snapshot.channels) {
+        if (channel.state != Data::ControllerChannelState::Connected)
+            return false;
+        channelIds.insert(channel.id);
+    }
+    return snapshot.state == Data::ControllerConnectionState::Connected
+           && snapshot.channels.size() == 3
+           && channelIds
+                  == QSet<QString>{
+                      QStringLiteral("control"),
+                      QStringLiteral("push"),
+                      QStringLiteral("bulk"),
+                  };
+}
+
+static bool api051HasAllV114Capabilities(
+    const std::optional<Data::ControllerCapabilitySummary> &capability)
+{
+    return capability && capability->controlLease && capability->resumablePush
+           && capability->transactionalBulk && capability->capabilityQuery
+           && capability->sdoFailureDiagnostics && capability->exactAlarmReplay
+           && capability->linkDiagnostics && capability->timeCorrelation
+           && capability->processInputSample && capability->structuredHandshakeError
+           && capability->firmwareUpdate && capability->explicitTimingModeStart
+           && capability->faultReset && capability->runtimeResources
+           && capability->semanticMappingAttestation && capability->runtimeOutputTransactions;
+}
+
+static QString api051ExecutionCorrelationId(
+    const Data::SemanticOperationId &operationId, QStringView phase, quint32 index = 0)
+{
+    QByteArray material = operationId.value.toUtf8();
+    material.append('\0');
+    material.append(phase.toUtf8());
+    material.append('\0');
+    const quint32 bigEndianIndex = qToBigEndian(index);
+    material.append(
+        reinterpret_cast<const char *>(&bigEndianIndex), qsizetype(sizeof(bigEndianIndex)));
+    return QStringLiteral("semantic-")
+           + QString::fromLatin1(
+               QCryptographicHash::hash(material, QCryptographicHash::Sha256).toHex())
+           + QLatin1Char('-') + phase.toString();
+}
+
+template<typename Result>
+static const Result *api051SingleCorrelatedResult(
+    const QList<Result> &results, QStringView correlationId)
+{
+    const auto matches = [correlationId](const Result &result) {
+        return result.request.correlationId == correlationId;
+    };
+    if (std::count_if(results.cbegin(), results.cend(), matches) != 1)
+        return nullptr;
+    return &*std::find_if(results.cbegin(), results.cend(), matches);
+}
+
+static const Data::RuntimeOutputTransactionResult *api051SingleOutputResult(
+    const QList<Data::RuntimeOutputTransactionResult> &results,
+    const Data::RuntimeOutputOperationId &operationId)
+{
+    const auto matches = [&operationId](const Data::RuntimeOutputTransactionResult &result) {
+        return result.request.operationId == operationId;
+    };
+    if (std::count_if(results.cbegin(), results.cend(), matches) != 1)
+        return nullptr;
+    return &*std::find_if(results.cbegin(), results.cend(), matches);
+}
+
+static QString executeApi051Command(
+    Core::ControllerConnectionProvider &provider,
+    const Data::ControllerControlRequest &request,
+    int timeoutMs)
+{
+    const Utils::Result<> dispatched = provider.executeControlCommand(request);
+    if (!dispatched)
+        return dispatched.error();
+    const bool terminal = waitForApi051Condition(
+        [&provider, command = request.command] {
+            const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+            return (snapshot.controlProgress.command == command
+                    && snapshot.controlProgress.state != Data::ControllerControlState::Pending
+                    && snapshot.controlProgress.state != Data::ControllerControlState::Idle)
+                   || snapshot.state == Data::ControllerConnectionState::Disconnected
+                   || snapshot.state == Data::ControllerConnectionState::Failed;
+        },
+        timeoutMs);
+    const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+    if (!terminal || snapshot.controlProgress.command != request.command)
+        return QStringLiteral("The controller command did not reach a terminal result");
+    if (snapshot.controlProgress.state != Data::ControllerControlState::Succeeded
+        || !snapshot.controlProgress.final || snapshot.controlProgress.status != 0
+        || snapshot.controlProgress.operationResult != 0) {
+        const QString providerDetail
+            = snapshot.lastError
+                  ? QStringLiteral(" [%1: %2]")
+                        .arg(snapshot.lastError->codeName, snapshot.lastError->detail)
+                  : QString();
+        return QStringLiteral("stage %1 status %2 result %3: %4%5")
+            .arg(snapshot.controlProgress.stage)
+            .arg(snapshot.controlProgress.status.value_or(0))
+            .arg(snapshot.controlProgress.operationResult.value_or(0))
+            .arg(snapshot.controlProgress.detail, providerDetail);
+    }
+    return {};
+}
+
+static std::optional<Data::SemanticRuntimeContext> api051Context(
+    const SemanticRuntimeExecutor &executor, const Data::ControllerConnectionScope &scope)
+{
+    QList<Data::SemanticRuntimeContext> matches;
+    for (const Data::SemanticRuntimeContext &context : executor.contexts()) {
+        if (context.scope == scope)
+            matches.append(context);
+    }
+    if (matches.size() != 1)
+        return {};
+    return matches.constFirst();
+}
+
+static QString api051LiveDcGate(
+    const Core::ControllerConnectionProvider &provider,
+    const SemanticRuntimeExecutor &executor,
+    const Data::ControllerConnectionScope &scope,
+    quint64 sessionGeneration,
+    quint64 sessionId,
+    quint64 bootId,
+    const Data::RuntimeResourceCatalogEpoch &epoch)
+{
+    const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+    const std::optional<Data::RuntimeResourceCatalog> catalog = provider.runtimeResourceCatalog();
+    const std::optional<Data::SemanticRuntimeContext> context = api051Context(executor, scope);
+    if (!api051Connected(snapshot) || snapshot.scope != scope
+        || snapshot.sessionGeneration != sessionGeneration || !snapshot.session
+        || snapshot.session->sessionId != sessionId || snapshot.session->bootId != bootId
+        || !snapshot.session->ownsControlLease
+        || snapshot.session->controlLeaseOwnerSessionId != sessionId || !snapshot.controllerState
+        || !snapshot.package || !catalog || !context || !context->complete) {
+        return QStringLiteral(
+            "The live Product API session, lease, package, catalog, or semantic context changed");
+    }
+
+    const Data::ControllerStateSummary &state = *snapshot.controllerState;
+    const Data::ControllerPackageSummary &package = *snapshot.package;
+    if (state.serviceState != Data::ControllerServiceState::Running || !state.ready
+        || !state.busOperational || !state.applicationActive || state.safeOutput
+        || !state.distributedClocksLocked || state.controllerBootId != bootId
+        || state.ethercatAlStateBits != 0x08
+        || state.expectedWorkingCounter != api051ExpectedWorkingCounter
+        || state.actualWorkingCounter != api051ExpectedWorkingCounter || state.currentFaults
+        || state.latchedFaults || !state.cycleCount
+        || package.activeSlot != Data::ControllerSlot::A
+        || package.activeGeneration != api051PackageGeneration
+        || package.activeConfigurationId != api051ConfigurationId
+        || package.controllerState != Data::ControllerPackageState::Active
+        || package.controllerBootId != bootId) {
+        return QStringLiteral(
+            "The live controller is not fault-free cfg3702 RUNNING/DC/WKC11/11");
+    }
+
+    const QByteArray expectedMapping = QByteArray::fromHex(api051MappingSha256);
+    if (catalog->scope != scope || catalog->sessionGeneration != sessionGeneration
+        || catalog->epoch != epoch || catalog->resources.size() != 56 || context->scope != scope
+        || context->sessionGeneration != sessionGeneration || context->epoch != epoch
+        || context->mappingDigest.value != expectedMapping
+        || context->controllerMappingDigest.value != expectedMapping
+        || context->cyclePeriodNs != api051CyclePeriodNs) {
+        return QStringLiteral("The live cfg3702 semantic epoch or mapping changed");
+    }
+    return {};
+}
+
+static bool api051OperationTerminal(Data::SemanticOperationState state)
+{
+    using State = Data::SemanticOperationState;
+    return state == State::Rejected || state == State::Succeeded || state == State::Failed
+           || state == State::TimedOut || state == State::OutcomeUnknown || state == State::Canceled
+           || state == State::Expired;
+}
+
+static bool api051SemanticSnapshotMatches(
+    const std::optional<Data::SemanticOperationSnapshot> &snapshot, bool output0, QString *error)
+{
+    if (!snapshot || !snapshot->complete || snapshot->observations.size() != 16) {
+        *error = QStringLiteral("The semantic output readback is not one complete 16-bit snapshot");
+        return false;
+    }
+    QSet<int> channels;
+    for (const Data::SemanticOperationSignalObservation &observation : snapshot->observations) {
+        const QString id = observation.target.signalId.value;
+        const qsizetype marker = id.lastIndexOf(QStringLiteral(".channel."));
+        bool validChannel = false;
+        const int channel = marker >= 0 ? id.sliced(marker + qsizetype(9)).toInt(&validChannel)
+                                        : -1;
+        if (!validChannel || channel < 0 || channel >= 16 || channels.contains(channel)
+            || observation.value.primitiveType != Data::RuntimeResourcePrimitiveType::Boolean
+            || observation.value.value.metaType().id() != QMetaType::Bool
+            || observation.value.value.toBool() != (channel == 0 && output0)
+            || observation.quality.state != Data::RuntimeResourceQualityState::Good) {
+            *error = QStringLiteral("The semantic output readback value or quality differs");
+            return false;
+        }
+        channels.insert(channel);
+    }
+    if (channels.size() != 16) {
+        *error = QStringLiteral("The semantic output readback does not cover channels 0 through 15");
+        return false;
+    }
+    return true;
+}
+
+static QList<Data::RuntimeResourceId> api051Xb6OutputResourceIds(
+    const Data::SemanticRuntimeContext &context)
+{
+    const auto action = std::find_if(
+        context.actionStates.cbegin(),
+        context.actionStates.cend(),
+        [](const Data::SemanticActionRuntimeState &candidate) {
+            return candidate.actionBindingId
+                   == QStringLiteral("embedlabs:project:action:xb6:set-outputs");
+        });
+    if (action == context.actionStates.cend() || action->bindings.size() != 16)
+        return {};
+    QList<Data::RuntimeResourceId> result;
+    result.reserve(action->bindings.size());
+    for (const Data::SemanticRuntimeBinding &binding : action->bindings)
+        result.append(binding.resourceId);
+    std::sort(
+        result.begin(),
+        result.end(),
+        [](const Data::RuntimeResourceId &left, const Data::RuntimeResourceId &right) {
+            return left.value < right.value;
+        });
+    if (std::adjacent_find(result.cbegin(), result.cend()) != result.cend())
+        return {};
+    return result;
+}
+
+static bool api051RuntimeSnapshotAllFalse(
+    const Data::RuntimeResourceSnapshotResult &result, QString *error)
+{
+    if (!result.isValid() || !result.snapshot || result.snapshot->samples.size() != 16) {
+        *error = QStringLiteral("The controller safe-hold readback is incomplete");
+        return false;
+    }
+    for (const Data::RuntimeResourceSample &sample : result.snapshot->samples) {
+        if (sample.value.primitiveType != Data::RuntimeResourcePrimitiveType::Boolean
+            || sample.value.value.metaType().id() != QMetaType::Bool || sample.value.value.toBool()
+            || sample.quality.state != Data::RuntimeResourceQualityState::Good) {
+            *error = QStringLiteral(
+                "The controller safe-hold readback is not 16 valid false values");
+            return false;
+        }
+    }
+    return true;
 }
 
 static Data::ControllerConnectionSnapshot executionConnectionSnapshot(
@@ -6291,6 +6926,1130 @@ void EtherCATSemanticRuntimeTests::testHardwareApi038SemanticAdmissionFailsClose
     QFAIL(
         "API-038 admission unexpectedly passed without a product activation preparation; "
         "controller access remains deliberately unimplemented");
+}
+
+void EtherCATSemanticRuntimeTests::testHardwareApi051SemanticPreflight()
+{
+    QCOMPARE(api051HardwareAuthorization({}, {}), Api051HardwareAuthorization::Disabled);
+    QCOMPARE(
+        api051HardwareAuthorization("0", api051HardwareConfirmation),
+        Api051HardwareAuthorization::Disabled);
+    QCOMPARE(
+        api051HardwareAuthorization("1", "wrong-confirmation"),
+        Api051HardwareAuthorization::Invalid);
+    QCOMPARE(
+        api051HardwareAuthorization("1", api051HardwareConfirmation),
+        Api051HardwareAuthorization::Authorized);
+
+    const QString packagePath = api051InputPath(
+        api051PackagePathVariable, u"package/three-slave-manual-control-fixed-pdo-cfg3702.ecpkg");
+    const QString projectPath = api051InputPath(api051ProjectPathVariable, u"evidence/project.json");
+    const QByteArray packageBytes = readFile(packagePath);
+    const QByteArray projectBytes = readFile(projectPath);
+    if (packageBytes.isEmpty() || projectBytes.isEmpty()) {
+        QSKIP(
+            "The ignored API-051 handoff fixture is not present; authorization remained disabled "
+            "and no Product API object was accessed");
+    }
+
+    const Utils::FilePath trustDirectory = ::Core::ICore::resourcePath("ethercat/production-trust");
+    if (!QFileInfo::exists(trustDirectory.toFSPathString())) {
+        QSKIP(
+            "The installed production trust directory is unavailable; no Product API object was "
+            "accessed");
+    }
+
+    QTemporaryDir temporary(
+        systemTemporaryDirectoryTemplate(u"embed-labs-api051-hardware-preflight"));
+    QVERIFY(temporary.isValid());
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidence = importApi051LocalEvidence(
+        packageBytes,
+        projectBytes,
+        QDir(temporary.path()).filePath("packages"),
+        trustDirectory.toFSPathString(),
+        QDir(temporary.path()).filePath("projects"));
+    QVERIFY_RESULT(evidence);
+
+    const Utils::Result<QList<Data::DeviceAdapterManifest>> publishedAdapters
+        = publishedApi038V3ActionAdapters();
+    QVERIFY_RESULT(publishedAdapters);
+    const QStringList adapterBlockers
+        = api051AdapterAdmissionBlockers(*evidence, *publishedAdapters);
+    QCOMPARE(adapterBlockers.size(), 2);
+    QVERIFY(
+        std::all_of(adapterBlockers.cbegin(), adapterBlockers.cend(), [](const QString &blocker) {
+            return blocker.contains(
+                QStringLiteral("lacks independently verified real-hardware permission"));
+        }));
+
+    Data::ProjectSnapshot project = factoryProject(*evidence);
+    configureApi038V3ManualProject(project, *publishedAdapters);
+    project.masterConfiguration.timingMode = Data::MasterTimingMode::DistributedClocks;
+    project.masterConfiguration.cyclePeriodNs = api051CyclePeriodNs;
+    QCOMPARE(project.slaves.size(), qsizetype(3));
+    const Data::OfflineSlaveConfiguration *xb6 = factoryManualSlave(project);
+    QVERIFY(xb6);
+    QCOMPARE(xb6->position, 0);
+    QVERIFY(xb6->manualControlEnvelope.enabled);
+    QCOMPARE(xb6->manualControlEnvelope.actionEnvelopes.size(), qsizetype(2));
+    QCOMPARE(
+        std::count_if(
+            project.slaves.cbegin(),
+            project.slaves.cend(),
+            [](const Data::OfflineSlaveConfiguration &slave) {
+                return std::count_if(
+                           slave.manualControlEnvelope.actionEnvelopes.cbegin(),
+                           slave.manualControlEnvelope.actionEnvelopes.cend(),
+                           [](const Data::ManualActionEnvelope &action) { return !action.enabled; })
+                       == 3;
+            }),
+        2);
+
+    QByteArray changedPackage = packageBytes;
+    changedPackage[0] ^= 1;
+    const Utils::Result<VerifiedRuntimePackageEvidence> changedPackageResult
+        = importApi051LocalEvidence(
+            changedPackage,
+            projectBytes,
+            QDir(temporary.path()).filePath("changed-packages"),
+            trustDirectory.toFSPathString(),
+            QDir(temporary.path()).filePath("changed-projects"));
+    QVERIFY(!changedPackageResult);
+    QVERIFY(changedPackageResult.error().contains(QStringLiteral("SHA-256 differs")));
+
+    QByteArray changedProject = projectBytes;
+    changedProject[0] ^= 1;
+    const Utils::Result<VerifiedRuntimePackageEvidence> changedProjectResult
+        = importApi051LocalEvidence(
+            packageBytes,
+            changedProject,
+            QDir(temporary.path()).filePath("project-mismatch-packages"),
+            trustDirectory.toFSPathString(),
+            QDir(temporary.path()).filePath("project-mismatch-projects"));
+    QVERIFY(!changedProjectResult);
+    QVERIFY(changedProjectResult.error().contains(QStringLiteral("SHA-256 differs")));
+}
+
+void EtherCATSemanticRuntimeTests::testHardwareApi051SemanticAcceptance()
+{
+    constexpr int connectTimeoutMs = 20000;
+    constexpr int operationTimeoutMs = 55000;
+    constexpr int runtimeTimeoutMs = 45000;
+
+    const Api051HardwareAuthorization authorization = api051HardwareAuthorization(
+        qgetenv(api051HardwareEnableVariable), qgetenv(api051HardwareConfirmationVariable));
+    if (authorization == Api051HardwareAuthorization::Disabled) {
+        QSKIP(
+            "API-051 semantic hardware acceptance is disabled; no Product API provider, session, "
+            "or mutation was accessed");
+    }
+    if (authorization == Api051HardwareAuthorization::Invalid) {
+        QFAIL(
+            "QTC_ETHER_CAT_API051_CONFIRM does not authorize the exact cfg3702 XB6/DC "
+            "acceptance flow");
+    }
+
+    // Package and project paths are untrusted byte sources only. All identities
+    // below are fixed in the test and independently rederived from the signed
+    // package before the Product API provider is obtained.
+    const QString packagePath = api051InputPath(
+        api051PackagePathVariable, u"package/three-slave-manual-control-fixed-pdo-cfg3702.ecpkg");
+    const QString projectPath = api051InputPath(api051ProjectPathVariable, u"evidence/project.json");
+    const QByteArray packageBytes = readFile(packagePath);
+    const QByteArray projectBytes = readFile(projectPath);
+    if (packageBytes.isEmpty() || projectBytes.isEmpty())
+        QFAIL("The exact API-051 package or compiled project source is unavailable");
+
+    const Utils::FilePath trustDirectory = ::Core::ICore::resourcePath("ethercat/production-trust");
+    if (!QFileInfo::exists(trustDirectory.toFSPathString()))
+        QFAIL("The installed production trust directory is unavailable");
+    QTemporaryDir temporary(
+        systemTemporaryDirectoryTemplate(u"embed-labs-api051-hardware-acceptance"));
+    if (!temporary.isValid())
+        QFAIL("The API-051 verified evidence repository could not be created");
+
+    auto repository = std::make_shared<RuntimePackageEvidenceRepository>(
+        QDir(temporary.path()).filePath("packages"),
+        trustDirectory.toFSPathString(),
+        QDir(temporary.path()).filePath("projects"));
+    const Utils::Result<VerifiedRuntimePackageEvidence> imported
+        = repository->import(packageBytes, projectBytes);
+    if (!imported) {
+        const QByteArray detail = QStringLiteral("API-051 repository verification failed: %1")
+                                      .arg(imported.error())
+                                      .toUtf8();
+        QFAIL(detail.constData());
+    }
+    const Utils::Result<> evidenceValidation
+        = validateApi051LocalEvidence(*imported, packageBytes, projectBytes);
+    if (!evidenceValidation) {
+        const QByteArray detail = evidenceValidation.error().toUtf8();
+        QFAIL(detail.constData());
+    }
+    const auto evidence = std::make_shared<const VerifiedRuntimePackageEvidence>(*imported);
+
+    const Utils::Result<QList<Data::DeviceAdapterManifest>> publishedAdapters
+        = publishedApi038V3ActionAdapters();
+    if (!publishedAdapters) {
+        const QByteArray detail = QStringLiteral("API-051 upper adapters are unavailable: %1")
+                                      .arg(publishedAdapters.error())
+                                      .toUtf8();
+        QFAIL(detail.constData());
+    }
+    const QStringList adapterBlockers
+        = api051AdapterAdmissionBlockers(*evidence, *publishedAdapters);
+    if (!adapterBlockers.isEmpty()) {
+        const QByteArray detail = QStringLiteral("API-051 adapter preflight failed: %1")
+                                      .arg(adapterBlockers.join(QStringLiteral("; ")))
+                                      .toUtf8();
+        QFAIL(detail.constData());
+    }
+
+    Data::ProjectSnapshot project = factoryProject(*evidence);
+    configureApi038V3ManualProject(project, *publishedAdapters);
+    project.name = QStringLiteral("API-051 cfg3702 headless acceptance");
+    project.masterConfiguration.timingMode = Data::MasterTimingMode::DistributedClocks;
+    project.masterConfiguration.cyclePeriodNs = api051CyclePeriodNs;
+    const Data::ControllerConnectionScope scope = projectScope(project);
+    if (scope.projectId.isNull() || scope.masterId.isNull() || !factoryManualSlave(project)) {
+        QFAIL("API-051 could not construct the exact upper-layer project adaptation");
+    }
+
+    TestProjectService projects;
+    projects.addProject(project);
+    if (!projects.activateProject(project.id))
+        QFAIL("The API-051 headless project could not be activated");
+
+    auto *providerRegistry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    if (!providerRegistry)
+        QFAIL("The public controller provider registry is unavailable");
+    QString host = qEnvironmentVariable(api051HostVariable).trimmed();
+    if (host.isEmpty())
+        host = QStringLiteral("192.168.3.101");
+
+    struct ProviderSelection
+    {
+        Core::ControllerConnectionProvider *provider = nullptr;
+        Data::ControllerConnectionProfile profile;
+        Data::ControllerConnectionProfileConfiguration configuration;
+    };
+    QList<ProviderSelection> matchingProviders;
+    for (Core::Provider *candidate :
+         providerRegistry->providers(Core::ProviderKind::ControllerConnection)) {
+        auto *connectionProvider
+            = qobject_cast<Core::ControllerConnectionProvider *>(candidate);
+        if (!connectionProvider || !connectionProvider->isAvailable()
+            || connectionProvider->connectionSnapshot().state
+                   != Data::ControllerConnectionState::Disconnected) {
+            continue;
+        }
+        const QList<Data::ControllerConnectionProfile> candidateProfiles
+            = connectionProvider->connectionProfiles(scope);
+        if (candidateProfiles.size() != 1 || !candidateProfiles.constFirst().defaultProfile
+            || !candidateProfiles.constFirst().configured
+            || !candidateProfiles.constFirst().supported
+            || !candidateProfiles.constFirst().configurationIssue.isEmpty()) {
+            continue;
+        }
+        const std::optional<Data::ControllerConnectionProfileConfiguration> configuration
+            = connectionProvider->connectionProfileConfiguration(
+                scope, candidateProfiles.constFirst().id);
+        if (!configuration || !configuration->editable
+            || !configuration->endpointDescription.contains(QStringLiteral("15200"))
+            || !configuration->endpointDescription.contains(QStringLiteral("15201"))
+            || !configuration->endpointDescription.contains(QStringLiteral("15202"))) {
+            continue;
+        }
+        matchingProviders.append(
+            {connectionProvider, candidateProfiles.constFirst(), *configuration});
+    }
+    if (matchingProviders.size() != 1)
+        QFAIL("The public three-channel Product API profile is missing or ambiguous");
+    Core::ControllerConnectionProvider *providerPointer
+        = matchingProviders.constFirst().provider;
+    Core::ControllerConnectionProvider &provider = *providerPointer;
+    const Data::ControllerConnectionProfile profile = matchingProviders.constFirst().profile;
+    const Data::ControllerConnectionProfileConfiguration previousProfile
+        = matchingProviders.constFirst().configuration;
+    auto executor
+        = std::make_unique<SemanticRuntimeExecutor>(&projects, providerRegistry, nullptr, repository);
+
+    QList<Data::RuntimeOutputGroupPolicyResult> policyResults;
+    QList<Data::RuntimeOutputTransactionStateResult> outputStateResults;
+    QList<Data::RuntimeOutputTransactionResult> outputResults;
+    QList<Data::RuntimeResourceSnapshotResult> targetedSnapshotResults;
+    QList<Data::SemanticOperationId> attemptedOutputOperations;
+    const QMetaObject::Connection policyConnection = QObject::connect(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeOutputGroupPolicyRequestFinished,
+        &provider,
+        [&policyResults](const Data::RuntimeOutputGroupPolicyResult &result) {
+            policyResults.append(result);
+        });
+    const QMetaObject::Connection outputStateConnection = QObject::connect(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeOutputTransactionStateRequestFinished,
+        &provider,
+        [&outputStateResults](const Data::RuntimeOutputTransactionStateResult &result) {
+            outputStateResults.append(result);
+        });
+    const QMetaObject::Connection outputConnection = QObject::connect(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeOutputTransactionFinished,
+        &provider,
+        [&outputResults](const Data::RuntimeOutputTransactionResult &result) {
+            outputResults.append(result);
+        });
+    const QMetaObject::Connection snapshotConnection = QObject::connect(
+        &provider,
+        &Core::ControllerConnectionProvider::runtimeResourceSnapshotRequestFinished,
+        &provider,
+        [&targetedSnapshotResults](const Data::RuntimeResourceSnapshotResult &result) {
+            targetedSnapshotResults.append(result);
+        });
+    const QScopeGuard signalCleanup([&] {
+        QObject::disconnect(policyConnection);
+        QObject::disconnect(outputStateConnection);
+        QObject::disconnect(outputConnection);
+        QObject::disconnect(snapshotConnection);
+    });
+
+    QString failure;
+    QStringList cleanupFailures;
+    bool connectionStarted = false;
+    bool endpointConfigured = false;
+    quint64 bootId = 0;
+    quint64 sessionId = 0;
+    quint64 sessionGeneration = 0;
+    const auto fail = [&failure](const QString &detail) {
+        if (failure.isEmpty())
+            failure = detail;
+    };
+    const auto command = [&provider, &fail, &failure](
+                             Data::ControllerControlCommand command,
+                             QStringView label,
+                             quint32 leaseDurationMs = 0) {
+        if (!failure.isEmpty())
+            return false;
+        Data::ControllerControlRequest request;
+        request.command = command;
+        request.leaseDurationMs = leaseDurationMs;
+        const QString error = executeApi051Command(provider, request, operationTimeoutMs);
+        if (!error.isEmpty()) {
+            fail(QStringLiteral("%1 failed: %2").arg(label, error));
+            return false;
+        }
+        return true;
+    };
+
+    const Utils::Result<> configured
+        = provider.setConnectionProfileEndpoint(scope, profile.id, host);
+    if (!configured) {
+        fail(QStringLiteral("The API-051 controller IP is invalid: %1").arg(configured.error()));
+    } else {
+        endpointConfigured = true;
+    }
+
+    if (failure.isEmpty()) {
+        const Data::ControllerConnectionRequest request{scope, profile.id};
+        const Utils::Result<> connected = provider.connectToController(request);
+        if (!connected) {
+            fail(QStringLiteral("The Product API connection could not start: %1")
+                     .arg(connected.error()));
+        } else {
+            connectionStarted = true;
+            if (!waitForApi051Condition(
+                    [&provider] {
+                        const Data::ControllerConnectionState state
+                            = provider.connectionSnapshot().state;
+                        return state == Data::ControllerConnectionState::Connected
+                               || state == Data::ControllerConnectionState::Failed
+                               || state == Data::ControllerConnectionState::Disconnected;
+                    },
+                    connectTimeoutMs)) {
+                fail(QStringLiteral("The three Product API channels did not connect in time"));
+            }
+        }
+    }
+
+    Data::ControllerConnectionSnapshot initialSnapshot = provider.connectionSnapshot();
+    if (failure.isEmpty()) {
+        if (!api051Connected(initialSnapshot) || initialSnapshot.protocolVersion.major != 1
+            || initialSnapshot.protocolVersion.minor != 14
+            || !api051HasAllV114Capabilities(initialSnapshot.capability) || !initialSnapshot.session
+            || !initialSnapshot.controllerState || !initialSnapshot.package
+            || initialSnapshot.readOnly || initialSnapshot.mock) {
+            fail(QStringLiteral(
+                "The Product API v1.14 three-channel capability set is unavailable"));
+        } else {
+            bootId = initialSnapshot.session->bootId;
+            sessionId = initialSnapshot.session->sessionId;
+            sessionGeneration = initialSnapshot.sessionGeneration;
+        }
+    }
+
+    if (failure.isEmpty()) {
+        const Data::ControllerStateSummary beforeState = *initialSnapshot.controllerState;
+        const Utils::Result<> refreshed = provider.refreshController();
+        if (!refreshed) {
+            fail(QStringLiteral("The explicit controller heartbeat refresh was rejected: %1")
+                     .arg(refreshed.error()));
+        } else if (!waitForApi051Condition(
+                       [&provider,
+                        bootId,
+                        sessionId,
+                        sessionGeneration,
+                        beforeHeartbeat = beforeState.controllerHeartbeat] {
+                           const Data::ControllerConnectionSnapshot snapshot
+                               = provider.connectionSnapshot();
+                           return api051Connected(snapshot) && snapshot.session
+                                  && snapshot.controllerState
+                                  && snapshot.sessionGeneration == sessionGeneration
+                                  && snapshot.session->sessionId == sessionId
+                                  && snapshot.session->bootId == bootId
+                                  && snapshot.controllerState->controllerHeartbeat
+                                         > beforeHeartbeat;
+                       },
+                       15000)) {
+            fail(QStringLiteral(
+                "The CPU1 heartbeat did not advance in the same session and BootId"));
+        }
+    }
+
+    if (failure.isEmpty()) {
+        initialSnapshot = provider.connectionSnapshot();
+        const Data::ControllerStateSummary &state = *initialSnapshot.controllerState;
+        const Data::ControllerPackageSummary &package = *initialSnapshot.package;
+        if (state.serviceState != Data::ControllerServiceState::Shutdown || !state.ready
+            || state.currentFaults || state.latchedFaults || state.applicationActive
+            || state.busOperational || state.safeOutput || state.controllerBootId != bootId
+            || initialSnapshot.session->ownsControlLease
+            || initialSnapshot.session->controlLeaseOwnerSessionId
+            || package.activeSlot != Data::ControllerSlot::A
+            || package.activeGeneration != api051PackageGeneration
+            || package.activeConfigurationId != api051ConfigurationId
+            || package.stagedSlot != Data::ControllerSlot::A
+            || package.stagedGeneration != api051PackageGeneration
+            || package.stagedConfigurationId != api051ConfigurationId) {
+            fail(QStringLiteral(
+                "Initial state is not fault-free SHUTDOWN with lease zero and persistent "
+                "A/18/3702"));
+        }
+    }
+
+    command(Data::ControllerControlCommand::AcquireControl, u"AcquireControl(30000ms)", 30000);
+    if (failure.isEmpty()) {
+        const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+        if (!snapshot.session || !snapshot.session->ownsControlLease
+            || snapshot.session->sessionId != sessionId || snapshot.session->bootId != bootId) {
+            fail(QStringLiteral("The exact joined session did not acquire the exclusive lease"));
+        }
+    }
+
+    command(Data::ControllerControlCommand::RestoreActivePackage, u"RestoreActivePackage");
+    if (failure.isEmpty()
+        && !waitForApi051Condition(
+            [&provider, bootId, sessionId, sessionGeneration] {
+                const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+                if (!api051Connected(snapshot) || !snapshot.session || !snapshot.controllerState
+                    || !snapshot.package || snapshot.sessionGeneration != sessionGeneration
+                    || snapshot.session->sessionId != sessionId
+                    || snapshot.session->bootId != bootId || !snapshot.session->ownsControlLease) {
+                    return false;
+                }
+                const Data::ControllerStateSummary &state = *snapshot.controllerState;
+                const Data::ControllerPackageSummary &package = *snapshot.package;
+                return state.serviceState == Data::ControllerServiceState::OperationalSafe
+                       && state.ready && state.busOperational && !state.applicationActive
+                       && state.safeOutput && !state.currentFaults && !state.latchedFaults
+                       && state.controllerBootId == bootId && (state.ethercatAlStateBits & 0x08)
+                       && state.expectedWorkingCounter == api051ExpectedWorkingCounter
+                       && state.actualWorkingCounter == api051ExpectedWorkingCounter
+                       && package.activeSlot == Data::ControllerSlot::A
+                       && package.activeGeneration == api051PackageGeneration
+                       && package.activeConfigurationId == api051ConfigurationId
+                       && package.controllerState == Data::ControllerPackageState::Active
+                       && package.controllerBootId == bootId;
+            },
+            runtimeTimeoutMs)) {
+        fail(QStringLiteral("RestoreActivePackage did not reach the strict cfg3702 OP_SAFE gate"));
+    }
+
+    std::optional<Data::SemanticRuntimeContext> context;
+    Data::RuntimeResourceCatalogEpoch runtimeEpoch;
+    if (failure.isEmpty()) {
+        if (!waitForApi051Condition(
+                [&executor, &scope, &context] {
+                    context = api051Context(*executor, scope);
+                    return context && context->complete;
+                },
+                runtimeTimeoutMs)) {
+            const QString detail = context ? context->detail : QStringLiteral("no unique context");
+            fail(QStringLiteral("SemanticRuntime did not become ready: %1").arg(detail));
+        }
+    }
+
+    if (failure.isEmpty()) {
+        const std::optional<Data::RuntimeResourceCatalog> catalog
+            = provider.runtimeResourceCatalog();
+        const std::optional<Data::RuntimeSemanticMappingAttestation> attestation
+            = provider.runtimeSemanticMappingAttestation();
+        if (!catalog || !attestation || catalog->resources.size() != 56 || catalog->scope != scope
+            || catalog->sessionGeneration != sessionGeneration
+            || catalog->epoch.controllerBootId != bootId
+            || catalog->epoch.activePackageSlot != Data::ControllerSlot::A
+            || catalog->epoch.activePackageGeneration != api051PackageGeneration
+            || catalog->epoch.configurationId != api051ConfigurationId
+            || catalog->epoch.catalogRevision != api051CatalogRevision
+            || catalog->epoch.topologyIdentity != factoryOpaqueId(api051TopologyIdentity)
+            || context->epoch != catalog->epoch
+            || context->mappingDigest.value != QByteArray::fromHex(api051MappingSha256)
+            || context->controllerMappingDigest.value != QByteArray::fromHex(api051MappingSha256)
+            || context->cyclePeriodNs != api051CyclePeriodNs) {
+            fail(QStringLiteral("Runtime catalog, epoch, mapping, or context differs from cfg3702"));
+        } else {
+            runtimeEpoch = catalog->epoch;
+            const Utils::Result<> attestationResult = verifyRuntimeSemanticMappingAttestation(
+                *attestation,
+                scope,
+                sessionGeneration,
+                catalog->epoch,
+                project.masterBindingArtifact,
+                *evidence);
+            if (!attestationResult) {
+                fail(QStringLiteral("Controller semantic attestation failed: %1")
+                         .arg(attestationResult.error()));
+            }
+        }
+    }
+
+    command(Data::ControllerControlCommand::StartDistributedClocks, u"StartDC");
+    quint64 runningCycle = 0;
+    if (failure.isEmpty()
+        && !waitForApi051Condition(
+            [&provider, bootId, &runningCycle] {
+                const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+                if (!snapshot.session || !snapshot.session->ownsControlLease
+                    || !snapshot.controllerState || !snapshot.package)
+                    return false;
+                const Data::ControllerStateSummary &state = *snapshot.controllerState;
+                if (state.serviceState != Data::ControllerServiceState::Running || !state.ready
+                    || !state.busOperational || !state.applicationActive || state.safeOutput
+                    || !state.distributedClocksLocked || state.controllerBootId != bootId
+                    || state.expectedWorkingCounter != api051ExpectedWorkingCounter
+                    || state.actualWorkingCounter != api051ExpectedWorkingCounter
+                    || state.currentFaults || state.latchedFaults || !state.cycleCount) {
+                    return false;
+                }
+                runningCycle = state.cycleCount;
+                return true;
+            },
+            runtimeTimeoutMs)) {
+        fail(QStringLiteral("StartDC did not reach fault-free RUNNING, lock, and WKC 11/11"));
+    }
+    if (failure.isEmpty()
+        && !waitForApi051Condition(
+            [&provider, runningCycle] {
+                const auto state = provider.connectionSnapshot().controllerState;
+                return state && state->cycleCount > runningCycle;
+            },
+            5000)) {
+        fail(QStringLiteral("The DC cycle counter did not advance"));
+    }
+
+    if (failure.isEmpty()) {
+        context = api051Context(*executor, scope);
+        if (!context || !context->complete) {
+            fail(QStringLiteral("The semantic context became unavailable after StartDC"));
+        } else {
+            const QStringList svActions{
+                QStringLiteral("embedlabs:project:action:axis0:prepare-csv"),
+                QStringLiteral("embedlabs:project:action:axis0:set-csv-velocity"),
+                QStringLiteral("embedlabs:project:action:axis0:stop-csv"),
+                QStringLiteral("embedlabs:project:action:axis1:prepare-csv"),
+                QStringLiteral("embedlabs:project:action:axis1:set-csv-velocity"),
+                QStringLiteral("embedlabs:project:action:axis1:stop-csv"),
+            };
+            const qsizetype mutationBaseline = outputResults.size();
+            for (const QString &actionId : svActions) {
+                Data::SemanticOperationRequest request = api038ActionRequest(
+                    *context,
+                    actionId,
+                    QStringLiteral("hardware/api051/sv-denied/%1/%2")
+                        .arg(actionId, QUuid::createUuid().toString(QUuid::WithoutBraces)));
+                request.reason = QStringLiteral("API-051 SV qualification rejection proof");
+                const Data::SemanticOperationRecord rejected
+                    = executor->submit(request, api038Submitter());
+                if (rejected.state != Data::SemanticOperationState::Rejected
+                    || rejected.executionAttempted) {
+                    fail(QStringLiteral("Unqualified SV action %1 was not rejected locally")
+                             .arg(actionId));
+                    break;
+                }
+            }
+            QCoreApplication::processEvents();
+            if (failure.isEmpty() && outputResults.size() != mutationBaseline)
+                fail(QStringLiteral("An unqualified SV action emitted an output mutation"));
+        }
+    }
+
+    Data::SemanticOperationRecord setOperation;
+    Data::RuntimeOutputTransactionState setOutputState;
+    Data::RuntimeOutputOperationId setOutputOperationId;
+    QString setPolicyCorrelation;
+    if (failure.isEmpty()) {
+        const QString gate = api051LiveDcGate(
+            provider,
+            *executor,
+            scope,
+            sessionGeneration,
+            sessionId,
+            bootId,
+            runtimeEpoch);
+        if (!gate.isEmpty())
+            fail(QStringLiteral("Before XB6 set: %1").arg(gate));
+    }
+    if (failure.isEmpty()) {
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            *context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            QStringLiteral("hardware/api051/xb6-set/%1")
+                .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+        setApi051DigitalOutputParameters(request, true);
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*evidence, request, *context);
+        if (!plan || plan->steps().size() != 1 || plan->groups().size() != 1
+            || plan->steps().constFirst().completeGroupWrites().size() != 16) {
+            fail(QStringLiteral("The signed XB6 set action did not produce one complete group"));
+        } else {
+            setOutputOperationId = plan->steps().constFirst().outputOperationId();
+            setPolicyCorrelation = api051ExecutionCorrelationId(request.operationId, u"policy");
+            attemptedOutputOperations.append(request.operationId);
+            const Data::SemanticOperationRecord approved
+                = submitAndApprove(*executor, *context, request);
+            if (approved.state != Data::SemanticOperationState::Approved) {
+                fail(QStringLiteral("The signed XB6 set action was not approved"));
+            } else if (!waitForApi051Condition(
+                           [&executor, operationId = request.operationId] {
+                               const auto operation = executor->operation(operationId);
+                               return operation && api051OperationTerminal(operation->state);
+                           },
+                           runtimeTimeoutMs)) {
+                fail(QStringLiteral("The signed XB6 set action did not finish"));
+            } else {
+                setOperation = *executor->operation(request.operationId);
+            }
+        }
+        if (failure.isEmpty()
+            && (setOperation.state != Data::SemanticOperationState::Succeeded
+                || !setOperation.executionAttempted || !setOperation.appliedCycle
+                || !setOutputOperationId.isValid() || setPolicyCorrelation.isEmpty())) {
+            fail(QStringLiteral("The XB6 set action did not produce one verified transaction"));
+        }
+        if (failure.isEmpty()) {
+            const Data::RuntimeOutputGroupPolicyResult *policy
+                = api051SingleCorrelatedResult(policyResults, setPolicyCorrelation);
+            const Data::RuntimeOutputTransactionResult *result
+                = api051SingleOutputResult(outputResults, setOutputOperationId);
+            if (!policy || !result || !policy->isValid() || !policy->policy
+                || policy->request.scope != scope
+                || policy->request.sessionGeneration != sessionGeneration
+                || policy->request.expectedEpoch != runtimeEpoch
+                || policy->request.consistencyGroupId
+                       != plan->groups().constFirst().consistencyGroupId()
+                || policy->policy->completeGroupRecordDigest
+                       != plan->groups().constFirst().completeGroupRecordDigest()
+                || policy->policy->recoveryPolicy != Data::RuntimeOutputRecoveryPolicy::HoldSafe
+                || policy->policy->maximumTtlCycles != api051OutputTtlCycles
+                || policy->policy->completeResourceCount != 16 || !result->isValid()
+                || result->request.scope != scope
+                || result->request.sessionGeneration != sessionGeneration
+                || result->request.expectedEpoch != runtimeEpoch
+                || result->outcome != Data::RuntimeOutputTransactionOutcome::Applied
+                || !result->finalResponseObserved || !result->state
+                || result->request.completeGroupWrites.size() != 16
+                || result->request.expectedCompleteResourceCount != 16
+                || result->request.expectedCompleteGroupRecordDigest
+                       != plan->groups().constFirst().completeGroupRecordDigest()
+                || result->request.consistencyGroupId
+                       != plan->groups().constFirst().consistencyGroupId()
+                || result->request.ttlCycles != api051OutputTtlCycles
+                || result->request.expectedRecoveryPolicy
+                       != Data::RuntimeOutputRecoveryPolicy::HoldSafe
+                || result->state->appliedCycle != setOperation.appliedCycle
+                || result->state->outputGeneration
+                       != result->request.expectedOutputGeneration + 1) {
+                fail(QStringLiteral(
+                    "The XB6 set policy, applied cycle, or output generation differs"));
+            } else {
+                setOutputState = *result->state;
+            }
+        }
+        if (failure.isEmpty()) {
+            QString readbackError;
+            if (!api051SemanticSnapshotMatches(setOperation.afterSnapshot, true, &readbackError)) {
+                fail(readbackError);
+            }
+        }
+        if (failure.isEmpty()) {
+            const QString gate = api051LiveDcGate(
+                provider,
+                *executor,
+                scope,
+                sessionGeneration,
+                sessionId,
+                bootId,
+                runtimeEpoch);
+            if (!gate.isEmpty())
+                fail(QStringLiteral("After XB6 set: %1").arg(gate));
+        }
+    }
+
+    Data::RuntimeOutputTransactionState safeHoldState;
+    if (failure.isEmpty()) {
+        if (!waitForApi051Condition(
+                [&provider, expiryCycle = setOutputState.expiryCycle] {
+                    const auto state = provider.connectionSnapshot().controllerState;
+                    return state && state->cycleCount > expiryCycle;
+                },
+                5000)) {
+            fail(QStringLiteral("The controller did not advance beyond the XB6 TTL expiry cycle"));
+        } else {
+            const QString gate = api051LiveDcGate(
+                provider,
+                *executor,
+                scope,
+                sessionGeneration,
+                sessionId,
+                bootId,
+                runtimeEpoch);
+            if (!gate.isEmpty())
+                fail(QStringLiteral("Before XB6 TTL evidence: %1").arg(gate));
+        }
+        if (failure.isEmpty()) {
+            Data::RuntimeOutputTransactionStateRequest request;
+            request.correlationId = QStringLiteral("hardware/api051/ttl-state/%1")
+                                        .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+            request.scope = scope;
+            request.sessionGeneration = context->sessionGeneration;
+            request.expectedEpoch = context->epoch;
+            request.expectedMappingDigest = context->mappingDigest.value;
+            const Utils::Result<> accepted = provider.requestRuntimeOutputTransactionState(request);
+            if (!accepted) {
+                fail(QStringLiteral("The TTL output-state query was rejected: %1")
+                         .arg(accepted.error()));
+            } else if (!waitForApi051Condition(
+                           [&outputStateResults, correlationId = request.correlationId] {
+                               return api051SingleCorrelatedResult(
+                                          outputStateResults, correlationId)
+                                      != nullptr;
+                           },
+                           runtimeTimeoutMs)) {
+                fail(QStringLiteral("The TTL output-state query did not finish"));
+            } else {
+                const Data::RuntimeOutputTransactionStateResult *result
+                    = api051SingleCorrelatedResult(outputStateResults, request.correlationId);
+                if (!result || !result->isValid() || result->request != request || !result->state
+                    || result->state->state != Data::RuntimeOutputState::SafeHold
+                    || !result->state->resultFlags.testFlag(
+                        Data::RuntimeOutputTransactionResultFlag::SafeHold)
+                    || result->state->operationId != setOutputState.operationId
+                    || result->state->appliedCycle != setOutputState.appliedCycle
+                    || result->state->expiryCycle != setOutputState.expiryCycle
+                    || result->state->outputGeneration != setOutputState.outputGeneration + 1
+                    || result->state->providerDetail != setOutputState.expiryCycle
+                    || result->state->recoveryPolicy
+                           != Data::RuntimeOutputRecoveryPolicy::HoldSafe) {
+                    fail(QStringLiteral("The XB6 TTL did not transition atomically to HOLD_SAFE"));
+                } else {
+                    safeHoldState = *result->state;
+                }
+            }
+        }
+    }
+
+    if (failure.isEmpty()) {
+        const QList<Data::RuntimeResourceId> outputIds = api051Xb6OutputResourceIds(*context);
+        Data::RuntimeResourceSnapshotRequest request;
+        request.correlationId = QStringLiteral("hardware/api051/safe-readback/%1")
+                                    .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+        request.scope = scope;
+        request.sessionGeneration = context->sessionGeneration;
+        request.expectedEpoch = context->epoch;
+        request.resourceIds = outputIds;
+        if (!request.isValid()) {
+            fail(QStringLiteral("The signed XB6 output readback request is incomplete"));
+        } else {
+            const Utils::Result<> accepted = provider.requestRuntimeResourceSnapshot(request);
+            if (!accepted) {
+                fail(QStringLiteral("The safe-hold output readback was rejected: %1")
+                         .arg(accepted.error()));
+            } else if (!waitForApi051Condition(
+                           [&targetedSnapshotResults, correlationId = request.correlationId] {
+                               return api051SingleCorrelatedResult(
+                                          targetedSnapshotResults, correlationId)
+                                      != nullptr;
+                           },
+                           runtimeTimeoutMs)) {
+                fail(QStringLiteral("The safe-hold output readback did not finish"));
+            } else {
+                QString readbackError;
+                const Data::RuntimeResourceSnapshotResult *result
+                    = api051SingleCorrelatedResult(
+                        targetedSnapshotResults, request.correlationId);
+                if (!result || result->request != request
+                    || !api051RuntimeSnapshotAllFalse(*result, &readbackError)) {
+                    fail(
+                        readbackError.isEmpty()
+                            ? QStringLiteral(
+                                  "The safe-hold readback result was missing or miscorrelated")
+                            : readbackError);
+                }
+            }
+        }
+    }
+
+    if (failure.isEmpty()) {
+        const QString gate = api051LiveDcGate(
+            provider,
+            *executor,
+            scope,
+            sessionGeneration,
+            sessionId,
+            bootId,
+            runtimeEpoch);
+        if (!gate.isEmpty())
+            fail(QStringLiteral("After XB6 TTL evidence: %1").arg(gate));
+    }
+
+    if (failure.isEmpty()) {
+        context = api051Context(*executor, scope);
+        if (!context || !context->complete) {
+            fail(QStringLiteral("The semantic context became unavailable before XB6 clear"));
+        } else {
+            const QString gate = api051LiveDcGate(
+                provider,
+                *executor,
+                scope,
+                sessionGeneration,
+                sessionId,
+                bootId,
+                runtimeEpoch);
+            if (!gate.isEmpty())
+                fail(QStringLiteral("Before XB6 clear: %1").arg(gate));
+        }
+    }
+    if (failure.isEmpty()) {
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            *context,
+            u"embedlabs:project:action:xb6:clear-outputs",
+            QStringLiteral("hardware/api051/xb6-clear/%1")
+                .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+        request.ttlCycles = api051OutputTtlCycles;
+        request.reason = QStringLiteral("API-051 explicit XB6 clear after HOLD_SAFE");
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*evidence, request, *context);
+        if (!plan || plan->steps().size() != 1 || plan->groups().size() != 1
+            || plan->steps().constFirst().completeGroupWrites().size() != 16
+            || plan->groups().constFirst().completeResourceCount() != 16
+            || plan->groups().constFirst().recoveryPolicy()
+                   != Data::RuntimeOutputRecoveryPolicy::HoldSafe) {
+            fail(QStringLiteral("The signed XB6 clear action did not produce one complete group"));
+        } else {
+            const Data::RuntimeOutputOperationId clearOutputOperationId
+                = plan->steps().constFirst().outputOperationId();
+            const QString clearPolicyCorrelation
+                = api051ExecutionCorrelationId(request.operationId, u"policy");
+            const SemanticActionPlanGroup &clearGroup = plan->groups().constFirst();
+            attemptedOutputOperations.append(request.operationId);
+            const Data::SemanticOperationRecord approved
+                = submitAndApprove(*executor, *context, request);
+            if (approved.state != Data::SemanticOperationState::Approved) {
+                fail(QStringLiteral("The signed XB6 clear action was not approved"));
+            } else if (!waitForApi051Condition(
+                           [&executor, operationId = request.operationId] {
+                               const auto operation = executor->operation(operationId);
+                               return operation && api051OperationTerminal(operation->state);
+                           },
+                           runtimeTimeoutMs)) {
+                fail(QStringLiteral("The signed XB6 clear action did not finish"));
+            } else {
+                const Data::SemanticOperationRecord completed = *executor->operation(
+                    request.operationId);
+                QString readbackError;
+                const Data::RuntimeOutputGroupPolicyResult *policy
+                    = api051SingleCorrelatedResult(policyResults, clearPolicyCorrelation);
+                const Data::RuntimeOutputTransactionResult *result
+                    = api051SingleOutputResult(outputResults, clearOutputOperationId);
+                if (completed.state != Data::SemanticOperationState::Succeeded
+                    || !completed.executionAttempted || !completed.appliedCycle
+                    || !policy || !result
+                    || !api051SemanticSnapshotMatches(
+                        completed.afterSnapshot, false, &readbackError)) {
+                    fail(
+                        readbackError.isEmpty()
+                            ? QStringLiteral("The XB6 clear action did not complete exactly once")
+                            : readbackError);
+                } else {
+                    if (!policy->isValid() || !policy->policy
+                        || policy->request.scope != scope
+                        || policy->request.sessionGeneration != sessionGeneration
+                        || policy->request.expectedEpoch != runtimeEpoch
+                        || policy->request.consistencyGroupId
+                               != clearGroup.consistencyGroupId()
+                        || policy->policy->completeGroupRecordDigest
+                               != clearGroup.completeGroupRecordDigest()
+                        || policy->policy->completeResourceCount != 16
+                        || policy->policy->recoveryPolicy
+                               != Data::RuntimeOutputRecoveryPolicy::HoldSafe
+                        || policy->policy->maximumTtlCycles != api051OutputTtlCycles
+                        || policy->policy->currentOutputGeneration
+                               != safeHoldState.outputGeneration
+                        || !result->isValid()
+                        || result->request.scope != scope
+                        || result->request.sessionGeneration != sessionGeneration
+                        || result->request.expectedEpoch != runtimeEpoch
+                        || result->outcome != Data::RuntimeOutputTransactionOutcome::Applied
+                        || !result->finalResponseObserved || !result->state
+                        || result->request.expectedCompleteResourceCount != 16
+                        || result->request.completeGroupWrites.size() != 16
+                        || result->request.expectedCompleteGroupRecordDigest
+                               != clearGroup.completeGroupRecordDigest()
+                        || result->request.expectedRecoveryPolicy
+                               != Data::RuntimeOutputRecoveryPolicy::HoldSafe
+                        || result->request.expectedMaximumTtlCycles != api051OutputTtlCycles
+                        || result->request.ttlCycles != api051OutputTtlCycles
+                        || result->request.consistencyGroupId
+                               != safeHoldState.consistencyGroupId
+                        || result->request.expectedOutputGeneration
+                               != safeHoldState.outputGeneration
+                        || result->state->appliedCycle != completed.appliedCycle
+                        || result->state->valueCount != 16
+                        || result->state->consistencyGroupId
+                               != result->request.consistencyGroupId
+                        || result->state->recoveryPolicy
+                               != Data::RuntimeOutputRecoveryPolicy::HoldSafe
+                        || std::any_of(
+                            result->request.completeGroupWrites.cbegin(),
+                            result->request.completeGroupWrites.cend(),
+                            [](const Data::RuntimeOutputValueWrite &write) {
+                                return write.value.value.toBool();
+                            })) {
+                        fail(QStringLiteral(
+                            "The XB6 clear transaction did not write the full false group"));
+                    }
+                }
+            }
+        }
+    }
+
+    if (failure.isEmpty()) {
+        const QString gate = api051LiveDcGate(
+            provider,
+            *executor,
+            scope,
+            sessionGeneration,
+            sessionId,
+            bootId,
+            runtimeEpoch);
+        if (!gate.isEmpty())
+            fail(QStringLiteral("After XB6 clear: %1").arg(gate));
+    }
+
+    // Cleanup is fail-closed. A lost lease, unknown/transitional state, unresolved
+    // autonomous RUNNING state, or failed stop prevents Release and Disconnect.
+    // It never resets a fault, uploads a package, or invokes an SV action.
+    bool safeToDisconnect = false;
+    if (connectionStarted) {
+        const auto stableControllerState = [&provider] {
+            const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+            if (!snapshot.controllerState)
+                return false;
+            const Data::ControllerServiceState state = snapshot.controllerState->serviceState;
+            return state == Data::ControllerServiceState::Running
+                   || state == Data::ControllerServiceState::Paused
+                   || state == Data::ControllerServiceState::OperationalSafe
+                   || state == Data::ControllerServiceState::Shutdown
+                   || state == Data::ControllerServiceState::Fault;
+        };
+        waitForApi051Condition(stableControllerState, operationTimeoutMs);
+
+        const bool semanticOperationsSettled = waitForApi051Condition(
+            [&executor, &attemptedOutputOperations] {
+                return std::all_of(
+                    attemptedOutputOperations.cbegin(),
+                    attemptedOutputOperations.cend(),
+                    [&executor](const Data::SemanticOperationId &operationId) {
+                        const auto operation = executor->operation(operationId);
+                        return operation && api051OperationTerminal(operation->state);
+                    });
+            },
+            2000);
+
+        Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+        const auto sameOwnedSession = [&] {
+            return api051Connected(snapshot) && snapshot.session
+                   && snapshot.sessionGeneration == sessionGeneration
+                   && snapshot.session->sessionId == sessionId
+                   && snapshot.session->bootId == bootId
+                   && snapshot.session->ownsControlLease
+                   && snapshot.session->controlLeaseOwnerSessionId == sessionId;
+        };
+        if (snapshot.controllerState
+            && snapshot.controllerState->serviceState
+                   != Data::ControllerServiceState::Shutdown) {
+            if (!sameOwnedSession()) {
+                cleanupFailures.append(
+                    QStringLiteral(
+                        "Unresolved autonomous controller state: the exact cleanup lease/session "
+                        "is unavailable"));
+            } else if (snapshot.controllerState->serviceState
+                       == Data::ControllerServiceState::Running
+                       || snapshot.controllerState->serviceState
+                              == Data::ControllerServiceState::Paused) {
+                Data::ControllerControlRequest stop;
+                stop.command = Data::ControllerControlCommand::ControlledStop;
+                const QString error = executeApi051Command(provider, stop, operationTimeoutMs);
+                if (!error.isEmpty()) {
+                    cleanupFailures.append(QStringLiteral("ControlledStop: %1").arg(error));
+                }
+            } else if (snapshot.controllerState->serviceState
+                       != Data::ControllerServiceState::OperationalSafe) {
+                cleanupFailures.append(
+                    QStringLiteral(
+                        "Unresolved autonomous controller state: cleanup did not settle to a "
+                        "stoppable state"));
+            }
+        } else if (!snapshot.controllerState && sessionGeneration) {
+            cleanupFailures.append(
+                QStringLiteral(
+                    "Unresolved autonomous controller state: no final ControllerState snapshot"));
+        }
+
+        snapshot = provider.connectionSnapshot();
+        if (snapshot.controllerState
+            && snapshot.controllerState->serviceState
+                   == Data::ControllerServiceState::OperationalSafe) {
+            if (!sameOwnedSession()) {
+                cleanupFailures.append(
+                    QStringLiteral("OP_SAFE cleanup lost the exact Product API lease/session"));
+            } else {
+                Data::ControllerControlRequest configuration;
+                configuration.command = Data::ControllerControlCommand::EnterConfigurationMode;
+                const QString error
+                    = executeApi051Command(provider, configuration, operationTimeoutMs);
+                if (!error.isEmpty()) {
+                    cleanupFailures.append(
+                        QStringLiteral("EnterConfigurationMode: %1").arg(error));
+                }
+            }
+        }
+
+        snapshot = provider.connectionSnapshot();
+        const bool strictShutdown
+            = api051Connected(snapshot) && snapshot.session && snapshot.controllerState
+              && snapshot.sessionGeneration == sessionGeneration
+              && snapshot.session->sessionId == sessionId && snapshot.session->bootId == bootId
+              && snapshot.controllerState->serviceState
+                     == Data::ControllerServiceState::Shutdown
+              && snapshot.controllerState->ready && !snapshot.controllerState->currentFaults
+              && !snapshot.controllerState->latchedFaults
+              && !snapshot.controllerState->applicationActive
+              && !snapshot.controllerState->busOperational && !snapshot.controllerState->safeOutput
+              && snapshot.controllerState->controllerBootId == bootId;
+        if (!strictShutdown && sessionGeneration) {
+            cleanupFailures.append(
+                QStringLiteral(
+                    "Unresolved autonomous controller state: final SHUTDOWN/fault0 was not "
+                    "proven; Release and Disconnect were withheld%1")
+                    .arg(
+                        semanticOperationsSettled
+                            ? QString()
+                            : QStringLiteral(" with an unresolved output operation")));
+        } else if (strictShutdown) {
+            if (snapshot.session->ownsControlLease) {
+                Data::ControllerControlRequest release;
+                release.command = Data::ControllerControlCommand::ReleaseControl;
+                const QString error = executeApi051Command(provider, release, operationTimeoutMs);
+                if (!error.isEmpty())
+                    cleanupFailures.append(QStringLiteral("ReleaseControl: %1").arg(error));
+            }
+            snapshot = provider.connectionSnapshot();
+            safeToDisconnect
+                = api051Connected(snapshot) && snapshot.session && snapshot.controllerState
+                  && snapshot.sessionGeneration == sessionGeneration
+                  && snapshot.session->sessionId == sessionId && snapshot.session->bootId == bootId
+                  && !snapshot.session->ownsControlLease
+                  && !snapshot.session->controlLeaseOwnerSessionId
+                  && snapshot.controllerState->serviceState
+                         == Data::ControllerServiceState::Shutdown
+                  && !snapshot.controllerState->currentFaults
+                  && !snapshot.controllerState->latchedFaults
+                  && !snapshot.controllerState->applicationActive
+                  && !snapshot.controllerState->busOperational;
+            if (!safeToDisconnect) {
+                cleanupFailures.append(
+                    QStringLiteral("Final SHUTDOWN/fault0/lease0 readback was not proven"));
+            }
+        } else {
+            // A connection that never established a session cannot own an
+            // autonomous runtime and may be closed to restore the endpoint.
+            safeToDisconnect = !sessionGeneration;
+        }
+
+        if (safeToDisconnect) {
+            const Utils::Result<> disconnected = provider.disconnectFromController();
+            if (!disconnected) {
+                cleanupFailures.append(QStringLiteral("Disconnect: %1").arg(disconnected.error()));
+            } else if (!waitForApi051Condition(
+                           [&provider] {
+                               return provider.connectionSnapshot().state
+                                      == Data::ControllerConnectionState::Disconnected;
+                           },
+                           connectTimeoutMs)) {
+                cleanupFailures.append(QStringLiteral("Disconnect did not finish"));
+            }
+        }
+    }
+
+    const Data::ControllerConnectionState finalProviderState
+        = provider.connectionSnapshot().state;
+    if (safeToDisconnect
+        && finalProviderState != Data::ControllerConnectionState::Disconnected) {
+        cleanupFailures.append(QStringLiteral("Product API provider is not disconnected"));
+    }
+    if (endpointConfigured && previousProfile.endpoint != host) {
+        if (finalProviderState != Data::ControllerConnectionState::Disconnected
+            && finalProviderState != Data::ControllerConnectionState::Failed) {
+            cleanupFailures.append(
+                QStringLiteral("Controller endpoint was not restored because cleanup is unresolved"));
+        } else {
+            const Utils::Result<> restored
+                = provider.setConnectionProfileEndpoint(scope, profile.id, previousProfile.endpoint);
+            const auto restoredConfiguration
+                = provider.connectionProfileConfiguration(scope, profile.id);
+            if (!restored || !restoredConfiguration
+                || restoredConfiguration->endpoint != previousProfile.endpoint) {
+                cleanupFailures.append(
+                    QStringLiteral("Restore controller endpoint: %1")
+                        .arg(restored ? QStringLiteral("readback mismatch") : restored.error()));
+            }
+        }
+    }
+    if (!cleanupFailures.isEmpty()) {
+        const QString cleanup = cleanupFailures.join(QStringLiteral("; "));
+        if (failure.isEmpty())
+            failure = QStringLiteral("API-051 cleanup failed: %1").arg(cleanup);
+        else
+            failure += QStringLiteral("; cleanup: %1").arg(cleanup);
+    }
+    if (!failure.isEmpty()) {
+        const QByteArray detail = failure.toUtf8();
+        QFAIL(detail.constData());
+    }
+
+    qInfo().noquote() << "[API-051 semantic hardware] PASS cfg3702 DC/WKC11 XB6 set/readback/"
+                         "HOLD_SAFE/clear; SV mutations=0; final SHUTDOWN/fault0/lease0";
 }
 
 void EtherCATSemanticRuntimeTests::testTrustedRuntimePackageActivation()

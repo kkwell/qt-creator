@@ -11,7 +11,7 @@ QtcPlugin {
     Depends { name: "EtherCATCore" }
     Depends { name: "EtherCATProject" }
 
-    pluginTestDepends: ["EtherCATDeviceAdapters"]
+    pluginTestDepends: ["EtherCATDeviceAdapters", "EtherCATProductApi"]
 
     files: [
         "canonicaljson_p.cpp",
