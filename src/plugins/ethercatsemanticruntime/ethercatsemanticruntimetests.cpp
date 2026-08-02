@@ -7377,6 +7377,69 @@ void EtherCATSemanticRuntimeTests::testHardwareApi051SemanticAcceptance()
         }
     }
 
+    command(Data::ControllerControlCommand::EnterConfigurationMode, u"EnterConfigurationMode");
+    if (failure.isEmpty()) {
+        Data::ControllerControlRequest discover;
+        discover.command = Data::ControllerControlCommand::DiscoverTopology;
+        discover.firstStationAddress = 0x1001;
+        discover.topologyCapacity = 64;
+        const QString error = executeApi051Command(provider, discover, operationTimeoutMs);
+        if (!error.isEmpty())
+            fail(QStringLiteral("DiscoverTopology failed: %1").arg(error));
+    }
+    if (failure.isEmpty()) {
+        const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
+        const auto matchesSlave = [&snapshot](quint32 position,
+                                              quint16 stationAddress,
+                                              quint32 vendorId,
+                                              quint32 productCode,
+                                              quint32 revision,
+                                              quint32 serial) {
+            return std::count_if(
+                       snapshot.topology->slaves.cbegin(),
+                       snapshot.topology->slaves.cend(),
+                       [=](const Data::ControllerTopologySlave &slave) {
+                           return slave.position == position
+                                  && slave.stationAddress == stationAddress
+                                  && slave.vendorId == vendorId
+                                  && slave.productCode == productCode
+                                  && slave.revision == revision && slave.serial == serial;
+                       })
+                   == 1;
+        };
+        if (!snapshot.topology || !snapshot.topology->hasCompleteProvenance()
+            || snapshot.topology->scope != scope
+            || snapshot.topology->sessionGeneration != sessionGeneration
+            || snapshot.topology->sessionId != sessionId || snapshot.topology->bootId != bootId
+            || snapshot.topology->firstStationAddress != 0x1001
+            || snapshot.topology->respondingCount != 3 || snapshot.topology->result != 0
+            || snapshot.topology->slaves.size() != 3
+            || !matchesSlave(
+                0,
+                0x1001,
+                0x00884443,
+                0x000000b6,
+                0x00000001,
+                0)
+            || !matchesSlave(
+                1,
+                0x1002,
+                0x00100000,
+                0x000c0112,
+                0x00010000,
+                0)
+            || !matchesSlave(
+                2,
+                0x1003,
+                0x00100000,
+                0x000c0112,
+                0x00010000,
+                0)) {
+            fail(QStringLiteral(
+                "The IDE Provider scan did not prove the exact XB6 plus two SV630N topology"));
+        }
+    }
+
     command(Data::ControllerControlCommand::RestoreActivePackage, u"RestoreActivePackage");
     if (failure.isEmpty()
         && !waitForApi051Condition(
