@@ -4073,18 +4073,19 @@ void AdapterPackageRepository::reload()
             manifests.append(package.manifest);
         applyDeviceAdapterAuthorizations(
             d->authorizationRoots, &manifests, &d->acceptedPolicies, &d->authorizationDiagnostics);
-        if (!d->authorizationDiagnostics.isEmpty()) {
-            for (DeviceAdapterManifest &manifest : manifests) {
-                manifest.signatureVerified = false;
-                manifest.realHardwareAllowed = false;
-            }
-        }
         for (qsizetype index = 0; index < d->packages.size(); ++index)
             d->packages[index].manifest = manifests.at(index);
     }
 
     d->authorizationStatus
         = makeAuthorizationStatus(d->authorizationRoots, d->packages, d->authorizationDiagnostics);
+    if (d->authorizationStatus.state == AdapterAuthorizationState::ValidationFailed) {
+        for (Package &package : d->packages) {
+            package.manifest.signatureVerified = false;
+            package.manifest.realHardwareAllowed = false;
+        }
+        d->authorizationStatus.authorizedAdapterCount = 0;
+    }
 
     setAvailable(d->loadErrors.isEmpty() && !d->packages.isEmpty());
     if (oldManifests != adapterManifests())

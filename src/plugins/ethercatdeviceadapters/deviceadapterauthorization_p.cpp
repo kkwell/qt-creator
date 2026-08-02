@@ -965,6 +965,13 @@ void applyDeviceAdapterAuthorizations(
             manifest->realHardwareAllowed = true;
         }
     }
+
+    if (!diagnostics->isEmpty()) {
+        for (DeviceAdapterManifest &manifest : *manifests) {
+            manifest.signatureVerified = false;
+            manifest.realHardwareAllowed = false;
+        }
+    }
 }
 
 } // namespace EtherCAT::DeviceAdapters::Internal

@@ -1044,8 +1044,29 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     result = evaluate();
     QVERIFY(!result.xb6.signatureVerified);
     QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(!result.sv.signatureVerified);
+    QVERIFY(!result.sv.realHardwareAllowed);
     QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::ValidationFailed);
+    QCOMPARE(result.authorizationStatus.authorizedAdapterCount, 0);
     QFile::remove(invalidExtraAuthorizationPath);
+
+    install(policy(1), authorization(1));
+    const QString orphanAuthorizationSignaturePath
+        = authorizationRoot + "/authorizations/orphan.authorization.sig";
+    QVERIFY(writeBytes(orphanAuthorizationSignaturePath, QByteArray(64, '\0')));
+    result = evaluate();
+    QVERIFY2(result.diagnostics.isEmpty(), qPrintable(result.diagnostics.join('\n')));
+    QVERIFY(!result.xb6.signatureVerified);
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(!result.sv.signatureVerified);
+    QVERIFY(!result.sv.realHardwareAllowed);
+    QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::ValidationFailed);
+    QCOMPARE(
+        result.authorizationStatus.firstFailure,
+        AdapterAuthorizationFailure::IncompleteBundle);
+    QCOMPARE(result.authorizationStatus.authorizedAdapterCount, 0);
+    QVERIFY(adapterAuthorizationStartupMessage(result.authorizationStatus).contains("incomplete"));
+    QVERIFY(QFile::remove(orphanAuthorizationSignaturePath));
 
     install(policy(1), authorization(1), policyDomain);
     result = evaluate();
@@ -1142,9 +1163,13 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     QVERIFY(QFile::link(linkedTarget, authorizationPath));
     QVERIFY(QFileInfo(authorizationPath).isSymLink());
     result = evaluate();
+    QVERIFY(!result.xb6.signatureVerified);
     QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(!result.sv.signatureVerified);
+    QVERIFY(!result.sv.realHardwareAllowed);
     QVERIFY(result.diagnostics.join('\n').contains("symbolic-link authorizations"));
     QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::ValidationFailed);
+    QCOMPARE(result.authorizationStatus.authorizedAdapterCount, 0);
     QVERIFY(QFile::remove(authorizationPath));
 
     install(policy(1), authorization(1));
