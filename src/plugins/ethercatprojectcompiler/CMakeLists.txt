@@ -17,6 +17,8 @@ add_qtc_plugin(EtherCATProjectCompiler
     provisionedruntimepackagecompilerprovider.h
     provisionedruntimepackagecompilerprojectrequestbuilder.cpp
     provisionedruntimepackagecompilerprojectrequestbuilder.h
+    runtimepackagecompilercompilerecoverycodec.cpp
+    runtimepackagecompilercompilerecoverycodec.h
     runtimepackagecompilerpreparationjournal.cpp
     runtimepackagecompilerpreparationjournal.h
 )

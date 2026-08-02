@@ -14,6 +14,8 @@ private slots:
     void testPluginMetadataAndDefaultAvailability();
     void testProvisioningRejectsUnsafeExecutables();
     void testCompilerInputProvisioningVerifiesTargetSignature();
+    void testCompileRecoveryRoundTrip();
+    void testCompileRecoveryRejectsMutations();
     void testProjectRequestBuilderProvisioningAndDeterminism();
     void testProjectRequestBuilderFailsClosedOnUnprovenTopology();
     void testScheduledJobUsesPinnedProvisioning();

@@ -9,6 +9,7 @@
 #include "ethercatprojectcompilerconstants.h"
 #include "provisionedruntimepackagecompilerprovider.h"
 #include "provisionedruntimepackagecompilerprojectrequestbuilder.h"
+#include "runtimepackagecompilercompilerecoverycodec.h"
 #include "runtimepackagecompilerpreparationjournal.h"
 
 #include <ethercatdata/deviceadapter.h>
@@ -217,7 +218,7 @@ struct CompilerFixture
             serializedProject,
             7,
             Data::RuntimePackageActivationDocumentRevisionToken{"revision-7"},
-            Data::RuntimePackageActivationOriginalBindingToken{"binding-empty"},
+            Data::runtimePackageActivationBindingToken(project.masterBindingArtifact),
         };
 
         Data::RuntimePackageCompilerFreshTopologyEvidence topology;
@@ -1303,6 +1304,167 @@ void EtherCATProjectCompilerTests::testCompilerInputProvisioningVerifiesTargetSi
         Utils::FilePath::fromString(changedPublicKey.profilePath));
     QVERIFY(!publicKeyRejected);
     QVERIFY(publicKeyRejected.error().contains(QStringLiteral("signature"), Qt::CaseInsensitive));
+}
+
+void EtherCATProjectCompilerTests::testCompileRecoveryRoundTrip()
+{
+    const CompilerFixture fixture;
+    const RuntimePackageCompilerCompileRecovery recovery{fixture.request, fixture.serializedProject};
+    QVERIFY(recovery.isValid());
+
+    const auto first = encodeRuntimePackageCompilerCompileRecovery(recovery);
+    QVERIFY(first);
+    const auto second = encodeRuntimePackageCompilerCompileRecovery(recovery);
+    QVERIFY(second);
+    QCOMPARE(*second, *first);
+    QVERIFY(first->endsWith('\n'));
+
+    const auto decoded = decodeRuntimePackageCompilerCompileRecovery(*first, sha256(*first));
+    QVERIFY2(decoded, qPrintable(decoded.error()));
+    QCOMPARE(*decoded, recovery);
+    QCOMPARE(decoded->request.projectSnapshotEvidence, recovery.request.projectSnapshotEvidence);
+    QCOMPARE(decoded->serializedProject, fixture.serializedProject);
+
+    const auto reencoded = encodeRuntimePackageCompilerCompileRecovery(*decoded);
+    QVERIFY(reencoded);
+    QCOMPARE(*reencoded, *first);
+
+    const auto lowerCanonical = Core::encodeRuntimePackageCompilerCompileRequest(fixture.request);
+    QVERIFY(lowerCanonical);
+    QVERIFY(!decodeRuntimePackageCompilerCompileRecovery(
+        lowerCanonical->exactBytes(), lowerCanonical->sha256()));
+    QVERIFY(!decodeRuntimePackageCompilerCompileRecovery(*first, sha256("wrong anchor")));
+
+    RuntimePackageCompilerCompileRecovery wrongProject = recovery;
+    wrongProject.serializedProject.append(' ');
+    QVERIFY(!wrongProject.isValid());
+    QVERIFY(!encodeRuntimePackageCompilerCompileRecovery(wrongProject));
+}
+
+void EtherCATProjectCompilerTests::testCompileRecoveryRejectsMutations()
+{
+    const CompilerFixture fixture;
+    const auto encoded = encodeRuntimePackageCompilerCompileRecovery(
+        {fixture.request, fixture.serializedProject});
+    QVERIFY(encoded);
+
+    auto canonicalObject = [](QJsonObject object) {
+        QByteArray bytes = QJsonDocument(object).toJson(QJsonDocument::Compact);
+        bytes.append('\n');
+        return bytes;
+    };
+    const QJsonObject original = QJsonDocument::fromJson(*encoded).object();
+    QVERIFY(!original.isEmpty());
+    QVERIFY(!decodeRuntimePackageCompilerCompileRecovery(*encoded, sha256("wrong anchor")));
+
+    QList<QByteArray> malformed;
+    QByteArray missingNewline = *encoded;
+    missingNewline.chop(1);
+    malformed.append(missingNewline);
+    malformed.append(*encoded + QByteArray("\n"));
+    malformed.append(QJsonDocument(original).toJson(QJsonDocument::Indented));
+
+    QJsonObject missing = original;
+    missing.remove(QStringLiteral("payload_sha256"));
+    malformed.append(canonicalObject(missing));
+    QJsonObject extra = original;
+    extra.insert(QStringLiteral("unexpected"), true);
+    malformed.append(canonicalObject(extra));
+    QJsonObject wrongFormat = original;
+    wrongFormat.insert(QStringLiteral("format"), QStringLiteral("wrong"));
+    malformed.append(canonicalObject(wrongFormat));
+    QJsonObject wrongVersion = original;
+    wrongVersion.insert(QStringLiteral("format_version"), 2);
+    malformed.append(canonicalObject(wrongVersion));
+    QJsonObject invalidBase64 = original;
+    invalidBase64.insert(QStringLiteral("payload_base64"), QStringLiteral("***"));
+    malformed.append(canonicalObject(invalidBase64));
+    QJsonObject upperDigest = original;
+    upperDigest.insert(
+        QStringLiteral("payload_sha256"),
+        original.value(QStringLiteral("payload_sha256")).toString().toUpper());
+    malformed.append(canonicalObject(upperDigest));
+    QJsonObject wrongCompileDigest = original;
+    wrongCompileDigest.insert(QStringLiteral("compile_request_sha256"), QString(64, '1'));
+    malformed.append(canonicalObject(wrongCompileDigest));
+
+    const QByteArray payload = QByteArray::fromBase64(
+        original.value(QStringLiteral("payload_base64")).toString().toLatin1(),
+        QByteArray::AbortOnBase64DecodingErrors);
+    QVERIFY(!payload.isEmpty());
+    const QList<QByteArray> changedPayloads{
+        payload.left(payload.size() - 1),
+        payload + QByteArray("\0", 1),
+    };
+    for (const QByteArray &changedPayload : changedPayloads) {
+        QJsonObject changed = original;
+        changed
+            .insert(QStringLiteral("payload_base64"), QString::fromLatin1(changedPayload.toBase64()));
+        changed.insert(
+            QStringLiteral("payload_sha256"),
+            QString::fromLatin1(sha256(changedPayload).value().toHex()));
+        malformed.append(canonicalObject(changed));
+    }
+
+    QByteArray changedOperation = payload;
+    QVERIFY(changedOperation.size() > 16);
+    changedOperation[16] = changedOperation.at(16) == '0' ? '1' : '0';
+    QJsonObject changed = original;
+    changed
+        .insert(QStringLiteral("payload_base64"), QString::fromLatin1(changedOperation.toBase64()));
+    changed.insert(
+        QStringLiteral("payload_sha256"),
+        QString::fromLatin1(sha256(changedOperation).value().toHex()));
+    malformed.append(canonicalObject(changed));
+
+    const QByteArray duplicateKey = QByteArray("{\"format\":\"duplicate\",") + encoded->mid(1);
+    malformed.append(duplicateKey);
+
+    for (const QByteArray &candidate : std::as_const(malformed)) {
+        QVERIFY2(
+            !decodeRuntimePackageCompilerCompileRecovery(candidate, sha256(candidate)),
+            candidate.constData());
+    }
+
+    const Data::RuntimePackageCompilerProjectSnapshotEvidence &originalEvidence
+        = fixture.request.projectSnapshotEvidence;
+    Data::ProjectSnapshot mismatchedSnapshot = originalEvidence.snapshot();
+    mismatchedSnapshot.masterBindingArtifact.artifactId = QStringLiteral("changed-binding");
+    Data::RuntimePackageActivationProjectCapture mismatchedCapture{
+        mismatchedSnapshot,
+        fixture.serializedProject,
+        originalEvidence.documentRevisionNumber(),
+        originalEvidence.documentRevision(),
+        originalEvidence.originalBinding(),
+    };
+    RuntimePackageCompilerCompileRecovery
+        mismatchedBinding{fixture.request, fixture.serializedProject};
+    mismatchedBinding.request.projectSnapshotEvidence
+        = Data::RuntimePackageCompilerProjectSnapshotEvidence{mismatchedCapture};
+    QVERIFY(mismatchedBinding.request.isValid());
+    QVERIFY(!mismatchedBinding.isValid());
+    QVERIFY(!encodeRuntimePackageCompilerCompileRecovery(mismatchedBinding));
+
+    Data::ProjectSnapshot invalidEnumSnapshot = originalEvidence.snapshot();
+    invalidEnumSnapshot.nodes.append({
+        Data::NodeId::fromString("77777777-7777-4777-8777-777777777777"),
+        invalidEnumSnapshot.id,
+        static_cast<Data::ProjectNodeKind>(99),
+        QStringLiteral("Invalid enum"),
+    });
+    Data::RuntimePackageActivationProjectCapture invalidEnumCapture{
+        invalidEnumSnapshot,
+        fixture.serializedProject,
+        originalEvidence.documentRevisionNumber(),
+        originalEvidence.documentRevision(),
+        Data::runtimePackageActivationBindingToken(invalidEnumSnapshot.masterBindingArtifact),
+    };
+    RuntimePackageCompilerCompileRecovery invalidEnum{fixture.request, fixture.serializedProject};
+    invalidEnum.request.projectSnapshotEvidence
+        = Data::RuntimePackageCompilerProjectSnapshotEvidence{invalidEnumCapture};
+    QVERIFY(invalidEnum.request.isValid());
+    QVERIFY(invalidEnum.isValid());
+    QVERIFY(!encodeRuntimePackageCompilerCompileRecovery(invalidEnum));
 }
 
 void EtherCATProjectCompilerTests::testProjectRequestBuilderProvisioningAndDeterminism()
