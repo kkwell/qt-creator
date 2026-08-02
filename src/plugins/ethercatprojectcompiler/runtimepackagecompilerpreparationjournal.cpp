@@ -2,6 +2,9 @@
 
 #include "runtimepackagecompilerpreparationjournal.h"
 
+#include "runtimepackagecompilercompilerecoverycodec.h"
+
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -21,6 +24,7 @@
 #include <memory>
 
 #ifdef Q_OS_UNIX
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -33,9 +37,19 @@ namespace {
 
 constexpr qsizetype maximumJournalBytes = 4 * 1024 * 1024;
 constexpr qsizetype maximumDetachedResponseBytes = 1024 * 1024;
+constexpr quint64 maximumRecoveryBytes = 96 * 1024 * 1024;
+constexpr quint64 maximumTotalRecoveryBytes = 256 * 1024 * 1024;
 constexpr qsizetype maximumJournalRecords = 512;
 constexpr auto journalName = "preparation-journal-v1.json";
 constexpr auto lockName = ".preparation-journal-v1.lock";
+constexpr auto recoveryDirectoryName = "compile-recovery-v1";
+constexpr auto recoveryTemporaryPrefix = ".compile-recovery-v1.tmp.";
+constexpr int currentJournalFormatVersion = 2;
+
+QByteArray recoveryLeafName(const Data::RuntimePackageCompilerOperationId &operationId)
+{
+    return operationId.value().toLatin1() + QByteArray(".json");
+}
 
 const QSet<QString> topLevelKeys{
     QStringLiteral("format"),
@@ -44,7 +58,7 @@ const QSet<QString> topLevelKeys{
     QStringLiteral("records"),
 };
 
-const QSet<QString> recordKeys{
+const QSet<QString> recordKeysV1{
     QStringLiteral("activation_operation_id"),
     QStringLiteral("build_timestamp_ns"),
     QStringLiteral("compile_operation_id"),
@@ -66,6 +80,13 @@ const QSet<QString> recordKeys{
     QStringLiteral("verify_operation_id"),
     QStringLiteral("verify_result_sha256"),
 };
+
+const QSet<QString> recordKeysV2 = [] {
+    QSet<QString> keys = recordKeysV1;
+    keys.insert(QStringLiteral("compile_recovery_bytes"));
+    keys.insert(QStringLiteral("compile_recovery_sha256"));
+    return keys;
+}();
 
 bool objectHasExactKeys(const QJsonObject &object, const QSet<QString> &expected)
 {
@@ -132,6 +153,21 @@ std::optional<std::optional<Data::RuntimePackageCompilerSha256>> optionalShaValu
     return std::optional<Data::RuntimePackageCompilerSha256>{*value};
 }
 
+std::optional<std::optional<RuntimePackageCompilerRecoveryLeafReference>> recoveryReferenceValue(
+    const QJsonObject &object)
+{
+    const auto sha = shaValue(object, QStringLiteral("compile_recovery_sha256"), true);
+    const auto byteCount = unsignedValue(object, QStringLiteral("compile_recovery_bytes"));
+    if (!sha || !byteCount)
+        return std::nullopt;
+    if (!sha->isValid() && *byteCount == 0)
+        return std::optional<RuntimePackageCompilerRecoveryLeafReference>{};
+    RuntimePackageCompilerRecoveryLeafReference result{*sha, *byteCount};
+    if (!result.isValid())
+        return std::nullopt;
+    return std::optional<RuntimePackageCompilerRecoveryLeafReference>{result};
+}
+
 QString phaseString(Core::RuntimePackageCompilerPreparationPhase phase)
 {
     using Phase = Core::RuntimePackageCompilerPreparationPhase;
@@ -192,9 +228,9 @@ std::optional<Core::RuntimePackageCompilerPreparationPhase> phaseValue(QStringVi
     return std::nullopt;
 }
 
-QJsonObject encodeEntry(const RuntimePackageCompilerPreparationJournalEntry &entry)
+QJsonObject encodeEntry(const RuntimePackageCompilerPreparationJournalEntry &entry, int formatVersion)
 {
-    return {
+    QJsonObject result{
         {QStringLiteral("activation_operation_id"), entry.activationOperationId.value()},
         {QStringLiteral("build_timestamp_ns"), unsignedString(entry.buildTimestampNs)},
         {QStringLiteral("compile_operation_id"), entry.compileOperationId.value()},
@@ -222,15 +258,26 @@ QJsonObject encodeEntry(const RuntimePackageCompilerPreparationJournalEntry &ent
         {QStringLiteral("verify_operation_id"), entry.verifyOperationId.value()},
         {QStringLiteral("verify_result_sha256"), optionalShaString(entry.verifyResultSha256)},
     };
+    if (formatVersion >= 2) {
+        result.insert(
+            QStringLiteral("compile_recovery_sha256"),
+            entry.compileRecovery ? shaString(entry.compileRecovery->sha256) : QString{});
+        result.insert(
+            QStringLiteral("compile_recovery_bytes"),
+            unsignedString(entry.compileRecovery ? entry.compileRecovery->exactByteCount : 0));
+    }
+    return result;
 }
 
-Utils::Result<RuntimePackageCompilerPreparationJournalEntry> decodeEntry(const QJsonValue &value)
+Utils::Result<RuntimePackageCompilerPreparationJournalEntry> decodeEntry(
+    const QJsonValue &value, int formatVersion)
 {
     if (!value.isObject())
         return Utils::ResultError(
             QStringLiteral("Compiler preparation journal record is not an object."));
     const QJsonObject object = value.toObject();
-    if (!objectHasExactKeys(object, recordKeys)) {
+    const QSet<QString> &expectedKeys = formatVersion == 1 ? recordKeysV1 : recordKeysV2;
+    if (!objectHasExactKeys(object, expectedKeys)) {
         return Utils::ResultError(
             QStringLiteral("Compiler preparation journal record fields are invalid."));
     }
@@ -275,6 +322,11 @@ Utils::Result<RuntimePackageCompilerPreparationJournalEntry> decodeEntry(const Q
     const auto schema = shaValue(object, QStringLiteral("schema_bundle_sha256"), false);
     const auto configurationId = unsignedValue(object, QStringLiteral("configuration_id"));
     const auto buildTimestampNs = unsignedValue(object, QStringLiteral("build_timestamp_ns"));
+    const auto recoveryReference
+        = formatVersion == 1
+              ? std::optional<std::optional<RuntimePackageCompilerRecoveryLeafReference>>{std::optional<
+                    RuntimePackageCompilerRecoveryLeafReference>{}}
+              : recoveryReferenceValue(object);
     const auto revision = unsignedValue(object, QStringLiteral("revision"));
     const auto phase = phaseValue(object.value(QStringLiteral("phase")).toString());
     const auto compileResult = optionalShaValue(object, QStringLiteral("compile_result_sha256"));
@@ -282,8 +334,9 @@ Utils::Result<RuntimePackageCompilerPreparationJournalEntry> decodeEntry(const Q
     const auto finalizeResult = optionalShaValue(object, QStringLiteral("finalize_result_sha256"));
     const auto package = optionalShaValue(object, QStringLiteral("package_sha256"));
     const auto verifyResult = optionalShaValue(object, QStringLiteral("verify_result_sha256"));
-    if (!fingerprint || !schema || !configurationId || !buildTimestampNs || !revision || !phase
-        || !compileResult || !signRequest || !finalizeResult || !package || !verifyResult) {
+    if (!fingerprint || !schema || !configurationId || !buildTimestampNs || !recoveryReference
+        || !revision || !phase || !compileResult || !signRequest || !finalizeResult || !package
+        || !verifyResult) {
         return Utils::ResultError(
             QStringLiteral("Compiler preparation journal record values are invalid."));
     }
@@ -335,6 +388,7 @@ Utils::Result<RuntimePackageCompilerPreparationJournalEntry> decodeEntry(const Q
         {object.value(QStringLiteral("contract_id")).toString(), quint32(contractVersion), *schema},
         *configurationId,
         *buildTimestampNs,
+        *recoveryReference,
         *revision,
         *phase,
         *compileResult,
@@ -346,19 +400,22 @@ Utils::Result<RuntimePackageCompilerPreparationJournalEntry> decodeEntry(const Q
         object.value(QStringLiteral("detail")).toString(),
     };
     if (!result.isValid())
-        return Utils::ResultError(QStringLiteral("Compiler preparation journal record is invalid."));
+        return Utils::ResultError(
+            QStringLiteral("Compiler preparation journal record is invalid."));
     return result;
 }
 
-QByteArray encodeState(const RuntimePackageCompilerPreparationJournalState &state)
+QByteArray encodeState(
+    const RuntimePackageCompilerPreparationJournalState &state,
+    int formatVersion = currentJournalFormatVersion)
 {
     QJsonArray records;
     for (const RuntimePackageCompilerPreparationJournalEntry &entry : state.entries)
-        records.append(encodeEntry(entry));
+        records.append(encodeEntry(entry, formatVersion));
     const QJsonObject root{
         {QStringLiteral("format"),
          QStringLiteral("embed-labs-runtime-package-preparation-journal-v1")},
-        {QStringLiteral("format_version"), 1},
+        {QStringLiteral("format_version"), formatVersion},
         {QStringLiteral("sequence"), unsignedString(state.sequence)},
         {QStringLiteral("records"), records},
     };
@@ -367,7 +424,13 @@ QByteArray encodeState(const RuntimePackageCompilerPreparationJournalState &stat
     return result;
 }
 
-Utils::Result<RuntimePackageCompilerPreparationJournalState> decodeState(const QByteArray &bytes)
+struct DecodedJournalState
+{
+    RuntimePackageCompilerPreparationJournalState state;
+    int formatVersion = 0;
+};
+
+Utils::Result<DecodedJournalState> decodeState(const QByteArray &bytes)
 {
     if (bytes.isEmpty() || bytes.size() > maximumJournalBytes || !bytes.endsWith('\n'))
         return Utils::ResultError(QStringLiteral("Compiler preparation journal size is invalid."));
@@ -376,12 +439,14 @@ Utils::Result<RuntimePackageCompilerPreparationJournalState> decodeState(const Q
     if (parseError.error != QJsonParseError::NoError || !document.isObject())
         return Utils::ResultError(QStringLiteral("Compiler preparation journal JSON is invalid."));
     const QJsonObject root = document.object();
+    const int formatVersion = root.value(QStringLiteral("format_version")).toInt();
     if (!objectHasExactKeys(root, topLevelKeys)
         || root.value(QStringLiteral("format")).toString()
                != QStringLiteral("embed-labs-runtime-package-preparation-journal-v1")
-        || root.value(QStringLiteral("format_version")).toInt() != 1
+        || (formatVersion != 1 && formatVersion != currentJournalFormatVersion)
         || !root.value(QStringLiteral("records")).isArray()) {
-        return Utils::ResultError(QStringLiteral("Compiler preparation journal header is invalid."));
+        return Utils::ResultError(
+            QStringLiteral("Compiler preparation journal header is invalid."));
     }
     const auto sequence = unsignedValue(root, QStringLiteral("sequence"));
     const QJsonArray array = root.value(QStringLiteral("records")).toArray();
@@ -393,18 +458,18 @@ Utils::Result<RuntimePackageCompilerPreparationJournalState> decodeState(const Q
     result.sequence = *sequence;
     result.entries.reserve(array.size());
     for (const QJsonValue &value : array) {
-        const Utils::Result<RuntimePackageCompilerPreparationJournalEntry> entry = decodeEntry(
-            value);
+        const Utils::Result<RuntimePackageCompilerPreparationJournalEntry> entry
+            = decodeEntry(value, formatVersion);
         if (!entry)
             return Utils::ResultError(entry.error());
         result.entries.append(*entry);
     }
     if (!result.isValid())
         return Utils::ResultError(QStringLiteral("Compiler preparation journal state is invalid."));
-    if (encodeState(result) != bytes) {
+    if (encodeState(result, formatVersion) != bytes) {
         return Utils::ResultError(QStringLiteral("Compiler preparation journal is not canonical."));
     }
-    return result;
+    return DecodedJournalState{result, formatVersion};
 }
 
 #ifdef Q_OS_UNIX
@@ -586,12 +651,11 @@ Utils::Result<> writeJournal(int rootDescriptor, const QByteArray &bytes)
     const QByteArray temporaryName = QByteArray(".preparation-journal-v1.tmp.")
                                      + QByteArray::number(::getpid()) + '.'
                                      + QByteArray::number(temporarySequence.fetch_add(1) + 1);
-    ScopedDescriptor file(
-        ::openat(
-            rootDescriptor,
-            temporaryName.constData(),
-            O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | noFollowFlag(),
-            0600));
+    ScopedDescriptor file(::openat(
+        rootDescriptor,
+        temporaryName.constData(),
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | noFollowFlag(),
+        0600));
     if (file.descriptor < 0)
         return Utils::ResultError(
             QStringLiteral("Cannot create compiler preparation journal update."));
@@ -626,6 +690,359 @@ Utils::Result<> writeJournal(int rootDescriptor, const QByteArray &bytes)
             QStringLiteral("Cannot commit compiler preparation journal update."));
     }
     return syncDescriptor(rootDescriptor, QStringLiteral("compiler preparation journal directory"));
+}
+
+Utils::Result<std::unique_ptr<ScopedDescriptor>> openRecoveryDirectory(
+    int rootDescriptor, bool create)
+{
+    if (create && ::mkdirat(rootDescriptor, recoveryDirectoryName, 0700) != 0 && errno != EEXIST) {
+        return Utils::ResultError(QStringLiteral("Cannot create compiler recovery directory."));
+    }
+    auto result = std::make_unique<ScopedDescriptor>(
+        ::openat(rootDescriptor, recoveryDirectoryName, directoryFlags()));
+    if (result->descriptor < 0)
+        return Utils::ResultError(QStringLiteral("Cannot open compiler recovery directory."));
+    struct stat info = {};
+    if (::fstat(result->descriptor, &info) != 0 || !S_ISDIR(info.st_mode)
+        || info.st_uid != ::geteuid()) {
+        return Utils::ResultError(QStringLiteral("Compiler recovery directory is unsafe."));
+    }
+    if ((info.st_mode & 0777) != 0700
+        && (::fchmod(result->descriptor, 0700) != 0 || ::fstat(result->descriptor, &info) != 0
+            || (info.st_mode & 0777) != 0700)) {
+        return Utils::ResultError(QStringLiteral("Cannot protect compiler recovery directory."));
+    }
+    struct stat linkInfo = {};
+    if (::fstatat(rootDescriptor, recoveryDirectoryName, &linkInfo, AT_SYMLINK_NOFOLLOW) != 0
+        || !S_ISDIR(linkInfo.st_mode) || S_ISLNK(linkInfo.st_mode) || linkInfo.st_dev != info.st_dev
+        || linkInfo.st_ino != info.st_ino || linkInfo.st_uid != info.st_uid
+        || (linkInfo.st_mode & 0777) != 0700) {
+        return Utils::ResultError(
+            QStringLiteral("Compiler recovery directory changed during validation."));
+    }
+    return result;
+}
+
+bool isSafeRecoveryLeaf(
+    const struct stat &info, const RuntimePackageCompilerRecoveryLeafReference &reference)
+{
+    return reference.isValid() && S_ISREG(info.st_mode) && info.st_uid == ::geteuid()
+           && info.st_nlink == 1 && (info.st_mode & 0777) == 0600 && info.st_size > 0
+           && quint64(info.st_size) == reference.exactByteCount;
+}
+
+Utils::Result<std::optional<QByteArray>> readRecoveryLeaf(
+    int directoryDescriptor,
+    const QByteArray &leafName,
+    const RuntimePackageCompilerRecoveryLeafReference &reference,
+    bool allowMissing,
+    struct stat *stableInfo = nullptr)
+{
+    ScopedDescriptor file(
+        ::openat(directoryDescriptor, leafName.constData(), O_RDONLY | O_CLOEXEC | noFollowFlag()));
+    if (file.descriptor < 0) {
+        if (allowMissing && errno == ENOENT)
+            return std::optional<QByteArray>{};
+        return Utils::ResultError(QStringLiteral("Cannot open compiler recovery leaf."));
+    }
+    struct stat info = {};
+    if (::fstat(file.descriptor, &info) != 0 || !isSafeRecoveryLeaf(info, reference))
+        return Utils::ResultError(QStringLiteral("Compiler recovery leaf is unsafe."));
+    if (reference.exactByteCount > quint64(std::numeric_limits<qsizetype>::max()))
+        return Utils::ResultError(QStringLiteral("Compiler recovery leaf is too large."));
+    QByteArray bytes(qsizetype(reference.exactByteCount), Qt::Uninitialized);
+    qsizetype offset = 0;
+    while (offset < bytes.size()) {
+        const ssize_t count
+            = ::read(file.descriptor, bytes.data() + offset, size_t(bytes.size() - offset));
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count <= 0)
+            return Utils::ResultError(QStringLiteral("Cannot read compiler recovery leaf."));
+        offset += qsizetype(count);
+    }
+    struct stat after = {};
+    if (::fstat(file.descriptor, &after) != 0 || !isSafeRecoveryLeaf(after, reference)
+        || after.st_dev != info.st_dev || after.st_ino != info.st_ino
+        || after.st_mode != info.st_mode || after.st_uid != info.st_uid
+        || after.st_gid != info.st_gid || after.st_nlink != info.st_nlink
+        || after.st_size != info.st_size || !sameTimestampMetadata(after, info)) {
+        return Utils::ResultError(QStringLiteral("Compiler recovery leaf changed while reading."));
+    }
+    if (QCryptographicHash::hash(bytes, QCryptographicHash::Sha256) != reference.sha256.value())
+        return Utils::ResultError(QStringLiteral("Compiler recovery leaf digest does not match."));
+    if (stableInfo)
+        *stableInfo = after;
+    return std::optional<QByteArray>{std::move(bytes)};
+}
+
+Utils::Result<> validateRecoveryBinding(
+    QByteArrayView exactRecoveryBytes,
+    const RuntimePackageCompilerRecoveryLeafReference &reference,
+    const RuntimePackageCompilerPreparationJournalEntry &entry)
+{
+    const Utils::Result<RuntimePackageCompilerCompileRecovery> recovery
+        = decodeRuntimePackageCompilerCompileRecovery(exactRecoveryBytes, reference.sha256);
+    if (!recovery)
+        return Utils::ResultError(recovery.error());
+    const Data::RuntimePackageCompilerCompileRequest &request = recovery->request;
+    if (request.operationId != entry.compileOperationId
+        || request.contractIdentity != entry.contractIdentity
+        || request.configurationId != entry.configurationId
+        || request.buildTimestampNs != entry.buildTimestampNs) {
+        return Utils::ResultError(
+            QStringLiteral("Compiler recovery leaf does not match its journal record."));
+    }
+    return Utils::ResultOk;
+}
+
+Utils::Result<> cleanRecoveryTemporaries(int directoryDescriptor)
+{
+    const int duplicate = ::openat(directoryDescriptor, ".", directoryFlags());
+    if (duplicate < 0)
+        return Utils::ResultError(QStringLiteral("Cannot inspect compiler recovery directory."));
+    DIR *directory = ::fdopendir(duplicate);
+    if (!directory) {
+        ::close(duplicate);
+        return Utils::ResultError(QStringLiteral("Cannot inspect compiler recovery directory."));
+    }
+    bool removed = false;
+    errno = 0;
+    while (const dirent *item = ::readdir(directory)) {
+        const QByteArray name(item->d_name);
+        if (!name.startsWith(recoveryTemporaryPrefix))
+            continue;
+        struct stat info = {};
+        if (::fstatat(directoryDescriptor, name.constData(), &info, AT_SYMLINK_NOFOLLOW) != 0
+            || !S_ISREG(info.st_mode) || info.st_uid != ::geteuid()
+            || (info.st_mode & 0777) != 0600) {
+            ::closedir(directory);
+            return Utils::ResultError(
+                QStringLiteral("Compiler recovery temporary leaf is unsafe."));
+        }
+        if (::unlinkat(directoryDescriptor, name.constData(), 0) != 0) {
+            ::closedir(directory);
+            return Utils::ResultError(
+                QStringLiteral("Cannot remove compiler recovery temporary leaf."));
+        }
+        removed = true;
+    }
+    const int readError = errno;
+    ::closedir(directory);
+    if (readError != 0)
+        return Utils::ResultError(QStringLiteral("Cannot inspect compiler recovery directory."));
+    return removed ? syncDescriptor(
+                         directoryDescriptor, QStringLiteral("compiler recovery directory cleanup"))
+                   : Utils::ResultOk;
+}
+
+bool isCanonicalRecoveryLeafName(const QByteArray &name)
+{
+    constexpr qsizetype suffixSize = 5;
+    if (!name.endsWith(".json") || name.size() <= suffixSize)
+        return false;
+    const QByteArray operationBytes = name.first(name.size() - suffixSize);
+    const Data::RuntimePackageCompilerOperationId operationId{QString::fromLatin1(operationBytes)};
+    return operationId.isValid() && recoveryLeafName(operationId) == name;
+}
+
+Utils::Result<> cleanOrphanRecoveryLeaves(
+    int directoryDescriptor,
+    const RuntimePackageCompilerPreparationJournalState &state,
+    const QByteArray &preservedLeaf = {})
+{
+    if (const Utils::Result<> cleaned = cleanRecoveryTemporaries(directoryDescriptor); !cleaned)
+        return cleaned;
+    QSet<QByteArray> referenced;
+    for (const RuntimePackageCompilerPreparationJournalEntry &entry : state.entries) {
+        if (entry.compileRecovery)
+            referenced.insert(recoveryLeafName(entry.compileOperationId));
+    }
+    if (!preservedLeaf.isEmpty())
+        referenced.insert(preservedLeaf);
+
+    const int duplicate = ::openat(directoryDescriptor, ".", directoryFlags());
+    if (duplicate < 0)
+        return Utils::ResultError(QStringLiteral("Cannot inspect compiler recovery directory."));
+    DIR *directory = ::fdopendir(duplicate);
+    if (!directory) {
+        ::close(duplicate);
+        return Utils::ResultError(QStringLiteral("Cannot inspect compiler recovery directory."));
+    }
+    bool removed = false;
+    errno = 0;
+    while (const dirent *item = ::readdir(directory)) {
+        const QByteArray name(item->d_name);
+        if (name == "." || name == "..")
+            continue;
+        if (!isCanonicalRecoveryLeafName(name)) {
+            ::closedir(directory);
+            return Utils::ResultError(
+                QStringLiteral("Compiler recovery directory contains an unknown leaf."));
+        }
+        struct stat info = {};
+        if (::fstatat(directoryDescriptor, name.constData(), &info, AT_SYMLINK_NOFOLLOW) != 0
+            || !S_ISREG(info.st_mode) || info.st_uid != ::geteuid() || info.st_nlink != 1
+            || (info.st_mode & 0777) != 0600 || info.st_size <= 0
+            || quint64(info.st_size) > maximumRecoveryBytes) {
+            ::closedir(directory);
+            return Utils::ResultError(
+                QStringLiteral("Compiler recovery directory leaf is unsafe."));
+        }
+        if (referenced.contains(name))
+            continue;
+        if (::unlinkat(directoryDescriptor, name.constData(), 0) != 0) {
+            ::closedir(directory);
+            return Utils::ResultError(
+                QStringLiteral("Cannot remove orphan compiler recovery leaf."));
+        }
+        removed = true;
+    }
+    const int readError = errno;
+    ::closedir(directory);
+    if (readError != 0)
+        return Utils::ResultError(QStringLiteral("Cannot inspect compiler recovery directory."));
+    return removed ? syncDescriptor(
+                         directoryDescriptor, QStringLiteral("compiler recovery orphan cleanup"))
+                   : Utils::ResultOk;
+}
+
+Utils::Result<> synchronizeAndVerifyRecoveryLeaf(
+    int directoryDescriptor,
+    const QByteArray &leafName,
+    QByteArrayView exactRecoveryBytes,
+    const RuntimePackageCompilerRecoveryLeafReference &reference,
+    const struct stat *expectedInfo = nullptr)
+{
+    ScopedDescriptor file(
+        ::openat(directoryDescriptor, leafName.constData(), O_RDWR | O_CLOEXEC | noFollowFlag()));
+    if (file.descriptor < 0)
+        return Utils::ResultError(QStringLiteral("Cannot open compiler recovery leaf for sync."));
+    struct stat beforeSync = {};
+    if (::fstat(file.descriptor, &beforeSync) != 0 || !isSafeRecoveryLeaf(beforeSync, reference)) {
+        return Utils::ResultError(QStringLiteral("Compiler recovery leaf is unsafe before sync."));
+    }
+    if (expectedInfo
+        && (beforeSync.st_dev != expectedInfo->st_dev
+            || beforeSync.st_ino != expectedInfo->st_ino)) {
+        return Utils::ResultError(
+            QStringLiteral("Compiler recovery leaf changed while it was published."));
+    }
+    if (const Utils::Result<> synced
+        = syncDescriptor(file.descriptor, QStringLiteral("compiler recovery leaf"));
+        !synced) {
+        return synced;
+    }
+    struct stat afterSync = {};
+    if (::fstat(file.descriptor, &afterSync) != 0 || !isSafeRecoveryLeaf(afterSync, reference)
+        || afterSync.st_dev != beforeSync.st_dev || afterSync.st_ino != beforeSync.st_ino
+        || afterSync.st_mode != beforeSync.st_mode || afterSync.st_uid != beforeSync.st_uid
+        || afterSync.st_gid != beforeSync.st_gid || afterSync.st_nlink != beforeSync.st_nlink
+        || afterSync.st_size != beforeSync.st_size
+        || !sameTimestampMetadata(afterSync, beforeSync)) {
+        return Utils::ResultError(QStringLiteral("Compiler recovery leaf changed while syncing."));
+    }
+    if (const Utils::Result<> synced
+        = syncDescriptor(directoryDescriptor, QStringLiteral("compiler recovery directory"));
+        !synced) {
+        return synced;
+    }
+    struct stat actualInfo = {};
+    const Utils::Result<std::optional<QByteArray>> persisted
+        = readRecoveryLeaf(directoryDescriptor, leafName, reference, false, &actualInfo);
+    if (!persisted || !*persisted || **persisted != exactRecoveryBytes)
+        return Utils::ResultError(
+            QStringLiteral("Published compiler recovery leaf does not match."));
+    if (actualInfo.st_dev != afterSync.st_dev || actualInfo.st_ino != afterSync.st_ino
+        || actualInfo.st_mode != afterSync.st_mode || actualInfo.st_uid != afterSync.st_uid
+        || actualInfo.st_gid != afterSync.st_gid || actualInfo.st_nlink != afterSync.st_nlink
+        || actualInfo.st_size != afterSync.st_size
+        || !sameTimestampMetadata(actualInfo, afterSync)) {
+        return Utils::ResultError(
+            QStringLiteral("Compiler recovery leaf changed while it was published."));
+    }
+    return Utils::ResultOk;
+}
+
+Utils::Result<> publishRecoveryLeaf(
+    int directoryDescriptor,
+    const QByteArray &leafName,
+    QByteArrayView exactRecoveryBytes,
+    const RuntimePackageCompilerRecoveryLeafReference &reference)
+{
+    if (const Utils::Result<> cleaned = cleanRecoveryTemporaries(directoryDescriptor); !cleaned)
+        return cleaned;
+    const Utils::Result<std::optional<QByteArray>> existing
+        = readRecoveryLeaf(directoryDescriptor, leafName, reference, true);
+    if (existing && *existing)
+        return synchronizeAndVerifyRecoveryLeaf(
+            directoryDescriptor, leafName, exactRecoveryBytes, reference);
+    if (!existing)
+        return Utils::ResultError(existing.error());
+
+    static std::atomic<quint64> temporarySequence = 0;
+    QByteArray temporaryName;
+    ScopedDescriptor file;
+    for (int attempt = 0; attempt < 32 && file.descriptor < 0; ++attempt) {
+        temporaryName = QByteArray(recoveryTemporaryPrefix) + QByteArray::number(::getpid()) + '.'
+                        + QByteArray::number(temporarySequence.fetch_add(1) + 1);
+        file.descriptor = ::openat(
+            directoryDescriptor,
+            temporaryName.constData(),
+            O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | noFollowFlag(),
+            0600);
+        if (file.descriptor < 0 && errno != EEXIST)
+            break;
+    }
+    if (file.descriptor < 0)
+        return Utils::ResultError(QStringLiteral("Cannot create compiler recovery update."));
+    if (::fchmod(file.descriptor, 0600) != 0) {
+        ::unlinkat(directoryDescriptor, temporaryName.constData(), 0);
+        return Utils::ResultError(QStringLiteral("Cannot protect compiler recovery update."));
+    }
+    qsizetype offset = 0;
+    while (offset < exactRecoveryBytes.size()) {
+        const ssize_t count = ::write(
+            file.descriptor,
+            exactRecoveryBytes.data() + offset,
+            size_t(exactRecoveryBytes.size() - offset));
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count <= 0) {
+            ::unlinkat(directoryDescriptor, temporaryName.constData(), 0);
+            return Utils::ResultError(QStringLiteral("Cannot write compiler recovery update."));
+        }
+        offset += qsizetype(count);
+    }
+    if (const Utils::Result<> synced
+        = syncDescriptor(file.descriptor, QStringLiteral("compiler recovery update"));
+        !synced) {
+        ::unlinkat(directoryDescriptor, temporaryName.constData(), 0);
+        return synced;
+    }
+    struct stat info = {};
+    if (::fstat(file.descriptor, &info) != 0 || !isSafeRecoveryLeaf(info, reference)) {
+        ::unlinkat(directoryDescriptor, temporaryName.constData(), 0);
+        return Utils::ResultError(QStringLiteral("Compiler recovery update is unsafe."));
+    }
+    if (::linkat(
+            directoryDescriptor,
+            temporaryName.constData(),
+            directoryDescriptor,
+            leafName.constData(),
+            0)
+        != 0) {
+        const int linkError = errno;
+        ::unlinkat(directoryDescriptor, temporaryName.constData(), 0);
+        if (linkError != EEXIST)
+            return Utils::ResultError(QStringLiteral("Cannot publish compiler recovery leaf."));
+        return synchronizeAndVerifyRecoveryLeaf(
+            directoryDescriptor, leafName, exactRecoveryBytes, reference);
+    }
+    if (::unlinkat(directoryDescriptor, temporaryName.constData(), 0) != 0)
+        return Utils::ResultError(QStringLiteral("Cannot finalize compiler recovery leaf."));
+    return synchronizeAndVerifyRecoveryLeaf(
+        directoryDescriptor, leafName, exactRecoveryBytes, reference, &info);
 }
 
 #else
@@ -696,7 +1113,10 @@ Utils::Result<RuntimePackageCompilerPreparationJournalState> loadLocked(
         return Utils::ResultError(bytes.error());
     if (bytes->isEmpty())
         return RuntimePackageCompilerPreparationJournalState{};
-    return decodeState(*bytes);
+    const Utils::Result<DecodedJournalState> decoded = decodeState(*bytes);
+    return decoded ? Utils::Result<RuntimePackageCompilerPreparationJournalState>{decoded->state}
+                   : Utils::Result<RuntimePackageCompilerPreparationJournalState>{
+                         Utils::ResultError(decoded.error())};
 }
 
 Utils::Result<RuntimePackageCompilerPreparationJournalState> commitLocked(
@@ -715,11 +1135,15 @@ Utils::Result<RuntimePackageCompilerPreparationJournalState> commitLocked(
 #endif
     if (!bytes)
         return Utils::ResultError(bytes.error());
-    const Utils::Result<RuntimePackageCompilerPreparationJournalState> loaded
+    const Utils::Result<DecodedJournalState> decoded
         = bytes->isEmpty()
-              ? Utils::Result<
-                    RuntimePackageCompilerPreparationJournalState>{RuntimePackageCompilerPreparationJournalState{}}
+              ? Utils::Result<DecodedJournalState>{DecodedJournalState{
+                    RuntimePackageCompilerPreparationJournalState{}, currentJournalFormatVersion}}
               : decodeState(*bytes);
+    const Utils::Result<RuntimePackageCompilerPreparationJournalState> loaded
+        = decoded ? Utils::Result<RuntimePackageCompilerPreparationJournalState>{decoded->state}
+                  : Utils::Result<RuntimePackageCompilerPreparationJournalState>{
+                        Utils::ResultError(decoded.error())};
     if (!loaded)
         return Utils::ResultError(loaded.error());
     RuntimePackageCompilerPreparationJournalState next = *loaded;
@@ -748,6 +1172,7 @@ Utils::Result<RuntimePackageCompilerPreparationJournalState> commitLocked(
             || entry.contractIdentity != found->contractIdentity
             || entry.configurationId != found->configurationId
             || entry.buildTimestampNs != found->buildTimestampNs
+            || entry.compileRecovery != found->compileRecovery
             || !preservesOptional(found->compileResultSha256, entry.compileResultSha256)
             || !preservesOptional(found->signRequestSha256, entry.signRequestSha256)
             || !preservesOptional(found->detachedSigningResponse, entry.detachedSigningResponse)
@@ -772,7 +1197,8 @@ Utils::Result<RuntimePackageCompilerPreparationJournalState> commitLocked(
         return left.compileOperationId.value() < right.compileOperationId.value();
     });
     if (!next.isValid())
-        return Utils::ResultError(QStringLiteral("Compiler preparation journal update is invalid."));
+        return Utils::ResultError(
+            QStringLiteral("Compiler preparation journal update is invalid."));
     const QByteArray encoded = encodeState(next);
 #ifdef Q_OS_UNIX
     const Utils::Result<> written = writeJournal((*locked)->root.descriptor, encoded);
@@ -784,7 +1210,173 @@ Utils::Result<RuntimePackageCompilerPreparationJournalState> commitLocked(
     return next;
 }
 
+Utils::Result<RuntimePackageCompilerPreparationJournalState> reserveWithRecoveryLocked(
+    const Utils::FilePath &root,
+    RuntimePackageCompilerPreparationJournalEntry entry,
+    quint64 expectedSequence,
+    QByteArray exactRecoveryBytes)
+{
+#ifndef Q_OS_UNIX
+    Q_UNUSED(root)
+    Q_UNUSED(entry)
+    Q_UNUSED(expectedSequence)
+    Q_UNUSED(exactRecoveryBytes)
+    return Utils::ResultError(
+        QStringLiteral("Secure compiler recovery storage is unavailable on this platform."));
+#else
+    if (exactRecoveryBytes.isEmpty() || quint64(exactRecoveryBytes.size()) > maximumRecoveryBytes) {
+        return Utils::ResultError(QStringLiteral("Compiler recovery payload size is invalid."));
+    }
+    RuntimePackageCompilerRecoveryLeafReference reference{
+        Data::RuntimePackageCompilerSha256{
+            QCryptographicHash::hash(exactRecoveryBytes, QCryptographicHash::Sha256)},
+        quint64(exactRecoveryBytes.size()),
+    };
+    if (!reference.isValid())
+        return Utils::ResultError(QStringLiteral("Compiler recovery payload digest is invalid."));
+    entry.compileRecovery = reference;
+    if (const Utils::Result<> bound = validateRecoveryBinding(exactRecoveryBytes, reference, entry);
+        !bound) {
+        return Utils::ResultError(bound.error());
+    }
+
+    const Utils::Result<std::unique_ptr<LockedRoot>> locked = lockRoot(root, true);
+    if (!locked)
+        return Utils::ResultError(locked.error());
+    const Utils::Result<QByteArray> bytes = readJournal((*locked)->root.descriptor, true);
+    if (!bytes)
+        return Utils::ResultError(bytes.error());
+    const Utils::Result<DecodedJournalState> decoded
+        = bytes->isEmpty()
+              ? Utils::Result<DecodedJournalState>{DecodedJournalState{
+                    RuntimePackageCompilerPreparationJournalState{}, currentJournalFormatVersion}}
+              : decodeState(*bytes);
+    if (!decoded)
+        return Utils::ResultError(decoded.error());
+    RuntimePackageCompilerPreparationJournalState next = decoded->state;
+    const auto found
+        = std::find_if(next.entries.cbegin(), next.entries.cend(), [&](const auto &item) {
+              return item.compileOperationId == entry.compileOperationId;
+          });
+    if (found == next.entries.cend()
+        && (next.sequence != expectedSequence
+            || expectedSequence == std::numeric_limits<quint64>::max())) {
+        return Utils::ResultError(
+            QStringLiteral("Compiler preparation journal changed concurrently."));
+    }
+    const Utils::Result<std::unique_ptr<ScopedDescriptor>> recoveryDirectory
+        = openRecoveryDirectory((*locked)->root.descriptor, true);
+    if (!recoveryDirectory)
+        return Utils::ResultError(recoveryDirectory.error());
+    const QByteArray leafName = recoveryLeafName(entry.compileOperationId);
+    if (const Utils::Result<> cleaned
+        = cleanOrphanRecoveryLeaves((*recoveryDirectory)->descriptor, next, leafName);
+        !cleaned) {
+        return Utils::ResultError(cleaned.error());
+    }
+    if (found != next.entries.cend()) {
+        if (*found != entry)
+            return Utils::ResultError(
+                QStringLiteral("Compiler recovery OperationId is already reserved."));
+        const Utils::Result<std::optional<QByteArray>> persisted
+            = readRecoveryLeaf((*recoveryDirectory)->descriptor, leafName, reference, false);
+        if (!persisted || !*persisted || **persisted != exactRecoveryBytes)
+            return Utils::ResultError(QStringLiteral("Compiler recovery replay does not match."));
+        if (const Utils::Result<> bound = validateRecoveryBinding(**persisted, reference, *found);
+            !bound) {
+            return Utils::ResultError(bound.error());
+        }
+        return next;
+    }
+    if (next.entries.size() >= maximumJournalRecords)
+        return Utils::ResultError(QStringLiteral("Compiler preparation journal is full."));
+    next.entries.append(entry);
+    ++next.sequence;
+    std::sort(next.entries.begin(), next.entries.end(), [](const auto &left, const auto &right) {
+        return left.compileOperationId.value() < right.compileOperationId.value();
+    });
+    if (!next.isValid())
+        return Utils::ResultError(
+            QStringLiteral("Compiler preparation journal update is invalid."));
+    if (const Utils::Result<> published = publishRecoveryLeaf(
+            (*recoveryDirectory)->descriptor, leafName, exactRecoveryBytes, reference);
+        !published) {
+        return Utils::ResultError(published.error());
+    }
+    const Utils::Result<> written = writeJournal((*locked)->root.descriptor, encodeState(next));
+    if (!written)
+        return Utils::ResultError(written.error());
+    return next;
+#endif
+}
+
+Utils::Result<QByteArray> loadRecoveryLocked(
+    const Utils::FilePath &root,
+    const Data::RuntimePackageCompilerOperationId &operationId,
+    quint64 expectedSequence,
+    const RuntimePackageCompilerPreparationJournalEntry &expectedEntry)
+{
+#ifndef Q_OS_UNIX
+    Q_UNUSED(root)
+    Q_UNUSED(operationId)
+    Q_UNUSED(expectedSequence)
+    Q_UNUSED(expectedEntry)
+    return Utils::ResultError(
+        QStringLiteral("Secure compiler recovery storage is unavailable on this platform."));
+#else
+    const Utils::Result<std::unique_ptr<LockedRoot>> locked = lockRoot(root, false);
+    if (!locked)
+        return Utils::ResultError(locked.error());
+    const Utils::Result<QByteArray> bytes = readJournal((*locked)->root.descriptor, false);
+    if (!bytes)
+        return Utils::ResultError(bytes.error());
+    const Utils::Result<DecodedJournalState> decoded = decodeState(*bytes);
+    if (!decoded)
+        return Utils::ResultError(decoded.error());
+    if (decoded->state.sequence != expectedSequence)
+        return Utils::ResultError(
+            QStringLiteral("Compiler preparation journal changed concurrently."));
+    const auto found = std::find_if(
+        decoded->state.entries.cbegin(), decoded->state.entries.cend(), [&](const auto &item) {
+            return item.compileOperationId == operationId;
+        });
+    if (found == decoded->state.entries.cend() || *found != expectedEntry
+        || !found->compileRecovery) {
+        return Utils::ResultError(
+            QStringLiteral("Compiler recovery journal reference changed concurrently."));
+    }
+    const Utils::Result<std::unique_ptr<ScopedDescriptor>> recoveryDirectory
+        = openRecoveryDirectory((*locked)->root.descriptor, false);
+    if (!recoveryDirectory)
+        return Utils::ResultError(recoveryDirectory.error());
+    if (const Utils::Result<> cleaned
+        = cleanOrphanRecoveryLeaves((*recoveryDirectory)->descriptor, decoded->state);
+        !cleaned) {
+        return Utils::ResultError(cleaned.error());
+    }
+    const Utils::Result<std::optional<QByteArray>> persisted = readRecoveryLeaf(
+        (*recoveryDirectory)->descriptor,
+        recoveryLeafName(operationId),
+        *found->compileRecovery,
+        false);
+    if (!persisted || !*persisted)
+        return Utils::ResultError(
+            persisted ? QStringLiteral("Compiler recovery leaf is missing.") : persisted.error());
+    if (const Utils::Result<> bound
+        = validateRecoveryBinding(**persisted, *found->compileRecovery, *found);
+        !bound) {
+        return Utils::ResultError(bound.error());
+    }
+    return **persisted;
+#endif
+}
+
 } // namespace
+
+bool RuntimePackageCompilerRecoveryLeafReference::isValid() const
+{
+    return sha256.isValid() && exactByteCount > 0 && exactByteCount <= maximumRecoveryBytes;
+}
 
 bool RuntimePackageCompilerPreparationJournalEntry::isValid() const
 {
@@ -804,9 +1396,10 @@ bool RuntimePackageCompilerPreparationJournalEntry::isValid() const
         return false;
     }
     const auto validOptionalSha = [](const auto &value) { return !value || value->isValid(); };
-    if (!validOptionalSha(compileResultSha256) || !validOptionalSha(signRequestSha256)
-        || !validOptionalSha(finalizeResultSha256) || !validOptionalSha(packageSha256)
-        || !validOptionalSha(verifyResultSha256) || (signRequestSha256 && !compileResultSha256)
+    if ((compileRecovery && !compileRecovery->isValid()) || !validOptionalSha(compileResultSha256)
+        || !validOptionalSha(signRequestSha256) || !validOptionalSha(finalizeResultSha256)
+        || !validOptionalSha(packageSha256) || !validOptionalSha(verifyResultSha256)
+        || (signRequestSha256 && !compileResultSha256)
         || (detachedSigningResponse && !signRequestSha256)
         || (detachedSigningResponse && !detachedSigningResponse->isValid())
         || (finalizeResultSha256 && (!compileResultSha256 || !detachedSigningResponse))
@@ -825,10 +1418,16 @@ bool RuntimePackageCompilerPreparationJournalState::isValid() const
     if ((sequence == 0) != entries.isEmpty() || entries.size() > maximumJournalRecords)
         return false;
     QString previous;
+    quint64 recoveryBytes = 0;
     for (const RuntimePackageCompilerPreparationJournalEntry &entry : entries) {
         if (!entry.isValid()
             || (!previous.isEmpty() && previous >= entry.compileOperationId.value()))
             return false;
+        if (entry.compileRecovery) {
+            if (entry.compileRecovery->exactByteCount > maximumTotalRecoveryBytes - recoveryBytes)
+                return false;
+            recoveryBytes += entry.compileRecovery->exactByteCount;
+        }
         previous = entry.compileOperationId.value();
     }
     return true;
@@ -852,8 +1451,13 @@ RuntimePackageCompilerPreparationJournal::initialize()
 #endif
     if (!bytes)
         return Utils::ResultError(bytes.error());
-    if (!bytes->isEmpty())
-        return decodeState(*bytes);
+    if (!bytes->isEmpty()) {
+        const Utils::Result<DecodedJournalState> decoded = decodeState(*bytes);
+        return decoded
+                   ? Utils::Result<RuntimePackageCompilerPreparationJournalState>{decoded->state}
+                   : Utils::Result<RuntimePackageCompilerPreparationJournalState>{
+                         Utils::ResultError(decoded.error())};
+    }
     const RuntimePackageCompilerPreparationJournalState initial;
     const QByteArray encoded = encodeState(initial);
 #ifdef Q_OS_UNIX
@@ -879,12 +1483,49 @@ RuntimePackageCompilerPreparationJournal::commit(
     std::optional<RuntimePackageCompilerPreparationJournalEntry> expectedEntry)
 {
     if (!entry.isValid())
-        return Utils::ResultError(QStringLiteral("Compiler preparation journal update is invalid."));
+        return Utils::ResultError(
+            QStringLiteral("Compiler preparation journal update is invalid."));
     if (expectedEntry && !expectedEntry->isValid()) {
         return Utils::ResultError(
             QStringLiteral("Compiler preparation journal predecessor is invalid."));
     }
+    if (!expectedEntry && entry.compileRecovery) {
+        return Utils::ResultError(QStringLiteral(
+            "Compiler recovery must be reserved atomically with its journal record."));
+    }
     return commitLocked(m_root, entry, expectedSequence, expectedEntry);
+}
+
+Utils::Result<RuntimePackageCompilerPreparationJournalState>
+RuntimePackageCompilerPreparationJournal::reserveWithRecovery(
+    RuntimePackageCompilerPreparationJournalEntry entry,
+    quint64 expectedSequence,
+    QByteArrayView exactRecoveryBytes)
+{
+    if (!entry.isValid() || entry.compileRecovery || entry.revision != 1
+        || entry.phase != Core::RuntimePackageCompilerPreparationPhase::Reserved) {
+        return Utils::ResultError(QStringLiteral("Compiler recovery reservation is invalid."));
+    }
+    if (exactRecoveryBytes.isEmpty() || quint64(exactRecoveryBytes.size()) > maximumRecoveryBytes) {
+        return Utils::ResultError(QStringLiteral("Compiler recovery payload size is invalid."));
+    }
+    return reserveWithRecoveryLocked(
+        m_root,
+        std::move(entry),
+        expectedSequence,
+        QByteArray(exactRecoveryBytes.data(), exactRecoveryBytes.size()));
+}
+
+Utils::Result<QByteArray> RuntimePackageCompilerPreparationJournal::loadRecovery(
+    const Data::RuntimePackageCompilerOperationId &operationId,
+    quint64 expectedSequence,
+    const RuntimePackageCompilerPreparationJournalEntry &expectedEntry) const
+{
+    if (!operationId.isValid() || !expectedEntry.isValid()
+        || operationId != expectedEntry.compileOperationId || !expectedEntry.compileRecovery) {
+        return Utils::ResultError(QStringLiteral("Compiler recovery load request is invalid."));
+    }
+    return loadRecoveryLocked(m_root, operationId, expectedSequence, expectedEntry);
 }
 
 Utils::FilePath RuntimePackageCompilerPreparationJournal::root() const
@@ -895,6 +1536,15 @@ Utils::FilePath RuntimePackageCompilerPreparationJournal::root() const
 Utils::FilePath RuntimePackageCompilerPreparationJournal::journalFile() const
 {
     return m_root / QString::fromLatin1(journalName);
+}
+
+Utils::FilePath RuntimePackageCompilerPreparationJournal::recoveryFile(
+    const Data::RuntimePackageCompilerOperationId &operationId) const
+{
+    if (!operationId.isValid())
+        return {};
+    return m_root / QString::fromLatin1(recoveryDirectoryName)
+           / QString::fromLatin1(recoveryLeafName(operationId));
 }
 
 } // namespace EtherCAT::ProjectCompiler

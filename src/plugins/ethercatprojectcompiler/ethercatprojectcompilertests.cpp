@@ -2884,6 +2884,197 @@ void EtherCATProjectCompilerTests::testPreparationJournalCasRequiresExactPredece
     competing.detail = QStringLiteral("Competing terminal update.");
     QVERIFY(competing.isValid());
     QVERIFY(!journal.commit(competing, staleSequence, compiling));
+
+    QJsonObject legacyRoot
+        = QJsonDocument::fromJson(readFile(journal.journalFile().path())).object();
+    legacyRoot.insert(QStringLiteral("format_version"), 1);
+    QJsonArray legacyRecords = legacyRoot.value(QStringLiteral("records")).toArray();
+    for (qsizetype index = 0; index < legacyRecords.size(); ++index) {
+        QJsonObject record = legacyRecords.at(index).toObject();
+        record.remove(QStringLiteral("compile_recovery_bytes"));
+        record.remove(QStringLiteral("compile_recovery_sha256"));
+        legacyRecords[index] = record;
+    }
+    legacyRoot.insert(QStringLiteral("records"), legacyRecords);
+    QByteArray legacyBytes = QJsonDocument(legacyRoot).toJson(QJsonDocument::Compact);
+    legacyBytes.append('\n');
+    QVERIFY(writeFile(journal.journalFile().path(), legacyBytes));
+    const auto legacyLoaded = journal.load();
+    QVERIFY(legacyLoaded);
+    QCOMPARE(*legacyLoaded, *committed);
+
+    RuntimePackageCompilerPreparationJournalEntry migrated = reconciliation;
+    migrated.revision = 4;
+    migrated.phase = Core::RuntimePackageCompilerPreparationPhase::Failed;
+    migrated.detail = QStringLiteral("Migrated terminal update.");
+    const auto migratedState
+        = journal.commit(migrated, legacyLoaded->sequence, reconciliation);
+    QVERIFY(migratedState);
+    const QJsonObject migratedRoot
+        = QJsonDocument::fromJson(readFile(journal.journalFile().path())).object();
+    QCOMPARE(migratedRoot.value(QStringLiteral("format_version")).toInt(), 2);
+    const QJsonObject migratedRecord
+        = migratedRoot.value(QStringLiteral("records")).toArray().first().toObject();
+    QVERIFY(migratedRecord.contains(QStringLiteral("compile_recovery_bytes")));
+    QVERIFY(migratedRecord.contains(QStringLiteral("compile_recovery_sha256")));
+}
+
+void EtherCATProjectCompilerTests::testPreparationJournalPersistsImmutableRecovery()
+{
+#ifndef Q_OS_UNIX
+    QSKIP("Secure compiler recovery storage is Unix-only.");
+#else
+    CompilerFixture fixture;
+    QTemporaryDir temporary;
+    const Utils::FilePath root = Utils::FilePath::fromString(
+        temporary.filePath(QStringLiteral("preparations")));
+    RuntimePackageCompilerPreparationJournal journal(root);
+    auto state = journal.initialize();
+    QVERIFY(state);
+
+    const Core::RuntimePackageCompilerPreparationStartRequest request
+        = preparationRequest(fixture, 32);
+    RuntimePackageCompilerPreparationJournalEntry reserved = journalEntry(
+        request, Core::RuntimePackageCompilerPreparationPhase::Reserved, 1);
+    const auto recovery = encodeRuntimePackageCompilerCompileRecovery(
+        {request.compileRequest, fixture.serializedProject});
+    QVERIFY(recovery);
+    const quint64 preReservationSequence = state->sequence;
+    state = journal.reserveWithRecovery(reserved, state->sequence, *recovery);
+    if (!state)
+        QFAIL(qPrintable(state.error()));
+    const RuntimePackageCompilerPreparationJournalEntry *persisted
+        = journalEntryFor(*state, request.compileRequest.operationId);
+    QVERIFY(persisted);
+    QVERIFY(persisted->compileRecovery);
+    QCOMPARE(persisted->compileRecovery->sha256, sha256(*recovery));
+    QCOMPARE(persisted->compileRecovery->exactByteCount, quint64(recovery->size()));
+
+    const auto loaded
+        = journal.loadRecovery(request.compileRequest.operationId, state->sequence, *persisted);
+    if (!loaded)
+        QFAIL(qPrintable(loaded.error()));
+    QCOMPARE(*loaded, *recovery);
+    const auto decoded
+        = decodeRuntimePackageCompilerCompileRecovery(*loaded, persisted->compileRecovery->sha256);
+    QVERIFY(decoded);
+    QCOMPARE(decoded->request, request.compileRequest);
+    QCOMPARE(decoded->serializedProject, fixture.serializedProject);
+
+    const QString recoveryFile = journal.recoveryFile(request.compileRequest.operationId).path();
+    struct stat before = {};
+    QVERIFY(::stat(QFile::encodeName(recoveryFile).constData(), &before) == 0);
+    QCOMPARE(before.st_uid, ::geteuid());
+    QCOMPARE(before.st_nlink, nlink_t(1));
+    QCOMPARE(before.st_mode & 0777, mode_t(0600));
+    struct stat directory = {};
+    QVERIFY(::stat(
+                QFile::encodeName(QFileInfo(recoveryFile).absolutePath()).constData(), &directory)
+            == 0);
+    QCOMPARE(directory.st_mode & 0777, mode_t(0700));
+
+    const quint64 stableSequence = state->sequence;
+    const auto replayed
+        = journal.reserveWithRecovery(reserved, preReservationSequence, *recovery);
+    if (!replayed)
+        QFAIL(qPrintable(replayed.error()));
+    QCOMPARE(replayed->sequence, stableSequence);
+    struct stat afterReplay = {};
+    QVERIFY(::stat(QFile::encodeName(recoveryFile).constData(), &afterReplay) == 0);
+    QCOMPARE(afterReplay.st_dev, before.st_dev);
+    QCOMPARE(afterReplay.st_ino, before.st_ino);
+#ifdef Q_OS_DARWIN
+    QCOMPARE(afterReplay.st_mtimespec.tv_sec, before.st_mtimespec.tv_sec);
+    QCOMPARE(afterReplay.st_mtimespec.tv_nsec, before.st_mtimespec.tv_nsec);
+#else
+    QCOMPARE(afterReplay.st_mtim.tv_sec, before.st_mtim.tv_sec);
+    QCOMPARE(afterReplay.st_mtim.tv_nsec, before.st_mtim.tv_nsec);
+#endif
+
+    Core::RuntimePackageCompilerPreparationStartRequest conflictingRequest = request;
+    conflictingRequest.compileRequest.intentId.append(QStringLiteral("-conflict"));
+    QVERIFY(conflictingRequest.isValid());
+    RuntimePackageCompilerPreparationJournalEntry conflictingEntry = journalEntry(
+        conflictingRequest, Core::RuntimePackageCompilerPreparationPhase::Reserved, 1);
+    const auto conflictingRecovery = encodeRuntimePackageCompilerCompileRecovery(
+        {conflictingRequest.compileRequest, fixture.serializedProject});
+    QVERIFY(conflictingRecovery);
+    QVERIFY(!journal.reserveWithRecovery(
+        conflictingEntry, stableSequence, *conflictingRecovery));
+    QCOMPARE(readFile(recoveryFile), *recovery);
+
+    RuntimePackageCompilerPreparationJournalEntry compiling = *persisted;
+    compiling.revision = 2;
+    compiling.phase = Core::RuntimePackageCompilerPreparationPhase::Compiling;
+    state = journal.commit(compiling, state->sequence, *persisted);
+    QVERIFY(state);
+    const RuntimePackageCompilerPreparationJournalEntry *compiledEntry
+        = journalEntryFor(*state, request.compileRequest.operationId);
+    QVERIFY(compiledEntry);
+    QVERIFY(compiledEntry->compileRecovery);
+    QVERIFY(journal.loadRecovery(
+        request.compileRequest.operationId, state->sequence, *compiledEntry));
+    QVERIFY(!journal.loadRecovery(
+        request.compileRequest.operationId, state->sequence - 1, *compiledEntry));
+
+    QByteArray corrupted = *recovery;
+    corrupted[corrupted.size() / 2] ^= 0x01;
+    QVERIFY(writeFile(recoveryFile, corrupted));
+    QVERIFY(!journal.loadRecovery(
+        request.compileRequest.operationId, state->sequence, *compiledEntry));
+    QVERIFY(writeFile(recoveryFile, *recovery));
+    QVERIFY(journal.loadRecovery(
+        request.compileRequest.operationId, state->sequence, *compiledEntry));
+
+    const QString backup = recoveryFile + QStringLiteral(".original");
+    QVERIFY(QFile::rename(recoveryFile, backup));
+    QCOMPARE(
+        ::link(QFile::encodeName(backup).constData(), QFile::encodeName(recoveryFile).constData()),
+        0);
+    QVERIFY(!journal.loadRecovery(
+        request.compileRequest.operationId, state->sequence, *compiledEntry));
+    QVERIFY(QFile::remove(recoveryFile));
+    QVERIFY(QFile::rename(backup, recoveryFile));
+    QVERIFY(journal.loadRecovery(
+        request.compileRequest.operationId, state->sequence, *compiledEntry));
+
+    const Core::RuntimePackageCompilerPreparationStartRequest adoptedRequest
+        = preparationRequest(fixture, 33);
+    RuntimePackageCompilerPreparationJournalEntry adoptedEntry = journalEntry(
+        adoptedRequest, Core::RuntimePackageCompilerPreparationPhase::Reserved, 1);
+    const auto adoptedRecovery = encodeRuntimePackageCompilerCompileRecovery(
+        {adoptedRequest.compileRequest, fixture.serializedProject});
+    QVERIFY(adoptedRecovery);
+    const QString adoptedFile
+        = journal.recoveryFile(adoptedRequest.compileRequest.operationId).path();
+    QVERIFY(writeFile(adoptedFile, *adoptedRecovery));
+    QCOMPARE(::chmod(QFile::encodeName(adoptedFile).constData(), 0600), 0);
+    struct stat beforeAdoption = {};
+    QVERIFY(::stat(QFile::encodeName(adoptedFile).constData(), &beforeAdoption) == 0);
+    const auto adoptedState
+        = journal.reserveWithRecovery(adoptedEntry, state->sequence, *adoptedRecovery);
+    QVERIFY(adoptedState);
+    struct stat afterAdoption = {};
+    QVERIFY(::stat(QFile::encodeName(adoptedFile).constData(), &afterAdoption) == 0);
+    QCOMPARE(afterAdoption.st_dev, beforeAdoption.st_dev);
+    QCOMPARE(afterAdoption.st_ino, beforeAdoption.st_ino);
+
+    const Core::RuntimePackageCompilerPreparationStartRequest orphanRequest
+        = preparationRequest(fixture, 34);
+    const auto orphanRecovery = encodeRuntimePackageCompilerCompileRecovery(
+        {orphanRequest.compileRequest, fixture.serializedProject});
+    QVERIFY(orphanRecovery);
+    const QString orphanFile
+        = journal.recoveryFile(orphanRequest.compileRequest.operationId).path();
+    QVERIFY(writeFile(orphanFile, *orphanRecovery));
+    QCOMPARE(::chmod(QFile::encodeName(orphanFile).constData(), 0600), 0);
+    const RuntimePackageCompilerPreparationJournalEntry *firstAfterAdoption
+        = journalEntryFor(*adoptedState, request.compileRequest.operationId);
+    QVERIFY(firstAfterAdoption);
+    QVERIFY(journal.loadRecovery(
+        request.compileRequest.operationId, adoptedState->sequence, *firstAfterAdoption));
+    QVERIFY(!QFileInfo::exists(orphanFile));
+#endif
 }
 
 void EtherCATProjectCompilerTests::testPreparationJournalRejectsUnsafeStorage()

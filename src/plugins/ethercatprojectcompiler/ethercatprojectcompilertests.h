@@ -33,6 +33,7 @@ private slots:
     void testPreparationCoordinatorRejectsConcurrentInvalidation();
     void testPreparationCoordinatorRestartAndTerminalTombstones();
     void testPreparationJournalCasRequiresExactPredecessor();
+    void testPreparationJournalPersistsImmutableRecovery();
     void testPreparationJournalRejectsUnsafeStorage();
 };
 
