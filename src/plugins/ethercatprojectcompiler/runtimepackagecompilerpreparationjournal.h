@@ -52,6 +52,9 @@ struct RuntimePackageCompilerPreparationJournalEntry
     std::optional<Data::RuntimePackageCompilerSha256> packageSha256;
     std::optional<Data::RuntimePackageCompilerSha256> verifyResultSha256;
     QString detail;
+    // Present for reservations created by the recovery-aware coordinator.
+    // Legacy journal entries deliberately retain no inferred default.
+    std::optional<bool> rollbackOnActivationFailure;
 
     bool isValid() const;
 
@@ -78,6 +81,10 @@ class RuntimePackageCompilerPreparationJournal
 {
 public:
     explicit RuntimePackageCompilerPreparationJournal(Utils::FilePath root);
+
+    // Secure immutable recovery leaves currently require the Unix dirfd API.
+    // Callers must use this capability instead of branching on error text.
+    bool supportsDurableRecoveryStorage() const;
 
     // Creates the private journal root and an empty journal when absent. Every
     // call validates the root, lock, and journal leaf before trusting bytes.

@@ -2,6 +2,7 @@
 
 #include "durableruntimepackagecompilerpreparationcoordinator.h"
 
+#include "runtimepackagecompilercompilerecoverycodec.h"
 #include "runtimepackagecompilerpreparationjournal.h"
 
 #include <ethercatcore/providerregistry.h>
@@ -200,18 +201,18 @@ public:
         }
         journalState = *initialized;
 
-        // No typed request is reconstructed from the journal. Every persisted
-        // operation is durably reduced to a minimal restart placeholder and no
-        // provider job is started by construction.
+        // Restart is passive: nonterminal operations are first made explicitly
+        // reconcilable, and no provider job is started by construction.
         const QList<RuntimePackageCompilerPreparationJournalEntry> loaded = journalState.entries;
         for (RuntimePackageCompilerPreparationJournalEntry entry : loaded) {
             if (!Core::runtimePackageCompilerPreparationPhaseIsTerminal(entry.phase)
-                && entry.phase != Phase::ReconciliationRequired) {
+                && entry.phase != Phase::ReconciliationRequired
+                && entry.phase != Phase::CancelRequested) {
                 const RuntimePackageCompilerPreparationJournalEntry previousEntry = entry;
                 entry.revision++;
                 entry.phase = Phase::ReconciliationRequired;
                 entry.detail = QStringLiteral(
-                    "Exact compiler preparation input is required after restart.");
+                    "Compiler preparation requires explicit resume after restart.");
                 const Utils::Result<RuntimePackageCompilerPreparationJournalState> committed
                     = journal.commit(entry, journalState.sequence, previousEntry);
                 if (!committed) {
@@ -224,6 +225,34 @@ public:
         }
         for (const RuntimePackageCompilerPreparationJournalEntry &entry : journalState.entries) {
             Record record = restartPlaceholder(entry);
+            if (!Core::runtimePackageCompilerPreparationPhaseIsTerminal(entry.phase)) {
+                const Utils::Result<StartRequest> recovered
+                    = entry.phase == Phase::CancelRequested
+                          ? Utils::Result<StartRequest>{Utils::ResultError(
+                                QStringLiteral("Canceled preparation cannot be resumed."))}
+                          : recoverStartRequest(entry);
+                if (recovered) {
+                    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> canonical
+                        = Core::encodeRuntimePackageCompilerCompileRequest(
+                            recovered->compileRequest);
+                    if (!canonical) {
+                        initializationError = canonical.error();
+                        records.clear();
+                        return;
+                    }
+                    record.startRequest = *recovered;
+                    record.compileRequestSha256 = canonical->sha256();
+                    record.detail = QStringLiteral(
+                        "Compiler preparation requires explicit resume after restart.");
+                } else {
+                    record.detail
+                        = entry.phase == Phase::CancelRequested
+                              ? QStringLiteral(
+                                    "Canceled compiler preparation requires reconciliation.")
+                              : QStringLiteral(
+                                    "Compiler preparation recovery input is unavailable.");
+                }
+            }
             if (!record.isValid()) {
                 initializationError = QStringLiteral(
                     "Compiler preparation restart placeholder is invalid.");
@@ -246,6 +275,109 @@ public:
             return Utils::ResultError(
                 QStringLiteral("Compiler preparation coordinator is shutting down."));
         return Utils::ResultOk;
+    }
+
+    Utils::Result<Data::RuntimePackageActivationProjectCapture> validatedCurrentProject(
+        const StartRequest &request, const QByteArray *exactSerializedProject = nullptr) const
+    {
+        const Data::NodeId projectId
+            = request.compileRequest.topologyEvidence.scope.projectId;
+        const Utils::Result<Data::RuntimePackageActivationProjectCapture> capture
+            = currentProjectCapture(projectId);
+        if (!capture || !capture->isValid())
+            return Utils::ResultError(QStringLiteral("Current project capture is unavailable."));
+        const Data::RuntimePackageCompilerProjectSnapshotEvidence evidence{*capture};
+        if (evidence != request.compileRequest.projectSnapshotEvidence
+            || (exactSerializedProject
+                && capture->serializedProject() != *exactSerializedProject)) {
+            return Utils::ResultError(
+                QStringLiteral("Current project differs from the compiler preparation input."));
+        }
+        return *capture;
+    }
+
+    Utils::Result<StartRequest> recoverStartRequest(
+        const RuntimePackageCompilerPreparationJournalEntry &entry,
+        QByteArray *exactSerializedProject = nullptr) const
+    {
+        if (!entry.compileRecovery) {
+            return Utils::ResultError(
+                QStringLiteral("Compiler preparation has no complete recovery input."));
+        }
+        const Utils::Result<QByteArray> exactRecovery = journal.loadRecovery(
+            entry.compileOperationId, journalState.sequence, entry);
+        if (!exactRecovery)
+            return Utils::ResultError(exactRecovery.error());
+        const Utils::Result<RuntimePackageCompilerCompileRecovery> recovered
+            = decodeRuntimePackageCompilerCompileRecovery(
+                *exactRecovery, entry.compileRecovery->sha256);
+        if (!recovered)
+            return Utils::ResultError(recovered.error());
+        StartRequest request{
+            recovered->request,
+            entry.verifyOperationId,
+            entry.activationOperationId,
+            entry.rollbackOnActivationFailure.value_or(false),
+        };
+        if (!entry.rollbackOnActivationFailure) {
+            const Utils::Result<Data::RuntimePackageCompilerSha256> falseFingerprint
+                = Core::runtimePackageCompilerPreparationStartRequestFingerprint(request);
+            request.rollbackOnActivationFailure = true;
+            const Utils::Result<Data::RuntimePackageCompilerSha256> trueFingerprint
+                = Core::runtimePackageCompilerPreparationStartRequestFingerprint(request);
+            const bool falseMatches
+                = falseFingerprint && *falseFingerprint == entry.startRequestFingerprint;
+            const bool trueMatches
+                = trueFingerprint && *trueFingerprint == entry.startRequestFingerprint;
+            if (falseMatches == trueMatches) {
+                return Utils::ResultError(
+                    QStringLiteral("Compiler preparation rollback policy is ambiguous."));
+            }
+            request.rollbackOnActivationFailure = trueMatches;
+        }
+        const Utils::Result<Data::RuntimePackageCompilerSha256> fingerprint
+            = Core::runtimePackageCompilerPreparationStartRequestFingerprint(request);
+        const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> canonicalCompileRequest
+            = Core::encodeRuntimePackageCompilerCompileRequest(request.compileRequest);
+        if (!request.isValid() || !fingerprint || *fingerprint != entry.startRequestFingerprint
+            || !canonicalCompileRequest
+            || request.compileRequest.operationId != entry.compileOperationId
+            || request.compileRequest.contractIdentity != entry.contractIdentity
+            || request.compileRequest.configurationId != entry.configurationId
+            || request.compileRequest.buildTimestampNs != entry.buildTimestampNs) {
+            return Utils::ResultError(
+                QStringLiteral("Compiler preparation recovery input is inconsistent."));
+        }
+        if (exactSerializedProject)
+            *exactSerializedProject = recovered->serializedProject;
+        return request;
+    }
+
+    Utils::Result<> validateResumeInput(const Record &record, const StartRequest &request) const
+    {
+        const RuntimePackageCompilerPreparationJournalEntry *entry
+            = findEntry(journalState, record.compileOperationId);
+        if (!entry)
+            return Utils::ResultError(QStringLiteral("Compiler preparation journal is missing."));
+        if (entry->phase == Phase::CancelRequested) {
+            return Utils::ResultError(
+                QStringLiteral("Canceled compiler preparation cannot be resumed."));
+        }
+        if (entry->compileRecovery) {
+            QByteArray exactSerializedProject;
+            const Utils::Result<StartRequest> recovered
+                = recoverStartRequest(*entry, &exactSerializedProject);
+            if (!recovered || *recovered != request) {
+                return Utils::ResultError(
+                    QStringLiteral("Compiler preparation resume input is not recoverable."));
+            }
+            const Utils::Result<Data::RuntimePackageActivationProjectCapture> current
+                = validatedCurrentProject(request, &exactSerializedProject);
+            return current ? Utils::ResultOk : Utils::ResultError(current.error());
+        }
+        const Utils::Result<Data::RuntimePackageActivationProjectCapture> current
+            = validatedCurrentProject(request);
+        return current ? Utils::ResultOk : Utils::ResultError(current.error());
     }
 
     bool providerIsCurrent(
@@ -293,6 +425,8 @@ public:
         if (record.startRequest) {
             entry.configurationId = record.startRequest->compileRequest.configurationId;
             entry.buildTimestampNs = record.startRequest->compileRequest.buildTimestampNs;
+            entry.rollbackOnActivationFailure
+                = record.startRequest->rollbackOnActivationFailure;
         }
 
         if (record.compileResult) {
@@ -351,6 +485,32 @@ public:
         records.insert(current.compileOperationId.value(), current);
         const Snapshot currentSnapshot = snapshot();
         return q->publishRecordTransition(current, currentSnapshot);
+    }
+
+    Utils::Result<> reserveRecordWithRecovery(
+        const Record &current, QByteArrayView exactRecoveryBytes)
+    {
+        if (!current.isValid() || current.revision != 1 || current.phase != Phase::Reserved)
+            return Utils::ResultError(QStringLiteral("Compiler preparation record is invalid."));
+        if (records.contains(current.compileOperationId.value())
+            || findEntry(journalState, current.compileOperationId)) {
+            return Utils::ResultError(
+                QStringLiteral("Compiler preparation OperationId is already reserved."));
+        }
+        RuntimePackageCompilerPreparationJournalEntry entry = journalEntry(current);
+        const Utils::Result<RuntimePackageCompilerPreparationJournalState> committed
+            = journal.reserveWithRecovery(entry, journalState.sequence, exactRecoveryBytes);
+        if (!committed)
+            return Utils::ResultError(committed.error());
+        journalState = *committed;
+        committedTransition = CommittedTransition{
+            current.compileOperationId,
+            current.revision,
+            journalState.sequence,
+            std::nullopt,
+        };
+        records.insert(current.compileOperationId.value(), current);
+        return q->publishRecordTransition(current, snapshot());
     }
 
     void bindProvider(
@@ -612,8 +772,9 @@ public:
         };
         const Utils::Result<Core::RuntimePackageCompilerJob *> scheduled = provider->query(request);
         if (!scheduled) {
-            requireReconciliation(key, QStringLiteral("Compiler operation could not be reconciled."));
-            return Utils::ResultOk;
+            return Utils::ResultError(
+                QStringLiteral("Compiler reconciliation query could not be scheduled: %1")
+                    .arg(scheduled.error()));
         }
         const Utils::Result<> attached = attachJob(key, *scheduled, JobPurpose::ResumeQuery);
         if (!attached) {
@@ -781,8 +942,38 @@ public:
             return;
         }
         const auto context = contexts.constFind(key);
-        if (!result || !result->isSuccess() || !result->hasCompilerRecord()
+        if (!result || !record || !record->startRequest || !record->compileRequestSha256
+            || result->envelope.operationId != record->compileOperationId
+            || result->envelope.requestSha256 != *record->compileRequestSha256
             || context == contexts.cend() || !context->provider) {
+            requireReconciliation(
+                key, QStringLiteral("Compiler operation has no trusted replay record."));
+            return;
+        }
+        const bool operationWasNeverReserved
+            = result->envelope.status == Data::RuntimePackageCompilerResultStatus::DomainFailed
+              && !result->hasRecoveredResult()
+              && result->envelope.diagnostics.size() == 1
+              && result->envelope.diagnostics.constFirst().category
+                     == Data::RuntimePackageCompilerDiagnosticCategory::Idempotency
+              && result->envelope.diagnostics.constFirst().severity
+                     == Data::RuntimePackageCompilerDiagnosticSeverity::Error
+              && result->envelope.diagnostics.constFirst().stage
+                     == QStringLiteral("configuration")
+              && result->envelope.diagnostics.constFirst().code
+                     == QStringLiteral("ECOMP-OPERATION-UNKNOWN")
+              && result->envelope.diagnostics.constFirst().path
+                     == QStringLiteral("$.operation_id")
+              && !result->envelope.diagnostics.constFirst().retryable;
+        if (operationWasNeverReserved) {
+            const Utils::Result<> scheduled = scheduleCompile(key, context->provider);
+            if (!scheduled) {
+                requireReconciliation(key, scheduled.error());
+                retainError(scheduled);
+            }
+            return;
+        }
+        if (!result->isSuccess() || !result->hasCompilerRecord()) {
             requireReconciliation(
                 key, QStringLiteral("Compiler operation has no trusted replay record."));
             return;
@@ -1118,6 +1309,19 @@ Utils::Result<Disposition> DurableRuntimePackageCompilerPreparationCoordinator::
     const QPointer<Core::RuntimePackageCompilerProvider> providerGuard(frozenProvider);
     if (const Utils::Result<> ready = d->validateReady(); !ready)
         return Utils::ResultError(ready.error());
+    std::optional<QByteArray> exactRecovery;
+    if (d->journal.supportsDurableRecoveryStorage()) {
+        const Utils::Result<Data::RuntimePackageActivationProjectCapture> currentCapture
+            = d->validatedCurrentProject(request);
+        if (!currentCapture)
+            return Utils::ResultError(currentCapture.error());
+        const Utils::Result<QByteArray> encodedRecovery
+            = encodeRuntimePackageCompilerCompileRecovery(
+                {request.compileRequest, currentCapture->serializedProject()});
+        if (!encodedRecovery)
+            return Utils::ResultError(encodedRecovery.error());
+        exactRecovery = *encodedRecovery;
+    }
     const Utils::Result<Data::RuntimePackageCompilerSha256> fingerprint
         = Core::runtimePackageCompilerPreparationStartRequestFingerprint(request);
     if (!fingerprint)
@@ -1137,8 +1341,12 @@ Utils::Result<Disposition> DurableRuntimePackageCompilerPreparationCoordinator::
     reserved.contractIdentity = request.compileRequest.contractIdentity;
     reserved.revision = 1;
     reserved.phase = Phase::Reserved;
-    if (const Utils::Result<> committed = d->commitRecord(std::nullopt, reserved); !committed)
+    const Utils::Result<> committed
+        = exactRecovery ? d->reserveRecordWithRecovery(reserved, *exactRecovery)
+                        : d->commitRecord(std::nullopt, reserved);
+    if (!committed) {
         return Utils::ResultError(committed.error());
+    }
 
     const std::optional<Record> afterReserved = d->currentRecord(
         request.compileRequest.operationId.value());
@@ -1242,6 +1450,10 @@ Utils::Result<Disposition> DurableRuntimePackageCompilerPreparationCoordinator::
     const QPointer<Core::RuntimePackageCompilerProvider> providerGuard(frozenProvider);
     if (const Utils::Result<> ready = d->validateReady(); !ready)
         return Utils::ResultError(ready.error());
+    if (const Utils::Result<> validated = d->validateResumeInput(record, exactOriginalRequest);
+        !validated) {
+        return Utils::ResultError(validated.error());
+    }
     const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> canonicalCompileRequest
         = Core::encodeRuntimePackageCompilerCompileRequest(exactOriginalRequest.compileRequest);
     if (!canonicalCompileRequest)
@@ -1278,7 +1490,6 @@ Utils::Result<Disposition> DurableRuntimePackageCompilerPreparationCoordinator::
         record.compileOperationId.value(), providerGuard.data());
     if (!scheduled) {
         d->requireReconciliation(record.compileOperationId.value(), scheduled.error());
-        d->retainError(scheduled);
     }
     return Disposition::Accepted;
 }

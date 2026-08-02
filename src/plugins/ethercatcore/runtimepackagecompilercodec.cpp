@@ -736,8 +736,11 @@ std::optional<RuntimePackageCompilerSha256> shaFromJson(const QJsonObject &objec
     return result.isValid() ? std::optional<RuntimePackageCompilerSha256>{result} : std::nullopt;
 }
 
-RuntimePackageCompilerDiagnosticCategory categoryForStage(const QString &stage)
+RuntimePackageCompilerDiagnosticCategory categoryForDiagnostic(
+    const QString &stage, const QString &code)
 {
+    if (code == QStringLiteral("ECOMP-OPERATION-UNKNOWN"))
+        return RuntimePackageCompilerDiagnosticCategory::Idempotency;
     if (stage == QStringLiteral("input"))
         return RuntimePackageCompilerDiagnosticCategory::Input;
     if (stage == QStringLiteral("topology"))
@@ -807,7 +810,7 @@ Utils::Result<QList<RuntimePackageCompilerDiagnostic>> decodeDiagnostics(
             return Utils::ResultError(QStringLiteral("Compiler diagnostic severity is invalid."));
         }
         RuntimePackageCompilerDiagnostic diagnostic{
-            categoryForStage(stage),
+            categoryForDiagnostic(stage, object.value(QStringLiteral("code")).toString()),
             *severity,
             stage,
             object.value(QStringLiteral("code")).toString(),

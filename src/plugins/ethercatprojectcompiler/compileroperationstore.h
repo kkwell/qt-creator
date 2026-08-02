@@ -60,6 +60,17 @@ struct CompilerOperationPaths
     Utils::FilePath package;
 };
 
+enum class CompilerOperationQueryState {
+    Reserved,
+    OperationDirectoryAbsent,
+};
+
+struct CompilerOperationQueryValidation
+{
+    CompilerOperationPaths paths;
+    CompilerOperationQueryState state = CompilerOperationQueryState::Reserved;
+};
+
 enum class CompilerCanonicalEvidenceKind {
     CompilerRecord,
     SignRequest,
@@ -93,7 +104,7 @@ public:
         const CompilerOperationLease &lease,
         const Data::RuntimePackageCompilerFinalizeRequest &request,
         const Data::RuntimePackageCompilerCanonicalJson &canonicalRequest);
-    Utils::Result<CompilerOperationPaths> validateQuery(
+    Utils::Result<CompilerOperationQueryValidation> validateQuery(
         const CompilerOperationLease &lease,
         const Data::RuntimePackageCompilerQueryRequest &request) const;
 

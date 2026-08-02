@@ -1138,6 +1138,7 @@ RuntimePackageCompilerPreparationJournalEntry journalEntry(
     entry.revision = revision;
     entry.phase = phase;
     entry.detail = std::move(detail);
+    entry.rollbackOnActivationFailure = request.rollbackOnActivationFailure;
     return entry;
 }
 
@@ -1151,6 +1152,91 @@ const RuntimePackageCompilerPreparationJournalEntry *journalEntryFor(
           });
     return found == state.entries.cend() ? nullptr : &*found;
 }
+
+Utils::Result<RuntimePackageCompilerPreparationJournalState> reservePreparationForRestart(
+    RuntimePackageCompilerPreparationJournal &journal,
+    const RuntimePackageCompilerPreparationJournalState &state,
+    const Core::RuntimePackageCompilerPreparationStartRequest &request,
+    QByteArrayView serializedProject)
+{
+    const RuntimePackageCompilerPreparationJournalEntry reserved = journalEntry(
+        request, Core::RuntimePackageCompilerPreparationPhase::Reserved, 1);
+    if (!journal.supportsDurableRecoveryStorage())
+        return journal.commit(reserved, state.sequence, std::nullopt);
+
+    const Utils::Result<QByteArray> recovery = encodeRuntimePackageCompilerCompileRecovery(
+        {request.compileRequest, QByteArray(serializedProject)});
+    if (!recovery)
+        return Utils::ResultError(recovery.error());
+    return journal.reserveWithRecovery(reserved, state.sequence, *recovery);
+}
+
+class ImmediateRuntimePackageCompilerJob final : public Core::RuntimePackageCompilerJob
+{
+public:
+    ImmediateRuntimePackageCompilerJob(
+        Data::RuntimePackageCompilerJobResult result, QObject *parent)
+        : Core::RuntimePackageCompilerJob(result.command(), parent)
+    {
+        finish(result);
+    }
+
+private:
+    void requestCancellation() final {}
+};
+
+class MalformedUnknownCompilerProvider final : public Core::RuntimePackageCompilerProvider
+{
+public:
+    MalformedUnknownCompilerProvider()
+        : Core::RuntimePackageCompilerProvider(
+              Constants::PROJECT_COMPILER_PROVIDER_ID,
+              QStringLiteral("Malformed unknown compiler"))
+    {
+        setAvailable(true);
+    }
+
+    Utils::Result<Core::RuntimePackageCompilerJob *> compile(
+        const Data::RuntimePackageCompilerCompileRequest &) final
+    {
+        ++compileCallCount;
+        return Utils::ResultError(QStringLiteral("Compile must not be scheduled."));
+    }
+
+    Utils::Result<Core::RuntimePackageCompilerJob *> finalize(
+        const Data::RuntimePackageCompilerFinalizeRequest &) final
+    {
+        return Utils::ResultError(QStringLiteral("Finalize is unavailable."));
+    }
+
+    Utils::Result<Core::RuntimePackageCompilerJob *> query(
+        const Data::RuntimePackageCompilerQueryRequest &request) final
+    {
+        ++queryCallCount;
+        const QByteArray failure = QByteArrayLiteral(
+            "{\"diagnostics\":[{\"code\":\"ECOMP-OPERATION-UNKNOWN\","
+            "\"format\":\"ethercat-ide-compiler-diagnostic-v1\","
+            "\"message\":\"Operation state is retryable\",\"path\":\"$.wrong\","
+            "\"retryable\":true,\"severity\":\"error\",\"stage\":\"internal\"}],"
+            "\"status\":\"fail\"}\n");
+        const Utils::Result<Data::RuntimePackageCompilerQueryResult> decoded
+            = Core::decodeRuntimePackageCompilerQueryResult(
+                request, {true, 1, {}, failure});
+        if (!decoded)
+            return Utils::ResultError(decoded.error());
+        return new ImmediateRuntimePackageCompilerJob(
+            Data::RuntimePackageCompilerJobResult{*decoded}, this);
+    }
+
+    Utils::Result<Core::RuntimePackageCompilerJob *> verify(
+        const Data::RuntimePackageCompilerVerifyRequest &) final
+    {
+        return Utils::ResultError(QStringLiteral("Verify is unavailable."));
+    }
+
+    int queryCallCount = 0;
+    int compileCallCount = 0;
+};
 
 QByteArray storeWriteFingerprint(const QString &root)
 {
@@ -2640,8 +2726,12 @@ void EtherCATProjectCompilerTests::testPreparationCoordinatorSuccessAndCancellat
     QCOMPARE(
         (*interruptedRecord)->phase,
         Core::RuntimePackageCompilerPreparationPhase::ReconciliationRequired);
-    QVERIFY(!(*interruptedRecord)->startRequest);
-    const auto resumed = restarted.resume(interrupted);
+    QCOMPARE(
+        bool((*interruptedRecord)->startRequest), journal.supportsDurableRecoveryStorage());
+    const Core::RuntimePackageCompilerPreparationStartRequest resumeRequest
+        = (*interruptedRecord)->startRequest.value_or(interrupted);
+    QCOMPARE(resumeRequest, interrupted);
+    const auto resumed = restarted.resume(resumeRequest);
     QVERIFY(resumed);
     QCOMPARE(*resumed, Core::RuntimePackageCompilerPreparationDisposition::Accepted);
     QVERIFY(awaitPreparationPhase(
@@ -2654,6 +2744,517 @@ void EtherCATProjectCompilerTests::testPreparationCoordinatorSuccessAndCancellat
         restarted,
         interrupted.compileRequest.operationId,
         Core::RuntimePackageCompilerPreparationPhase::Canceled));
+}
+
+void EtherCATProjectCompilerTests::testPreparationCoordinatorRestoresFromRecoverySidecar()
+{
+#ifndef Q_OS_UNIX
+    QSKIP("Secure compiler recovery storage is Unix-only.");
+#endif
+    auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+    TestEnvironment environment;
+    auto provider = environment.provider();
+    QVERIFY(provider->isAvailable());
+    ScopedCompilerProviderRegistration registration(registry, provider.get());
+    QVERIFY(registration.isValid());
+
+    QTemporaryDir journalTemporary;
+    const Utils::FilePath journalRoot = Utils::FilePath::fromString(
+        journalTemporary.filePath(QStringLiteral("preparations")));
+    const Data::RuntimePackageActivationProjectCapture savedCapture
+        = projectCapture(environment.fixture);
+    int captureCount = 0;
+    const RuntimePackageCompilerCurrentProjectCapture capture
+        = [&savedCapture, &captureCount](const Data::NodeId &projectId)
+        -> Utils::Result<Data::RuntimePackageActivationProjectCapture> {
+        ++captureCount;
+        return projectId == savedCapture.snapshot().id
+                   ? Utils::Result<Data::RuntimePackageActivationProjectCapture>{savedCapture}
+                   : Utils::Result<Data::RuntimePackageActivationProjectCapture>{
+                         Utils::ResultError(QStringLiteral("Unexpected project capture."))};
+    };
+
+    Core::RuntimePackageCompilerPreparationStartRequest initialRequest
+        = preparationRequest(environment.fixture, 35);
+    initialRequest.rollbackOnActivationFailure = false;
+    QVERIFY(initialRequest.isValid());
+    const Data::RuntimePackageCompilerOperationId operationId
+        = initialRequest.compileRequest.operationId;
+    const auto initialFingerprint
+        = Core::runtimePackageCompilerPreparationStartRequestFingerprint(initialRequest);
+    QVERIFY(initialFingerprint);
+    Data::RuntimePackageCompilerSha256 firstCompileResultSha;
+    Data::RuntimePackageCompilerSha256 firstSignRequestSha;
+    QByteArray recoveryBytes;
+    {
+        DurableRuntimePackageCompilerPreparationCoordinator coordinator(
+            registry, journalRoot, capture);
+        QVERIFY(coordinator.initializationError().isEmpty());
+        QVERIFY(coordinator.start(initialRequest));
+        QVERIFY(awaitPreparationPhase(
+            coordinator,
+            operationId,
+            Core::RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature));
+        const auto record = coordinator.record(operationId);
+        QVERIFY(record && *record && (*record)->compileResult
+                && (*record)->compileResult->signRequest);
+        firstCompileResultSha = (*record)->compileResult->envelope.canonicalResult.sha256();
+        firstSignRequestSha = (*record)->compileResult->signRequest->sha256();
+        RuntimePackageCompilerPreparationJournal journal(journalRoot);
+        recoveryBytes = readFile(journal.recoveryFile(operationId).path());
+        QVERIFY(!recoveryBytes.isEmpty());
+        coordinator.shutdown();
+    }
+
+    RuntimePackageCompilerPreparationJournal legacyJournal(journalRoot);
+    QJsonObject version2
+        = QJsonDocument::fromJson(readFile(legacyJournal.journalFile().path())).object();
+    version2.insert(QStringLiteral("format_version"), 2);
+    QJsonArray version2Records = version2.value(QStringLiteral("records")).toArray();
+    for (qsizetype index = 0; index < version2Records.size(); ++index) {
+        QJsonObject record = version2Records.at(index).toObject();
+        record.remove(QStringLiteral("rollback_on_activation_failure"));
+        version2Records[index] = record;
+    }
+    version2.insert(QStringLiteral("records"), version2Records);
+    QByteArray version2Bytes = QJsonDocument(version2).toJson(QJsonDocument::Compact);
+    version2Bytes.append('\n');
+    QVERIFY(writeFile(legacyJournal.journalFile().path(), version2Bytes));
+    QVERIFY(legacyJournal.load());
+
+    environment.fixture.request = {};
+    environment.fixture.serializedProject.clear();
+    initialRequest = {};
+    const QString callsPath = environment.root + QStringLiteral("/compiler-ledger.json.calls");
+    const QByteArray compileCall = QByteArray("compile ") + operationId.value().toLatin1() + '\n';
+    const QByteArray queryCall = QByteArray("query ") + operationId.value().toLatin1() + '\n';
+    QCOMPARE(readFile(callsPath).count(compileCall), 1);
+    QCOMPARE(readFile(callsPath).count(queryCall), 0);
+
+    DurableRuntimePackageCompilerPreparationCoordinator restarted(registry, journalRoot, capture);
+    QVERIFY2(restarted.initializationError().isEmpty(), qPrintable(restarted.initializationError()));
+    QSignalSpy signingSpy(
+        &restarted,
+        &Core::RuntimePackageCompilerPreparationCoordinator::detachedSigningRequested);
+    auto recoveredRecord = restarted.record(operationId);
+    QVERIFY(recoveredRecord && *recoveredRecord);
+    QCOMPARE(
+        (*recoveredRecord)->phase,
+        Core::RuntimePackageCompilerPreparationPhase::ReconciliationRequired);
+    QVERIFY((*recoveredRecord)->startRequest);
+    const Core::RuntimePackageCompilerPreparationStartRequest recoveredRequest
+        = *(*recoveredRecord)->startRequest;
+    QVERIFY(!recoveredRequest.rollbackOnActivationFailure);
+    const auto recoveredFingerprint
+        = Core::runtimePackageCompilerPreparationStartRequestFingerprint(recoveredRequest);
+    QVERIFY(recoveredFingerprint);
+    QCOMPARE(*recoveredFingerprint, *initialFingerprint);
+    const auto resumed = restarted.resume(recoveredRequest);
+    QVERIFY(resumed);
+    QCOMPARE(*resumed, Core::RuntimePackageCompilerPreparationDisposition::Accepted);
+    QVERIFY(awaitPreparationPhase(
+        restarted,
+        operationId,
+        Core::RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature));
+    QCOMPARE(signingSpy.count(), 1);
+    recoveredRecord = restarted.record(operationId);
+    QVERIFY(recoveredRecord && *recoveredRecord && (*recoveredRecord)->compileResult
+            && (*recoveredRecord)->compileResult->signRequest);
+    QCOMPARE(
+        (*recoveredRecord)->compileResult->envelope.canonicalResult.sha256(),
+        firstCompileResultSha);
+    QCOMPARE((*recoveredRecord)->compileResult->signRequest->sha256(), firstSignRequestSha);
+    QCOMPARE(readFile(callsPath).count(queryCall), 1);
+    QCOMPARE(readFile(callsPath).count(compileCall), 2);
+    RuntimePackageCompilerPreparationJournal journal(journalRoot);
+    QCOMPARE(readFile(journal.recoveryFile(operationId).path()), recoveryBytes);
+    const auto durable = journal.load();
+    QVERIFY(durable);
+    const RuntimePackageCompilerPreparationJournalEntry *durableEntry
+        = journalEntryFor(*durable, operationId);
+    QVERIFY(durableEntry && durableEntry->rollbackOnActivationFailure);
+    QVERIFY(!*durableEntry->rollbackOnActivationFailure);
+    QCOMPARE(durableEntry->startRequestFingerprint, *initialFingerprint);
+    QVERIFY(captureCount >= 2);
+}
+
+void EtherCATProjectCompilerTests::testPreparationCoordinatorRecoversBeforeProviderReservation()
+{
+    auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+    TestEnvironment environment;
+    auto provider = environment.provider();
+    QVERIFY(provider->isAvailable());
+    ScopedCompilerProviderRegistration registration(registry, provider.get());
+    QVERIFY(registration.isValid());
+
+    QTemporaryDir temporary;
+    const Utils::FilePath journalRoot = Utils::FilePath::fromString(
+        temporary.filePath(QStringLiteral("preparations")));
+    RuntimePackageCompilerPreparationJournal journal(journalRoot);
+    auto state = journal.initialize();
+    QVERIFY(state);
+    Core::RuntimePackageCompilerPreparationStartRequest request
+        = preparationRequest(environment.fixture, 36);
+    const Core::RuntimePackageCompilerPreparationStartRequest exactOriginalRequest = request;
+    const RuntimePackageCompilerPreparationJournalEntry reserved = journalEntry(
+        request, Core::RuntimePackageCompilerPreparationPhase::Reserved, 1);
+    // Model the non-Unix crash window after the coordinator reservation but
+    // before the provider has reserved the operation in its own store. This is
+    // deliberately exercised on every host so the fallback remains testable.
+    state = journal.commit(reserved, state->sequence, std::nullopt);
+    QVERIFY(state);
+    const Data::RuntimePackageCompilerOperationId operationId
+        = request.compileRequest.operationId;
+    const Data::RuntimePackageActivationProjectCapture savedCapture
+        = projectCapture(environment.fixture);
+    request = {};
+    environment.fixture.request = {};
+    environment.fixture.serializedProject.clear();
+
+    const QString callsPath = environment.root + QStringLiteral("/compiler-ledger.json.calls");
+    const QByteArray compileCall = QByteArray("compile ") + operationId.value().toLatin1() + '\n';
+    const QByteArray queryCall = QByteArray("query ") + operationId.value().toLatin1() + '\n';
+    QVERIFY(readFile(callsPath).isEmpty());
+    DurableRuntimePackageCompilerPreparationCoordinator coordinator(
+        registry,
+        journalRoot,
+        [&savedCapture](const Data::NodeId &projectId)
+        -> Utils::Result<Data::RuntimePackageActivationProjectCapture> {
+            return projectId == savedCapture.snapshot().id
+                       ? Utils::Result<Data::RuntimePackageActivationProjectCapture>{savedCapture}
+                       : Utils::Result<Data::RuntimePackageActivationProjectCapture>{
+                             Utils::ResultError(QStringLiteral("Unexpected project capture."))};
+        });
+    QVERIFY(coordinator.initializationError().isEmpty());
+    auto record = coordinator.record(operationId);
+    QVERIFY(record && *record);
+    QVERIFY(!(*record)->startRequest);
+    QVERIFY(readFile(callsPath).isEmpty());
+    const auto resumed = coordinator.resume(exactOriginalRequest);
+    QVERIFY(resumed);
+    QCOMPARE(*resumed, Core::RuntimePackageCompilerPreparationDisposition::Accepted);
+    const bool reachedSigning = awaitPreparationPhase(
+        coordinator,
+        operationId,
+        Core::RuntimePackageCompilerPreparationPhase::AwaitingDetachedSignature);
+    const auto afterResume = coordinator.record(operationId);
+    const QString resumeDiagnostic
+        = afterResume && *afterResume
+              ? QStringLiteral("phase=%1 detail=%2 calls=%3")
+                    .arg(int((*afterResume)->phase))
+                    .arg((*afterResume)->detail, QString::fromLatin1(readFile(callsPath)))
+              : QStringLiteral("record unavailable");
+    QVERIFY2(reachedSigning, qPrintable(resumeDiagnostic));
+    // The secure store distinguishes a missing operation directory from every
+    // unsafe/corrupt query error. The pinned backend must then confirm the
+    // exact unknown OperationId before the coordinator may replay Compile.
+    QCOMPARE(readFile(callsPath).count(queryCall), 1);
+    QCOMPARE(readFile(callsPath).count(compileCall), 1);
+}
+
+void EtherCATProjectCompilerTests::testPreparationCoordinatorRejectsInvalidRecovery()
+{
+#ifndef Q_OS_UNIX
+    QSKIP("Secure compiler recovery storage is Unix-only.");
+#endif
+    auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+
+    const auto runCase = [registry](bool removeRecovery, bool changeCurrentProject) {
+        TestEnvironment environment;
+        auto provider = environment.provider();
+        if (!provider->isAvailable())
+            return false;
+        ScopedCompilerProviderRegistration registration(registry, provider.get());
+        if (!registration.isValid())
+            return false;
+        QTemporaryDir temporary;
+        const Utils::FilePath journalRoot = Utils::FilePath::fromString(
+            temporary.filePath(QStringLiteral("preparations")));
+        RuntimePackageCompilerPreparationJournal journal(journalRoot);
+        auto state = journal.initialize();
+        if (!state)
+            return false;
+        const Core::RuntimePackageCompilerPreparationStartRequest request
+            = preparationRequest(environment.fixture, removeRecovery ? 37 : 38);
+        RuntimePackageCompilerPreparationJournalEntry reserved = journalEntry(
+            request, Core::RuntimePackageCompilerPreparationPhase::Reserved, 1);
+        const auto recovery = encodeRuntimePackageCompilerCompileRecovery(
+            {request.compileRequest, environment.fixture.serializedProject});
+        if (!recovery)
+            return false;
+        state = journal.reserveWithRecovery(reserved, state->sequence, *recovery);
+        if (!state)
+            return false;
+        if (removeRecovery
+            && !QFile::remove(journal.recoveryFile(request.compileRequest.operationId).path())) {
+            return false;
+        }
+        Data::RuntimePackageActivationProjectCapture current = projectCapture(environment.fixture);
+        if (changeCurrentProject) {
+            current = Data::RuntimePackageActivationProjectCapture{
+                current.snapshot(),
+                current.serializedProject() + QByteArray("changed"),
+                current.documentRevisionNumber() + 1,
+                Data::RuntimePackageActivationDocumentRevisionToken{"changed-revision"},
+                current.originalBinding(),
+            };
+            if (!current.isValid())
+                return false;
+        }
+        const QString callsPath
+            = environment.root + QStringLiteral("/compiler-ledger.json.calls");
+        const QByteArray callsBefore = readFile(callsPath);
+        DurableRuntimePackageCompilerPreparationCoordinator coordinator(
+            registry,
+            journalRoot,
+            [current](const Data::NodeId &projectId)
+            -> Utils::Result<Data::RuntimePackageActivationProjectCapture> {
+                return projectId == current.snapshot().id
+                           ? Utils::Result<Data::RuntimePackageActivationProjectCapture>{current}
+                           : Utils::Result<Data::RuntimePackageActivationProjectCapture>{
+                                 Utils::ResultError(QStringLiteral("Unexpected project capture."))};
+            });
+        if (!coordinator.initializationError().isEmpty())
+            return false;
+        const auto record = coordinator.record(request.compileRequest.operationId);
+        if (!record || !*record
+            || (*record)->phase
+                   != Core::RuntimePackageCompilerPreparationPhase::ReconciliationRequired) {
+            return false;
+        }
+        if (removeRecovery && (*record)->startRequest)
+            return false;
+        if (!removeRecovery && !(*record)->startRequest)
+            return false;
+        const Core::RuntimePackageCompilerPreparationStartRequest resumeRequest
+            = (*record)->startRequest ? *(*record)->startRequest : request;
+        if (coordinator.resume(resumeRequest))
+            return false;
+        return readFile(callsPath) == callsBefore;
+    };
+
+    QVERIFY(runCase(true, false));
+    QVERIFY(runCase(false, true));
+
+    TestEnvironment canceledEnvironment;
+    auto canceledProvider = canceledEnvironment.provider();
+    QVERIFY(canceledProvider->isAvailable());
+    ScopedCompilerProviderRegistration canceledRegistration(registry, canceledProvider.get());
+    QVERIFY(canceledRegistration.isValid());
+    QTemporaryDir canceledTemporary;
+    const Utils::FilePath canceledRoot = Utils::FilePath::fromString(
+        canceledTemporary.filePath(QStringLiteral("preparations")));
+    RuntimePackageCompilerPreparationJournal canceledJournal(canceledRoot);
+    auto canceledState = canceledJournal.initialize();
+    QVERIFY(canceledState);
+    const Core::RuntimePackageCompilerPreparationStartRequest canceledRequest
+        = preparationRequest(canceledEnvironment.fixture, 39);
+    RuntimePackageCompilerPreparationJournalEntry canceledReserved = journalEntry(
+        canceledRequest, Core::RuntimePackageCompilerPreparationPhase::Reserved, 1);
+    const auto canceledRecovery = encodeRuntimePackageCompilerCompileRecovery(
+        {canceledRequest.compileRequest, canceledEnvironment.fixture.serializedProject});
+    QVERIFY(canceledRecovery);
+    canceledState = canceledJournal.reserveWithRecovery(
+        canceledReserved, canceledState->sequence, *canceledRecovery);
+    QVERIFY(canceledState);
+    const RuntimePackageCompilerPreparationJournalEntry *persistedReserved
+        = journalEntryFor(*canceledState, canceledRequest.compileRequest.operationId);
+    QVERIFY(persistedReserved);
+    RuntimePackageCompilerPreparationJournalEntry cancelRequested = *persistedReserved;
+    cancelRequested.revision = 2;
+    cancelRequested.phase = Core::RuntimePackageCompilerPreparationPhase::CancelRequested;
+    canceledState = canceledJournal.commit(
+        cancelRequested, canceledState->sequence, *persistedReserved);
+    QVERIFY(canceledState);
+    const Data::RuntimePackageActivationProjectCapture canceledCapture
+        = projectCapture(canceledEnvironment.fixture);
+    const QString canceledCalls
+        = canceledEnvironment.root + QStringLiteral("/compiler-ledger.json.calls");
+    const QByteArray canceledCallsBefore = readFile(canceledCalls);
+    DurableRuntimePackageCompilerPreparationCoordinator canceledCoordinator(
+        registry,
+        canceledRoot,
+        [canceledCapture](const Data::NodeId &)
+        -> Utils::Result<Data::RuntimePackageActivationProjectCapture> {
+            return canceledCapture;
+        });
+    QVERIFY(canceledCoordinator.initializationError().isEmpty());
+    const auto canceledRecord
+        = canceledCoordinator.record(canceledRequest.compileRequest.operationId);
+    QVERIFY(canceledRecord && *canceledRecord);
+    QCOMPARE(
+        (*canceledRecord)->phase,
+        Core::RuntimePackageCompilerPreparationPhase::ReconciliationRequired);
+    QVERIFY(!(*canceledRecord)->startRequest);
+    QVERIFY(!canceledCoordinator.resume(canceledRequest));
+    QCOMPARE(readFile(canceledCalls), canceledCallsBefore);
+
+}
+
+void EtherCATProjectCompilerTests::testPreparationCoordinatorRejectsCorruptProviderQuery()
+{
+    auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+    TestEnvironment environment;
+    auto provider = environment.provider();
+    QVERIFY(provider->isAvailable());
+    ScopedCompilerProviderRegistration registration(registry, provider.get());
+    QVERIFY(registration.isValid());
+
+    QTemporaryDir temporary;
+    const Utils::FilePath journalRoot = Utils::FilePath::fromString(
+        temporary.filePath(QStringLiteral("preparations")));
+    RuntimePackageCompilerPreparationJournal journal(journalRoot);
+    auto state = journal.initialize();
+    QVERIFY(state);
+    const Core::RuntimePackageCompilerPreparationStartRequest request
+        = preparationRequest(environment.fixture, 40);
+    state = reservePreparationForRestart(
+        journal, *state, request, environment.fixture.serializedProject);
+    QVERIFY(state);
+
+    const QString operationRoot = provider->operationRoot(request.compileRequest.operationId).path();
+    QVERIFY(QDir().mkpath(operationRoot));
+    QVERIFY(QFile::setPermissions(
+        operationRoot,
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    QVERIFY(writeFile(
+        operationRoot + QStringLiteral("/reservation.json"), QByteArray("corrupt\n")));
+    const QString callsPath = environment.root + QStringLiteral("/compiler-ledger.json.calls");
+    const QByteArray callsBefore = readFile(callsPath);
+    const Data::RuntimePackageActivationProjectCapture capture
+        = projectCapture(environment.fixture);
+    DurableRuntimePackageCompilerPreparationCoordinator coordinator(
+        registry,
+        journalRoot,
+        [capture](const Data::NodeId &)
+        -> Utils::Result<Data::RuntimePackageActivationProjectCapture> {
+            return capture;
+        });
+    QVERIFY(coordinator.initializationError().isEmpty());
+    auto record = coordinator.record(request.compileRequest.operationId);
+    QVERIFY2(
+        record && *record,
+        qPrintable(
+            record && *record ? QStringLiteral("Recovery unavailable: %1").arg((*record)->detail)
+                              : QStringLiteral("Recovery record unavailable.")));
+    QCOMPARE(bool((*record)->startRequest), journal.supportsDurableRecoveryStorage());
+    const auto resumed = coordinator.resume((*record)->startRequest.value_or(request));
+    QVERIFY(resumed);
+    QCOMPARE(*resumed, Core::RuntimePackageCompilerPreparationDisposition::Accepted);
+    record = coordinator.record(request.compileRequest.operationId);
+    QVERIFY2(
+        record,
+        qPrintable(QStringLiteral("Record lookup failed: %1 / %2")
+                       .arg(record.error(), coordinator.initializationError())));
+    QVERIFY(*record);
+    QCOMPARE(
+        (*record)->phase,
+        Core::RuntimePackageCompilerPreparationPhase::ReconciliationRequired);
+    QCOMPARE(readFile(callsPath), callsBefore);
+}
+
+void EtherCATProjectCompilerTests::testPreparationCoordinatorRejectsInvalidCompilerLedger()
+{
+    auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+
+    for (const bool removeLedger : {false, true}) {
+        TestEnvironment environment;
+        auto provider = environment.provider();
+        QVERIFY(provider->isAvailable());
+        ScopedCompilerProviderRegistration registration(registry, provider.get());
+        QVERIFY(registration.isValid());
+
+        const Utils::FilePath journalRoot = Utils::FilePath::fromString(
+            environment.temporary.filePath(
+                removeLedger ? QStringLiteral("missing-ledger-preparations")
+                             : QStringLiteral("corrupt-ledger-preparations")));
+        RuntimePackageCompilerPreparationJournal journal(journalRoot);
+        auto state = journal.initialize();
+        QVERIFY(state);
+        const Core::RuntimePackageCompilerPreparationStartRequest request
+            = preparationRequest(environment.fixture, removeLedger ? 45 : 46);
+        state = reservePreparationForRestart(
+            journal, *state, request, environment.fixture.serializedProject);
+        QVERIFY(state);
+
+        const QString ledgerPath = environment.root + QStringLiteral("/compiler-ledger.json");
+        if (removeLedger)
+            QVERIFY(QFile::remove(ledgerPath));
+        else
+            QVERIFY(writeFile(ledgerPath, QByteArray("corrupt\n")));
+        const QString callsPath = ledgerPath + QStringLiteral(".calls");
+        const QByteArray queryCall
+            = QByteArray("query ") + request.compileRequest.operationId.value().toLatin1() + '\n';
+        const QByteArray compileCall
+            = QByteArray("compile ") + request.compileRequest.operationId.value().toLatin1() + '\n';
+        const Data::RuntimePackageActivationProjectCapture capture
+            = projectCapture(environment.fixture);
+        DurableRuntimePackageCompilerPreparationCoordinator coordinator(
+            registry,
+            journalRoot,
+            [capture](const Data::NodeId &)
+            -> Utils::Result<Data::RuntimePackageActivationProjectCapture> { return capture; });
+        QVERIFY(coordinator.initializationError().isEmpty());
+        const auto recovered = coordinator.record(request.compileRequest.operationId);
+        QVERIFY(recovered && *recovered);
+        QCOMPARE(bool((*recovered)->startRequest), journal.supportsDurableRecoveryStorage());
+        const auto resumed = coordinator.resume((*recovered)->startRequest.value_or(request));
+        QVERIFY(resumed);
+        QCOMPARE(*resumed, Core::RuntimePackageCompilerPreparationDisposition::Accepted);
+        QVERIFY(awaitPreparationPhase(
+            coordinator,
+            request.compileRequest.operationId,
+            Core::RuntimePackageCompilerPreparationPhase::ReconciliationRequired));
+        QCOMPARE(readFile(callsPath).count(queryCall), 1);
+        QCOMPARE(readFile(callsPath).count(compileCall), 0);
+    }
+}
+
+void EtherCATProjectCompilerTests::testPreparationCoordinatorRejectsMalformedUnknownProvider()
+{
+    auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+    CompilerFixture fixture;
+    MalformedUnknownCompilerProvider provider;
+    ScopedCompilerProviderRegistration registration(registry, &provider);
+    QVERIFY(registration.isValid());
+
+    QTemporaryDir temporary;
+    const Utils::FilePath journalRoot = Utils::FilePath::fromString(
+        temporary.filePath(QStringLiteral("preparations")));
+    RuntimePackageCompilerPreparationJournal journal(journalRoot);
+    auto state = journal.initialize();
+    QVERIFY(state);
+    const Core::RuntimePackageCompilerPreparationStartRequest request
+        = preparationRequest(fixture, 47);
+    state = reservePreparationForRestart(journal, *state, request, fixture.serializedProject);
+    QVERIFY(state);
+
+    const Data::RuntimePackageActivationProjectCapture capture = projectCapture(fixture);
+    DurableRuntimePackageCompilerPreparationCoordinator coordinator(
+        registry,
+        journalRoot,
+        [capture](const Data::NodeId &)
+        -> Utils::Result<Data::RuntimePackageActivationProjectCapture> { return capture; });
+    QVERIFY(coordinator.initializationError().isEmpty());
+    const auto recovered = coordinator.record(request.compileRequest.operationId);
+    QVERIFY(recovered && *recovered);
+    QCOMPARE(bool((*recovered)->startRequest), journal.supportsDurableRecoveryStorage());
+    const auto resumed = coordinator.resume((*recovered)->startRequest.value_or(request));
+    QVERIFY(resumed);
+    QCOMPARE(*resumed, Core::RuntimePackageCompilerPreparationDisposition::Accepted);
+    const auto afterResume = coordinator.record(request.compileRequest.operationId);
+    QVERIFY(afterResume && *afterResume);
+    QCOMPARE(
+        (*afterResume)->phase,
+        Core::RuntimePackageCompilerPreparationPhase::ReconciliationRequired);
+    QCOMPARE(provider.queryCallCount, 1);
+    QCOMPARE(provider.compileCallCount, 0);
 }
 
 void EtherCATProjectCompilerTests::testPreparationCoordinatorRejectsConcurrentInvalidation()
@@ -2893,6 +3494,7 @@ void EtherCATProjectCompilerTests::testPreparationJournalCasRequiresExactPredece
         QJsonObject record = legacyRecords.at(index).toObject();
         record.remove(QStringLiteral("compile_recovery_bytes"));
         record.remove(QStringLiteral("compile_recovery_sha256"));
+        record.remove(QStringLiteral("rollback_on_activation_failure"));
         legacyRecords[index] = record;
     }
     legacyRoot.insert(QStringLiteral("records"), legacyRecords);
@@ -2901,22 +3503,88 @@ void EtherCATProjectCompilerTests::testPreparationJournalCasRequiresExactPredece
     QVERIFY(writeFile(journal.journalFile().path(), legacyBytes));
     const auto legacyLoaded = journal.load();
     QVERIFY(legacyLoaded);
-    QCOMPARE(*legacyLoaded, *committed);
+    RuntimePackageCompilerPreparationJournalState expectedLegacy = *committed;
+    expectedLegacy.entries.first().rollbackOnActivationFailure.reset();
+    QCOMPARE(*legacyLoaded, expectedLegacy);
 
-    RuntimePackageCompilerPreparationJournalEntry migrated = reconciliation;
+    const RuntimePackageCompilerPreparationJournalEntry *legacyEntry
+        = journalEntryFor(*legacyLoaded, request.compileRequest.operationId);
+    QVERIFY(legacyEntry);
+    QVERIFY(!legacyEntry->rollbackOnActivationFailure);
+    RuntimePackageCompilerPreparationJournalEntry migrated = *legacyEntry;
     migrated.revision = 4;
     migrated.phase = Core::RuntimePackageCompilerPreparationPhase::Failed;
     migrated.detail = QStringLiteral("Migrated terminal update.");
     const auto migratedState
-        = journal.commit(migrated, legacyLoaded->sequence, reconciliation);
+        = journal.commit(migrated, legacyLoaded->sequence, *legacyEntry);
     QVERIFY(migratedState);
     const QJsonObject migratedRoot
         = QJsonDocument::fromJson(readFile(journal.journalFile().path())).object();
-    QCOMPARE(migratedRoot.value(QStringLiteral("format_version")).toInt(), 2);
+    QCOMPARE(migratedRoot.value(QStringLiteral("format_version")).toInt(), 3);
     const QJsonObject migratedRecord
         = migratedRoot.value(QStringLiteral("records")).toArray().first().toObject();
     QVERIFY(migratedRecord.contains(QStringLiteral("compile_recovery_bytes")));
     QVERIFY(migratedRecord.contains(QStringLiteral("compile_recovery_sha256")));
+    QVERIFY(migratedRecord.contains(QStringLiteral("rollback_on_activation_failure")));
+    QVERIFY(migratedRecord.value(QStringLiteral("rollback_on_activation_failure")).isNull());
+}
+
+void EtherCATProjectCompilerTests::testPreparationJournalPortableRecoveryRoundTrip()
+{
+    CompilerFixture fixture;
+    QTemporaryDir temporary;
+    const Utils::FilePath root = Utils::FilePath::fromString(
+        temporary.filePath(QStringLiteral("preparations")));
+    RuntimePackageCompilerPreparationJournal journal(root);
+    auto state = journal.initialize();
+    QVERIFY(state);
+
+    const Core::RuntimePackageCompilerPreparationStartRequest request
+        = preparationRequest(fixture, 50);
+    const RuntimePackageCompilerPreparationJournalEntry reserved = journalEntry(
+        request, Core::RuntimePackageCompilerPreparationPhase::Reserved, 1);
+    const auto recovery = encodeRuntimePackageCompilerCompileRecovery(
+        {request.compileRequest, fixture.serializedProject});
+    QVERIFY(recovery);
+#ifdef Q_OS_UNIX
+    QVERIFY(journal.supportsDurableRecoveryStorage());
+#else
+    QVERIFY(!journal.supportsDurableRecoveryStorage());
+    QVERIFY(!journal.reserveWithRecovery(reserved, state->sequence, *recovery));
+    QVERIFY(!QFileInfo::exists(journal.recoveryFile(request.compileRequest.operationId).path()));
+    return;
+#endif
+    const quint64 initialSequence = state->sequence;
+    state = journal.reserveWithRecovery(reserved, initialSequence, *recovery);
+    if (!state)
+        QFAIL(qPrintable(state.error()));
+
+    const RuntimePackageCompilerPreparationJournalEntry *persisted
+        = journalEntryFor(*state, request.compileRequest.operationId);
+    QVERIFY(persisted && persisted->compileRecovery);
+    const auto loaded
+        = journal.loadRecovery(request.compileRequest.operationId, state->sequence, *persisted);
+    if (!loaded)
+        QFAIL(qPrintable(loaded.error()));
+    QCOMPARE(*loaded, *recovery);
+
+    const auto replayed = journal.reserveWithRecovery(reserved, initialSequence, *recovery);
+    QVERIFY(replayed);
+    QCOMPARE(replayed->sequence, state->sequence);
+
+    const QString recoveryPath = journal.recoveryFile(request.compileRequest.operationId).path();
+    QByteArray corrupted = *recovery;
+    corrupted[corrupted.size() / 2] ^= 0x01;
+    QVERIFY(writeFile(recoveryPath, corrupted));
+    QVERIFY(!journal.loadRecovery(
+        request.compileRequest.operationId, state->sequence, *persisted));
+    QVERIFY(writeFile(recoveryPath, *recovery));
+    QVERIFY(journal.loadRecovery(
+        request.compileRequest.operationId, state->sequence, *persisted));
+
+    RuntimePackageCompilerPreparationJournal nonCanonical(
+        Utils::FilePath::fromString(temporary.filePath(QStringLiteral("nested/../escape"))));
+    QVERIFY(!nonCanonical.initialize());
 }
 
 void EtherCATProjectCompilerTests::testPreparationJournalPersistsImmutableRecovery()
@@ -3017,6 +3685,32 @@ void EtherCATProjectCompilerTests::testPreparationJournalPersistsImmutableRecove
     QVERIFY(!journal.loadRecovery(
         request.compileRequest.operationId, state->sequence - 1, *compiledEntry));
 
+    RuntimePackageCompilerPreparationJournalEntry injectedEvidence = *compiledEntry;
+    injectedEvidence.revision++;
+    injectedEvidence.phase
+        = Core::RuntimePackageCompilerPreparationPhase::ReconciliationRequired;
+    injectedEvidence.compileResultSha256 = sha256("injected compile result");
+    injectedEvidence.signRequestSha256 = sha256("injected sign request");
+    injectedEvidence.detachedSigningResponse = canonical(QByteArray("{}\n"));
+    injectedEvidence.finalizeResultSha256 = sha256("injected finalize result");
+    injectedEvidence.packageSha256 = sha256("injected package");
+    injectedEvidence.verifyResultSha256 = sha256("injected verify result");
+    injectedEvidence.detail = QStringLiteral("Reject injected recovery evidence.");
+    QVERIFY(injectedEvidence.isValid());
+
+    QByteArray corruptedForInjection = *recovery;
+    corruptedForInjection[corruptedForInjection.size() / 3] ^= 0x01;
+    QVERIFY(writeFile(recoveryFile, corruptedForInjection));
+    QVERIFY(!journal.commit(injectedEvidence, state->sequence, *compiledEntry));
+    QVERIFY(writeFile(recoveryFile, *recovery));
+    const QString missingRecoveryBackup = recoveryFile + QStringLiteral(".missing");
+    QVERIFY(QFile::rename(recoveryFile, missingRecoveryBackup));
+    QVERIFY(!journal.commit(injectedEvidence, state->sequence, *compiledEntry));
+    QVERIFY(QFile::rename(missingRecoveryBackup, recoveryFile));
+    const auto unchangedAfterInjection = journal.load();
+    QVERIFY(unchangedAfterInjection);
+    QCOMPARE(*unchangedAfterInjection, *state);
+
     QByteArray corrupted = *recovery;
     corrupted[corrupted.size() / 2] ^= 0x01;
     QVERIFY(writeFile(recoveryFile, corrupted));
@@ -3074,6 +3768,304 @@ void EtherCATProjectCompilerTests::testPreparationJournalPersistsImmutableRecove
     QVERIFY(journal.loadRecovery(
         request.compileRequest.operationId, adoptedState->sequence, *firstAfterAdoption));
     QVERIFY(!QFileInfo::exists(orphanFile));
+#endif
+}
+
+void EtherCATProjectCompilerTests::testPreparationJournalBindsRecoveryFingerprint()
+{
+#ifndef Q_OS_UNIX
+    QSKIP("Secure compiler recovery storage is Unix-only.");
+#else
+    CompilerFixture fixture;
+    QTemporaryDir temporary;
+    const Utils::FilePath root = Utils::FilePath::fromString(
+        temporary.filePath(QStringLiteral("preparations")));
+    RuntimePackageCompilerPreparationJournal journal(root);
+    auto state = journal.initialize();
+    QVERIFY(state);
+
+    Core::RuntimePackageCompilerPreparationStartRequest request
+        = preparationRequest(fixture, 40);
+    request.rollbackOnActivationFailure = false;
+    QVERIFY(request.isValid());
+    const auto recovery = encodeRuntimePackageCompilerCompileRecovery(
+        {request.compileRequest, fixture.serializedProject});
+    QVERIFY(recovery);
+    const RuntimePackageCompilerPreparationJournalEntry reserved = journalEntry(
+        request, Core::RuntimePackageCompilerPreparationPhase::Reserved, 1);
+
+    RuntimePackageCompilerPreparationJournalEntry forged = reserved;
+    forged.startRequestFingerprint = sha256("forged preparation fingerprint");
+    QVERIFY(!journal.reserveWithRecovery(forged, state->sequence, *recovery));
+    forged = reserved;
+    forged.verifyOperationId = preparationRequest(fixture, 41).verifyOperationId;
+    QVERIFY(!journal.reserveWithRecovery(forged, state->sequence, *recovery));
+    forged = reserved;
+    forged.activationOperationId = preparationRequest(fixture, 42).activationOperationId;
+    QVERIFY(!journal.reserveWithRecovery(forged, state->sequence, *recovery));
+    forged = reserved;
+    forged.rollbackOnActivationFailure = true;
+    QVERIFY(!journal.reserveWithRecovery(forged, state->sequence, *recovery));
+
+    state = journal.reserveWithRecovery(reserved, state->sequence, *recovery);
+    QVERIFY(state);
+    const QByteArray canonicalV3 = readFile(journal.journalFile().path());
+    QVERIFY(!canonicalV3.isEmpty());
+
+    const auto mutateRecord = [&](const std::function<void(QJsonObject &)> &mutation) {
+        QJsonObject document = QJsonDocument::fromJson(canonicalV3).object();
+        QJsonArray records = document.value(QStringLiteral("records")).toArray();
+        if (records.size() != 1)
+            return false;
+        QJsonObject record = records.first().toObject();
+        mutation(record);
+        records[0] = record;
+        document.insert(QStringLiteral("records"), records);
+        QByteArray bytes = QJsonDocument(document).toJson(QJsonDocument::Compact);
+        bytes.append('\n');
+        return writeFile(journal.journalFile().path(), bytes);
+    };
+    const auto rejectsMutation = [&](const std::function<void(QJsonObject &)> &mutation) {
+        if (!mutateRecord(mutation))
+            return false;
+        const auto mutatedState = journal.load();
+        if (!mutatedState)
+            return false;
+        const RuntimePackageCompilerPreparationJournalEntry *mutatedEntry
+            = journalEntryFor(*mutatedState, request.compileRequest.operationId);
+        if (!mutatedEntry
+            || journal.loadRecovery(
+                request.compileRequest.operationId, mutatedState->sequence, *mutatedEntry)) {
+            return false;
+        }
+        return writeFile(journal.journalFile().path(), canonicalV3);
+    };
+
+    QVERIFY(rejectsMutation([](QJsonObject &record) {
+        record.insert(QStringLiteral("rollback_on_activation_failure"), true);
+    }));
+    QVERIFY(rejectsMutation([](QJsonObject &record) {
+        record.insert(QStringLiteral("rollback_on_activation_failure"), QJsonValue::Null);
+    }));
+    const Core::RuntimePackageCompilerPreparationStartRequest otherVerify
+        = preparationRequest(fixture, 43);
+    QVERIFY(rejectsMutation([&](QJsonObject &record) {
+        record.insert(
+            QStringLiteral("verify_operation_id"), otherVerify.verifyOperationId.value());
+    }));
+    const Core::RuntimePackageCompilerPreparationStartRequest otherActivation
+        = preparationRequest(fixture, 44);
+    QVERIFY(rejectsMutation([&](QJsonObject &record) {
+        record.insert(
+            QStringLiteral("activation_operation_id"),
+            otherActivation.activationOperationId.value());
+    }));
+    QVERIFY(rejectsMutation([](QJsonObject &record) {
+        record.insert(
+            QStringLiteral("start_request_fingerprint"),
+            QString::fromLatin1(sha256("unbound fingerprint").value().toHex()));
+    }));
+
+    QJsonObject legacyV2 = QJsonDocument::fromJson(canonicalV3).object();
+    legacyV2.insert(QStringLiteral("format_version"), 2);
+    QJsonArray legacyRecords = legacyV2.value(QStringLiteral("records")).toArray();
+    QJsonObject legacyRecord = legacyRecords.first().toObject();
+    legacyRecord.remove(QStringLiteral("rollback_on_activation_failure"));
+    legacyRecords[0] = legacyRecord;
+    legacyV2.insert(QStringLiteral("records"), legacyRecords);
+    QByteArray legacyBytes = QJsonDocument(legacyV2).toJson(QJsonDocument::Compact);
+    legacyBytes.append('\n');
+    QVERIFY(writeFile(journal.journalFile().path(), legacyBytes));
+    const auto legacyState = journal.load();
+    QVERIFY(legacyState);
+    const RuntimePackageCompilerPreparationJournalEntry *legacyEntry
+        = journalEntryFor(*legacyState, request.compileRequest.operationId);
+    QVERIFY(legacyEntry && !legacyEntry->rollbackOnActivationFailure);
+
+    RuntimePackageCompilerPreparationJournalEntry wrongMigration = *legacyEntry;
+    wrongMigration.revision = 2;
+    wrongMigration.phase = Core::RuntimePackageCompilerPreparationPhase::Compiling;
+    wrongMigration.rollbackOnActivationFailure = true;
+    QVERIFY(!journal.commit(wrongMigration, legacyState->sequence, *legacyEntry));
+
+    QJsonObject unboundLegacy = legacyV2;
+    QJsonArray unboundRecords = unboundLegacy.value(QStringLiteral("records")).toArray();
+    QJsonObject unboundRecord = unboundRecords.first().toObject();
+    unboundRecord.insert(
+        QStringLiteral("start_request_fingerprint"),
+        QString::fromLatin1(sha256("unbound legacy fingerprint").value().toHex()));
+    unboundRecords[0] = unboundRecord;
+    unboundLegacy.insert(QStringLiteral("records"), unboundRecords);
+    QByteArray unboundBytes = QJsonDocument(unboundLegacy).toJson(QJsonDocument::Compact);
+    unboundBytes.append('\n');
+    QVERIFY(writeFile(journal.journalFile().path(), unboundBytes));
+    const auto unboundState = journal.load();
+    QVERIFY(unboundState);
+    const RuntimePackageCompilerPreparationJournalEntry *unboundEntry
+        = journalEntryFor(*unboundState, request.compileRequest.operationId);
+    QVERIFY(unboundEntry);
+    QVERIFY(!journal.loadRecovery(
+        request.compileRequest.operationId, unboundState->sequence, *unboundEntry));
+    QVERIFY(writeFile(journal.journalFile().path(), legacyBytes));
+
+    RuntimePackageCompilerPreparationJournalEntry migrated = *legacyEntry;
+    migrated.revision = 2;
+    migrated.phase = Core::RuntimePackageCompilerPreparationPhase::Compiling;
+    const auto migratedState
+        = journal.commit(migrated, legacyState->sequence, *legacyEntry);
+    QVERIFY(migratedState);
+    const RuntimePackageCompilerPreparationJournalEntry *migratedEntry
+        = journalEntryFor(*migratedState, request.compileRequest.operationId);
+    QVERIFY(migratedEntry && migratedEntry->rollbackOnActivationFailure);
+    QVERIFY(!*migratedEntry->rollbackOnActivationFailure);
+    const QJsonObject migratedDocument
+        = QJsonDocument::fromJson(readFile(journal.journalFile().path())).object();
+    QCOMPARE(migratedDocument.value(QStringLiteral("format_version")).toInt(), 3);
+    QCOMPARE(
+        migratedDocument.value(QStringLiteral("records"))
+            .toArray()
+            .first()
+            .toObject()
+            .value(QStringLiteral("rollback_on_activation_failure"))
+            .toBool(true),
+        false);
+    QVERIFY(journal.load());
+
+    QTemporaryDir multipleTemporary;
+    const Utils::FilePath multipleRoot = Utils::FilePath::fromString(
+        multipleTemporary.filePath(QStringLiteral("preparations")));
+    RuntimePackageCompilerPreparationJournal multipleJournal(multipleRoot);
+    auto multipleState = multipleJournal.initialize();
+    QVERIFY(multipleState);
+
+    Core::RuntimePackageCompilerPreparationStartRequest firstRequest
+        = preparationRequest(fixture, 45);
+    firstRequest.rollbackOnActivationFailure = false;
+    Core::RuntimePackageCompilerPreparationStartRequest secondRequest
+        = preparationRequest(fixture, 46);
+    secondRequest.rollbackOnActivationFailure = true;
+    QVERIFY(firstRequest.isValid());
+    QVERIFY(secondRequest.isValid());
+    const auto firstRecovery = encodeRuntimePackageCompilerCompileRecovery(
+        {firstRequest.compileRequest, fixture.serializedProject});
+    const auto secondRecovery = encodeRuntimePackageCompilerCompileRecovery(
+        {secondRequest.compileRequest, fixture.serializedProject});
+    QVERIFY(firstRecovery);
+    QVERIFY(secondRecovery);
+    multipleState = multipleJournal.reserveWithRecovery(
+        journalEntry(firstRequest, Core::RuntimePackageCompilerPreparationPhase::Reserved, 1),
+        multipleState->sequence,
+        *firstRecovery);
+    QVERIFY(multipleState);
+    multipleState = multipleJournal.reserveWithRecovery(
+        journalEntry(secondRequest, Core::RuntimePackageCompilerPreparationPhase::Reserved, 1),
+        multipleState->sequence,
+        *secondRecovery);
+    QVERIFY(multipleState);
+
+    QJsonObject multipleLegacy
+        = QJsonDocument::fromJson(readFile(multipleJournal.journalFile().path())).object();
+    multipleLegacy.insert(QStringLiteral("format_version"), 2);
+    QJsonArray multipleLegacyRecords = multipleLegacy.value(QStringLiteral("records")).toArray();
+    QCOMPARE(multipleLegacyRecords.size(), 2);
+    for (qsizetype index = 0; index < multipleLegacyRecords.size(); ++index) {
+        QJsonObject record = multipleLegacyRecords.at(index).toObject();
+        record.remove(QStringLiteral("rollback_on_activation_failure"));
+        multipleLegacyRecords[index] = record;
+    }
+    multipleLegacy.insert(QStringLiteral("records"), multipleLegacyRecords);
+    QByteArray multipleLegacyBytes = QJsonDocument(multipleLegacy).toJson(QJsonDocument::Compact);
+    multipleLegacyBytes.append('\n');
+    QVERIFY(writeFile(multipleJournal.journalFile().path(), multipleLegacyBytes));
+
+    const auto multipleLegacyState = multipleJournal.load();
+    QVERIFY(multipleLegacyState);
+    const RuntimePackageCompilerPreparationJournalEntry *firstLegacyEntry = journalEntryFor(
+        *multipleLegacyState, firstRequest.compileRequest.operationId);
+    const RuntimePackageCompilerPreparationJournalEntry *secondLegacyEntry = journalEntryFor(
+        *multipleLegacyState, secondRequest.compileRequest.operationId);
+    QVERIFY(firstLegacyEntry && !firstLegacyEntry->rollbackOnActivationFailure);
+    QVERIFY(secondLegacyEntry && !secondLegacyEntry->rollbackOnActivationFailure);
+    RuntimePackageCompilerPreparationJournalEntry firstCompiling = *firstLegacyEntry;
+    firstCompiling.revision++;
+    firstCompiling.phase = Core::RuntimePackageCompilerPreparationPhase::Compiling;
+    const auto multipleMigratedState = multipleJournal.commit(
+        firstCompiling, multipleLegacyState->sequence, *firstLegacyEntry);
+    QVERIFY(multipleMigratedState);
+
+    const RuntimePackageCompilerPreparationJournalEntry *firstMigratedEntry = journalEntryFor(
+        *multipleMigratedState, firstRequest.compileRequest.operationId);
+    const RuntimePackageCompilerPreparationJournalEntry *secondMigratedEntry = journalEntryFor(
+        *multipleMigratedState, secondRequest.compileRequest.operationId);
+    QVERIFY(firstMigratedEntry && firstMigratedEntry->rollbackOnActivationFailure);
+    QVERIFY(secondMigratedEntry && secondMigratedEntry->rollbackOnActivationFailure);
+    QVERIFY(!*firstMigratedEntry->rollbackOnActivationFailure);
+    QVERIFY(*secondMigratedEntry->rollbackOnActivationFailure);
+    const QJsonObject multipleMigratedDocument
+        = QJsonDocument::fromJson(readFile(multipleJournal.journalFile().path())).object();
+    QCOMPARE(multipleMigratedDocument.value(QStringLiteral("format_version")).toInt(), 3);
+    QVERIFY(multipleJournal.loadRecovery(
+        firstRequest.compileRequest.operationId,
+        multipleMigratedState->sequence,
+        *firstMigratedEntry));
+    QVERIFY(multipleJournal.loadRecovery(
+        secondRequest.compileRequest.operationId,
+        multipleMigratedState->sequence,
+        *secondMigratedEntry));
+
+    QJsonObject partiallyRecoverableLegacy = multipleMigratedDocument;
+    partiallyRecoverableLegacy.insert(QStringLiteral("format_version"), 2);
+    QJsonArray partiallyRecoverableRecords
+        = partiallyRecoverableLegacy.value(QStringLiteral("records")).toArray();
+    for (qsizetype index = 0; index < partiallyRecoverableRecords.size(); ++index) {
+        QJsonObject record = partiallyRecoverableRecords.at(index).toObject();
+        record.remove(QStringLiteral("rollback_on_activation_failure"));
+        partiallyRecoverableRecords[index] = record;
+    }
+    partiallyRecoverableLegacy.insert(QStringLiteral("records"), partiallyRecoverableRecords);
+    QByteArray partiallyRecoverableBytes
+        = QJsonDocument(partiallyRecoverableLegacy).toJson(QJsonDocument::Compact);
+    partiallyRecoverableBytes.append('\n');
+    QVERIFY(writeFile(multipleJournal.journalFile().path(), partiallyRecoverableBytes));
+    QVERIFY(QFile::remove(
+        multipleJournal.recoveryFile(secondRequest.compileRequest.operationId).path()));
+    const auto partiallyRecoverableState = multipleJournal.load();
+    QVERIFY(partiallyRecoverableState);
+
+    Core::RuntimePackageCompilerPreparationStartRequest newRequest
+        = preparationRequest(fixture, 47);
+    newRequest.rollbackOnActivationFailure = true;
+    QVERIFY(newRequest.isValid());
+    const auto newRecovery = encodeRuntimePackageCompilerCompileRecovery(
+        {newRequest.compileRequest, fixture.serializedProject});
+    QVERIFY(newRecovery);
+    const auto stateWithNewReservation = multipleJournal.reserveWithRecovery(
+        journalEntry(newRequest, Core::RuntimePackageCompilerPreparationPhase::Reserved, 1),
+        partiallyRecoverableState->sequence,
+        *newRecovery);
+    QVERIFY(stateWithNewReservation);
+    const RuntimePackageCompilerPreparationJournalEntry *recoverableLegacyEntry = journalEntryFor(
+        *stateWithNewReservation, firstRequest.compileRequest.operationId);
+    const RuntimePackageCompilerPreparationJournalEntry *isolatedLegacyEntry = journalEntryFor(
+        *stateWithNewReservation, secondRequest.compileRequest.operationId);
+    const RuntimePackageCompilerPreparationJournalEntry *newReservationEntry = journalEntryFor(
+        *stateWithNewReservation, newRequest.compileRequest.operationId);
+    QVERIFY(recoverableLegacyEntry && recoverableLegacyEntry->rollbackOnActivationFailure);
+    QVERIFY(!*recoverableLegacyEntry->rollbackOnActivationFailure);
+    QVERIFY(isolatedLegacyEntry && !isolatedLegacyEntry->rollbackOnActivationFailure);
+    QVERIFY(newReservationEntry && newReservationEntry->rollbackOnActivationFailure);
+    QVERIFY(*newReservationEntry->rollbackOnActivationFailure);
+    const QJsonObject upgradedWithIsolatedRecord
+        = QJsonDocument::fromJson(readFile(multipleJournal.journalFile().path())).object();
+    QCOMPARE(upgradedWithIsolatedRecord.value(QStringLiteral("format_version")).toInt(), 3);
+    QVERIFY(!multipleJournal.loadRecovery(
+        secondRequest.compileRequest.operationId,
+        stateWithNewReservation->sequence,
+        *isolatedLegacyEntry));
+    QVERIFY(multipleJournal.loadRecovery(
+        newRequest.compileRequest.operationId,
+        stateWithNewReservation->sequence,
+        *newReservationEntry));
 #endif
 }
 

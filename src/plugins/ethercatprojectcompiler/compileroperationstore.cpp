@@ -562,6 +562,48 @@ Utils::Result<> validatePrivateDirectory(
 #endif
 }
 
+Utils::Result<bool> privateDirectoryExists(
+    const std::shared_ptr<CompilerStoreRoot> &rootHandle,
+    const Utils::FilePath &root,
+    const Utils::FilePath &path)
+{
+    if (!path.isAbsolutePath() || !path.scheme().isEmpty())
+        return Utils::ResultError(QStringLiteral("Compiler store path must be absolute and local."));
+#ifdef Q_OS_UNIX
+    const Utils::Result<std::shared_ptr<ScopedDescriptor>> parent
+        = openParentDirectory(rootHandle, root, path, DirectoryPolicy::Private);
+    if (!parent)
+        return Utils::ResultError(parent.error());
+    const QByteArray leaf = QFile::encodeName(path.fileName());
+    const int descriptor
+        = ::openat((*parent)->descriptor, leaf.constData(), directoryOpenFlags());
+    if (descriptor < 0) {
+        if (errno == ENOENT)
+            return false;
+        return Utils::ResultError(
+            QStringLiteral("Cannot inspect compiler operation directory."));
+    }
+    ScopedDescriptor opened(descriptor);
+    if (const Utils::Result<> valid = validateDirectoryDescriptor(
+            opened.descriptor, DirectoryPolicy::Private, QStringLiteral("operation directory"));
+        !valid) {
+        return Utils::ResultError(valid.error());
+    }
+    return true;
+#else
+    if (const Utils::Result<> parent = validatePrivateDirectory(rootHandle, root, path.parentDir());
+        !parent) {
+        return Utils::ResultError(parent.error());
+    }
+    const QFileInfo info(path.path());
+    if (!info.exists())
+        return false;
+    if (!info.isDir() || info.isSymLink())
+        return Utils::ResultError(QStringLiteral("Compiler operation directory is unsafe."));
+    return true;
+#endif
+}
+
 Utils::Result<> validateProviderDirectoryChain(
     const std::shared_ptr<CompilerStoreRoot> &rootHandle,
     const Utils::FilePath &root,
@@ -1584,7 +1626,7 @@ Utils::Result<CompilerOperationPaths> CompilerOperationStore::reserveFinalize(
     return operationPaths;
 }
 
-Utils::Result<CompilerOperationPaths> CompilerOperationStore::validateQuery(
+Utils::Result<CompilerOperationQueryValidation> CompilerOperationStore::validateQuery(
     const CompilerOperationLease &lease,
     const Data::RuntimePackageCompilerQueryRequest &request) const
 {
@@ -1593,10 +1635,15 @@ Utils::Result<CompilerOperationPaths> CompilerOperationStore::validateQuery(
     const CompilerOperationPaths operationPaths = paths(request.operationId);
     if (const Utils::Result<> store = validateStore(); !store)
         return Utils::ResultError(store.error());
-    if (const Utils::Result<> operationDirectory
-        = validatePrivateDirectory(m_rootHandle, m_compilerRoot, operationPaths.operationRoot);
-        !operationDirectory) {
+    const Utils::Result<bool> operationDirectory = privateDirectoryExists(
+        m_rootHandle, m_compilerRoot, operationPaths.operationRoot);
+    if (!operationDirectory)
         return Utils::ResultError(operationDirectory.error());
+    if (!*operationDirectory) {
+        return CompilerOperationQueryValidation{
+            operationPaths,
+            CompilerOperationQueryState::OperationDirectoryAbsent,
+        };
     }
     const Utils::Result<QByteArray> reservationBytes = readRegularLeaf(
         m_rootHandle,
@@ -1634,7 +1681,10 @@ Utils::Result<CompilerOperationPaths> CompilerOperationStore::validateQuery(
         return Utils::ResultError(
             QStringLiteral("Compiler query configuration index is inconsistent."));
     }
-    return operationPaths;
+    return CompilerOperationQueryValidation{
+        operationPaths,
+        CompilerOperationQueryState::Reserved,
+    };
 }
 
 Utils::Result<Utils::FilePath> CompilerOperationStore::persistCanonicalResponse(

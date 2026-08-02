@@ -30,10 +30,18 @@ private slots:
     void testActivationProofRejectsMutationsWithoutProcess();
     void testActivationProofRejectsUnsafeEvidence();
     void testPreparationCoordinatorSuccessAndCancellation();
+    void testPreparationCoordinatorRestoresFromRecoverySidecar();
+    void testPreparationCoordinatorRecoversBeforeProviderReservation();
+    void testPreparationCoordinatorRejectsInvalidRecovery();
+    void testPreparationCoordinatorRejectsCorruptProviderQuery();
+    void testPreparationCoordinatorRejectsInvalidCompilerLedger();
+    void testPreparationCoordinatorRejectsMalformedUnknownProvider();
     void testPreparationCoordinatorRejectsConcurrentInvalidation();
     void testPreparationCoordinatorRestartAndTerminalTombstones();
     void testPreparationJournalCasRequiresExactPredecessor();
+    void testPreparationJournalPortableRecoveryRoundTrip();
     void testPreparationJournalPersistsImmutableRecovery();
+    void testPreparationJournalBindsRecoveryFingerprint();
     void testPreparationJournalRejectsUnsafeStorage();
 };
 

@@ -38,6 +38,32 @@ Utils::CommandLine commandLine(
     return Utils::CommandLine(executable, complete);
 }
 
+Utils::Result<Data::RuntimePackageCompilerQueryResult> decodeExactOperationUnknown(
+    const Data::RuntimePackageCompilerQueryRequest &request,
+    const Core::RuntimePackageCompilerProcessOutput &output)
+{
+    const Utils::Result<Data::RuntimePackageCompilerQueryResult> decoded
+        = Core::decodeRuntimePackageCompilerQueryResult(request, output);
+    if (!decoded || decoded->envelope.operationId != request.operationId
+        || decoded->envelope.requestSha256 != request.compileRequestSha256
+        || decoded->envelope.status != Data::RuntimePackageCompilerResultStatus::DomainFailed
+        || decoded->hasRecoveredResult() || decoded->envelope.diagnostics.size() != 1) {
+        return Utils::ResultError(
+            Tr::tr("Missing operation query did not return an authoritative unknown result."));
+    }
+    const Data::RuntimePackageCompilerDiagnostic &diagnostic
+        = decoded->envelope.diagnostics.constFirst();
+    if (diagnostic.category != Data::RuntimePackageCompilerDiagnosticCategory::Idempotency
+        || diagnostic.severity != Data::RuntimePackageCompilerDiagnosticSeverity::Error
+        || diagnostic.stage != QStringLiteral("configuration")
+        || diagnostic.code != QStringLiteral("ECOMP-OPERATION-UNKNOWN")
+        || diagnostic.path != QStringLiteral("$.operation_id") || diagnostic.retryable) {
+        return Utils::ResultError(
+            Tr::tr("Missing operation query returned a different terminal result."));
+    }
+    return *decoded;
+}
+
 class ProvisionedCompilerJob final : public Core::RuntimePackageCompilerJob
 {
 public:
@@ -717,9 +743,41 @@ Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompil
     Utils::Result<CompilerOperationLease> lease = d->store.acquireLease();
     if (!lease)
         return Utils::ResultError(lease.error());
-    const Utils::Result<CompilerOperationPaths> paths = d->store.validateQuery(*lease, request);
-    if (!paths)
-        return Utils::ResultError(paths.error());
+    const Utils::Result<CompilerOperationQueryValidation> validation
+        = d->store.validateQuery(*lease, request);
+    if (!validation)
+        return Utils::ResultError(validation.error());
+    const std::optional<Utils::CommandLine> queryCommand = d->reconciliationCommand(
+        request.operationId);
+    if (!queryCommand)
+        return Utils::ResultError(Tr::tr("Compiler query command is unavailable."));
+    if (validation->state == CompilerOperationQueryState::OperationDirectoryAbsent) {
+        JobResultDecoder decoder = [request](
+                                       const CompilerOperationLease &,
+                                       const Core::RuntimePackageCompilerProcessOutput &output)
+            -> Utils::Result<Data::RuntimePackageCompilerJobResult> {
+            const Utils::Result<Data::RuntimePackageCompilerQueryResult> result
+                = decodeExactOperationUnknown(request, output);
+            if (!result)
+                return Utils::ResultError(result.error());
+            return Data::RuntimePackageCompilerJobResult{*result};
+        };
+        return d->schedule({
+            Data::RuntimePackageCompilerCommand::Query,
+            *queryCommand,
+            d->store.compilerRoot(),
+            d->limits.queryTimeout,
+            std::nullopt,
+            d->limits.queryTimeout,
+            d->limits.cancellationGrace,
+            d->limits.maximumStandardOutputBytes,
+            d->limits.maximumStandardErrorBytes,
+            std::move(*lease),
+            std::move(decoder),
+            {},
+            {},
+        });
+    }
     JobResultDecoder decoder = [decode = d->queryDecoder(request)](
                                    const CompilerOperationLease &lease,
                                    const Core::RuntimePackageCompilerProcessOutput &output)
@@ -731,8 +789,8 @@ Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompil
     };
     return d->schedule({
         Data::RuntimePackageCompilerCommand::Query,
-        *d->reconciliationCommand(request.operationId),
-        paths->operationRoot,
+        *queryCommand,
+        validation->paths.operationRoot,
         d->limits.queryTimeout,
         std::nullopt,
         d->limits.queryTimeout,

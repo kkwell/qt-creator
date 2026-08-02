@@ -353,6 +353,64 @@ std::optional<QJsonObject> objectDocument(const QByteArray &bytes)
     return document.object();
 }
 
+struct CompilerLedger
+{
+    QJsonObject configurationIds;
+    QJsonObject operations;
+    QJsonObject signerResponses;
+};
+
+std::optional<CompilerLedger> exactCompilerLedger(const QByteArray &bytes)
+{
+    const std::optional<QJsonObject> document = objectDocument(bytes);
+    if (!document || document->size() != 5
+        || document->value(QStringLiteral("format")).toString()
+               != QStringLiteral("ethercat-ide-compiler-ledger-v1")
+        || !document->value(QStringLiteral("format_version")).isDouble()
+        || document->value(QStringLiteral("format_version")).toInteger() != 1
+        || !document->value(QStringLiteral("configuration_ids")).isObject()
+        || !document->value(QStringLiteral("operations")).isObject()
+        || !document->value(QStringLiteral("signer_responses")).isObject()) {
+        return std::nullopt;
+    }
+    const QSet<QString> expectedKeys{
+        QStringLiteral("configuration_ids"),
+        QStringLiteral("format"),
+        QStringLiteral("format_version"),
+        QStringLiteral("operations"),
+        QStringLiteral("signer_responses"),
+    };
+    QSet<QString> actualKeys;
+    for (auto it = document->constBegin(); it != document->constEnd(); ++it)
+        actualKeys.insert(it.key());
+    const std::optional<QByteArray> canonical = canonicalValue(QJsonValue(*document));
+    if (actualKeys != expectedKeys || !canonical || *canonical + '\n' != bytes)
+        return std::nullopt;
+
+    CompilerLedger result{
+        document->value(QStringLiteral("configuration_ids")).toObject(),
+        document->value(QStringLiteral("operations")).toObject(),
+        document->value(QStringLiteral("signer_responses")).toObject(),
+    };
+    for (auto it = result.configurationIds.constBegin();
+         it != result.configurationIds.constEnd();
+         ++it) {
+        if (it.key().isEmpty() || !it.value().isString() || it.value().toString().isEmpty())
+            return std::nullopt;
+    }
+    for (auto it = result.operations.constBegin(); it != result.operations.constEnd(); ++it) {
+        if (it.key().isEmpty() || !it.value().isObject())
+            return std::nullopt;
+    }
+    for (auto it = result.signerResponses.constBegin();
+         it != result.signerResponses.constEnd();
+         ++it) {
+        if (it.key().isEmpty() || !it.value().isObject())
+            return std::nullopt;
+    }
+    return result;
+}
+
 QByteArray digestObject(const QJsonValue &value)
 {
     const auto canonical = canonicalValue(value);
@@ -792,19 +850,66 @@ int queryCommand(const Arguments &arguments)
         {QStringLiteral("state"), jsonString(QStringLiteral("query_only"))},
     });
     QByteArray signer("null");
-    if (readFile(ledgerPath, &ledgerBytes)) {
-        const auto recordMap = rootValue(ledgerBytes, QByteArrayView("operations"));
-        const auto signerMap = rootValue(ledgerBytes, QByteArrayView("signer_responses"));
-        if (recordMap) {
-            const auto record = rootValue(*recordMap + '\n', operationId.toUtf8());
-            if (record && record->startsWith('{') && record->endsWith('}'))
-                compiler = *record;
+    bool hasCompilerRecord = false;
+    bool hasSignerResponse = false;
+    if (!readFile(ledgerPath, &ledgerBytes)) {
+        return fail(failureDocument(
+            QStringLiteral("ECOMP-TEST-LEDGER"),
+            QStringLiteral("internal"),
+            QStringLiteral("$.ledger"),
+            QStringLiteral("Compiler ledger is unreadable")));
+    }
+    const std::optional<CompilerLedger> ledger = exactCompilerLedger(ledgerBytes);
+    if (!ledger) {
+        return fail(failureDocument(
+            QStringLiteral("ECOMP-TEST-LEDGER"),
+            QStringLiteral("internal"),
+            QStringLiteral("$.ledger"),
+            QStringLiteral("Compiler ledger is invalid")));
+    }
+    const QJsonValue record = ledger->operations.value(operationId);
+    if (record.isObject()) {
+        const std::optional<QByteArray> encoded = canonicalValue(record);
+        if (!encoded) {
+            return fail(failureDocument(
+                QStringLiteral("ECOMP-TEST-LEDGER"),
+                QStringLiteral("internal"),
+                QStringLiteral("$.ledger.operations"),
+                QStringLiteral("Compiler ledger operation is invalid")));
         }
-        if (signerMap) {
-            const auto response = rootValue(*signerMap + '\n', operationId.toUtf8());
-            if (response && response->startsWith('{') && response->endsWith('}'))
-                signer = *response;
+        compiler = *encoded;
+        hasCompilerRecord = true;
+    }
+    const QJsonValue response = ledger->signerResponses.value(operationId);
+    if (response.isObject()) {
+        const std::optional<QByteArray> encoded = canonicalValue(response);
+        if (!encoded) {
+            return fail(failureDocument(
+                QStringLiteral("ECOMP-TEST-LEDGER"),
+                QStringLiteral("internal"),
+                QStringLiteral("$.ledger.signer_responses"),
+                QStringLiteral("Compiler ledger signer response is invalid")));
         }
+        signer = *encoded;
+        hasSignerResponse = true;
+    }
+    if (!hasCompilerRecord && !hasSignerResponse) {
+        const bool hasConfigurationReservation = std::any_of(
+            ledger->configurationIds.constBegin(),
+            ledger->configurationIds.constEnd(),
+            [&operationId](const QJsonValue &value) { return value.toString() == operationId; });
+        if (hasConfigurationReservation) {
+            return fail(failureDocument(
+                QStringLiteral("ECOMP-TEST-LEDGER"),
+                QStringLiteral("internal"),
+                QStringLiteral("$.ledger.configuration_ids"),
+                QStringLiteral("Compiler ledger reservation is incomplete")));
+        }
+        return fail(failureDocument(
+            QStringLiteral("ECOMP-OPERATION-UNKNOWN"),
+            QStringLiteral("configuration"),
+            QStringLiteral("$.operation_id"),
+            QStringLiteral("OperationId is unknown")));
     }
     return succeed(canonicalDocument({
         {QStringLiteral("compiler"), compiler},
