@@ -175,6 +175,12 @@ QByteArray canonicalProfile(
 
 } // namespace
 
+Utils::Result<QByteArray> readProvisionedRegularLeaf(
+    const Utils::FilePath &path, qsizetype maximumBytes, bool requireExecutable)
+{
+    return readRegularLeaf(path, maximumBytes, requireExecutable);
+}
+
 Utils::Result<CompilerProvisioningProfile> CompilerProvisioningProfile::load(
     const Utils::FilePath &profileFile)
 {

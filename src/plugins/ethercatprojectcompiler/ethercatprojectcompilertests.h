@@ -13,6 +13,9 @@ class EtherCATProjectCompilerTests final : public QObject
 private slots:
     void testPluginMetadataAndDefaultAvailability();
     void testProvisioningRejectsUnsafeExecutables();
+    void testCompilerInputProvisioningVerifiesTargetSignature();
+    void testProjectRequestBuilderProvisioningAndDeterminism();
+    void testProjectRequestBuilderFailsClosedOnUnprovenTopology();
     void testScheduledJobUsesPinnedProvisioning();
     void testStoreAnchorsAncestorsAndPreservesEvidence();
     void testCompileProcessAndImmutableEvidence();

@@ -6,6 +6,7 @@
 #include "manualcontrolcontract.h"
 #include "providerregistry.h"
 #include "runtimepackagecompilerpreparationcoordinator.h"
+#include "runtimepackagecompilerprojectrequestbuilder.h"
 #include "runtimepackagecompilerprovider.h"
 #include "selectionservice.h"
 #include "stateservice.h"
@@ -90,6 +91,7 @@ void EtherCATCorePlugin::initialize()
     qRegisterMetaType<RuntimePackageCompilerPreparationRecord>();
     qRegisterMetaType<RuntimePackageCompilerPreparationSnapshot>();
     qRegisterMetaType<RuntimePackageCompilerPreparationDisposition>();
+    qRegisterMetaType<RuntimePackageCompilerProjectRequestSeed>();
     qRegisterMetaType<EngineeringContractValidation>();
     qRegisterMetaType<EngineeringConversionResult>();
     qRegisterMetaType<ManualControlContractValidation>();

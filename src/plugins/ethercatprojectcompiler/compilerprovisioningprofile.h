@@ -9,6 +9,12 @@
 
 namespace EtherCAT::ProjectCompiler {
 
+// Shared secure reader for administrator-provisioned compiler inputs. It
+// rejects non-local paths, symlinks, non-regular files, multiple hard links,
+// unsafe ownership/permissions, oversized files and read-time replacement.
+Utils::Result<QByteArray> readProvisionedRegularLeaf(
+    const Utils::FilePath &path, qsizetype maximumBytes, bool requireExecutable = false);
+
 // Provisioning is an administrator-controlled, same-user trust boundary. The
 // provider pins exact source bytes before accepting work, but it does not
 // defend against a process with the IDE user's privileges mutating the private

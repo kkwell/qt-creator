@@ -3,10 +3,12 @@
 #include "ethercatprojectcompilertests.h"
 
 #include "compileroperationstore.h"
+#include "compilerinputprovisioningprofile.h"
 #include "compilerprovisioningprofile.h"
 #include "durableruntimepackagecompilerpreparationcoordinator.h"
 #include "ethercatprojectcompilerconstants.h"
 #include "provisionedruntimepackagecompilerprovider.h"
+#include "provisionedruntimepackagecompilerprojectrequestbuilder.h"
 #include "runtimepackagecompilerpreparationjournal.h"
 
 #include <ethercatdata/deviceadapter.h>
@@ -16,12 +18,16 @@
 #include <ethercatdata/runtimepackagecompiler.h>
 
 #include <ethercatcore/providerregistry.h>
+#include <ethercatcore/providers.h>
 #include <ethercatcore/runtimepackagecompilercodec.h>
+#include <ethercatcore/runtimepackagecompilerprojectrequestbuilder.h>
 #include <ethercatcore/runtimepackagecompilerprovider.h>
 
 #include <extensionsystem/pluginmanager.h>
 
 #include <utils/filepath.h>
+
+#include <monocypher-ed25519.h>
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -30,6 +36,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPointer>
@@ -93,13 +100,23 @@ struct CompilerFixture
     Data::NodeId projectId = Data::NodeId::fromString("11111111-1111-4111-8111-111111111111");
     Data::NodeId masterId = Data::NodeId::fromString("22222222-2222-4222-8222-222222222222");
     Data::NodeId slaveId = Data::NodeId::fromString("33333333-3333-4333-8333-333333333333");
-    QByteArray publicKey = QByteArray(32, '\x31');
-    QByteArray signature = QByteArray(64, '\x32');
+    Data::NodeId deviceDescriptionId
+        = Data::NodeId::fromString("66666666-6666-4666-8666-666666666666");
+    QByteArray publicKey;
+    QByteArray signature;
     QByteArray serializedProject = QByteArray("{\"format\":\"embed-labs-ethercat-project\"}\n");
     Data::RuntimePackageCompilerCompileRequest request;
 
     CompilerFixture()
     {
+        QByteArray signingSeed(32, '\x31');
+        QByteArray secretKey(64, '\0');
+        publicKey.resize(32);
+        crypto_ed25519_key_pair(
+            reinterpret_cast<uint8_t *>(secretKey.data()),
+            reinterpret_cast<uint8_t *>(publicKey.data()),
+            reinterpret_cast<uint8_t *>(signingSeed.data()));
+
         const QByteArray esiBytes("<EtherCATInfo/>");
         const QByteArray adapterBytes("format: ethercat-device-adapter-v1\n");
         const auto adapterFileSha = sha256(adapterBytes);
@@ -141,6 +158,14 @@ struct CompilerFixture
                                       "\"profile_id\":\"embedlabs.zynq.fixture\","
                                       "\"signing_key_id\":\"")
                                   + signingKeySha.value().toHex() + QByteArray("\"}\n");
+        signature.resize(64);
+        crypto_ed25519_sign(
+            reinterpret_cast<uint8_t *>(signature.data()),
+            reinterpret_cast<const uint8_t *>(secretKey.constData()),
+            reinterpret_cast<const uint8_t *>(target.constData()),
+            size_t(target.size()));
+        secretKey.fill('\0');
+        signingSeed.fill('\0');
 
         Data::ProjectSnapshot project;
         project.id = projectId;
@@ -161,6 +186,7 @@ struct CompilerFixture
         slave.position = 0;
         slave.identity = {0x00884443, 0x000000b6, 0x00000001};
         slave.name = QStringLiteral("XB6 fixture");
+        slave.deviceDescriptionId = deviceDescriptionId;
         slave.stationAddress = 0x1001;
         slave.esiSha256 = sha256(esiBytes).value();
         slave.adapterSelection.adapterId = {"org.embedlabs.adapter.solidot.xb6-fixture"};
@@ -594,6 +620,417 @@ Data::RuntimePackageActivationProjectCapture projectCapture(const CompilerFixtur
     };
 }
 
+class BuilderProjectService final : public Core::ProjectService
+{
+public:
+    explicit BuilderProjectService(const CompilerFixture &fixture)
+        : Core::ProjectService(
+              Utils::Id("EtherCAT.ProjectCompiler.Test.Project"), QStringLiteral("Test project"))
+        , m_capture(projectCapture(fixture))
+    {
+        setAvailable(true);
+    }
+
+    QList<Data::ProjectSnapshot> projects() const final { return {m_capture.snapshot()}; }
+    std::optional<Data::ProjectSnapshot> project(const Data::NodeId &id) const final
+    {
+        return id == m_capture.snapshot().id ? std::optional(m_capture.snapshot()) : std::nullopt;
+    }
+    Data::NodeId activeProjectId() const final { return m_capture.snapshot().id; }
+    bool managesProject(const QObject *) const final { return false; }
+    Utils::Result<> activateProject(const Data::NodeId &) final { return unsupported(); }
+    Utils::Result<> renameProject(const Data::NodeId &, const QString &) final { return unsupported(); }
+    Utils::Result<> saveProject(const Data::NodeId &) final { return unsupported(); }
+    Utils::Result<> undoProject(const Data::NodeId &) final { return unsupported(); }
+    Utils::Result<> redoProject(const Data::NodeId &) final { return unsupported(); }
+    Utils::Result<> setMasterConfiguration(
+        const Data::NodeId &, const Data::NodeId &, const Data::MasterConfiguration &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> replaceOfflineSlaves(
+        const Data::NodeId &, const Data::NodeId &, const QList<Data::OfflineSlaveConfiguration> &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> setProcessDataConfiguration(
+        const Data::NodeId &, const Data::NodeId &, const Data::ProcessDataConfiguration &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> setStartupConfiguration(
+        const Data::NodeId &, const Data::NodeId &, const Data::StartupConfiguration &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> setDcConfiguration(
+        const Data::NodeId &, const Data::NodeId &, const Data::DcConfiguration &) final
+    {
+        return unsupported();
+    }
+    bool canUndoProject(const Data::NodeId &) const final { return false; }
+    bool canRedoProject(const Data::NodeId &) const final { return false; }
+    Utils::Result<> renameStructuralNode(
+        const Data::NodeId &, const Data::NodeId &, const QString &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> setDeviceAdapterSelection(
+        const Data::NodeId &,
+        const Data::NodeId &,
+        const QByteArray &,
+        const Data::DeviceAdapterProjectSelection &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> setManualControlEnvelope(
+        const Data::NodeId &, const Data::NodeId &, const Data::ManualControlEnvelope &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> setMasterBindingArtifact(
+        const Data::NodeId &, const Data::SemanticBindingArtifactReference &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<Data::RuntimePackageActivationProjectCapture>
+    captureRuntimePackageActivationProject(const Data::NodeId &id) const final
+    {
+        return id == m_capture.snapshot().id
+                   ? Utils::Result<Data::RuntimePackageActivationProjectCapture>{m_capture}
+                   : Utils::Result<Data::RuntimePackageActivationProjectCapture>{
+                         Utils::ResultError(QStringLiteral("Unexpected project."))};
+    }
+    Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult>
+    compareAndSetMasterBindingArtifact(
+        const Data::NodeId &,
+        const Data::RuntimePackageActivationDocumentRevisionToken &,
+        const Data::RuntimePackageActivationOriginalBindingToken &,
+        const Data::SemanticBindingArtifactReference &) final
+    {
+        return Utils::ResultError(QStringLiteral("Mutation is not supported."));
+    }
+
+    void setCapture(Data::RuntimePackageActivationProjectCapture capture)
+    {
+        m_capture = std::move(capture);
+    }
+
+private:
+    static Utils::Result<> unsupported()
+    {
+        return Utils::ResultError(QStringLiteral("Mutation is not supported."));
+    }
+    Data::RuntimePackageActivationProjectCapture m_capture;
+};
+
+class BuilderDeviceRepository final : public Core::DeviceRepositoryProvider
+{
+public:
+    explicit BuilderDeviceRepository(const CompilerFixture &fixture)
+        : Core::DeviceRepositoryProvider(
+              Utils::Id("EtherCAT.ProjectCompiler.Test.ESI"), QStringLiteral("Test ESI"))
+        , m_id(fixture.deviceDescriptionId)
+        , m_xml(fixture.request.deviceSourceEvidence.constFirst().originalEsi.exactBytes)
+    {
+        const Data::OfflineSlaveConfiguration &slave
+            = fixture.request.projectSnapshotEvidence.snapshot().slaves.constFirst();
+        m_description.summary.id = m_id;
+        m_description.summary.identity = slave.identity;
+        m_description.sourceSha256 = slave.esiSha256;
+        setAvailable(true);
+    }
+
+    QList<Data::DeviceSummary> devices(const Data::DeviceFilter &) const final
+    {
+        return {m_description.summary};
+    }
+    std::optional<Data::DeviceDescription> device(const Data::NodeId &id) const final
+    {
+        return id == m_id ? std::optional(m_description) : std::nullopt;
+    }
+    QByteArray originalXml(const Data::NodeId &id) const final { return id == m_id ? m_xml : QByteArray{}; }
+    Core::DeviceImportJob *importFiles(const Utils::FilePaths &) final { return nullptr; }
+    Core::DeviceImportJob *rebuildIndex() final { return nullptr; }
+    bool isIndexing() const final { return false; }
+
+private:
+    Data::NodeId m_id;
+    QByteArray m_xml;
+    Data::DeviceDescription m_description;
+};
+
+class BuilderAdapterProvider final : public Core::DeviceAdapterProvider
+{
+public:
+    explicit BuilderAdapterProvider(const CompilerFixture &fixture)
+        : Core::DeviceAdapterProvider(
+              Utils::Id("EtherCAT.ProjectCompiler.Test.Adapter"), QStringLiteral("Test adapter"))
+    {
+        const Data::OfflineSlaveConfiguration &slave
+            = fixture.request.projectSnapshotEvidence.snapshot().slaves.constFirst();
+        const Data::RuntimePackageCompilerDeviceSourceEvidence &source
+            = fixture.request.deviceSourceEvidence.constFirst();
+        m_manifest.contractVersion = Data::DeviceAdapterContractVersion::V3;
+        m_manifest.id = slave.adapterSelection.adapterId;
+        m_manifest.version = slave.adapterSelection.adapterVersion;
+        m_manifest.match = {slave.identity.vendorId,
+                            slave.identity.productCode,
+                            slave.identity.revisionNumber,
+                            slave.identity.revisionNumber,
+                            slave.esiSha256};
+        Data::ProcessDataProfile profile;
+        profile.id = slave.adapterSelection.processDataProfileId;
+        profile.signedPdoProfileId = source.projectSignedPdoProfileId;
+        profile.signedDcProfileId = source.projectSignedDcProfileId;
+        for (const Data::PdoConfiguration &pdo : slave.processData.pdos) {
+            if (!pdo.selected)
+                continue;
+            (pdo.direction == Data::PdoDirection::Rx ? profile.rxPdoIndices
+                                                     : profile.txPdoIndices)
+                .append(pdo.index);
+        }
+        m_manifest.processDataProfiles = {profile};
+        m_manifest.controllerAdapterTarget = source.projectControllerAdapterTarget;
+        m_manifest.contentSha256 = slave.adapterSelection.adapterContentSha256;
+        m_manifest.signatureVerified = true;
+        m_manifest.realHardwareAllowed = true;
+        setAvailable(true);
+    }
+
+    QList<Data::DeviceAdapterManifest> adapterManifests() const final { return {m_manifest}; }
+    std::optional<Data::DeviceAdapterManifest> adapterManifest(
+        const Data::DeviceAdapterId &id, const QString &version) const final
+    {
+        return id == m_manifest.id && version == m_manifest.version ? std::optional(m_manifest)
+                                                                    : std::nullopt;
+    }
+    Data::DeviceAdapterResolutionResult resolveDevice(
+        const Data::DeviceAdapterResolutionRequest &) const final
+    {
+        return {};
+    }
+
+private:
+    Data::DeviceAdapterManifest m_manifest;
+};
+
+class BuilderConnectionProvider final : public Core::ControllerConnectionProvider
+{
+public:
+    explicit BuilderConnectionProvider(const CompilerFixture &fixture)
+        : Core::ControllerConnectionProvider(
+              Utils::Id("EtherCAT.ProjectCompiler.Test.Connection"),
+              QStringLiteral("Test connection"))
+    {
+        const Data::RuntimePackageCompilerFreshTopologyEvidence &topology
+            = fixture.request.topologyEvidence;
+        m_snapshot.scope = topology.scope;
+        m_snapshot.state = Data::ControllerConnectionState::Connected;
+        m_snapshot.sessionGeneration = topology.sessionGeneration;
+        m_snapshot.mock = false;
+        m_snapshot.session = Data::ControllerSessionSummary{
+            topology.sessionId, topology.captureBootId, 0, 30000, false};
+        Data::ControllerCapabilitySummary capability;
+        capability.descriptorSha256
+            = fixture.request.targetProfile.capabilityDescriptorSha256.value();
+        m_snapshot.capability = capability;
+        Data::ControllerTopologySnapshot observed;
+        observed.firstStationAddress = topology.slaves.constFirst().stationAddress;
+        observed.respondingCount = topology.slaves.size();
+        observed.discoveredAt = QDateTime::fromMSecsSinceEpoch(topology.capturedAtNs / 1'000'000);
+        observed.scope = topology.scope;
+        observed.sessionGeneration = topology.sessionGeneration;
+        observed.sessionId = topology.sessionId;
+        observed.bootId = topology.captureBootId;
+        observed.requestId = 41;
+        observed.responseSequence = 42;
+        observed.cpu1RequestSequence = quint32(topology.captureSequence);
+        observed.cpu1CompletedTimeNs = 43;
+        observed.receivedAt = observed.discoveredAt;
+        for (const Data::RuntimePackageCompilerTopologySlaveEvidence &slave : topology.slaves) {
+            observed.slaves.append({quint32(slave.position),
+                                    slave.stationAddress,
+                                    0,
+                                    0,
+                                    slave.identity.vendorId,
+                                    slave.identity.productCode,
+                                    slave.identity.revisionNumber,
+                                    slave.serialNumber});
+        }
+        m_snapshot.topology = observed;
+        setAvailable(true);
+    }
+
+    QList<Data::ControllerConnectionProfile> connectionProfiles(
+        const Data::ControllerConnectionScope &) const final
+    {
+        return {};
+    }
+    Data::ControllerConnectionSnapshot connectionSnapshot() const final { return m_snapshot; }
+    Utils::Result<> connectToController(const Data::ControllerConnectionRequest &) final
+    {
+        return Utils::ResultError(QStringLiteral("Not supported."));
+    }
+    Utils::Result<> disconnectFromController() final
+    {
+        return Utils::ResultError(QStringLiteral("Not supported."));
+    }
+    Utils::Result<> refreshController() final
+    {
+        return Utils::ResultError(QStringLiteral("Not supported."));
+    }
+
+    Data::ControllerConnectionSnapshot &mutableSnapshot() { return m_snapshot; }
+
+private:
+    Data::ControllerConnectionSnapshot m_snapshot;
+};
+
+class ScopedProviderKindRegistration
+{
+public:
+    ScopedProviderKindRegistration(Core::ProviderRegistry *registry, Core::Provider *provider)
+        : m_registry(registry)
+        , m_provider(provider)
+    {
+        m_displaced = registry->providers(provider->kind());
+        for (Core::Provider *existing : std::as_const(m_displaced))
+            ExtensionSystem::PluginManager::removeObject(existing);
+        ExtensionSystem::PluginManager::addObject(provider);
+    }
+    ~ScopedProviderKindRegistration()
+    {
+        ExtensionSystem::PluginManager::removeObject(m_provider);
+        for (Core::Provider *existing : std::as_const(m_displaced))
+            ExtensionSystem::PluginManager::addObject(existing);
+    }
+
+private:
+    Core::ProviderRegistry *m_registry = nullptr;
+    Core::Provider *m_provider = nullptr;
+    QList<Core::Provider *> m_displaced;
+};
+
+struct BuilderInputEnvironment
+{
+    QTemporaryDir temporary;
+    QString profilePath;
+
+    explicit BuilderInputEnvironment(const CompilerFixture &fixture)
+    {
+        const QString root = temporary.path();
+        const auto writeArtifact = [&](const Data::RuntimePackageCompilerSourceArtifact &source) {
+            return writeFile(temporary.filePath(source.relativePath), source.exactBytes);
+        };
+        const auto &sources = fixture.request.sourceArtifacts;
+        writeArtifact(sources.targetProfile);
+        writeArtifact(sources.targetProfileSignature);
+        writeArtifact(sources.productionPublicKey);
+        writeArtifact(sources.adapterBundle);
+        writeArtifact(sources.policyTemplate);
+        writeArtifact(sources.controllerFeatures);
+        writeArtifact(sources.runtimeSource);
+        const auto &deviceSource = fixture.request.deviceSourceEvidence.constFirst();
+        writeArtifact(deviceSource.adapterSourceFile);
+
+        const auto descriptor = [](const Data::RuntimePackageCompilerSourceArtifact &source) {
+            return QJsonObject{{QStringLiteral("path"), source.relativePath},
+                               {QStringLiteral("sha256"),
+                                QString::fromLatin1(source.sha256.value().toHex())}};
+        };
+        const auto stringObject = [](const QMap<QString, QString> &values) {
+            QJsonObject object;
+            for (auto it = values.cbegin(); it != values.cend(); ++it)
+                object.insert(it.key(), it.value());
+            return object;
+        };
+        const auto &projection = fixture.request.projectProjection.devices.constFirst();
+        const QJsonObject manual{
+            {QStringLiteral("enabled"), projection.manualEnvelope.enabled},
+            {QStringLiteral("failure_action"), QStringLiteral("hold_safe")},
+            {QStringLiteral("max_hold_cycles"), projection.manualEnvelope.maximumHoldCycles},
+            {QStringLiteral("max_ttl_cycles"), projection.manualEnvelope.maximumTtlCycles},
+            {QStringLiteral("refresh_cycles"), projection.manualEnvelope.refreshCycles},
+            {QStringLiteral("release_action"), QStringLiteral("hold_safe")},
+            {QStringLiteral("timeout_action"), QStringLiteral("hold_safe")},
+        };
+        const QJsonObject device{
+            {QStringLiteral("adapter_source"), descriptor(deviceSource.adapterSourceFile)},
+            {QStringLiteral("component_binding_ids"),
+             stringObject(projection.componentBindingIds)},
+            {QStringLiteral("expected_alias"), 0},
+            {QStringLiteral("expected_modules"), QJsonArray{}},
+            {QStringLiteral("manual_envelope"), manual},
+            {QStringLiteral("project_device_id"), projection.projectDeviceId},
+            {QStringLiteral("project_slave_node_id"), fixture.slaveId.toString()},
+            {QStringLiteral("semantic_action_binding_ids"),
+             stringObject(projection.semanticActionBindingIds)},
+            {QStringLiteral("semantic_binding_ids"),
+             stringObject(projection.semanticBindingIds)},
+            {QStringLiteral("slave_node_id"), projection.slaveNodeId},
+            {QStringLiteral("symbol_mode"), QStringLiteral("report_only")},
+            {QStringLiteral("symbols"), stringObject(projection.symbols)},
+        };
+        const QJsonObject profile{
+            {QStringLiteral("adapter_bundle"), descriptor(sources.adapterBundle)},
+            {QStringLiteral("contract_id"), fixture.request.contractIdentity.contractId},
+            {QStringLiteral("contract_version"),
+             int(fixture.request.contractIdentity.contractVersion)},
+            {QStringLiteral("controller_features"), descriptor(sources.controllerFeatures)},
+            {QStringLiteral("devices"), QJsonArray{device}},
+            {QStringLiteral("format"),
+             QStringLiteral("ethercat-ide-compiler-input-provisioning-v1")},
+            {QStringLiteral("format_version"), 1},
+            {QStringLiteral("master_node_id"), fixture.request.projectProjection.masterNodeId},
+            {QStringLiteral("policy_template"), descriptor(sources.policyTemplate)},
+            {QStringLiteral("production_public_key"), descriptor(sources.productionPublicKey)},
+            {QStringLiteral("project_id"), fixture.request.projectProjection.projectId},
+            {QStringLiteral("runtime_source"), descriptor(sources.runtimeSource)},
+            {QStringLiteral("schema_bundle_sha256"),
+             QString::fromLatin1(
+                 fixture.request.contractIdentity.schemaBundleSha256.value().toHex())},
+            {QStringLiteral("target_profile"), descriptor(sources.targetProfile)},
+            {QStringLiteral("target_profile_signature"),
+             descriptor(sources.targetProfileSignature)},
+            {QStringLiteral("topology_ttl_ns"), 3'600'000'000'000.0},
+            {QStringLiteral("ui_metadata"), QJsonObject{}},
+        };
+        profilePath = temporary.filePath(QStringLiteral("compile-inputs.json"));
+        writeFile(profilePath, QJsonDocument(profile).toJson(QJsonDocument::Compact));
+    }
+};
+
+bool replaceCompilerInputArtifact(
+    BuilderInputEnvironment *environment,
+    const Data::RuntimePackageCompilerSourceArtifact &artifact,
+    const QByteArray &replacement)
+{
+    QJsonDocument document = QJsonDocument::fromJson(readFile(environment->profilePath));
+    if (!document.isObject()
+        || !writeFile(environment->temporary.filePath(artifact.relativePath), replacement)) {
+        return false;
+    }
+    QJsonObject profile = document.object();
+    bool found = false;
+    for (auto it = profile.begin(); it != profile.end(); ++it) {
+        if (!it->isObject())
+            continue;
+        QJsonObject descriptor = it->toObject();
+        if (descriptor.value(QStringLiteral("path")).toString() != artifact.relativePath)
+            continue;
+        descriptor.insert(
+            QStringLiteral("sha256"),
+            QString::fromLatin1(sha256(replacement).value().toHex()));
+        it.value() = descriptor;
+        found = true;
+        break;
+    }
+    return found
+           && writeFile(
+               environment->profilePath, QJsonDocument(profile).toJson(QJsonDocument::Compact));
+}
+
 Core::RuntimePackageCompilerPreparationStartRequest preparationRequest(
     const CompilerFixture &fixture, quint64 ordinal)
 {
@@ -825,6 +1262,248 @@ void EtherCATProjectCompilerTests::testProvisioningRejectsUnsafeExecutables()
     changed.close();
     QVERIFY(!provider->compile(environment.fixture.request));
     QVERIFY(!QFileInfo::exists(environment.root + QStringLiteral("/compiler-ledger.json.calls")));
+}
+
+void EtherCATProjectCompilerTests::testCompilerInputProvisioningVerifiesTargetSignature()
+{
+    CompilerFixture fixture;
+    const auto &sources = fixture.request.sourceArtifacts;
+
+    BuilderInputEnvironment valid(fixture);
+    const auto loaded = CompilerInputProvisioningProfile::load(
+        Utils::FilePath::fromString(valid.profilePath));
+    QVERIFY_RESULT(loaded);
+    QVERIFY(loaded->targetProfile().productionSigned);
+
+    BuilderInputEnvironment changedTarget(fixture);
+    QByteArray targetBytes = sources.targetProfile.exactBytes;
+    targetBytes[0] = targetBytes[0] == '{' ? '[' : '{';
+    QVERIFY(replaceCompilerInputArtifact(&changedTarget, sources.targetProfile, targetBytes));
+    const auto targetRejected = CompilerInputProvisioningProfile::load(
+        Utils::FilePath::fromString(changedTarget.profilePath));
+    QVERIFY(!targetRejected);
+    QVERIFY(targetRejected.error().contains(QStringLiteral("signature"), Qt::CaseInsensitive));
+
+    BuilderInputEnvironment changedSignature(fixture);
+    QByteArray signatureBytes = sources.targetProfileSignature.exactBytes;
+    signatureBytes[0] = char(quint8(signatureBytes.at(0)) ^ 0x01);
+    QVERIFY(replaceCompilerInputArtifact(
+        &changedSignature, sources.targetProfileSignature, signatureBytes));
+    const auto signatureRejected = CompilerInputProvisioningProfile::load(
+        Utils::FilePath::fromString(changedSignature.profilePath));
+    QVERIFY(!signatureRejected);
+    QVERIFY(signatureRejected.error().contains(QStringLiteral("signature"), Qt::CaseInsensitive));
+
+    BuilderInputEnvironment changedPublicKey(fixture);
+    QByteArray publicKeyBytes = sources.productionPublicKey.exactBytes;
+    publicKeyBytes[0] = char(quint8(publicKeyBytes.at(0)) ^ 0x01);
+    QVERIFY(replaceCompilerInputArtifact(
+        &changedPublicKey, sources.productionPublicKey, publicKeyBytes));
+    const auto publicKeyRejected = CompilerInputProvisioningProfile::load(
+        Utils::FilePath::fromString(changedPublicKey.profilePath));
+    QVERIFY(!publicKeyRejected);
+    QVERIFY(publicKeyRejected.error().contains(QStringLiteral("signature"), Qt::CaseInsensitive));
+}
+
+void EtherCATProjectCompilerTests::testProjectRequestBuilderProvisioningAndDeterminism()
+{
+    CompilerFixture fixture;
+    BuilderInputEnvironment inputs(fixture);
+    const auto loaded = CompilerInputProvisioningProfile::load(
+        Utils::FilePath::fromString(inputs.profilePath));
+    QVERIFY_RESULT(loaded);
+    QVERIFY(loaded->validateCurrent());
+    QCOMPARE(loaded->devices().size(), 1);
+
+    Core::ProviderRegistry *registry
+        = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+    BuilderProjectService project(fixture);
+    BuilderConnectionProvider connection(fixture);
+    BuilderDeviceRepository repository(fixture);
+    BuilderAdapterProvider adapters(fixture);
+    ScopedProviderKindRegistration projectRegistration(registry, &project);
+    ScopedProviderKindRegistration connectionRegistration(registry, &connection);
+    ScopedProviderKindRegistration repositoryRegistration(registry, &repository);
+    ScopedProviderKindRegistration adapterRegistration(registry, &adapters);
+
+    ProvisionedRuntimePackageCompilerProjectRequestBuilder builder(
+        registry,
+        Utils::FilePath::fromString(inputs.profilePath),
+        nullptr,
+        [&fixture] { return fixture.request.compileTimeNs; });
+    QVERIFY2(builder.isAvailable(), qPrintable(builder.provisioningError()));
+    const Core::RuntimePackageCompilerProjectRequestSeed seed{
+        fixture.request.topologyEvidence.scope,
+        fixture.request.operationId,
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8001-000000000001")},
+        Data::RuntimePackageActivationOperationId{
+            QStringLiteral("operation/compiler-entry-activation-1")},
+        fixture.request.intentId,
+        fixture.request.configurationId,
+        fixture.request.buildTimestampNs,
+        fixture.request.compileTimeNs,
+        true,
+    };
+    QVERIFY(seed.isValid());
+    const auto first = builder.build(seed);
+    QVERIFY2(first, qPrintable(first.error()));
+    const auto second = builder.build(seed);
+    QVERIFY2(second, qPrintable(second.error()));
+    QCOMPARE(*first, *second);
+    QVERIFY(first->isValid());
+    QVERIFY(first->compileRequest.isValid());
+    QCOMPARE(first->compileRequest.topologyEvidence.slaves.constFirst().alias, quint16(0));
+    QVERIFY(first->compileRequest.topologyEvidence.slaves.constFirst().moduleAssignments.isEmpty());
+    QCOMPARE(
+        first->compileRequest.projectProjection.devices.constFirst().projectDeviceId,
+        fixture.request.projectProjection.devices.constFirst().projectDeviceId);
+    const auto encodedFirst = Core::encodeRuntimePackageCompilerCompileRequest(
+        first->compileRequest);
+    const auto encodedSecond = Core::encodeRuntimePackageCompilerCompileRequest(
+        second->compileRequest);
+    QVERIFY_RESULT(encodedFirst);
+    QVERIFY_RESULT(encodedSecond);
+    QCOMPARE(encodedFirst->exactBytes(), encodedSecond->exactBytes());
+
+    QFile runtime(inputs.temporary.filePath(fixture.request.sourceArtifacts.runtimeSource.relativePath));
+    QVERIFY(runtime.open(QIODevice::Append));
+    QCOMPARE(runtime.write("drift", 5), 5);
+    runtime.close();
+    QVERIFY(!builder.build(seed));
+    QVERIFY(!builder.isAvailable());
+}
+
+void EtherCATProjectCompilerTests::testProjectRequestBuilderFailsClosedOnUnprovenTopology()
+{
+    CompilerFixture fixture;
+    BuilderInputEnvironment inputs(fixture);
+    Core::ProviderRegistry *registry
+        = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+    BuilderProjectService project(fixture);
+    BuilderConnectionProvider connection(fixture);
+    BuilderDeviceRepository repository(fixture);
+    BuilderAdapterProvider adapters(fixture);
+    ScopedProviderKindRegistration projectRegistration(registry, &project);
+    ScopedProviderKindRegistration connectionRegistration(registry, &connection);
+    ScopedProviderKindRegistration repositoryRegistration(registry, &repository);
+    ScopedProviderKindRegistration adapterRegistration(registry, &adapters);
+    quint64 currentTimeNs = fixture.request.compileTimeNs;
+    ProvisionedRuntimePackageCompilerProjectRequestBuilder builder(
+        registry,
+        Utils::FilePath::fromString(inputs.profilePath),
+        nullptr,
+        [&currentTimeNs] { return currentTimeNs; });
+    QVERIFY(builder.isAvailable());
+    const Data::ControllerConnectionSnapshot originalConnection = connection.connectionSnapshot();
+
+    const Core::RuntimePackageCompilerProjectRequestSeed seed{
+        fixture.request.topologyEvidence.scope,
+        fixture.request.operationId,
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8001-000000000001")},
+        Data::RuntimePackageActivationOperationId{
+            QStringLiteral("operation/compiler-entry-activation-1")},
+        fixture.request.intentId,
+        fixture.request.configurationId,
+        fixture.request.buildTimestampNs,
+        fixture.request.compileTimeNs,
+        true,
+    };
+
+    Data::ProjectSnapshot aliasProject = projectCapture(fixture).snapshot();
+    aliasProject.slaves[0].alias = 1;
+    const auto originalCapture = projectCapture(fixture);
+    project.setCapture({aliasProject,
+                        originalCapture.serializedProject(),
+                        originalCapture.documentRevisionNumber(),
+                        originalCapture.documentRevision(),
+                        originalCapture.originalBinding()});
+    const auto aliasRejected = builder.build(seed);
+    QVERIFY(!aliasRejected);
+    QVERIFY(aliasRejected.error().contains(QStringLiteral("alias"), Qt::CaseInsensitive)
+            || aliasRejected.error().contains(QStringLiteral("topology"), Qt::CaseInsensitive));
+
+    project.setCapture(originalCapture);
+    connection.mutableSnapshot().topology->slaves[0].serial = 7;
+    const auto topologyRejected = builder.build(seed);
+    QVERIFY(!topologyRejected);
+    QVERIFY(topologyRejected.error().contains(QStringLiteral("topology"), Qt::CaseInsensitive));
+
+    connection.mutableSnapshot() = originalConnection;
+    connection.mutableSnapshot().mock = true;
+    const auto mockRejected = builder.build(seed);
+    QVERIFY(!mockRejected);
+    QVERIFY(mockRejected.error().contains(QStringLiteral("real"), Qt::CaseInsensitive));
+
+    connection.mutableSnapshot() = originalConnection;
+    const auto setProject = [&](Data::ProjectSnapshot snapshot) {
+        project.setCapture({snapshot,
+                            originalCapture.serializedProject(),
+                            originalCapture.documentRevisionNumber(),
+                            originalCapture.documentRevision(),
+                            originalCapture.originalBinding()});
+    };
+    Data::ProjectSnapshot missingPdoProject = originalCapture.snapshot();
+    missingPdoProject.slaves[0].processData.pdos[0].selected = false;
+    setProject(missingPdoProject);
+    const auto missingPdoRejected = builder.build(seed);
+    QVERIFY(!missingPdoRejected);
+    QVERIFY(missingPdoRejected.error().contains(QStringLiteral("PDO"), Qt::CaseInsensitive));
+
+    Data::ProjectSnapshot extraPdoProject = originalCapture.snapshot();
+    Data::PdoConfiguration extraPdo = extraPdoProject.slaves[0].processData.pdos.constFirst();
+    extraPdo.id = Data::NodeId::create();
+    ++extraPdo.index;
+    extraPdo.name += QStringLiteral(".extra");
+    extraPdoProject.slaves[0].processData.pdos.append(extraPdo);
+    setProject(extraPdoProject);
+    const auto extraPdoRejected = builder.build(seed);
+    QVERIFY(!extraPdoRejected);
+    QVERIFY(extraPdoRejected.error().contains(QStringLiteral("PDO"), Qt::CaseInsensitive));
+
+    Data::ProjectSnapshot duplicatePdoProject = originalCapture.snapshot();
+    Data::PdoConfiguration duplicatePdo
+        = duplicatePdoProject.slaves[0].processData.pdos.constFirst();
+    duplicatePdo.id = Data::NodeId::create();
+    duplicatePdo.name += QStringLiteral(".duplicate");
+    duplicatePdoProject.slaves[0].processData.pdos.append(duplicatePdo);
+    setProject(duplicatePdoProject);
+    const auto duplicatePdoRejected = builder.build(seed);
+    QVERIFY(!duplicatePdoRejected);
+    QVERIFY(duplicatePdoRejected.error().contains(QStringLiteral("duplicate"), Qt::CaseInsensitive));
+
+    Data::ProjectSnapshot wrongDirectionProject = originalCapture.snapshot();
+    wrongDirectionProject.slaves[0].processData.pdos[0].direction = Data::PdoDirection::Tx;
+    setProject(wrongDirectionProject);
+    const auto wrongDirectionRejected = builder.build(seed);
+    QVERIFY(!wrongDirectionRejected);
+    QVERIFY(wrongDirectionRejected.error().contains(QStringLiteral("PDO"), Qt::CaseInsensitive));
+
+    Data::ProjectSnapshot sdoProject = originalCapture.snapshot();
+    Data::StartupParameterConfiguration startup;
+    startup.id = Data::NodeId::create();
+    startup.enabled = true;
+    startup.order = 1;
+    startup.transition = QStringLiteral("preop");
+    startup.index = 0x2000;
+    startup.subIndex = 1;
+    startup.dataType = Data::EtherCATDataType::UnsignedInteger16;
+    startup.rawValue = QByteArray::fromHex("0001");
+    sdoProject.slaves[0].startup.parameters.append(startup);
+    setProject(sdoProject);
+    const auto sdoRejected = builder.build(seed);
+    QVERIFY(!sdoRejected);
+    QVERIFY(sdoRejected.error().contains(QStringLiteral("SDO"), Qt::CaseInsensitive));
+
+    setProject(originalCapture.snapshot());
+    currentTimeNs = fixture.request.topologyEvidence.expiresAtNs + 1;
+    const auto replayedStaleTopologyRejected = builder.build(seed);
+    QVERIFY(!replayedStaleTopologyRejected);
+    QVERIFY(replayedStaleTopologyRejected.error().contains(
+        QStringLiteral("build time"), Qt::CaseInsensitive));
 }
 
 void EtherCATProjectCompilerTests::testScheduledJobUsesPinnedProvisioning()

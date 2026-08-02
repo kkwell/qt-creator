@@ -1,9 +1,11 @@
 add_qtc_plugin(EtherCATProjectCompiler
-  DEPENDS EtherCATData Qt::Core Utils
+  DEPENDS EtherCATData Qt::Core Utils qtcMonocypher
   PLUGIN_DEPENDS Core EtherCATCore
   SOURCES
     compileroperationstore.cpp
     compileroperationstore.h
+    compilerinputprovisioningprofile.cpp
+    compilerinputprovisioningprofile.h
     compilerprovisioningprofile.cpp
     compilerprovisioningprofile.h
     durableruntimepackagecompilerpreparationcoordinator.cpp
@@ -13,6 +15,8 @@ add_qtc_plugin(EtherCATProjectCompiler
     ethercatprojectcompilertr.h
     provisionedruntimepackagecompilerprovider.cpp
     provisionedruntimepackagecompilerprovider.h
+    provisionedruntimepackagecompilerprojectrequestbuilder.cpp
+    provisionedruntimepackagecompilerprojectrequestbuilder.h
     runtimepackagecompilerpreparationjournal.cpp
     runtimepackagecompilerpreparationjournal.h
 )

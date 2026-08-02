@@ -7,6 +7,7 @@ Project {
 
         Depends { name: "Qt"; submodules: ["core"] }
         Depends { name: "EtherCATData" }
+        Depends { name: "qtcMonocypher" }
         Depends { name: "Utils" }
         Depends { name: "Core" }
         Depends { name: "EtherCATCore" }
@@ -18,6 +19,8 @@ Project {
         files: [
             "compileroperationstore.cpp",
             "compileroperationstore.h",
+            "compilerinputprovisioningprofile.cpp",
+            "compilerinputprovisioningprofile.h",
             "compilerprovisioningprofile.cpp",
             "compilerprovisioningprofile.h",
             "durableruntimepackagecompilerpreparationcoordinator.cpp",
@@ -27,6 +30,8 @@ Project {
             "ethercatprojectcompilertr.h",
             "provisionedruntimepackagecompilerprovider.cpp",
             "provisionedruntimepackagecompilerprovider.h",
+            "provisionedruntimepackagecompilerprojectrequestbuilder.cpp",
+            "provisionedruntimepackagecompilerprojectrequestbuilder.h",
             "runtimepackagecompilerpreparationjournal.cpp",
             "runtimepackagecompilerpreparationjournal.h",
         ]

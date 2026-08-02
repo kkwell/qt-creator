@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Embed Labs
 
 #include "durableruntimepackagecompilerpreparationcoordinator.h"
+#include "provisionedruntimepackagecompilerprojectrequestbuilder.h"
 #include "provisionedruntimepackagecompilerprovider.h"
 
 #ifdef WITH_TESTS
@@ -37,8 +38,10 @@ private:
     void shutdown();
 
     std::unique_ptr<ProvisionedRuntimePackageCompilerProvider> m_provider;
+    std::unique_ptr<ProvisionedRuntimePackageCompilerProjectRequestBuilder> m_requestBuilder;
     std::unique_ptr<DurableRuntimePackageCompilerPreparationCoordinator> m_coordinator;
     bool m_providerRegistered = false;
+    bool m_requestBuilderRegistered = false;
     bool m_coordinatorRegistered = false;
 };
 
@@ -57,6 +60,12 @@ void EtherCATProjectCompilerPlugin::initialize()
 
     auto *providerRegistry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
     if (providerRegistry) {
+        m_requestBuilder
+            = std::make_unique<ProvisionedRuntimePackageCompilerProjectRequestBuilder>(
+                providerRegistry, compilerRoot / "compile-inputs.json");
+        ExtensionSystem::PluginManager::addObject(m_requestBuilder.get());
+        m_requestBuilderRegistered = true;
+
         const QPointer<Core::ProviderRegistry> registryGuard(providerRegistry);
         const RuntimePackageCompilerCurrentProjectCapture currentProjectCapture =
             [registryGuard](const Data::NodeId &projectId)
@@ -106,6 +115,13 @@ void EtherCATProjectCompilerPlugin::shutdown()
             m_coordinatorRegistered = false;
         }
         m_coordinator.reset();
+    }
+    if (m_requestBuilder) {
+        if (m_requestBuilderRegistered) {
+            ExtensionSystem::PluginManager::removeObject(m_requestBuilder.get());
+            m_requestBuilderRegistered = false;
+        }
+        m_requestBuilder.reset();
     }
     if (!m_provider)
         return;

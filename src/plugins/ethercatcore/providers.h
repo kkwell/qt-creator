@@ -38,6 +38,7 @@ enum class ProviderKind {
     ControllerConnection,
     DeviceAdapter,
     RuntimePackageCompiler = 7,
+    RuntimePackageCompilerProjectRequestBuilder = 8,
 };
 enum class DeviceImportState { Pending, Running, Canceling, Finished };
 enum class ProviderDiagnosticSeverity { Information, Warning, Error };

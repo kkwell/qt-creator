@@ -12,6 +12,7 @@
 #include "runtimepackageactivationservice.h"
 #include "runtimepackagecompilercodec.h"
 #include "runtimepackagecompilerpreparationcoordinator.h"
+#include "runtimepackagecompilerprojectrequestbuilder.h"
 #include "runtimepackagecompilerprovider.h"
 #include "selectionservice.h"
 #include "semanticruntimeservice.h"
@@ -7156,6 +7157,70 @@ void EtherCATCoreTests::testRuntimePackageCompilerProviderContract()
     removeProvider.dismiss();
     QVERIFY(!registry->provider(provider.id()));
     QCOMPARE(removedSpy.count(), 1);
+}
+
+void EtherCATCoreTests::testRuntimePackageCompilerProjectRequestBuilderContract()
+{
+    class TestBuilder final : public RuntimePackageCompilerProjectRequestBuilder
+    {
+    public:
+        explicit TestBuilder(Utils::Id id)
+            : RuntimePackageCompilerProjectRequestBuilder(
+                  id, QStringLiteral("Test compiler request builder"))
+        {}
+
+        Utils::Result<RuntimePackageCompilerPreparationStartRequest> build(
+            const RuntimePackageCompilerProjectRequestSeed &) final
+        {
+            return Utils::ResultError(QStringLiteral("Not exercised by the routing test."));
+        }
+    };
+
+    RuntimePackageCompilerProjectRequestSeed seed{
+        {Data::NodeId::fromString(QStringLiteral("11111111-1111-4111-8111-111111111111")),
+         Data::NodeId::fromString(QStringLiteral("22222222-2222-4222-8222-222222222222"))},
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8000-000000000001")},
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8001-000000000001")},
+        Data::RuntimePackageActivationOperationId{
+            QStringLiteral("operation/compiler-activation-1")},
+        QStringLiteral("embedlabs:compile-intent:project-1"),
+        4201,
+        1'785'542'400'000'000'000ULL,
+        1'785'542'401'000'000'000ULL,
+        true,
+    };
+    QVERIFY(seed.isValid());
+    RuntimePackageCompilerProjectRequestSeed invalid = seed;
+    invalid.verifyOperationId = invalid.compileOperationId;
+    QVERIFY(!invalid.isValid());
+    invalid = seed;
+    invalid.compileTimeNs = invalid.buildTimestampNs - 1;
+    QVERIFY(!invalid.isValid());
+
+    QCOMPARE(int(ProviderKind::RuntimePackageCompilerProjectRequestBuilder), 8);
+    ProviderRegistry *registry = ExtensionSystem::PluginManager::getObject<ProviderRegistry>();
+    QVERIFY(registry);
+    QVERIFY(!uniqueRuntimePackageCompilerProjectRequestBuilder(nullptr));
+
+    TestBuilder first("EtherCAT.Compiler.RequestBuilder.Test1");
+    TestBuilder second("EtherCAT.Compiler.RequestBuilder.Test2");
+    first.setAvailable(true);
+    second.setAvailable(true);
+    ExtensionSystem::PluginManager::addObject(&first);
+    auto removeFirst = qScopeGuard([&] { ExtensionSystem::PluginManager::removeObject(&first); });
+    const auto selected = uniqueRuntimePackageCompilerProjectRequestBuilder(registry);
+    QVERIFY_RESULT(selected);
+    QCOMPARE(*selected, &first);
+
+    ExtensionSystem::PluginManager::addObject(&second);
+    auto removeSecond = qScopeGuard([&] { ExtensionSystem::PluginManager::removeObject(&second); });
+    QVERIFY(!uniqueRuntimePackageCompilerProjectRequestBuilder(registry));
+    second.setAvailable(false);
+    const auto selectedAgain = uniqueRuntimePackageCompilerProjectRequestBuilder(registry);
+    QVERIFY_RESULT(selectedAgain);
+    QCOMPARE(*selectedAgain, &first);
 }
 
 void EtherCATCoreTests::testRuntimePackageCompilerPreparationCoordinatorContract()
