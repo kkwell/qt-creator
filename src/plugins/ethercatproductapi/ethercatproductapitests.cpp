@@ -3148,7 +3148,9 @@ private:
                 ? m_helloLeaseOwnerSessionId
                 : (m_leaseOwned ? TestSessionId : 0));
         const quint32 defaultFeatureBits
-            = m_protocolMinor >= Protocol::OutputTransactionMinor
+            = m_protocolMinor >= Protocol::TopologyEvidenceMinor
+                  ? 0x1ffff
+              : m_protocolMinor >= Protocol::OutputTransactionMinor
                   ? 0xffff
               : m_protocolMinor >= Protocol::SemanticBindingAttestationMinor
                   ? 0x7fff
@@ -3704,7 +3706,7 @@ struct SnapshotOnlyHeartbeatEvidence
 };
 
 constexpr quint32 SnapshotOnlyFeatureMask
-    = Protocol::OutputTransactionFeature | (Protocol::OutputTransactionFeature - 1U);
+    = Protocol::TopologyEvidenceFeature | (Protocol::TopologyEvidenceFeature - 1U);
 
 constexpr std::array SnapshotOnlyMutationRequests{
     Protocol::MessageType::AcquireControl,
@@ -7028,12 +7030,12 @@ void EtherCATProductApiTests::testSnapshotOnlyHeartbeatGateFailures_data()
         << QStringLiteral("heartbeat is unavailable") << 1;
     QTest::newRow("control-feature-missing")
         << int(Behavior::Increment) << int(Protocol::CurrentMinor) << quint64(101)
-        << (SnapshotOnlyFeatureMask & ~Protocol::OutputTransactionFeature)
+        << (SnapshotOnlyFeatureMask & ~Protocol::TopologyEvidenceFeature)
         << SnapshotOnlyFeatureMask << SnapshotOnlyFeatureMask
         << QStringLiteral("three-channel feature set") << 1;
     QTest::newRow("push-feature-unknown")
         << int(Behavior::Increment) << int(Protocol::CurrentMinor) << quint64(101)
-        << SnapshotOnlyFeatureMask << (SnapshotOnlyFeatureMask | 0x00010000U)
+        << SnapshotOnlyFeatureMask << (SnapshotOnlyFeatureMask | 0x00020000U)
         << SnapshotOnlyFeatureMask << QStringLiteral("three-channel feature set") << 1;
     QTest::newRow("bulk-feature-missing")
         << int(Behavior::Increment) << int(Protocol::CurrentMinor) << quint64(101)
