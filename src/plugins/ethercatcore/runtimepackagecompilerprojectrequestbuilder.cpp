@@ -33,6 +33,11 @@ RuntimePackageCompilerProjectRequestBuilder::RuntimePackageCompilerProjectReques
           parent)
 {}
 
+QString RuntimePackageCompilerProjectRequestBuilder::unavailableReason() const
+{
+    return {};
+}
+
 Utils::Result<RuntimePackageCompilerProjectRequestBuilder *>
 uniqueRuntimePackageCompilerProjectRequestBuilder(ProviderRegistry *providerRegistry)
 {

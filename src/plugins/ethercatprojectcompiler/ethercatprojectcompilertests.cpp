@@ -1361,6 +1361,19 @@ void EtherCATProjectCompilerTests::testPluginMetadataAndDefaultAvailability()
         Utils::FilePath::fromString(temporary.filePath(QStringLiteral("root"))));
     QVERIFY(!provider.isAvailable());
     QVERIFY(!provider.provisioningError().isEmpty());
+    QCOMPARE(
+        provider.unavailableReason(),
+        QStringLiteral("No trusted compiler provisioning profile is installed."));
+
+    auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+    ProvisionedRuntimePackageCompilerProjectRequestBuilder builder(
+        registry,
+        Utils::FilePath::fromString(temporary.filePath(QStringLiteral("missing-inputs.json"))));
+    QVERIFY(!builder.isAvailable());
+    QCOMPARE(
+        builder.unavailableReason(),
+        QStringLiteral("No trusted compiler input profile is installed."));
 }
 
 void EtherCATProjectCompilerTests::testProvisioningRejectsUnsafeExecutables()

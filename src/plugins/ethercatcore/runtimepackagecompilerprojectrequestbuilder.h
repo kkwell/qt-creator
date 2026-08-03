@@ -49,6 +49,10 @@ public:
     RuntimePackageCompilerProjectRequestBuilder(
         Utils::Id id, const QString &displayName, QObject *parent = nullptr);
 
+    // An unavailable builder may expose a concise, user-facing reason. This
+    // must not contain untrusted backend output or sensitive local paths.
+    virtual QString unavailableReason() const;
+
     virtual Utils::Result<RuntimePackageCompilerPreparationStartRequest> build(
         const RuntimePackageCompilerProjectRequestSeed &seed)
         = 0;

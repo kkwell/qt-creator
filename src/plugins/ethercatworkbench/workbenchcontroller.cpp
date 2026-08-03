@@ -9,6 +9,7 @@
 
 #include <ethercatcore/providerregistry.h>
 #include <ethercatcore/runtimepackagecompilerprovider.h>
+#include <ethercatcore/runtimepackagecompilerprojectrequestbuilder.h>
 #include <ethercatcore/selectionservice.h>
 
 #include <extensionsystem/pluginmanager.h>
@@ -2915,23 +2916,60 @@ QString WorkbenchController::trustedRuntimePackageActivationUnavailableReason(
             "compiler workflow before activation.");
     }
     if (!m_runtimePackageActivationPreparation) {
-        bool compilerAvailable = false;
+        QList<Core::RuntimePackageCompilerProvider *> availableCompilers;
+        QStringList unavailableCompilerReasons;
+        QList<Core::RuntimePackageCompilerProjectRequestBuilder *> availableBuilders;
+        QStringList unavailableBuilderReasons;
         if (m_providerRegistry) {
             for (Core::Provider *provider :
                  m_providerRegistry->providers(
                      Core::ProviderKind::RuntimePackageCompiler)) {
-                if (provider && provider->isAvailable()) {
-                    compilerAvailable = true;
-                    break;
+                auto *compiler = qobject_cast<Core::RuntimePackageCompilerProvider *>(provider);
+                if (!compiler)
+                    continue;
+                if (compiler->isAvailable()) {
+                    availableCompilers.append(compiler);
+                } else if (const QString reason = compiler->unavailableReason().trimmed();
+                           !reason.isEmpty()) {
+                    unavailableCompilerReasons.append(reason);
+                }
+            }
+            for (Core::Provider *provider :
+                 m_providerRegistry->providers(
+                     Core::ProviderKind::RuntimePackageCompilerProjectRequestBuilder)) {
+                auto *builder
+                    = qobject_cast<Core::RuntimePackageCompilerProjectRequestBuilder *>(provider);
+                if (!builder)
+                    continue;
+                if (builder->isAvailable()) {
+                    availableBuilders.append(builder);
+                } else if (const QString reason = builder->unavailableReason().trimmed();
+                           !reason.isEmpty()) {
+                    unavailableBuilderReasons.append(reason);
                 }
             }
         }
-        return compilerAvailable
-                   ? Tr::tr(
-                         "Compile and verify this exact open project before trusted activation.")
-                   : Tr::tr(
-                         "No API-042 project compiler is installed. Configure the trusted "
-                         "compiler workflow, then compile and verify this exact project.");
+        if (availableCompilers.size() != 1) {
+            if (availableCompilers.isEmpty() && unavailableCompilerReasons.size() == 1) {
+                return Tr::tr("Trusted project compiler is unavailable: %1")
+                    .arg(unavailableCompilerReasons.constFirst());
+            }
+            return availableCompilers.isEmpty()
+                       ? Tr::tr(
+                             "No API-042 project compiler is installed. Configure the trusted "
+                             "compiler workflow, then compile and verify this exact project.")
+                       : Tr::tr("Trusted project compiler selection is ambiguous.");
+        }
+        if (availableBuilders.size() != 1) {
+            if (availableBuilders.isEmpty() && unavailableBuilderReasons.size() == 1) {
+                return Tr::tr("Trusted compiler inputs are unavailable: %1")
+                    .arg(unavailableBuilderReasons.constFirst());
+            }
+            return availableBuilders.isEmpty()
+                       ? Tr::tr("No trusted compiler input profile is installed.")
+                       : Tr::tr("Trusted compiler input selection is ambiguous.");
+        }
+        return Tr::tr("Compile and verify this exact open project before trusted activation.");
     }
     if (m_runtimePackageActivationPreparation->scope != scope) {
         return Tr::tr(

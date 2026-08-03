@@ -119,6 +119,10 @@ public:
     RuntimePackageCompilerProvider(
         Utils::Id id, const QString &displayName, QObject *parent = nullptr);
 
+    // An unavailable provider may expose a concise, user-facing reason. This
+    // must not contain untrusted backend output or sensitive local paths.
+    virtual QString unavailableReason() const;
+
     virtual Utils::Result<RuntimePackageCompilerJob *> compile(
         const Data::RuntimePackageCompilerCompileRequest &request) = 0;
     virtual Utils::Result<RuntimePackageCompilerJob *> finalize(

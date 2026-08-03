@@ -36,6 +36,7 @@ public:
     ~ProvisionedRuntimePackageCompilerProvider() final;
 
     QString provisioningError() const;
+    QString unavailableReason() const final;
     Utils::FilePath compilerRoot() const;
     Utils::FilePath operationRoot(const Data::RuntimePackageCompilerOperationId &operationId) const;
 

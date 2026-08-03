@@ -33,6 +33,7 @@ public:
     ~ProvisionedRuntimePackageCompilerProjectRequestBuilder() final;
 
     QString provisioningError() const;
+    QString unavailableReason() const final;
 
     Utils::Result<Core::RuntimePackageCompilerPreparationStartRequest> build(
         const Core::RuntimePackageCompilerProjectRequestSeed &seed) final;

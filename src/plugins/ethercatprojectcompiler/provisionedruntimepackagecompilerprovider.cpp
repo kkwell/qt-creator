@@ -25,6 +25,22 @@ namespace EtherCAT::ProjectCompiler {
 
 namespace {
 
+QString userFacingProvisioningError(const QString &error)
+{
+    if (error.startsWith(QStringLiteral("Provisioned path is not a regular non-symlink file:"))) {
+        return Tr::tr("No trusted compiler provisioning profile is installed.");
+    }
+    if (error.startsWith(QStringLiteral("Provisioned file exceeds its size limit:"))
+        || error.startsWith(QStringLiteral("Provisioned compiler is not executable:"))
+        || error.startsWith(QStringLiteral("Cannot securely open provisioned file:"))
+        || error.startsWith(QStringLiteral("Provisioned file changed while it was opened:"))
+        || error.startsWith(QStringLiteral("Cannot completely read provisioned file:"))
+        || error.startsWith(QStringLiteral("Pinned compiler or production key changed"))) {
+        return Tr::tr("Trusted compiler provisioning files do not meet security requirements.");
+    }
+    return error;
+}
+
 using JobResultDecoder = std::function<Utils::Result<Data::RuntimePackageCompilerJobResult>(
     const CompilerOperationLease &, const Core::RuntimePackageCompilerProcessOutput &)>;
 using QueryResultDecoder = std::function<Utils::Result<Data::RuntimePackageCompilerQueryResult>(
@@ -506,6 +522,11 @@ ProvisionedRuntimePackageCompilerProvider::~ProvisionedRuntimePackageCompilerPro
 QString ProvisionedRuntimePackageCompilerProvider::provisioningError() const
 {
     return d->error;
+}
+
+QString ProvisionedRuntimePackageCompilerProvider::unavailableReason() const
+{
+    return userFacingProvisioningError(d->error);
 }
 
 Utils::FilePath ProvisionedRuntimePackageCompilerProvider::compilerRoot() const

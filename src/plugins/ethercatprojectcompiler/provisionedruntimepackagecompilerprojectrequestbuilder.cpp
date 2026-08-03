@@ -751,6 +751,26 @@ QString ProvisionedRuntimePackageCompilerProjectRequestBuilder::provisioningErro
     return d->error;
 }
 
+QString ProvisionedRuntimePackageCompilerProjectRequestBuilder::unavailableReason() const
+{
+    if (d->error.startsWith(
+            QStringLiteral("Provisioned path is not a regular non-symlink file:"))) {
+        return Tr::tr("No trusted compiler input profile is installed.");
+    }
+    if (d->error.startsWith(QStringLiteral("Provisioned file exceeds its size limit:"))
+        || d->error.startsWith(QStringLiteral("Provisioned compiler is not executable:"))
+        || d->error.startsWith(QStringLiteral("Cannot securely open provisioned file:"))
+        || d->error.startsWith(QStringLiteral("Provisioned file changed while it was opened:"))
+        || d->error.startsWith(QStringLiteral("Cannot completely read provisioned file:"))
+        || d->error.startsWith(QStringLiteral("Compiler input artifact descriptor is invalid."))
+        || d->error.startsWith(QStringLiteral("Compiler input artifact identity is invalid."))
+        || d->error.startsWith(QStringLiteral("Compiler input artifact digest does not match."))
+        || d->error.startsWith(QStringLiteral("Compiler input provisioning"))) {
+        return Tr::tr("Trusted compiler input files do not meet security requirements.");
+    }
+    return d->error;
+}
+
 Utils::Result<Core::RuntimePackageCompilerPreparationStartRequest>
 ProvisionedRuntimePackageCompilerProjectRequestBuilder::build(
     const Core::RuntimePackageCompilerProjectRequestSeed &seed)
