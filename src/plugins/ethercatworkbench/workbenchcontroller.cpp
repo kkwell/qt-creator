@@ -275,9 +275,9 @@ static std::optional<CurrentBusAdapterSelection> resolveCurrentBusAdapterSelecti
     request.device = device;
     request.processImage = validation.processImage;
     request.allowCandidate = true;
+    request.moduleAssignments = savedSelection.moduleAssignments;
     if (hasCompleteSavedSelection) {
         request.processDataProfileId = savedSelection.processDataProfileId;
-        request.moduleAssignments = savedSelection.moduleAssignments;
     }
 
     QList<CurrentBusAdapterSelection> matches;
@@ -595,6 +595,7 @@ static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
         });
     QSet<quint32> positions;
     QHash<quint16, quint32> stationPositions;
+    const bool hasTopologyEvidence = topology.topologyCaptureSequence != 0;
     for (const Data::ControllerTopologySlave &slave : std::as_const(sortedTopology)) {
         if (slave.position > quint32(std::numeric_limits<int>::max())
             || positions.contains(slave.position)) {
@@ -609,6 +610,22 @@ static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
             return Utils::ResultError(
                 Tr::tr("The detected EtherCAT device at bus position %1 has station address 0.")
                     .arg(slave.position));
+        }
+        if (hasTopologyEvidence
+            && (slave.aliasValidity != Data::ControllerTopologyEvidenceValidity::Valid
+                || slave.aliasProvenance
+                       != Data::ControllerTopologyEvidenceProvenance::Observed
+                || slave.aliasSource != Data::ControllerTopologyEvidenceSource::EscStationAlias
+                || (slave.moduleValidity != Data::ControllerTopologyEvidenceValidity::Valid
+                    && slave.moduleValidity
+                           != Data::ControllerTopologyEvidenceValidity::Unavailable)
+                || slave.moduleProvenance
+                       != Data::ControllerTopologyEvidenceProvenance::DeviceReported
+                || (slave.moduleSource != Data::ControllerTopologyEvidenceSource::SiiMailbox
+                    && slave.moduleSource
+                           != Data::ControllerTopologyEvidenceSource::CoeDetectedModules))) {
+            return Utils::ResultError(
+                Tr::tr("A detected EtherCAT device has incomplete alias or module evidence."));
         }
         const auto duplicateStation = stationPositions.constFind(slave.stationAddress);
         if (duplicateStation != stationPositions.cend()) {
@@ -685,6 +702,18 @@ static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
                 Tr::tr("Unknown EtherCAT Device %1").arg(position + 1), plan.candidateSlaves);
         }
         candidate.stationAddress = topologySlave.stationAddress;
+        if (hasTopologyEvidence) {
+            candidate.alias = topologySlave.alias;
+            candidate.adapterSelection.moduleAssignments.clear();
+            if (topologySlave.moduleValidity
+                == Data::ControllerTopologyEvidenceValidity::Valid) {
+                for (const Data::ControllerTopologyModuleEvidence &module :
+                     topologySlave.modules) {
+                    candidate.adapterSelection.moduleAssignments.append(
+                        {int(module.slot), module.moduleIdent, 0, 0});
+                }
+            }
+        }
 
         if (device) {
             candidate.esiSha256 = device->sourceSha256;

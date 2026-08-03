@@ -193,12 +193,10 @@ Utils::Result<CompilerInputProvisionedDevice> loadDevice(
 
     const auto alias = unsignedInteger(object.value(QStringLiteral("expected_alias")));
     const QJsonArray modules = object.value(QStringLiteral("expected_modules")).toArray();
-    // Product API v1.14 does not carry alias or module assignment evidence.
-    // v1 permits only an explicitly provisioned zero/empty claim.
-    if (!alias || *alias != 0 || !object.value(QStringLiteral("expected_modules")).isArray()
-        || !modules.isEmpty()) {
-        return Utils::ResultError(
-            QStringLiteral("Product API topology cannot prove alias or module assignments."));
+    if (!alias || *alias > std::numeric_limits<quint16>::max()
+        || !object.value(QStringLiteral("expected_modules")).isArray()
+        || modules.size() > 128) {
+        return Utils::ResultError(QStringLiteral("Provisioned topology evidence is invalid."));
     }
 
     bool mapsOk = true;
@@ -207,7 +205,28 @@ Utils::Result<CompilerInputProvisionedDevice> loadDevice(
         object.value(QStringLiteral("project_slave_node_id")).toString());
     result.slaveNodeId = object.value(QStringLiteral("slave_node_id")).toString();
     result.projectDeviceId = object.value(QStringLiteral("project_device_id")).toString();
-    result.expectedAlias = 0;
+    result.expectedAlias = quint16(*alias);
+    int previousSlot = 0;
+    for (const QJsonValue &moduleValue : modules) {
+        const QJsonObject module = moduleValue.toObject();
+        if (!hasExactKeys(
+                module,
+                {QStringLiteral("module_ident"), QStringLiteral("slot")})) {
+            return Utils::ResultError(
+                QStringLiteral("Provisioned module evidence shape is invalid."));
+        }
+        const auto slot = unsignedInteger(module.value(QStringLiteral("slot")));
+        const auto moduleIdent = unsignedInteger(module.value(QStringLiteral("module_ident")));
+        if (!slot || *slot < 1 || *slot > std::numeric_limits<quint16>::max()
+            || int(*slot) <= previousSlot || !moduleIdent
+            || *moduleIdent > std::numeric_limits<quint32>::max()) {
+            return Utils::ResultError(
+                QStringLiteral("Provisioned module evidence identity is invalid."));
+        }
+        result.expectedModuleAssignments.append(
+            {int(*slot), quint32(*moduleIdent), 0, 0});
+        previousSlot = int(*slot);
+    }
     result.componentBindingIds = stringMap(
         object.value(QStringLiteral("component_binding_ids")), &mapsOk);
     result.semanticBindingIds = stringMap(
@@ -241,6 +260,7 @@ bool CompilerInputProvisionedDevice::isValid() const
     projection.projectDeviceId = projectDeviceId;
     projection.position = 0;
     projection.stationAddress = 1;
+    projection.alias = expectedAlias;
     projection.identity = {1, 1, 0};
     projection.esiSha256 = Data::RuntimePackageCompilerSha256{QByteArray(32, '\1')};
     projection.targetProfileId = QStringLiteral("provisioning.validation");
@@ -254,14 +274,14 @@ bool CompilerInputProvisionedDevice::isValid() const
                                0,
                                false,
                                {{QStringLiteral("validation"), 1, 0, 1, QStringLiteral("BOOL")}}}};
+    projection.moduleAssignments = expectedModuleAssignments;
     projection.componentBindingIds = componentBindingIds;
     projection.semanticBindingIds = semanticBindingIds;
     projection.semanticActionBindingIds = semanticActionBindingIds;
     projection.symbolMode = symbolMode;
     projection.symbols = symbols;
     projection.manualEnvelope = manualEnvelope;
-    return expectedAlias == 0 && expectedModuleAssignments.isEmpty()
-           && adapterSourceFile.isValid() && projection.isValid();
+    return adapterSourceFile.isValid() && projection.isValid();
 }
 
 Utils::Result<CompilerInputProvisioningProfile> CompilerInputProvisioningProfile::load(

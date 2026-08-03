@@ -6,6 +6,7 @@
 
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QSet>
 #include <QtEndian>
 
 #include <algorithm>
@@ -567,6 +568,7 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
                    || type == MessageType::EnterConfigurationMode
                    || type == MessageType::GetCapability
                    || type == MessageType::DiscoverTopology
+                   || type == MessageType::DiscoverTopologyEvidence
                    || type == MessageType::ApplyOutputTransaction
                    || type == MessageType::GetPackageState
                    || type == MessageType::ValidatePackage
@@ -593,6 +595,7 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
     if (role == Role::Control) {
         return type == MessageType::CommandStatus || type == MessageType::ControllerState
                || type == MessageType::Capability || type == MessageType::TopologyResult
+               || type == MessageType::TopologyEvidence
                || type == MessageType::PackageState || type == MessageType::FirmwareState
                || type == MessageType::OutputTransactionResult;
     }
@@ -964,6 +967,7 @@ bool commandStatusOriginalAllowed(quint16 originalType)
     case MessageType::ResumeEvents:
     case MessageType::GetCapability:
     case MessageType::DiscoverTopology:
+    case MessageType::DiscoverTopologyEvidence:
     case MessageType::GetPackageState:
     case MessageType::ValidatePackage:
     case MessageType::ActivatePackage:
@@ -1439,6 +1443,7 @@ bool isSupportedRequest(MessageType type)
            || type == MessageType::ResetFault || type == MessageType::Heartbeat
            || type == MessageType::EnterConfigurationMode
            || type == MessageType::DiscoverTopology
+           || type == MessageType::DiscoverTopologyEvidence
            || type == MessageType::ApplyOutputTransaction
            || isPackageDeploymentRequest(type);
 }
@@ -1553,6 +1558,15 @@ QByteArray encodeRequest(
             -14);
         return {};
     }
+    if (type == MessageType::DiscoverTopologyEvidence
+        && protocolMinor < TopologyEvidenceMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            Tr::tr("Topology evidence requires protocol v1.15."),
+            -14);
+        return {};
+    }
     bool payloadValid = false;
     if (type == MessageType::Hello) {
         payloadValid = payload.size() == 24;
@@ -1570,6 +1584,23 @@ QByteArray encodeRequest(
                        && readBigEndian<quint16>(payload, 2) >= 1
                        && readBigEndian<quint16>(payload, 2) <= 64
                        && readBigEndian<quint32>(payload, 4) == 0;
+    } else if (type == MessageType::DiscoverTopologyEvidence) {
+        const quint16 firstStation = payload.size() == 16
+                                         ? readBigEndian<quint16>(payload, 0)
+                                         : 0;
+        const quint16 slaveCapacity = payload.size() == 16
+                                          ? readBigEndian<quint16>(payload, 2)
+                                          : 0;
+        const quint16 moduleCapacity = payload.size() == 16
+                                           ? readBigEndian<quint16>(payload, 4)
+                                           : 0;
+        payloadValid = payload.size() == 16 && firstStation && slaveCapacity >= 1
+                       && slaveCapacity <= 64 && moduleCapacity >= 1
+                       && moduleCapacity <= 128
+                       && quint32(firstStation) + slaveCapacity - 1 <= 0xffffU
+                       && readBigEndian<quint16>(payload, 6) == 0
+                       && readBigEndian<quint32>(payload, 8) == 0
+                       && readBigEndian<quint32>(payload, 12) == 0;
     } else if (type == MessageType::BulkBegin) {
         payloadValid = payload.size() == 24 && readBigEndian<quint64>(payload, 0)
                        && readBigEndian<quint32>(payload, 8)
@@ -1700,6 +1731,45 @@ QByteArray encodeResumeEvents(
     appendBigEndian(payload, afterSequence);
     return encodeRequest(
         MessageType::ResumeEvents,
+        payload,
+        sessionId,
+        requestId,
+        sequence,
+        bootId,
+        protocolMinor,
+        error);
+}
+
+QByteArray encodeDiscoverTopologyEvidence(
+    const TopologyEvidenceQuery &query,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint64 bootId,
+    quint16 protocolMinor,
+    Error *error)
+{
+    clearError(error);
+    if (!query.firstStationAddress || query.slaveCapacity < 1 || query.slaveCapacity > 64
+        || query.moduleCapacity < 1 || query.moduleCapacity > 128
+        || quint32(query.firstStationAddress) + query.slaveCapacity - 1 > 0xffffU) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            Tr::tr("The topology evidence scan range is invalid."));
+        return {};
+    }
+
+    QByteArray payload;
+    payload.reserve(16);
+    appendBigEndian(payload, query.firstStationAddress);
+    appendBigEndian(payload, query.slaveCapacity);
+    appendBigEndian(payload, query.moduleCapacity);
+    appendBigEndian(payload, quint16(0));
+    appendBigEndian(payload, quint32(0));
+    appendBigEndian(payload, quint32(0));
+    return encodeRequest(
+        MessageType::DiscoverTopologyEvidence,
         payload,
         sessionId,
         requestId,
@@ -2954,6 +3024,7 @@ std::optional<Data::ControllerCapabilitySummary> decodeCapability(
     result.runtimeResources = featureBits & RuntimeResourceFeature;
     result.semanticMappingAttestation = featureBits & SemanticBindingAttestationFeature;
     result.runtimeOutputTransactions = featureBits & OutputTransactionFeature;
+    result.topologyEvidence = featureBits & TopologyEvidenceFeature;
     return result;
 }
 
@@ -3127,6 +3198,228 @@ std::optional<TopologyResult> decodeTopologyResult(const Frame &frame, Error *er
         topology.slaves.append(slave);
     }
     return topology;
+}
+
+std::optional<TopologyEvidenceResult> decodeTopologyEvidence(
+    const Frame &frame,
+    const TopologyEvidenceQuery &query,
+    quint32 afterCaptureSequence,
+    Error *error)
+{
+    clearError(error);
+    if (frame.header.protocolMajor != CurrentMajor
+        || frame.header.protocolMinor < TopologyEvidenceMinor
+        || frame.header.protocolMinor > CurrentMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            Tr::tr("TopologyEvidence requires Product API v1.15."));
+        return {};
+    }
+    if (frame.header.messageType != MessageType::TopologyEvidence || frame.payload.size() < 64) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            Tr::tr("Expected a complete TopologyEvidence response."));
+        return {};
+    }
+    if (frame.header.flags != flagValue(Flag::Response) || !frame.header.requestId
+        || !frame.header.bootId) {
+        setError(
+            error,
+            ErrorCategory::InvalidEnvelope,
+            Tr::tr("TopologyEvidence has an invalid response envelope."));
+        return {};
+    }
+    if (!query.firstStationAddress || query.slaveCapacity < 1 || query.slaveCapacity > 64
+        || query.moduleCapacity < 1 || query.moduleCapacity > 128
+        || quint32(query.firstStationAddress) + query.slaveCapacity - 1 > 0xffffU) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            Tr::tr("TopologyEvidence expected query is invalid."));
+        return {};
+    }
+
+    constexpr quint32 completeFlags = 0x0f;
+    constexpr quint16 slaveRecordBytes = 36;
+    constexpr quint16 moduleRecordBytes = 12;
+    const QByteArrayView payload(frame.payload);
+    const quint16 originalType = readBigEndian<quint16>(payload, 0);
+    const quint16 headerBytes = readBigEndian<quint16>(payload, 2);
+    const qint32 status = readBigEndian<qint32>(payload, 4);
+    const quint32 flags = readBigEndian<quint32>(payload, 8);
+    const quint32 captureSequence = readBigEndian<quint32>(payload, 12);
+    const quint16 slaveCount = readBigEndian<quint16>(payload, 16);
+    const quint16 moduleCount = readBigEndian<quint16>(payload, 18);
+    const quint16 encodedSlaveBytes = readBigEndian<quint16>(payload, 20);
+    const quint16 encodedModuleBytes = readBigEndian<quint16>(payload, 22);
+    const quint16 firstStationAddress = readBigEndian<quint16>(payload, 24);
+    const quint16 combinedAlState = readBigEndian<quint16>(payload, 26);
+    const quint32 reserved0 = readBigEndian<quint32>(payload, 28);
+    const quint64 completedTimeNs = readBigEndian<quint64>(payload, 32);
+    const quint64 payloadBootId = readBigEndian<quint64>(payload, 40);
+    const quint64 reserved1 = readBigEndian<quint64>(payload, 48);
+    const quint64 reserved2 = readBigEndian<quint64>(payload, 56);
+    const qsizetype expectedBytes = 64 + qsizetype(slaveCount) * slaveRecordBytes
+                                    + qsizetype(moduleCount) * moduleRecordBytes;
+    if (originalType != quint16(MessageType::DiscoverTopologyEvidence) || headerBytes != 64
+        || status || flags != completeFlags || !captureSequence
+        || captureSequence <= afterCaptureSequence || slaveCount > query.slaveCapacity
+        || moduleCount > query.moduleCapacity || encodedSlaveBytes != slaveRecordBytes
+        || encodedModuleBytes != moduleRecordBytes
+        || firstStationAddress != query.firstStationAddress
+        || (combinedAlState & ~ControllerAlKnownMask) || reserved0 || !completedTimeNs
+        || payloadBootId != frame.header.bootId || reserved1 || reserved2
+        || frame.payload.size() != expectedBytes) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            Tr::tr("TopologyEvidence fields violate the discovery contract."));
+        return {};
+    }
+
+    const auto validity = [](quint8 value) -> std::optional<TopologyEvidenceValidity> {
+        if (value <= quint8(TopologyEvidenceValidity::Unavailable))
+            return TopologyEvidenceValidity(value);
+        return {};
+    };
+    const auto provenance = [](quint8 value) -> std::optional<TopologyEvidenceProvenance> {
+        if (value <= quint8(TopologyEvidenceProvenance::EsiDerived))
+            return TopologyEvidenceProvenance(value);
+        return {};
+    };
+    const auto source = [](quint8 value) -> std::optional<TopologyEvidenceSource> {
+        if (value <= quint8(TopologyEvidenceSource::CoeDetectedModules))
+            return TopologyEvidenceSource(value);
+        return {};
+    };
+
+    TopologyEvidenceResult result;
+    result.result = status;
+    result.flags = flags;
+    result.captureSequence = captureSequence;
+    result.firstStationAddress = firstStationAddress;
+    result.combinedAlState = combinedAlState;
+    result.completedTimeNs = completedTimeNs;
+    result.bootId = payloadBootId;
+    result.slaves.reserve(slaveCount);
+    QSet<quint16> positions;
+    QSet<quint16> stationAddresses;
+    quint32 declaredModuleCount = 0;
+    for (quint16 index = 0; index < slaveCount; ++index) {
+        const qsizetype offset = 64 + qsizetype(index) * slaveRecordBytes;
+        TopologyEvidenceSlave slave;
+        slave.position = readBigEndian<quint16>(payload, offset);
+        slave.stationAddress = readBigEndian<quint16>(payload, offset + 2);
+        slave.alState = readBigEndian<quint16>(payload, offset + 4);
+        const quint16 slaveFlags = readBigEndian<quint16>(payload, offset + 6);
+        slave.vendorId = readBigEndian<quint32>(payload, offset + 8);
+        slave.productCode = readBigEndian<quint32>(payload, offset + 12);
+        slave.revision = readBigEndian<quint32>(payload, offset + 16);
+        slave.serial = readBigEndian<quint32>(payload, offset + 20);
+        slave.alias = readBigEndian<quint16>(payload, offset + 24);
+        const auto aliasValidity = validity(quint8(payload.at(offset + 26)));
+        const auto aliasProvenance = provenance(quint8(payload.at(offset + 27)));
+        const auto aliasSource = source(quint8(payload.at(offset + 28)));
+        const auto moduleValidity = validity(quint8(payload.at(offset + 29)));
+        const auto moduleProvenance = provenance(quint8(payload.at(offset + 30)));
+        const auto moduleSource = source(quint8(payload.at(offset + 31)));
+        slave.moduleCount = readBigEndian<quint16>(payload, offset + 32);
+        const quint16 reserved = readBigEndian<quint16>(payload, offset + 34);
+        if (slave.position != index
+            || slave.stationAddress != quint32(query.firstStationAddress) + index
+            || !slave.vendorId || !slave.productCode
+            || (slave.alState & ~ControllerAlKnownMask) || slaveFlags || !aliasValidity
+            || !aliasProvenance || !aliasSource || !moduleValidity || !moduleProvenance
+            || !moduleSource || reserved || positions.contains(slave.position)
+            || stationAddresses.contains(slave.stationAddress)
+            || *aliasValidity != TopologyEvidenceValidity::Valid
+            || *aliasProvenance != TopologyEvidenceProvenance::Observed
+            || *aliasSource != TopologyEvidenceSource::EscStationAlias
+            || (*moduleValidity != TopologyEvidenceValidity::Valid
+                && *moduleValidity != TopologyEvidenceValidity::Unavailable)
+            || *moduleProvenance != TopologyEvidenceProvenance::DeviceReported
+            || (*moduleSource != TopologyEvidenceSource::SiiMailbox
+                && *moduleSource != TopologyEvidenceSource::CoeDetectedModules)
+            || (*moduleValidity == TopologyEvidenceValidity::Valid
+                && *moduleSource != TopologyEvidenceSource::CoeDetectedModules)
+            || (*moduleValidity == TopologyEvidenceValidity::Unavailable && slave.moduleCount)) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                Tr::tr("TopologyEvidence contains invalid slave evidence."));
+            return {};
+        }
+        slave.aliasValidity = *aliasValidity;
+        slave.aliasProvenance = *aliasProvenance;
+        slave.aliasSource = *aliasSource;
+        slave.moduleValidity = *moduleValidity;
+        slave.moduleProvenance = *moduleProvenance;
+        slave.moduleSource = *moduleSource;
+        positions.insert(slave.position);
+        stationAddresses.insert(slave.stationAddress);
+        declaredModuleCount += slave.moduleCount;
+        result.slaves.append(slave);
+    }
+    if (declaredModuleCount != moduleCount) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            Tr::tr("TopologyEvidence module counts are inconsistent."));
+        return {};
+    }
+
+    result.modules.reserve(moduleCount);
+    QHash<quint16, quint16> nextSlots;
+    QHash<quint16, quint16> observedModules;
+    quint16 previousParent = 0;
+    bool firstModule = true;
+    for (quint16 index = 0; index < moduleCount; ++index) {
+        const qsizetype offset = 64 + qsizetype(slaveCount) * slaveRecordBytes
+                                 + qsizetype(index) * moduleRecordBytes;
+        TopologyEvidenceModule module;
+        module.parentPosition = readBigEndian<quint16>(payload, offset);
+        module.slot = readBigEndian<quint16>(payload, offset + 2);
+        module.moduleIdent = readBigEndian<quint32>(payload, offset + 4);
+        const auto moduleValidity = validity(quint8(payload.at(offset + 8)));
+        const auto moduleProvenance = provenance(quint8(payload.at(offset + 9)));
+        const auto moduleSource = source(quint8(payload.at(offset + 10)));
+        const quint8 reserved = quint8(payload.at(offset + 11));
+        const quint16 expectedSlot = nextSlots.value(module.parentPosition, 1);
+        if (!positions.contains(module.parentPosition) || !module.slot || !module.moduleIdent
+            || !moduleValidity || !moduleProvenance || !moduleSource || reserved
+            || *moduleValidity != TopologyEvidenceValidity::Valid
+            || *moduleProvenance != TopologyEvidenceProvenance::DeviceReported
+            || *moduleSource != TopologyEvidenceSource::CoeDetectedModules
+            || (!firstModule && module.parentPosition < previousParent)
+            || module.slot != expectedSlot) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                Tr::tr("TopologyEvidence contains invalid module evidence."));
+            return {};
+        }
+        module.validity = *moduleValidity;
+        module.provenance = *moduleProvenance;
+        module.source = *moduleSource;
+        nextSlots.insert(module.parentPosition, module.slot + 1);
+        observedModules.insert(
+            module.parentPosition, observedModules.value(module.parentPosition) + 1);
+        previousParent = module.parentPosition;
+        firstModule = false;
+        result.modules.append(module);
+    }
+    for (const TopologyEvidenceSlave &slave : std::as_const(result.slaves)) {
+        if (observedModules.value(slave.position) != slave.moduleCount) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                Tr::tr("TopologyEvidence module ownership is inconsistent."));
+            return {};
+        }
+    }
+    return result;
 }
 
 std::optional<RuntimeResourceTablePage> decodeResourceTablePage(

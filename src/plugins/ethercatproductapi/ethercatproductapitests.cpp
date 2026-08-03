@@ -372,6 +372,62 @@ QByteArray topologyResultPayload()
     return payload;
 }
 
+QByteArray topologyEvidencePayload(quint32 captureSequence = 17)
+{
+    QByteArray payload(64 + 2 * 36 + 12, '\0');
+    putU16(payload, 0, quint16(Protocol::MessageType::DiscoverTopologyEvidence));
+    putU16(payload, 2, 64);
+    putU32(payload, 8, 0x0f);
+    putU32(payload, 12, captureSequence);
+    putU16(payload, 16, 2);
+    putU16(payload, 18, 1);
+    putU16(payload, 20, 36);
+    putU16(payload, 22, 12);
+    putU16(payload, 24, 0x1001);
+    putU16(payload, 26, 0x08);
+    putU64(payload, 32, 123456789);
+    putU64(payload, 40, TestBootId);
+
+    putU16(payload, 64, 0);
+    putU16(payload, 66, 0x1001);
+    putU16(payload, 68, 0x08);
+    putU32(payload, 72, 0x00884443);
+    putU32(payload, 76, 0x000000b6);
+    putU32(payload, 80, 0x00000001);
+    putU32(payload, 84, 0x00000021);
+    putU16(payload, 88, 0x002a);
+    payload[90] = char(Protocol::TopologyEvidenceValidity::Valid);
+    payload[91] = char(Protocol::TopologyEvidenceProvenance::Observed);
+    payload[92] = char(Protocol::TopologyEvidenceSource::EscStationAlias);
+    payload[93] = char(Protocol::TopologyEvidenceValidity::Valid);
+    payload[94] = char(Protocol::TopologyEvidenceProvenance::DeviceReported);
+    payload[95] = char(Protocol::TopologyEvidenceSource::CoeDetectedModules);
+    putU16(payload, 96, 1);
+
+    putU16(payload, 100, 1);
+    putU16(payload, 102, 0x1002);
+    putU16(payload, 104, 0x08);
+    putU32(payload, 108, 0x00100000);
+    putU32(payload, 112, 0x000c0112);
+    putU32(payload, 116, 0x00010000);
+    putU32(payload, 120, 0x00000022);
+    putU16(payload, 124, 0x002b);
+    payload[126] = char(Protocol::TopologyEvidenceValidity::Valid);
+    payload[127] = char(Protocol::TopologyEvidenceProvenance::Observed);
+    payload[128] = char(Protocol::TopologyEvidenceSource::EscStationAlias);
+    payload[129] = char(Protocol::TopologyEvidenceValidity::Unavailable);
+    payload[130] = char(Protocol::TopologyEvidenceProvenance::DeviceReported);
+    payload[131] = char(Protocol::TopologyEvidenceSource::SiiMailbox);
+
+    putU16(payload, 136, 0);
+    putU16(payload, 138, 1);
+    putU32(payload, 140, 0x00000624);
+    payload[144] = char(Protocol::TopologyEvidenceValidity::Valid);
+    payload[145] = char(Protocol::TopologyEvidenceProvenance::DeviceReported);
+    payload[146] = char(Protocol::TopologyEvidenceSource::CoeDetectedModules);
+    return payload;
+}
+
 QByteArray firmwareStatePayload(Protocol::MessageType originalType)
 {
     QByteArray payload(192, '\0');
@@ -1760,6 +1816,7 @@ private:
         case Protocol::MessageType::Heartbeat:
         case Protocol::MessageType::EnterConfigurationMode:
         case Protocol::MessageType::DiscoverTopology:
+        case Protocol::MessageType::DiscoverTopologyEvidence:
         case Protocol::MessageType::RestoreActivePackage:
             handleControlRequest(peer, frame);
             return;
@@ -2775,6 +2832,8 @@ private:
             : request.header.messageType == Protocol::MessageType::ResetFault  ? 16
             : request.header.messageType == Protocol::MessageType::DiscoverTopology
                 ? 8
+            : request.header.messageType == Protocol::MessageType::DiscoverTopologyEvidence
+                ? 16
             : request.header.messageType == Protocol::MessageType::RestoreActivePackage
                 ? 24
                 : 0);
@@ -2913,6 +2972,30 @@ private:
                 sendResponse(
                     peer,
                     Protocol::MessageType::TopologyResult,
+                    request.header.requestId,
+                    payload);
+            }
+            return;
+        case Protocol::MessageType::DiscoverTopologyEvidence:
+            if (!m_leaseOwned || m_serviceState != 8 || m_controllerPackageActive
+                || readU16(request.payload, 0) != 0x1001
+                || readU16(request.payload, 2) != 64
+                || readU16(request.payload, 4) != 128
+                || readU16(request.payload, 6) || readU32(request.payload, 8)
+                || readU32(request.payload, 12)) {
+                m_violations.append(
+                    QStringLiteral("DiscoverTopologyEvidence preconditions were invalid."));
+            }
+            sendCommandStages(peer, request, false);
+            {
+                QByteArray payload = topologyEvidencePayload(m_topologyEvidenceCaptureSequence++);
+                if (m_corruptNextTopologyResult) {
+                    m_corruptNextTopologyResult = false;
+                    putU32(payload, 8, 0x07);
+                }
+                sendResponse(
+                    peer,
+                    Protocol::MessageType::TopologyEvidence,
                     request.header.requestId,
                     payload);
             }
@@ -3353,6 +3436,7 @@ private:
     bool m_faultClearedEventAvailable = false;
     bool m_omitFaultClearedEventOnce = false;
     bool m_corruptNextTopologyResult = false;
+    quint32 m_topologyEvidenceCaptureSequence = 17;
     Data::ControllerSlot m_candidateSlot = Data::ControllerSlot::A;
     quint64 m_candidateGeneration = 55;
     quint64 m_deploymentConfigurationId = 0;
@@ -5591,6 +5675,14 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
     QVERIFY(outputCapability->runtimeResources);
     QVERIFY(outputCapability->semanticMappingAttestation);
     QVERIFY(outputCapability->runtimeOutputTransactions);
+    QVERIFY(!outputCapability->topologyEvidence);
+
+    error = {};
+    const auto topologyEvidenceCapability = Protocol::decodeCapability(
+        responseFrame(Protocol::MessageType::Capability, descriptor), 0x1ffff, &error);
+    QVERIFY(topologyEvidenceCapability);
+    QVERIFY(!error);
+    QVERIFY(topologyEvidenceCapability->topologyEvidence);
 
     error = {};
     const auto package = Protocol::decodePackageState(
@@ -6162,6 +6254,86 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
     QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
 }
 
+void EtherCATProductApiTests::testTopologyEvidenceCodec()
+{
+    const Protocol::TopologyEvidenceQuery query{0x1001, 64, 128};
+    Protocol::Error error;
+    const QByteArray requestWire = Protocol::encodeDiscoverTopologyEvidence(
+        query, TestSessionId, 19, 3, TestBootId, Protocol::CurrentMinor, &error);
+    QVERIFY(!requestWire.isEmpty());
+    QVERIFY(!error);
+    QCOMPARE(requestWire.size(), 80);
+    Protocol::FrameParser requestParser(
+        Protocol::Role::Control, Protocol::FrameDirection::ClientRequest);
+    const Protocol::ParseResult requestResult = requestParser.append(requestWire);
+    QVERIFY(!requestResult.error);
+    QCOMPARE(requestResult.frames.size(), 1);
+    QCOMPARE(
+        requestResult.frames.constFirst().header.messageType,
+        Protocol::MessageType::DiscoverTopologyEvidence);
+    QCOMPARE(requestResult.frames.constFirst().payload.toHex(),
+             QByteArray("10010040008000000000000000000000"));
+
+    Protocol::Frame response = responseFrame(
+        Protocol::MessageType::TopologyEvidence, topologyEvidencePayload());
+    response.header.protocolMinor = Protocol::TopologyEvidenceMinor;
+    error = {};
+    const QByteArray responseWire = Protocol::encodeFrame(response, &error);
+    QVERIFY(!responseWire.isEmpty());
+    QVERIFY(!error);
+    QCOMPARE(responseWire.size(), 212);
+
+    const auto topology = Protocol::decodeTopologyEvidence(
+        response, query, 16, &error);
+    QVERIFY(topology);
+    QVERIFY(!error);
+    QCOMPARE(topology->captureSequence, quint32(17));
+    QCOMPARE(topology->firstStationAddress, quint16(0x1001));
+    QCOMPARE(topology->completedTimeNs, quint64(123456789));
+    QCOMPARE(topology->bootId, TestBootId);
+    QCOMPARE(topology->slaves.size(), 2);
+    QCOMPARE(topology->modules.size(), 1);
+    QCOMPARE(topology->slaves.constFirst().alias, quint16(0x002a));
+    QCOMPARE(
+        topology->slaves.constFirst().moduleValidity,
+        Protocol::TopologyEvidenceValidity::Valid);
+    QCOMPARE(topology->slaves.constLast().alias, quint16(0x002b));
+    QCOMPARE(
+        topology->slaves.constLast().moduleValidity,
+        Protocol::TopologyEvidenceValidity::Unavailable);
+    QCOMPARE(topology->modules.constFirst().parentPosition, quint16(0));
+    QCOMPARE(topology->modules.constFirst().slot, quint16(1));
+    QCOMPARE(topology->modules.constFirst().moduleIdent, quint32(0x00000624));
+
+    QByteArray invalid = topologyEvidencePayload();
+    putU16(invalid, 96, 0);
+    error = {};
+    QVERIFY(!Protocol::decodeTopologyEvidence(
+        responseFrame(Protocol::MessageType::TopologyEvidence, invalid), query, 0, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    invalid = topologyEvidencePayload();
+    invalid[145] = char(Protocol::TopologyEvidenceProvenance::EsiDerived);
+    error = {};
+    QVERIFY(!Protocol::decodeTopologyEvidence(
+        responseFrame(Protocol::MessageType::TopologyEvidence, invalid), query, 0, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    invalid = topologyEvidencePayload();
+    putU32(invalid, 12, 16);
+    error = {};
+    QVERIFY(!Protocol::decodeTopologyEvidence(
+        responseFrame(Protocol::MessageType::TopologyEvidence, invalid), query, 16, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+
+    invalid = topologyEvidencePayload();
+    putU16(invalid, 64, 1);
+    error = {};
+    QVERIFY(!Protocol::decodeTopologyEvidence(
+        responseFrame(Protocol::MessageType::TopologyEvidence, invalid), query, 0, &error));
+    QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
+}
+
 void EtherCATProductApiTests::testSupportedRequestPolicy()
 {
     const QList<Protocol::MessageType> allowed{
@@ -6180,6 +6352,10 @@ void EtherCATProductApiTests::testSupportedRequestPolicy()
     QByteArray topology(8, '\0');
     putU16(topology, 0, 0x1001);
     putU16(topology, 2, 64);
+    QByteArray topologyEvidence(16, '\0');
+    putU16(topologyEvidence, 0, 0x1001);
+    putU16(topologyEvidence, 2, 64);
+    putU16(topologyEvidence, 4, 128);
     QByteArray selector(24, '\0');
     putU32(selector, 0, 'A');
     putU64(selector, 8, 11);
@@ -6198,6 +6374,7 @@ void EtherCATProductApiTests::testSupportedRequestPolicy()
         {Protocol::MessageType::Heartbeat, {}},
         {Protocol::MessageType::EnterConfigurationMode, {}},
         {Protocol::MessageType::DiscoverTopology, topology},
+        {Protocol::MessageType::DiscoverTopologyEvidence, topologyEvidence},
         {Protocol::MessageType::RestoreActivePackage, selector},
     };
     for (const auto &[type, payload] : controls) {
@@ -6215,6 +6392,21 @@ void EtherCATProductApiTests::testSupportedRequestPolicy()
                      &error)
                      .isEmpty());
         QVERIFY(!error);
+    }
+    {
+        Protocol::Error error;
+        QVERIFY(Protocol::encodeRequest(
+                    Protocol::MessageType::DiscoverTopologyEvidence,
+                    topologyEvidence,
+                    TestSessionId,
+                    1,
+                    1,
+                    TestBootId,
+                    Protocol::TopologyEvidenceMinor - 1,
+                    &error)
+                    .isEmpty());
+        QCOMPARE(error.category, Protocol::ErrorCategory::IncompatibleVersion);
+        QCOMPARE(error.status, std::optional<qint32>(-14));
     }
     for (const Protocol::MessageType type :
          {Protocol::MessageType::StartFreeRun, Protocol::MessageType::StartDc}) {
@@ -7373,6 +7565,73 @@ void EtherCATProductApiTests::testTopologyProvenanceLifecycle()
     QVERIFY(controller.violations().isEmpty());
 }
 
+void EtherCATProductApiTests::testTopologyEvidenceLifecycle()
+{
+    LoopbackController controller(LoopbackController::Behavior::ControlLifecycle);
+    controller.setProtocolMinor(Protocol::TopologyEvidenceMinor);
+    controller.setFeatureBits(0x0001ffff);
+    QVERIFY(controller.start());
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.connectionSnapshot().capability);
+    QVERIFY(provider.connectionSnapshot().capability->topologyEvidence);
+
+    const auto executeAndWait = [&provider](Data::ControllerControlCommand command) {
+        Data::ControllerControlRequest request;
+        request.command = command;
+        QVERIFY(provider.executeControlCommand(request));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+    };
+    executeAndWait(Data::ControllerControlCommand::AcquireControl);
+    executeAndWait(Data::ControllerControlCommand::EnterConfigurationMode);
+    executeAndWait(Data::ControllerControlCommand::DiscoverTopology);
+
+    QVERIFY(provider.connectionSnapshot().topology);
+    const Data::ControllerTopologySnapshot &topology
+        = *provider.connectionSnapshot().topology;
+    QVERIFY(topology.hasCompleteProvenance());
+    QCOMPARE(topology.cpu1RequestSequence, quint32(0));
+    QCOMPARE(topology.cpu1CompletedTimeNs, quint64(0));
+    QCOMPARE(topology.topologyCaptureSequence, quint32(17));
+    QCOMPARE(topology.topologyCompletedTimeNs, quint64(123456789));
+    QCOMPARE(topology.respondingCount, quint32(2));
+    QCOMPARE(topology.slaves.size(), 2);
+    QCOMPARE(topology.slaves.constFirst().alias, quint16(0x002a));
+    QCOMPARE(
+        topology.slaves.constFirst().aliasProvenance,
+        Data::ControllerTopologyEvidenceProvenance::Observed);
+    QCOMPARE(topology.slaves.constFirst().modules.size(), 1);
+    QCOMPARE(topology.slaves.constFirst().modules.constFirst().slot, quint16(1));
+    QCOMPARE(
+        topology.slaves.constFirst().modules.constFirst().moduleIdent,
+        quint32(0x00000624));
+    QCOMPARE(topology.slaves.constLast().alias, quint16(0x002b));
+    QCOMPARE(
+        topology.slaves.constLast().moduleValidity,
+        Data::ControllerTopologyEvidenceValidity::Unavailable);
+    QVERIFY(topology.slaves.constLast().modules.isEmpty());
+    QCOMPARE(controller.requestCount(Protocol::MessageType::DiscoverTopologyEvidence), 1);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::DiscoverTopology), 0);
+
+    executeAndWait(Data::ControllerControlCommand::DiscoverTopology);
+    QVERIFY(provider.connectionSnapshot().topology);
+    QCOMPARE(provider.connectionSnapshot().topology->topologyCaptureSequence, quint32(18));
+    QCOMPARE(controller.requestCount(Protocol::MessageType::DiscoverTopologyEvidence), 2);
+
+    executeAndWait(Data::ControllerControlCommand::ReleaseControl);
+    QVERIFY(provider.disconnectFromController());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state,
+        Data::ControllerConnectionState::Disconnected,
+        1000);
+    QVERIFY(controller.violations().isEmpty());
+}
+
 void EtherCATProductApiTests::testFaultResetLifecycle()
 {
     {
@@ -8140,7 +8399,9 @@ void EtherCATProductApiTests::testPackageDeploymentMaximumAudit()
     QTRY_VERIFY_WITH_TIMEOUT(!provider.sessionForTests()->refreshInProgressForTests(), 1000);
     QVERIFY(provider.disconnectFromController());
     QTRY_VERIFY_WITH_TIMEOUT(provider.sessionForTests()->isIdleForTests(), 1000);
-    QVERIFY(controller.violations().isEmpty());
+    QVERIFY2(
+        controller.violations().isEmpty(),
+        qPrintable(controller.violations().join(QStringLiteral("; "))));
 }
 
 void EtherCATProductApiTests::testPackageDeploymentGuardsAndIdempotency()

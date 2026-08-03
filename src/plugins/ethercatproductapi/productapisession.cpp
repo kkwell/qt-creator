@@ -846,6 +846,57 @@ std::optional<Data::RuntimeOutputRecoveryPolicy> runtimeOutputRecoveryPolicy(qui
     return {};
 }
 
+Data::ControllerTopologyEvidenceValidity topologyEvidenceValidity(
+    Protocol::TopologyEvidenceValidity value)
+{
+    using DataValue = Data::ControllerTopologyEvidenceValidity;
+    switch (value) {
+    case Protocol::TopologyEvidenceValidity::Unknown:
+        return DataValue::Unknown;
+    case Protocol::TopologyEvidenceValidity::Valid:
+        return DataValue::Valid;
+    case Protocol::TopologyEvidenceValidity::Unavailable:
+        return DataValue::Unavailable;
+    }
+    return DataValue::Unknown;
+}
+
+Data::ControllerTopologyEvidenceProvenance topologyEvidenceProvenance(
+    Protocol::TopologyEvidenceProvenance value)
+{
+    using DataValue = Data::ControllerTopologyEvidenceProvenance;
+    switch (value) {
+    case Protocol::TopologyEvidenceProvenance::None:
+        return DataValue::None;
+    case Protocol::TopologyEvidenceProvenance::Observed:
+        return DataValue::Observed;
+    case Protocol::TopologyEvidenceProvenance::DeviceReported:
+        return DataValue::DeviceReported;
+    case Protocol::TopologyEvidenceProvenance::ProjectSelected:
+        return DataValue::ProjectSelected;
+    case Protocol::TopologyEvidenceProvenance::EsiDerived:
+        return DataValue::EsiDerived;
+    }
+    return DataValue::None;
+}
+
+Data::ControllerTopologyEvidenceSource topologyEvidenceSource(
+    Protocol::TopologyEvidenceSource value)
+{
+    using DataValue = Data::ControllerTopologyEvidenceSource;
+    switch (value) {
+    case Protocol::TopologyEvidenceSource::None:
+        return DataValue::None;
+    case Protocol::TopologyEvidenceSource::EscStationAlias:
+        return DataValue::EscStationAlias;
+    case Protocol::TopologyEvidenceSource::SiiMailbox:
+        return DataValue::SiiMailbox;
+    case Protocol::TopologyEvidenceSource::CoeDetectedModules:
+        return DataValue::CoeDetectedModules;
+    }
+    return DataValue::None;
+}
+
 std::optional<Data::RuntimeOutputState> runtimeOutputState(Protocol::OutputTransactionState state)
 {
     switch (state) {
@@ -939,6 +990,8 @@ public:
         Data::ControllerControlCommand controlCommand = Data::ControllerControlCommand::None;
         quint16 nextExpectedStage = 0;
         quint16 firstStationAddress = 0;
+        std::optional<Protocol::TopologyEvidenceQuery> topologyEvidenceQuery;
+        quint32 afterTopologyCaptureSequence = 0;
         quint32 deploymentChunkBytes = 0;
         int responseTimeoutMs = 0;
         bool terminalCommandStatus = false;
@@ -3644,9 +3697,15 @@ public:
                   ? std::max(options.requestTimeoutMs, 40000)
                   : options.requestTimeoutMs;
         Channel &control = channel(Protocol::Role::Control);
+        Protocol::MessageType requestType = messageTypeForCommand(command);
+        if (command == Data::ControllerControlCommand::DiscoverTopology
+            && negotiatedMinor >= Protocol::TopologyEvidenceMinor
+            && (featureBits & Protocol::TopologyEvidenceFeature)) {
+            requestType = Protocol::MessageType::DiscoverTopologyEvidence;
+        }
         const quint64 requestId = sendRequest(
             control,
-            messageTypeForCommand(command),
+            requestType,
             kind,
             operationForCommand(command),
             payload,
@@ -6123,6 +6182,9 @@ public:
                 = negotiatedMinor >= Protocol::OutputTransactionMinor
                   && (featureBits & Protocol::OutputTransactionFeature)
                   && (bulkFeatureBits & Protocol::OutputTransactionFeature);
+            capability->topologyEvidence
+                = negotiatedMinor >= Protocol::TopologyEvidenceMinor
+                  && (featureBits & Protocol::TopologyEvidenceFeature);
             snapshot.capability = *capability;
             if (!capability->semanticMappingAttestation) {
                 invalidateRuntimeSemanticMappingAttestation(
@@ -6205,14 +6267,8 @@ public:
                     requestId);
                 return;
             }
-            const auto topology = Protocol::decodeTopologyResult(frame, &decodeError);
-            if (!topology)
-                break;
             Data::ControllerTopologySnapshot result;
             const QDateTime receivedAt = QDateTime::currentDateTimeUtc();
-            result.firstStationAddress = request.firstStationAddress;
-            result.respondingCount = topology->respondingCount;
-            result.result = topology->result;
             result.discoveredAt = receivedAt;
             result.scope = snapshot.scope;
             result.sessionGeneration = request.generation;
@@ -6220,21 +6276,95 @@ public:
             result.bootId = frame.header.bootId;
             result.requestId = frame.header.requestId;
             result.responseSequence = frame.header.sequence;
-            result.cpu1RequestSequence = topology->cpu1RequestSequence;
             result.controllerTimestampNs = frame.header.controllerTimestampNs;
-            result.cpu1CompletedTimeNs = topology->cpu1CompletedTimeNs;
             result.receivedAt = receivedAt;
-            result.slaves.reserve(topology->slaves.size());
-            for (const Protocol::TopologySlave &slave : topology->slaves) {
-                result.slaves.append(
-                    {slave.position,
-                     slave.stationAddress,
-                     slave.alState,
-                     slave.flags,
-                     slave.vendorId,
-                     slave.productCode,
-                     slave.revision,
-                     slave.serial});
+
+            if (request.requestType == Protocol::MessageType::DiscoverTopologyEvidence) {
+                if (!request.topologyEvidenceQuery) {
+                    failProtocol(
+                        value.role,
+                        request.operation,
+                        Tr::tr("The topology evidence request context is unavailable."),
+                        {},
+                        requestId);
+                    return;
+                }
+                const auto topology = Protocol::decodeTopologyEvidence(
+                    frame,
+                    *request.topologyEvidenceQuery,
+                    request.afterTopologyCaptureSequence,
+                    &decodeError);
+                if (!topology)
+                    break;
+                result.firstStationAddress = topology->firstStationAddress;
+                result.respondingCount = topology->slaves.size();
+                result.result = topology->result;
+                result.topologyCaptureSequence = topology->captureSequence;
+                result.topologyCompletedTimeNs = topology->completedTimeNs;
+                result.slaves.reserve(topology->slaves.size());
+                for (const Protocol::TopologyEvidenceSlave &slave : topology->slaves) {
+                    Data::ControllerTopologySlave mapped;
+                    mapped.position = slave.position;
+                    mapped.stationAddress = slave.stationAddress;
+                    mapped.alState = slave.alState;
+                    mapped.vendorId = slave.vendorId;
+                    mapped.productCode = slave.productCode;
+                    mapped.revision = slave.revision;
+                    mapped.serial = slave.serial;
+                    mapped.alias = slave.alias;
+                    mapped.aliasValidity = topologyEvidenceValidity(slave.aliasValidity);
+                    mapped.aliasProvenance = topologyEvidenceProvenance(slave.aliasProvenance);
+                    mapped.aliasSource = topologyEvidenceSource(slave.aliasSource);
+                    mapped.moduleValidity = topologyEvidenceValidity(slave.moduleValidity);
+                    mapped.moduleProvenance = topologyEvidenceProvenance(slave.moduleProvenance);
+                    mapped.moduleSource = topologyEvidenceSource(slave.moduleSource);
+                    result.slaves.append(mapped);
+                }
+                for (const Protocol::TopologyEvidenceModule &module : topology->modules) {
+                    const auto parent = std::find_if(
+                        result.slaves.begin(),
+                        result.slaves.end(),
+                        [&module](const Data::ControllerTopologySlave &slave) {
+                            return slave.position == module.parentPosition;
+                        });
+                    if (parent == result.slaves.end()) {
+                        failProtocol(
+                            value.role,
+                            request.operation,
+                            Tr::tr("The topology module has no parent device."),
+                            {},
+                            requestId);
+                        return;
+                    }
+                    parent->modules.append(
+                        {module.slot,
+                         module.moduleIdent,
+                         topologyEvidenceValidity(module.validity),
+                         topologyEvidenceProvenance(module.provenance),
+                         topologyEvidenceSource(module.source)});
+                }
+            } else {
+                const auto topology = Protocol::decodeTopologyResult(frame, &decodeError);
+                if (!topology)
+                    break;
+                result.firstStationAddress = request.firstStationAddress;
+                result.respondingCount = topology->respondingCount;
+                result.result = topology->result;
+                result.cpu1RequestSequence = topology->cpu1RequestSequence;
+                result.cpu1CompletedTimeNs = topology->cpu1CompletedTimeNs;
+                result.slaves.reserve(topology->slaves.size());
+                for (const Protocol::TopologySlave &slave : topology->slaves) {
+                    Data::ControllerTopologySlave mapped;
+                    mapped.position = slave.position;
+                    mapped.stationAddress = slave.stationAddress;
+                    mapped.alState = slave.alState;
+                    mapped.flags = slave.flags;
+                    mapped.vendorId = slave.vendorId;
+                    mapped.productCode = slave.productCode;
+                    mapped.revision = slave.revision;
+                    mapped.serial = slave.serial;
+                    result.slaves.append(mapped);
+                }
             }
             if (!result.hasCompleteProvenance()) {
                 failProtocol(
@@ -8113,12 +8243,28 @@ Utils::Result<> ProductApiSession::executeControlCommand(
         payload.resize(offset + qsizetype(sizeof(value)));
         qToBigEndian(value, reinterpret_cast<uchar *>(payload.data() + offset));
     };
+    const bool useTopologyEvidence
+        = request.command == Command::DiscoverTopology
+          && d->negotiatedMinor >= Protocol::TopologyEvidenceMinor
+          && (d->featureBits & Protocol::TopologyEvidenceFeature);
+    const quint32 afterTopologyCaptureSequence
+        = useTopologyEvidence && d->snapshot.topology
+                  && d->snapshot.topology->bootId == d->snapshot.session->bootId
+              ? d->snapshot.topology->topologyCaptureSequence
+              : 0;
     if (request.command == Command::AcquireControl) {
         appendU32(quint32(request.leaseDurationMs));
     } else if (request.command == Command::DiscoverTopology) {
         appendU16(request.firstStationAddress);
         appendU16(request.topologyCapacity);
-        appendU32(0);
+        if (useTopologyEvidence) {
+            appendU16(128);
+            appendU16(0);
+            appendU32(0);
+            appendU32(0);
+        } else {
+            appendU32(0);
+        }
     } else if (request.command == Command::RestoreActivePackage) {
         const ProductApiSessionPrivate::PersistentPackageSelector &selector
             = *d->persistentPackageSelector;
@@ -8193,8 +8339,14 @@ Utils::Result<> ProductApiSession::executeControlCommand(
     }
     if (kind == ProductApiSessionPrivate::PendingKind::Topology) {
         auto found = d->pendingRequests.find(requestId);
-        if (found != d->pendingRequests.end())
+        if (found != d->pendingRequests.end()) {
             found->firstStationAddress = request.firstStationAddress;
+            if (useTopologyEvidence) {
+                found->topologyEvidenceQuery = Protocol::TopologyEvidenceQuery{
+                    request.firstStationAddress, request.topologyCapacity, 128};
+                found->afterTopologyCaptureSequence = afterTopologyCaptureSequence;
+            }
+        }
     }
     return {};
 }

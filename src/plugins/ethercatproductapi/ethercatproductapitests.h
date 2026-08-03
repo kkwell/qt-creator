@@ -18,6 +18,7 @@ private slots:
     void testSemanticControllerState();
     void testSemanticPerformanceSnapshot();
     void testSemanticAuxiliaryRecords();
+    void testTopologyEvidenceCodec();
     void testRuntimeResourceGoldenFrames();
     void testRuntimeResourceCodecRejectsMalformed_data();
     void testRuntimeResourceCodecRejectsMalformed();
@@ -43,6 +44,7 @@ private slots:
     void testProtocolMinorDowngrade();
     void testControlLifecycle();
     void testTopologyProvenanceLifecycle();
+    void testTopologyEvidenceLifecycle();
     void testFaultResetLifecycle();
     void testPackageDeploymentLifecycle();
     void testPackageDeploymentMaximumAudit();

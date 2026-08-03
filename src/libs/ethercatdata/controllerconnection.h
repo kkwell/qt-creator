@@ -306,6 +306,42 @@ struct ETHERCATDATA_EXPORT ControllerConnectionScope
         = default;
 };
 
+enum class ControllerTopologyEvidenceValidity {
+    Unknown,
+    Valid,
+    Unavailable,
+};
+
+enum class ControllerTopologyEvidenceProvenance {
+    None,
+    Observed,
+    DeviceReported,
+    ProjectSelected,
+    EsiDerived,
+};
+
+enum class ControllerTopologyEvidenceSource {
+    None,
+    EscStationAlias,
+    SiiMailbox,
+    CoeDetectedModules,
+};
+
+struct ETHERCATDATA_EXPORT ControllerTopologyModuleEvidence
+{
+    quint16 slot = 0;
+    quint32 moduleIdent = 0;
+    ControllerTopologyEvidenceValidity validity
+        = ControllerTopologyEvidenceValidity::Unknown;
+    ControllerTopologyEvidenceProvenance provenance
+        = ControllerTopologyEvidenceProvenance::None;
+    ControllerTopologyEvidenceSource source = ControllerTopologyEvidenceSource::None;
+
+    friend bool operator==(
+        const ControllerTopologyModuleEvidence &, const ControllerTopologyModuleEvidence &)
+        = default;
+};
+
 struct ETHERCATDATA_EXPORT ControllerTopologySlave
 {
     quint32 position = 0;
@@ -316,6 +352,18 @@ struct ETHERCATDATA_EXPORT ControllerTopologySlave
     quint32 productCode = 0;
     quint32 revision = 0;
     quint32 serial = 0;
+    quint16 alias = 0;
+    ControllerTopologyEvidenceValidity aliasValidity
+        = ControllerTopologyEvidenceValidity::Unknown;
+    ControllerTopologyEvidenceProvenance aliasProvenance
+        = ControllerTopologyEvidenceProvenance::None;
+    ControllerTopologyEvidenceSource aliasSource = ControllerTopologyEvidenceSource::None;
+    ControllerTopologyEvidenceValidity moduleValidity
+        = ControllerTopologyEvidenceValidity::Unknown;
+    ControllerTopologyEvidenceProvenance moduleProvenance
+        = ControllerTopologyEvidenceProvenance::None;
+    ControllerTopologyEvidenceSource moduleSource = ControllerTopologyEvidenceSource::None;
+    QList<ControllerTopologyModuleEvidence> modules;
 
     friend bool operator==(const ControllerTopologySlave &,
                            const ControllerTopologySlave &)
@@ -340,19 +388,26 @@ struct ETHERCATDATA_EXPORT ControllerTopologySnapshot
     // This is the CPU1 request_sequence carried by the TopologyResult payload,
     // not the Product API response frame sequence.
     quint32 cpu1RequestSequence = 0;
+    // Product API v1.15 topology-evidence capture sequence. It is independent
+    // of the ECAP response frame sequence and the legacy CPU1 request sequence.
+    quint32 topologyCaptureSequence = 0;
     // This is the ECAP response send timestamp, not a topology capture time.
     // Preserve zero because the current wire contract does not forbid it.
     quint64 controllerTimestampNs = 0;
     // This is the CPU1 completed_time_ns carried by the TopologyResult payload,
     // not the ECAP response send timestamp.
     quint64 cpu1CompletedTimeNs = 0;
+    // Product API v1.15 topology-evidence completion time.
+    quint64 topologyCompletedTimeNs = 0;
     QDateTime receivedAt;
 
     bool hasCompleteProvenance() const
     {
         return !scope.projectId.isNull() && !scope.masterId.isNull() && sessionGeneration
-               && sessionId && bootId && requestId && responseSequence && cpu1RequestSequence
-               && cpu1CompletedTimeNs && receivedAt.isValid();
+               && sessionId && bootId && requestId && responseSequence
+               && ((cpu1RequestSequence && cpu1CompletedTimeNs)
+                   || (topologyCaptureSequence && topologyCompletedTimeNs))
+               && receivedAt.isValid();
     }
 
     friend bool operator==(const ControllerTopologySnapshot &,
@@ -538,6 +593,7 @@ struct ETHERCATDATA_EXPORT ControllerCapabilitySummary
     bool runtimeResources = false;
     bool semanticMappingAttestation = false;
     bool runtimeOutputTransactions = false;
+    bool topologyEvidence = false;
     bool coe = false;
     bool distributedClocks = false;
     bool multiSlaveDistributedClocks = false;
@@ -659,6 +715,10 @@ Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPackageSelector)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPackageDeploymentRequest)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPackageDeploymentAuditEvent)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerPackageDeploymentProgress)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerTopologyEvidenceValidity)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerTopologyEvidenceProvenance)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerTopologyEvidenceSource)
+Q_DECLARE_METATYPE(EtherCAT::Data::ControllerTopologyModuleEvidence)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerTopologySlave)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerTopologySnapshot)
 Q_DECLARE_METATYPE(EtherCAT::Data::ControllerConnectionScope)

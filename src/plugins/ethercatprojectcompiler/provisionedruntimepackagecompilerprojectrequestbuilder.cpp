@@ -53,6 +53,31 @@ bool stableId(const QString &value)
     return pattern.match(value).hasMatch();
 }
 
+bool sameModuleIdentities(
+    const QList<Data::DeviceModuleAssignment> &left,
+    const QList<Data::DeviceModuleAssignment> &right)
+{
+    if (left.size() != right.size())
+        return false;
+    for (qsizetype index = 0; index < left.size(); ++index) {
+        if (left.at(index).slot != right.at(index).slot
+            || left.at(index).moduleIdent != right.at(index).moduleIdent) {
+            return false;
+        }
+    }
+    return true;
+}
+
+QList<Data::DeviceModuleAssignment> observedModuleAssignments(
+    const Data::ControllerTopologySlave &slave)
+{
+    QList<Data::DeviceModuleAssignment> result;
+    result.reserve(slave.modules.size());
+    for (const Data::ControllerTopologyModuleEvidence &module : slave.modules)
+        result.append({int(module.slot), module.moduleIdent, 0, 0});
+    return result;
+}
+
 QString dataTypeName(Data::EtherCATDataType type, const QString &rawType)
 {
     using Type = Data::EtherCATDataType;
@@ -118,7 +143,18 @@ Data::RuntimePackageCompilerCanonicalJson canonicalTopologyEvidence(
         bytes += QByteArray::number(slave.identity.productCode);
         bytes += ",\"revision\":" + QByteArray::number(slave.identity.revisionNumber);
         bytes += ",\"vendor_id\":" + QByteArray::number(slave.identity.vendorId) + '}';
-        bytes += ",\"modules\":[],\"position\":" + QByteArray::number(slave.position);
+        bytes += ",\"modules\":[";
+        for (qsizetype moduleIndex = 0;
+             moduleIndex < slave.moduleAssignments.size();
+             ++moduleIndex) {
+            if (moduleIndex)
+                bytes += ',';
+            const Data::DeviceModuleAssignment &module
+                = slave.moduleAssignments.at(moduleIndex);
+            bytes += "{\"module_ident\":" + QByteArray::number(module.moduleIdent);
+            bytes += ",\"slot\":" + QByteArray::number(module.slot) + '}';
+        }
+        bytes += "],\"position\":" + QByteArray::number(slave.position);
         bytes += ",\"serial\":" + QByteArray::number(slave.serialNumber);
         bytes += ",\"station_address\":" + QByteArray::number(slave.stationAddress) + '}';
     }
@@ -219,10 +255,12 @@ Utils::Result<Data::RuntimePackageCompilerDeviceProjection> deviceProjection(
         return Utils::ResultError(
             Tr::tr("Startup SDO compiler metadata is not provisioned; compilation is denied."));
     }
-    if (slave.alias != 0 || !slave.adapterSelection.moduleAssignments.isEmpty()
-        || provisioned.expectedAlias != 0 || !provisioned.expectedModuleAssignments.isEmpty()) {
+    if (slave.alias != provisioned.expectedAlias
+        || !sameModuleIdentities(
+            slave.adapterSelection.moduleAssignments,
+            provisioned.expectedModuleAssignments)) {
         return Utils::ResultError(
-            Tr::tr("Product API topology cannot prove alias or module assignments."));
+            Tr::tr("Project alias or module assignments differ from provisioned inputs."));
     }
 
     Data::RuntimePackageCompilerDeviceProjection result;
@@ -231,7 +269,7 @@ Utils::Result<Data::RuntimePackageCompilerDeviceProjection> deviceProjection(
     result.projectDeviceId = provisioned.projectDeviceId;
     result.position = slave.position;
     result.stationAddress = slave.stationAddress;
-    result.alias = 0;
+    result.alias = slave.alias;
     result.identity = slave.identity;
     result.serialNumber = slave.serialNumber;
     result.esiSha256 = Data::RuntimePackageCompilerSha256{slave.esiSha256};
@@ -241,6 +279,7 @@ Utils::Result<Data::RuntimePackageCompilerDeviceProjection> deviceProjection(
     result.adapterSha256 = Data::RuntimePackageCompilerSha256{
         manifest.controllerAdapterTarget.adapterSha256};
     result.pdoProfileId = processProfile.signedPdoProfileId;
+    result.moduleAssignments = slave.adapterSelection.moduleAssignments;
     for (const Data::PdoConfiguration &pdo : slave.processData.pdos) {
         if (!pdo.selected)
             continue;
@@ -498,10 +537,12 @@ public:
         result.sessionGeneration = observed.sessionGeneration;
         result.sessionId = observed.sessionId;
         result.captureBootId = observed.bootId;
-        result.captureSequence = observed.cpu1RequestSequence;
+        result.captureSequence = observed.topologyCaptureSequence
+                                     ? observed.topologyCaptureSequence
+                                     : observed.cpu1RequestSequence;
         result.evidenceId = QStringLiteral("discover:boot-%1:sequence-%2")
                                 .arg(observed.bootId, 16, 16, QLatin1Char('0'))
-                                .arg(observed.cpu1RequestSequence);
+                                .arg(result.captureSequence);
         result.capturedAtNs = quint64(capturedMs) * 1'000'000;
         result.expiresAtNs = result.capturedAtNs + profile->topologyTtlNs();
         result.cyclePeriodNs = project.masterConfiguration.cyclePeriodNs;
@@ -514,6 +555,7 @@ public:
         }
         if (slaves.size() != observed.slaves.size() || slaves.size() != profile->devices().size())
             return Utils::ResultError(Tr::tr("Project and controller topology sizes differ."));
+        const bool hasTopologyEvidence = observed.topologyCaptureSequence != 0;
         int previousPosition = -1;
         for (qsizetype index = 0; index < slaves.size(); ++index) {
             const Data::OfflineSlaveConfiguration &slave = slaves.at(index);
@@ -523,21 +565,39 @@ public:
                 || slave.stationAddress != wire.stationAddress || slave.identity.vendorId != wire.vendorId
                 || slave.identity.productCode != wire.productCode
                 || slave.identity.revisionNumber != wire.revision
-                || slave.serialNumber != wire.serial || slave.alias != 0
-                || !slave.adapterSelection.moduleAssignments.isEmpty()
-                || provisioned->expectedAlias != 0
-                || !provisioned->expectedModuleAssignments.isEmpty()) {
+                || slave.serialNumber != wire.serial || slave.alias != wire.alias
+                || slave.alias != provisioned->expectedAlias
+                || (hasTopologyEvidence
+                    && (wire.aliasValidity
+                            != Data::ControllerTopologyEvidenceValidity::Valid
+                        || wire.aliasProvenance
+                               != Data::ControllerTopologyEvidenceProvenance::Observed
+                        || wire.aliasSource
+                               != Data::ControllerTopologyEvidenceSource::EscStationAlias
+                        || (wire.moduleValidity
+                                != Data::ControllerTopologyEvidenceValidity::Valid
+                            && wire.moduleValidity
+                                   != Data::ControllerTopologyEvidenceValidity::Unavailable)))) {
                 return Utils::ResultError(
                     Tr::tr("Project, provisioned input, and Product API topology differ."));
+            }
+            const QList<Data::DeviceModuleAssignment> wireModules
+                = observedModuleAssignments(wire);
+            if (!sameModuleIdentities(
+                    slave.adapterSelection.moduleAssignments, wireModules)
+                || !sameModuleIdentities(
+                    provisioned->expectedModuleAssignments, wireModules)) {
+                return Utils::ResultError(
+                    Tr::tr("Project, provisioned input, and detected module lists differ."));
             }
             previousPosition = slave.position;
             result.slaves.append({slave.id,
                                   slave.position,
                                   slave.stationAddress,
-                                  0,
+                                  slave.alias,
                                   slave.identity,
                                   slave.serialNumber,
-                                  {}});
+                                  wireModules});
         }
         result.canonicalEvidence = canonicalTopologyEvidence(result);
         const quint64 actualBuildTimeNs = currentTimeNs();

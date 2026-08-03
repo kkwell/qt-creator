@@ -25648,6 +25648,47 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     QVERIFY(project.slaves.at(2).startup.parameters.isEmpty());
     QVERIFY(!project.slaves.at(2).dc.enabled);
 
+    Data::ControllerTopologySnapshot evidenceTopology = topology;
+    evidenceTopology.topologyCaptureSequence = 17;
+    evidenceTopology.topologyCompletedTimeNs = 123456789;
+    for (qsizetype index = 0; index < evidenceTopology.slaves.size(); ++index) {
+        Data::ControllerTopologySlave &slave = evidenceTopology.slaves[index];
+        slave.alias = quint16(0x002a + index);
+        slave.aliasValidity = Data::ControllerTopologyEvidenceValidity::Valid;
+        slave.aliasProvenance = Data::ControllerTopologyEvidenceProvenance::Observed;
+        slave.aliasSource = Data::ControllerTopologyEvidenceSource::EscStationAlias;
+        slave.moduleProvenance = Data::ControllerTopologyEvidenceProvenance::DeviceReported;
+        if (index == 0) {
+            slave.moduleValidity = Data::ControllerTopologyEvidenceValidity::Valid;
+            slave.moduleSource = Data::ControllerTopologyEvidenceSource::CoeDetectedModules;
+            slave.modules = {
+                {1,
+                 0x00000624,
+                 Data::ControllerTopologyEvidenceValidity::Valid,
+                 Data::ControllerTopologyEvidenceProvenance::DeviceReported,
+                 Data::ControllerTopologyEvidenceSource::CoeDetectedModules},
+            };
+        } else {
+            slave.moduleValidity = Data::ControllerTopologyEvidenceValidity::Unavailable;
+            slave.moduleSource = Data::ControllerTopologyEvidenceSource::SiiMailbox;
+        }
+    }
+    snapshot.protocolVersion = {1, 15};
+    snapshot.topology = evidenceTopology;
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(controller.canApplyCurrentBusToProject());
+    QVERIFY_RESULT(controller.applyCurrentBusToProject());
+    project = *projectService->project(file.projectId);
+    QCOMPARE(project.slaves.at(0).alias, quint16(0x002a));
+    QCOMPARE(project.slaves.at(0).adapterSelection.moduleAssignments.size(), 1);
+    QCOMPARE(project.slaves.at(0).adapterSelection.moduleAssignments.constFirst().slot, 1);
+    QCOMPARE(
+        project.slaves.at(0).adapterSelection.moduleAssignments.constFirst().moduleIdent,
+        quint32(0x00000624));
+    QCOMPARE(project.slaves.at(1).alias, quint16(0x002b));
+    QVERIFY(project.slaves.at(1).adapterSelection.moduleAssignments.isEmpty());
+    QCOMPARE(project.slaves.at(2).alias, quint16(0x002c));
+
     QVERIFY_RESULT(projectService->undoProject(file.projectId));
     project = *projectService->project(file.projectId);
     QCOMPARE(project.slaves, QList<Data::OfflineSlaveConfiguration>({preserved, removed}));

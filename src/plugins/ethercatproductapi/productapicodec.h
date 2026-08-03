@@ -23,10 +23,12 @@ inline constexpr quint16 ControlledFaultResetMinor = 11;
 inline constexpr quint16 RuntimeResourceMinor = 12;
 inline constexpr quint16 SemanticBindingAttestationMinor = 13;
 inline constexpr quint16 OutputTransactionMinor = 14;
-inline constexpr quint16 CurrentMinor = OutputTransactionMinor;
+inline constexpr quint16 TopologyEvidenceMinor = 15;
+inline constexpr quint16 CurrentMinor = TopologyEvidenceMinor;
 inline constexpr quint32 RuntimeResourceFeature = 1U << 13;
 inline constexpr quint32 SemanticBindingAttestationFeature = 1U << 14;
 inline constexpr quint32 OutputTransactionFeature = 1U << 15;
+inline constexpr quint32 TopologyEvidenceFeature = 1U << 16;
 inline constexpr quint32 OutputTransactionMaximumTtlCycles = 65535;
 inline constexpr quint32 ControlMaximumPayloadBytes = 4096;
 inline constexpr quint32 PushMaximumPayloadBytes = 65536;
@@ -87,6 +89,7 @@ enum class MessageType : quint16 {
     QuerySemanticBindingAttestation = 0x040d,
     QueryOutputGroupPolicy = 0x040e,
     GetOutputTransactionState = 0x040f,
+    DiscoverTopologyEvidence = 0x0410,
     Capability = 0x0480,
     TopologyResult = 0x0481,
     PackageState = 0x0483,
@@ -95,6 +98,7 @@ enum class MessageType : quint16 {
     SemanticBindingAttestation = 0x0489,
     OutputGroupPolicy = 0x048a,
     OutputTransactionState = 0x048b,
+    TopologyEvidence = 0x048c,
     GetFirmwareState = 0x0504,
     FirmwareStatus = 0x0580,
     FirmwareState = 0x0581,
@@ -302,6 +306,76 @@ struct TopologyResult
     quint32 combinedAlState = 0;
     quint64 cpu1CompletedTimeNs = 0;
     QList<TopologySlave> slaves;
+};
+
+enum class TopologyEvidenceValidity : quint8 {
+    Unknown = 0,
+    Valid = 1,
+    Unavailable = 2,
+};
+
+enum class TopologyEvidenceProvenance : quint8 {
+    None = 0,
+    Observed = 1,
+    DeviceReported = 2,
+    ProjectSelected = 3,
+    EsiDerived = 4,
+};
+
+enum class TopologyEvidenceSource : quint8 {
+    None = 0,
+    EscStationAlias = 1,
+    SiiMailbox = 2,
+    CoeDetectedModules = 3,
+};
+
+struct TopologyEvidenceQuery
+{
+    quint16 firstStationAddress = 0;
+    quint16 slaveCapacity = 0;
+    quint16 moduleCapacity = 0;
+};
+
+struct TopologyEvidenceSlave
+{
+    quint16 position = 0;
+    quint16 stationAddress = 0;
+    quint16 alState = 0;
+    quint32 vendorId = 0;
+    quint32 productCode = 0;
+    quint32 revision = 0;
+    quint32 serial = 0;
+    quint16 alias = 0;
+    TopologyEvidenceValidity aliasValidity = TopologyEvidenceValidity::Unknown;
+    TopologyEvidenceProvenance aliasProvenance = TopologyEvidenceProvenance::None;
+    TopologyEvidenceSource aliasSource = TopologyEvidenceSource::None;
+    TopologyEvidenceValidity moduleValidity = TopologyEvidenceValidity::Unknown;
+    TopologyEvidenceProvenance moduleProvenance = TopologyEvidenceProvenance::None;
+    TopologyEvidenceSource moduleSource = TopologyEvidenceSource::None;
+    quint16 moduleCount = 0;
+};
+
+struct TopologyEvidenceModule
+{
+    quint16 parentPosition = 0;
+    quint16 slot = 0;
+    quint32 moduleIdent = 0;
+    TopologyEvidenceValidity validity = TopologyEvidenceValidity::Unknown;
+    TopologyEvidenceProvenance provenance = TopologyEvidenceProvenance::None;
+    TopologyEvidenceSource source = TopologyEvidenceSource::None;
+};
+
+struct TopologyEvidenceResult
+{
+    qint32 result = 0;
+    quint32 flags = 0;
+    quint32 captureSequence = 0;
+    quint16 firstStationAddress = 0;
+    quint16 combinedAlState = 0;
+    quint64 completedTimeNs = 0;
+    quint64 bootId = 0;
+    QList<TopologyEvidenceSlave> slaves;
+    QList<TopologyEvidenceModule> modules;
 };
 
 enum class RuntimeResourcePrimitive : quint8 {
@@ -596,6 +670,14 @@ QByteArray encodeResumeEvents(
     quint64 bootId,
     quint16 protocolMinor = CurrentMinor,
     Error *error = nullptr);
+QByteArray encodeDiscoverTopologyEvidence(
+    const TopologyEvidenceQuery &query,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint64 bootId,
+    quint16 protocolMinor = CurrentMinor,
+    Error *error = nullptr);
 QByteArray encodeQueryResourceTable(
     const RuntimeResourceTableQuery &query,
     quint64 sessionId,
@@ -663,6 +745,11 @@ std::optional<Data::ControllerPackageSummary> decodePackageState(
     const Frame &frame, Error *error = nullptr);
 std::optional<TopologyResult> decodeTopologyResult(
     const Frame &frame, Error *error = nullptr);
+std::optional<TopologyEvidenceResult> decodeTopologyEvidence(
+    const Frame &frame,
+    const TopologyEvidenceQuery &query,
+    quint32 afterCaptureSequence = 0,
+    Error *error = nullptr);
 std::optional<RuntimeResourceTablePage> decodeResourceTablePage(
     const Frame &frame, const RuntimeResourceTableQuery &query, Error *error = nullptr);
 std::optional<RuntimeResourceSnapshot> decodeResourceSnapshot(

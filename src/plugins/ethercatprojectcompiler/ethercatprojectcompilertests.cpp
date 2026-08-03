@@ -189,11 +189,13 @@ struct CompilerFixture
         slave.name = QStringLiteral("XB6 fixture");
         slave.deviceDescriptionId = deviceDescriptionId;
         slave.stationAddress = 0x1001;
+        slave.alias = 0x002a;
         slave.esiSha256 = sha256(esiBytes).value();
         slave.adapterSelection.adapterId = {"org.embedlabs.adapter.solidot.xb6-fixture"};
         slave.adapterSelection.adapterVersion = QStringLiteral("0.3.0");
         slave.adapterSelection.adapterContentSha256 = sha256("upper-adapter").value();
         slave.adapterSelection.processDataProfileId = QStringLiteral("xb6.do16");
+        slave.adapterSelection.moduleAssignments = {{1, 0x00000624, 0, 0}};
         Data::PdoEntryConfiguration pdoEntry;
         pdoEntry.id = Data::NodeId::create();
         pdoEntry.index = 0x7000;
@@ -232,7 +234,13 @@ struct CompilerFixture
         topology.expiresAtNs = topology.capturedAtNs + 3'600'000'000'000ULL;
         topology.cyclePeriodNs = 125000;
         topology.linkSpeedMbps = 100;
-        topology.slaves = {{slaveId, 0, 0x1001, 0, slave.identity, 0, {}}};
+        topology.slaves = {{slaveId,
+                            0,
+                            0x1001,
+                            0x002a,
+                            slave.identity,
+                            0,
+                            {{1, 0x00000624, 0, 0}}}};
         const QByteArray topologyBytes
             = QByteArray(
                   "{\"capture_boot_id\":\"0x4f536f408aafbc51\","
@@ -244,9 +252,10 @@ struct CompilerFixture
                   ",\"format\":\"ethercat-discover-topology-evidence-v1\","
                   "\"format_version\":1,\"matched_scan\":{"
                   "\"cycle_period_ns\":125000,\"format\":\"ethercat-esi-match-v1\","
-                  "\"link_speed_mbps\":100,\"slaves\":[{\"alias\":0,"
+                  "\"link_speed_mbps\":100,\"slaves\":[{\"alias\":42,"
                   "\"identity\":{\"product_code\":182,\"revision\":1,"
-                  "\"vendor_id\":8930371},\"modules\":[],\"position\":0,"
+                  "\"vendor_id\":8930371},\"modules\":[{\"module_ident\":1572,"
+                  "\"slot\":1}],\"position\":0,"
                   "\"serial\":0,\"station_address\":4097}]}}\n");
         topology.canonicalEvidence = canonical(topologyBytes);
 
@@ -332,6 +341,7 @@ struct CompilerFixture
         projection.projectDeviceId = QStringLiteral("embedlabs:project:device:xb6-fixture");
         projection.position = 0;
         projection.stationAddress = 0x1001;
+        projection.alias = 0x002a;
         projection.identity = slave.identity;
         projection.esiSha256 = sha256(esiBytes);
         projection.targetProfileId = signedTarget.profileId;
@@ -339,6 +349,7 @@ struct CompilerFixture
         projection.adapterVersion = deviceSource.adapterVersion;
         projection.adapterSha256 = adapterFileSha;
         projection.pdoProfileId = QStringLiteral("do16");
+        projection.moduleAssignments = {{1, 0x00000624, 0, 0}};
         projection.pdoMappings = {
             {QStringLiteral("do16"),
              Data::RuntimePackageCompilerPdoDirection::Output,
@@ -835,6 +846,7 @@ public:
         Data::ControllerCapabilitySummary capability;
         capability.descriptorSha256
             = fixture.request.targetProfile.capabilityDescriptorSha256.value();
+        capability.topologyEvidence = true;
         m_snapshot.capability = capability;
         Data::ControllerTopologySnapshot observed;
         observed.firstStationAddress = topology.slaves.constFirst().stationAddress;
@@ -846,18 +858,38 @@ public:
         observed.bootId = topology.captureBootId;
         observed.requestId = 41;
         observed.responseSequence = 42;
-        observed.cpu1RequestSequence = quint32(topology.captureSequence);
-        observed.cpu1CompletedTimeNs = 43;
+        observed.topologyCaptureSequence = quint32(topology.captureSequence);
+        observed.topologyCompletedTimeNs = 43;
         observed.receivedAt = observed.discoveredAt;
         for (const Data::RuntimePackageCompilerTopologySlaveEvidence &slave : topology.slaves) {
-            observed.slaves.append({quint32(slave.position),
-                                    slave.stationAddress,
-                                    0,
-                                    0,
-                                    slave.identity.vendorId,
-                                    slave.identity.productCode,
-                                    slave.identity.revisionNumber,
-                                    slave.serialNumber});
+            Data::ControllerTopologySlave wire;
+            wire.position = quint32(slave.position);
+            wire.stationAddress = slave.stationAddress;
+            wire.vendorId = slave.identity.vendorId;
+            wire.productCode = slave.identity.productCode;
+            wire.revision = slave.identity.revisionNumber;
+            wire.serial = slave.serialNumber;
+            wire.alias = slave.alias;
+            wire.aliasValidity = Data::ControllerTopologyEvidenceValidity::Valid;
+            wire.aliasProvenance = Data::ControllerTopologyEvidenceProvenance::Observed;
+            wire.aliasSource = Data::ControllerTopologyEvidenceSource::EscStationAlias;
+            wire.moduleProvenance = Data::ControllerTopologyEvidenceProvenance::DeviceReported;
+            if (slave.moduleAssignments.isEmpty()) {
+                wire.moduleValidity = Data::ControllerTopologyEvidenceValidity::Unavailable;
+                wire.moduleSource = Data::ControllerTopologyEvidenceSource::SiiMailbox;
+            } else {
+                wire.moduleValidity = Data::ControllerTopologyEvidenceValidity::Valid;
+                wire.moduleSource = Data::ControllerTopologyEvidenceSource::CoeDetectedModules;
+                for (const Data::DeviceModuleAssignment &module : slave.moduleAssignments) {
+                    wire.modules.append(
+                        {quint16(module.slot),
+                         module.moduleIdent,
+                         Data::ControllerTopologyEvidenceValidity::Valid,
+                         Data::ControllerTopologyEvidenceProvenance::DeviceReported,
+                         Data::ControllerTopologyEvidenceSource::CoeDetectedModules});
+                }
+            }
+            observed.slaves.append(wire);
         }
         m_snapshot.topology = observed;
         setAvailable(true);
@@ -956,12 +988,18 @@ struct BuilderInputEnvironment
             {QStringLiteral("release_action"), QStringLiteral("hold_safe")},
             {QStringLiteral("timeout_action"), QStringLiteral("hold_safe")},
         };
+        QJsonArray expectedModules;
+        for (const Data::DeviceModuleAssignment &module : projection.moduleAssignments) {
+            expectedModules.append(
+                QJsonObject{{QStringLiteral("module_ident"), double(module.moduleIdent)},
+                            {QStringLiteral("slot"), module.slot}});
+        }
         const QJsonObject device{
             {QStringLiteral("adapter_source"), descriptor(deviceSource.adapterSourceFile)},
             {QStringLiteral("component_binding_ids"),
              stringObject(projection.componentBindingIds)},
-            {QStringLiteral("expected_alias"), 0},
-            {QStringLiteral("expected_modules"), QJsonArray{}},
+            {QStringLiteral("expected_alias"), projection.alias},
+            {QStringLiteral("expected_modules"), expectedModules},
             {QStringLiteral("manual_envelope"), manual},
             {QStringLiteral("project_device_id"), projection.projectDeviceId},
             {QStringLiteral("project_slave_node_id"), fixture.slaveId.toString()},
@@ -1602,8 +1640,10 @@ void EtherCATProjectCompilerTests::testProjectRequestBuilderProvisioningAndDeter
     QCOMPARE(*first, *second);
     QVERIFY(first->isValid());
     QVERIFY(first->compileRequest.isValid());
-    QCOMPARE(first->compileRequest.topologyEvidence.slaves.constFirst().alias, quint16(0));
-    QVERIFY(first->compileRequest.topologyEvidence.slaves.constFirst().moduleAssignments.isEmpty());
+    QCOMPARE(first->compileRequest.topologyEvidence.slaves.constFirst().alias, quint16(0x002a));
+    QCOMPARE(
+        first->compileRequest.topologyEvidence.slaves.constFirst().moduleAssignments,
+        QList<Data::DeviceModuleAssignment>({{1, 0x00000624, 0, 0}}));
     QCOMPARE(
         first->compileRequest.projectProjection.devices.constFirst().projectDeviceId,
         fixture.request.projectProjection.devices.constFirst().projectDeviceId);
