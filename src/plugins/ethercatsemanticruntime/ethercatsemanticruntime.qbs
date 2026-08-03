@@ -9,6 +9,7 @@ QtcPlugin {
     Depends { name: "Utils" }
     Depends { name: "Core" }
     Depends { name: "EtherCATCore" }
+    Depends { name: "EtherCATProjectCompiler" }
     Depends { name: "EtherCATProject" }
 
     pluginTestDepends: ["EtherCATDeviceAdapters", "EtherCATProductApi"]

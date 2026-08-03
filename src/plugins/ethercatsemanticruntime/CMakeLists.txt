@@ -3,6 +3,7 @@ add_qtc_plugin(EtherCATSemanticRuntime
   PLUGIN_DEPENDS
     Core
     EtherCATCore
+    EtherCATProjectCompiler
     EtherCATProject
   PLUGIN_TEST_DEPENDS
     EtherCATDeviceAdapters
