@@ -867,6 +867,35 @@ void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
     }
 }
 
+void EtherCATDeviceAdaptersTests::testInstalledProductionAuthorizations()
+{
+    AdapterPackageRepository repository(
+        adaptersRoot().pathAppended("v3"),
+        ::Core::ICore::resourcePath("ethercat/adapter-authorizations"),
+        ::Core::ICore::resourcePath("ethercat/adapter-authorization-trust"));
+
+    QVERIFY(repository.isAvailable());
+    QVERIFY2(repository.loadErrors().isEmpty(), qPrintable(repository.loadErrors().join('\n')));
+    QVERIFY2(
+        repository.authorizationDiagnostics().isEmpty(),
+        qPrintable(repository.authorizationDiagnostics().join('\n')));
+    QCOMPARE(repository.authorizationStatus().state, AdapterAuthorizationState::Authorized);
+    QCOMPARE(repository.authorizationStatus().authorizedAdapterCount, 2);
+    QCOMPARE(repository.authorizationStatus().validationFailureCount, 0);
+    QVERIFY(repository.startupDiagnostics().isEmpty());
+
+    const auto xb6 = repository.adapterManifest(
+        {"org.embedlabs.adapter.solidot.xb6-ec0002.rev1"}, "0.3.1");
+    const auto sv630n = repository.adapterManifest(
+        {"org.embedlabs.adapter.inovance.sv630n-1axis.rev00010000"}, "0.3.0");
+    QVERIFY(xb6);
+    QVERIFY(sv630n);
+    QVERIFY(xb6->signatureVerified);
+    QVERIFY(xb6->realHardwareAllowed);
+    QVERIFY(sv630n->signatureVerified);
+    QVERIFY(sv630n->realHardwareAllowed);
+}
+
 void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
 {
     constexpr char policyDomain[] = "embed-labs.ethercat-device-adapter-authorization-policy/v1";

@@ -1,9 +1,10 @@
 # Signed device-adapter authorization v1
 
-This directory is intentionally shipped without production authorizations.
-An embedded V3 adapter manifest must keep `signatureVerified` and
-`realHardwareAllowed` set to `false`. The IDE raises those two values only in
-memory after independently verifying the files described here.
+This directory ships the production policy and exact XB6/SV630N
+authorizations admitted by ISSUE-API-054. An embedded V3 adapter manifest must
+still keep `signatureVerified` and `realHardwareAllowed` set to `false`. The
+IDE raises those two values only in memory after independently verifying the
+files described here.
 
 Policy files use the suffix `.policy.json`; their detached raw 64-byte Ed25519
 signature uses the same basename with `.policy.sig`. Authorization files use
