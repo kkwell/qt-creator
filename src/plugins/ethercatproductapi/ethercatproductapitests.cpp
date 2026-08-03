@@ -9459,10 +9459,33 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         waitForMainGate(
             QStringLiteral("non-empty discovered topology"), [&provider, &strictShutdownGate] {
                 const Data::ControllerConnectionSnapshot snapshot = provider.connectionSnapshot();
-                return strictShutdownGate() && snapshot.topology
-                       && snapshot.topology->respondingCount && !snapshot.topology->slaves.isEmpty()
-                       && snapshot.topology->slaves.size()
-                              == qsizetype(snapshot.topology->respondingCount);
+                if (!strictShutdownGate() || !snapshot.topology
+                    || !snapshot.topology->respondingCount
+                    || snapshot.topology->slaves.isEmpty()
+                    || snapshot.topology->slaves.size()
+                           != qsizetype(snapshot.topology->respondingCount)
+                    || !snapshot.topology->hasCompleteProvenance()) {
+                    return false;
+                }
+                if (!snapshot.capability || !snapshot.capability->topologyEvidence)
+                    return true;
+                return snapshot.topology->topologyCaptureSequence
+                       && snapshot.topology->topologyCompletedTimeNs
+                       && std::all_of(
+                           snapshot.topology->slaves.cbegin(),
+                           snapshot.topology->slaves.cend(),
+                           [](const Data::ControllerTopologySlave &slave) {
+                               return slave.aliasValidity
+                                          == Data::ControllerTopologyEvidenceValidity::Valid
+                                      && slave.aliasProvenance
+                                             == Data::ControllerTopologyEvidenceProvenance::Observed
+                                      && slave.aliasSource
+                                             == Data::ControllerTopologyEvidenceSource::EscStationAlias
+                                      && (slave.moduleValidity
+                                              == Data::ControllerTopologyEvidenceValidity::Valid
+                                          || slave.moduleValidity
+                                                 == Data::ControllerTopologyEvidenceValidity::Unavailable);
+                           });
             });
         if (failure.isEmpty()) {
             const Data::ControllerTopologySnapshot &topology
@@ -9476,8 +9499,10 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
                 << "requestId=" << topology.requestId
                 << "responseSequence=" << topology.responseSequence
                 << "cpu1RequestSequence=" << topology.cpu1RequestSequence
+                << "topologyCaptureSequence=" << topology.topologyCaptureSequence
                 << "controllerTimestampNs=" << topology.controllerTimestampNs
                 << "cpu1CompletedTimeNs=" << topology.cpu1CompletedTimeNs
+                << "topologyCompletedTimeNs=" << topology.topologyCompletedTimeNs
                 << "receivedAt=" << topology.receivedAt.toString(Qt::ISODateWithMs);
             qInfo().noquote() << "[Product API hardware] discovered" << topology.respondingCount
                               << "slaves from station"
@@ -9495,6 +9520,9 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
                     << QStringLiteral("0x%1").arg(slave.revision, 8, 16, QLatin1Char('0'))
                     << "serial="
                     << QStringLiteral("0x%1").arg(slave.serial, 8, 16, QLatin1Char('0'))
+                    << "alias="
+                    << QStringLiteral("0x%1").arg(slave.alias, 4, 16, QLatin1Char('0'))
+                    << "modules=" << slave.modules.size()
                     << "al="
                     << QStringLiteral("0x%1").arg(slave.alState, 2, 16, QLatin1Char('0'))
                     << "flags="
