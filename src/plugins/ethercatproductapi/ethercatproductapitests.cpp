@@ -9206,6 +9206,18 @@ void EtherCATProductApiTests::testHardwareControlLifecycle()
         if (failure.isEmpty()) {
             const Data::ControllerTopologySnapshot &topology
                 = *provider.connectionSnapshot().topology;
+            qInfo().noquote()
+                << "[Product API hardware] topology provenance sessionGeneration="
+                << topology.sessionGeneration << "sessionId="
+                << QStringLiteral("0x%1").arg(topology.sessionId, 16, 16, QLatin1Char('0'))
+                << "bootId="
+                << QStringLiteral("0x%1").arg(topology.bootId, 16, 16, QLatin1Char('0'))
+                << "requestId=" << topology.requestId
+                << "responseSequence=" << topology.responseSequence
+                << "cpu1RequestSequence=" << topology.cpu1RequestSequence
+                << "controllerTimestampNs=" << topology.controllerTimestampNs
+                << "cpu1CompletedTimeNs=" << topology.cpu1CompletedTimeNs
+                << "receivedAt=" << topology.receivedAt.toString(Qt::ISODateWithMs);
             qInfo().noquote() << "[Product API hardware] discovered" << topology.respondingCount
                               << "slaves from station"
                               << QStringLiteral("0x%1")
