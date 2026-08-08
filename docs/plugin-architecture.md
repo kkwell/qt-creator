@@ -1,5 +1,9 @@
 # EtherCAT Plugin Architecture
 
+> 当前中文架构总览、插件调用规范、扩展步骤和工程化路线请先阅读
+> `docs/ethercat-plugin-development-guide.zh_CN.md`。本文其余章节保留完整历史 ISSUE
+> 演进和测试证据，其中部分阶段描述不代表当前产品能力。
+
 ## Scope
 
 The completed offline phase builds a CODESYS/TwinCAT-informed EtherCAT

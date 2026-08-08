@@ -9,7 +9,7 @@
     "Copyright" : "(C) 2026 Kvell",
     "License" : [ "Commercial Usage" ],
     "Category" : "EtherCAT",
-    "Description" : "Loopback-only, mock-only MCP and REST automation over IDE-owned EtherCAT state.",
+    "Description" : "Loopback MCP and REST with mock controller views and approved semantic action intents.",
     "SoftLoadable" : true,
     ${IDE_PLUGIN_DEPENDENCIES}
 }

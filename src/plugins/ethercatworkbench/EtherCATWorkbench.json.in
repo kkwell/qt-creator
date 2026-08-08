@@ -9,6 +9,6 @@
     "Copyright" : "(C) 2026 Kvell",
     "License" : [ "Commercial Usage" ],
     "Category" : "EtherCAT",
-    "Description" : "EtherCAT mode, device tree, selection, and extensible offline property pages.",
+    "Description" : "Unified EtherCAT engineering, commissioning, runtime, and semantic control workspace.",
     ${IDE_PLUGIN_DEPENDENCIES}
 }
