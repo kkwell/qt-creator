@@ -33,6 +33,29 @@
 
 namespace EtherCAT::Workbench::Internal {
 
+std::optional<ProviderStartupOutput> providerStartupOutput(
+    const Core::ProviderStartupDiagnostic &diagnostic)
+{
+    if (!diagnostic.isValid())
+        return std::nullopt;
+
+    ProviderStartupOutput output;
+    output.message = diagnostic.message.trimmed();
+    switch (diagnostic.severity) {
+    case Core::ProviderDiagnosticSeverity::Information:
+        output.level = ControllerOutputLevel::Information;
+        break;
+    case Core::ProviderDiagnosticSeverity::Warning:
+        output.level = ControllerOutputLevel::Warning;
+        break;
+    case Core::ProviderDiagnosticSeverity::Error:
+        output.level = ControllerOutputLevel::Error;
+        output.reveal = true;
+        break;
+    }
+    return output;
+}
+
 QList<ProviderStartupOutput> providerStartupOutput(Core::Provider *provider)
 {
     auto adapterProvider = qobject_cast<Core::DeviceAdapterProvider *>(provider);
@@ -41,24 +64,8 @@ QList<ProviderStartupOutput> providerStartupOutput(Core::Provider *provider)
 
     QList<ProviderStartupOutput> result;
     for (const Core::ProviderStartupDiagnostic &diagnostic : adapterProvider->startupDiagnostics()) {
-        if (!diagnostic.isValid())
-            continue;
-
-        ProviderStartupOutput output;
-        output.message = diagnostic.message.trimmed();
-        switch (diagnostic.severity) {
-        case Core::ProviderDiagnosticSeverity::Information:
-            output.level = ControllerOutputLevel::Information;
-            break;
-        case Core::ProviderDiagnosticSeverity::Warning:
-            output.level = ControllerOutputLevel::Warning;
-            break;
-        case Core::ProviderDiagnosticSeverity::Error:
-            output.level = ControllerOutputLevel::Error;
-            output.reveal = true;
-            break;
-        }
-        result.append(output);
+        if (const auto output = providerStartupOutput(diagnostic))
+            result.append(*output);
     }
     return result;
 }

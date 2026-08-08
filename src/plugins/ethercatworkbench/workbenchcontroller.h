@@ -21,6 +21,7 @@ namespace EtherCAT::Core {
 class ControllerConnectionProvider;
 class Provider;
 class ProviderRegistry;
+struct ProviderStartupDiagnostic;
 class SelectionService;
 } // namespace EtherCAT::Core
 
@@ -96,6 +97,8 @@ struct ProviderStartupOutput
 };
 
 QList<ProviderStartupOutput> providerStartupOutput(Core::Provider *provider);
+std::optional<ProviderStartupOutput> providerStartupOutput(
+    const Core::ProviderStartupDiagnostic &diagnostic);
 
 class WorkbenchController final : public QObject
 {

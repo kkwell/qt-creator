@@ -10728,6 +10728,7 @@ void EtherCATCoreTests::testProviderRegistryTracksObjectPool()
     QSignalSpy addedSpy(registry, &ProviderRegistry::providerAdded);
     QSignalSpy removedSpy(registry, &ProviderRegistry::providerAboutToBeRemoved);
     TestScanProvider provider;
+    TestScanProvider duplicateProvider;
     TestPropertyPageProvider reentrantProvider;
     TestControllerConnectionProvider connectionProvider;
     TestControllerConnectionProvider alternateConnectionProvider(
@@ -10737,6 +10738,55 @@ void EtherCATCoreTests::testProviderRegistryTracksObjectPool()
     QCOMPARE(registry->provider(provider.id()), &provider);
     QCOMPARE(registry->providers(ProviderKind::Scan), QList<Provider *>({&provider}));
     QCOMPARE(addedSpy.count(), 1);
+
+    const qsizetype initialDiagnosticCount = registry->registrationDiagnostics().size();
+    int addedDiagnosticCount = 0;
+    ProviderStartupDiagnostic duplicateDiagnostic;
+    connect(
+        registry,
+        &ProviderRegistry::registrationDiagnosticAdded,
+        this,
+        [&](const ProviderStartupDiagnostic &diagnostic) {
+            ++addedDiagnosticCount;
+            duplicateDiagnostic = diagnostic;
+        });
+    ExtensionSystem::PluginManager::addObject(&duplicateProvider);
+    QCOMPARE(registry->provider(provider.id()), &provider);
+    QVERIFY(!registry->providers().contains(&duplicateProvider));
+    QCOMPARE(addedSpy.count(), 1);
+    QCOMPARE(addedDiagnosticCount, 1);
+    QCOMPARE(registry->registrationDiagnostics().size(), initialDiagnosticCount + 1);
+    QCOMPARE(duplicateDiagnostic.code, Utils::Id("EtherCAT.ProviderRegistry.DuplicateId"));
+    QCOMPARE(duplicateDiagnostic.severity, ProviderDiagnosticSeverity::Error);
+    QVERIFY(duplicateDiagnostic.message.contains(provider.id().toString()));
+    QVERIFY(duplicateDiagnostic.message.contains(provider.displayName()));
+    ExtensionSystem::PluginManager::removeObject(&duplicateProvider);
+
+    ProviderRegistry boundedRegistry;
+    int boundedDiagnosticCount = 0;
+    connect(
+        &boundedRegistry,
+        &ProviderRegistry::registrationDiagnosticAdded,
+        this,
+        [&](const ProviderStartupDiagnostic &) { ++boundedDiagnosticCount; });
+    for (qsizetype index = 0;
+         index < ProviderRegistry::MaximumRegistrationDiagnostics + 8;
+         ++index) {
+        const Utils::Id providerId
+            = Utils::Id("EtherCAT.ProviderRegistry.Capacity").withSuffix(index);
+        Provider registeredProvider(ProviderKind::Scan, providerId, "Registered provider");
+        Provider rejectedProvider(ProviderKind::Scan, providerId, "Rejected provider");
+        boundedRegistry.recordDuplicateProvider(&registeredProvider, &rejectedProvider);
+        rejectedProvider.setDisplayName("Renamed rejected provider");
+        boundedRegistry.recordDuplicateProvider(&registeredProvider, &rejectedProvider);
+    }
+    QCOMPARE(
+        boundedRegistry.registrationDiagnostics().size(),
+        ProviderRegistry::MaximumRegistrationDiagnostics);
+    QCOMPARE(boundedDiagnosticCount, ProviderRegistry::MaximumRegistrationDiagnostics);
+    QCOMPARE(
+        boundedRegistry.registrationDiagnostics().constLast().code,
+        Utils::Id("EtherCAT.ProviderRegistry.DiagnosticCapacityExceeded"));
 
     provider.setAvailable(true);
     QVERIFY(provider.isAvailable());

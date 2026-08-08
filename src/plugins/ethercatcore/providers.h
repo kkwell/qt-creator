@@ -406,6 +406,8 @@ signals:
 
 Q_DECLARE_METATYPE(EtherCAT::Core::ProviderKind)
 Q_DECLARE_METATYPE(EtherCAT::Core::DeviceImportState)
+Q_DECLARE_METATYPE(EtherCAT::Core::ProviderDiagnosticSeverity)
+Q_DECLARE_METATYPE(EtherCAT::Core::ProviderStartupDiagnostic)
 Q_DECLARE_METATYPE(EtherCAT::Core::WorkbenchNodeKind)
 Q_DECLARE_METATYPE(EtherCAT::Core::PropertyPageContext)
 Q_DECLARE_METATYPE(EtherCAT::Core::PropertyPageDescriptor)

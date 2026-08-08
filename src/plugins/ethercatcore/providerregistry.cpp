@@ -62,17 +62,61 @@ Provider *ProviderRegistry::provider(Utils::Id id) const
     return nullptr;
 }
 
+QList<ProviderStartupDiagnostic> ProviderRegistry::registrationDiagnostics() const
+{
+    return m_registrationDiagnostics;
+}
+
 void ProviderRegistry::handleObjectAdded(QObject *object)
 {
     QTC_ASSERT(QThread::currentThread() == thread(), return);
 
     auto *provider = qobject_cast<Provider *>(object);
-    if (!provider || this->provider(provider->id()))
+    if (!provider)
         return;
+
+    if (Provider *registered = this->provider(provider->id())) {
+        if (registered == provider)
+            return;
+        recordDuplicateProvider(registered, provider);
+        return;
+    }
 
     m_providers.append(provider);
     connect(provider, &QObject::destroyed, this, &ProviderRegistry::discardDestroyedProviders);
     emit providerAdded(provider);
+}
+
+void ProviderRegistry::recordDuplicateProvider(Provider *registered, Provider *rejected)
+{
+    QTC_ASSERT(registered && rejected, return);
+
+    const Utils::Id rejectedId = rejected->id();
+    if (m_reportedDuplicateIds.contains(rejectedId))
+        return;
+
+    ProviderStartupDiagnostic diagnostic;
+    if (m_reportedDuplicateIds.size() >= MaximumRegistrationDiagnostics - 1) {
+        if (m_registrationDiagnosticOverflowReported)
+            return;
+        m_registrationDiagnosticOverflowReported = true;
+        diagnostic.code = Utils::Id("EtherCAT.ProviderRegistry.DiagnosticCapacityExceeded");
+        diagnostic.message = tr("Additional duplicate provider IDs were rejected; only the first "
+                                "%1 registration conflicts are retained.")
+                                 .arg(MaximumRegistrationDiagnostics - 1);
+    } else {
+        m_reportedDuplicateIds.insert(rejectedId);
+        diagnostic.code = Utils::Id("EtherCAT.ProviderRegistry.DuplicateId");
+        diagnostic.message = tr("Provider ID \"%1\" is already registered by \"%2\"; \"%3\" "
+                                "was rejected.")
+                                 .arg(
+                                     rejectedId.toString(),
+                                     registered->displayName(),
+                                     rejected->displayName());
+    }
+    diagnostic.severity = ProviderDiagnosticSeverity::Error;
+    m_registrationDiagnostics.append(diagnostic);
+    emit registrationDiagnosticAdded(diagnostic);
 }
 
 void ProviderRegistry::handleObjectAboutToBeRemoved(QObject *object)

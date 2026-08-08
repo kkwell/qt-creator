@@ -150,6 +150,7 @@ private:
     void scheduleProjectPresentation();
     void activateProjectPresentation();
     void postProviderStartupDiagnostics(Core::Provider *provider);
+    void postProviderRegistryDiagnostic(const Core::ProviderStartupDiagnostic &diagnostic);
     void shutdown();
 
     std::unique_ptr<WorkbenchController> m_controller;
@@ -207,6 +208,11 @@ void EtherCATWorkbenchPlugin::initialize()
     if (Core::ProviderRegistry *registry = m_controller->providerRegistry()) {
         connect(
             registry,
+            &Core::ProviderRegistry::registrationDiagnosticAdded,
+            this,
+            &EtherCATWorkbenchPlugin::postProviderRegistryDiagnostic);
+        connect(
+            registry,
             &Core::ProviderRegistry::providerAdded,
             this,
             &EtherCATWorkbenchPlugin::postProviderStartupDiagnostics);
@@ -217,6 +223,10 @@ void EtherCATWorkbenchPlugin::initialize()
             [this](Core::Provider *provider) {
                 m_reportedStartupDiagnosticProviders.remove(provider);
             });
+        for (const Core::ProviderStartupDiagnostic &diagnostic :
+             registry->registrationDiagnostics()) {
+            postProviderRegistryDiagnostic(diagnostic);
+        }
         for (Core::Provider *provider : registry->providers())
             postProviderStartupDiagnostics(provider);
     }
@@ -272,6 +282,23 @@ void EtherCATWorkbenchPlugin::postProviderStartupDiagnostics(Core::Provider *pro
         if (output.reveal)
             ProjectExplorer::ProjectExplorerPlugin::showApplicationOutput(channelId);
     }
+}
+
+void EtherCATWorkbenchPlugin::postProviderRegistryDiagnostic(
+    const Core::ProviderStartupDiagnostic &diagnostic)
+{
+    const std::optional<ProviderStartupOutput> output = providerStartupOutput(diagnostic);
+    if (!output)
+        return;
+
+    const Utils::Id channelId(Constants::CONTROLLER_OUTPUT_CHANNEL_ID);
+    const Utils::OutputFormat format = output->level == ControllerOutputLevel::Error
+                                           ? Utils::ErrorMessageFormat
+                                           : Utils::NormalMessageFormat;
+    ProjectExplorer::ProjectExplorerPlugin::postApplicationOutput(
+        channelId, Tr::tr("Output"), output->message + QLatin1Char('\n'), format);
+    if (output->reveal)
+        ProjectExplorer::ProjectExplorerPlugin::showApplicationOutput(channelId);
 }
 
 void EtherCATWorkbenchPlugin::setupQuickControllerActions()

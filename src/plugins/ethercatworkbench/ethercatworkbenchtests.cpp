@@ -10215,6 +10215,19 @@ void EtherCATWorkbenchTests::testProviderStartupDiagnosticsPresentation()
     QVERIFY(providerStartupOutput(nullptr).isEmpty());
     QVERIFY(providerStartupOutput(&provider).isEmpty());
 
+    Core::ProviderStartupDiagnostic invalidDiagnostic;
+    QVERIFY(!providerStartupOutput(invalidDiagnostic));
+    const Core::ProviderStartupDiagnostic registryDiagnostic{
+        Utils::Id("EtherCAT.ProviderRegistry.DuplicateId"),
+        "  Duplicate provider rejected.  ",
+        Core::ProviderDiagnosticSeverity::Error};
+    const std::optional<ProviderStartupOutput> registryOutput
+        = providerStartupOutput(registryDiagnostic);
+    QVERIFY(registryOutput);
+    QCOMPARE(registryOutput->message, QString("Duplicate provider rejected."));
+    QCOMPARE(registryOutput->level, ControllerOutputLevel::Error);
+    QVERIFY(registryOutput->reveal);
+
     provider.setStartupDiagnostics(
         {{Utils::Id("EtherCAT.AdapterAuthorization.NotInstalled"),
           "  Manual control unavailable: production adapter authorization is not installed.  ",

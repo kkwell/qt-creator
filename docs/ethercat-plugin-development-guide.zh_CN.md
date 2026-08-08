@@ -179,6 +179,8 @@ ShutdownFlag Plugin::aboutToShutdown()
 
 注册 ID 必须全局唯一且长期稳定。消费者需监听
 `ProviderRegistry::providerAboutToBeRemoved()`，在回调内立即丢弃指针和派生状态。
+重复 ID 不会进入 Registry；冲突会按 ID 合并、以固定容量保留为注册诊断，并显示在
+应用程序输出中。
 
 ### 5.3 异步控制和部署命令的接受与完成
 
@@ -493,8 +495,8 @@ DC 运行记录宣称为真机运动验证。
 
 ## 14. 已知架构风险
 
-- `ProviderRegistry` 当前会静默忽略重复 Provider ID。新 Provider 上线前必须人工和测试
-  检查 ID 唯一性，后续应改为可见启动诊断并 fail closed。
+- `ProviderRegistry` 会拒绝重复 Provider ID，并在应用程序输出发布可见错误；新 Provider
+  仍必须用测试固定 ID 唯一性，不能依赖运行时诊断代替设计审查。
 - Gateway、SemanticRuntime、Compiler 和激活服务各有操作记录，尚未形成统一查询入口。
 - 旧文档混合大量历史 ISSUE，部分协议版本和工具数量已经过期。
 - `EtherCATScan`/`EtherCATDiagnostics` 名称容易让新开发人员误认为它们是真实来源；当前
