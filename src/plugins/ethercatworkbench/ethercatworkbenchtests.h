@@ -56,6 +56,7 @@ private slots:
     void testTreeModelLargeIncrementalUpdate();
     void testConfiguredSlaveStateIcon();
     void testBundledEsiOnlineTopologyPresentation();
+    void testControllerTopologyEvidenceRefresh();
     void testNavigationHeaderResizePersistence();
     void testProviderStartupDiagnosticsPresentation();
     void testProviderStateTreeAndNavigation();

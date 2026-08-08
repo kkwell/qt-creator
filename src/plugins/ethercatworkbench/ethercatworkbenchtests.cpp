@@ -10109,6 +10109,76 @@ void EtherCATWorkbenchTests::testBundledEsiOnlineTopologyPresentation()
         Utils::Icons::SETTINGS.icon().pixmap(iconSize, iconSize).toImage());
 }
 
+void EtherCATWorkbenchTests::testControllerTopologyEvidenceRefresh()
+{
+    WorkbenchTreeModel model;
+    QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    QSignalSpy reset(&model, &QAbstractItemModel::modelReset);
+    const Data::ProjectSnapshot project = projectSnapshot("Topology Evidence Refresh");
+    const Data::NodeId master = masterId(project);
+    model.setProjects({project});
+    QCOMPARE(reset.count(), 1);
+
+    Data::ControllerTopologySlave slave;
+    slave.position = 0;
+    slave.stationAddress = 0x1001;
+    slave.alState = 0x0008;
+    slave.vendorId = 0x00884443;
+    slave.productCode = 0x000000b6;
+    slave.revision = 0x00000001;
+    slave.serial = 17;
+
+    Data::ControllerTopologySnapshot topology;
+    topology.firstStationAddress = slave.stationAddress;
+    topology.respondingCount = 1;
+    topology.slaves = {slave};
+    topology.discoveredAt = QDateTime::currentDateTimeUtc();
+
+    Data::ControllerConnectionSnapshot snapshot;
+    snapshot.scope = {project.id, master};
+    snapshot.state = Data::ControllerConnectionState::Connected;
+    snapshot.topology = topology;
+    model.setControllerConnections({snapshot});
+    QCOMPARE(reset.count(), 2);
+
+    const QModelIndex masterIndex = model.indexForNodeId(master);
+    const QModelIndex onlineDevice = directChildByKind(
+        &model, Core::WorkbenchNodeKind::Module, masterIndex);
+    QVERIFY(onlineDevice.isValid());
+    const Data::NodeId onlineDeviceId
+        = onlineDevice.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>();
+    QCOMPARE(model.controllerTopologySlave(onlineDeviceId), std::optional(slave));
+
+    Data::ControllerConnectionSnapshot evidenceUpdate = snapshot;
+    Data::ControllerTopologySlave &updatedSlave = evidenceUpdate.topology->slaves.first();
+    updatedSlave.alias = 7;
+    updatedSlave.aliasValidity = Data::ControllerTopologyEvidenceValidity::Valid;
+    updatedSlave.aliasProvenance = Data::ControllerTopologyEvidenceProvenance::Observed;
+    updatedSlave.aliasSource = Data::ControllerTopologyEvidenceSource::EscStationAlias;
+    updatedSlave.moduleValidity = Data::ControllerTopologyEvidenceValidity::Valid;
+    updatedSlave.moduleProvenance
+        = Data::ControllerTopologyEvidenceProvenance::DeviceReported;
+    updatedSlave.moduleSource = Data::ControllerTopologyEvidenceSource::CoeDetectedModules;
+    updatedSlave.modules = {
+        {1,
+         0x00000625,
+         Data::ControllerTopologyEvidenceValidity::Valid,
+         Data::ControllerTopologyEvidenceProvenance::DeviceReported,
+         Data::ControllerTopologyEvidenceSource::CoeDetectedModules},
+    };
+
+    model.setControllerConnections({evidenceUpdate});
+    QCOMPARE(reset.count(), 3);
+    QCOMPARE(model.controllerTopologySlave(onlineDeviceId), std::optional(updatedSlave));
+
+    Data::ControllerConnectionSnapshot sampleOnlyUpdate = evidenceUpdate;
+    sampleOnlyUpdate.topology->discoveredAt = topology.discoveredAt.addMSecs(1);
+    sampleOnlyUpdate.topology->requestId = 2;
+    model.setControllerConnections({sampleOnlyUpdate});
+    QCOMPARE(reset.count(), 3);
+    QCOMPARE(model.controllerTopologySlave(onlineDeviceId), std::optional(updatedSlave));
+}
+
 void EtherCATWorkbenchTests::testNavigationHeaderResizePersistence()
 {
     const Utils::Key settingsKey("EtherCAT/Workbench/NavigationHeaderState");

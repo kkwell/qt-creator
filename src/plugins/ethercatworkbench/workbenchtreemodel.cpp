@@ -496,15 +496,34 @@ static QString controllerTopologyFingerprint(
             QString::number(connection.topology->result),
         };
         for (const Data::ControllerTopologySlave &slave : connection.topology->slaves) {
-            fields.append(QStringLiteral("%1:%2:%3:%4:%5:%6:%7:%8")
-                              .arg(slave.position)
-                              .arg(slave.stationAddress)
-                              .arg(slave.alState)
-                              .arg(slave.flags)
-                              .arg(slave.vendorId)
-                              .arg(slave.productCode)
-                              .arg(slave.revision)
-                              .arg(slave.serial));
+            QStringList slaveFields{
+                QString::number(slave.position),
+                QString::number(slave.stationAddress),
+                QString::number(slave.alState),
+                QString::number(slave.flags),
+                QString::number(slave.vendorId),
+                QString::number(slave.productCode),
+                QString::number(slave.revision),
+                QString::number(slave.serial),
+                QString::number(slave.alias),
+                QString::number(int(slave.aliasValidity)),
+                QString::number(int(slave.aliasProvenance)),
+                QString::number(int(slave.aliasSource)),
+                QString::number(int(slave.moduleValidity)),
+                QString::number(int(slave.moduleProvenance)),
+                QString::number(int(slave.moduleSource)),
+                QString::number(slave.modules.size()),
+            };
+            for (const Data::ControllerTopologyModuleEvidence &module : slave.modules) {
+                slaveFields.append(
+                    QStringLiteral("m:%1:%2:%3:%4:%5")
+                        .arg(module.slot)
+                        .arg(module.moduleIdent)
+                        .arg(int(module.validity))
+                        .arg(int(module.provenance))
+                        .arg(int(module.source)));
+            }
+            fields.append(slaveFields.join(QLatin1Char(':')));
         }
         scopes.append(fields.join(QLatin1Char('|')));
     }
