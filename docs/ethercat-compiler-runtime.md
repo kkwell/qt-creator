@@ -45,8 +45,10 @@ starting a process:
 6. The Python executable and dependency environment are separately
    provisioned and fixed. User-site, `PYTHONPATH`, `PYTHONHOME`, loader
    injection variables and caller overrides must not select another runtime.
-7. The complete installed tree is revalidated before every compiler process,
-   and the provider must record a post-run drift check as operation evidence.
+7. The complete installed tree is revalidated before every compiler process
+   and again before any process output is decoded or accepted. A failed
+   post-run check rejects the result and preserves its operation directory as
+   unaccepted diagnostic evidence.
 
 The verifier defends against a damaged or malicious archive and installation
 changes made by another unprivileged user. Every directory from the filesystem
@@ -106,6 +108,22 @@ or real hardware operation.
   evidence only.
 - The API-068 signing key is limited to this exact release. Future product
   releases need governed key rotation, revocation and recovery.
+
+## API-069 Python runtime boundary
+
+API-069 supplies a signed offline CPython 3.11.9 companion, seven locked
+wheels and an atomic installer. The Mac verified its external Ed25519 key,
+archive signature, 25-entry closed set, wheel records, Apple installer signer
+and an atomically installed companion tree. This remains supply-chain evidence,
+not a usable IDE runtime.
+
+The native acceptance correctly stopped because the exact Python 3.11.9 host
+framework is absent. API-069 can only obtain it by running a privileged
+Python.org system package that also installs global links and may update shell
+profiles. That side effect is outside the IDE bootstrap boundary and was not
+authorized or executed. Product integration therefore waits for API-070: a
+signed, relocatable macOS arm64 runtime that installs wholly under its chosen
+versioned root without root access or system/profile changes.
 
 Close the active compiler-provisioning issue only after a clean installation
 can discover and verify the runtime, generate inputs from the current
