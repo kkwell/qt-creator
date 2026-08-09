@@ -8,6 +8,7 @@
 #include "runtimepackagecompilerpreparationcoordinator.h"
 #include "runtimepackagecompilerprojectrequestbuilder.h"
 #include "runtimepackagecompilerprovider.h"
+#include "scanproviderselectionservice.h"
 #include "selectionservice.h"
 #include "stateservice.h"
 #include "topologyservice.h"
@@ -52,6 +53,7 @@ private:
     std::unique_ptr<SelectionService> m_selectionService;
     std::unique_ptr<StateService> m_stateService;
     std::unique_ptr<ProviderRegistry> m_providerRegistry;
+    std::unique_ptr<ScanProviderSelectionService> m_scanProviderSelectionService;
     std::unique_ptr<TopologyService> m_topologyService;
     bool m_servicesRegistered = false;
 };
@@ -117,6 +119,7 @@ void EtherCATCorePlugin::initialize()
     qRegisterMetaType<TopologySelection>();
     qRegisterMetaType<TopologySnapshot>();
     qRegisterMetaType<TopologyLookupResult>();
+    qRegisterMetaType<ScanProviderSelection>();
 
     ::Core::IOptionsPage::registerCategory(Constants::SETTINGS_CATEGORY, Tr::tr("EtherCAT"), {});
     m_settingsPage = createSettingsPage();
@@ -128,6 +131,10 @@ void EtherCATCorePlugin::initialize()
 
     m_providerRegistry = std::make_unique<ProviderRegistry>();
     ExtensionSystem::PluginManager::addObject(m_providerRegistry.get());
+
+    m_scanProviderSelectionService
+        = std::make_unique<ScanProviderSelectionService>(m_providerRegistry.get());
+    ExtensionSystem::PluginManager::addObject(m_scanProviderSelectionService.get());
 
     m_topologyService = std::make_unique<TopologyService>(m_providerRegistry.get());
     ExtensionSystem::PluginManager::addObject(m_topologyService.get());
@@ -153,6 +160,9 @@ void EtherCATCorePlugin::unregisterServices()
 
     ExtensionSystem::PluginManager::removeObject(m_topologyService.get());
     m_topologyService.reset();
+
+    ExtensionSystem::PluginManager::removeObject(m_scanProviderSelectionService.get());
+    m_scanProviderSelectionService.reset();
 
     ExtensionSystem::PluginManager::removeObject(m_providerRegistry.get());
     m_providerRegistry.reset();

@@ -25,6 +25,8 @@ add_qtc_plugin(EtherCATCore
     runtimepackagecompilerprojectrequestbuilder.h
     runtimepackagecompilerprovider.cpp
     runtimepackagecompilerprovider.h
+    scanproviderselectionservice.cpp
+    scanproviderselectionservice.h
     selectionservice.cpp
     selectionservice.h
     semanticruntimeservice.cpp

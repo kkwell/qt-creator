@@ -58,6 +58,7 @@ private slots:
     void testScanProviderContract();
     void testDiagnosticsProviderContract();
     void testSelectionServicePublishesStableIds();
+    void testScanProviderSelectionServiceContract();
     void testStateServiceAggregatesContributions();
     void testTopologyServiceKeepsRealAndMockEvidenceSeparate();
     void testProviderRegistryTracksObjectPool();

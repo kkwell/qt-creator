@@ -44,6 +44,7 @@ python3 scripts/ethercat_feature_locator.py check
 | `ethercat.data.domain-contracts` | 跨插件数据合同 | `EtherCATData` | `contract-only` | [`src/libs/ethercatdata/offlineconfiguration.cpp`](../src/libs/ethercatdata/offlineconfiguration.cpp) |
 | `ethercat.core.provider-registry` | Provider 注册与唯一性 | `EtherCATCore` | `engineering-only` | [`src/plugins/ethercatcore/providerregistry.cpp`](../src/plugins/ethercatcore/providerregistry.cpp) |
 | `ethercat.core.topology-service` | 来源隔离的统一拓扑服务 | `EtherCATCore` | `engineering-only` | [`src/plugins/ethercatcore/topologyservice.cpp`](../src/plugins/ethercatcore/topologyservice.cpp) |
+| `ethercat.core.scan-provider-selection` | 显式 Mock 扫描 Provider 选择 | `EtherCATCore` | `engineering-only` | [`src/plugins/ethercatcore/scanproviderselectionservice.cpp`](../src/plugins/ethercatcore/scanproviderselectionservice.cpp) |
 | `ethercat.core.manual-control-contract` | 通用手动控制合同 | `EtherCATCore` | `contract-only` | [`src/plugins/ethercatcore/manualcontrolcontract.cpp`](../src/plugins/ethercatcore/manualcontrolcontract.cpp) |
 | `ethercat.project.model-format` | 工程格式与迁移 | `EtherCATProject` | `engineering-only` | [`src/plugins/ethercatproject/ethercatprojectformat.cpp`](../src/plugins/ethercatproject/ethercatprojectformat.cpp) |
 | `ethercat.project.mutation` | 工程变更、Undo 与 CAS | `EtherCATProject` | `engineering-only` | [`src/plugins/ethercatproject/projectserviceimpl.cpp`](../src/plugins/ethercatproject/projectserviceimpl.cpp) |
@@ -136,7 +137,26 @@ python3 scripts/ethercat_feature_locator.py check
 - 前置功能：`ethercat.data.domain-contracts`、`ethercat.core.provider-registry`
 - 边界提醒：服务不缓存拓扑、不触发连接或扫描；Real 与 Mock 永不自动替补。Fresh 只表示所选 Provider 仍暴露这一代证据，不证明与当前 ProjectSnapshot 修订匹配，也不授权编译或执行。
 - 边界提醒：标记为 mock 的 ControllerConnectionSnapshot 会被拒绝，不能借 ControllerConnectionProvider 类型冒充真实来源。
-- 边界提醒：Workbench 已按显式 Provider/Profile 只消费 Fresh RealController 证据；Mock 扫描的显式选择合同仍待独立闭合。
+- 边界提醒：Workbench 已按显式 Provider/Profile 只消费 Fresh RealController 证据；Mock 消费者必须使用 Core 的显式 Scan Provider 选择，不得动态挑选备用 Provider。
+
+#### `ethercat.core.scan-provider-selection` — 显式 Mock 扫描 Provider 选择
+
+按打开的工程与主站 Scope 保存唯一 Scan Provider ID，并在扫描活跃、Provider 移除和工程结构变化时 fail closed。
+
+- Owner：`EtherCATCore`（[`src/plugins/ethercatcore`](../src/plugins/ethercatcore)）
+- 运行边界：`engineering-only`
+- 证据边界：`unit`
+- 修改入口：
+  - [`src/plugins/ethercatcore/scanproviderselectionservice.cpp`](../src/plugins/ethercatcore/scanproviderselectionservice.cpp)：按 Scope 管理显式 Provider ID、活跃扫描门禁和工程生命周期清理；`ScanProviderSelectionService::select`、`ScanProviderSelectionService::clear`、`ScanProviderSelectionService::handleProjectChanged`
+- 公共合同：
+  - [`src/plugins/ethercatcore/scanproviderselectionservice.h`](../src/plugins/ethercatcore/scanproviderselectionservice.h)：会话级 Mock Scan Provider 选择与可用性通知合同；`ScanProviderSelection`、`class ETHERCATCORE_EXPORT ScanProviderSelectionService`
+- 定向测试：
+  - [`src/plugins/ethercatcore/ethercatcoretests.cpp`](../src/plugins/ethercatcore/ethercatcoretests.cpp)（`unit`）：`testScanProviderSelectionServiceContract`
+- 相关文档：[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
+- 前置功能：`ethercat.data.domain-contracts`、`ethercat.core.provider-registry`
+- 边界提醒：服务只保存 scope 与稳定 Provider ID，不保存 Provider 指针、ScanResult 或拓扑，也不调用 start、cancel 或 clear。
+- 边界提醒：没有显式选择时结果为空；已选 Provider 不可用或被移除时保持原 ID，但不得自动切换到其他 Provider。
+- 边界提醒：这是进程会话事实，不进入 .ecatproject 或签名工程身份；本机偏好恢复必须等待工程打开并重新校验 scope。
 
 #### `ethercat.core.manual-control-contract` — 通用手动控制合同
 
@@ -812,7 +832,7 @@ python3 scripts/ethercat_feature_locator.py check
 
 | Area | 知识卡 | 功能数 | 用途 |
 |---|---|---:|---|
-| `architecture` | 架构与公共合同知识卡 | 4 | 在不遍历实现插件的前提下确认跨插件值对象、Provider 和公共服务的正确边界。 |
+| `architecture` | 架构与公共合同知识卡 | 5 | 在不遍历实现插件的前提下确认跨插件值对象、Provider 和公共服务的正确边界。 |
 | `project` | 工程模型知识卡 | 2 | 维护 .ecatproject 的唯一事实来源、格式迁移和可撤销变更。 |
 | `devices` | 设备、ESI 与 Adapter 知识卡 | 2 | 用原始厂家证据和数据驱动适配完成精确设备识别，避免在上层写死型号逻辑。 |
 | `online` | 真实控制器在线功能知识卡 | 8 | 维护 Product API 三通道、会话、控制权、拓扑证据、部署和原子输出的一致在线快照。 |
@@ -834,7 +854,7 @@ python3 scripts/ethercat_feature_locator.py check
 | `ethercat.issue.current-project-hardware-acceptance` | `blocked` | `p0` | `ethercat.compiler.project-projection`、`ethercat.product-api.topology-evidence`、`ethercat.product-api.package-deployment`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.output-transactions`、`ethercat.runtime.activation`、`ethercat.runtime.manual-control`、`ethercat.workbench.deployment`、`ethercat.workbench.semantic-control` | 当前工程到真实硬件的完整验收尚未闭环 |
 | `ethercat.issue.startup-sdo-compiler` | `open` | `p0` | `ethercat.project.model-format`、`ethercat.project.mutation`、`ethercat.workbench.configuration-pages`、`ethercat.compiler.project-projection`、`ethercat.compiler.backend` | 非空 Startup SDO 尚未进入编译闭环 |
 | `ethercat.issue.restore-project-binding-guard` | `open` | `p0` | `ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.product-api.semantic-attestation`、`ethercat.runtime.package-evidence`、`ethercat.runtime.binding-actions`、`ethercat.runtime.activation`、`ethercat.workbench.communication` | Restore 运行前缺少当前工程绑定门禁 |
-| `ethercat.issue.topology-service` | `open` | `p1` | `ethercat.core.topology-service`、`ethercat.product-api.topology-evidence`、`ethercat.scan.mock-workflow`、`ethercat.workbench.project-navigation`、`ethercat.workbench.communication`、`ethercat.gateway.controller-views-intents` | 统一拓扑服务尚未接入 Mock 与 Gateway |
+| `ethercat.issue.topology-service` | `open` | `p1` | `ethercat.core.scan-provider-selection`、`ethercat.core.topology-service`、`ethercat.product-api.topology-evidence`、`ethercat.scan.mock-workflow`、`ethercat.workbench.project-navigation`、`ethercat.workbench.communication`、`ethercat.gateway.controller-views-intents` | 统一拓扑服务尚未接入 Mock 与 Gateway |
 | `ethercat.issue.engineering-coordinator` | `planned` | `p1` | `ethercat.workbench.communication`、`ethercat.workbench.deployment`、`ethercat.workbench.output-status`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.runtime.activation`、`ethercat.gateway.controller-views-intents` | 工程操作协调逻辑仍集中在 WorkbenchController |
 | `ethercat.issue.operation-journal` | `planned` | `p1` | `ethercat.compiler.preparation`、`ethercat.runtime.activation`、`ethercat.runtime.manual-control`、`ethercat.gateway.controller-views-intents` | 操作记录尚无统一查询与审计索引 |
 | `ethercat.issue.scan-diagnostics-dependency` | `planned` | `p1` | `ethercat.scan.mock-workflow`、`ethercat.diagnostics.mock-stream`、`ethercat.core.provider-registry` | Scan 与 Diagnostics 对 Workbench 存在反向依赖 |

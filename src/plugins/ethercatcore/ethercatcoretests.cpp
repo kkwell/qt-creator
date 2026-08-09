@@ -14,6 +14,7 @@
 #include "runtimepackagecompilerpreparationcoordinator.h"
 #include "runtimepackagecompilerprojectrequestbuilder.h"
 #include "runtimepackagecompilerprovider.h"
+#include "scanproviderselectionservice.h"
 #include "selectionservice.h"
 #include "semanticruntimeservice.h"
 #include "stateservice.h"
@@ -3098,7 +3099,11 @@ class TestScanProvider final : public ScanProvider
 {
 public:
     TestScanProvider()
-        : ScanProvider("EtherCAT.Scan.Test", "Test scanner")
+        : TestScanProvider("EtherCAT.Scan.Test", "Test scanner")
+    {}
+
+    TestScanProvider(Utils::Id id, const QString &displayName)
+        : ScanProvider(id, displayName)
     {}
 
     Data::ScanState scanState() const final { return m_progress.state; }
@@ -3187,6 +3192,146 @@ private:
     Data::ScanRequest m_request;
     std::optional<Data::ScanResult> m_result;
     QString m_error;
+};
+
+class TestProjectService final : public ProjectService
+{
+public:
+    TestProjectService()
+        : ProjectService("EtherCAT.Project.TestSelection", "Test selection projects")
+    {
+        setAvailable(true);
+    }
+
+    QList<Data::ProjectSnapshot> projects() const final { return m_projects; }
+
+    std::optional<Data::ProjectSnapshot> project(const Data::NodeId &projectId) const final
+    {
+        const auto found = std::find_if(
+            m_projects.cbegin(), m_projects.cend(), [&projectId](const auto &candidate) {
+                return candidate.id == projectId;
+            });
+        return found == m_projects.cend() ? std::nullopt
+                                         : std::optional<Data::ProjectSnapshot>(*found);
+    }
+
+    Data::NodeId activeProjectId() const final { return {}; }
+    bool managesProject(const QObject *) const final { return false; }
+
+    Utils::Result<> activateProject(const Data::NodeId &) final { return unsupported(); }
+    Utils::Result<> renameProject(const Data::NodeId &, const QString &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> saveProject(const Data::NodeId &) final { return unsupported(); }
+    Utils::Result<> undoProject(const Data::NodeId &) final { return unsupported(); }
+    Utils::Result<> redoProject(const Data::NodeId &) final { return unsupported(); }
+    Utils::Result<> setMasterConfiguration(
+        const Data::NodeId &,
+        const Data::NodeId &,
+        const Data::MasterConfiguration &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> replaceOfflineSlaves(
+        const Data::NodeId &,
+        const Data::NodeId &,
+        const QList<Data::OfflineSlaveConfiguration> &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> setProcessDataConfiguration(
+        const Data::NodeId &,
+        const Data::NodeId &,
+        const Data::ProcessDataConfiguration &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> setStartupConfiguration(
+        const Data::NodeId &,
+        const Data::NodeId &,
+        const Data::StartupConfiguration &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> setDcConfiguration(
+        const Data::NodeId &,
+        const Data::NodeId &,
+        const Data::DcConfiguration &) final
+    {
+        return unsupported();
+    }
+    bool canUndoProject(const Data::NodeId &) const final { return false; }
+    bool canRedoProject(const Data::NodeId &) const final { return false; }
+    Utils::Result<> renameStructuralNode(
+        const Data::NodeId &, const Data::NodeId &, const QString &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> setDeviceAdapterSelection(
+        const Data::NodeId &,
+        const Data::NodeId &,
+        const QByteArray &,
+        const Data::DeviceAdapterProjectSelection &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> setManualControlEnvelope(
+        const Data::NodeId &,
+        const Data::NodeId &,
+        const Data::ManualControlEnvelope &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> setMasterBindingArtifact(
+        const Data::NodeId &, const Data::SemanticBindingArtifactReference &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<Data::RuntimePackageActivationProjectCapture>
+    captureRuntimePackageActivationProject(const Data::NodeId &) const final
+    {
+        return Utils::ResultError("Unsupported test project operation");
+    }
+    Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult>
+    compareAndSetMasterBindingArtifact(
+        const Data::NodeId &,
+        const Data::RuntimePackageActivationDocumentRevisionToken &,
+        const Data::RuntimePackageActivationOriginalBindingToken &,
+        const Data::SemanticBindingArtifactReference &) final
+    {
+        return Utils::ResultError("Unsupported test project operation");
+    }
+
+    void setProjects(const QList<Data::ProjectSnapshot> &projects) { m_projects = projects; }
+
+    void announceProjectRemoval(const Data::NodeId &projectId)
+    {
+        emit projectAboutToBeRemoved(projectId);
+        m_projects.removeIf(
+            [&projectId](const Data::ProjectSnapshot &project) { return project.id == projectId; });
+    }
+
+    void announceProjectChanged(const Data::ProjectSnapshot &project)
+    {
+        const auto existing = std::find_if(
+            m_projects.begin(), m_projects.end(), [&project](const auto &candidate) {
+                return candidate.id == project.id;
+            });
+        if (existing == m_projects.end())
+            m_projects.append(project);
+        else
+            *existing = project;
+        emit projectChanged(project);
+    }
+
+private:
+    static Utils::Result<> unsupported()
+    {
+        return Utils::ResultError("Unsupported test project operation");
+    }
+
+    QList<Data::ProjectSnapshot> m_projects;
 };
 
 class TestDiagnosticsProvider final : public DiagnosticsProvider
@@ -3372,6 +3517,7 @@ void EtherCATCoreTests::testMetadataAndServices()
     QVERIFY(ExtensionSystem::PluginManager::getObject<SelectionService>());
     QVERIFY(ExtensionSystem::PluginManager::getObject<StateService>());
     QVERIFY(ExtensionSystem::PluginManager::getObject<ProviderRegistry>());
+    QVERIFY(ExtensionSystem::PluginManager::getObject<ScanProviderSelectionService>());
     QVERIFY(ExtensionSystem::PluginManager::getObject<TopologyService>());
 }
 
@@ -10749,6 +10895,197 @@ void EtherCATCoreTests::testSelectionServicePublishesStableIds()
     service->clear();
     QVERIFY(service->currentNodeId().isNull());
     QCOMPARE(changedSpy.count(), 2);
+}
+
+void EtherCATCoreTests::testScanProviderSelectionServiceContract()
+{
+    ProviderRegistry *registry = ExtensionSystem::PluginManager::getObject<ProviderRegistry>();
+    ScanProviderSelectionService *service
+        = ExtensionSystem::PluginManager::getObject<ScanProviderSelectionService>();
+    QVERIFY(registry);
+    QVERIFY(service);
+    QVERIFY(service->selections().isEmpty());
+
+    const Data::ControllerConnectionScope firstScope{
+        Data::NodeId::create(), Data::NodeId::create()};
+    const Data::ControllerConnectionScope secondScope{
+        Data::NodeId::create(), Data::NodeId::create()};
+    Data::ProjectSnapshot firstProject;
+    firstProject.id = firstScope.projectId;
+    firstProject.nodes = {
+        {firstScope.projectId, {}, Data::ProjectNodeKind::Project, "First project"},
+        {firstScope.masterId, firstScope.projectId, Data::ProjectNodeKind::Master, "First master"},
+    };
+    Data::ProjectSnapshot secondProject;
+    secondProject.id = secondScope.projectId;
+    secondProject.nodes = {
+        {secondScope.projectId, {}, Data::ProjectNodeKind::Project, "Second project"},
+        {secondScope.masterId,
+         secondScope.projectId,
+         Data::ProjectNodeKind::Master,
+         "Second master"},
+    };
+
+    TestScanProvider selectedProvider(
+        "EtherCAT.Scan.Selection.Selected", "Selected test scanner");
+    TestScanProvider alternateProvider(
+        "EtherCAT.Scan.Selection.Alternate", "Alternate test scanner");
+    TestControllerConnectionProvider wrongKindProvider(
+        "EtherCAT.Connection.Selection.WrongKind",
+        "Wrong-kind test provider",
+        "controller://wrong-kind",
+        {"control"});
+    TestProjectService projectService;
+    projectService.setProjects({firstProject, secondProject});
+    selectedProvider.setAvailable(true);
+    alternateProvider.setAvailable(true);
+    wrongKindProvider.setAvailable(true);
+
+    ExtensionSystem::PluginManager::addObject(&selectedProvider);
+    ExtensionSystem::PluginManager::addObject(&alternateProvider);
+    ExtensionSystem::PluginManager::addObject(&wrongKindProvider);
+    ExtensionSystem::PluginManager::addObject(&projectService);
+    const QScopeGuard cleanup([&] {
+        selectedProvider.cancelScan();
+        alternateProvider.cancelScan();
+        service->clear(firstScope);
+        service->clear(secondScope);
+        for (Provider *provider : QList<Provider *>{
+                 &projectService,
+                 &wrongKindProvider,
+                 &alternateProvider,
+                 &selectedProvider,
+             }) {
+            if (registry->provider(provider->id()) == provider)
+                ExtensionSystem::PluginManager::removeObject(provider);
+        }
+    });
+
+    QSignalSpy selectionChanged(service, &ScanProviderSelectionService::selectionChanged);
+    QSignalSpy validityChanged(service, &ScanProviderSelectionService::selectionValidityChanged);
+
+    QVERIFY(!service->selection(firstScope));
+    QVERIFY(!service->selectionIsAvailable(firstScope));
+    QVERIFY(!service->select({}, selectedProvider.id()));
+    QVERIFY(!service->select(firstScope, {}));
+    QVERIFY(!service->select(
+        {Data::NodeId::create(), Data::NodeId::create()}, selectedProvider.id()));
+    QVERIFY(!service->select(
+        {firstScope.projectId, Data::NodeId::create()}, selectedProvider.id()));
+    QVERIFY(!service->select(firstScope, "EtherCAT.Scan.Selection.Missing"));
+    QVERIFY(!service->select(firstScope, wrongKindProvider.id()));
+    QCOMPARE(selectedProvider.scanState(), Data::ScanState::Idle);
+    QCOMPARE(alternateProvider.scanState(), Data::ScanState::Idle);
+
+    QVERIFY_RESULT(service->select(firstScope, selectedProvider.id()));
+    QCOMPARE(
+        service->selection(firstScope),
+        std::optional(ScanProviderSelection{firstScope, selectedProvider.id()}));
+    QVERIFY(service->selectionIsAvailable(firstScope));
+    QCOMPARE(selectionChanged.count(), 1);
+    QCOMPARE(validityChanged.count(), 1);
+    QVERIFY(validityChanged.constLast().at(1).toBool());
+
+    QVERIFY_RESULT(service->select(firstScope, selectedProvider.id()));
+    QCOMPARE(selectionChanged.count(), 1);
+    QCOMPARE(validityChanged.count(), 1);
+
+    selectedProvider.setAvailable(false);
+    QCOMPARE(validityChanged.count(), 2);
+    QVERIFY(!validityChanged.constLast().at(1).toBool());
+    QCOMPARE(service->selection(firstScope)->providerId, selectedProvider.id());
+    QVERIFY(!service->selectionIsAvailable(firstScope));
+    selectedProvider.setAvailable(true);
+    QCOMPARE(validityChanged.count(), 3);
+    QVERIFY(validityChanged.constLast().at(1).toBool());
+
+    QVERIFY_RESULT(alternateProvider.startScan(
+        {secondScope.projectId, secondScope.masterId, Data::ScanOperation::Slaves, {}}));
+    QVERIFY(!service->select(secondScope, alternateProvider.id()));
+    QVERIFY(!service->selection(secondScope));
+    alternateProvider.cancelScan();
+    alternateProvider.clearScanResult();
+    QVERIFY_RESULT(service->select(secondScope, alternateProvider.id()));
+    QCOMPARE(selectionChanged.count(), 2);
+    QCOMPARE(validityChanged.count(), 4);
+    QCOMPARE(selectedProvider.scanState(), Data::ScanState::Idle);
+    QCOMPARE(alternateProvider.scanState(), Data::ScanState::Idle);
+
+    QVERIFY_RESULT(selectedProvider.startScan(
+        {firstScope.projectId, firstScope.masterId, Data::ScanOperation::Slaves, {}}));
+    QCOMPARE(selectedProvider.scanState(), Data::ScanState::Preparing);
+    QVERIFY(!service->select(firstScope, alternateProvider.id()));
+    QVERIFY(!service->select(secondScope, selectedProvider.id()));
+    QVERIFY(!service->clear(firstScope));
+    QVERIFY_RESULT(service->select(firstScope, selectedProvider.id()));
+    QCOMPARE(service->selection(firstScope)->providerId, selectedProvider.id());
+    QCOMPARE(selectionChanged.count(), 2);
+    QCOMPARE(selectedProvider.scanState(), Data::ScanState::Preparing);
+
+    selectedProvider.cancelScan();
+    QVERIFY_RESULT(service->select(firstScope, alternateProvider.id()));
+    QCOMPARE(selectionChanged.count(), 3);
+    QCOMPARE(service->selection(firstScope)->providerId, alternateProvider.id());
+    QCOMPARE(service->selection(secondScope)->providerId, alternateProvider.id());
+
+    const int validityBeforeRemoval = validityChanged.count();
+    ExtensionSystem::PluginManager::removeObject(&alternateProvider);
+    QCOMPARE(validityChanged.count(), validityBeforeRemoval + 2);
+    QVERIFY(!validityChanged.at(validityBeforeRemoval).at(1).toBool());
+    QVERIFY(!validityChanged.at(validityBeforeRemoval + 1).at(1).toBool());
+    QCOMPARE(service->selection(firstScope)->providerId, alternateProvider.id());
+    QCOMPARE(service->selection(secondScope)->providerId, alternateProvider.id());
+    QVERIFY(!service->selectionIsAvailable(firstScope));
+    QVERIFY(!service->selectionIsAvailable(secondScope));
+    QVERIFY(registry->provider(selectedProvider.id()) == &selectedProvider);
+    const int selectionChangesBeforeMissingReplay = selectionChanged.count();
+    QVERIFY(!service->select(firstScope, alternateProvider.id()));
+    QCOMPARE(selectionChanged.count(), selectionChangesBeforeMissingReplay);
+    QCOMPARE(validityChanged.count(), validityBeforeRemoval + 2);
+
+    ExtensionSystem::PluginManager::addObject(&alternateProvider);
+    QCOMPARE(validityChanged.count(), validityBeforeRemoval + 4);
+    QVERIFY(validityChanged.at(validityBeforeRemoval + 2).at(1).toBool());
+    QVERIFY(validityChanged.at(validityBeforeRemoval + 3).at(1).toBool());
+    QVERIFY(service->selectionIsAvailable(firstScope));
+    QVERIFY(service->selectionIsAvailable(secondScope));
+
+    QVERIFY_RESULT(alternateProvider.startScan(
+        {firstScope.projectId, firstScope.masterId, Data::ScanOperation::Slaves, {}}));
+    projectService.announceProjectRemoval(firstScope.projectId);
+    QVERIFY(!service->selection(firstScope));
+    QVERIFY(service->selection(secondScope));
+    QCOMPARE(alternateProvider.scanState(), Data::ScanState::Preparing);
+    QCOMPARE(selectionChanged.count(), 4);
+
+    alternateProvider.cancelScan();
+    QVERIFY_RESULT(service->clear(secondScope));
+    QVERIFY(service->selections().isEmpty());
+    QCOMPARE(selectionChanged.count(), 5);
+    QCOMPARE(selectedProvider.scanState(), Data::ScanState::Cancelled);
+    QCOMPARE(alternateProvider.scanState(), Data::ScanState::Cancelled);
+
+    Data::ProjectSnapshot restoredProject = firstProject;
+    restoredProject.valid = true;
+    projectService.announceProjectChanged(restoredProject);
+    QVERIFY_RESULT(service->select(firstScope, selectedProvider.id()));
+    QCOMPARE(selectionChanged.count(), 6);
+
+    Data::ProjectSnapshot nonStructuralChange = restoredProject;
+    nonStructuralChange.name = "Changed without removing the master";
+    nonStructuralChange.valid = false;
+    projectService.announceProjectChanged(nonStructuralChange);
+    QVERIFY(service->selection(firstScope));
+    QCOMPARE(selectionChanged.count(), 6);
+
+    Data::ProjectSnapshot missingMaster = nonStructuralChange;
+    missingMaster.nodes.removeIf([&firstScope](const Data::ProjectNodeSnapshot &node) {
+        return node.id == firstScope.masterId;
+    });
+    projectService.announceProjectChanged(missingMaster);
+    QVERIFY(!service->selection(firstScope));
+    QVERIFY(service->selections().isEmpty());
+    QCOMPARE(selectionChanged.count(), 7);
 }
 
 void EtherCATCoreTests::testStateServiceAggregatesContributions()

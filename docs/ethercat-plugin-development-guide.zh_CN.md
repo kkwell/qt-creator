@@ -202,8 +202,15 @@ Provider 类型冒充真实来源。
 Workbench 的真实控制器路径只按当前工程保存的 Provider/Profile 精确选择查询该服务，并且
 只把 `Fresh RealController` 证据投影到设备树、页面、FreeRun 判断和“应用当前总线”写入门禁。
 证据陈旧、不完整、scope/profile 不匹配或 Provider 被移除时，连接状态仍可显示，但在线拓扑
-立即清空且不会改用同 scope 的其他 Provider。Mock 扫描当前仍保留原有动态首选路径，必须在
-后续冻结显式选择合同后才能接入，不能把它视为已经统一。
+立即清空且不会改用同 scope 的其他 Provider。
+
+Mock 扫描 Provider 的选择由 Core `ScanProviderSelectionService` 按 `project/master scope`
+保存稳定 Provider ID。它只保存选择，不保存 Provider 指针、扫描结果或拓扑，也不会启动、取消
+或清除扫描。没有显式选择、Provider 不可用或 Provider 被移除时，消费者必须显示为空或不可用，
+不能动态选择第一个或“最优”备用 Provider；同一 ID 重新注册后才可恢复。扫描正在进行时也不得
+切换或清除选择。这个选择属于本机进程会话，不进入 `.ecatproject` 或签名工程身份；以后从本地
+偏好恢复时，必须等工程打开后重新校验 Project/Master scope。当前 Core 合同已完成，Workbench
+Mock 展示、ScanWorkflow 和 Gateway 的消费仍按后续独立问题迁移。
 
 ## 5. 插件间调用规范
 
@@ -214,6 +221,7 @@ Workbench 的真实控制器路径只按当前工程保存的 Provider/Profile �
 - `SelectionService`
 - `StateService`
 - `ProviderRegistry`
+- `ScanProviderSelectionService`
 - `TopologyService`
 - `AutomationService`
 - `SemanticRuntimeService`
@@ -552,8 +560,9 @@ DC 运行记录宣称为真机运动验证。
 
 ### P1：统一业务协调层
 
-1. Core 已建立来源隔离 `TopologyService`，Workbench 的真实控制器路径已按显式选择接入；
-   下一步先冻结 Mock Provider 的显式选择生命周期，再让 Gateway 消费同一只读合同。
+1. Core 已建立来源隔离 `TopologyService` 和会话级 `ScanProviderSelectionService`，Workbench
+   的真实控制器路径已按显式选择接入；下一步让 Workbench 与 ScanWorkflow 消费精确 Mock
+   Provider 选择，再让 Gateway 消费同一只读合同。
 2. 将连接、租约、扫描、配置、编译、部署、运行和停止从 5,000 行级
    `WorkbenchController` 逐步迁移到无 UI 的 `EngineeringOperationCoordinator`。
 3. 建立 UI、Gateway、SemanticRuntime、Compiler 和 Activation 共用的持久 Operation
