@@ -10,6 +10,7 @@
 #include "runtimepackagecompilerprovider.h"
 #include "selectionservice.h"
 #include "stateservice.h"
+#include "topologyservice.h"
 
 #ifdef WITH_TESTS
 #include "ethercatcoretests.h"
@@ -51,6 +52,7 @@ private:
     std::unique_ptr<SelectionService> m_selectionService;
     std::unique_ptr<StateService> m_stateService;
     std::unique_ptr<ProviderRegistry> m_providerRegistry;
+    std::unique_ptr<TopologyService> m_topologyService;
     bool m_servicesRegistered = false;
 };
 
@@ -106,6 +108,15 @@ void EtherCATCorePlugin::initialize()
     qRegisterMetaType<PropertyPageDescriptor>();
     qRegisterMetaType<StatusEntry>();
     qRegisterMetaType<StatusSeverity>();
+    qRegisterMetaType<TopologyEvidenceSource>();
+    qRegisterMetaType<TopologyEvidenceFreshness>();
+    qRegisterMetaType<TopologyLookupStatus>();
+    qRegisterMetaType<RealTopologyGeneration>();
+    qRegisterMetaType<MockTopologyGeneration>();
+    qRegisterMetaType<TopologyGeneration>();
+    qRegisterMetaType<TopologySelection>();
+    qRegisterMetaType<TopologySnapshot>();
+    qRegisterMetaType<TopologyLookupResult>();
 
     ::Core::IOptionsPage::registerCategory(Constants::SETTINGS_CATEGORY, Tr::tr("EtherCAT"), {});
     m_settingsPage = createSettingsPage();
@@ -117,6 +128,9 @@ void EtherCATCorePlugin::initialize()
 
     m_providerRegistry = std::make_unique<ProviderRegistry>();
     ExtensionSystem::PluginManager::addObject(m_providerRegistry.get());
+
+    m_topologyService = std::make_unique<TopologyService>(m_providerRegistry.get());
+    ExtensionSystem::PluginManager::addObject(m_topologyService.get());
     m_servicesRegistered = true;
 
 #ifdef WITH_TESTS
@@ -136,6 +150,9 @@ void EtherCATCorePlugin::unregisterServices()
 {
     if (!m_servicesRegistered)
         return;
+
+    ExtensionSystem::PluginManager::removeObject(m_topologyService.get());
+    m_topologyService.reset();
 
     ExtensionSystem::PluginManager::removeObject(m_providerRegistry.get());
     m_providerRegistry.reset();

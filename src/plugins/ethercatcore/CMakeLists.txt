@@ -31,6 +31,8 @@ add_qtc_plugin(EtherCATCore
     semanticruntimeservice.h
     stateservice.cpp
     stateservice.h
+    topologyservice.cpp
+    topologyservice.h
 )
 
 extend_qtc_plugin(EtherCATCore

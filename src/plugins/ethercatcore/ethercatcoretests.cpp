@@ -17,6 +17,7 @@
 #include "selectionservice.h"
 #include "semanticruntimeservice.h"
 #include "stateservice.h"
+#include "topologyservice.h"
 
 #include <coreplugin/dialogs/ioptionspage.h>
 
@@ -3027,6 +3028,49 @@ public:
         emit connectionSnapshotChanged();
     }
 
+    void publishTopology(bool completeProvenance = true, quint64 requestId = 23)
+    {
+        Data::ControllerTopologySlave slave;
+        slave.position = 0;
+        slave.stationAddress = 0x1001;
+        slave.alState = 8;
+        slave.vendorId = 2;
+        slave.productCode = 0x1234;
+        slave.revision = 1;
+        slave.serial = 17;
+
+        Data::ControllerTopologySnapshot topology;
+        topology.firstStationAddress = slave.stationAddress;
+        topology.respondingCount = 1;
+        topology.slaves = {slave};
+        topology.discoveredAt = QDateTime::currentDateTimeUtc();
+        topology.scope = m_snapshot.scope;
+        topology.sessionGeneration = m_snapshot.sessionGeneration;
+        if (completeProvenance && m_snapshot.session) {
+            topology.sessionId = m_snapshot.session->sessionId;
+            topology.bootId = m_snapshot.session->bootId;
+            topology.requestId = requestId;
+            topology.responseSequence = 29;
+            topology.topologyCaptureSequence = 31;
+            topology.topologyCompletedTimeNs = 37;
+            topology.receivedAt = QDateTime::currentDateTimeUtc();
+        }
+        m_snapshot.topology = topology;
+        emit connectionSnapshotChanged();
+    }
+
+    void setMock(bool mock)
+    {
+        m_snapshot.mock = mock;
+        emit connectionSnapshotChanged();
+    }
+
+    void clearTopology()
+    {
+        m_snapshot.topology.reset();
+        emit connectionSnapshotChanged();
+    }
+
     void failProtocol()
     {
         Data::ControllerOperationError error;
@@ -3088,6 +3132,7 @@ public:
         result.snapshot.id = Data::NodeId::create();
         result.snapshot.projectId = m_request.projectId;
         result.snapshot.masterId = m_request.masterId;
+        result.snapshot.capturedAt = QDateTime::currentDateTimeUtc();
         result.snapshot.slaves = {slave};
         result.snapshot.complete = true;
         result.snapshot.mock = true;
@@ -3109,6 +3154,14 @@ public:
         emit scanResultChanged();
         emit scanStateChanged(m_progress.state);
         emit scanFinished(m_progress.state);
+    }
+
+    void clearSnapshotIdentity()
+    {
+        if (!m_result)
+            return;
+        m_result->snapshot.id = {};
+        emit scanResultChanged();
     }
 
     void cancelScan() final
@@ -3319,6 +3372,7 @@ void EtherCATCoreTests::testMetadataAndServices()
     QVERIFY(ExtensionSystem::PluginManager::getObject<SelectionService>());
     QVERIFY(ExtensionSystem::PluginManager::getObject<StateService>());
     QVERIFY(ExtensionSystem::PluginManager::getObject<ProviderRegistry>());
+    QVERIFY(ExtensionSystem::PluginManager::getObject<TopologyService>());
 }
 
 void EtherCATCoreTests::testMockUiVisibility()
@@ -10718,6 +10772,166 @@ void EtherCATCoreTests::testStateServiceAggregatesContributions()
     service->clearAll();
     QCOMPARE(service->aggregateSeverity(), StatusSeverity::Ready);
     QVERIFY(service->statuses().isEmpty());
+}
+
+void EtherCATCoreTests::testTopologyServiceKeepsRealAndMockEvidenceSeparate()
+{
+    ProviderRegistry *registry = ExtensionSystem::PluginManager::getObject<ProviderRegistry>();
+    TopologyService *service = ExtensionSystem::PluginManager::getObject<TopologyService>();
+    QVERIFY(registry);
+    QVERIFY(service);
+
+    const Data::ControllerConnectionScope scope{Data::NodeId::create(), Data::NodeId::create()};
+    TestControllerConnectionProvider connectionProvider;
+    TestControllerConnectionProvider alternateConnectionProvider(
+        "EtherCAT.Connection.Topology.Alternate",
+        "Alternate topology controller",
+        "controller://alternate",
+        {"control", "events", "bulk"});
+    TestScanProvider scanProvider;
+    connectionProvider.setAvailable(true);
+    alternateConnectionProvider.setAvailable(true);
+    scanProvider.setAvailable(true);
+
+    QSignalSpy changedSpy(service, &TopologyService::topologyChanged);
+    ExtensionSystem::PluginManager::addObject(&connectionProvider);
+    ExtensionSystem::PluginManager::addObject(&alternateConnectionProvider);
+    ExtensionSystem::PluginManager::addObject(&scanProvider);
+    const QScopeGuard removeProviders([&] {
+        if (registry->provider(scanProvider.id()) == &scanProvider)
+            ExtensionSystem::PluginManager::removeObject(&scanProvider);
+        if (registry->provider(alternateConnectionProvider.id()) == &alternateConnectionProvider)
+            ExtensionSystem::PluginManager::removeObject(&alternateConnectionProvider);
+        if (registry->provider(connectionProvider.id()) == &connectionProvider)
+            ExtensionSystem::PluginManager::removeObject(&connectionProvider);
+    });
+
+    QCOMPARE(service->availableSelections(), QList<TopologySelection>());
+    QVERIFY(connectionProvider.connectToController(
+        {scope, connectionProvider.connectionProfiles(scope).constFirst().id}));
+    connectionProvider.completeHandshake();
+    QCOMPARE(service->availableSelections(), QList<TopologySelection>());
+
+    connectionProvider.publishTopology();
+    QVERIFY(scanProvider.startScan(
+        {scope.projectId, scope.masterId, Data::ScanOperation::Slaves, {}}));
+    scanProvider.complete();
+
+    const TopologySelection realSelection{
+        TopologyEvidenceSource::RealController,
+        connectionProvider.id(),
+        scope,
+    };
+    const TopologySelection mockSelection{
+        TopologyEvidenceSource::MockScan,
+        scanProvider.id(),
+        scope,
+    };
+    QCOMPARE(
+        service->availableSelections(),
+        QList<TopologySelection>({realSelection, mockSelection}));
+
+    const TopologyLookupResult real = service->topology(realSelection);
+    QVERIFY(real.isSuccess());
+    QVERIFY(real.hasFreshProviderEvidence());
+    QCOMPARE(real.snapshot->freshness, TopologyEvidenceFreshness::Fresh);
+    QVERIFY(real.snapshot->controllerEvidence);
+    QVERIFY(!real.snapshot->mockEvidence);
+    const TopologyGeneration realGeneration = real.snapshot->generation();
+    QCOMPARE(realGeneration.source(), TopologyEvidenceSource::RealController);
+    QVERIFY(realGeneration.isValid());
+    const auto *realToken = std::get_if<RealTopologyGeneration>(&realGeneration.value);
+    QVERIFY(realToken);
+    QCOMPARE(realToken->sessionGeneration, real.snapshot->controllerEvidence->sessionGeneration);
+    QCOMPARE(realToken->sessionId, real.snapshot->controllerEvidence->sessionId);
+    QCOMPARE(realToken->bootId, real.snapshot->controllerEvidence->bootId);
+    QCOMPARE(realToken->requestId, real.snapshot->controllerEvidence->requestId);
+    QCOMPARE(realToken->responseSequence, real.snapshot->controllerEvidence->responseSequence);
+    QCOMPARE(
+        realToken->cpu1RequestSequence,
+        real.snapshot->controllerEvidence->cpu1RequestSequence);
+    QCOMPARE(
+        realToken->topologyCaptureSequence,
+        real.snapshot->controllerEvidence->topologyCaptureSequence);
+
+    const TopologyLookupResult mock = service->topology(mockSelection);
+    QVERIFY(mock.isSuccess());
+    QVERIFY(mock.hasFreshProviderEvidence());
+    QCOMPARE(mock.snapshot->freshness, TopologyEvidenceFreshness::Fresh);
+    QVERIFY(mock.snapshot->mockEvidence);
+    QVERIFY(!mock.snapshot->controllerEvidence);
+    const TopologyGeneration mockGeneration = mock.snapshot->generation();
+    QCOMPARE(mockGeneration.source(), TopologyEvidenceSource::MockScan);
+    QVERIFY(mockGeneration.isValid());
+    const auto *mockToken = std::get_if<MockTopologyGeneration>(&mockGeneration.value);
+    QVERIFY(mockToken);
+    QCOMPARE(mockToken->snapshotId, mock.snapshot->mockEvidence->snapshot.id);
+
+    connectionProvider.publishTopology(true, 47);
+    const TopologyGeneration nextRealGeneration
+        = service->topology(realSelection).snapshot->generation();
+    QVERIFY(nextRealGeneration.isValid());
+    QVERIFY(nextRealGeneration != realGeneration);
+
+    connectionProvider.setMock(true);
+    QCOMPARE(service->topology(realSelection).status, TopologyLookupStatus::EvidenceInvalid);
+    QVERIFY(!service->availableSelections().contains(realSelection));
+    connectionProvider.setMock(false);
+    QVERIFY(service->topology(realSelection).hasFreshProviderEvidence());
+
+    TopologySelection wrongSource = realSelection;
+    wrongSource.source = TopologyEvidenceSource::MockScan;
+    QCOMPARE(service->topology(wrongSource).status, TopologyLookupStatus::ProviderKindMismatch);
+
+    TopologySelection wrongScope = realSelection;
+    wrongScope.scope.masterId = Data::NodeId::create();
+    QCOMPARE(service->topology(wrongScope).status, TopologyLookupStatus::ScopeMismatch);
+
+    TopologySelection missingProvider = realSelection;
+    missingProvider.providerId = "EtherCAT.Connection.Missing";
+    QCOMPARE(service->topology(missingProvider).status, TopologyLookupStatus::ProviderNotFound);
+
+    connectionProvider.setAvailable(false);
+    const TopologyLookupResult stale = service->topology(realSelection);
+    QVERIFY(stale.isSuccess());
+    QVERIFY(!stale.hasFreshProviderEvidence());
+    QCOMPARE(stale.snapshot->freshness, TopologyEvidenceFreshness::Stale);
+    connectionProvider.setAvailable(true);
+
+    alternateConnectionProvider.connectToController(
+        {scope, alternateConnectionProvider.connectionProfiles(scope).constFirst().id});
+    alternateConnectionProvider.completeHandshake();
+    alternateConnectionProvider.publishTopology(false);
+    const TopologySelection incompleteSelection{
+        TopologyEvidenceSource::RealController,
+        alternateConnectionProvider.id(),
+        scope,
+    };
+    const TopologyLookupResult incomplete = service->topology(incompleteSelection);
+    QVERIFY(incomplete.isSuccess());
+    QVERIFY(!incomplete.hasFreshProviderEvidence());
+    QCOMPARE(incomplete.snapshot->freshness, TopologyEvidenceFreshness::Incomplete);
+    QVERIFY(!incomplete.snapshot->generation().isValid());
+
+    const int changesBeforeRemoval = changedSpy.count();
+    ExtensionSystem::PluginManager::removeObject(&connectionProvider);
+    QCOMPARE(changedSpy.count(), changesBeforeRemoval + 1);
+    const QList<QVariant> removalNotification = changedSpy.constLast();
+    QCOMPARE(
+        qvariant_cast<TopologyEvidenceSource>(removalNotification.at(0)),
+        TopologyEvidenceSource::RealController);
+    QCOMPARE(qvariant_cast<Utils::Id>(removalNotification.at(1)), connectionProvider.id());
+    QCOMPARE(service->topology(realSelection).status, TopologyLookupStatus::ProviderNotFound);
+    QVERIFY(service->topology(mockSelection).isSuccess());
+    QVERIFY(!service->availableSelections().contains(realSelection));
+    QVERIFY(service->availableSelections().contains(mockSelection));
+
+    scanProvider.clearSnapshotIdentity();
+    const TopologyLookupResult incompleteMock = service->topology(mockSelection);
+    QVERIFY(incompleteMock.isSuccess());
+    QVERIFY(!incompleteMock.hasFreshProviderEvidence());
+    QCOMPARE(incompleteMock.snapshot->freshness, TopologyEvidenceFreshness::Incomplete);
+    QVERIFY(!incompleteMock.snapshot->generation().isValid());
 }
 
 void EtherCATCoreTests::testProviderRegistryTracksObjectPool()

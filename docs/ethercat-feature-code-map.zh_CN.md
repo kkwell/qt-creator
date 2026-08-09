@@ -43,6 +43,7 @@ python3 scripts/ethercat_feature_locator.py check
 |---|---|---|---|---|
 | `ethercat.data.domain-contracts` | 跨插件数据合同 | `EtherCATData` | `contract-only` | [`src/libs/ethercatdata/offlineconfiguration.cpp`](../src/libs/ethercatdata/offlineconfiguration.cpp) |
 | `ethercat.core.provider-registry` | Provider 注册与唯一性 | `EtherCATCore` | `engineering-only` | [`src/plugins/ethercatcore/providerregistry.cpp`](../src/plugins/ethercatcore/providerregistry.cpp) |
+| `ethercat.core.topology-service` | 来源隔离的统一拓扑服务 | `EtherCATCore` | `engineering-only` | [`src/plugins/ethercatcore/topologyservice.cpp`](../src/plugins/ethercatcore/topologyservice.cpp) |
 | `ethercat.core.manual-control-contract` | 通用手动控制合同 | `EtherCATCore` | `contract-only` | [`src/plugins/ethercatcore/manualcontrolcontract.cpp`](../src/plugins/ethercatcore/manualcontrolcontract.cpp) |
 | `ethercat.project.model-format` | 工程格式与迁移 | `EtherCATProject` | `engineering-only` | [`src/plugins/ethercatproject/ethercatprojectformat.cpp`](../src/plugins/ethercatproject/ethercatprojectformat.cpp) |
 | `ethercat.project.mutation` | 工程变更、Undo 与 CAS | `EtherCATProject` | `engineering-only` | [`src/plugins/ethercatproject/projectserviceimpl.cpp`](../src/plugins/ethercatproject/projectserviceimpl.cpp) |
@@ -117,6 +118,24 @@ python3 scripts/ethercat_feature_locator.py check
 - 相关文档：[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
 - 前置功能：`ethercat.data.domain-contracts`
 - 边界提醒：同一职责只允许一个稳定 Provider ID；冲突对象不会成为备用实现。
+
+#### `ethercat.core.topology-service` — 来源隔离的统一拓扑服务
+
+按精确来源、Provider 和工程 Scope 即时投影真实或 Mock 拓扑，并派生可比较的 generation 与 freshness。
+
+- Owner：`EtherCATCore`（[`src/plugins/ethercatcore`](../src/plugins/ethercatcore)）
+- 运行边界：`engineering-only`
+- 证据边界：`unit`
+- 修改入口：
+  - [`src/plugins/ethercatcore/topologyservice.cpp`](../src/plugins/ethercatcore/topologyservice.cpp)：精确来源查询、代际派生和失效通知；`TopologyService::topology`、`TopologySnapshot::generation`、`TopologyService::handleProviderAboutToBeRemoved`
+- 公共合同：
+  - [`src/plugins/ethercatcore/topologyservice.h`](../src/plugins/ethercatcore/topologyservice.h)：统一只读拓扑选择、来源、代际和 Provider 质量合同；`class ETHERCATCORE_EXPORT TopologyService`、`TopologySelection`、`TopologyGeneration`、`TopologyLookupResult`、`hasFreshProviderEvidence`
+- 定向测试：
+  - [`src/plugins/ethercatcore/ethercatcoretests.cpp`](../src/plugins/ethercatcore/ethercatcoretests.cpp)（`unit`）：`testTopologyServiceKeepsRealAndMockEvidenceSeparate`
+- 相关文档：[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
+- 前置功能：`ethercat.data.domain-contracts`、`ethercat.core.provider-registry`
+- 边界提醒：服务不缓存拓扑、不触发连接或扫描；Real 与 Mock 永不自动替补。Fresh 只表示所选 Provider 仍暴露这一代证据，不证明与当前 ProjectSnapshot 修订匹配，也不授权编译或执行。
+- 边界提醒：标记为 mock 的 ControllerConnectionSnapshot 会被拒绝，不能借 ControllerConnectionProvider 类型冒充真实来源。
 
 #### `ethercat.core.manual-control-contract` — 通用手动控制合同
 
@@ -791,7 +810,7 @@ python3 scripts/ethercat_feature_locator.py check
 
 | Area | 知识卡 | 功能数 | 用途 |
 |---|---|---:|---|
-| `architecture` | 架构与公共合同知识卡 | 3 | 在不遍历实现插件的前提下确认跨插件值对象、Provider 和公共服务的正确边界。 |
+| `architecture` | 架构与公共合同知识卡 | 4 | 在不遍历实现插件的前提下确认跨插件值对象、Provider 和公共服务的正确边界。 |
 | `project` | 工程模型知识卡 | 2 | 维护 .ecatproject 的唯一事实来源、格式迁移和可撤销变更。 |
 | `devices` | 设备、ESI 与 Adapter 知识卡 | 2 | 用原始厂家证据和数据驱动适配完成精确设备识别，避免在上层写死型号逻辑。 |
 | `online` | 真实控制器在线功能知识卡 | 8 | 维护 Product API 三通道、会话、控制权、拓扑证据、部署和原子输出的一致在线快照。 |
@@ -813,7 +832,7 @@ python3 scripts/ethercat_feature_locator.py check
 | `ethercat.issue.current-project-hardware-acceptance` | `blocked` | `p0` | `ethercat.compiler.project-projection`、`ethercat.product-api.topology-evidence`、`ethercat.product-api.package-deployment`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.output-transactions`、`ethercat.runtime.activation`、`ethercat.runtime.manual-control`、`ethercat.workbench.deployment`、`ethercat.workbench.semantic-control` | 当前工程到真实硬件的完整验收尚未闭环 |
 | `ethercat.issue.startup-sdo-compiler` | `open` | `p0` | `ethercat.project.model-format`、`ethercat.project.mutation`、`ethercat.workbench.configuration-pages`、`ethercat.compiler.project-projection`、`ethercat.compiler.backend` | 非空 Startup SDO 尚未进入编译闭环 |
 | `ethercat.issue.restore-project-binding-guard` | `open` | `p0` | `ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.product-api.semantic-attestation`、`ethercat.runtime.package-evidence`、`ethercat.runtime.binding-actions`、`ethercat.runtime.activation`、`ethercat.workbench.communication` | Restore 运行前缺少当前工程绑定门禁 |
-| `ethercat.issue.topology-service` | `planned` | `p1` | `ethercat.product-api.topology-evidence`、`ethercat.scan.mock-workflow`、`ethercat.workbench.project-navigation`、`ethercat.workbench.communication`、`ethercat.gateway.controller-views-intents` | 真实与 Mock 拓扑尚无统一公共服务 |
+| `ethercat.issue.topology-service` | `open` | `p1` | `ethercat.core.topology-service`、`ethercat.product-api.topology-evidence`、`ethercat.scan.mock-workflow`、`ethercat.workbench.project-navigation`、`ethercat.workbench.communication`、`ethercat.gateway.controller-views-intents` | 统一拓扑服务尚未接入 Workbench 与 Gateway |
 | `ethercat.issue.engineering-coordinator` | `planned` | `p1` | `ethercat.workbench.communication`、`ethercat.workbench.deployment`、`ethercat.workbench.output-status`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.runtime.activation`、`ethercat.gateway.controller-views-intents` | 工程操作协调逻辑仍集中在 WorkbenchController |
 | `ethercat.issue.operation-journal` | `planned` | `p1` | `ethercat.compiler.preparation`、`ethercat.runtime.activation`、`ethercat.runtime.manual-control`、`ethercat.gateway.controller-views-intents` | 操作记录尚无统一查询与审计索引 |
 | `ethercat.issue.scan-diagnostics-dependency` | `planned` | `p1` | `ethercat.scan.mock-workflow`、`ethercat.diagnostics.mock-stream`、`ethercat.core.provider-registry` | Scan 与 Diagnostics 对 Workbench 存在反向依赖 |

@@ -190,6 +190,15 @@ VendorId、ProductCode、Revision 和原始 XML SHA-256。显示名称、树序�
 
 消费者只复制快照。不得缓存 Socket、协议对象、RequestId 分配器或 Provider 私有对象。
 
+跨真实控制器和 Mock 扫描选择拓扑时，使用 Core 的 `TopologyService`。调用者必须显式提供
+`source + providerId + project/master scope`；服务只即时读取原始 Provider 证据，不缓存拓扑、
+不自增代际，也不触发连接或扫描。Real 的 generation 从 Session/Boot/Request/Response/Capture
+证据派生，Mock 的 generation 是扫描快照 `NodeId`。只有 `Fresh` 且 generation 有效的结果可进入
+Provider 级“当前证据”判断；这不证明它与当前 `ProjectSnapshot` 修订匹配，也不授权编译或执行，
+消费者仍须校验工程修订、来源策略和操作意图。`Stale` 和 `Incomplete` 仅供显示与诊断，Real 与
+Mock 不自动替补。标记为 `mock` 的 `ControllerConnectionSnapshot` 也会 fail closed，不能借
+Provider 类型冒充真实来源。
+
 ## 5. 插件间调用规范
 
 ### 5.1 服务与 Provider 的区别
@@ -199,6 +208,7 @@ VendorId、ProductCode、Revision 和原始 XML SHA-256。显示名称、树序�
 - `SelectionService`
 - `StateService`
 - `ProviderRegistry`
+- `TopologyService`
 - `AutomationService`
 - `SemanticRuntimeService`
 - `RuntimePackageActivationService`
@@ -536,8 +546,8 @@ DC 运行记录宣称为真机运动验证。
 
 ### P1：统一业务协调层
 
-1. 将真实 topology 与 Mock scan 统一到通用 TopologyService/Provider，避免 Workbench、
-   Gateway 和属性页看到不同来源。
+1. Core 已建立真实 topology 与 Mock scan 的来源隔离 `TopologyService`；下一步让 Workbench、
+   Gateway 和属性页按显式选择消费同一合同，避免各自解释来源和刷新状态。
 2. 将连接、租约、扫描、配置、编译、部署、运行和停止从 5,000 行级
    `WorkbenchController` 逐步迁移到无 UI 的 `EngineeringOperationCoordinator`。
 3. 建立 UI、Gateway、SemanticRuntime、Compiler 和 Activation 共用的持久 Operation

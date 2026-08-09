@@ -182,6 +182,28 @@
       "notesZh": ["同一职责只允许一个稳定 Provider ID；冲突对象不会成为备用实现。"]
     },
     {
+      "id": "ethercat.core.topology-service",
+      "area": "architecture",
+      "titleZh": "来源隔离的统一拓扑服务",
+      "summaryZh": "按精确来源、Provider 和工程 Scope 即时投影真实或 Mock 拓扑，并派生可比较的 generation 与 freshness。",
+      "owner": "ethercat-core",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["unit"],
+      "keywords": ["TopologyService", "拓扑", "Real", "Mock", "generation", "freshness"],
+      "implementation": [
+        {"path": "src/plugins/ethercatcore/topologyservice.cpp", "symbols": ["TopologyService::topology", "TopologySnapshot::generation", "TopologyService::handleProviderAboutToBeRemoved"], "roleZh": "精确来源查询、代际派生和失效通知"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/topologyservice.h", "symbols": ["class ETHERCATCORE_EXPORT TopologyService", "TopologySelection", "TopologyGeneration", "TopologyLookupResult", "hasFreshProviderEvidence"], "roleZh": "统一只读拓扑选择、来源、代际和 Provider 质量合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatcore/ethercatcoretests.cpp", "cases": ["testTopologyServiceKeepsRealAndMockEvidenceSeparate"], "kind": "unit"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.data.domain-contracts", "ethercat.core.provider-registry"],
+      "notesZh": ["服务不缓存拓扑、不触发连接或扫描；Real 与 Mock 永不自动替补。Fresh 只表示所选 Provider 仍暴露这一代证据，不证明与当前 ProjectSnapshot 修订匹配，也不授权编译或执行。", "标记为 mock 的 ControllerConnectionSnapshot 会被拒绝，不能借 ControllerConnectionProvider 类型冒充真实来源。"]
+    },
+    {
       "id": "ethercat.core.manual-control-contract",
       "area": "architecture",
       "titleZh": "通用手动控制合同",
@@ -990,8 +1012,8 @@
       "id": "architecture",
       "titleZh": "架构与公共合同知识卡",
       "purposeZh": "在不遍历实现插件的前提下确认跨插件值对象、Provider 和公共服务的正确边界。",
-      "readOrder": ["ethercat.data.domain-contracts", "ethercat.core.provider-registry", "ethercat.core.manual-control-contract"],
-      "callFlowsZh": ["EtherCATData 不可变值对象 -> EtherCATCore 公共合同 -> ProviderRegistry 唯一实现 -> 消费者复制快照。", "插件初始化时注册稳定 Provider ID，卸载前注销；消费者只依赖公开合同和稳定 ID。"],
+      "readOrder": ["ethercat.data.domain-contracts", "ethercat.core.provider-registry", "ethercat.core.topology-service", "ethercat.core.manual-control-contract"],
+      "callFlowsZh": ["EtherCATData 不可变值对象 -> EtherCATCore 公共合同 -> ProviderRegistry 唯一实现 -> 消费者复制快照。", "真实或 Mock Provider 原始证据 -> TopologyService 精确来源选择 -> 派生 generation/freshness -> 消费者重新读取。", "插件初始化时注册稳定 Provider ID，卸载前注销；消费者只依赖公开合同和稳定 ID。"],
       "invariantsZh": ["跨插件数据只能通过公开值类型和 Provider/Service 合同传递。", "Provider ID 在进程内唯一且稳定，冲突诊断必须有界并按稳定身份合并。", "Core、Workbench 和 Gateway 不得出现厂家型号、CiA 402 对象或 PDO 偏移分支。"],
       "changeChecklistZh": ["先判断变更属于值类型、公共合同还是具体 Provider。", "新增值类型时同步元类型、相等语义、序列化边界和合同测试。", "新增 Provider 时验证注册、冲突、卸载、重入和消费者失效路径。", "修改构建依赖时同步同目录 CMake 与 qbs。"],
       "avoidZh": ["不要创建第二个全局服务或通过 QObject::findChild 查找其他插件对象。", "不要让消费者保存 Provider 私有指针、Socket 或协议对象。", "不要用运行时冲突诊断替代设计时稳定 ID 审查。"]
@@ -1145,14 +1167,14 @@
     },
     {
       "id": "ethercat.issue.topology-service",
-      "titleZh": "真实与 Mock 拓扑尚无统一公共服务",
-      "status": "planned",
+      "titleZh": "统一拓扑服务尚未接入 Workbench 与 Gateway",
+      "status": "open",
       "severity": "p1",
-      "affectedFeatures": ["ethercat.product-api.topology-evidence", "ethercat.scan.mock-workflow", "ethercat.workbench.project-navigation", "ethercat.workbench.communication", "ethercat.gateway.controller-views-intents"],
-      "problemZh": "真实扫描、Mock 扫描、Workbench 和 Gateway 使用的拓扑入口仍分散，容易出现来源和刷新语义不一致。",
-      "currentBoundaryZh": "事实边界必须保持 Real/Mock 分离；统一服务只统一合同、来源标识和选择规则。",
-      "nextActionZh": "在 Core 建立无 UI TopologyService/Provider，承载来源、generation、freshness 和工程比较结果。",
-      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatcore/providers.h", "src/plugins/ethercatworkbench/workbenchcontroller.cpp"],
+      "affectedFeatures": ["ethercat.core.topology-service", "ethercat.product-api.topology-evidence", "ethercat.scan.mock-workflow", "ethercat.workbench.project-navigation", "ethercat.workbench.communication", "ethercat.gateway.controller-views-intents"],
+      "problemZh": "Workbench 与 Gateway 尚未统一消费 Core 的来源隔离拓扑合同，仍可能各自解释真实与 Mock 的刷新状态。",
+      "currentBoundaryZh": "Core 已提供无 UI、无缓存的 TopologyService：按精确 source/provider/scope 即时读取原始证据，派生 source-specific generation 和 Fresh/Stale/Incomplete，Provider 移除不自动替补；当前尚无产品消费者接线。",
+      "nextActionZh": "先让 Workbench 以显式选择读取 TopologyService，再让 Gateway 通过同一公共快照投影只读视图；两步都不得触发连接或扫描。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatcore/topologyservice.h", "src/plugins/ethercatcore/topologyservice.cpp", "src/plugins/ethercatcore/ethercatcoretests.cpp", "src/plugins/ethercatworkbench/workbenchcontroller.cpp"],
       "resolutionCriteriaZh": ["UI 与 Gateway 读取同一拓扑快照合同。", "Real/Mock 来源和新鲜度不可混淆。", "连接不扫描、显式重新扫描语义保持不变。"],
       "notesZh": []
     },

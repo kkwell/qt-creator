@@ -38,6 +38,8 @@ QtcPlugin {
         "semanticruntimeservice.h",
         "stateservice.cpp",
         "stateservice.h",
+        "topologyservice.cpp",
+        "topologyservice.h",
     ]
 
     QtcTestFiles {
