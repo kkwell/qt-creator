@@ -201,7 +201,7 @@
       ],
       "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
       "dependsOn": ["ethercat.data.domain-contracts", "ethercat.core.provider-registry"],
-      "notesZh": ["服务不缓存拓扑、不触发连接或扫描；Real 与 Mock 永不自动替补。Fresh 只表示所选 Provider 仍暴露这一代证据，不证明与当前 ProjectSnapshot 修订匹配，也不授权编译或执行。", "标记为 mock 的 ControllerConnectionSnapshot 会被拒绝，不能借 ControllerConnectionProvider 类型冒充真实来源。", "Workbench 已按显式 Provider/Profile 只消费 Fresh RealController 证据；Mock 消费者必须使用 Core 的显式 Scan Provider 选择，不得动态挑选备用 Provider。"]
+      "notesZh": ["服务不缓存拓扑、不触发连接或扫描；Real 与 Mock 永不自动替补。Fresh 只表示所选 Provider 仍暴露这一代证据，不证明与当前 ProjectSnapshot 修订匹配，也不授权编译或执行。", "标记为 mock 的 ControllerConnectionSnapshot 会被拒绝，不能借 ControllerConnectionProvider 类型冒充真实来源。", "Workbench 已按显式 Provider/Profile 消费 Fresh RealController，并按 Core Scan Provider 选择消费 Fresh Mock 证据；ScanWorkflow 与 Gateway 仍待迁移。"]
     },
     {
       "id": "ethercat.core.scan-provider-selection",
@@ -751,6 +751,31 @@
       "notesZh": ["没有打开工程时树必须为空；SelectionService 只保存选择，不保存工程或控制器副本。"]
     },
     {
+      "id": "ethercat.workbench.mock-topology-selection",
+      "area": "ui",
+      "titleZh": "Workbench 精确 Mock 拓扑选择",
+      "summaryZh": "在主站 General 页显式选择 Scan Provider，并按工程 Scope 只显示该 Provider 的 Fresh Mock 拓扑。",
+      "owner": "ethercat-workbench",
+      "runtimeBoundary": "mock-only",
+      "evidenceBoundary": ["offscreen-ui"],
+      "keywords": ["Mock topology", "Scan Provider", "General 页", "显式选择", "本地偏好", "Fresh"],
+      "implementation": [
+        {"path": "src/plugins/ethercatworkbench/workbenchcontroller.cpp", "symbols": ["WorkbenchController::selectScanProvider", "WorkbenchController::selectedMockTopology", "WorkbenchController::restoreScanProviderSelections"], "roleZh": "精确选择、Fresh-only 查询和有界本地偏好恢复"},
+        {"path": "src/plugins/ethercatworkbench/workbenchtreemodel.cpp", "symbols": ["WorkbenchTreeModel::setProviderPresentations", "scanPresentationForScope"], "roleZh": "按 Project/Master Scope 投影 Mock 拓扑与状态"},
+        {"path": "src/plugins/ethercatworkbench/generalpage.cpp", "symbols": ["GeneralPage::commitMasterScanProvider", "GeneralPage::refreshMasterSummary"], "roleZh": "Master General 页显式 Provider 选择器"}
+      ],
+      "contracts": [
+        {"path": "src/plugins/ethercatcore/scanproviderselectionservice.h", "symbols": ["ScanProviderSelection", "class ETHERCATCORE_EXPORT ScanProviderSelectionService"], "roleZh": "唯一会话级 Provider 选择合同"},
+        {"path": "src/plugins/ethercatcore/topologyservice.h", "symbols": ["TopologySelection", "hasFreshProviderEvidence"], "roleZh": "来源隔离与 Fresh Mock 证据合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testWorkbenchUsesExactMockTopologySelection", "testWorkbenchKeepsMockTopologyScopedAcrossDuplicateMasterIds"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.core.scan-provider-selection", "ethercat.core.topology-service"],
+      "notesZh": ["未选择、缺失、不可用、移除、非 Mock、不完整、陈旧或 scope 不匹配时立即清空且不切换备用 Provider。", "偏好只存于单个有界本地设置记录，最多 128 个 Scope；不修改 .ecatproject、签名工程身份或 ProjectSnapshot。", "选择器只改变本地绑定，不调用 start、cancel、clear、控制器命令或 Discover。"]
+    },
+    {
       "id": "ethercat.workbench.communication",
       "area": "ui",
       "titleZh": "IP、连接、扫描和快捷控制",
@@ -1094,7 +1119,7 @@
       "id": "ui",
       "titleZh": "Workbench 界面知识卡",
       "purposeZh": "让工程树、右侧属性页、顶部/左下快捷操作和输出面板投影同一套服务状态。",
-      "readOrder": ["ethercat.workbench.details-routing", "ethercat.workbench.general-overview", "ethercat.workbench.project-navigation", "ethercat.workbench.communication", "ethercat.workbench.configuration-pages", "ethercat.workbench.esi-library", "ethercat.workbench.coe-view", "ethercat.workbench.deployment", "ethercat.workbench.semantic-control", "ethercat.workbench.output-status"],
+      "readOrder": ["ethercat.workbench.details-routing", "ethercat.workbench.general-overview", "ethercat.workbench.project-navigation", "ethercat.workbench.mock-topology-selection", "ethercat.workbench.communication", "ethercat.workbench.configuration-pages", "ethercat.workbench.esi-library", "ethercat.workbench.coe-view", "ethercat.workbench.deployment", "ethercat.workbench.semantic-control", "ethercat.workbench.output-status"],
       "callFlowsZh": ["树节点选择 -> SelectionService -> PropertyPageProvider -> DetailsView 对应页面。", "工具栏、左下控制区和树节点菜单复用同一 QAction -> WorkbenchController/公共服务 -> 输出和状态投影。", "页面编辑 -> ProjectService mutation -> projectChanged -> 树和详情重新读取 ProjectSnapshot。"],
       "invariantsZh": ["页面只投影公共快照，不保存第二套工程、连接或运行状态机。", "同一操作在工具栏、快捷控制和右键菜单复用同一启用条件与处理器。", "关键错误进入应用程序输出并包含可行动原因；普通握手和重复状态不刷屏。", "无工程时设备树为空；连接状态由控制按钮/页面表达，不在底部状态栏重复。"],
       "changeChecklistZh": ["先确认功能所有权和公共合同，再修改页面或 Controller 接线。", "测试选择切换、页面生命周期、可拖动布局、动作 enablement、错误断连和工程重开。", "遵守 Qt Creator 颜色、字体、间距 token 和 CMake/qbs 同步规则。"],
@@ -1189,13 +1214,13 @@
     },
     {
       "id": "ethercat.issue.topology-service",
-      "titleZh": "统一拓扑服务尚未接入 Mock 与 Gateway",
+      "titleZh": "统一拓扑服务尚未接入 ScanWorkflow 与 Gateway",
       "status": "open",
       "severity": "p1",
-      "affectedFeatures": ["ethercat.core.scan-provider-selection", "ethercat.core.topology-service", "ethercat.product-api.topology-evidence", "ethercat.scan.mock-workflow", "ethercat.workbench.project-navigation", "ethercat.workbench.communication", "ethercat.gateway.controller-views-intents"],
-      "problemZh": "Workbench 的真实控制器路径已统一，但 Mock 扫描消费者尚未全部接入 Core 的显式 Provider 选择，Gateway 也尚未消费公共拓扑合同。",
-      "currentBoundaryZh": "Core 已提供无 UI、无缓存的 TopologyService 和会话级 ScanProviderSelectionService；后者只接受当前打开工程/主站与精确 Scan Provider ID，Provider 移除时保留绑定但不替补，扫描活跃时拒绝切换。Workbench 的真实路径已统一，Mock 展示、ScanWorkflow 和 Gateway 仍使用旧路径。",
-      "nextActionZh": "先让 Workbench 按 Scope 恢复并消费显式 Mock Provider 选择，再让 ScanWorkflow 在启动和接受结果时复核同一 Provider 与 snapshot generation；最后让 Gateway 读取同一公共只读快照。",
+      "affectedFeatures": ["ethercat.core.scan-provider-selection", "ethercat.core.topology-service", "ethercat.product-api.topology-evidence", "ethercat.scan.mock-workflow", "ethercat.workbench.mock-topology-selection", "ethercat.workbench.project-navigation", "ethercat.workbench.communication", "ethercat.gateway.controller-views-intents"],
+      "problemZh": "Workbench 的 Real 与 Mock 拓扑展示已统一，但 ScanWorkflow 尚未在启动和接受结果时复核共享选择与 generation，Gateway 也尚未消费公共拓扑合同。",
+      "currentBoundaryZh": "Core 已提供无 UI、无缓存的 TopologyService 和会话级 ScanProviderSelectionService；Workbench 只投影精确选择的 Fresh Real/Mock 证据，Mock Provider 偏好以单个最多 128 项的本地记录恢复，移除、陈旧、不完整或错 scope 均清空且不替补。ScanWorkflow 仍持具体 Provider，Gateway 仍没有真实公共视图。",
+      "nextActionZh": "让 ScanWorkflow 在启动、比较、接受和清除时复核同一共享 Provider 选择与 Mock snapshot generation；然后让 Gateway 读取同一公共只读快照。",
       "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatcore/scanproviderselectionservice.h", "src/plugins/ethercatcore/scanproviderselectionservice.cpp", "src/plugins/ethercatcore/topologyservice.h", "src/plugins/ethercatcore/topologyservice.cpp", "src/plugins/ethercatcore/ethercatcoretests.cpp", "src/plugins/ethercatworkbench/workbenchcontroller.cpp", "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp"],
       "resolutionCriteriaZh": ["UI 与 Gateway 读取同一拓扑快照合同。", "Real/Mock 来源和新鲜度不可混淆。", "连接不扫描、显式重新扫描语义保持不变。"],
       "notesZh": []

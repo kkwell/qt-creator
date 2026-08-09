@@ -30,6 +30,7 @@
 #include <QPushButton>
 #include <QRegularExpressionValidator>
 #include <QScopedValueRollback>
+#include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QStyle>
 #include <QTreeWidget>
@@ -182,6 +183,7 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     , m_masterCycle(new QLineEdit(m_masterSummaryForm))
     , m_masterSlaveCount(new QLineEdit(m_masterSummaryForm))
     , m_masterStatus(new QLineEdit(m_masterSummaryForm))
+    , m_masterScanProvider(new QComboBox(m_masterSummaryForm))
     , m_masterApply(new QPushButton(Tr::tr("Apply"), m_masterSummaryForm))
     , m_tree(new QTreeWidget(this))
 {
@@ -453,11 +455,13 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     m_masterCycle->setObjectName("EtherCATMasterGeneralCycle");
     m_masterSlaveCount->setObjectName("EtherCATMasterGeneralSlaveCount");
     m_masterStatus->setObjectName("EtherCATMasterGeneralStatus");
+    m_masterScanProvider->setObjectName("EtherCATMasterGeneralScanProvider");
     m_masterApply->setObjectName("EtherCATMasterGeneralApply");
     m_masterTimingMode->setAccessibleName(Tr::tr("EtherCAT master timing mode"));
     m_masterCycle->setAccessibleName(Tr::tr("EtherCAT master cycle period"));
     m_masterSlaveCount->setAccessibleName(Tr::tr("Configured EtherCAT slave count"));
     m_masterStatus->setAccessibleName(Tr::tr("EtherCAT master status summary"));
+    m_masterScanProvider->setAccessibleName(Tr::tr("Mock topology Scan Provider"));
     m_masterApply->setAccessibleName(Tr::tr("Apply EtherCAT master cycle configuration"));
     m_masterTimingMode->addItem(
         Tr::tr("Not assigned"), int(Data::MasterTimingMode::Unassigned));
@@ -470,6 +474,12 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
         new QRegularExpressionValidator(QRegularExpression("[0-9]{0,10}"), m_masterCycle));
     m_masterStatus->setToolTip(
         Tr::tr("Summary from the shared Workbench scan and diagnostics presentation."));
+    const QString scanProviderTip = Tr::tr(
+        "Select the exact Scan Provider whose completed Mock topology may be shown for this "
+        "Master. This selection does not start, cancel, or clear a scan and does not contact a "
+        "controller.");
+    m_masterScanProvider->setToolTip(scanProviderTip);
+    m_masterScanProvider->setAccessibleDescription(scanProviderTip);
     m_masterSlaveCount->setReadOnly(true);
     m_masterStatus->setReadOnly(true);
     auto masterSummary = new QFormLayout(m_masterSummaryForm);
@@ -481,6 +491,7 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     masterSummary->addRow(m_masterApply);
     masterSummary->addRow(Tr::tr("Configured slaves:"), m_masterSlaveCount);
     masterSummary->addRow(Tr::tr("Status:"), m_masterStatus);
+    masterSummary->addRow(Tr::tr("Mock topology:"), m_masterScanProvider);
 
     auto masterContentLayout = new QVBoxLayout(m_masterContent);
     masterContentLayout->setContentsMargins(QMargins());
@@ -521,6 +532,11 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
     connect(m_targetName, &QLineEdit::editingFinished, this, &GeneralPage::commitTargetName);
     connect(m_masterName, &QLineEdit::editingFinished, this, &GeneralPage::commitMasterName);
     connect(m_masterApply, &QPushButton::clicked, this, &GeneralPage::commitMasterConfiguration);
+    connect(
+        m_masterScanProvider,
+        &QComboBox::activated,
+        this,
+        &GeneralPage::commitMasterScanProvider);
     for (QLineEdit *name : {m_projectName, m_name, m_targetName, m_masterName}) {
         connect(name, &QLineEdit::textEdited, this, [this] { clearNameFeedback(); });
     }
@@ -535,6 +551,11 @@ GeneralPage::GeneralPage(WorkbenchController *controller, QWidget *parent)
         connect(
             m_controller->treeModel(),
             &QAbstractItemModel::modelReset,
+            this,
+            &GeneralPage::refreshMasterSummary);
+        connect(
+            m_controller,
+            &WorkbenchController::scanProviderChanged,
             this,
             &GeneralPage::refreshMasterSummary);
     }
@@ -881,6 +902,8 @@ void GeneralPage::reset(const QString &summary, QLineEdit *preservedName)
     m_masterApply->setEnabled(false);
     m_masterSlaveCount->clear();
     m_masterStatus->clear();
+    m_masterScanProvider->clear();
+    m_masterScanProvider->setEnabled(false);
     m_tree->clear();
     m_tree->setColumnCount(2);
     m_tree->setHeaderLabels({Tr::tr("Property"), Tr::tr("Value")});
@@ -1064,6 +1087,26 @@ void GeneralPage::commitMasterConfiguration()
     refreshMasterSummary();
 }
 
+void GeneralPage::commitMasterScanProvider()
+{
+    if (m_updating || !m_controller || m_context.nodeKind != Core::WorkbenchNodeKind::Master)
+        return;
+
+    const Data::ControllerConnectionScope scope{m_context.projectId, m_context.nodeId};
+    const Utils::Id providerId = Utils::Id::fromSetting(m_masterScanProvider->currentData());
+    const Utils::Result<> result = m_controller->selectScanProvider(scope, providerId);
+    if (!result) {
+        m_controller->writeControllerOutput(
+            Tr::tr("Cannot update the Mock topology provider: %1").arg(result.error()),
+            ControllerOutputLevel::Error);
+    } else {
+        m_controller->writeControllerOutput(
+            providerId.isValid() ? Tr::tr("Mock topology provider selected.")
+                                 : Tr::tr("Mock topology provider selection cleared."));
+    }
+    refreshMasterSummary();
+}
+
 void GeneralPage::refreshMasterSummary()
 {
     if (!m_controller || m_context.nodeKind != Core::WorkbenchNodeKind::Master)
@@ -1087,6 +1130,32 @@ void GeneralPage::refreshMasterSummary()
     const QModelIndex masterIndex = m_controller->treeModel()->indexForNodeId(m_context.nodeId);
     const QString status = masterIndex.data(WorkbenchTreeModel::StatusRole).toString();
     m_masterStatus->setText(status.isEmpty() ? Tr::tr("Offline configuration") : status);
+
+    const QSignalBlocker scanProviderBlocker(m_masterScanProvider);
+    const Data::ControllerConnectionScope scope{m_context.projectId, m_context.nodeId};
+    const std::optional<Core::ScanProviderSelection> selected
+        = m_controller->scanProviderSelection(scope);
+    m_masterScanProvider->clear();
+    m_masterScanProvider->addItem(Tr::tr("No Mock topology provider"), QVariant());
+    int selectedIndex = 0;
+    for (Core::ScanProvider *provider : m_controller->scanProviders()) {
+        QString displayName = provider->displayName().trimmed();
+        if (displayName.isEmpty())
+            displayName = Tr::tr("Unnamed Scan Provider");
+        if (!provider->isAvailable())
+            displayName = Tr::tr("%1 (unavailable)").arg(displayName);
+        m_masterScanProvider->addItem(displayName, provider->id().toSetting());
+        if (selected && selected->providerId == provider->id())
+            selectedIndex = m_masterScanProvider->count() - 1;
+    }
+    if (selected && selectedIndex == 0) {
+        m_masterScanProvider->addItem(
+            Tr::tr("%1 (unavailable)").arg(selected->providerId.toString()),
+            selected->providerId.toSetting());
+        selectedIndex = m_masterScanProvider->count() - 1;
+    }
+    m_masterScanProvider->setCurrentIndex(selectedIndex);
+    m_masterScanProvider->setEnabled(editable);
 }
 
 } // namespace EtherCAT::Workbench::Internal

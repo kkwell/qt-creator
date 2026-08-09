@@ -5,6 +5,7 @@
 #include "workbenchtreemodel.h"
 
 #include <ethercatcore/runtimepackageactivationservice.h>
+#include <ethercatcore/scanproviderselectionservice.h>
 #include <ethercatcore/topologyservice.h>
 
 #include <utils/id.h>
@@ -14,6 +15,7 @@
 #include <QList>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 #include <QString>
 
 #include <optional>
@@ -22,6 +24,8 @@ namespace EtherCAT::Core {
 class ControllerConnectionProvider;
 class Provider;
 class ProviderRegistry;
+class ScanProvider;
+class ScanProviderSelectionService;
 struct ProviderStartupDiagnostic;
 class SelectionService;
 } // namespace EtherCAT::Core
@@ -115,6 +119,13 @@ public:
     Core::DeviceRepositoryProvider *deviceRepository() const;
     Core::ProviderRegistry *providerRegistry() const;
     OptionalProviderPresentation scanProviderPresentation() const;
+    OptionalProviderPresentation scanProviderPresentation(
+        const Data::ControllerConnectionScope &scope) const;
+    QList<Core::ScanProvider *> scanProviders() const;
+    std::optional<Core::ScanProviderSelection> scanProviderSelection(
+        const Data::ControllerConnectionScope &scope) const;
+    Utils::Result<> selectScanProvider(
+        const Data::ControllerConnectionScope &scope, Utils::Id providerId);
     OptionalProviderPresentation diagnosticsProviderPresentation() const;
     DiagnosticsStatusPresentation diagnosticsStatusPresentation() const;
     std::optional<Data::ScanResult> automationScanResult(
@@ -252,6 +263,7 @@ signals:
     void locateUnsupportedDeviceRequested();
     void copyCurrentNodeIdRequested();
     void insertDeviceRequested();
+    void scanProviderChanged();
     void diagnosticsProviderChanged(bool availabilityChanged);
     void diagnosticsStatusChanged();
     void controllerConnectionChanged();
@@ -377,6 +389,7 @@ private:
     void watchOptionalProvider(Core::Provider *provider);
     void watchDeviceAdapterProvider(Core::Provider *provider);
     void watchControllerConnectionProvider(Core::Provider *provider);
+    void restoreScanProviderSelections();
     void refreshOptionalProviders(Core::Provider *excluding = nullptr);
     void handleOptionalAvailabilityChanged();
     void handleProjectAboutToBeRemoved(const Data::NodeId &projectId);
@@ -441,6 +454,8 @@ private:
         const Data::ControllerConnectionScope &scope,
         const QList<Core::ControllerConnectionProvider *> &providers);
     bool controllerConnectionScopeIsValid(const Data::ControllerConnectionScope &scope) const;
+    Core::TopologyLookupResult selectedMockTopology(
+        const Data::ControllerConnectionScope &scope) const;
     Core::TopologyLookupResult selectedRealTopology(
         const Data::ControllerConnectionScope &scope) const;
     Data::ControllerConnectionSnapshot projectedControllerConnectionSnapshot(
@@ -459,6 +474,8 @@ private:
     QPointer<Core::DeviceRepositoryProvider> m_deviceRepository;
     QPointer<Core::ProviderRegistry> m_providerRegistry;
     QPointer<Core::RuntimePackageActivationService> m_runtimePackageActivationService;
+    QPointer<Core::ScanProviderSelectionService> m_scanProviderSelectionService;
+    QSet<Utils::Id> m_removingScanProviderIds;
     QPointer<Core::TopologyService> m_topologyService;
     std::optional<Core::RuntimePackageActivationPreparationRequest>
         m_runtimePackageActivationPreparation;
@@ -466,7 +483,7 @@ private:
     QHash<QString, quint64> m_reportedRuntimePackageActivationRevisions;
     QList<QMetaObject::Connection> m_connections;
     bool m_shuttingDown = false;
-    OptionalProviderPresentation m_scanProvider;
+    bool m_suppressScanProviderPreferenceRestore = false;
     OptionalProviderPresentation m_diagnosticsProvider;
     DiagnosticsStatusPresentation m_diagnosticsStatus;
     QList<ControllerConnectionSelection> m_controllerConnectionSelections;

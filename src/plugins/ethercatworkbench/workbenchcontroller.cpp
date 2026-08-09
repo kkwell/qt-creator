@@ -10,6 +10,7 @@
 #include <ethercatcore/providerregistry.h>
 #include <ethercatcore/runtimepackagecompilerprovider.h>
 #include <ethercatcore/runtimepackagecompilerprojectrequestbuilder.h>
+#include <ethercatcore/scanproviderselectionservice.h>
 #include <ethercatcore/selectionservice.h>
 #include <ethercatcore/topologyservice.h>
 
@@ -21,12 +22,14 @@
 #include <projectexplorer/projectmanager.h>
 
 #include <utils/qtcassert.h>
+#include <utils/qtcsettings.h>
 
 #include <QHash>
 #include <QScopedValueRollback>
 #include <QSet>
 #include <QStringList>
 #include <QTimer>
+#include <QVariant>
 
 #include <algorithm>
 #include <limits>
@@ -749,28 +752,8 @@ static Utils::Result<CurrentBusApplyPlan> currentBusApplyPlan(
     return plan;
 }
 
-static int optionalProviderScore(Core::Provider *provider, Core::ProviderKind kind)
+static int diagnosticsProviderScore(Core::Provider *provider)
 {
-    if (kind == Core::ProviderKind::Scan) {
-        const auto scan = qobject_cast<Core::ScanProvider *>(provider);
-        if (!scan)
-            return -1;
-        if (scan->lastScanResult())
-            return 3;
-        switch (scan->scanState()) {
-        case Data::ScanState::Preparing:
-        case Data::ScanState::ScanningMaster:
-        case Data::ScanState::ScanningSlaves:
-        case Data::ScanState::BuildingSnapshot:
-        case Data::ScanState::Comparing:
-            return 2;
-        case Data::ScanState::Failed:
-            return 1;
-        default:
-            return 0;
-        }
-    }
-
     const auto diagnostics = qobject_cast<Core::DiagnosticsProvider *>(provider);
     if (!diagnostics)
         return -1;
@@ -779,22 +762,22 @@ static int optionalProviderScore(Core::Provider *provider, Core::ProviderKind ki
     return diagnostics->streamState() == Data::DiagnosticsStreamState::Stopped ? 0 : 1;
 }
 
-static Core::Provider *preferredOptionalProvider(
-    Core::ProviderRegistry *registry,
-    Core::ProviderKind kind,
-    Core::Provider *excluding)
+static Core::DiagnosticsProvider *preferredDiagnosticsProvider(
+    Core::ProviderRegistry *registry, Core::Provider *excluding)
 {
     if (!registry)
         return nullptr;
 
-    QList<Core::Provider *> providers;
-    for (Core::Provider *provider : registry->providers(kind)) {
-        if (provider != excluding)
-            providers.append(provider);
+    QList<Core::DiagnosticsProvider *> providers;
+    for (Core::Provider *provider : registry->providers(Core::ProviderKind::Diagnostics)) {
+        if (provider == excluding)
+            continue;
+        if (auto *diagnostics = qobject_cast<Core::DiagnosticsProvider *>(provider))
+            providers.append(diagnostics);
     }
-    std::sort(providers.begin(), providers.end(), [kind](auto *left, auto *right) {
-        const int leftScore = optionalProviderScore(left, kind);
-        const int rightScore = optionalProviderScore(right, kind);
+    std::sort(providers.begin(), providers.end(), [](auto *left, auto *right) {
+        const int leftScore = diagnosticsProviderScore(left);
+        const int rightScore = diagnosticsProviderScore(right);
         const bool leftUsable = left->isAvailable() && leftScore >= 0;
         const bool rightUsable = right->isAvailable() && rightScore >= 0;
         if (leftUsable != rightUsable)
@@ -811,12 +794,115 @@ static OptionalProviderPresentation optionalProviderPresentation(
 {
     if (!provider)
         return {};
-    const bool available = provider->isAvailable() && optionalProviderScore(provider, kind) >= 0;
+    const bool expectedKind
+        = kind == Core::ProviderKind::Scan
+              ? qobject_cast<Core::ScanProvider *>(provider) != nullptr
+              : qobject_cast<Core::DiagnosticsProvider *>(provider) != nullptr;
+    const bool available = provider->isAvailable() && expectedKind;
     OptionalProviderPresentation presentation{
         available ? OptionalProviderState::Available : OptionalProviderState::Unavailable,
         provider->displayName().trimmed()};
     presentation.displayName = optionalProviderDisplayName(presentation, kind);
     return presentation;
+}
+
+struct ScanProviderPreference
+{
+    Data::ControllerConnectionScope scope;
+    Utils::Id providerId;
+};
+
+static const Utils::Key scanProviderPreferencesKey(
+    "EtherCAT/Workbench/MockTopologyProviderBindings/v1");
+static constexpr qsizetype maximumScanProviderPreferenceCount = 128;
+
+static std::optional<QList<ScanProviderPreference>> scanProviderPreferences()
+{
+    if (!Utils::userSettings().contains(scanProviderPreferencesKey))
+        return QList<ScanProviderPreference>{};
+
+    const QVariant stored = Utils::userSettings().value(scanProviderPreferencesKey);
+    if (stored.typeId() != QMetaType::QVariantList)
+        return std::nullopt;
+    const QVariantList storedPreferences = stored.toList();
+    if (storedPreferences.size() > maximumScanProviderPreferenceCount)
+        return std::nullopt;
+
+    QList<ScanProviderPreference> result;
+    result.reserve(storedPreferences.size());
+    for (const QVariant &storedPreference : storedPreferences) {
+        if (storedPreference.typeId() != QMetaType::QStringList)
+            return std::nullopt;
+        const QStringList fields = storedPreference.toStringList();
+        if (fields.size() != 3)
+            return std::nullopt;
+
+        const ScanProviderPreference preference{
+            {Data::NodeId::fromString(fields.at(0)), Data::NodeId::fromString(fields.at(1))},
+            Utils::Id::fromSetting(fields.at(2)),
+        };
+        if (preference.scope.projectId.isNull() || preference.scope.masterId.isNull()
+            || !preference.providerId.isValid()
+            || preference.scope.projectId.toString() != fields.at(0)
+            || preference.scope.masterId.toString() != fields.at(1)
+            || preference.providerId.toString() != fields.at(2)
+            || std::any_of(
+                result.cbegin(),
+                result.cend(),
+                [&preference](const ScanProviderPreference &candidate) {
+                    return candidate.scope == preference.scope;
+                })) {
+            return std::nullopt;
+        }
+        result.append(preference);
+    }
+    return result;
+}
+
+static void writeScanProviderPreferences(const QList<ScanProviderPreference> &preferences)
+{
+    if (preferences.isEmpty()) {
+        Utils::userSettings().remove(scanProviderPreferencesKey);
+        return;
+    }
+
+    QVariantList storedPreferences;
+    storedPreferences.reserve(preferences.size());
+    for (const ScanProviderPreference &preference : preferences) {
+        storedPreferences.append(QStringList{
+            preference.scope.projectId.toString(),
+            preference.scope.masterId.toString(),
+            preference.providerId.toString(),
+        });
+    }
+    Utils::userSettings().setValue(scanProviderPreferencesKey, storedPreferences);
+}
+
+static void setScanProviderPreference(
+    const Data::ControllerConnectionScope &scope, Utils::Id providerId)
+{
+    QList<ScanProviderPreference> preferences = scanProviderPreferences().value_or(
+        QList<ScanProviderPreference>{});
+    preferences.removeIf([&scope](const ScanProviderPreference &preference) {
+        return preference.scope == scope;
+    });
+    preferences.append({scope, providerId});
+    while (preferences.size() > maximumScanProviderPreferenceCount)
+        preferences.removeFirst();
+    writeScanProviderPreferences(preferences);
+}
+
+static void clearScanProviderPreference(const Data::ControllerConnectionScope &scope)
+{
+    std::optional<QList<ScanProviderPreference>> preferences = scanProviderPreferences();
+    if (!preferences) {
+        Utils::userSettings().remove(scanProviderPreferencesKey);
+        return;
+    }
+    preferences->removeIf([&scope](const ScanProviderPreference &preference) {
+        return preference.scope == scope;
+    });
+    writeScanProviderPreferences(*preferences);
 }
 
 static bool connectionProfileUsable(const Data::ControllerConnectionProfile &profile)
@@ -1631,6 +1717,8 @@ WorkbenchController::WorkbenchController(QObject *parent)
     m_providerRegistry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
     m_runtimePackageActivationService
         = ExtensionSystem::PluginManager::getObject<Core::RuntimePackageActivationService>();
+    m_scanProviderSelectionService
+        = ExtensionSystem::PluginManager::getObject<Core::ScanProviderSelectionService>();
     m_topologyService = ExtensionSystem::PluginManager::getObject<Core::TopologyService>();
 
     QTC_ASSERT(m_selectionService, return);
@@ -1638,6 +1726,7 @@ WorkbenchController::WorkbenchController(QObject *parent)
     QTC_ASSERT(m_deviceRepository, return);
     QTC_ASSERT(m_providerRegistry, return);
     QTC_ASSERT(m_runtimePackageActivationService, return);
+    QTC_ASSERT(m_scanProviderSelectionService, return);
     QTC_ASSERT(m_topologyService, return);
 
     m_connections.append(connect(
@@ -1732,6 +1821,24 @@ WorkbenchController::WorkbenchController(QObject *parent)
             refreshProjects();
             scheduleControllerAutoAcquire();
         }));
+    m_connections.append(connect(
+        m_scanProviderSelectionService,
+        &Core::ScanProviderSelectionService::selectionChanged,
+        this,
+        [this] { refreshOptionalProviders(); }));
+    m_connections.append(connect(
+        m_scanProviderSelectionService,
+        &Core::ScanProviderSelectionService::selectionValidityChanged,
+        this,
+        [this] { refreshOptionalProviders(); }));
+    m_connections.append(connect(
+        m_topologyService,
+        &Core::TopologyService::topologyChanged,
+        this,
+        [this](Core::TopologyEvidenceSource source, Utils::Id) {
+            if (source == Core::TopologyEvidenceSource::MockScan)
+                refreshOptionalProviders();
+        }));
     m_connections.append(
         connect(m_selectionService, &Core::SelectionService::currentNodeChanged, this, [this] {
             handleControllerConnectionChanged();
@@ -1751,10 +1858,13 @@ WorkbenchController::WorkbenchController(QObject *parent)
         &Core::ProviderRegistry::providerAdded,
         this,
         [this](Core::Provider *provider) {
+            if (qobject_cast<Core::ScanProvider *>(provider))
+                m_removingScanProviderIds.remove(provider->id());
             watchOptionalProvider(provider);
             watchDeviceAdapterProvider(provider);
             watchControllerConnectionProvider(provider);
             refreshDeviceAdapterProviders();
+            restoreScanProviderSelections();
             refreshOptionalProviders();
             if (provider && provider->kind() == Core::ProviderKind::ControllerConnection)
                 handleControllerConnectionChanged();
@@ -1764,6 +1874,17 @@ WorkbenchController::WorkbenchController(QObject *parent)
         &Core::ProviderRegistry::providerAboutToBeRemoved,
         this,
         [this](Core::Provider *provider) {
+            if (qobject_cast<Core::ScanProvider *>(provider)) {
+                const Utils::Id providerId = provider->id();
+                m_removingScanProviderIds.insert(providerId);
+                QMetaObject::invokeMethod(
+                    this,
+                    [this, providerId] {
+                        m_removingScanProviderIds.remove(providerId);
+                        refreshOptionalProviders();
+                    },
+                    Qt::QueuedConnection);
+            }
             if (provider && provider->kind() == Core::ProviderKind::DeviceAdapter)
                 refreshDeviceAdapterProvidersExcluding(provider);
             refreshOptionalProviders(provider);
@@ -1837,7 +1958,84 @@ Core::ProviderRegistry *WorkbenchController::providerRegistry() const
 
 OptionalProviderPresentation WorkbenchController::scanProviderPresentation() const
 {
-    return m_scanProvider;
+    const std::optional<Data::ControllerConnectionScope> scope = quickControllerControlScope();
+    return scope ? scanProviderPresentation(*scope) : OptionalProviderPresentation();
+}
+
+OptionalProviderPresentation WorkbenchController::scanProviderPresentation(
+    const Data::ControllerConnectionScope &scope) const
+{
+    const std::optional<Core::ScanProviderSelection> selection = scanProviderSelection(scope);
+    if (!selection)
+        return {};
+
+    Core::Provider *provider = m_providerRegistry
+                                  ? m_providerRegistry->provider(selection->providerId)
+                                  : nullptr;
+    if (!m_removingScanProviderIds.contains(selection->providerId)) {
+        if (auto *scanProvider = qobject_cast<Core::ScanProvider *>(provider)) {
+            return optionalProviderPresentation(
+                scanProvider, Core::ProviderKind::Scan);
+        }
+    }
+
+    OptionalProviderPresentation presentation{
+        OptionalProviderState::Unavailable, selection->providerId.toString()};
+    presentation.displayName = optionalProviderDisplayName(
+        presentation, Core::ProviderKind::Scan);
+    return presentation;
+}
+
+QList<Core::ScanProvider *> WorkbenchController::scanProviders() const
+{
+    QList<Core::ScanProvider *> result;
+    if (!m_providerRegistry)
+        return result;
+    for (Core::Provider *provider : m_providerRegistry->providers(Core::ProviderKind::Scan)) {
+        if (auto *scanProvider = qobject_cast<Core::ScanProvider *>(provider);
+            scanProvider && !m_removingScanProviderIds.contains(scanProvider->id())) {
+            result.append(scanProvider);
+        }
+    }
+    std::sort(result.begin(), result.end(), [](const auto *left, const auto *right) {
+        const int displayOrder
+            = left->displayName().compare(right->displayName(), Qt::CaseInsensitive);
+        if (displayOrder != 0)
+            return displayOrder < 0;
+        return left->id().toString() < right->id().toString();
+    });
+    return result;
+}
+
+std::optional<Core::ScanProviderSelection> WorkbenchController::scanProviderSelection(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (m_shuttingDown || !m_scanProviderSelectionService)
+        return std::nullopt;
+    return m_scanProviderSelectionService->selection(scope);
+}
+
+Utils::Result<> WorkbenchController::selectScanProvider(
+    const Data::ControllerConnectionScope &scope, Utils::Id providerId)
+{
+    if (m_shuttingDown || !m_scanProviderSelectionService) {
+        return Utils::ResultError(
+            Tr::tr("The Mock scan provider selection service is unavailable."));
+    }
+
+    const QScopedValueRollback suppressRestore(
+        m_suppressScanProviderPreferenceRestore, true);
+    const Utils::Result<> result = providerId.isValid()
+                                       ? m_scanProviderSelectionService->select(scope, providerId)
+                                       : m_scanProviderSelectionService->clear(scope);
+    if (!result)
+        return result;
+
+    if (providerId.isValid())
+        setScanProviderPreference(scope, providerId);
+    else
+        clearScanProviderPreference(scope);
+    return Utils::ResultOk;
 }
 
 OptionalProviderPresentation WorkbenchController::diagnosticsProviderPresentation() const
@@ -1853,19 +2051,11 @@ DiagnosticsStatusPresentation WorkbenchController::diagnosticsStatusPresentation
 std::optional<Data::ScanResult> WorkbenchController::automationScanResult(
     const Data::ControllerConnectionScope &scope) const
 {
-    if (m_shuttingDown)
-        return std::nullopt;
-    Core::Provider *provider
-        = preferredOptionalProvider(m_providerRegistry, Core::ProviderKind::Scan, nullptr);
-    const auto scan = qobject_cast<Core::ScanProvider *>(provider);
-    if (!scan || !scan->isAvailable())
-        return std::nullopt;
-    const std::optional<Data::ScanResult> result = scan->lastScanResult();
-    if (!result || result->snapshot.projectId != scope.projectId
-        || result->snapshot.masterId != scope.masterId) {
-        return std::nullopt;
-    }
-    return result;
+    const Core::TopologyLookupResult topology = selectedMockTopology(scope);
+    return topology.hasFreshProviderEvidence() && topology.snapshot
+                   && topology.snapshot->mockEvidence
+               ? topology.snapshot->mockEvidence
+               : std::nullopt;
 }
 
 std::optional<Data::DiagnosticsSnapshot>
@@ -1874,9 +2064,7 @@ WorkbenchController::automationDiagnosticsSnapshot(
 {
     if (m_shuttingDown)
         return std::nullopt;
-    Core::Provider *provider
-        = preferredOptionalProvider(m_providerRegistry, Core::ProviderKind::Diagnostics, nullptr);
-    const auto diagnostics = qobject_cast<Core::DiagnosticsProvider *>(provider);
+    const auto diagnostics = preferredDiagnosticsProvider(m_providerRegistry, nullptr);
     if (!diagnostics || !diagnostics->isAvailable())
         return std::nullopt;
     const std::optional<Data::DiagnosticsSnapshot> snapshot
@@ -2163,6 +2351,28 @@ Data::ControllerConnectionSnapshot WorkbenchController::controllerConnectionSnap
     Data::ControllerConnectionSnapshot result;
     result.scope = scope;
     return result;
+}
+
+Core::TopologyLookupResult WorkbenchController::selectedMockTopology(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (!m_topologyService || !m_scanProviderSelectionService
+        || !controllerConnectionScopeIsValid(scope)) {
+        return {Core::TopologyLookupStatus::InvalidSelection, std::nullopt};
+    }
+
+    const std::optional<Core::ScanProviderSelection> selection
+        = m_scanProviderSelectionService->selection(scope);
+    if (!selection || selection->scope != scope || !selection->providerId.isValid())
+        return {Core::TopologyLookupStatus::InvalidSelection, std::nullopt};
+    if (m_removingScanProviderIds.contains(selection->providerId))
+        return {Core::TopologyLookupStatus::ProviderNotFound, std::nullopt};
+
+    return m_topologyService->topology({
+        Core::TopologyEvidenceSource::MockScan,
+        selection->providerId,
+        scope,
+    });
 }
 
 Core::TopologyLookupResult WorkbenchController::selectedRealTopology(
@@ -3219,7 +3429,7 @@ void WorkbenchController::writeControllerOutput(
 
 bool WorkbenchController::scanAvailable() const
 {
-    return m_scanProvider.isAvailable();
+    return scanProviderPresentation().isAvailable();
 }
 
 bool WorkbenchController::diagnosticsAvailable() const
@@ -3646,6 +3856,8 @@ void WorkbenchController::refreshProjects()
         && m_treeModel.contextForNodeId(selectedId).nodeId.isNull()) {
         m_selectionService->clear();
     }
+    restoreScanProviderSelections();
+    refreshOptionalProviders();
     refreshControllerConnectionPresentation();
 }
 
@@ -3822,25 +4034,54 @@ void WorkbenchController::watchControllerConnectionProvider(Core::Provider *prov
     }
 }
 
+void WorkbenchController::restoreScanProviderSelections()
+{
+    if (m_shuttingDown || m_suppressScanProviderPreferenceRestore
+        || !m_projectService || !m_scanProviderSelectionService) {
+        return;
+    }
+
+    const std::optional<QList<ScanProviderPreference>> preferences = scanProviderPreferences();
+    if (!preferences)
+        return;
+
+    const QScopedValueRollback suppressRestore(
+        m_suppressScanProviderPreferenceRestore, true);
+    for (const ScanProviderPreference &preference : *preferences) {
+        if (!controllerConnectionScopeIsValid(preference.scope)
+            || m_scanProviderSelectionService->selection(preference.scope)) {
+            continue;
+        }
+        m_scanProviderSelectionService->select(preference.scope, preference.providerId);
+    }
+}
+
 void WorkbenchController::refreshOptionalProviders(Core::Provider *excluding)
 {
     if (m_shuttingDown || !m_providerRegistry)
         return;
 
-    Core::Provider *scanObject = preferredOptionalProvider(
-        m_providerRegistry, Core::ProviderKind::Scan, excluding);
-    Core::Provider *diagnosticsObject = preferredOptionalProvider(
-        m_providerRegistry, Core::ProviderKind::Diagnostics, excluding);
-    const OptionalProviderPresentation scan = optionalProviderPresentation(
-        scanObject, Core::ProviderKind::Scan);
+    Core::DiagnosticsProvider *diagnosticsObject = preferredDiagnosticsProvider(
+        m_providerRegistry, excluding);
     const OptionalProviderPresentation diagnostics = optionalProviderPresentation(
         diagnosticsObject, Core::ProviderKind::Diagnostics);
 
-    std::optional<Data::ScanResult> scanResult;
-    if (scan.isAvailable()) {
-        const auto scanProvider = qobject_cast<Core::ScanProvider *>(scanObject);
-        QTC_ASSERT(scanProvider, return);
-        scanResult = scanProvider->lastScanResult();
+    QList<ScopedScanProviderPresentation> scanProviders;
+    if (m_scanProviderSelectionService) {
+        for (const Core::ScanProviderSelection &selection :
+             m_scanProviderSelectionService->selections()) {
+            if (!controllerConnectionScopeIsValid(selection.scope))
+                continue;
+            ScopedScanProviderPresentation presentation;
+            presentation.scope = selection.scope;
+            presentation.provider = scanProviderPresentation(selection.scope);
+            const Core::TopologyLookupResult topology = selectedMockTopology(selection.scope);
+            if (topology.hasFreshProviderEvidence() && topology.snapshot
+                && topology.snapshot->mockEvidence) {
+                presentation.result = topology.snapshot->mockEvidence;
+            }
+            scanProviders.append(presentation);
+        }
     }
 
     Data::DiagnosticsStreamState diagnosticsState = Data::DiagnosticsStreamState::Stopped;
@@ -3875,16 +4116,15 @@ void WorkbenchController::refreshOptionalProviders(Core::Provider *excluding)
     const bool diagnosticsAvailabilityChanged
         = m_diagnosticsProvider.isAvailable() != diagnostics.isAvailable();
     const bool statusPresentationChanged = m_diagnosticsStatus != diagnosticsStatus;
-    m_scanProvider = scan;
     m_diagnosticsProvider = diagnostics;
     m_diagnosticsStatus = diagnosticsStatus;
     m_treeModel.setProviderPresentations(
-        m_scanProvider,
+        scanProviders,
         m_diagnosticsProvider,
-        scanResult,
         diagnosticsState,
         diagnosticsRequest,
         diagnosticsSnapshot);
+    emit scanProviderChanged();
     if (diagnosticsChanged)
         emit diagnosticsProviderChanged(diagnosticsAvailabilityChanged);
     if (statusPresentationChanged)
@@ -3893,6 +4133,7 @@ void WorkbenchController::refreshOptionalProviders(Core::Provider *excluding)
 
 void WorkbenchController::handleOptionalAvailabilityChanged()
 {
+    restoreScanProviderSelections();
     refreshOptionalProviders();
 }
 

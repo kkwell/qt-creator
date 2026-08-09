@@ -26,6 +26,17 @@ struct OptionalProviderPresentation
         = default;
 };
 
+struct ScopedScanProviderPresentation
+{
+    Data::ControllerConnectionScope scope;
+    OptionalProviderPresentation provider;
+    std::optional<Data::ScanResult> result;
+
+    friend bool operator==(
+        const ScopedScanProviderPresentation &, const ScopedScanProviderPresentation &)
+        = default;
+};
+
 QString optionalProviderDisplayName(
     const OptionalProviderPresentation &provider, Core::ProviderKind kind);
 
@@ -95,9 +106,8 @@ public:
     void invalidateDeviceAdapterProviders();
     void syncDevices(const QList<Data::DeviceSummary> &devices);
     void setProviderPresentations(
-        const OptionalProviderPresentation &scanProvider,
+        const QList<ScopedScanProviderPresentation> &scanProviders,
         const OptionalProviderPresentation &diagnosticsProvider,
-        const std::optional<Data::ScanResult> &scanResult,
         Data::DiagnosticsStreamState diagnosticsState,
         const Data::DiagnosticsRequest &diagnosticsRequest,
         const std::optional<Data::DiagnosticsSnapshot> &diagnosticsSnapshot);
@@ -127,6 +137,8 @@ private:
     QModelIndex indexForNode(const Node *node, int column = 0) const;
     Node *nodeForIndex(const QModelIndex &index) const;
     Node *findNode(const Data::NodeId &nodeId) const;
+    Node *findProjectNode(
+        const Data::NodeId &projectId, const Data::NodeId &nodeId) const;
     QString visibleStatus(const Node *node) const;
     QString visibleCompactStatus(const Node *node) const;
     Data::NodeId deviceIdFromMimeData(const QMimeData *data) const;
@@ -142,9 +154,8 @@ private:
     Data::NodeId m_dropTargetMasterId;
     DeviceDropHandler m_deviceDropHandler;
     QList<QPointer<Core::DeviceAdapterProvider>> m_deviceAdapterProviders;
-    OptionalProviderPresentation m_scanProvider;
+    QList<ScopedScanProviderPresentation> m_scanProviders;
     OptionalProviderPresentation m_diagnosticsProvider;
-    std::optional<Data::ScanResult> m_scanResult;
     Data::DiagnosticsStreamState m_diagnosticsState = Data::DiagnosticsStreamState::Stopped;
     Data::DiagnosticsRequest m_diagnosticsRequest;
     std::optional<Data::DiagnosticsSnapshot> m_diagnosticsSnapshot;

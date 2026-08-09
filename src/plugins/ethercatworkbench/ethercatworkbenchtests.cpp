@@ -40,6 +40,7 @@
 #include <ethercatcore/runtimepackagecompilercodec.h>
 #include <ethercatcore/runtimepackagecompilerpreparationcoordinator.h>
 #include <ethercatcore/runtimepackagecompilerprovider.h>
+#include <ethercatcore/scanproviderselectionservice.h>
 #include <ethercatcore/selectionservice.h>
 #include <ethercatcore/semanticruntimeservice.h>
 #include <ethercatcore/stateservice.h>
@@ -1734,9 +1735,14 @@ public:
     Data::ScanProgress scanProgress() const final { return m_progress; }
     std::optional<Data::ScanResult> lastScanResult() const final { return m_result; }
     QString lastScanError() const final { return m_error; }
-    Utils::Result<> startScan(const Data::ScanRequest &) final { return Utils::ResultOk; }
-    void cancelScan() final {}
-    void clearScanResult() final {}
+    Utils::Result<> startScan(const Data::ScanRequest &request) final
+    {
+        ++startCalls;
+        startRequests.append(request);
+        return Utils::ResultOk;
+    }
+    void cancelScan() final { ++cancelCalls; }
+    void clearScanResult() final { ++clearCalls; }
 
     void publishResult(const Data::ScanResult &result)
     {
@@ -1760,12 +1766,53 @@ public:
         emit scanResultChanged();
     }
 
+    void setScanState(Data::ScanState state)
+    {
+        m_state = state;
+        m_progress.state = state;
+        emit scanStateChanged(m_state);
+        emit scanProgressChanged(m_progress);
+    }
+
+    int startCalls = 0;
+    int cancelCalls = 0;
+    int clearCalls = 0;
+    QList<Data::ScanRequest> startRequests;
+
 private:
     Data::ScanState m_state = Data::ScanState::Idle;
     Data::ScanProgress m_progress;
     std::optional<Data::ScanResult> m_result;
     QString m_error;
 };
+
+static Data::ScanResult freshMockScanResult(
+    const Data::ControllerConnectionScope &scope,
+    const QString &marker,
+    const Data::NodeId &offlineSlaveId = {})
+{
+    Data::ScanResult result;
+    result.snapshot.id = Data::NodeId::create();
+    result.snapshot.projectId = scope.projectId;
+    result.snapshot.masterId = scope.masterId;
+    result.snapshot.capturedAt = QDateTime::currentDateTimeUtc();
+    result.snapshot.complete = true;
+    result.snapshot.mock = true;
+    result.comparison.projectId = scope.projectId;
+    result.comparison.masterId = scope.masterId;
+    result.comparison.differences = {
+        {offlineSlaveId.isNull() ? Data::TopologyDifferenceKind::Added
+                                 : Data::TopologyDifferenceKind::Missing,
+         Data::DifferenceSeverity::Information,
+         offlineSlaveId,
+         offlineSlaveId.isNull() ? Data::NodeId::create() : Data::NodeId(),
+         offlineSlaveId.isNull() ? -1 : 0,
+         offlineSlaveId.isNull() ? 0 : -1,
+         marker,
+         marker},
+    };
+    return result;
+}
 
 class AvailableDiagnosticsProvider final : public Core::DiagnosticsProvider
 {
@@ -10398,6 +10445,464 @@ void EtherCATWorkbenchTests::testWorkbenchUsesExactRealTopologySelection()
     QVERIFY(noControlWasIssued());
 }
 
+void EtherCATWorkbenchTests::testWorkbenchUsesExactMockTopologySelection()
+{
+    const Utils::Key preferenceKey("EtherCAT/Workbench/MockTopologyProviderBindings/v1");
+    const bool preferenceExisted = Utils::userSettings().contains(preferenceKey);
+    const QVariant previousPreference = Utils::userSettings().value(preferenceKey);
+    const QScopeGuard restorePreference([&] {
+        if (preferenceExisted)
+            Utils::userSettings().setValue(preferenceKey, previousPreference);
+        else
+            Utils::userSettings().remove(preferenceKey);
+    });
+    Utils::userSettings().remove(preferenceKey);
+
+    auto controller = std::make_unique<WorkbenchController>();
+    Core::ProjectService *projectService = controller->projectService();
+    Core::ScanProviderSelectionService *scanSelectionService
+        = ExtensionSystem::PluginManager::getObject<Core::ScanProviderSelectionService>();
+    QVERIFY(projectService);
+    QVERIFY(scanSelectionService);
+    controller->selectionService()->clear();
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        deviceSummaries(1).constFirst(),
+        "exact-mock-topology-selection.ecatproject",
+        "Exact Mock Topology Selection");
+    QVERIFY(!file.path.isEmpty());
+    const Utils::Result<QByteArray> originalProjectBytes = file.path.fileContents();
+    QVERIFY_RESULT(originalProjectBytes);
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    ProjectExplorer::ProjectManager::setStartupProject(opened.project());
+    const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
+
+    AvailableScanProvider alternateProvider(
+        Utils::Id("EtherCAT.Workbench.TestScan.Topology.Alternate"),
+        "A alternate Mock scanner");
+    AvailableScanProvider selectedProvider(
+        Utils::Id("EtherCAT.Workbench.TestScan.Topology.Selected"),
+        "B selected Mock scanner");
+    ControlledControllerConnectionProvider controlProvider(
+        Utils::Id("EtherCAT.Workbench.TestControllerConnection.MockTopology.NoControl"),
+        "Mock topology no-control probe");
+    alternateProvider.setAvailable(true);
+    selectedProvider.setAvailable(true);
+    controlProvider.setAvailable(true);
+
+    bool alternateRegistered = false;
+    bool selectedRegistered = false;
+    bool controlRegistered = false;
+    const QScopeGuard cleanup([&] {
+        if (controller)
+            controller->selectScanProvider(scope, {});
+        else
+            scanSelectionService->clear(scope);
+        if (selectedRegistered)
+            ExtensionSystem::PluginManager::removeObject(&selectedProvider);
+        if (alternateRegistered)
+            ExtensionSystem::PluginManager::removeObject(&alternateProvider);
+        if (controlRegistered)
+            ExtensionSystem::PluginManager::removeObject(&controlProvider);
+        controller.reset();
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    ExtensionSystem::PluginManager::addObject(&alternateProvider);
+    alternateRegistered = true;
+    ExtensionSystem::PluginManager::addObject(&selectedProvider);
+    selectedRegistered = true;
+    ExtensionSystem::PluginManager::addObject(&controlProvider);
+    controlRegistered = true;
+
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    const std::optional<Data::ProjectSnapshot> originalProject = projectService->project(
+        file.projectId);
+    QVERIFY(originalProject);
+    QCOMPARE(originalProject->formatVersion, 7);
+    QVERIFY(!originalProject->modified);
+    QVERIFY_RESULT(scanSelectionService->clear(scope));
+
+    const Data::ScanResult alternate = freshMockScanResult(
+        scope, "Alternate provider evidence");
+    const Data::ScanResult selected = freshMockScanResult(
+        scope, "Selected provider evidence");
+    alternateProvider.publishResult(alternate);
+    selectedProvider.publishResult(selected);
+
+    const auto selectedResult = [&]() { return controller->automationScanResult(scope); };
+    const auto masterSearchText = [&]() {
+        return controller->treeModel()
+            ->indexForNodeId(file.masterId)
+            .data(WorkbenchTreeModel::SearchTextRole)
+            .toString();
+    };
+    const auto noOperationWasIssued = [&]() {
+        const bool noDiscover = std::none_of(
+            controlProvider.controlRequests.cbegin(),
+            controlProvider.controlRequests.cend(),
+            [](const Data::ControllerControlRequest &request) {
+                return request.command == Data::ControllerControlCommand::DiscoverTopology;
+            });
+        return alternateProvider.startCalls == 0 && alternateProvider.cancelCalls == 0
+               && alternateProvider.clearCalls == 0 && selectedProvider.startCalls == 0
+               && selectedProvider.cancelCalls == 0 && selectedProvider.clearCalls == 0
+               && controlProvider.controlCalls == 0 && noDiscover;
+    };
+
+    QVERIFY(!controller->scanProviderSelection(scope));
+    QVERIFY(!selectedResult());
+    QCOMPARE(
+        controller->scanProviderPresentation(scope).state,
+        OptionalProviderState::Absent);
+    QVERIFY(!controller->treeModel()->firstTopologyDifference().isValid());
+    QVERIFY(noOperationWasIssued());
+
+    QVariantList boundedPreferences;
+    boundedPreferences.reserve(128);
+    for (int index = 0; index < 128; ++index) {
+        boundedPreferences.append(QStringList{
+            Data::NodeId::create().toString(),
+            Data::NodeId::create().toString(),
+            QString("EtherCAT.Workbench.TestScan.Stored.%1").arg(index),
+        });
+    }
+    const QStringList secondStoredPreference = boundedPreferences.at(1).toStringList();
+    Utils::userSettings().setValue(preferenceKey, boundedPreferences);
+    QVERIFY_RESULT(controller->selectScanProvider(scope, selectedProvider.id()));
+    const QVariantList persistedPreferences = Utils::userSettings().value(preferenceKey).toList();
+    QCOMPARE(persistedPreferences.size(), 128);
+    QCOMPARE(persistedPreferences.constFirst().toStringList(), secondStoredPreference);
+    QCOMPARE(
+        persistedPreferences.constLast().toStringList(),
+        QStringList({
+            scope.projectId.toString(),
+            scope.masterId.toString(),
+            selectedProvider.id().toString(),
+        }));
+    QTRY_COMPARE(
+        controller->scanProviderSelection(scope),
+        std::optional(Core::ScanProviderSelection{scope, selectedProvider.id()}));
+    QTRY_VERIFY(selectedResult().has_value());
+    QCOMPARE(selectedResult()->snapshot.id, selected.snapshot.id);
+    QTRY_VERIFY(masterSearchText().contains("Selected provider evidence"));
+    QVERIFY(!masterSearchText().contains("Alternate provider evidence"));
+    QCOMPARE(
+        controller->scanProviderPresentation(scope).displayName,
+        QString("B selected Mock scanner"));
+    QVERIFY(noOperationWasIssued());
+
+    const Data::ScanResult newerAlternate = freshMockScanResult(
+        scope, "Newer alternate evidence");
+    alternateProvider.publishResult(newerAlternate);
+    QTRY_COMPARE(selectedResult()->snapshot.id, selected.snapshot.id);
+    QVERIFY(!masterSearchText().contains("Newer alternate evidence"));
+    QVERIFY(noOperationWasIssued());
+
+    Data::ScanResult invalid = selected;
+    invalid.snapshot.id = Data::NodeId::create();
+    invalid.snapshot.mock = false;
+    selectedProvider.publishResult(invalid);
+    QTRY_VERIFY(!selectedResult());
+    QTRY_VERIFY(!controller->treeModel()->firstTopologyDifference().isValid());
+
+    invalid = freshMockScanResult(scope, "Incomplete selected evidence");
+    invalid.snapshot.complete = false;
+    selectedProvider.publishResult(invalid);
+    QTRY_VERIFY(!selectedResult());
+    QTRY_VERIFY(!controller->treeModel()->firstTopologyDifference().isValid());
+
+    selectedProvider.publishResult(selected);
+    selectedProvider.setScanState(Data::ScanState::Failed);
+    QTRY_VERIFY(!selectedResult());
+    QTRY_VERIFY(!controller->treeModel()->firstTopologyDifference().isValid());
+
+    invalid = freshMockScanResult(
+        {Data::NodeId::create(), Data::NodeId::create()},
+        "Wrong-scope selected evidence");
+    selectedProvider.publishResult(invalid);
+    QTRY_VERIFY(!selectedResult());
+    QTRY_VERIFY(!controller->treeModel()->firstTopologyDifference().isValid());
+    QVERIFY(noOperationWasIssued());
+
+    selectedProvider.publishResult(selected);
+    QTRY_COMPARE(selectedResult()->snapshot.id, selected.snapshot.id);
+    QTRY_VERIFY(masterSearchText().contains("Selected provider evidence"));
+
+    controller.reset();
+    QVERIFY_RESULT(scanSelectionService->clear(scope));
+    controller = std::make_unique<WorkbenchController>();
+    QTRY_COMPARE(
+        controller->scanProviderSelection(scope),
+        std::optional(Core::ScanProviderSelection{scope, selectedProvider.id()}));
+    QTRY_VERIFY(controller->automationScanResult(scope).has_value());
+    QCOMPARE(controller->automationScanResult(scope)->snapshot.id, selected.snapshot.id);
+    QVERIFY(noOperationWasIssued());
+
+    const QList<QVariant> invalidPreferences{
+        QString("not-a-preference-list"),
+        QVariantList{QStringList{
+            scope.projectId.toString(),
+            scope.masterId.toString(),
+        }},
+        QVariantList{QStringList{
+            QString("{%1}").arg(scope.projectId.toString()),
+            scope.masterId.toString(),
+            selectedProvider.id().toString(),
+        }},
+        QVariantList{
+            QStringList{
+                scope.projectId.toString(),
+                scope.masterId.toString(),
+                selectedProvider.id().toString(),
+            },
+            QStringList{
+                scope.projectId.toString(),
+                scope.masterId.toString(),
+                alternateProvider.id().toString(),
+            },
+        },
+    };
+    for (const QVariant &invalidPreference : invalidPreferences) {
+        controller.reset();
+        QVERIFY_RESULT(scanSelectionService->clear(scope));
+        QVERIFY(scanSelectionService->selections().isEmpty());
+        Utils::userSettings().setValue(preferenceKey, invalidPreference);
+        controller = std::make_unique<WorkbenchController>();
+        QTRY_VERIFY(scanSelectionService->selections().isEmpty());
+        QVERIFY(!controller->scanProviderSelection(scope));
+        QVERIFY(!controller->automationScanResult(scope));
+        QVERIFY(!controller->treeModel()->firstTopologyDifference().isValid());
+        QCOMPARE(Utils::userSettings().value(preferenceKey), invalidPreference);
+        QVERIFY(noOperationWasIssued());
+    }
+
+    controller.reset();
+    QVERIFY_RESULT(scanSelectionService->clear(scope));
+    Utils::userSettings().setValue(preferenceKey, persistedPreferences);
+    controller = std::make_unique<WorkbenchController>();
+    QTRY_COMPARE(
+        controller->scanProviderSelection(scope),
+        std::optional(Core::ScanProviderSelection{scope, selectedProvider.id()}));
+    QTRY_VERIFY(controller->automationScanResult(scope).has_value());
+    QCOMPARE(controller->automationScanResult(scope)->snapshot.id, selected.snapshot.id);
+    QVERIFY(noOperationWasIssued());
+
+    ExtensionSystem::PluginManager::removeObject(&selectedProvider);
+    selectedRegistered = false;
+    QCOMPARE(
+        controller->scanProviderSelection(scope),
+        std::optional(Core::ScanProviderSelection{scope, selectedProvider.id()}));
+    QVERIFY(!controller->automationScanResult(scope));
+    QCOMPARE(
+        controller->scanProviderPresentation(scope).state,
+        OptionalProviderState::Unavailable);
+    QVERIFY(!controller->treeModel()->firstTopologyDifference().isValid());
+    QVERIFY(alternateProvider.isAvailable());
+    QVERIFY(noOperationWasIssued());
+
+    GeneralPage generalPage(controller.get());
+    generalPage.setContext(controller->treeModel()->contextForNodeId(file.masterId));
+    QComboBox *providerSelection
+        = generalPage.findChild<QComboBox *>("EtherCATMasterGeneralScanProvider");
+    QVERIFY(providerSelection);
+    QTRY_COMPARE(
+        Utils::Id::fromSetting(providerSelection->currentData()),
+        selectedProvider.id());
+
+    ExtensionSystem::PluginManager::addObject(&selectedProvider);
+    selectedRegistered = true;
+    QTRY_VERIFY(controller->automationScanResult(scope).has_value());
+    QCOMPARE(controller->automationScanResult(scope)->snapshot.id, selected.snapshot.id);
+    QTRY_COMPARE(
+        Utils::Id::fromSetting(providerSelection->currentData()),
+        selectedProvider.id());
+    QTRY_COMPARE(providerSelection->currentText(), QString("B selected Mock scanner"));
+
+    providerSelection->setCurrentIndex(0);
+    QVERIFY(QMetaObject::invokeMethod(
+        providerSelection, "activated", Q_ARG(int, providerSelection->currentIndex())));
+    QTRY_VERIFY(!controller->scanProviderSelection(scope));
+    QVERIFY(!controller->automationScanResult(scope));
+    QVERIFY(!controller->treeModel()->firstTopologyDifference().isValid());
+    QVERIFY(noOperationWasIssued());
+    const QVariantList preferencesAfterClear = Utils::userSettings().value(preferenceKey).toList();
+    QCOMPARE(preferencesAfterClear.size(), 127);
+    QVERIFY(std::none_of(
+        preferencesAfterClear.cbegin(),
+        preferencesAfterClear.cend(),
+        [&scope](const QVariant &entry) {
+            const QStringList fields = entry.toStringList();
+            return fields.size() == 3 && fields.at(0) == scope.projectId.toString()
+                   && fields.at(1) == scope.masterId.toString();
+        }));
+
+    controller.reset();
+    QVERIFY_RESULT(scanSelectionService->clear(scope));
+    controller = std::make_unique<WorkbenchController>();
+    QTRY_VERIFY(!controller->scanProviderSelection(scope));
+    QVERIFY(!controller->automationScanResult(scope));
+    QVERIFY(noOperationWasIssued());
+
+    const std::optional<Data::ProjectSnapshot> unchangedProject = projectService->project(
+        file.projectId);
+    QVERIFY(unchangedProject);
+    QCOMPARE(unchangedProject->formatVersion, originalProject->formatVersion);
+    QCOMPARE(unchangedProject->modified, originalProject->modified);
+    const Utils::Result<QByteArray> unchangedProjectBytes = file.path.fileContents();
+    QVERIFY_RESULT(unchangedProjectBytes);
+    QCOMPARE(*unchangedProjectBytes, *originalProjectBytes);
+}
+
+void EtherCATWorkbenchTests::testWorkbenchKeepsMockTopologyScopedAcrossDuplicateMasterIds()
+{
+    const Utils::Key preferenceKey("EtherCAT/Workbench/MockTopologyProviderBindings/v1");
+    const bool preferenceExisted = Utils::userSettings().contains(preferenceKey);
+    const QVariant previousPreference = Utils::userSettings().value(preferenceKey);
+    const QScopeGuard restorePreference([&] {
+        if (preferenceExisted)
+            Utils::userSettings().setValue(preferenceKey, previousPreference);
+        else
+            Utils::userSettings().remove(preferenceKey);
+    });
+    Utils::userSettings().remove(preferenceKey);
+
+    auto controller = std::make_unique<WorkbenchController>();
+    Core::ProjectService *projectService = controller->projectService();
+    Core::ScanProviderSelectionService *scanSelectionService
+        = ExtensionSystem::PluginManager::getObject<Core::ScanProviderSelectionService>();
+    QVERIFY(projectService);
+    QVERIFY(scanSelectionService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Data::NodeId sharedMasterId = Data::NodeId::create();
+    const Data::ControllerConnectionScope firstScope{Data::NodeId::create(), sharedMasterId};
+    const Data::ControllerConnectionScope secondScope{Data::NodeId::create(), sharedMasterId};
+    const QList<Data::DeviceSummary> devices = deviceSummaries(2);
+    const TestProjectFile firstFile = writeProjectWithSlave(
+        directory,
+        devices.at(0),
+        "duplicate-master-first.ecatproject",
+        "Duplicate Master First",
+        firstScope);
+    const TestProjectFile secondFile = writeProjectWithSlave(
+        directory,
+        devices.at(1),
+        "duplicate-master-second.ecatproject",
+        "Duplicate Master Second",
+        secondScope);
+    QVERIFY(!firstFile.path.isEmpty());
+    QVERIFY(!secondFile.path.isEmpty());
+
+    const ProjectExplorer::OpenProjectResult firstOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(firstFile.path, false);
+    QVERIFY2(firstOpened, qPrintable(firstOpened.errorMessage()));
+    const ProjectExplorer::OpenProjectResult secondOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(secondFile.path, false);
+    QVERIFY2(secondOpened, qPrintable(secondOpened.errorMessage()));
+    ProjectExplorer::ProjectManager::setStartupProject(firstOpened.project());
+
+    AvailableScanProvider firstProvider(
+        Utils::Id("EtherCAT.Workbench.TestScan.DuplicateMaster.First"),
+        "First duplicate-master scanner");
+    AvailableScanProvider secondProvider(
+        Utils::Id("EtherCAT.Workbench.TestScan.DuplicateMaster.Second"),
+        "Second duplicate-master scanner");
+    firstProvider.setAvailable(true);
+    secondProvider.setAvailable(true);
+    bool firstProviderRegistered = false;
+    bool secondProviderRegistered = false;
+    const QScopeGuard cleanup([&] {
+        if (controller) {
+            controller->selectScanProvider(firstScope, {});
+            controller->selectScanProvider(secondScope, {});
+        } else {
+            scanSelectionService->clear(firstScope);
+            scanSelectionService->clear(secondScope);
+        }
+        if (secondProviderRegistered)
+            ExtensionSystem::PluginManager::removeObject(&secondProvider);
+        if (firstProviderRegistered)
+            ExtensionSystem::PluginManager::removeObject(&firstProvider);
+        controller.reset();
+        if (projectService->project(secondFile.projectId))
+            ProjectExplorer::ProjectManager::removeProject(secondOpened.project());
+        if (projectService->project(firstFile.projectId))
+            ProjectExplorer::ProjectManager::removeProject(firstOpened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    ExtensionSystem::PluginManager::addObject(&firstProvider);
+    firstProviderRegistered = true;
+    ExtensionSystem::PluginManager::addObject(&secondProvider);
+    secondProviderRegistered = true;
+
+    QTRY_VERIFY(projectService->project(firstScope.projectId).has_value());
+    QTRY_VERIFY(projectService->project(secondScope.projectId).has_value());
+    const Data::ScanResult firstResult = freshMockScanResult(
+        firstScope, "First project exact Mock evidence");
+    const Data::ScanResult secondResult = freshMockScanResult(
+        secondScope, "Second project exact Mock evidence");
+    firstProvider.publishResult(firstResult);
+    secondProvider.publishResult(secondResult);
+    QVERIFY_RESULT(controller->selectScanProvider(firstScope, firstProvider.id()));
+    QVERIFY_RESULT(controller->selectScanProvider(secondScope, secondProvider.id()));
+
+    QTRY_COMPARE(
+        controller->scanProviderSelection(firstScope),
+        std::optional(Core::ScanProviderSelection{firstScope, firstProvider.id()}));
+    QTRY_COMPARE(
+        controller->scanProviderSelection(secondScope),
+        std::optional(Core::ScanProviderSelection{secondScope, secondProvider.id()}));
+    QTRY_VERIFY(controller->automationScanResult(firstScope).has_value());
+    QTRY_VERIFY(controller->automationScanResult(secondScope).has_value());
+    QCOMPARE(controller->automationScanResult(firstScope)->snapshot.id, firstResult.snapshot.id);
+    QCOMPARE(controller->automationScanResult(secondScope)->snapshot.id, secondResult.snapshot.id);
+
+    const QModelIndex firstProject
+        = controller->treeModel()->indexForNodeId(firstScope.projectId);
+    const QModelIndex secondProject
+        = controller->treeModel()->indexForNodeId(secondScope.projectId);
+    QVERIFY(firstProject.isValid());
+    QVERIFY(secondProject.isValid());
+    const QModelIndex firstMaster = findByKind(
+        controller->treeModel(), Core::WorkbenchNodeKind::Master, firstProject);
+    const QModelIndex secondMaster = findByKind(
+        controller->treeModel(), Core::WorkbenchNodeKind::Master, secondProject);
+    QVERIFY(firstMaster.isValid());
+    QVERIFY(secondMaster.isValid());
+    QCOMPARE(
+        firstMaster.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>(),
+        sharedMasterId);
+    QCOMPARE(
+        secondMaster.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>(),
+        sharedMasterId);
+
+    const auto searchText = [](const QModelIndex &index) {
+        return index.data(WorkbenchTreeModel::SearchTextRole).toString();
+    };
+    QTRY_VERIFY(searchText(firstMaster).contains("First project exact Mock evidence"));
+    QVERIFY(!searchText(firstMaster).contains("Second project exact Mock evidence"));
+    QTRY_VERIFY(searchText(secondMaster).contains("Second project exact Mock evidence"));
+    QVERIFY(!searchText(secondMaster).contains("First project exact Mock evidence"));
+    QVERIFY(controller->treeModel()->firstTopologyDifference(firstScope.projectId).isValid());
+    QVERIFY(controller->treeModel()->firstTopologyDifference(secondScope.projectId).isValid());
+    QCOMPARE(firstProvider.startCalls, 0);
+    QCOMPARE(firstProvider.cancelCalls, 0);
+    QCOMPARE(firstProvider.clearCalls, 0);
+    QCOMPARE(secondProvider.startCalls, 0);
+    QCOMPARE(secondProvider.cancelCalls, 0);
+    QCOMPARE(secondProvider.clearCalls, 0);
+}
+
 void EtherCATWorkbenchTests::testNavigationHeaderResizePersistence()
 {
     const Utils::Key settingsKey("EtherCAT/Workbench/NavigationHeaderState");
@@ -10509,25 +11014,37 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
     AvailableDiagnosticsProvider diagnostics;
     scan.setAvailable(true);
     diagnostics.setAvailable(true);
-    ExtensionSystem::PluginManager::addObject(&scan);
     ExtensionSystem::PluginManager::addObject(&diagnostics);
-    bool providersRegistered = true;
+    bool diagnosticsRegistered = true;
     const QScopeGuard providerCleanup([&] {
-        if (!providersRegistered)
+        if (!diagnosticsRegistered)
             return;
         ExtensionSystem::PluginManager::removeObject(&diagnostics);
-        ExtensionSystem::PluginManager::removeObject(&scan);
     });
 
     Data::ScanResult scanResult;
+    scanResult.snapshot.id = Data::NodeId::create();
     scanResult.snapshot.projectId = fixture.project.id;
     scanResult.snapshot.masterId = masterId(fixture.project);
+    scanResult.snapshot.capturedAt = QDateTime::currentDateTimeUtc();
     scanResult.snapshot.mock = true;
     scanResult.snapshot.complete = true;
     scanResult.comparison.projectId = fixture.project.id;
     scanResult.comparison.masterId = masterId(fixture.project);
     scanResult.comparison.exactMatch = true;
-    scan.publishResult(scanResult);
+    const Data::ControllerConnectionScope scope{
+        fixture.project.id, masterId(fixture.project)};
+    const auto applyScanPresentation = [&] {
+        controller.treeModel()->setProviderPresentations(
+            {{scope,
+              {OptionalProviderState::Available, scan.displayName()},
+              scanResult}},
+            controller.diagnosticsProviderPresentation(),
+            diagnostics.streamState(),
+            diagnostics.activeRequest(),
+            diagnostics.latestSnapshot());
+    };
+    applyScanPresentation();
 
     const int iconSize = QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize);
     QTRY_COMPARE(master.siblingAtColumn(1).data().toString(), QString("MOCK Match"));
@@ -10584,7 +11101,7 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
          "Unexpected I/O"},
     };
     QSignalSpy providerChanged(controller.treeModel(), &QAbstractItemModel::dataChanged);
-    scan.publishResult(scanResult);
+    applyScanPresentation();
 
     QTRY_COMPARE(
         master.siblingAtColumn(1).data().toString(),
@@ -10658,7 +11175,7 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
         fixture.slaveId);
 
     scanResult.comparison.differences.removeAt(2);
-    scan.publishResult(scanResult);
+    applyScanPresentation();
     QTRY_COMPARE(
         master.siblingAtColumn(1).data().toString(),
         QString::fromUtf8("MOCK · Differences: 3"));
@@ -10687,6 +11204,7 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
          {}},
     };
     diagnostics.publishSnapshot(diagnosticsSnapshot);
+    applyScanPresentation();
 
     const QModelIndex diagnosticsNode = controller.treeModel()->diagnosticsForProject(
         fixture.project.id);
@@ -10740,6 +11258,7 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
          {},
          {}});
     diagnostics.publishSnapshot(diagnosticsSnapshot);
+    applyScanPresentation();
     QTRY_COMPARE(
         revision.siblingAtColumn(1).data().toString(),
         QString::fromUtf8("MOCK OP · MOCK · Revision"));
@@ -10757,6 +11276,7 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
         diagnosticsNode.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
     QVERIFY(!navigation.treeView()->currentIndex().isValid());
     diagnostics.setStreamState(Data::DiagnosticsStreamState::Stopped);
+    applyScanPresentation();
     QTRY_VERIFY(master.data(WorkbenchTreeModel::StatusRole).toString().contains("last"));
     QTRY_COMPARE(
         diagnosticsNode.siblingAtColumn(1).data().toString(),
@@ -10769,8 +11289,7 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
         QVERIFY2(navigation.grab().save(renderPath), qPrintable(renderPath));
 
     ExtensionSystem::PluginManager::removeObject(&diagnostics);
-    ExtensionSystem::PluginManager::removeObject(&scan);
-    providersRegistered = false;
+    diagnosticsRegistered = false;
     QTRY_VERIFY(missing.siblingAtColumn(1).data().toString().contains("Offline"));
     QTRY_VERIFY(diagnosticsNode.data(Qt::AccessibleDescriptionRole)
                     .toString()
@@ -10808,6 +11327,7 @@ void EtherCATWorkbenchTests::testProjectScopedLocateNavigation()
         "Local Mock project-scoped locate scan");
     bool scanRegistered = false;
     const QScopeGuard cleanup([&] {
+        controller.selectScanProvider({alpha.projectId, alpha.masterId}, {});
         controller.selectionService()->clear();
         if (scanRegistered)
             ExtensionSystem::PluginManager::removeObject(&scan);
@@ -10866,9 +11386,13 @@ void EtherCATWorkbenchTests::testProjectScopedLocateNavigation()
     scan.setAvailable(true);
     ExtensionSystem::PluginManager::addObject(&scan);
     scanRegistered = true;
+    QVERIFY_RESULT(controller.selectScanProvider(
+        {alpha.projectId, alpha.masterId}, scan.id()));
     Data::ScanResult scanResult;
+    scanResult.snapshot.id = Data::NodeId::create();
     scanResult.snapshot.projectId = alpha.projectId;
     scanResult.snapshot.masterId = alpha.masterId;
+    scanResult.snapshot.capturedAt = QDateTime::currentDateTimeUtc();
     scanResult.snapshot.mock = true;
     scanResult.snapshot.complete = true;
     scanResult.comparison.projectId = alpha.projectId;
@@ -11610,9 +12134,8 @@ void EtherCATWorkbenchTests::testInvalidProjectPresentationAndLifecycle()
         invalid.id);
 
     controller.treeModel()->setProviderPresentations(
-        {OptionalProviderState::Unavailable, "Unavailable Scan Probe"},
+        {},
         {OptionalProviderState::Unavailable, "Unavailable Diagnostics Probe"},
-        std::nullopt,
         Data::DiagnosticsStreamState::Stopped,
         {},
         std::nullopt);
@@ -26731,18 +27254,11 @@ void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
     QVERIFY(!summary->text().contains("installed", Qt::CaseInsensitive));
     QCOMPARE(summary->accessibleDescription(), summary->text());
 
-    AvailableScanProvider scan;
-    AvailableScanProvider backupScan(
-        Utils::Id("EtherCAT.Workbench.TestScan.Backup"),
-        "Backup Local Mock test scanner");
     AvailableDiagnosticsProvider diagnosticsProvider;
     AvailableDiagnosticsProvider backupDiagnostics(
         Utils::Id("EtherCAT.Workbench.TestDiagnostics.Backup"),
         "Backup Local Mock diagnostics");
-    scan.setDisplayName("Local Mock test scanner");
     diagnosticsProvider.setDisplayName("Local Mock test diagnostics");
-    bool scanRegistered = false;
-    bool backupScanRegistered = false;
     bool diagnosticsRegistered = false;
     bool backupDiagnosticsRegistered = false;
     const QScopeGuard cleanup([&] {
@@ -26750,24 +27266,16 @@ void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
             ExtensionSystem::PluginManager::removeObject(&backupDiagnostics);
         if (diagnosticsRegistered)
             ExtensionSystem::PluginManager::removeObject(&diagnosticsProvider);
-        if (backupScanRegistered)
-            ExtensionSystem::PluginManager::removeObject(&backupScan);
-        if (scanRegistered)
-            ExtensionSystem::PluginManager::removeObject(&scan);
         controller.selectionService()->clear();
     });
 
-    ExtensionSystem::PluginManager::addObject(&scan);
-    scanRegistered = true;
-    ExtensionSystem::PluginManager::addObject(&backupScan);
-    backupScanRegistered = true;
     ExtensionSystem::PluginManager::addObject(&diagnosticsProvider);
     diagnosticsRegistered = true;
     ExtensionSystem::PluginManager::addObject(&backupDiagnostics);
     backupDiagnosticsRegistered = true;
-    QTRY_COMPARE(status(noSlaves), QString("Local Mock test scanner unavailable"));
+    QTRY_COMPARE(status(noSlaves), QString("No Scan Provider registered | Local Mock only"));
     QTRY_COMPARE(status(diagnostics), QString("Local Mock test diagnostics unavailable"));
-    QTRY_COMPARE(compactStatus(noSlaves), QString("Unavailable"));
+    QTRY_COMPARE(compactStatus(noSlaves), QString::fromUtf8("No provider · Mock only"));
     QTRY_COMPARE(compactStatus(diagnostics), QString("Unavailable"));
     QTRY_VERIFY(details.tabWidget()->count() > 0);
     summary = details.findChild<QLabel *>("EtherCATWorkbenchPageSummary");
@@ -26802,15 +27310,6 @@ void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
     }
 
     QPointer<QLabel> retainedSummary(summary);
-    scan.setDisplayName("  ");
-    QTRY_COMPARE(status(noSlaves), QString("Unnamed Scan Provider unavailable"));
-    QVERIFY(retainedSummary);
-    QCOMPARE(details.findChild<QLabel *>("EtherCATWorkbenchPageSummary"), retainedSummary.data());
-    scan.setDisplayName("Renamed Local Mock test scanner");
-    QTRY_COMPARE(status(noSlaves), QString("Renamed Local Mock test scanner unavailable"));
-    QVERIFY(retainedSummary);
-    QCOMPARE(details.findChild<QLabel *>("EtherCATWorkbenchPageSummary"), retainedSummary.data());
-
     diagnosticsProvider.setDisplayName("\t");
     QTRY_COMPARE(status(diagnostics), QString("Unnamed Diagnostics Provider unavailable"));
     QTRY_VERIFY(retainedSummary);
@@ -26820,44 +27319,6 @@ void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
     QTRY_VERIFY(retainedSummary);
     QTRY_VERIFY(retainedSummary->text().contains("Renamed Local Mock diagnostics"));
     QCOMPARE(details.findChild<QLabel *>("EtherCATWorkbenchPageSummary"), retainedSummary.data());
-
-    backupScan.setAvailable(true);
-    QTRY_COMPARE(status(noSlaves), QString("Backup Local Mock test scanner available"));
-    QTRY_COMPARE(compactStatus(noSlaves), QString("Available"));
-    scan.setAvailable(true);
-    QTRY_COMPARE(status(noSlaves), QString("Renamed Local Mock test scanner available"));
-    QTRY_COMPARE(compactStatus(noSlaves), QString("Available"));
-
-    Data::ScanResult backupScanResult;
-    backupScanResult.snapshot.projectId = project.id;
-    backupScanResult.snapshot.masterId = masterId(project);
-    backupScanResult.snapshot.mock = true;
-    backupScanResult.snapshot.complete = true;
-    backupScanResult.comparison.projectId = project.id;
-    backupScanResult.comparison.masterId = masterId(project);
-    backupScanResult.comparison.differences = {
-        {Data::TopologyDifferenceKind::Added,
-         Data::DifferenceSeverity::Information,
-         {},
-         Data::NodeId::create(),
-         -1,
-         0,
-         "Backup scan difference",
-         "Local Mock backup result"},
-    };
-    backupScan.publishResult(backupScanResult);
-    QTRY_COMPARE(
-        controller.scanProviderPresentation().displayName,
-        QString("Backup Local Mock test scanner"));
-    QTRY_COMPARE(status(noSlaves), QString("Backup Local Mock test scanner available"));
-    QTRY_VERIFY(status(master).contains("1 topology difference"));
-    QTRY_COMPARE(
-        compactStatus(master), QString::fromUtf8("MOCK · Differences: 1"));
-    backupScan.clearPublishedResult();
-    QTRY_COMPARE(
-        controller.scanProviderPresentation().displayName,
-        QString("Renamed Local Mock test scanner"));
-    QTRY_VERIFY(!status(master).contains("topology difference"));
 
     backupDiagnostics.setAvailable(true);
     QTRY_COMPARE(status(diagnostics), QString("Backup Local Mock diagnostics available"));
@@ -26942,10 +27403,6 @@ void EtherCATWorkbenchTests::testOptionalProviderAvailabilityPresentation()
         status(diagnostics), QString("No Diagnostics Provider registered | Local Mock only"));
     QTRY_COMPARE(
         compactStatus(diagnostics), QString::fromUtf8("No provider · Mock only"));
-    ExtensionSystem::PluginManager::removeObject(&backupScan);
-    backupScanRegistered = false;
-    ExtensionSystem::PluginManager::removeObject(&scan);
-    scanRegistered = false;
     QTRY_COMPARE(status(noSlaves), QString("No Scan Provider registered | Local Mock only"));
     QTRY_COMPARE(
         compactStatus(noSlaves), QString::fromUtf8("No provider · Mock only"));
@@ -26988,24 +27445,22 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
     const Core::PropertyPageContext masterContext = controller.treeModel()->contextForIndex(master);
     QCOMPARE(pages.pages(masterContext).size(), 7);
 
-    AvailableScanProvider scan;
     AvailableDiagnosticsProvider diagnosticsProvider;
-    scan.setAvailable(true);
     diagnosticsProvider.setAvailable(true);
-    ExtensionSystem::PluginManager::addObject(&scan);
     ExtensionSystem::PluginManager::addObject(&diagnosticsProvider);
 
-    QTRY_VERIFY(controller.scanAvailable());
+    QTRY_VERIFY(!controller.scanAvailable());
     QTRY_VERIFY(controller.diagnosticsAvailable());
     QCOMPARE(
         fullStatus(diagnostics),
         QString("Local Mock test diagnostics available"));
     QCOMPARE(
         fullStatus(controller.treeModel()->index(1, 0, master)),
-        QString("Local Mock test scanner available"));
+        QString("No Scan Provider registered | Local Mock only"));
     QCOMPARE(compactStatus(diagnostics), QString("Available"));
     QCOMPARE(
-        compactStatus(controller.treeModel()->index(1, 0, master)), QString("Available"));
+        compactStatus(controller.treeModel()->index(1, 0, master)),
+        QString::fromUtf8("No provider · Mock only"));
     QCOMPARE(pages.pages(masterContext).size(), 5);
 
     diagnosticsProvider.setAvailable(false);
@@ -27019,7 +27474,6 @@ void EtherCATWorkbenchTests::testDynamicOptionalProviders()
     QTRY_VERIFY(controller.diagnosticsAvailable());
 
     ExtensionSystem::PluginManager::removeObject(&diagnosticsProvider);
-    ExtensionSystem::PluginManager::removeObject(&scan);
     QTRY_VERIFY(!controller.diagnosticsAvailable());
     QTRY_VERIFY(!controller.scanAvailable());
     QCOMPARE(

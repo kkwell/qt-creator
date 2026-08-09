@@ -48,6 +48,7 @@ private:
     void commitTargetName();
     void commitMasterName();
     void commitMasterConfiguration();
+    void commitMasterScanProvider();
     void refreshMasterSummary();
 
     QPointer<WorkbenchController> m_controller;
@@ -103,6 +104,7 @@ private:
     QLineEdit *m_masterCycle;
     QLineEdit *m_masterSlaveCount;
     QLineEdit *m_masterStatus;
+    QComboBox *m_masterScanProvider;
     QPushButton *m_masterApply;
     QTreeWidget *m_tree;
     Data::NodeId m_nameBaselineProjectId;

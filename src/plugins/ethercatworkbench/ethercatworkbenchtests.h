@@ -58,6 +58,8 @@ private slots:
     void testBundledEsiOnlineTopologyPresentation();
     void testControllerTopologyEvidenceRefresh();
     void testWorkbenchUsesExactRealTopologySelection();
+    void testWorkbenchUsesExactMockTopologySelection();
+    void testWorkbenchKeepsMockTopologyScopedAcrossDuplicateMasterIds();
     void testNavigationHeaderResizePersistence();
     void testProviderStartupDiagnosticsPresentation();
     void testProviderStateTreeAndNavigation();

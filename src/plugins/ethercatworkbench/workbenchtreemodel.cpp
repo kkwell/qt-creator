@@ -141,6 +141,19 @@ static bool shouldShowDiagnosticsNode(const OptionalProviderPresentation &provid
     return Core::isMockUiEnabled() || provider.state != OptionalProviderState::Absent;
 }
 
+static const ScopedScanProviderPresentation *scanPresentationForScope(
+    const QList<ScopedScanProviderPresentation> &presentations,
+    const Data::ControllerConnectionScope &scope)
+{
+    const auto found = std::find_if(
+        presentations.cbegin(),
+        presentations.cend(),
+        [&scope](const ScopedScanProviderPresentation &presentation) {
+            return presentation.scope == scope;
+        });
+    return found == presentations.cend() ? nullptr : &*found;
+}
+
 static std::unique_ptr<WorkbenchTreeModel::Node> makeNode(
     WorkbenchTreeModel::Node *parent,
     const Data::NodeId &id,
@@ -1715,28 +1728,25 @@ void WorkbenchTreeModel::syncDevices(const QList<Data::DeviceSummary> &devices)
 }
 
 void WorkbenchTreeModel::setProviderPresentations(
-    const OptionalProviderPresentation &scanProvider,
+    const QList<ScopedScanProviderPresentation> &scanProviders,
     const OptionalProviderPresentation &diagnosticsProvider,
-    const std::optional<Data::ScanResult> &scanResult,
     Data::DiagnosticsStreamState diagnosticsState,
     const Data::DiagnosticsRequest &diagnosticsRequest,
     const std::optional<Data::DiagnosticsSnapshot> &diagnosticsSnapshot)
 {
-    const bool optionalProvidersChanged = m_scanProvider != scanProvider
+    const bool optionalProvidersChanged = m_scanProviders != scanProviders
                                           || m_diagnosticsProvider != diagnosticsProvider;
     const bool diagnosticsNodeVisibilityChanged
         = shouldShowDiagnosticsNode(m_diagnosticsProvider)
           != shouldShowDiagnosticsNode(diagnosticsProvider);
-    if (!optionalProvidersChanged && m_scanResult == scanResult
-        && m_diagnosticsState == diagnosticsState
+    if (!optionalProvidersChanged && m_diagnosticsState == diagnosticsState
         && m_diagnosticsRequest == diagnosticsRequest
         && m_diagnosticsSnapshot == diagnosticsSnapshot) {
         return;
     }
 
-    m_scanProvider = scanProvider;
+    m_scanProviders = scanProviders;
     m_diagnosticsProvider = diagnosticsProvider;
-    m_scanResult = scanResult;
     m_diagnosticsState = diagnosticsState;
     m_diagnosticsRequest = diagnosticsRequest;
     m_diagnosticsSnapshot = diagnosticsSnapshot;
@@ -1773,6 +1783,7 @@ void WorkbenchTreeModel::clear()
     m_deviceAdapterProviders.clear();
     m_activeProjectId = {};
     m_dropTargetMasterId = {};
+    m_scanProviders.clear();
     m_controllerConnections.clear();
     m_controllerTopologyFingerprint.clear();
     rebuild();
@@ -2090,6 +2101,23 @@ WorkbenchTreeModel::Node *WorkbenchTreeModel::findNode(const Data::NodeId &nodeI
     return findRecursive(findRecursive, m_root.get());
 }
 
+WorkbenchTreeModel::Node *WorkbenchTreeModel::findProjectNode(
+    const Data::NodeId &projectId, const Data::NodeId &nodeId) const
+{
+    if (projectId.isNull() || nodeId.isNull())
+        return nullptr;
+    const auto findRecursive = [&projectId, &nodeId](const auto &self, Node *parent) -> Node * {
+        for (const std::unique_ptr<Node> &child : parent->children) {
+            if (child->projectId == projectId && child->id == nodeId)
+                return child.get();
+            if (Node *found = self(self, child.get()))
+                return found;
+        }
+        return nullptr;
+    };
+    return findRecursive(findRecursive, m_root.get());
+}
+
 Data::NodeId WorkbenchTreeModel::deviceIdFromMimeData(const QMimeData *data) const
 {
     if (!data || !data->hasFormat(deviceMimeType))
@@ -2111,7 +2139,13 @@ void WorkbenchTreeModel::updateOptionalProviderStatus()
             } else if (
                 child->kind == Core::WorkbenchNodeKind::Placeholder && child->parent
                 && child->parent->kind == Core::WorkbenchNodeKind::Master) {
-                status = optionalProviderStatus(m_scanProvider, Core::ProviderKind::Scan);
+                const Data::ControllerConnectionScope scope{
+                    child->parent->projectId, child->parent->id};
+                const ScopedScanProviderPresentation *scan
+                    = scanPresentationForScope(m_scanProviders, scope);
+                status = optionalProviderStatus(
+                    scan ? scan->provider : OptionalProviderPresentation(),
+                    Core::ProviderKind::Scan);
             }
             child->baseStatus = status;
             if (child->kind == Core::WorkbenchNodeKind::Diagnostics) {
@@ -2120,8 +2154,13 @@ void WorkbenchTreeModel::updateOptionalProviderStatus()
             } else if (
                 child->kind == Core::WorkbenchNodeKind::Placeholder && child->parent
                 && child->parent->kind == Core::WorkbenchNodeKind::Master) {
+                const Data::ControllerConnectionScope scope{
+                    child->parent->projectId, child->parent->id};
+                const ScopedScanProviderPresentation *scan
+                    = scanPresentationForScope(m_scanProviders, scope);
                 child->baseCompactStatus = optionalProviderCompactStatus(
-                    m_scanProvider, Core::ProviderKind::Scan);
+                    scan ? scan->provider : OptionalProviderPresentation(),
+                    Core::ProviderKind::Scan);
             }
             self(self, child.get());
         }
@@ -2463,14 +2502,25 @@ void WorkbenchTreeModel::updateProviderPresentation()
         }
     }
 
-    if (m_scanResult) {
-        const Data::ScanResult &result = *m_scanResult;
-        Node *master = findNode(result.snapshot.masterId);
+    for (const ScopedScanProviderPresentation &scanPresentation :
+         std::as_const(m_scanProviders)) {
+        if (!scanPresentation.result)
+            continue;
+        const Data::ScanResult &result = *scanPresentation.result;
+        if (!result.snapshot.mock || !result.snapshot.complete || result.snapshot.id.isNull()
+            || !result.snapshot.capturedAt.isValid()
+            || result.snapshot.projectId != scanPresentation.scope.projectId
+            || result.snapshot.masterId != scanPresentation.scope.masterId
+            || result.comparison.projectId != scanPresentation.scope.projectId
+            || result.comparison.masterId != scanPresentation.scope.masterId) {
+            continue;
+        }
+        Node *master = findProjectNode(result.snapshot.projectId, result.snapshot.masterId);
         if (master && master->kind == Core::WorkbenchNodeKind::Master
             && master->projectId == result.snapshot.projectId) {
             const QString providerName = optionalProviderDisplayName(
-                m_scanProvider, Core::ProviderKind::Scan);
-            const QString source = result.snapshot.mock ? Tr::tr("MOCK") : Tr::tr("Online");
+                scanPresentation.provider, Core::ProviderKind::Scan);
+            const QString source = Tr::tr("MOCK");
             if (result.snapshot.operation == Data::ScanOperation::Interfaces) {
                 appendPresentationStatus(
                     master,
@@ -2850,16 +2900,20 @@ void WorkbenchTreeModel::rebuild()
                         nodePointer->compactStatus = nodePointer->baseCompactStatus;
                     }
                     if (slaveCount == 0) {
+                        const Data::ControllerConnectionScope scope{
+                            project.id, nodePointer->id};
+                        const ScopedScanProviderPresentation *scan
+                            = scanPresentationForScope(m_scanProviders, scope);
+                        const OptionalProviderPresentation provider
+                            = scan ? scan->provider : OptionalProviderPresentation();
                         nodePointer->children.push_back(makeNode(
                             nodePointer,
                             derivedNodeId(snapshot->id.toString() + ":slaves-empty"),
                             project.id,
                             Core::WorkbenchNodeKind::Placeholder,
                             Tr::tr("No configured slaves"),
-                            optionalProviderStatus(
-                                m_scanProvider, Core::ProviderKind::Scan),
-                            optionalProviderCompactStatus(
-                                m_scanProvider, Core::ProviderKind::Scan)));
+                            optionalProviderStatus(provider, Core::ProviderKind::Scan),
+                            optionalProviderCompactStatus(provider, Core::ProviderKind::Scan)));
                     }
                 }
             }

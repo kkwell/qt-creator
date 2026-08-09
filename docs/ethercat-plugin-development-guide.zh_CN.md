@@ -209,8 +209,13 @@ Mock 扫描 Provider 的选择由 Core `ScanProviderSelectionService` 按 `proje
 或清除扫描。没有显式选择、Provider 不可用或 Provider 被移除时，消费者必须显示为空或不可用，
 不能动态选择第一个或“最优”备用 Provider；同一 ID 重新注册后才可恢复。扫描正在进行时也不得
 切换或清除选择。这个选择属于本机进程会话，不进入 `.ecatproject` 或签名工程身份；以后从本地
-偏好恢复时，必须等工程打开后重新校验 Project/Master scope。当前 Core 合同已完成，Workbench
-Mock 展示、ScanWorkflow 和 Gateway 的消费仍按后续独立问题迁移。
+偏好恢复时，必须等工程打开后重新校验 Project/Master scope。
+
+Workbench 已在 Master General 页提供显式 Mock topology Provider 选择，并通过 `TopologyService`
+只把该 scope 的 `Fresh MockScan` 证据投影到树和自动化只读结果。偏好存于单个最多 128 项的
+本地 LRU 记录；Provider 移除时保留 ID 但立即清空结果，同 ID 重新注册后才恢复。选择和恢复不
+调用扫描、控制或 Discover，也不修改工程字节。`ScanWorkflow` 的 start/compare/accept/clear
+仍需在后续问题中接入同一选择与 generation 门禁，Gateway 也尚未迁移。
 
 ## 5. 插件间调用规范
 
@@ -561,8 +566,8 @@ DC 运行记录宣称为真机运动验证。
 ### P1：统一业务协调层
 
 1. Core 已建立来源隔离 `TopologyService` 和会话级 `ScanProviderSelectionService`，Workbench
-   的真实控制器路径已按显式选择接入；下一步让 Workbench 与 ScanWorkflow 消费精确 Mock
-   Provider 选择，再让 Gateway 消费同一只读合同。
+   已按显式选择接入 Real 与 Mock 拓扑；下一步让 ScanWorkflow 复核同一 Provider 与 generation，
+   再让 Gateway 消费同一只读合同。
 2. 将连接、租约、扫描、配置、编译、部署、运行和停止从 5,000 行级
    `WorkbenchController` 逐步迁移到无 UI 的 `EngineeringOperationCoordinator`。
 3. 建立 UI、Gateway、SemanticRuntime、Compiler 和 Activation 共用的持久 Operation
