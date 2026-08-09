@@ -57,6 +57,7 @@ private slots:
     void testConfiguredSlaveStateIcon();
     void testBundledEsiOnlineTopologyPresentation();
     void testControllerTopologyEvidenceRefresh();
+    void testWorkbenchUsesExactRealTopologySelection();
     void testNavigationHeaderResizePersistence();
     void testProviderStartupDiagnosticsPresentation();
     void testProviderStateTreeAndNavigation();

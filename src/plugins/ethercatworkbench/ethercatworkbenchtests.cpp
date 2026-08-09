@@ -1685,6 +1685,42 @@ private:
     Data::ControllerConnectionSnapshot m_snapshot;
 };
 
+static void completeRealTopologyProvenance(
+    Data::ControllerConnectionSnapshot &snapshot, quint64 requestId = 1)
+{
+    if (!snapshot.topology)
+        return;
+
+    if (!snapshot.sessionGeneration)
+        snapshot.sessionGeneration = 1;
+    if (!snapshot.session)
+        snapshot.session = Data::ControllerSessionSummary();
+    if (!snapshot.session->sessionId)
+        snapshot.session->sessionId = 1000 + requestId;
+    if (!snapshot.session->bootId)
+        snapshot.session->bootId = 2000 + requestId;
+
+    Data::ControllerTopologySnapshot &topology = *snapshot.topology;
+    topology.scope = snapshot.scope;
+    topology.sessionGeneration = snapshot.sessionGeneration;
+    topology.sessionId = snapshot.session->sessionId;
+    topology.bootId = snapshot.session->bootId;
+    topology.requestId = requestId;
+    topology.responseSequence = requestId + 1;
+    if (snapshot.protocolVersion.minor >= 15) {
+        topology.cpu1RequestSequence = 0;
+        topology.cpu1CompletedTimeNs = 0;
+        topology.topologyCaptureSequence = quint32(requestId + 2);
+        topology.topologyCompletedTimeNs = requestId + 3;
+    } else {
+        topology.cpu1RequestSequence = quint32(requestId + 2);
+        topology.cpu1CompletedTimeNs = requestId + 3;
+        topology.topologyCaptureSequence = 0;
+        topology.topologyCompletedTimeNs = 0;
+    }
+    topology.receivedAt = QDateTime::currentDateTimeUtc();
+}
+
 class AvailableScanProvider final : public Core::ScanProvider
 {
 public:
@@ -4020,6 +4056,9 @@ void EtherCATWorkbenchTests::testControlPageSelectionPolicy()
     providerRegistered = true;
     QTRY_VERIFY(projectService->project(file.projectId).has_value());
     QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.masterId).isValid());
+    QVERIFY_RESULT(controller.selectControllerConnectionProvider(scope, provider.id()));
+    QVERIFY_RESULT(controller.selectControllerConnectionProfile(
+        scope, provider.primaryProfileId()));
 
     Data::ControllerTopologySnapshot topology;
     topology.firstStationAddress = 0x1001;
@@ -4046,6 +4085,7 @@ void EtherCATWorkbenchTests::testControlPageSelectionPolicy()
     snapshot.readOnly = false;
     snapshot.mock = false;
     snapshot.topology = topology;
+    completeRealTopologyProvenance(snapshot, 101);
     provider.publishSnapshot(snapshot);
 
     const QModelIndex masterIndex = controller.treeModel()->indexForNodeId(file.masterId);
@@ -10177,6 +10217,185 @@ void EtherCATWorkbenchTests::testControllerTopologyEvidenceRefresh()
     model.setControllerConnections({sampleOnlyUpdate});
     QCOMPARE(reset.count(), 3);
     QCOMPARE(model.controllerTopologySlave(onlineDeviceId), std::optional(updatedSlave));
+}
+
+void EtherCATWorkbenchTests::testWorkbenchUsesExactRealTopologySelection()
+{
+    WorkbenchController controller;
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(projectService);
+    controller.selectionService()->clear();
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        deviceSummaries(1).constFirst(),
+        "exact-real-topology-selection.ecatproject",
+        "Exact Real Topology Selection");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    ProjectExplorer::ProjectManager::setStartupProject(opened.project());
+    const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
+
+    ControlledControllerConnectionProvider alternateProvider(
+        Utils::Id("EtherCAT.Workbench.TestControllerConnection.Topology.Alternate"),
+        "A alternate topology controller");
+    ControlledControllerConnectionProvider selectedProvider(
+        Utils::Id("EtherCAT.Workbench.TestControllerConnection.Topology.Selected"),
+        "Z selected topology controller");
+    alternateProvider.setAvailable(true);
+    selectedProvider.setAvailable(true);
+
+    bool alternateRegistered = false;
+    bool selectedRegistered = false;
+    const QScopeGuard cleanup([&] {
+        if (selectedRegistered)
+            ExtensionSystem::PluginManager::removeObject(&selectedProvider);
+        if (alternateRegistered)
+            ExtensionSystem::PluginManager::removeObject(&alternateProvider);
+        controller.selectionService()->clear();
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+    });
+    ExtensionSystem::PluginManager::addObject(&alternateProvider);
+    alternateRegistered = true;
+    ExtensionSystem::PluginManager::addObject(&selectedProvider);
+    selectedRegistered = true;
+
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QVERIFY_RESULT(controller.selectControllerConnectionProvider(scope, selectedProvider.id()));
+    QVERIFY_RESULT(controller.selectControllerConnectionProfile(
+        scope, selectedProvider.primaryProfileId()));
+
+    const auto freshSnapshot = [&scope](
+                                   const Data::NodeId &profileId,
+                                   quint32 productCode,
+                                   quint64 sessionGeneration,
+                                   quint64 sessionId,
+                                   quint64 bootId,
+                                   quint64 requestId) {
+        Data::ControllerSessionSummary session;
+        session.sessionId = sessionId;
+        session.bootId = bootId;
+
+        Data::ControllerTopologySlave slave;
+        slave.position = 0;
+        slave.stationAddress = 0x1001;
+        slave.alState = 0x0008;
+        slave.vendorId = 0x00000002;
+        slave.productCode = productCode;
+        slave.revision = 0x00000001;
+        slave.serial = productCode;
+
+        Data::ControllerTopologySnapshot topology;
+        topology.firstStationAddress = slave.stationAddress;
+        topology.respondingCount = 1;
+        topology.slaves = {slave};
+        topology.discoveredAt = QDateTime::currentDateTimeUtc();
+        topology.scope = scope;
+        topology.sessionGeneration = sessionGeneration;
+        topology.sessionId = sessionId;
+        topology.bootId = bootId;
+        topology.requestId = requestId;
+        topology.responseSequence = requestId + 1;
+        topology.topologyCaptureSequence = quint32(requestId + 2);
+        topology.topologyCompletedTimeNs = requestId + 3;
+        topology.receivedAt = QDateTime::currentDateTimeUtc();
+
+        Data::ControllerConnectionSnapshot snapshot;
+        snapshot.scope = scope;
+        snapshot.profileId = profileId;
+        snapshot.state = Data::ControllerConnectionState::Connected;
+        snapshot.protocolVersion = {1, 15};
+        snapshot.sessionGeneration = sessionGeneration;
+        snapshot.readOnly = false;
+        snapshot.mock = false;
+        snapshot.session = session;
+        snapshot.topology = topology;
+        return snapshot;
+    };
+
+    Data::ControllerConnectionSnapshot alternate = freshSnapshot(
+        alternateProvider.primaryProfileId(), 0xaaaaaaaa, 21, 121, 221, 321);
+    Data::ControllerConnectionSnapshot selected = freshSnapshot(
+        selectedProvider.primaryProfileId(), 0xbbbbbbbb, 22, 122, 222, 322);
+    alternateProvider.publishSnapshot(alternate);
+    selectedProvider.publishSnapshot(selected);
+
+    const auto selectedTopology = [&controller, &scope]() {
+        return controller.controllerConnectionSnapshot(scope).topology;
+    };
+    const auto treeProductCode = [&controller, &file]() -> std::optional<quint32> {
+        const std::optional<Data::ControllerTopologySlave> slave
+            = controller.treeModel()->controllerTopologySlave(file.slaveId);
+        return slave ? std::optional(slave->productCode) : std::nullopt;
+    };
+    const auto noControlWasIssued = [&] {
+        return selectedProvider.controlCalls == 0 && alternateProvider.controlCalls == 0
+               && std::none_of(
+                   selectedProvider.controlRequests.cbegin(),
+                   selectedProvider.controlRequests.cend(),
+                   [](const Data::ControllerControlRequest &request) {
+                       return request.command == Data::ControllerControlCommand::DiscoverTopology;
+                   })
+               && std::none_of(
+                   alternateProvider.controlRequests.cbegin(),
+                   alternateProvider.controlRequests.cend(),
+                   [](const Data::ControllerControlRequest &request) {
+                       return request.command == Data::ControllerControlCommand::DiscoverTopology;
+                   });
+    };
+
+    QTRY_VERIFY(selectedTopology().has_value());
+    QCOMPARE(selectedTopology()->slaves.constFirst().productCode, quint32(0xbbbbbbbb));
+    QTRY_COMPARE(treeProductCode(), std::optional<quint32>(0xbbbbbbbb));
+    QVERIFY(!controller.projectedControllerConnectionSnapshot(&alternateProvider, scope).topology);
+    QVERIFY(controller.projectedControllerConnectionSnapshot(&selectedProvider, scope).topology);
+    QVERIFY(noControlWasIssued());
+
+    selected.mock = true;
+    selectedProvider.publishSnapshot(selected);
+    QTRY_VERIFY(!selectedTopology());
+    QTRY_VERIFY(!treeProductCode());
+    QVERIFY(noControlWasIssued());
+
+    selected.mock = false;
+    selected.sessionGeneration += 1;
+    selectedProvider.publishSnapshot(selected);
+    QTRY_VERIFY(!selectedTopology());
+    QTRY_VERIFY(!treeProductCode());
+    QVERIFY(noControlWasIssued());
+
+    selected = freshSnapshot(
+        selectedProvider.primaryProfileId(), 0xbbbbbbbb, 23, 123, 223, 323);
+    selected.topology->requestId = 0;
+    selectedProvider.publishSnapshot(selected);
+    QTRY_VERIFY(!selectedTopology());
+    QTRY_VERIFY(!treeProductCode());
+    QVERIFY(noControlWasIssued());
+
+    selected = freshSnapshot(
+        selectedProvider.alternateProfileId(), 0xbbbbbbbb, 24, 124, 224, 324);
+    selectedProvider.publishSnapshot(selected);
+    QTRY_VERIFY(!selectedTopology());
+    QTRY_VERIFY(!treeProductCode());
+    QVERIFY(noControlWasIssued());
+
+    selected = freshSnapshot(
+        selectedProvider.primaryProfileId(), 0xbbbbbbbb, 25, 125, 225, 325);
+    selectedProvider.publishSnapshot(selected);
+    QTRY_VERIFY(selectedTopology());
+    QTRY_COMPARE(treeProductCode(), std::optional<quint32>(0xbbbbbbbb));
+    QVERIFY(noControlWasIssued());
+
+    ExtensionSystem::PluginManager::removeObject(&selectedProvider);
+    selectedRegistered = false;
+    QTRY_VERIFY(!selectedTopology());
+    QTRY_VERIFY(!treeProductCode());
+    QVERIFY(noControlWasIssued());
 }
 
 void EtherCATWorkbenchTests::testNavigationHeaderResizePersistence()
@@ -23370,6 +23589,7 @@ void EtherCATWorkbenchTests::testControllerCommunicationControlWorkflow()
         {1, 0x1002, 0x0004, 0, 0x00000003, 0x87654321, 0x00000012, 0x00000022},
     };
     snapshot.topology = topology;
+    completeRealTopologyProvenance(snapshot, 401);
     provider.publishSnapshot(snapshot);
     QTRY_COMPARE(actualBus->topLevelItemCount(), 2);
     QVERIFY(actualBusSummary->text().contains(QString::number(topology.respondingCount)));
@@ -24529,6 +24749,7 @@ void EtherCATWorkbenchTests::testControllerFreeRunCapabilityWarnings()
     snapshot.readOnly = false;
     snapshot.mock = false;
     snapshot.topology = topology;
+    completeRealTopologyProvenance(snapshot, 601);
     provider.publishSnapshot(snapshot);
 
     QTRY_VERIFY(std::any_of(output.cbegin(), output.cend(), [](const QList<QVariant> &arguments) {
@@ -24574,6 +24795,7 @@ void EtherCATWorkbenchTests::testControllerFreeRunCapabilityWarnings()
     topology.slaves.first().revision = 0x00000012;
     topology.discoveredAt = topology.discoveredAt.addSecs(1);
     snapshot.topology = topology;
+    completeRealTopologyProvenance(snapshot, 602);
     provider.publishSnapshot(snapshot);
     QTRY_VERIFY(std::any_of(output.cbegin(), output.cend(), [](const QList<QVariant> &arguments) {
         const QString message = arguments.constFirst().toString();
@@ -24896,6 +25118,7 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
     snapshot.package->controllerState = Data::ControllerPackageState::Active;
     snapshot.package->controllerBootId = session.bootId;
     snapshot.topology = topology;
+    completeRealTopologyProvenance(snapshot, 701);
     provider.publishSnapshot(snapshot);
     QTRY_COMPARE(provider.controlCalls, 2);
     QCOMPARE(
@@ -24926,6 +25149,7 @@ void EtherCATWorkbenchTests::testControllerQuickStartupAndLivePresentation()
     snapshot.package->controllerState = Data::ControllerPackageState::Active;
     snapshot.package->controllerBootId = session.bootId;
     snapshot.topology = topology;
+    completeRealTopologyProvenance(snapshot, 702);
     provider.publishSnapshot(snapshot);
     QTRY_VERIFY(!controller.controllerStartupInProgress(scope));
     QCOMPARE(provider.controlRequests.size(), 2);
@@ -25546,6 +25770,7 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     Data::ControllerTopologySnapshot zeroStationTopology = topology;
     zeroStationTopology.slaves.first().stationAddress = 0;
     snapshot.topology = zeroStationTopology;
+    completeRealTopologyProvenance(snapshot, 801);
     provider.publishSnapshot(snapshot);
     QTRY_VERIFY(!controller.canApplyCurrentBusToProject());
     const Utils::Result<> zeroStationApply = controller.applyCurrentBusToProject();
@@ -25558,6 +25783,7 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     duplicateStationTopology.slaves[1].stationAddress
         = duplicateStationTopology.slaves[0].stationAddress;
     snapshot.topology = duplicateStationTopology;
+    completeRealTopologyProvenance(snapshot, 802);
     provider.publishSnapshot(snapshot);
     QTRY_VERIFY(!controller.canApplyCurrentBusToProject());
     const Utils::Result<> duplicateStationApply = controller.applyCurrentBusToProject();
@@ -25571,6 +25797,7 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
 
     snapshot.mock = true;
     snapshot.topology = topology;
+    completeRealTopologyProvenance(snapshot, 803);
     provider.publishSnapshot(snapshot);
     QTRY_VERIFY(!controller.canApplyCurrentBusToProject());
     const Utils::Result<> mockApply = controller.applyCurrentBusToProject();
@@ -25581,6 +25808,7 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
 
     snapshot.mock = false;
     snapshot.topology = topology;
+    completeRealTopologyProvenance(snapshot, 804);
     provider.publishSnapshot(snapshot);
     QTRY_VERIFY(controller.canApplyCurrentBusToProject());
 
@@ -25758,6 +25986,7 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     }
     snapshot.protocolVersion = {1, 15};
     snapshot.topology = evidenceTopology;
+    completeRealTopologyProvenance(snapshot, 805);
     provider.publishSnapshot(snapshot);
     QTRY_VERIFY(controller.canApplyCurrentBusToProject());
     QVERIFY_RESULT(controller.applyCurrentBusToProject());
@@ -25778,6 +26007,7 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     QVERIFY_RESULT(projectService->redoProject(file.projectId));
     QCOMPARE(projectService->project(file.projectId)->slaves.size(), 3);
     snapshot.topology = topology;
+    completeRealTopologyProvenance(snapshot, 806);
     provider.publishSnapshot(snapshot);
     QVERIFY(!controller.canApplyCurrentBusToProject());
     QVERIFY(!controller.applyCurrentBusToProject());

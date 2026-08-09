@@ -199,6 +199,12 @@ Provider 级“当前证据”判断；这不证明它与当前 `ProjectSnapshot
 Mock 不自动替补。标记为 `mock` 的 `ControllerConnectionSnapshot` 也会 fail closed，不能借
 Provider 类型冒充真实来源。
 
+Workbench 的真实控制器路径只按当前工程保存的 Provider/Profile 精确选择查询该服务，并且
+只把 `Fresh RealController` 证据投影到设备树、页面、FreeRun 判断和“应用当前总线”写入门禁。
+证据陈旧、不完整、scope/profile 不匹配或 Provider 被移除时，连接状态仍可显示，但在线拓扑
+立即清空且不会改用同 scope 的其他 Provider。Mock 扫描当前仍保留原有动态首选路径，必须在
+后续冻结显式选择合同后才能接入，不能把它视为已经统一。
+
 ## 5. 插件间调用规范
 
 ### 5.1 服务与 Provider 的区别
@@ -546,8 +552,8 @@ DC 运行记录宣称为真机运动验证。
 
 ### P1：统一业务协调层
 
-1. Core 已建立真实 topology 与 Mock scan 的来源隔离 `TopologyService`；下一步让 Workbench、
-   Gateway 和属性页按显式选择消费同一合同，避免各自解释来源和刷新状态。
+1. Core 已建立来源隔离 `TopologyService`，Workbench 的真实控制器路径已按显式选择接入；
+   下一步先冻结 Mock Provider 的显式选择生命周期，再让 Gateway 消费同一只读合同。
 2. 将连接、租约、扫描、配置、编译、部署、运行和停止从 5,000 行级
    `WorkbenchController` 逐步迁移到无 UI 的 `EngineeringOperationCoordinator`。
 3. 建立 UI、Gateway、SemanticRuntime、Compiler 和 Activation 共用的持久 Operation

@@ -5,6 +5,7 @@
 #include "workbenchtreemodel.h"
 
 #include <ethercatcore/runtimepackageactivationservice.h>
+#include <ethercatcore/topologyservice.h>
 
 #include <utils/id.h>
 #include <utils/result.h>
@@ -440,6 +441,11 @@ private:
         const Data::ControllerConnectionScope &scope,
         const QList<Core::ControllerConnectionProvider *> &providers);
     bool controllerConnectionScopeIsValid(const Data::ControllerConnectionScope &scope) const;
+    Core::TopologyLookupResult selectedRealTopology(
+        const Data::ControllerConnectionScope &scope) const;
+    Data::ControllerConnectionSnapshot projectedControllerConnectionSnapshot(
+        Core::ControllerConnectionProvider *provider,
+        const Data::ControllerConnectionScope &scope) const;
     QString controllerControlCommonUnavailableReason(
         const Data::ControllerConnectionScope &scope,
         Data::ControllerControlCommand command,
@@ -453,6 +459,7 @@ private:
     QPointer<Core::DeviceRepositoryProvider> m_deviceRepository;
     QPointer<Core::ProviderRegistry> m_providerRegistry;
     QPointer<Core::RuntimePackageActivationService> m_runtimePackageActivationService;
+    QPointer<Core::TopologyService> m_topologyService;
     std::optional<Core::RuntimePackageActivationPreparationRequest>
         m_runtimePackageActivationPreparation;
     bool m_runtimePackageCompilerPreparationCoordinatorAvailable = false;

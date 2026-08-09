@@ -11,6 +11,7 @@
 #include <ethercatcore/runtimepackagecompilerprovider.h>
 #include <ethercatcore/runtimepackagecompilerprojectrequestbuilder.h>
 #include <ethercatcore/selectionservice.h>
+#include <ethercatcore/topologyservice.h>
 
 #include <extensionsystem/pluginmanager.h>
 
@@ -1630,12 +1631,14 @@ WorkbenchController::WorkbenchController(QObject *parent)
     m_providerRegistry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
     m_runtimePackageActivationService
         = ExtensionSystem::PluginManager::getObject<Core::RuntimePackageActivationService>();
+    m_topologyService = ExtensionSystem::PluginManager::getObject<Core::TopologyService>();
 
     QTC_ASSERT(m_selectionService, return);
     QTC_ASSERT(m_projectService, return);
     QTC_ASSERT(m_deviceRepository, return);
     QTC_ASSERT(m_providerRegistry, return);
     QTC_ASSERT(m_runtimePackageActivationService, return);
+    QTC_ASSERT(m_topologyService, return);
 
     m_connections.append(connect(
         m_runtimePackageActivationService,
@@ -2156,10 +2159,68 @@ Data::ControllerConnectionSnapshot WorkbenchController::controllerConnectionSnap
 {
     Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
     if (provider)
-        return provider->connectionSnapshot();
+        return projectedControllerConnectionSnapshot(provider, scope);
     Data::ControllerConnectionSnapshot result;
     result.scope = scope;
     return result;
+}
+
+Core::TopologyLookupResult WorkbenchController::selectedRealTopology(
+    const Data::ControllerConnectionScope &scope) const
+{
+    if (!m_topologyService || !controllerConnectionScopeIsValid(scope))
+        return {Core::TopologyLookupStatus::InvalidSelection, std::nullopt};
+
+    const ControllerConnectionSelection selection = controllerConnectionSelection(scope);
+    if (!selection.providerExplicitlySelected || !selection.providerId.isValid()
+        || !selection.profileExplicitlySelected || selection.profileId.isNull()) {
+        return {Core::TopologyLookupStatus::InvalidSelection, std::nullopt};
+    }
+
+    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope);
+    if (!provider || provider->id() != selection.providerId)
+        return {Core::TopologyLookupStatus::ProviderNotFound, std::nullopt};
+
+    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (snapshot.scope != scope)
+        return {Core::TopologyLookupStatus::ScopeMismatch, std::nullopt};
+    if (snapshot.profileId != selection.profileId)
+        return {Core::TopologyLookupStatus::EvidenceInvalid, std::nullopt};
+
+    return m_topologyService->topology({
+        Core::TopologyEvidenceSource::RealController,
+        selection.providerId,
+        scope,
+    });
+}
+
+Data::ControllerConnectionSnapshot WorkbenchController::projectedControllerConnectionSnapshot(
+    Core::ControllerConnectionProvider *provider,
+    const Data::ControllerConnectionScope &scope) const
+{
+    Data::ControllerConnectionSnapshot snapshot;
+    snapshot.scope = scope;
+    if (!provider)
+        return snapshot;
+
+    snapshot = provider->connectionSnapshot();
+    snapshot.topology.reset();
+
+    const ControllerConnectionSelection selection = controllerConnectionSelection(scope);
+    Core::ControllerConnectionProvider *selectedProvider = controllerConnectionProvider(scope);
+    if (!selection.providerExplicitlySelected || !selection.providerId.isValid()
+        || !selection.profileExplicitlySelected || selection.profileId.isNull()
+        || selectedProvider != provider || provider->id() != selection.providerId
+        || snapshot.scope != scope || snapshot.profileId != selection.profileId) {
+        return snapshot;
+    }
+
+    const Core::TopologyLookupResult topology = selectedRealTopology(scope);
+    if (topology.hasFreshProviderEvidence() && topology.snapshot
+        && topology.snapshot->controllerEvidence) {
+        snapshot.topology = topology.snapshot->controllerEvidence;
+    }
+    return snapshot;
 }
 
 bool WorkbenchController::controllerConnectionProjectIsOpen(
@@ -2374,14 +2435,29 @@ QString WorkbenchController::currentBusApplyUnavailableReason() const
         return Tr::tr("A Mock topology cannot configure a production EtherCAT project.");
     if (snapshot.controlProgress.state == Data::ControllerControlState::Pending)
         return Tr::tr("Wait for the current controller operation to finish.");
-    if (!snapshot.topology)
+
+    const Core::TopologyLookupResult topology = selectedRealTopology(*scope);
+    if (!topology.isSuccess())
         return Tr::tr("Scan the EtherCAT bus before applying it to the project.");
+    QTC_ASSERT(topology.snapshot, return Tr::tr("The controller topology evidence is invalid."));
+    if (topology.snapshot->freshness == Core::TopologyEvidenceFreshness::Stale)
+        return Tr::tr("Scan the EtherCAT bus again because its topology evidence is stale.");
+    if (topology.snapshot->freshness == Core::TopologyEvidenceFreshness::Incomplete) {
+        return Tr::tr(
+            "Scan the EtherCAT bus again because its topology evidence is incomplete.");
+    }
+    if (!topology.hasFreshProviderEvidence() || !topology.snapshot->controllerEvidence)
+        return Tr::tr("The controller topology evidence is invalid.");
 
     const std::optional<Data::ProjectSnapshot> project = m_projectService->project(scope->projectId);
     if (!project)
         return Tr::tr("The selected EtherCAT project is no longer available.");
     const Utils::Result<CurrentBusApplyPlan> plan = currentBusApplyPlan(
-        *scope, *project, *snapshot.topology, m_deviceRepository, m_providerRegistry);
+        *scope,
+        *project,
+        *topology.snapshot->controllerEvidence,
+        m_deviceRepository,
+        m_providerRegistry);
     if (!plan)
         return plan.error();
     if (plan->candidateSlaves == plan->currentSlaves)
@@ -2405,19 +2481,20 @@ Utils::Result<> WorkbenchController::applyCurrentBusToProject()
         scope,
         return Utils::ResultError(
             Tr::tr("The EtherCAT project no longer has an available Master.")));
-    Core::ControllerConnectionProvider *provider = controllerConnectionProvider(*scope);
-    QTC_ASSERT(
-        provider,
-        return Utils::ResultError(Tr::tr("The selected controller adapter is unavailable.")));
-    const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    const Core::TopologyLookupResult topology = selectedRealTopology(*scope);
     const std::optional<Data::ProjectSnapshot> project = m_projectService->project(scope->projectId);
     QTC_ASSERT(
-        snapshot.topology && project,
+        topology.hasFreshProviderEvidence() && topology.snapshot
+            && topology.snapshot->controllerEvidence && project,
         return Utils::ResultError(
             Tr::tr("The current bus or EtherCAT project is no longer available.")));
 
     const Utils::Result<CurrentBusApplyPlan> plan = currentBusApplyPlan(
-        *scope, *project, *snapshot.topology, m_deviceRepository, m_providerRegistry);
+        *scope,
+        *project,
+        *topology.snapshot->controllerEvidence,
+        m_deviceRepository,
+        m_providerRegistry);
     if (!plan)
         return Utils::ResultError(plan.error());
     const Utils::Result<> applied
@@ -3482,8 +3559,8 @@ QString WorkbenchController::masterTimingModeUnavailableReason(
         return Tr::tr("The EtherCAT master is not available.");
 
     const Data::ControllerConnectionScope scope{projectId, masterId};
-    if (Core::ControllerConnectionProvider *provider = controllerConnectionProvider(scope)) {
-        const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+    if (controllerConnectionProvider(scope)) {
+        const Data::ControllerConnectionSnapshot snapshot = controllerConnectionSnapshot(scope);
         if (snapshot.scope == scope
             && (snapshot.state == Data::ControllerConnectionState::Connected
                 || snapshot.state == Data::ControllerConnectionState::Degraded)
@@ -3569,6 +3646,7 @@ void WorkbenchController::refreshProjects()
         && m_treeModel.contextForNodeId(selectedId).nodeId.isNull()) {
         m_selectionService->clear();
     }
+    refreshControllerConnectionPresentation();
 }
 
 void WorkbenchController::refreshDevices()
@@ -3821,9 +3899,22 @@ void WorkbenchController::handleOptionalAvailabilityChanged()
 void WorkbenchController::refreshControllerConnectionPresentation()
 {
     QList<Data::ControllerConnectionSnapshot> snapshots;
-    for (Core::ControllerConnectionProvider *provider : controllerConnectionProviders()) {
-        if (provider && m_controllerConnectionProviderEpochs.contains(provider))
-            snapshots.append(provider->connectionSnapshot());
+    for (const ControllerConnectionSelection &selection : m_controllerConnectionSelections) {
+        if (!selection.providerExplicitlySelected || !selection.providerId.isValid()
+            || !selection.profileExplicitlySelected || selection.profileId.isNull()
+            || !controllerConnectionScopeIsValid(selection.scope)) {
+            continue;
+        }
+        Core::ControllerConnectionProvider *provider = controllerConnectionProvider(
+            selection.scope);
+        if (!provider || provider->id() != selection.providerId
+            || !m_controllerConnectionProviderEpochs.contains(provider)) {
+            continue;
+        }
+        const Data::ControllerConnectionSnapshot snapshot
+            = projectedControllerConnectionSnapshot(provider, selection.scope);
+        if (snapshot.scope == selection.scope && snapshot.profileId == selection.profileId)
+            snapshots.append(snapshot);
     }
     m_treeModel.setControllerConnections(snapshots);
 }
@@ -3948,7 +4039,9 @@ void WorkbenchController::handleControllerConnectionChanged()
     for (Core::ControllerConnectionProvider *provider : controllerConnectionProviders()) {
         if (!provider)
             continue;
-        const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+        const Data::ControllerConnectionSnapshot rawSnapshot = provider->connectionSnapshot();
+        const Data::ControllerConnectionSnapshot snapshot
+            = projectedControllerConnectionSnapshot(provider, rawSnapshot.scope);
         writeControllerTopologyCapabilityOutput(provider, snapshot);
         const ControllerOutputLevel level = controllerOutputLevel(snapshot);
         const QString message = controllerOutputMessage(snapshot);

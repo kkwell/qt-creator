@@ -136,6 +136,7 @@ python3 scripts/ethercat_feature_locator.py check
 - 前置功能：`ethercat.data.domain-contracts`、`ethercat.core.provider-registry`
 - 边界提醒：服务不缓存拓扑、不触发连接或扫描；Real 与 Mock 永不自动替补。Fresh 只表示所选 Provider 仍暴露这一代证据，不证明与当前 ProjectSnapshot 修订匹配，也不授权编译或执行。
 - 边界提醒：标记为 mock 的 ControllerConnectionSnapshot 会被拒绝，不能借 ControllerConnectionProvider 类型冒充真实来源。
+- 边界提醒：Workbench 已按显式 Provider/Profile 只消费 Fresh RealController 证据；Mock 扫描的显式选择合同仍待独立闭合。
 
 #### `ethercat.core.manual-control-contract` — 通用手动控制合同
 
@@ -572,15 +573,16 @@ python3 scripts/ethercat_feature_locator.py check
 - 证据边界：`offscreen-ui`、`loopback`
 - 修改入口：
   - [`src/plugins/ethercatworkbench/communicationpage.cpp`](../src/plugins/ethercatworkbench/communicationpage.cpp)：嵌入式通信和控制页；`CommunicationPage::updateControllerControl`、`CommunicationPage::updateTopology`
-  - [`src/plugins/ethercatworkbench/workbenchcontroller.cpp`](../src/plugins/ethercatworkbench/workbenchcontroller.cpp)：UI 无关控制编排；`WorkbenchController::connectController`、`WorkbenchController::beginControllerStartup`、`WorkbenchController::beginControllerStop`
+  - [`src/plugins/ethercatworkbench/workbenchcontroller.cpp`](../src/plugins/ethercatworkbench/workbenchcontroller.cpp)：UI 无关控制编排和精确真实拓扑投影；`WorkbenchController::connectController`、`WorkbenchController::beginControllerStartup`、`WorkbenchController::beginControllerStop`、`WorkbenchController::selectedRealTopology`、`WorkbenchController::projectedControllerConnectionSnapshot`
 - 公共合同：
   - [`src/plugins/ethercatcore/providers.h`](../src/plugins/ethercatcore/providers.h)：厂商无关控制器接口；`class ETHERCATCORE_EXPORT ControllerConnectionProvider`
 - 定向测试：
-  - [`src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp`](../src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp)（`offscreen-ui`）：`testControllerCommunicationControlWorkflow`、`testControllerCommunicationDoesNotAutoDiscover`、`testControllerQuickStopToShutdown`
+  - [`src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp`](../src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp)（`offscreen-ui`）：`testControllerCommunicationControlWorkflow`、`testControllerCommunicationDoesNotAutoDiscover`、`testControllerQuickStopToShutdown`、`testWorkbenchUsesExactRealTopologySelection`
 - 相关文档：[`docs/ethercat-workbench.md`](../docs/ethercat-workbench.md)、[`docs/ethercat-online-controller.md`](../docs/ethercat-online-controller.md)
 - 前置功能：`ethercat.product-api.control-lifecycle`、`ethercat.product-api.topology-evidence`
-- 边界提醒：页面只调用 ControllerConnectionProvider，不依赖 Product API Codec。
+- 边界提醒：页面只调用 ControllerConnectionProvider 和 Core TopologyService，不依赖 Product API Codec。
 - 边界提醒：连接报错后由 Provider 快照决定是否保留会话；输出必须显示可操作根因。
+- 边界提醒：Workbench 只投影工程显式选择的 Fresh RealController 拓扑；Mock、陈旧、不完整、scope/profile 不匹配和 Provider 移除均清空且不替补。
 
 #### `ethercat.workbench.configuration-pages` — PDO、Startup SDO 和 DC 配置页
 
@@ -832,7 +834,7 @@ python3 scripts/ethercat_feature_locator.py check
 | `ethercat.issue.current-project-hardware-acceptance` | `blocked` | `p0` | `ethercat.compiler.project-projection`、`ethercat.product-api.topology-evidence`、`ethercat.product-api.package-deployment`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.output-transactions`、`ethercat.runtime.activation`、`ethercat.runtime.manual-control`、`ethercat.workbench.deployment`、`ethercat.workbench.semantic-control` | 当前工程到真实硬件的完整验收尚未闭环 |
 | `ethercat.issue.startup-sdo-compiler` | `open` | `p0` | `ethercat.project.model-format`、`ethercat.project.mutation`、`ethercat.workbench.configuration-pages`、`ethercat.compiler.project-projection`、`ethercat.compiler.backend` | 非空 Startup SDO 尚未进入编译闭环 |
 | `ethercat.issue.restore-project-binding-guard` | `open` | `p0` | `ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.product-api.semantic-attestation`、`ethercat.runtime.package-evidence`、`ethercat.runtime.binding-actions`、`ethercat.runtime.activation`、`ethercat.workbench.communication` | Restore 运行前缺少当前工程绑定门禁 |
-| `ethercat.issue.topology-service` | `open` | `p1` | `ethercat.core.topology-service`、`ethercat.product-api.topology-evidence`、`ethercat.scan.mock-workflow`、`ethercat.workbench.project-navigation`、`ethercat.workbench.communication`、`ethercat.gateway.controller-views-intents` | 统一拓扑服务尚未接入 Workbench 与 Gateway |
+| `ethercat.issue.topology-service` | `open` | `p1` | `ethercat.core.topology-service`、`ethercat.product-api.topology-evidence`、`ethercat.scan.mock-workflow`、`ethercat.workbench.project-navigation`、`ethercat.workbench.communication`、`ethercat.gateway.controller-views-intents` | 统一拓扑服务尚未接入 Mock 与 Gateway |
 | `ethercat.issue.engineering-coordinator` | `planned` | `p1` | `ethercat.workbench.communication`、`ethercat.workbench.deployment`、`ethercat.workbench.output-status`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.runtime.activation`、`ethercat.gateway.controller-views-intents` | 工程操作协调逻辑仍集中在 WorkbenchController |
 | `ethercat.issue.operation-journal` | `planned` | `p1` | `ethercat.compiler.preparation`、`ethercat.runtime.activation`、`ethercat.runtime.manual-control`、`ethercat.gateway.controller-views-intents` | 操作记录尚无统一查询与审计索引 |
 | `ethercat.issue.scan-diagnostics-dependency` | `planned` | `p1` | `ethercat.scan.mock-workflow`、`ethercat.diagnostics.mock-stream`、`ethercat.core.provider-registry` | Scan 与 Diagnostics 对 Workbench 存在反向依赖 |
