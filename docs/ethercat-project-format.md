@@ -1,5 +1,11 @@
 # EtherCAT Offline Project
 
+> The source of truth for the current writer version is
+> `src/plugins/ethercatproject/ethercatprojectconstants.h`. Use
+> `python3 scripts/ethercat_feature_locator.py show ethercat.project.model-format`
+> for the owning files and tests; the generated overview is
+> `docs/ethercat-feature-code-map.zh_CN.md`.
+
 ## Scope and ownership
 
 `EtherCATProject` owns the local `*.ecatproject` engineering-project lifecycle.
@@ -22,23 +28,27 @@ All Project objects are GUI-thread-owned. This plugin has no worker thread,
 timer, future, or cancellation path. Document signals are disconnected before
 the document and undo stack are destroyed.
 
-## Version 4 format
+## Version 7 format
 
 The current file is indented UTF-8 JSON with MIME type
 `application/x-ethercat-project`, format name `ethercat-project`, and
-`formatVersion` 4. Version 2 added per-slave Process Data, Startup, and DC
+`formatVersion` 7. Version 2 added per-slave Process Data, Startup, and DC
 configuration. Version 3 adds the provider-neutral master timing mode and
 cycle period needed to build a controller package. Version 4 adds reproducible
 ESI/device-adapter selection and one compiler-produced semantic-binding
-artifact reference. It is local editor data, not ECPKG, ECFG, ETIR, a network
-message, or a TwinCAT project file.
+artifact reference. Version 5 adds bounded manual-control envelopes and retains
+the binding reference. Version 6 adds the canonical `projectDeviceBindings`
+field to a present artifact reference. Version 7 adds the configured station
+address used by fresh topology and compiler evidence. It is local editor data,
+not ECPKG, ECFG, ETIR, a
+network message, or a TwinCAT project file.
 
 The top-level shape is:
 
 ```json
 {
     "format": "ethercat-project",
-    "formatVersion": 4,
+    "formatVersion": 7,
     "project": {
         "id": "lowercase-uuid-without-braces",
         "name": "Packaging Line",
@@ -58,7 +68,8 @@ The top-level shape is:
         "semanticBindingArtifact": {
             "artifactId": "binding/com.embedlabs.line/1",
             "artifactSha256": "64-lowercase-hex-characters",
-            "projectConfigurationSha256": "64-lowercase-hex-characters"
+            "projectConfigurationSha256": "64-lowercase-hex-characters",
+            "projectDeviceBindings": []
         },
         "slaves": []
     }
@@ -83,6 +94,7 @@ Every slave has this structural data plus one required `configuration` object:
     "revisionNumber": 1,
     "serialNumber": 101,
     "alias": 0,
+    "stationAddress": 4097,
     "deviceDescriptionId": "optional-esi-device-node-id",
     "esiSha256": "64-lowercase-hex-characters",
     "adapterSelection": {
@@ -98,6 +110,11 @@ Every slave has this structural data plus one required `configuration` object:
                 "pdoIndexOffset": 0
             }
         ]
+    },
+    "manualControlEnvelope": {
+        "enabled": false,
+        "signalEnvelopes": [],
+        "actionEnvelopes": []
     },
     "configuration": {
         "processData": {
@@ -258,14 +275,14 @@ unchanged.
 
 Version 1 contains the same structural project and optional slave list but no
 per-slave `configuration`. It loads with empty Process Data and Startup values
-and disabled DC, is marked migrated/modified, and is rewritten as version 4
+and disabled DC, is marked migrated/modified, and is rewritten as version 7
 only after explicit Save or Save All. Before replacement, the exact source
 bytes are copied to `<project>.v1.bak`; existing backups receive a numeric
 suffix and are never overwritten.
 
 Version 2 preserves all per-slave configuration but has no master timing
 configuration. It loads with an unassigned master, is marked
-migrated/modified, and is rewritten as version 4 only after explicit Save or
+migrated/modified, and is rewritten as version 7 only after explicit Save or
 Save All. The exact version-2 bytes are first copied to
 `<project>.v2.bak`.
 
@@ -273,8 +290,17 @@ Version 3 preserves its master timing, Process Data, Startup, and DC values
 exactly. It loads with empty ESI digests, adapter selections, and binding
 artifact reference; the loader never guesses an adapter from identity, name,
 position, or device-description ID. It is marked migrated/modified and is
-rewritten as version 4 only after explicit Save or Save All, after first
+rewritten as version 7 only after explicit Save or Save All, after first
 copying the exact source bytes to `<project>.v3.bak`.
+
+Version 4 preserves exact ESI and adapter selection, but its pre-instance
+semantic artifact reference is not retained as writable evidence. Version 5
+adds manual-control envelopes and retains the artifact reference without
+project-device bindings. Version 6 requires the `projectDeviceBindings` field
+when an artifact reference is present, but has no configured station address.
+Each loads as migrated/modified, is
+backed up with its matching `.v4.bak`, `.v5.bak`, or `.v6.bak` suffix, and is
+rewritten as version 7 only after explicit Save or Save All.
 
 The legacy version-0 root shape with `id`, `name`, and `createdBy` remains
 supported. It preserves the project ID, creates stable target/master IDs, and
@@ -298,7 +324,7 @@ explicit Save and Save All are the supported persistence paths.
 
 ## New-project and close behavior
 
-The `EtherCAT Engineering Project` wizard creates one version-4 file and opens
+The `EtherCAT Engineering Project` wizard creates one version-7 file and opens
 it through ProjectExplorer. The wizard uses current Qt Creator factory and
 GeneratedFile APIs.
 
@@ -312,7 +338,7 @@ unload or shutdown. There is no second close-time serializer.
 The focused Project suite covers:
 
 - metadata, dependencies, service registration, and wizard discovery;
-- version-4 structural, master-cycle, slave-configuration, ESI/adapter, and
+- current-format structural, master-cycle, slave-configuration, ESI/adapter, and
   binding-artifact round trips;
 - malformed JSON, unsupported versions, missing configuration, duplicate IDs,
   invalid raw hex/digests, partial selections, invalid module assignments, and
@@ -320,10 +346,10 @@ The focused Project suite covers:
 - Project and Target/Master rename, topology replacement, Process Data,
   Startup, DC, adapter selection, binding invalidation, and atomic Undo/Redo;
 - Save All registration, Save As rejection, atomic write failure, and success;
-- exact version-0 through version-3 migration and recovery behavior;
+- exact version-0 through version-6 migration and recovery behavior;
 - two real ProjectExplorer projects, startup-project switching, close-save,
   signal publication, close order, and cleanup.
 
-The qualified Qt 6.11.0 Release run passes 21 tests. macOS runs use an isolated
-HOME and settings path so prior AppKit saved state cannot introduce an
-unrelated modal prompt.
+The focused suite, not a historical fixed test count, is the current evidence
+source. macOS runs use an isolated HOME and settings path so prior AppKit saved
+state cannot introduce an unrelated modal prompt.

@@ -3,6 +3,11 @@
 > 当前中文架构总览、插件调用规范、扩展步骤和工程化路线请先阅读
 > `docs/ethercat-plugin-development-guide.zh_CN.md`。本文其余章节保留完整历史 ISSUE
 > 演进和测试证据，其中部分阶段描述不代表当前产品能力。
+>
+> 修改具体功能前，使用 `python3 scripts/ethercat_feature_locator.py find <keyword>` 或
+> `show <feature-id>` 定位所有者、入口、依赖和测试。机器可读事实源位于
+> `docs/ethercat-feature-locator.json`，生成的中文代码地图位于
+> `docs/ethercat-feature-code-map.zh_CN.md`；`check` 用于发现路径、符号和生成结果漂移。
 
 ## Scope
 
@@ -38,9 +43,11 @@ documentation, review, and local-commit gates.
 | 8 | `EtherCATAutomationGatewayPlugin` | Product-discoverable, listeners off | Dedicated closed MCP and REST facade over fresh Workbench semantic values; explicit loopback-only Mock/read-only runtime |
 
 `EtherCATData` is an infrastructure library, not a feature container. Its
-offline configuration contract is persisted by EtherCATProject format version
-2 and exposed through checked Project service commands. The Phase-1 product is
-not Ready until editable pages, complete tree workflows, integration tests,
+offline configuration contract is persisted by the current EtherCATProject
+format version 7 and exposed through checked Project service commands. Earlier
+version numbers in the serial-delivery table and historical issue sections are
+milestone records, not the current persistence contract. The Phase-1 product
+is not Ready until editable pages, complete tree workflows, integration tests,
 and the policy-deferred upstream rehearsal pass.
 
 ## Dependency direction

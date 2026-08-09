@@ -8,6 +8,24 @@
 本文只描述当前源码中已经存在的能力和明确的剩余边界。历史 ISSUE、旧协议版本和
 阶段性测试记录仍保留在其他文档中，但不能替代本文的当前状态摘要。
 
+### 1.1 不遍历源码的功能定位入口
+
+功能所有权、入口符号、依赖、测试和证据边界统一登记在
+`docs/ethercat-feature-locator.json`，面向阅读的索引由同一清单生成到
+`docs/ethercat-feature-code-map.zh_CN.md`。开发人员和 AI 应先使用定位器，再进入对应
+插件目录：
+
+```bash
+python3 scripts/ethercat_feature_locator.py list
+python3 scripts/ethercat_feature_locator.py find 扫描
+python3 scripts/ethercat_feature_locator.py show ethercat.product-api.topology-evidence
+python3 scripts/ethercat_feature_locator.py check
+```
+
+`find` 用于按功能名、关键词、文件或符号搜索，`show` 输出一个功能的最短修改路径，
+`check` 校验清单、源码符号、依赖关系和生成文档是否漂移。新增、拆分或迁移功能时，
+必须在同一修改中更新该清单并重新生成代码地图。
+
 当前产品目标是：
 
 1. 以一个 `.ecatproject` 工程作为唯一工程事实来源；
