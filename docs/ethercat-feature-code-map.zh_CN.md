@@ -10,6 +10,9 @@
 python3 scripts/ethercat_feature_locator.py list
 python3 scripts/ethercat_feature_locator.py find 扫描
 python3 scripts/ethercat_feature_locator.py show ethercat.product-api.topology-evidence
+python3 scripts/ethercat_feature_locator.py context ethercat.product-api.topology-evidence
+python3 scripts/ethercat_feature_locator.py issues --status open
+python3 scripts/ethercat_feature_locator.py impact src/plugins/ethercatproductapi/productapisession.cpp
 python3 scripts/ethercat_feature_locator.py check
 ```
 
@@ -773,3 +776,45 @@ python3 scripts/ethercat_feature_locator.py check
   `ethercat.runtime.package-evidence`、`ethercat.runtime.activation`。
 - Mock Scan/Diagnostics 不能作为真实控制器入口；
   以对应条目的边界字段为准。
+
+## 6. 领域知识卡
+
+默认读取有界摘要，避免把全部领域上下文一次性载入：
+`python3 scripts/ethercat_feature_locator.py context <FEATURE_ID>`；
+需要完整知识卡和相关问题时再追加 `--full`。
+
+| Area | 知识卡 | 功能数 | 用途 |
+|---|---|---:|---|
+| `architecture` | 架构与公共合同知识卡 | 3 | 在不遍历实现插件的前提下确认跨插件值对象、Provider 和公共服务的正确边界。 |
+| `project` | 工程模型知识卡 | 2 | 维护 .ecatproject 的唯一事实来源、格式迁移和可撤销变更。 |
+| `devices` | 设备、ESI 与 Adapter 知识卡 | 2 | 用原始厂家证据和数据驱动适配完成精确设备识别，避免在上层写死型号逻辑。 |
+| `online` | 真实控制器在线功能知识卡 | 8 | 维护 Product API 三通道、会话、控制权、拓扑证据、部署和原子输出的一致在线快照。 |
+| `compiler` | 编译与准备知识卡 | 3 | 把工程快照和新鲜硬件证据确定性转换为可签名、可恢复、可验证的运行包。 |
+| `runtime` | 签名运行时与控制知识卡 | 4 | 在签名包、项目实例、控制器证明和审批一致时执行厂家无关的语义动作。 |
+| `ui` | Workbench 界面知识卡 | 10 | 让工程树、右侧属性页、顶部/左下快捷操作和输出面板投影同一套服务状态。 |
+| `mock` | Mock 工具知识卡 | 2 | 提供确定性的离线扫描和诊断测试，同时保持与真实控制器证据的严格隔离。 |
+| `automation` | 自动化网关知识卡 | 3 | 让外部 AI 通过本机受限入口读取 IDE 共享事实并提交需审批的语义意图。 |
+
+## 7. 已知问题台账
+
+按状态查询：`python3 scripts/ethercat_feature_locator.py issues --status open`；
+读取单项：`python3 scripts/ethercat_feature_locator.py issue <ISSUE_ID>`。
+
+| Issue ID | 状态 | 严重度 | 影响功能 | 标题 |
+|---|---|---|---|---|
+| `ethercat.issue.compiler-provisioning` | `open` | `p0` | `ethercat.compiler.project-projection`、`ethercat.compiler.backend`、`ethercat.compiler.preparation`、`ethercat.workbench.deployment` | 受信编译器交付与发现尚未产品化 |
+| `ethercat.issue.detached-sign-ui-flow` | `open` | `p0` | `ethercat.compiler.preparation`、`ethercat.runtime.package-evidence`、`ethercat.runtime.activation`、`ethercat.workbench.deployment` | Workbench detached-sign 流程未形成完整用户闭环 |
+| `ethercat.issue.current-project-hardware-acceptance` | `blocked` | `p0` | `ethercat.compiler.project-projection`、`ethercat.product-api.topology-evidence`、`ethercat.product-api.package-deployment`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.output-transactions`、`ethercat.runtime.activation`、`ethercat.runtime.manual-control`、`ethercat.workbench.deployment`、`ethercat.workbench.semantic-control` | 当前工程到真实硬件的完整验收尚未闭环 |
+| `ethercat.issue.startup-sdo-compiler` | `open` | `p0` | `ethercat.project.model-format`、`ethercat.project.mutation`、`ethercat.workbench.configuration-pages`、`ethercat.compiler.project-projection`、`ethercat.compiler.backend` | 非空 Startup SDO 尚未进入编译闭环 |
+| `ethercat.issue.restore-project-binding-guard` | `open` | `p0` | `ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.product-api.semantic-attestation`、`ethercat.runtime.package-evidence`、`ethercat.runtime.binding-actions`、`ethercat.runtime.activation`、`ethercat.workbench.communication` | Restore 运行前缺少当前工程绑定门禁 |
+| `ethercat.issue.topology-service` | `planned` | `p1` | `ethercat.product-api.topology-evidence`、`ethercat.scan.mock-workflow`、`ethercat.workbench.project-navigation`、`ethercat.workbench.communication`、`ethercat.gateway.controller-views-intents` | 真实与 Mock 拓扑尚无统一公共服务 |
+| `ethercat.issue.engineering-coordinator` | `planned` | `p1` | `ethercat.workbench.communication`、`ethercat.workbench.deployment`、`ethercat.workbench.output-status`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.runtime.activation`、`ethercat.gateway.controller-views-intents` | 工程操作协调逻辑仍集中在 WorkbenchController |
+| `ethercat.issue.operation-journal` | `planned` | `p1` | `ethercat.compiler.preparation`、`ethercat.runtime.activation`、`ethercat.runtime.manual-control`、`ethercat.gateway.controller-views-intents` | 操作记录尚无统一查询与审计索引 |
+| `ethercat.issue.scan-diagnostics-dependency` | `planned` | `p1` | `ethercat.scan.mock-workflow`、`ethercat.diagnostics.mock-stream`、`ethercat.core.provider-registry` | Scan 与 Diagnostics 对 Workbench 存在反向依赖 |
+| `ethercat.issue.gateway-real-read-views` | `planned` | `p1` | `ethercat.gateway.controller-views-intents`、`ethercat.product-api.telemetry`、`ethercat.product-api.topology-evidence`、`ethercat.runtime.manual-control`、`ethercat.workbench.output-status` | Gateway controller 视图尚未接入真实公共事实 |
+| `ethercat.issue.adapter-catalog-service` | `planned` | `p2` | `ethercat.adapters.catalog-authorization`、`ethercat.workbench.esi-library`、`ethercat.gateway.contract-tools` | Adapter 目录尚无统一公共查询服务 |
+| `ethercat.issue.crypto-identity-library` | `planned` | `p2` | `ethercat.adapters.catalog-authorization`、`ethercat.compiler.backend`、`ethercat.runtime.package-evidence` | Canonical JSON、哈希与签名实现仍有重复 |
+| `ethercat.issue.task-editor` | `planned` | `p2` | `ethercat.project.model-format`、`ethercat.project.mutation`、`ethercat.runtime.binding-actions`、`ethercat.compiler.project-projection`、`ethercat.compiler.backend`、`ethercat.workbench.semantic-control` | 通用自动流程编辑器尚未实现 |
+| `ethercat.issue.adapter-coverage` | `planned` | `p2` | `ethercat.devices.esi-repository`、`ethercat.adapters.catalog-authorization`、`ethercat.runtime.binding-actions`、`ethercat.workbench.configuration-pages`、`ethercat.workbench.semantic-control` | DI、模拟量和更多驱动器缺少精确 Adapter |
+| `ethercat.issue.sv630n-unit-qualification` | `blocked` | `p2` | `ethercat.adapters.catalog-authorization`、`ethercat.runtime.binding-actions`、`ethercat.runtime.manual-control`、`ethercat.workbench.semantic-control` | SV630N 速度工程单位换算尚未签名闭环 |
+| `ethercat.issue.coe-online-sdo` | `planned` | `p2` | `ethercat.workbench.coe-view`、`ethercat.product-api.runtime-resources` | CoE 页面尚不是在线 SDO 浏览器 |

@@ -26,6 +26,48 @@ python3 scripts/ethercat_feature_locator.py check
 `check` 校验清单、源码符号、依赖关系和生成文档是否漂移。新增、拆分或迁移功能时，
 必须在同一修改中更新该清单并重新生成代码地图。
 
+定位器同时保存可按需读取的工程知识，而不只是文件索引：
+
+1. **Feature** 回答“功能由谁负责，入口、合同、测试和证据在哪”；
+2. **Knowledge Card** 回答“调用链怎样走、哪些不变量不能破坏、修改时检查什么”；
+3. **Issue Ledger** 回答“已知问题、当前事实边界、下一步和完成标准是什么”。
+
+开始修改前，不再先遍历整个插件目录。先读取目标功能的最小上下文，或由已经知道的
+文件反查影响范围：
+
+```bash
+python3 scripts/ethercat_feature_locator.py context ethercat.runtime.manual-control
+python3 scripts/ethercat_feature_locator.py issues --status open
+python3 scripts/ethercat_feature_locator.py issue ethercat.issue.startup-sdo-compiler
+python3 scripts/ethercat_feature_locator.py impact \
+  src/plugins/ethercatworkbench/workbenchcontroller.cpp
+```
+
+`context` 默认只输出目标 Feature 摘要、最多三个直接前置、所属知识卡的不变量和相关
+Issue 摘要；需要完整入口、检查表和问题细节时再加 `--full`。开发人员或 AI 应先读这段
+有界上下文，再调用 `show`、`issue` 打开必要信息，不重新扫描全部源码。
+
+`impact` 接受安全的仓库相对路径，即使文件刚被移动或删除，也会区分直接引用、Feature
+反向依赖、所属组件和组件下游，并列出直接证据 Issue 与受影响 Issue。查询命令默认不因
+无关功能的路径或符号漂移整体失效；需要同时执行全量校验时加 `--strict`。`check` 和
+`generate` 始终执行严格全量校验。
+
+完成修改后必须同步维护工程记忆：解决问题时先把稳定结论补充到 Feature/Knowledge
+Card，再从活动 Issue 台账删除；新发现的问题登记根因、边界、下一步和验收标准；功能
+迁移则更新 Feature 和 Knowledge Card。
+最后执行：
+
+```bash
+python3 scripts/ethercat_feature_locator.py generate
+python3 scripts/ethercat_feature_locator.py check
+```
+
+台账只记录可长期复用的工程事实，不保存临时 IP、当前 BootId、某次板卡状态或未经复核
+的猜测。清单和各字段都有数量/长度上限；活动台账不接受 `closed` 状态，解决后必须写回
+稳定知识并删除该 Issue，由 Git 历史保留演进记录。生成代码地图只保留知识卡和问题摘要，
+详细内容按 ID 查询。真实硬件证据仍放在对应测试归档中，并由 Issue 的 `evidencePaths`
+引用稳定入口。
+
 当前产品目标是：
 
 1. 以一个 `.ecatproject` 工程作为唯一工程事实来源；

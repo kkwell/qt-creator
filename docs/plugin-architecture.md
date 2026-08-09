@@ -4,8 +4,9 @@
 > `docs/ethercat-plugin-development-guide.zh_CN.md`。本文其余章节保留完整历史 ISSUE
 > 演进和测试证据，其中部分阶段描述不代表当前产品能力。
 >
-> 修改具体功能前，使用 `python3 scripts/ethercat_feature_locator.py find <keyword>` 或
-> `show <feature-id>` 定位所有者、入口、依赖和测试。机器可读事实源位于
+> 修改具体功能前，使用 `python3 scripts/ethercat_feature_locator.py find <keyword>` 定位
+> 稳定功能 ID，再用 `context <feature-id>` 读取有界架构知识和相关问题；`show`、`issue`
+> 按需展开入口或问题细节，`impact <path>` 反查直接与传递影响。机器可读事实源位于
 > `docs/ethercat-feature-locator.json`，生成的中文代码地图位于
 > `docs/ethercat-feature-code-map.zh_CN.md`；`check` 用于发现路径、符号和生成结果漂移。
 

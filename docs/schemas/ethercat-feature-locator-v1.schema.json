@@ -10,7 +10,9 @@
     "formatVersion",
     "areas",
     "components",
-    "features"
+    "features",
+    "knowledgeCards",
+    "issues"
   ],
   "properties": {
     "$schema": {
@@ -25,6 +27,7 @@
     "areas": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 32,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/area"
@@ -33,6 +36,7 @@
     "components": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 64,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/component"
@@ -41,20 +45,41 @@
     "features": {
       "type": "array",
       "minItems": 1,
+      "maxItems": 512,
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/feature"
+      }
+    },
+    "knowledgeCards": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/knowledgeCard"
+      }
+    },
+    "issues": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/issue"
       }
     }
   },
   "$defs": {
     "id": {
       "type": "string",
+      "maxLength": 128,
       "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
     },
     "nonEmptyString": {
       "type": "string",
       "minLength": 1,
+      "maxLength": 2000,
       "pattern": "\\S"
     },
     "repositoryPath": {
@@ -86,6 +111,7 @@
     },
     "stringSet": {
       "type": "array",
+      "maxItems": 64,
       "items": {
         "$ref": "#/$defs/nonEmptyString"
       },
@@ -93,8 +119,17 @@
     },
     "idSet": {
       "type": "array",
+      "maxItems": 64,
       "items": {
         "$ref": "#/$defs/id"
+      },
+      "uniqueItems": true
+    },
+    "repositoryPathSet": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/repositoryPath"
       },
       "uniqueItems": true
     },
@@ -297,6 +332,171 @@
         },
         "dependsOn": {
           "$ref": "#/$defs/idSet"
+        },
+        "notesZh": {
+          "$ref": "#/$defs/stringSet"
+        }
+      }
+    },
+    "knowledgeCard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "titleZh",
+        "purposeZh",
+        "readOrder",
+        "callFlowsZh",
+        "invariantsZh",
+        "changeChecklistZh",
+        "avoidZh"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "titleZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "purposeZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "readOrder": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/idSet"
+            },
+            {
+              "minItems": 1,
+              "maxItems": 16
+            }
+          ]
+        },
+        "callFlowsZh": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stringSet"
+            },
+            {
+              "minItems": 1,
+              "maxItems": 16
+            }
+          ]
+        },
+        "invariantsZh": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stringSet"
+            },
+            {
+              "minItems": 1,
+              "maxItems": 16
+            }
+          ]
+        },
+        "changeChecklistZh": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stringSet"
+            },
+            {
+              "minItems": 1,
+              "maxItems": 16
+            }
+          ]
+        },
+        "avoidZh": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stringSet"
+            },
+            {
+              "minItems": 1,
+              "maxItems": 16
+            }
+          ]
+        }
+      }
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "titleZh",
+        "status",
+        "severity",
+        "affectedFeatures",
+        "problemZh",
+        "currentBoundaryZh",
+        "nextActionZh",
+        "evidencePaths",
+        "resolutionCriteriaZh",
+        "notesZh"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "titleZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "blocked",
+            "planned",
+            "mitigated"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "p0",
+            "p1",
+            "p2",
+            "p3"
+          ]
+        },
+        "affectedFeatures": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/idSet"
+            },
+            {
+              "minItems": 1
+            }
+          ]
+        },
+        "problemZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "currentBoundaryZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "nextActionZh": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "evidencePaths": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/repositoryPathSet"
+            },
+            {
+              "minItems": 1
+            }
+          ]
+        },
+        "resolutionCriteriaZh": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stringSet"
+            },
+            {
+              "minItems": 1
+            }
+          ]
         },
         "notesZh": {
           "$ref": "#/$defs/stringSet"
