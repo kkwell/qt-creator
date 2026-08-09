@@ -382,12 +382,13 @@ python3 scripts/ethercat_feature_locator.py check
 - 证据边界：`unit`、`artifact`
 - 修改入口：
   - [`src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp`](../src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp)：外部编译器进程与结果验证；`ProvisionedRuntimePackageCompilerProvider::compile`、`ProvisionedRuntimePackageCompilerProvider::verify`
+  - [`src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp`](../src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp)：签名运行树、外部信任锚和闭集校验；`CompilerRuntimeBundleProfile::load`、`CompilerRuntimeBundleProfile::validateCurrent`
   - [`src/plugins/ethercatprojectcompiler/compileroperationstore.cpp`](../src/plugins/ethercatprojectcompiler/compileroperationstore.cpp)：持久幂等账本；`CompilerOperationStore`
 - 公共合同：
   - [`src/plugins/ethercatcore/runtimepackagecompilerprovider.h`](../src/plugins/ethercatcore/runtimepackagecompilerprovider.h)：可替换编译器 Provider 合同；`class ETHERCATCORE_EXPORT RuntimePackageCompilerProvider`
 - 定向测试：
-  - [`src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp`](../src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp)（`artifact`）：`testCompileProcessAndImmutableEvidence`、`testFinalizeQueryVerifyAndRestart`
-- 相关文档：[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
+  - [`src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp`](../src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp)（`artifact`）：`testRuntimeBundleProfileVerifiesInstalledTree`、`testCompileProcessAndImmutableEvidence`、`testFinalizeQueryVerifyAndRestart`
+- 相关文档：[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)、[`docs/ethercat-compiler-runtime.md`](../docs/ethercat-compiler-runtime.md)
 - 前置功能：`ethercat.compiler.project-projection`
 - 边界提醒：生产私钥不进入 IDE；签名由外部 signer 或 HSM 完成。
 

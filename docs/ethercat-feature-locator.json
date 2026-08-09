@@ -507,15 +507,16 @@
       "keywords": ["编译器", "compile", "finalize", "verify", "签名", "OperationId"],
       "implementation": [
         {"path": "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp", "symbols": ["ProvisionedRuntimePackageCompilerProvider::compile", "ProvisionedRuntimePackageCompilerProvider::verify"], "roleZh": "外部编译器进程与结果验证"},
+        {"path": "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp", "symbols": ["CompilerRuntimeBundleProfile::load", "CompilerRuntimeBundleProfile::validateCurrent"], "roleZh": "签名运行树、外部信任锚和闭集校验"},
         {"path": "src/plugins/ethercatprojectcompiler/compileroperationstore.cpp", "symbols": ["CompilerOperationStore"], "roleZh": "持久幂等账本"}
       ],
       "contracts": [
         {"path": "src/plugins/ethercatcore/runtimepackagecompilerprovider.h", "symbols": ["class ETHERCATCORE_EXPORT RuntimePackageCompilerProvider"], "roleZh": "可替换编译器 Provider 合同"}
       ],
       "tests": [
-        {"path": "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "cases": ["testCompileProcessAndImmutableEvidence", "testFinalizeQueryVerifyAndRestart"], "kind": "artifact"}
+        {"path": "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "cases": ["testRuntimeBundleProfileVerifiesInstalledTree", "testCompileProcessAndImmutableEvidence", "testFinalizeQueryVerifyAndRestart"], "kind": "artifact"}
       ],
-      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-compiler-runtime.md"],
       "dependsOn": ["ethercat.compiler.project-projection"],
       "notesZh": ["生产私钥不进入 IDE；签名由外部 signer 或 HSM 完成。"]
     },
@@ -1081,11 +1082,11 @@
       "severity": "p0",
       "affectedFeatures": ["ethercat.compiler.project-projection", "ethercat.compiler.backend", "ethercat.compiler.preparation", "ethercat.workbench.deployment"],
       "problemZh": "Mac 端受信编译器可执行 bundle、provisioning.json 和当前工程 compile-inputs 尚未形成用户可重复安装和发现的交付路径。",
-      "currentBoundaryZh": "编译合同、幂等账本和离线 golden 已存在，但不能把测试 fixture 或任意本地可执行文件当作产品编译器。",
-      "nextActionZh": "固定并安装可验证的编译器 bundle，接入 provisioning 发现、版本/哈希门禁和当前 ProjectSnapshot 输入生成。",
-      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilerplugin.cpp", "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp"],
+      "currentBoundaryZh": "API-068 已在 Mac 以外部 raw32 key、固定 Python 3.11 依赖完成签名安装树和 canonical self-test；但 IDE 尚未执行完整运行树，产品 Python 供应与当前工程 input catalog 仍未闭合。",
+      "nextActionZh": "先接入 API-068 完整运行树的 release-specific 信任、每次启动前重验和固定 Python 环境，再单独实现当前 ProjectSnapshot input catalog bridge。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-compiler-runtime.md", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilerplugin.cpp", "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp", "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp"],
       "resolutionCriteriaZh": ["干净环境可发现并校验固定版本和哈希的编译器。", "当前工程可确定性生成输入并完成 compile/query/finalize/verify。", "重启和响应丢失后可由持久 OperationId 恢复。"],
-      "notesZh": ["生产私钥不得进入 IDE 或编译器 bundle。"]
+      "notesZh": ["生产私钥不得进入 IDE 或编译器 bundle。", "API-068 runtime key 只绑定 exact 1.0.0 release，不能作为未来产品全局信任根。", "API-068 provisioning 输出完整 compiler request，不能覆盖 IDE 当前同名 compile-input catalog。"]
     },
     {
       "id": "ethercat.issue.detached-sign-ui-flow",

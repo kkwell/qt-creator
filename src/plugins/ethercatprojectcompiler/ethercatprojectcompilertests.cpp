@@ -5,6 +5,7 @@
 #include "compileroperationstore.h"
 #include "compilerinputprovisioningprofile.h"
 #include "compilerprovisioningprofile.h"
+#include "compilerruntimebundleprofile.h"
 #include "durableruntimepackagecompilerpreparationcoordinator.h"
 #include "ethercatprojectcompilerconstants.h"
 #include "provisionedruntimepackagecompilerprovider.h"
@@ -54,6 +55,9 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef Q_OS_DARWIN
+#include <sys/acl.h>
+#endif
 #endif
 
 namespace EtherCAT::ProjectCompiler::Internal {
@@ -1374,6 +1378,195 @@ void EtherCATProjectCompilerTests::testPluginMetadataAndDefaultAvailability()
     QCOMPARE(
         builder.unavailableReason(),
         QStringLiteral("No trusted compiler input profile is installed."));
+}
+
+void EtherCATProjectCompilerTests::testRuntimeBundleProfileVerifiesInstalledTree()
+{
+#ifndef Q_OS_UNIX
+    QSKIP("The external compiler runtime contract requires a POSIX host.");
+#else
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString container
+        = QDir(QFileInfo(temporary.path()).canonicalFilePath()).filePath("runtime-container");
+    const QString root = QDir(container).filePath("runtime");
+    QVERIFY(QDir().mkpath(root));
+    QVERIFY(::chmod(QFile::encodeName(container).constData(), 0700) == 0);
+
+    QByteArray seed(32, '\x58');
+    QByteArray secretKey(64, '\0');
+    QByteArray publicKey(32, '\0');
+    crypto_ed25519_key_pair(
+        reinterpret_cast<uint8_t *>(secretKey.data()),
+        reinterpret_cast<uint8_t *>(publicKey.data()),
+        reinterpret_cast<uint8_t *>(seed.data()));
+    const QByteArray keyId = sha256(publicKey).value().toHex();
+    const QString trustPath = QStringLiteral("trust/%1.pub").arg(QString::fromLatin1(keyId));
+    const QString requirementsPath = QStringLiteral(
+        "runtime/igh_osless/contracts/compiler-runtime-requirements-v1.txt");
+    const QByteArray requirements("jsonschema==4.25.0\n");
+    const QMap<QString, QPair<QByteArray, int>> payload{
+        {QStringLiteral("bin/embedlabs-ecpkg-compiler"), {QByteArray("#!/bin/sh\n"), 0755}},
+        {QStringLiteral("bin/embedlabs-ecpkg-compiler-provision"),
+         {QByteArray("#!/bin/sh\n"), 0755}},
+        {QStringLiteral("bin/embedlabs-ecpkg-compiler-self-test"),
+         {QByteArray("#!/bin/sh\n"), 0755}},
+        {QStringLiteral("bin/embedlabs-ecpkg-compiler-verify"),
+         {QByteArray("#!/bin/sh\n"), 0755}},
+        {requirementsPath, {requirements, 0644}},
+        {trustPath, {publicKey, 0644}},
+    };
+
+    QJsonArray fileRecords;
+    for (auto it = payload.cbegin(); it != payload.cend(); ++it) {
+        QVERIFY(writeFile(QDir(root).filePath(it.key()), it->first));
+        QVERIFY(::chmod(QFile::encodeName(QDir(root).filePath(it.key())).constData(), it->second)
+                == 0);
+        fileRecords.append(QJsonObject{
+            {QStringLiteral("bytes"), it->first.size()},
+            {QStringLiteral("mode"), it->second},
+            {QStringLiteral("path"), it.key()},
+            {QStringLiteral("sha256"), QString::fromLatin1(sha256(it->first).value().toHex())},
+        });
+    }
+
+    const QJsonObject manifest{
+        {QStringLiteral("artifact_root_contract"),
+         QJsonObject{
+             {QStringLiteral("explicit_argument"), QStringLiteral("--artifact-root")},
+             {QStringLiteral("request_paths"), QStringLiteral("relative_to_artifact_root")},
+             {QStringLiteral("symlinks_allowed"), false},
+             {QStringLiteral("working_directory_independent"), true},
+         }},
+        {QStringLiteral("bundle_id"), QStringLiteral("org.embedlabs.ethercat.project-compiler")},
+        {QStringLiteral("bundle_version"), QStringLiteral("1.0.0")},
+        {QStringLiteral("compiler_contract"),
+         QJsonObject{
+             {QStringLiteral("ecpkg_versions"), QJsonArray{2}},
+             {QStringLiteral("implementation"),
+              QStringLiteral("ethercat-ide-project-compiler-1.0.0")},
+             {QStringLiteral("name"), QStringLiteral("ethercat-ide-project-compiler")},
+             {QStringLiteral("version"), 1},
+         }},
+        {QStringLiteral("entrypoints"),
+         QJsonObject{
+             {QStringLiteral("compiler"), QStringLiteral("bin/embedlabs-ecpkg-compiler")},
+             {QStringLiteral("provision"),
+              QStringLiteral("bin/embedlabs-ecpkg-compiler-provision")},
+             {QStringLiteral("self_test"),
+              QStringLiteral("bin/embedlabs-ecpkg-compiler-self-test")},
+             {QStringLiteral("verify"), QStringLiteral("bin/embedlabs-ecpkg-compiler-verify")},
+         }},
+        {QStringLiteral("files"), fileRecords},
+        {QStringLiteral("format"), QStringLiteral("embedlabs-external-compiler-runtime-bundle-v1")},
+        {QStringLiteral("format_version"), 1},
+        {QStringLiteral("limits"),
+         QJsonObject{
+             {QStringLiteral("max_files"), 256},
+             {QStringLiteral("max_path_bytes"), 240},
+             {QStringLiteral("max_single_file_bytes"), 16777216},
+             {QStringLiteral("max_total_uncompressed_bytes"), 33554432},
+         }},
+        {QStringLiteral("runtime"),
+         QJsonObject{
+             {QStringLiteral("implementation"), QStringLiteral("CPython")},
+             {QStringLiteral("native_windows_supported"), false},
+             {QStringLiteral("platforms"), QJsonArray{QStringLiteral("darwin"),
+                                                       QStringLiteral("linux")}},
+             {QStringLiteral("python_maximum_exclusive"), QStringLiteral("3.13.0")},
+             {QStringLiteral("python_minimum"), QStringLiteral("3.11.0")},
+             {QStringLiteral("requirements_path"), requirementsPath},
+             {QStringLiteral("requirements_sha256"),
+              QString::fromLatin1(sha256(requirements).value().toHex())},
+         }},
+        {QStringLiteral("signature"),
+         QJsonObject{
+             {QStringLiteral("algorithm"), QStringLiteral("ed25519")},
+             {QStringLiteral("domain"),
+              QStringLiteral("embedlabs-ethercat-compiler-runtime-bundle-v1")},
+             {QStringLiteral("key_id"), QString::fromLatin1(keyId)},
+             {QStringLiteral("signature_file"), QStringLiteral("manifest.sig")},
+         }},
+    };
+    QByteArray manifestBytes = QJsonDocument(manifest).toJson(QJsonDocument::Compact);
+    manifestBytes.append('\n');
+    QByteArray signedBytes("embedlabs-ethercat-compiler-runtime-bundle-v1");
+    signedBytes.append('\0');
+    signedBytes.append(manifestBytes);
+    QByteArray signature(64, '\0');
+    crypto_ed25519_sign(
+        reinterpret_cast<uint8_t *>(signature.data()),
+        reinterpret_cast<const uint8_t *>(secretKey.constData()),
+        reinterpret_cast<const uint8_t *>(signedBytes.constData()),
+        size_t(signedBytes.size()));
+    secretKey.fill('\0');
+    seed.fill('\0');
+    QVERIFY(writeFile(QDir(root).filePath(QStringLiteral("manifest.json")), manifestBytes));
+    QVERIFY(writeFile(QDir(root).filePath(QStringLiteral("manifest.sig")), signature));
+    QVERIFY(::chmod(QFile::encodeName(QDir(root).filePath("manifest.json")).constData(), 0644) == 0);
+    QVERIFY(::chmod(QFile::encodeName(QDir(root).filePath("manifest.sig")).constData(), 0644) == 0);
+
+    const CompilerRuntimeBundleExpectation expectation{
+        QStringLiteral("1.0.0"), publicKey, sha256(manifestBytes)};
+    const auto loaded = CompilerRuntimeBundleProfile::load(
+        Utils::FilePath::fromString(root), expectation);
+    QVERIFY_RESULT(loaded);
+    QVERIFY(loaded->identity().isValid());
+    QCOMPARE(
+        loaded->compilerExecutable().path(),
+        QDir(root).filePath(QStringLiteral("bin/embedlabs-ecpkg-compiler")));
+    QVERIFY_RESULT(loaded->validateCurrent());
+
+    QVERIFY(::chmod(QFile::encodeName(container).constData(), 0777) == 0);
+    QVERIFY(!CompilerRuntimeBundleProfile::load(Utils::FilePath::fromString(root), expectation));
+    QVERIFY(::chmod(QFile::encodeName(container).constData(), 0700) == 0);
+    QVERIFY_RESULT(loaded->validateCurrent());
+
+#ifdef Q_OS_DARWIN
+    const auto setExtendedAcl = [&container](QByteArrayView text) {
+        acl_t accessControlList = ::acl_from_text(QByteArray(text).constData());
+        if (!accessControlList)
+            return false;
+        const bool stored = ::acl_set_file(
+                                QFile::encodeName(container).constData(),
+                                ACL_TYPE_EXTENDED,
+                                accessControlList)
+                            == 0;
+        ::acl_free(accessControlList);
+        return stored;
+    };
+    const QByteArray denyAcl(
+        "!#acl 1\n"
+        "group:ABCDEFAB-CDEF-ABCD-EFAB-CDEF0000000C:everyone:12:deny:write\n");
+    QVERIFY(setExtendedAcl(denyAcl));
+    QVERIFY_RESULT(loaded->validateCurrent());
+    const QByteArray allowAcl(
+        "!#acl 1\n"
+        "group:ABCDEFAB-CDEF-ABCD-EFAB-CDEF0000000C:everyone:12:allow:write\n");
+    QVERIFY(setExtendedAcl(allowAcl));
+    QVERIFY(!CompilerRuntimeBundleProfile::load(Utils::FilePath::fromString(root), expectation));
+    acl_t emptyAcl = ::acl_init(0);
+    QVERIFY(emptyAcl);
+    QVERIFY(::acl_set_file(
+                QFile::encodeName(container).constData(), ACL_TYPE_EXTENDED, emptyAcl)
+            == 0);
+    ::acl_free(emptyAcl);
+    QVERIFY_RESULT(loaded->validateCurrent());
+#endif
+
+    CompilerRuntimeBundleExpectation wrongKey = expectation;
+    wrongKey.signingPublicKey[0] = char(quint8(wrongKey.signingPublicKey.at(0)) ^ 0x01);
+    QVERIFY(!CompilerRuntimeBundleProfile::load(Utils::FilePath::fromString(root), wrongKey));
+    CompilerRuntimeBundleExpectation wrongManifest = expectation;
+    wrongManifest.manifestSha256 = Data::RuntimePackageCompilerSha256(QByteArray(32, '\x01'));
+    QVERIFY(!CompilerRuntimeBundleProfile::load(Utils::FilePath::fromString(root), wrongManifest));
+
+    QFile compiler(QDir(root).filePath(QStringLiteral("bin/embedlabs-ecpkg-compiler")));
+    QVERIFY(compiler.open(QIODevice::Append));
+    QCOMPARE(compiler.write("tamper", 6), 6);
+    compiler.close();
+    QVERIFY(!loaded->validateCurrent());
+#endif
 }
 
 void EtherCATProjectCompilerTests::testProvisioningRejectsUnsafeExecutables()
