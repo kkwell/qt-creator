@@ -3,6 +3,7 @@
 #include "ethercatprojectcompilertests.h"
 
 #include "compileroperationstore.h"
+#include "compilerpythonruntimeprofile.h"
 #include "compilerinputprovisioningprofile.h"
 #include "compilerprovisioningprofile.h"
 #include "compilerruntimebundleprofile.h"
@@ -42,11 +43,14 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPointer>
+#include <QSet>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
 
+#include <algorithm>
+#include <cmath>
 #include <optional>
 #include <thread>
 #include <tuple>
@@ -98,6 +102,111 @@ QByteArray readFile(const QString &path)
 {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
+void appendPythonJsonString(QByteArray &output, const QString &value)
+{
+    static constexpr char hex[] = "0123456789abcdef";
+    output.append('"');
+    for (QChar character : value) {
+        const ushort code = character.unicode();
+        switch (code) {
+        case '"':
+            output.append("\\\"");
+            break;
+        case '\\':
+            output.append("\\\\");
+            break;
+        case '\b':
+            output.append("\\b");
+            break;
+        case '\t':
+            output.append("\\t");
+            break;
+        case '\n':
+            output.append("\\n");
+            break;
+        case '\f':
+            output.append("\\f");
+            break;
+        case '\r':
+            output.append("\\r");
+            break;
+        default:
+            if (code >= 0x20 && code <= 0x7e) {
+                output.append(char(code));
+            } else {
+                output.append("\\u");
+                output.append(hex[(code >> 12) & 0xf]);
+                output.append(hex[(code >> 8) & 0xf]);
+                output.append(hex[(code >> 4) & 0xf]);
+                output.append(hex[code & 0xf]);
+            }
+            break;
+        }
+    }
+    output.append('"');
+}
+
+bool appendPythonCanonicalJson(QByteArray &output, const QJsonValue &value)
+{
+    if (value.isNull()) {
+        output.append("null");
+        return true;
+    }
+    if (value.isBool()) {
+        output.append(value.toBool() ? "true" : "false");
+        return true;
+    }
+    if (value.isDouble()) {
+        const double number = value.toDouble();
+        if (!std::isfinite(number) || number != std::floor(number))
+            return false;
+        output.append(QByteArray::number(qint64(number)));
+        return true;
+    }
+    if (value.isString()) {
+        appendPythonJsonString(output, value.toString());
+        return true;
+    }
+    if (value.isArray()) {
+        output.append('[');
+        const QJsonArray array = value.toArray();
+        for (qsizetype index = 0; index < array.size(); ++index) {
+            if (index)
+                output.append(',');
+            if (!appendPythonCanonicalJson(output, array.at(index)))
+                return false;
+        }
+        output.append(']');
+        return true;
+    }
+    if (value.isObject()) {
+        output.append('{');
+        const QJsonObject object = value.toObject();
+        QStringList keys = object.keys();
+        std::sort(keys.begin(), keys.end());
+        for (qsizetype index = 0; index < keys.size(); ++index) {
+            if (index)
+                output.append(',');
+            appendPythonJsonString(output, keys.at(index));
+            output.append(':');
+            if (!appendPythonCanonicalJson(output, object.value(keys.at(index))))
+                return false;
+        }
+        output.append('}');
+        return true;
+    }
+    return false;
+}
+
+QByteArray pythonCanonicalJson(const QJsonValue &value)
+{
+    QByteArray result;
+    if (!appendPythonCanonicalJson(result, value))
+        return {};
+    result.append('\n');
+    return result;
 }
 
 struct CompilerFixture
@@ -477,6 +586,20 @@ bool awaitTerminal(Core::RuntimePackageCompilerJob *job, int timeoutMs = 10000)
     timeout.start(timeoutMs);
     loop.exec();
     return timeout.isActive() && job->state() == Core::RuntimePackageCompilerJobState::Finished;
+}
+
+bool awaitJobState(
+    Core::RuntimePackageCompilerJob *job,
+    Core::RuntimePackageCompilerJobState expected,
+    int timeoutMs = 2000)
+{
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (job->state() != expected && elapsed.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        QThread::msleep(1);
+    }
+    return job->state() == expected;
 }
 
 const Data::RuntimePackageCompilerCompileResult *compileResult(
@@ -1380,6 +1503,970 @@ void EtherCATProjectCompilerTests::testPluginMetadataAndDefaultAvailability()
         QStringLiteral("No trusted compiler input profile is installed."));
 }
 
+void EtherCATProjectCompilerTests::testPythonRuntimeProfileVerifiesSignedInstalledTree()
+{
+#if !defined(Q_OS_DARWIN) || !defined(Q_PROCESSOR_ARM_64)
+    QSKIP("The relocatable Python runtime contract requires native macOS arm64.");
+#else
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QString base = QFileInfo(temporary.path()).canonicalFilePath();
+    const QString container = QDir(base).filePath(QStringLiteral("python-profile-container"));
+    const QString companionRoot = QDir(container).filePath(QStringLiteral("companion"));
+    const QString runtimeRoot = QDir(container).filePath(QStringLiteral("runtime-测试"));
+    QVERIFY(QDir().mkpath(companionRoot));
+    QVERIFY(QDir().mkpath(runtimeRoot));
+    QVERIFY(::chmod(QFile::encodeName(container).constData(), 0700) == 0);
+    QVERIFY(::chmod(QFile::encodeName(companionRoot).constData(), 0700) == 0);
+    QVERIFY(::chmod(QFile::encodeName(runtimeRoot).constData(), 0700) == 0);
+
+    QByteArray seed(32, '\x70');
+    QByteArray secretKey(64, '\0');
+    QByteArray publicKey(32, '\0');
+    crypto_ed25519_key_pair(
+        reinterpret_cast<uint8_t *>(secretKey.data()),
+        reinterpret_cast<uint8_t *>(publicKey.data()),
+        reinterpret_cast<uint8_t *>(seed.data()));
+    const QByteArray keyId = sha256(publicKey).value().toHex();
+
+    QByteArray pythonBytes = QByteArray::fromHex("cffaedfe0c0000010000000002000000");
+    pythonBytes.append(QByteArray(240, '\x5a'));
+    const QMap<QString, QPair<QByteArray, int>> runtimeFiles{
+        {QStringLiteral("python/bin/python3.11"), {pythonBytes, 0755}},
+        {QStringLiteral("python/lib/python3.11/LICENSE.txt"),
+         {QByteArray("CPython fixture license\n"), 0644}},
+        {QStringLiteral("python/lib/python3.11/lib-dynload/_fixture.so"),
+         {QByteArray("Mach-O extension fixture\n"), 0755}},
+        {QStringLiteral("python/lib/python3.11/site-packages/embedlabs_api070/fixture.py"),
+         {QByteArray("VALUE = 70\n"), 0644}},
+    };
+    for (auto it = runtimeFiles.cbegin(); it != runtimeFiles.cend(); ++it) {
+        const QString path = QDir(runtimeRoot).filePath(it.key());
+        QVERIFY(writeFile(path, it->first));
+        QVERIFY(::chmod(QFile::encodeName(path).constData(), it->second) == 0);
+    }
+    const QString pythonSymlink = QDir(runtimeRoot).filePath(QStringLiteral("python/bin/python3"));
+    QVERIFY(::symlink("python3.11", QFile::encodeName(pythonSymlink).constData()) == 0);
+
+    QMap<QString, QJsonObject> baseRuntimeMembers;
+    for (auto it = runtimeFiles.cbegin(); it != runtimeFiles.cend(); ++it) {
+        const QString path = it.key().sliced(QStringLiteral("python/").size());
+        baseRuntimeMembers.insert(
+            path,
+            QJsonObject{
+                {QStringLiteral("archive_mode"), it->second},
+                {QStringLiteral("bytes"), it->first.size()},
+                {QStringLiteral("installed_mode"), it->second},
+                {QStringLiteral("mtime"), 1704067200},
+                {QStringLiteral("path"), path},
+                {QStringLiteral("sha256"), QString::fromLatin1(sha256(it->first).value().toHex())},
+                {QStringLiteral("type"), QStringLiteral("file")}});
+    }
+    baseRuntimeMembers.insert(
+        QStringLiteral("bin/python3"),
+        QJsonObject{
+            {QStringLiteral("mtime"), 1704067200},
+            {QStringLiteral("path"), QStringLiteral("bin/python3")},
+            {QStringLiteral("target"), QStringLiteral("python3.11")},
+            {QStringLiteral("type"), QStringLiteral("symlink")}});
+    QJsonArray runtimeMemberArray;
+    quint64 baseRuntimeBytes = 0;
+    for (auto it = baseRuntimeMembers.cbegin(); it != baseRuntimeMembers.cend(); ++it) {
+        runtimeMemberArray.append(it.value());
+        baseRuntimeBytes += quint64(it.value().value(QStringLiteral("bytes")).toInt());
+    }
+    const QJsonObject runtimeTreeProjection{
+        {QStringLiteral("format"),
+         QStringLiteral("embedlabs-relocatable-python-tree-projection-v1")},
+        {QStringLiteral("members"), runtimeMemberArray}};
+    const auto runtimeTreeSha = sha256(pythonCanonicalJson(runtimeTreeProjection));
+    const QByteArray archiveBytes("fixture-python-runtime-archive");
+    const QString archivePath = QStringLiteral("runtime/python-runtime-fixture.tar.gz");
+    const QJsonObject runtimeTree{
+        {QStringLiteral("archive"),
+         QJsonObject{
+             {QStringLiteral("bytes"), archiveBytes.size()},
+             {QStringLiteral("compression"), QStringLiteral("tar+gzip")},
+             {QStringLiteral("path"), archivePath},
+             {QStringLiteral("sha256"), QString::fromLatin1(sha256(archiveBytes).value().toHex())}}},
+        {QStringLiteral("counts"),
+         QJsonObject{
+             {QStringLiteral("file_bytes"), double(baseRuntimeBytes)},
+             {QStringLiteral("files"), runtimeFiles.size()},
+             {QStringLiteral("macho_files"), 2},
+             {QStringLiteral("members"), baseRuntimeMembers.size()},
+             {QStringLiteral("symlinks"), 1}}},
+        {QStringLiteral("format"), QStringLiteral("embedlabs-relocatable-python-tree-v1")},
+        {QStringLiteral("format_version"), 1},
+        {QStringLiteral("members"), runtimeMemberArray},
+        {QStringLiteral("root_prefix"), QStringLiteral("python")},
+        {QStringLiteral("target"),
+         QJsonObject{
+             {QStringLiteral("cache_tag"), QStringLiteral("cpython-311")},
+             {QStringLiteral("implementation"), QStringLiteral("CPython")},
+             {QStringLiteral("machine"), QStringLiteral("arm64")},
+             {QStringLiteral("minimum_macos_version"), QStringLiteral("11.0")},
+             {QStringLiteral("operating_system"), QStringLiteral("macos")},
+             {QStringLiteral("python_version"), QStringLiteral("3.11.15")},
+             {QStringLiteral("soabi"), QStringLiteral("cpython-311-darwin")}}},
+        {QStringLiteral("tree_sha256"), QString::fromLatin1(runtimeTreeSha.value().toHex())},
+    };
+    const QByteArray runtimeTreeBytes = pythonCanonicalJson(runtimeTree);
+
+    const QByteArray contractBytes("{\"format\":\"fixture-contract\"}\n");
+    const QByteArray licenseBytes("Runtime fixture license\n");
+    const QByteArray lockBytes("fixture==1.0 --hash=sha256:00\n");
+    const QByteArray wheelManifestBytes("{\"format\":\"fixture-wheelhouse\"}\n");
+    const QByteArray binaryEntrypoint = QByteArray::fromHex(
+        "cffaedfe0c000001000000000200000000000000");
+    const QString treePath = QStringLiteral("runtime/runtime-tree-manifest-v1.json");
+    const QString contractPath = QStringLiteral(
+        "contracts/compiler-runtime-relocatable-macos-arm64-cp311-v1.json");
+    const QString licensePath = QStringLiteral("licenses/runtime-license.txt");
+    const QString lockPath = QStringLiteral(
+        "locks/compiler-runtime-relocatable-macos-arm64-cp311.lock");
+    const QString wheelManifestPath = QStringLiteral("wheelhouse/wheelhouse-manifest-v2.json");
+    const QString trustPath = QStringLiteral("trust/%1.pub").arg(QString::fromLatin1(keyId));
+    const QMap<QString, QPair<QByteArray, int>> companionFiles{
+        {QStringLiteral("bin/embedlabs-python-relocatable-runtime-install"),
+         {binaryEntrypoint, 0755}},
+        {QStringLiteral("bin/embedlabs-python-relocatable-runtime-self-test"),
+         {binaryEntrypoint, 0755}},
+        {QStringLiteral("bin/embedlabs-python-relocatable-runtime-verify"),
+         {binaryEntrypoint, 0755}},
+        {contractPath, {contractBytes, 0644}},
+        {licensePath, {licenseBytes, 0644}},
+        {lockPath, {lockBytes, 0644}},
+        {archivePath, {archiveBytes, 0644}},
+        {treePath, {runtimeTreeBytes, 0644}},
+        {trustPath, {publicKey, 0644}},
+        {wheelManifestPath, {wheelManifestBytes, 0644}},
+    };
+    QJsonArray companionFileRecords;
+    for (auto it = companionFiles.cbegin(); it != companionFiles.cend(); ++it) {
+        const QString path = QDir(companionRoot).filePath(it.key());
+        QVERIFY(writeFile(path, it->first));
+        QVERIFY(::chmod(QFile::encodeName(path).constData(), it->second) == 0);
+        companionFileRecords.append(
+            QJsonObject{
+                {QStringLiteral("bytes"), it->first.size()},
+                {QStringLiteral("mode"), it->second},
+                {QStringLiteral("path"), it.key()},
+                {QStringLiteral("sha256"), QString::fromLatin1(sha256(it->first).value().toHex())}});
+    }
+    const QStringList identityFieldNames{
+        QStringLiteral("base_runtime_archive_sha256"),
+        QStringLiteral("base_runtime_tree_sha256"),
+        QStringLiteral("companion_bundle_sha256"),
+        QStringLiteral("companion_id"),
+        QStringLiteral("companion_key_id"),
+        QStringLiteral("companion_manifest_format"),
+        QStringLiteral("companion_manifest_format_version"),
+        QStringLiteral("companion_manifest_sha256"),
+        QStringLiteral("companion_version"),
+        QStringLiteral("format"),
+        QStringLiteral("format_version"),
+        QStringLiteral("identity_sha256"),
+        QStringLiteral("installed_file_bytes"),
+        QStringLiteral("installed_tree_entries"),
+        QStringLiteral("installed_tree_sha256"),
+        QStringLiteral("machine"),
+        QStringLiteral("package_set_sha256"),
+        QStringLiteral("platform"),
+        QStringLiteral("python_cache_tag"),
+        QStringLiteral("python_executable"),
+        QStringLiteral("python_executable_sha256"),
+        QStringLiteral("python_implementation"),
+        QStringLiteral("python_soabi"),
+        QStringLiteral("python_version"),
+        QStringLiteral("runtime_release_tag"),
+        QStringLiteral("runtime_root"),
+        QStringLiteral("safe_path_policy"),
+        QStringLiteral("signature_algorithm"),
+        QStringLiteral("signature_domain"),
+        QStringLiteral("sys_base_prefix"),
+        QStringLiteral("sys_path_relative"),
+        QStringLiteral("sys_path_sha256"),
+        QStringLiteral("sys_prefix"),
+        QStringLiteral("wheel_lock_sha256"),
+        QStringLiteral("wheel_overlay_tree_sha256"),
+        QStringLiteral("wheelhouse_content_sha256")};
+    QJsonArray identityFields;
+    for (const QString &name : identityFieldNames)
+        identityFields.append(name);
+    const QByteArray wheelContent("fixture-wheel-content");
+    const QJsonObject companionManifest{
+        {QStringLiteral("companion_id"),
+         QStringLiteral("org.embedlabs.ethercat.project-compiler.python-runtime.relocatable")},
+        {QStringLiteral("companion_version"), QStringLiteral("1.0.0")},
+        {QStringLiteral("contract"),
+         QJsonObject{
+             {QStringLiteral("bytes"), contractBytes.size()},
+             {QStringLiteral("path"), contractPath},
+             {QStringLiteral("sha256"),
+              QString::fromLatin1(sha256(contractBytes).value().toHex())}}},
+        {QStringLiteral("files"), companionFileRecords},
+        {QStringLiteral("format"),
+         QStringLiteral("embedlabs-relocatable-macos-python-runtime-companion-v1")},
+        {QStringLiteral("format_version"), 1},
+        {QStringLiteral("host_runtime"),
+         QJsonObject{
+             {QStringLiteral("archive"),
+              QJsonObject{
+                  {QStringLiteral("bytes"), archiveBytes.size()},
+                  {QStringLiteral("path"), archivePath},
+                  {QStringLiteral("sha256"),
+                   QString::fromLatin1(sha256(archiveBytes).value().toHex())}}},
+             {QStringLiteral("binary_architectures"), QJsonArray{QStringLiteral("arm64")}},
+             {QStringLiteral("cpython_license_sha256"),
+              QString::fromLatin1(sha256("cpython-license").value().toHex())},
+             {QStringLiteral("distribution"),
+              QStringLiteral("astral-sh/python-build-standalone install_only")},
+             {QStringLiteral("python_executable"), QStringLiteral("python/bin/python3.11")},
+             {QStringLiteral("release_commit"), QString(40, QLatin1Char('7'))},
+             {QStringLiteral("release_tag"), QStringLiteral("20260718")},
+             {QStringLiteral("repository"),
+              QStringLiteral("https://github.com/astral-sh/python-build-standalone")},
+             {QStringLiteral("runtime_members"), baseRuntimeMembers.size()},
+             {QStringLiteral("tree_manifest"),
+              QJsonObject{
+                  {QStringLiteral("bytes"), runtimeTreeBytes.size()},
+                  {QStringLiteral("path"), treePath},
+                  {QStringLiteral("sha256"),
+                   QString::fromLatin1(sha256(runtimeTreeBytes).value().toHex())}}},
+             {QStringLiteral("tree_sha256"), QString::fromLatin1(runtimeTreeSha.value().toHex())},
+             {QStringLiteral("upstream_license"),
+              QJsonObject{
+                  {QStringLiteral("bytes"), licenseBytes.size()},
+                  {QStringLiteral("path"), licensePath},
+                  {QStringLiteral("sha256"),
+                   QString::fromLatin1(sha256(licenseBytes).value().toHex())}}}}},
+        {QStringLiteral("identity_fields"), identityFields},
+        {QStringLiteral("installation"),
+         QJsonObject{
+             {QStringLiteral("atomic_sibling_publish"), true},
+             {QStringLiteral("compiler_import_root"),
+              QStringLiteral("externally-verified-api068-runtime-root/runtime/igh_osless/tools")},
+             {QStringLiteral("creates_system_links"), false},
+             {QStringLiteral("destination_absolute_and_empty"), true},
+             {QStringLiteral("entrypoint"),
+              QStringLiteral("bin/embedlabs-python-relocatable-runtime-install")},
+             {QStringLiteral("forbidden_prefixes"),
+              QJsonArray{
+                  QStringLiteral("/Library"),
+                  QStringLiteral("/System"),
+                  QStringLiteral("/usr"),
+                  QStringLiteral("/bin"),
+                  QStringLiteral("/sbin")}},
+             {QStringLiteral("implicit_script_directory_allowed"), false},
+             {QStringLiteral("modifies_shell_profile"), false},
+             {QStringLiteral("network_allowed"), false},
+             {QStringLiteral("pip_configuration_allowed"), false},
+             {QStringLiteral("requires_root"), false},
+             {QStringLiteral("safe_path_required"), true},
+             {QStringLiteral("self_test"),
+              QStringLiteral("bin/embedlabs-python-relocatable-runtime-self-test")},
+             {QStringLiteral("user_site_allowed"), false},
+             {QStringLiteral("verifier"),
+              QStringLiteral("bin/embedlabs-python-relocatable-runtime-verify")},
+             {QStringLiteral("writes_outside_destination_parent"), false}}},
+        {QStringLiteral("limits"),
+         QJsonObject{
+             {QStringLiteral("max_bundle_file_bytes"), 33554432},
+             {QStringLiteral("max_bundle_files"), 64},
+             {QStringLiteral("max_bundle_uncompressed_bytes"), 50331648},
+             {QStringLiteral("max_path_bytes"), 512},
+             {QStringLiteral("max_runtime_file_bytes"), 33554432},
+             {QStringLiteral("max_runtime_file_total_bytes"), 134217728},
+             {QStringLiteral("max_runtime_members"), 4096}}},
+        {QStringLiteral("signature"),
+         QJsonObject{
+             {QStringLiteral("algorithm"), QStringLiteral("ed25519")},
+             {QStringLiteral("domain"),
+              QStringLiteral("embedlabs-ethercat-macos-python-relocatable-runtime-companion-v1")},
+             {QStringLiteral("key_id"), QString::fromLatin1(keyId)},
+             {QStringLiteral("signature_file"), QStringLiteral("manifest.sig")}}},
+        {QStringLiteral("target"),
+         QJsonObject{
+             {QStringLiteral("machine"), QStringLiteral("arm64")},
+             {QStringLiteral("minimum_macos_version"), QStringLiteral("11.0")},
+             {QStringLiteral("operating_system"), QStringLiteral("macos")},
+             {QStringLiteral("python_implementation"), QStringLiteral("CPython")},
+             {QStringLiteral("python_version"), QStringLiteral("3.11.15")}}},
+        {QStringLiteral("wheelhouse"),
+         QJsonObject{
+             {QStringLiteral("content_sha256"),
+              QString::fromLatin1(sha256(wheelContent).value().toHex())},
+             {QStringLiteral("directory"), QStringLiteral("wheelhouse")},
+             {QStringLiteral("distribution_count"), 7},
+             {QStringLiteral("installation_mode"), QStringLiteral("verified-relative-site-overlay")},
+             {QStringLiteral("lock"),
+              QJsonObject{
+                  {QStringLiteral("bytes"), lockBytes.size()},
+                  {QStringLiteral("path"), lockPath},
+                  {QStringLiteral("sha256"),
+                   QString::fromLatin1(sha256(lockBytes).value().toHex())}}},
+             {QStringLiteral("manifest"),
+              QJsonObject{
+                  {QStringLiteral("bytes"), wheelManifestBytes.size()},
+                  {QStringLiteral("path"), wheelManifestPath},
+                  {QStringLiteral("sha256"),
+                   QString::fromLatin1(sha256(wheelManifestBytes).value().toHex())}}}}},
+    };
+    const QByteArray companionManifestBytes = pythonCanonicalJson(companionManifest);
+    QByteArray signedBytes("embedlabs-ethercat-macos-python-relocatable-runtime-companion-v1");
+    signedBytes.append('\0');
+    signedBytes.append(companionManifestBytes);
+    QByteArray signature(64, '\0');
+    crypto_ed25519_sign(
+        reinterpret_cast<uint8_t *>(signature.data()),
+        reinterpret_cast<const uint8_t *>(secretKey.constData()),
+        reinterpret_cast<const uint8_t *>(signedBytes.constData()),
+        size_t(signedBytes.size()));
+    const QString manifestPath = QDir(companionRoot).filePath(QStringLiteral("manifest.json"));
+    const QString signaturePath = QDir(companionRoot).filePath(QStringLiteral("manifest.sig"));
+    QVERIFY(writeFile(manifestPath, companionManifestBytes));
+    QVERIFY(writeFile(signaturePath, signature));
+    QVERIFY(::chmod(QFile::encodeName(manifestPath).constData(), 0644) == 0);
+    QVERIFY(::chmod(QFile::encodeName(signaturePath).constData(), 0644) == 0);
+
+    QMap<QString, QJsonObject> installedRecords;
+    quint64 installedBytes = 0;
+    for (auto it = runtimeFiles.cbegin(); it != runtimeFiles.cend(); ++it) {
+        installedBytes += quint64(it->first.size());
+        installedRecords.insert(
+            it.key(),
+            QJsonObject{
+                {QStringLiteral("bytes"), it->first.size()},
+                {QStringLiteral("mode"), it->second},
+                {QStringLiteral("path"), it.key()},
+                {QStringLiteral("sha256"), QString::fromLatin1(sha256(it->first).value().toHex())},
+                {QStringLiteral("type"), QStringLiteral("file")}});
+    }
+    installedRecords.insert(
+        QStringLiteral("python/bin/python3"),
+        QJsonObject{
+            {QStringLiteral("path"), QStringLiteral("python/bin/python3")},
+            {QStringLiteral("target"), QStringLiteral("python3.11")},
+            {QStringLiteral("type"), QStringLiteral("symlink")}});
+    QJsonArray installedRecordArray;
+    for (auto it = installedRecords.cbegin(); it != installedRecords.cend(); ++it)
+        installedRecordArray.append(it.value());
+    const QJsonObject installedTreeProjection{
+        {QStringLiteral("entries"), installedRecordArray},
+        {QStringLiteral("format"),
+         QStringLiteral("embedlabs-installed-relocatable-runtime-tree-v1")}};
+    const auto installedTreeSha = sha256(pythonCanonicalJson(installedTreeProjection));
+    const QJsonArray sysPath{
+        QStringLiteral("python/lib/python311.zip"),
+        QStringLiteral("python/lib/python3.11"),
+        QStringLiteral("python/lib/python3.11/lib-dynload"),
+        QStringLiteral("python/lib/python3.11/site-packages"),
+        QStringLiteral("python/lib/python3.11/site-packages/embedlabs_api070")};
+    const auto companionBundleSha = sha256("signed-companion-archive-fixture");
+    QJsonObject identity{
+        {QStringLiteral("base_runtime_archive_sha256"),
+         QString::fromLatin1(sha256(archiveBytes).value().toHex())},
+        {QStringLiteral("base_runtime_tree_sha256"),
+         QString::fromLatin1(runtimeTreeSha.value().toHex())},
+        {QStringLiteral("companion_bundle_sha256"),
+         QString::fromLatin1(companionBundleSha.value().toHex())},
+        {QStringLiteral("companion_id"),
+         QStringLiteral("org.embedlabs.ethercat.project-compiler.python-runtime.relocatable")},
+        {QStringLiteral("companion_key_id"), QString::fromLatin1(keyId)},
+        {QStringLiteral("companion_manifest_format"),
+         QStringLiteral("embedlabs-relocatable-macos-python-runtime-companion-v1")},
+        {QStringLiteral("companion_manifest_format_version"), 1},
+        {QStringLiteral("companion_manifest_sha256"),
+         QString::fromLatin1(sha256(companionManifestBytes).value().toHex())},
+        {QStringLiteral("companion_version"), QStringLiteral("1.0.0")},
+        {QStringLiteral("format"),
+         QStringLiteral("embedlabs-installed-relocatable-python-runtime-identity-v1")},
+        {QStringLiteral("format_version"), 1},
+        {QStringLiteral("installed_file_bytes"), double(installedBytes)},
+        {QStringLiteral("installed_tree_entries"), installedRecords.size()},
+        {QStringLiteral("installed_tree_sha256"),
+         QString::fromLatin1(installedTreeSha.value().toHex())},
+        {QStringLiteral("machine"), QStringLiteral("arm64")},
+        {QStringLiteral("package_set_sha256"),
+         QString::fromLatin1(sha256("package-set").value().toHex())},
+        {QStringLiteral("platform"), QStringLiteral("macos")},
+        {QStringLiteral("python_cache_tag"), QStringLiteral("cpython-311")},
+        {QStringLiteral("python_executable"),
+         QDir(runtimeRoot).filePath(QStringLiteral("python/bin/python3.11"))},
+        {QStringLiteral("python_executable_sha256"),
+         QString::fromLatin1(sha256(pythonBytes).value().toHex())},
+        {QStringLiteral("python_implementation"), QStringLiteral("CPython")},
+        {QStringLiteral("python_soabi"), QStringLiteral("cpython-311-darwin")},
+        {QStringLiteral("python_version"), QStringLiteral("3.11.15")},
+        {QStringLiteral("runtime_release_tag"), QStringLiteral("20260718")},
+        {QStringLiteral("runtime_root"), runtimeRoot},
+        {QStringLiteral("safe_path_policy"), QStringLiteral("required-explicit-signed-import-root")},
+        {QStringLiteral("signature_algorithm"), QStringLiteral("ed25519")},
+        {QStringLiteral("signature_domain"),
+         QStringLiteral("embedlabs-ethercat-macos-python-relocatable-runtime-companion-v1")},
+        {QStringLiteral("sys_base_prefix"), QDir(runtimeRoot).filePath(QStringLiteral("python"))},
+        {QStringLiteral("sys_path_relative"), sysPath},
+        {QStringLiteral("sys_path_sha256"),
+         QString::fromLatin1(sha256(pythonCanonicalJson(sysPath)).value().toHex())},
+        {QStringLiteral("sys_prefix"), QDir(runtimeRoot).filePath(QStringLiteral("python"))},
+        {QStringLiteral("wheel_lock_sha256"),
+         QString::fromLatin1(sha256(lockBytes).value().toHex())},
+        {QStringLiteral("wheel_overlay_tree_sha256"),
+         QString::fromLatin1(sha256("wheel-overlay").value().toHex())},
+        {QStringLiteral("wheelhouse_content_sha256"),
+         QString::fromLatin1(sha256(wheelContent).value().toHex())},
+    };
+    const auto writeIdentity = [&] {
+        QJsonObject projection = identity;
+        projection.remove(QStringLiteral("identity_sha256"));
+        identity.insert(
+            QStringLiteral("identity_sha256"),
+            QString::fromLatin1(sha256(pythonCanonicalJson(projection)).value().toHex()));
+        const QString path = QDir(runtimeRoot).filePath(QStringLiteral("runtime-identity-v1.json"));
+        return writeFile(path, pythonCanonicalJson(identity))
+               && ::chmod(QFile::encodeName(path).constData(), 0600) == 0;
+    };
+    QVERIFY(writeIdentity());
+    QJsonObject portableIdentity = identity;
+    portableIdentity.remove(QStringLiteral("runtime_root"));
+    portableIdentity.remove(QStringLiteral("python_executable"));
+    portableIdentity.remove(QStringLiteral("sys_prefix"));
+    portableIdentity.remove(QStringLiteral("sys_base_prefix"));
+    portableIdentity.remove(QStringLiteral("identity_sha256"));
+    const CompilerPythonRuntimeExpectation expectation{
+        QStringLiteral("1.0.0"),
+        publicKey,
+        companionBundleSha,
+        sha256(companionManifestBytes),
+        sha256(pythonBytes),
+        installedTreeSha,
+        sha256(pythonCanonicalJson(portableIdentity)),
+    };
+
+    const auto loaded = CompilerPythonRuntimeProfile::load(
+        Utils::FilePath::fromString(companionRoot),
+        Utils::FilePath::fromString(runtimeRoot),
+        expectation);
+    QVERIFY_RESULT(loaded);
+    QVERIFY(loaded->identity().isValid());
+    QCOMPARE(
+        loaded->pythonExecutable().path(),
+        QDir(runtimeRoot).filePath(QStringLiteral("python/bin/python3.11")));
+    QVERIFY_RESULT(loaded->validateCurrent());
+
+    const QString runtimeRootLink = QDir(container).filePath(QStringLiteral("runtime-link"));
+    QVERIFY(::symlink(
+                QFile::encodeName(runtimeRoot).constData(),
+                QFile::encodeName(runtimeRootLink).constData())
+            == 0);
+    QVERIFY(!CompilerPythonRuntimeProfile::load(
+        Utils::FilePath::fromString(companionRoot),
+        Utils::FilePath::fromString(runtimeRootLink),
+        expectation));
+    QVERIFY(::unlink(QFile::encodeName(runtimeRootLink).constData()) == 0);
+
+    const QStringList historicalIdentityFieldNames{
+        QStringLiteral("base_runtime_archive_sha256"),
+        QStringLiteral("base_runtime_tree_sha256"),
+        QStringLiteral("companion_bundle_sha256"),
+        QStringLiteral("companion_key_id"),
+        QStringLiteral("companion_id"),
+        QStringLiteral("companion_manifest_format"),
+        QStringLiteral("companion_manifest_format_version"),
+        QStringLiteral("companion_manifest_sha256"),
+        QStringLiteral("companion_version"),
+        QStringLiteral("identity_sha256"),
+        QStringLiteral("installed_file_bytes"),
+        QStringLiteral("installed_tree_entries"),
+        QStringLiteral("installed_tree_sha256"),
+        QStringLiteral("machine"),
+        QStringLiteral("package_set_sha256"),
+        QStringLiteral("platform"),
+        QStringLiteral("python_cache_tag"),
+        QStringLiteral("python_executable"),
+        QStringLiteral("python_executable_sha256"),
+        QStringLiteral("python_implementation"),
+        QStringLiteral("python_soabi"),
+        QStringLiteral("python_version"),
+        QStringLiteral("runtime_release_tag"),
+        QStringLiteral("runtime_root"),
+        QStringLiteral("safe_path_policy"),
+        QStringLiteral("signature_algorithm"),
+        QStringLiteral("signature_domain"),
+        QStringLiteral("sys_path_sha256"),
+        QStringLiteral("wheel_lock_sha256"),
+        QStringLiteral("wheelhouse_content_sha256"),
+        QStringLiteral("wheel_overlay_tree_sha256")};
+    QJsonArray historicalIdentityFields;
+    for (const QString &name : historicalIdentityFieldNames)
+        historicalIdentityFields.append(name);
+    QCOMPARE(historicalIdentityFields.size(), 31);
+    QJsonObject historicalManifest = companionManifest;
+    historicalManifest.insert(QStringLiteral("identity_fields"), historicalIdentityFields);
+    const QByteArray historicalManifestBytes = pythonCanonicalJson(historicalManifest);
+    QByteArray historicalSignedBytes(
+        "embedlabs-ethercat-macos-python-relocatable-runtime-companion-v1");
+    historicalSignedBytes.append('\0');
+    historicalSignedBytes.append(historicalManifestBytes);
+    QByteArray historicalSignature(64, '\0');
+    crypto_ed25519_sign(
+        reinterpret_cast<uint8_t *>(historicalSignature.data()),
+        reinterpret_cast<const uint8_t *>(secretKey.constData()),
+        reinterpret_cast<const uint8_t *>(historicalSignedBytes.constData()),
+        size_t(historicalSignedBytes.size()));
+    QVERIFY(writeFile(manifestPath, historicalManifestBytes));
+    QVERIFY(writeFile(signaturePath, historicalSignature));
+    QVERIFY(::chmod(QFile::encodeName(manifestPath).constData(), 0644) == 0);
+    QVERIFY(::chmod(QFile::encodeName(signaturePath).constData(), 0644) == 0);
+    CompilerPythonRuntimeExpectation historicalExpectation = expectation;
+    historicalExpectation.companionManifestSha256 = sha256(historicalManifestBytes);
+    QVERIFY(!CompilerPythonRuntimeProfile::load(
+        Utils::FilePath::fromString(companionRoot),
+        Utils::FilePath::fromString(runtimeRoot),
+        historicalExpectation));
+    QVERIFY(writeFile(manifestPath, companionManifestBytes));
+    QVERIFY(writeFile(signaturePath, signature));
+    QVERIFY(::chmod(QFile::encodeName(manifestPath).constData(), 0644) == 0);
+    QVERIFY(::chmod(QFile::encodeName(signaturePath).constData(), 0644) == 0);
+    secretKey.fill('\0');
+    seed.fill('\0');
+    QVERIFY_RESULT(loaded->validateCurrent());
+
+    CompilerPythonRuntimeExpectation wrongPortable = expectation;
+    wrongPortable.portableIdentitySha256 = Data::RuntimePackageCompilerSha256(
+        QByteArray(32, '\x42'));
+    QVERIFY(!CompilerPythonRuntimeProfile::load(
+        Utils::FilePath::fromString(companionRoot),
+        Utils::FilePath::fromString(runtimeRoot),
+        wrongPortable));
+
+    const QString identityPath
+        = QDir(runtimeRoot).filePath(QStringLiteral("runtime-identity-v1.json"));
+    QByteArray nonCanonicalIdentity = QJsonDocument(identity).toJson(QJsonDocument::Compact);
+    nonCanonicalIdentity.append('\n');
+    QVERIFY(nonCanonicalIdentity != pythonCanonicalJson(identity));
+    QVERIFY(writeFile(identityPath, nonCanonicalIdentity));
+    QVERIFY(::chmod(QFile::encodeName(identityPath).constData(), 0600) == 0);
+    QVERIFY(!CompilerPythonRuntimeProfile::load(
+        Utils::FilePath::fromString(companionRoot),
+        Utils::FilePath::fromString(runtimeRoot),
+        expectation));
+    QVERIFY(writeIdentity());
+
+    QVERIFY(::unlink(QFile::encodeName(pythonSymlink).constData()) == 0);
+    QVERIFY(::symlink("../LICENSE.txt", QFile::encodeName(pythonSymlink).constData()) == 0);
+    QVERIFY(!loaded->validateCurrent());
+    QVERIFY(::unlink(QFile::encodeName(pythonSymlink).constData()) == 0);
+    QVERIFY(::symlink("python3.11", QFile::encodeName(pythonSymlink).constData()) == 0);
+
+    const QString licenseFile
+        = QDir(runtimeRoot).filePath(QStringLiteral("python/lib/python3.11/LICENSE.txt"));
+    const QByteArray originalLicense = readFile(licenseFile);
+    QVERIFY(writeFile(licenseFile, originalLicense + QByteArray("tamper")));
+    QVERIFY(::chmod(QFile::encodeName(licenseFile).constData(), 0644) == 0);
+    QVERIFY(!loaded->validateCurrent());
+    QVERIFY(writeFile(licenseFile, originalLicense));
+    QVERIFY(::chmod(QFile::encodeName(licenseFile).constData(), 0644) == 0);
+
+    const QString emptyDirectory = QDir(runtimeRoot).filePath(QStringLiteral("unsigned-empty"));
+    QVERIFY(QDir().mkpath(emptyDirectory));
+    QVERIFY(!loaded->validateCurrent());
+    QVERIFY(QDir().rmdir(emptyDirectory));
+
+    const QString hardLink = QDir(runtimeRoot).filePath(QStringLiteral("hard-link"));
+    QVERIFY(
+        ::link(QFile::encodeName(licenseFile).constData(), QFile::encodeName(hardLink).constData())
+        == 0);
+    QVERIFY(!loaded->validateCurrent());
+    QVERIFY(::unlink(QFile::encodeName(hardLink).constData()) == 0);
+
+    const QString fifo = QDir(runtimeRoot).filePath(QStringLiteral("unexpected-fifo"));
+    QVERIFY(::mkfifo(QFile::encodeName(fifo).constData(), 0600) == 0);
+    QVERIFY(!loaded->validateCurrent());
+    QVERIFY(::unlink(QFile::encodeName(fifo).constData()) == 0);
+
+    const QString contractFile = QDir(companionRoot).filePath(contractPath);
+    QVERIFY(writeFile(contractFile, contractBytes + QByteArray("tamper")));
+    QVERIFY(::chmod(QFile::encodeName(contractFile).constData(), 0644) == 0);
+    QVERIFY(!loaded->validateCurrent());
+    QVERIFY(writeFile(contractFile, contractBytes));
+    QVERIFY(::chmod(QFile::encodeName(contractFile).constData(), 0644) == 0);
+    QVERIFY_RESULT(loaded->validateCurrent());
+
+    const QString compilerContainer = QDir(base).filePath(QStringLiteral("compiler-container"));
+    const QString compilerRoot = QDir(compilerContainer).filePath(QStringLiteral("runtime"));
+    QVERIFY(QDir().mkpath(compilerRoot));
+    QVERIFY(::chmod(QFile::encodeName(compilerContainer).constData(), 0700) == 0);
+
+    QByteArray compilerSeed(32, '\x68');
+    QByteArray compilerSecretKey(64, '\0');
+    QByteArray compilerPublicKey(32, '\0');
+    crypto_ed25519_key_pair(
+        reinterpret_cast<uint8_t *>(compilerSecretKey.data()),
+        reinterpret_cast<uint8_t *>(compilerPublicKey.data()),
+        reinterpret_cast<uint8_t *>(compilerSeed.data()));
+    const QByteArray compilerKeyId = sha256(compilerPublicKey).value().toHex();
+    const QString compilerTrustPath
+        = QStringLiteral("trust/%1.pub").arg(QString::fromLatin1(compilerKeyId));
+    const QString compilerRequirementsPath = QStringLiteral(
+        "runtime/igh_osless/contracts/compiler-runtime-requirements-v1.txt");
+    const QByteArray compilerRequirements("jsonschema==4.25.0\n");
+    const QByteArray fakeCompiler = readFile(
+        QString::fromUtf8(ETHERCAT_PROJECT_COMPILER_FAKE_EXECUTABLE));
+    QVERIFY(!fakeCompiler.isEmpty());
+    const QString environmentEvidencePath = QDir(base).filePath(
+        QStringLiteral("compiler-environment.txt"));
+    const QString compilerImportRoot
+        = QDir(compilerRoot).filePath(QStringLiteral("runtime/igh_osless/tools"));
+    const QByteArray compilerWrapper
+        = QStringLiteral(
+              "#!/bin/sh\n"
+              "/usr/bin/env > \"%3\"\n"
+              "[ \"${EMBEDLABS_COMPILER_PYTHON-}\" = \"%1\" ] || exit 90\n"
+              "[ \"${PYTHONPATH-}\" = \"%2\" ] || exit 91\n"
+              "[ \"${PYTHONSAFEPATH-}\" = \"1\" ] || exit 92\n"
+              "[ \"${PATH-}\" = \"/usr/bin:/bin\" ] || exit 93\n"
+              "[ \"${LANG-}\" = \"C\" ] || exit 94\n"
+              "[ \"${LC_ALL-}\" = \"C\" ] || exit 95\n"
+              "[ \"${TZ-}\" = \"UTC\" ] || exit 96\n"
+              "[ \"${PYTHONNOUSERSITE-}\" = \"1\" ] || exit 97\n"
+              "[ \"${PYTHONDONTWRITEBYTECODE-}\" = \"1\" ] || exit 98\n"
+              "[ \"${PYTHONUTF8-}\" = \"1\" ] || exit 99\n"
+              "[ \"${PYTHONIOENCODING-}\" = \"utf-8\" ] || exit 100\n"
+              "[ \"${PYTHONHASHSEED-}\" = \"0\" ] || exit 101\n"
+              "[ \"${PYTHONBREAKPOINT-}\" = \"0\" ] || exit 102\n"
+              "[ -z \"${HOME+x}\" ] || exit 103\n"
+              "[ -z \"${PYTHONHOME+x}\" ] || exit 104\n"
+              "exec \"${0%/*}/../runtime/fakecompiler\" \"$@\" 2>/dev/null\n")
+              .arg(
+                  loaded->pythonExecutable().path(),
+                  compilerImportRoot,
+                  environmentEvidencePath)
+              .toUtf8();
+    const QMap<QString, QPair<QByteArray, int>> compilerPayload{
+        {QStringLiteral("bin/embedlabs-ecpkg-compiler"), {compilerWrapper, 0755}},
+        {QStringLiteral("bin/embedlabs-ecpkg-compiler-provision"),
+         {QByteArray("#!/bin/sh\n"), 0755}},
+        {QStringLiteral("bin/embedlabs-ecpkg-compiler-self-test"),
+         {QByteArray("#!/bin/sh\n"), 0755}},
+        {QStringLiteral("bin/embedlabs-ecpkg-compiler-verify"),
+         {QByteArray("#!/bin/sh\n"), 0755}},
+        {compilerRequirementsPath, {compilerRequirements, 0644}},
+        {QStringLiteral("runtime/fakecompiler"), {fakeCompiler, 0755}},
+        {QStringLiteral("runtime/igh_osless/tools/compiler_runtime_entry.py"),
+         {QByteArray("# signed fixture compiler entry\n"), 0644}},
+        {QStringLiteral("runtime/igh_osless/tools/ide_project_compiler.py"),
+         {QByteArray("# signed fixture project compiler\n"), 0644}},
+        {compilerTrustPath, {compilerPublicKey, 0644}},
+    };
+    QJsonArray compilerFileRecords;
+    for (auto it = compilerPayload.cbegin(); it != compilerPayload.cend(); ++it) {
+        const QString path = QDir(compilerRoot).filePath(it.key());
+        QVERIFY(writeFile(path, it->first));
+        QVERIFY(::chmod(QFile::encodeName(path).constData(), it->second) == 0);
+        compilerFileRecords.append(
+            QJsonObject{{QStringLiteral("bytes"), it->first.size()},
+                        {QStringLiteral("mode"), it->second},
+                        {QStringLiteral("path"), it.key()},
+                        {QStringLiteral("sha256"),
+                         QString::fromLatin1(sha256(it->first).value().toHex())}});
+    }
+    const QJsonObject compilerManifest{
+        {QStringLiteral("artifact_root_contract"),
+         QJsonObject{{QStringLiteral("explicit_argument"), QStringLiteral("--artifact-root")},
+                     {QStringLiteral("request_paths"),
+                      QStringLiteral("relative_to_artifact_root")},
+                     {QStringLiteral("symlinks_allowed"), false},
+                     {QStringLiteral("working_directory_independent"), true}}},
+        {QStringLiteral("bundle_id"), QStringLiteral("org.embedlabs.ethercat.project-compiler")},
+        {QStringLiteral("bundle_version"), QStringLiteral("1.0.0")},
+        {QStringLiteral("compiler_contract"),
+         QJsonObject{{QStringLiteral("ecpkg_versions"), QJsonArray{2}},
+                     {QStringLiteral("implementation"),
+                      QStringLiteral("ethercat-ide-project-compiler-1.0.0")},
+                     {QStringLiteral("name"),
+                      QStringLiteral("ethercat-ide-project-compiler")},
+                     {QStringLiteral("version"), 1}}},
+        {QStringLiteral("entrypoints"),
+         QJsonObject{{QStringLiteral("compiler"),
+                      QStringLiteral("bin/embedlabs-ecpkg-compiler")},
+                     {QStringLiteral("provision"),
+                      QStringLiteral("bin/embedlabs-ecpkg-compiler-provision")},
+                     {QStringLiteral("self_test"),
+                      QStringLiteral("bin/embedlabs-ecpkg-compiler-self-test")},
+                     {QStringLiteral("verify"),
+                      QStringLiteral("bin/embedlabs-ecpkg-compiler-verify")}}},
+        {QStringLiteral("files"), compilerFileRecords},
+        {QStringLiteral("format"), QStringLiteral("embedlabs-external-compiler-runtime-bundle-v1")},
+        {QStringLiteral("format_version"), 1},
+        {QStringLiteral("limits"),
+         QJsonObject{{QStringLiteral("max_files"), 256},
+                     {QStringLiteral("max_path_bytes"), 240},
+                     {QStringLiteral("max_single_file_bytes"), 16777216},
+                     {QStringLiteral("max_total_uncompressed_bytes"), 33554432}}},
+        {QStringLiteral("runtime"),
+         QJsonObject{{QStringLiteral("implementation"), QStringLiteral("CPython")},
+                     {QStringLiteral("native_windows_supported"), false},
+                     {QStringLiteral("platforms"),
+                      QJsonArray{QStringLiteral("darwin"), QStringLiteral("linux")}},
+                     {QStringLiteral("python_maximum_exclusive"), QStringLiteral("3.13.0")},
+                     {QStringLiteral("python_minimum"), QStringLiteral("3.11.0")},
+                     {QStringLiteral("requirements_path"), compilerRequirementsPath},
+                     {QStringLiteral("requirements_sha256"),
+                      QString::fromLatin1(sha256(compilerRequirements).value().toHex())}}},
+        {QStringLiteral("signature"),
+         QJsonObject{{QStringLiteral("algorithm"), QStringLiteral("ed25519")},
+                     {QStringLiteral("domain"),
+                      QStringLiteral("embedlabs-ethercat-compiler-runtime-bundle-v1")},
+                     {QStringLiteral("key_id"), QString::fromLatin1(compilerKeyId)},
+                     {QStringLiteral("signature_file"), QStringLiteral("manifest.sig")}}},
+    };
+    QByteArray compilerManifestBytes = QJsonDocument(compilerManifest).toJson(
+        QJsonDocument::Compact);
+    compilerManifestBytes.append('\n');
+    QByteArray compilerSignedBytes("embedlabs-ethercat-compiler-runtime-bundle-v1");
+    compilerSignedBytes.append('\0');
+    compilerSignedBytes.append(compilerManifestBytes);
+    QByteArray compilerSignature(64, '\0');
+    crypto_ed25519_sign(
+        reinterpret_cast<uint8_t *>(compilerSignature.data()),
+        reinterpret_cast<const uint8_t *>(compilerSecretKey.constData()),
+        reinterpret_cast<const uint8_t *>(compilerSignedBytes.constData()),
+        size_t(compilerSignedBytes.size()));
+    compilerSecretKey.fill('\0');
+    compilerSeed.fill('\0');
+    const QString compilerManifestPath
+        = QDir(compilerRoot).filePath(QStringLiteral("manifest.json"));
+    const QString compilerSignaturePath
+        = QDir(compilerRoot).filePath(QStringLiteral("manifest.sig"));
+    QVERIFY(writeFile(compilerManifestPath, compilerManifestBytes));
+    QVERIFY(writeFile(compilerSignaturePath, compilerSignature));
+    QVERIFY(::chmod(QFile::encodeName(compilerManifestPath).constData(), 0644) == 0);
+    QVERIFY(::chmod(QFile::encodeName(compilerSignaturePath).constData(), 0644) == 0);
+    const CompilerRuntimeBundleExpectation compilerExpectation{
+        QStringLiteral("1.0.0"), compilerPublicKey, sha256(compilerManifestBytes)};
+    const auto compilerProfile = CompilerRuntimeBundleProfile::load(
+        Utils::FilePath::fromString(compilerRoot), compilerExpectation);
+    QVERIFY_RESULT(compilerProfile);
+    QCOMPARE(compilerProfile->compilerImportRoot().path(), compilerImportRoot);
+
+    TestEnvironment environment;
+    environment.rewriteProfile(compilerProfile->compilerExecutable().path());
+    RuntimePackageCompilerProcessLimits processLimits;
+    processLimits.commandTimeout = 10s;
+    processLimits.queryTimeout = 2s;
+    processLimits.cancellationGrace = 50ms;
+    const auto makeProvider = [&] {
+        return std::make_unique<ProvisionedRuntimePackageCompilerProvider>(
+            Utils::FilePath::fromString(environment.provisioning),
+            Utils::FilePath::fromString(environment.root),
+            *compilerProfile,
+            *loaded,
+            processLimits);
+    };
+    auto provider = makeProvider();
+    QVERIFY(provider->isAvailable());
+    const auto scheduled = provider->compile(environment.fixture.request);
+    QVERIFY_RESULT(scheduled);
+    QVERIFY(awaitTerminal(*scheduled));
+    const Data::RuntimePackageCompilerCompileResult *compiled = compileResult(**scheduled);
+    const QByteArray executionEvidence
+        = readFile(environmentEvidencePath) + "\nCALLS\n"
+          + readFile(environment.root + QStringLiteral("/compiler-ledger.json.calls"))
+          + "\nCOMPLETION "
+          + QByteArray::number(int((*scheduled)->completionError()));
+    QVERIFY2(compiled && compiled->isSuccess(), executionEvidence.constData());
+
+    QMap<QByteArray, QByteArray> observedEnvironment;
+    for (const QByteArray &line : readFile(environmentEvidencePath).split('\n')) {
+        if (line.isEmpty())
+            continue;
+        const qsizetype separator = line.indexOf('=');
+        QVERIFY(separator > 0);
+        observedEnvironment.insert(line.first(separator), line.sliced(separator + 1));
+    }
+    const QMap<QByteArray, QByteArray> fixedEnvironment{
+        {QByteArray("EMBEDLABS_COMPILER_PYTHON"),
+         loaded->pythonExecutable().toFSPathString().toUtf8()},
+        {QByteArray("LANG"), QByteArray("C")},
+        {QByteArray("LC_ALL"), QByteArray("C")},
+        {QByteArray("PATH"), QByteArray("/usr/bin:/bin")},
+        {QByteArray("PYTHONBREAKPOINT"), QByteArray("0")},
+        {QByteArray("PYTHONDONTWRITEBYTECODE"), QByteArray("1")},
+        {QByteArray("PYTHONHASHSEED"), QByteArray("0")},
+        {QByteArray("PYTHONIOENCODING"), QByteArray("utf-8")},
+        {QByteArray("PYTHONNOUSERSITE"), QByteArray("1")},
+        {QByteArray("PYTHONPATH"), compilerProfile->compilerImportRoot().toFSPathString().toUtf8()},
+        {QByteArray("PYTHONSAFEPATH"), QByteArray("1")},
+        {QByteArray("PYTHONUTF8"), QByteArray("1")},
+        {QByteArray("TZ"), QByteArray("UTC")},
+    };
+    for (auto it = fixedEnvironment.cbegin(); it != fixedEnvironment.cend(); ++it)
+        QCOMPARE(observedEnvironment.value(it.key()), it.value());
+    QSet<QByteArray> remainingEnvironment(observedEnvironment.keyBegin(), observedEnvironment.keyEnd());
+    for (auto it = fixedEnvironment.cbegin(); it != fixedEnvironment.cend(); ++it)
+        remainingEnvironment.remove(it.key());
+    const QSet<QByteArray> permittedShellEnvironment{
+        QByteArray("PWD"), QByteArray("SHLVL"), QByteArray("_")};
+    for (const QByteArray &key : std::as_const(remainingEnvironment))
+        QVERIFY2(permittedShellEnvironment.contains(key), key.constData());
+    const QSet<QByteArray> forbiddenEnvironment{
+        QByteArray("ALL_PROXY"),
+        QByteArray("BASH_ENV"),
+        QByteArray("CONDA_PREFIX"),
+        QByteArray("DYLD_INSERT_LIBRARIES"),
+        QByteArray("DYLD_LIBRARY_PATH"),
+        QByteArray("ENV"),
+        QByteArray("HOME"),
+        QByteArray("HTTPS_PROXY"),
+        QByteArray("HTTP_PROXY"),
+        QByteArray("LD_LIBRARY_PATH"),
+        QByteArray("LD_PRELOAD"),
+        QByteArray("NO_PROXY"),
+        QByteArray("PYTHONHOME"),
+        QByteArray("SHELL"),
+        QByteArray("SSL_CERT_DIR"),
+        QByteArray("SSL_CERT_FILE"),
+        QByteArray("TMPDIR"),
+        QByteArray("USER"),
+        QByteArray("VIRTUAL_ENV"),
+    };
+    for (const QByteArray &key : forbiddenEnvironment)
+        QVERIFY(!observedEnvironment.contains(key));
+    const QString pinnedCompiler = QDir(environment.root)
+                                       .filePath(QStringLiteral("provisioned/%1/compiler")
+                                                     .arg(QString::fromLatin1(
+                                                         sha256(compilerWrapper).value().toHex())));
+    QVERIFY(!QFileInfo::exists(pinnedCompiler));
+
+    struct TamperTarget
+    {
+        QString path;
+        QByteArray exactBytes;
+        int mode = 0;
+    };
+    const TamperTarget compilerTarget{
+        QDir(compilerRoot).filePath(compilerRequirementsPath), compilerRequirements, 0644};
+    const TamperTarget pythonRuntimeTarget{licenseFile, originalLicense, 0644};
+    const TamperTarget pythonCompanionTarget{contractFile, contractBytes, 0644};
+    const auto rewriteTarget = [](const TamperTarget &target, bool tamper) {
+        const QByteArray bytes
+            = tamper ? target.exactBytes + QByteArray("tamper") : target.exactBytes;
+        return writeFile(target.path, bytes)
+               && ::chmod(QFile::encodeName(target.path).constData(), target.mode) == 0;
+    };
+    const auto requestFor = [&](QStringView operationId, quint64 configurationId) {
+        auto request = environment.fixture.request;
+        request.operationId = Data::RuntimePackageCompilerOperationId{operationId.toString()};
+        request.configurationId = configurationId;
+        return request;
+    };
+    const auto profilesAreCurrent = [&] {
+        return bool(compilerProfile->validateCurrent()) && bool(loaded->validateCurrent());
+    };
+
+    const auto preLaunchTamper = [&](const TamperTarget &target,
+                                     QStringView operationId,
+                                     quint64 configurationId) {
+        provider.reset();
+        provider = makeProvider();
+        if (!provider->isAvailable())
+            return false;
+        const auto request = requestFor(operationId, configurationId);
+        const auto job = provider->compile(request);
+        if (!job || !rewriteTarget(target, true))
+            return false;
+        QByteArray expectedCall("compile ");
+        expectedCall.append(request.operationId.value().toLatin1());
+        expectedCall.append('\n');
+        const bool rejected
+            = awaitTerminal(*job)
+              && (*job)->completionError()
+                     == Core::RuntimePackageCompilerJobCompletionError::BackendProcessFailure
+              && !(*job)->result()
+              && !readFile(environment.root + QStringLiteral("/compiler-ledger.json.calls"))
+                      .contains(expectedCall);
+        return rewriteTarget(target, false) && profilesAreCurrent() && rejected;
+    };
+    QVERIFY(preLaunchTamper(
+        compilerTarget,
+        u"04204204-2001-4000-8000-000000001001",
+        4211));
+    QVERIFY(preLaunchTamper(
+        pythonRuntimeTarget,
+        u"04204204-2001-4000-8000-000000001002",
+        4212));
+
+    const auto reconciliationTamper = [&](const TamperTarget &target,
+                                          QStringView operationId,
+                                          quint64 configurationId) {
+        provider.reset();
+        provider = makeProvider();
+        if (!provider->isAvailable())
+            return false;
+        const auto request = requestFor(operationId, configurationId);
+        const auto job = provider->compile(request);
+        if (!job)
+            return false;
+        (*job)->cancel();
+        if (!rewriteTarget(target, true))
+            return false;
+        QByteArray expectedCall("query ");
+        expectedCall.append(request.operationId.value().toLatin1());
+        expectedCall.append('\n');
+        const bool rejected
+            = awaitTerminal(*job)
+              && (*job)->completionError()
+                     == Core::RuntimePackageCompilerJobCompletionError::BackendProcessFailure
+              && !(*job)->result()
+              && !readFile(environment.root + QStringLiteral("/compiler-ledger.json.calls"))
+                      .contains(expectedCall);
+        return rewriteTarget(target, false) && profilesAreCurrent() && rejected;
+    };
+    QVERIFY(reconciliationTamper(
+        compilerTarget,
+        u"04204204-2001-4000-8000-000000002001",
+        4221));
+    QVERIFY(reconciliationTamper(
+        pythonCompanionTarget,
+        u"04204204-2001-4000-8000-000000002002",
+        4222));
+
+    const auto postRunTamper = [&](const TamperTarget &target,
+                                   QStringView operationId,
+                                   quint64 configurationId) {
+        provider.reset();
+        provider = makeProvider();
+        if (!provider->isAvailable())
+            return false;
+        const auto request = requestFor(operationId, configurationId);
+        const auto job = provider->compile(request);
+        if (!job || !awaitJobState(*job, Core::RuntimePackageCompilerJobState::Running)
+            || !rewriteTarget(target, true)) {
+            return false;
+        }
+        const bool rejected
+            = awaitTerminal(*job)
+              && (*job)->completionError()
+                     == Core::RuntimePackageCompilerJobCompletionError::BackendProcessFailure
+              && !(*job)->result()
+              && QFileInfo::exists(
+                  provider->operationRoot(request.operationId).path()
+                  + QStringLiteral("/output/sign-request.json"));
+        return rewriteTarget(target, false) && profilesAreCurrent() && rejected;
+    };
+    QVERIFY(postRunTamper(
+        compilerTarget,
+        u"04204204-2001-4000-8000-000000000004",
+        4231));
+    QVERIFY(postRunTamper(
+        pythonRuntimeTarget,
+        u"04204204-2001-4000-8000-000000010004",
+        4232));
+#endif
+}
+
 void EtherCATProjectCompilerTests::testRuntimeBundleProfileVerifiesInstalledTree()
 {
 #ifndef Q_OS_UNIX
@@ -1414,6 +2501,10 @@ void EtherCATProjectCompilerTests::testRuntimeBundleProfileVerifiesInstalledTree
         {QStringLiteral("bin/embedlabs-ecpkg-compiler-verify"),
          {QByteArray("#!/bin/sh\n"), 0755}},
         {requirementsPath, {requirements, 0644}},
+        {QStringLiteral("runtime/igh_osless/tools/compiler_runtime_entry.py"),
+         {QByteArray("# fixture compiler entry\n"), 0644}},
+        {QStringLiteral("runtime/igh_osless/tools/ide_project_compiler.py"),
+         {QByteArray("# fixture project compiler\n"), 0644}},
         {trustPath, {publicKey, 0644}},
     };
 
@@ -1515,6 +2606,9 @@ void EtherCATProjectCompilerTests::testRuntimeBundleProfileVerifiesInstalledTree
     QCOMPARE(
         loaded->compilerExecutable().path(),
         QDir(root).filePath(QStringLiteral("bin/embedlabs-ecpkg-compiler")));
+    QCOMPARE(
+        loaded->compilerImportRoot().path(),
+        QDir(root).filePath(QStringLiteral("runtime/igh_osless/tools")));
     QVERIFY_RESULT(loaded->validateCurrent());
 
     QVERIFY(::chmod(QFile::encodeName(container).constData(), 0777) == 0);

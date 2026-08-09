@@ -44,6 +44,10 @@ constexpr auto verifyPath = "bin/embedlabs-ecpkg-compiler-verify";
 constexpr auto selfTestPath = "bin/embedlabs-ecpkg-compiler-self-test";
 constexpr auto requirementsPath
     = "runtime/igh_osless/contracts/compiler-runtime-requirements-v1.txt";
+constexpr auto compilerImportRootPath = "runtime/igh_osless/tools";
+constexpr auto compilerRuntimeEntryPath
+    = "runtime/igh_osless/tools/compiler_runtime_entry.py";
+constexpr auto ideProjectCompilerPath = "runtime/igh_osless/tools/ide_project_compiler.py";
 constexpr qsizetype maximumManifestBytes = 1024 * 1024;
 constexpr qsizetype maximumSingleFileBytes = 16 * 1024 * 1024;
 constexpr quint64 maximumTotalBytes = 32 * 1024 * 1024;
@@ -362,6 +366,8 @@ Utils::Result<ParsedManifest> parseManifest(
         {QString::fromLatin1(verifyPath), 0755},
         {QString::fromLatin1(selfTestPath), 0755},
         {QString::fromLatin1(requirementsPath), 0644},
+        {QString::fromLatin1(compilerRuntimeEntryPath), 0644},
+        {QString::fromLatin1(ideProjectCompilerPath), 0644},
         {QStringLiteral("trust/%1.pub").arg(QString::fromLatin1(expectedKeyId.value().toHex())),
          0644},
     };
@@ -759,6 +765,8 @@ Utils::Result<CompilerRuntimeBundleProfile> CompilerRuntimeBundleProfile::loadIm
     result.m_verifyExecutable = result.m_bundleRoot.pathAppended(parsed->verify);
     result.m_selfTestExecutable = result.m_bundleRoot.pathAppended(parsed->selfTest);
     result.m_runtimeRequirements = result.m_bundleRoot.pathAppended(parsed->requirements);
+    result.m_compilerImportRoot = result.m_bundleRoot.pathAppended(
+        QString::fromLatin1(compilerImportRootPath));
     result.m_expectation = std::move(expectation);
     result.m_identity = parsed->identity;
     return result;
@@ -801,7 +809,8 @@ Utils::Result<> CompilerRuntimeBundleProfile::validateCurrent() const
         || current->m_provisionExecutable != m_provisionExecutable
         || current->m_verifyExecutable != m_verifyExecutable
         || current->m_selfTestExecutable != m_selfTestExecutable
-        || current->m_runtimeRequirements != m_runtimeRequirements) {
+        || current->m_runtimeRequirements != m_runtimeRequirements
+        || current->m_compilerImportRoot != m_compilerImportRoot) {
         return Utils::ResultError(
             QStringLiteral("Compiler runtime identity changed after validation."));
     }
@@ -836,6 +845,11 @@ Utils::FilePath CompilerRuntimeBundleProfile::selfTestExecutable() const
 Utils::FilePath CompilerRuntimeBundleProfile::runtimeRequirements() const
 {
     return m_runtimeRequirements;
+}
+
+Utils::FilePath CompilerRuntimeBundleProfile::compilerImportRoot() const
+{
+    return m_compilerImportRoot;
 }
 
 const CompilerRuntimeBundleExpectation &CompilerRuntimeBundleProfile::expectation() const

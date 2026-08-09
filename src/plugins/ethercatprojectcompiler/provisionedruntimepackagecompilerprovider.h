@@ -11,6 +11,9 @@
 
 namespace EtherCAT::ProjectCompiler {
 
+class CompilerPythonRuntimeProfile;
+class CompilerRuntimeBundleProfile;
+
 struct RuntimePackageCompilerProcessLimits
 {
     qsizetype maximumStandardOutputBytes = 1024 * 1024;
@@ -31,6 +34,13 @@ public:
     ProvisionedRuntimePackageCompilerProvider(
         const Utils::FilePath &provisioningFile,
         const Utils::FilePath &compilerRoot,
+        RuntimePackageCompilerProcessLimits limits = {},
+        QObject *parent = nullptr);
+    ProvisionedRuntimePackageCompilerProvider(
+        const Utils::FilePath &provisioningFile,
+        const Utils::FilePath &compilerRoot,
+        const CompilerRuntimeBundleProfile &runtimeBundle,
+        const CompilerPythonRuntimeProfile &pythonRuntime,
         RuntimePackageCompilerProcessLimits limits = {},
         QObject *parent = nullptr);
     ~ProvisionedRuntimePackageCompilerProvider() final;

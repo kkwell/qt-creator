@@ -4,6 +4,8 @@ add_qtc_plugin(EtherCATProjectCompiler
   SOURCES
     compileroperationstore.cpp
     compileroperationstore.h
+    compilerpythonruntimeprofile.cpp
+    compilerpythonruntimeprofile.h
     compilerinputprovisioningprofile.cpp
     compilerinputprovisioningprofile.h
     compilerprovisioningprofile.cpp

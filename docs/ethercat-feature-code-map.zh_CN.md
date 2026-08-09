@@ -381,16 +381,21 @@ python3 scripts/ethercat_feature_locator.py check
 - 运行边界：`engineering-only`
 - 证据边界：`unit`、`artifact`
 - 修改入口：
-  - [`src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp`](../src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp)：外部编译器进程与结果验证；`ProvisionedRuntimePackageCompilerProvider::compile`、`ProvisionedRuntimePackageCompilerProvider::verify`
-  - [`src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp`](../src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp)：签名运行树、外部信任锚和闭集校验；`CompilerRuntimeBundleProfile::load`、`CompilerRuntimeBundleProfile::validateCurrent`
+  - [`src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp`](../src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp)：双 Profile 外部进程、空白环境和启动前后复验；`ProvisionedRuntimePackageCompilerProvider::compile`、`ProvisionedRuntimePackageCompilerProvider::verify`、`validateExecutionFiles`
+  - [`src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp`](../src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp)：API-068 签名编译器树、外部信任锚和导入根闭集校验；`CompilerRuntimeBundleProfile::load`、`CompilerRuntimeBundleProfile::validateCurrent`、`CompilerRuntimeBundleProfile::compilerImportRoot`
+  - [`src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.cpp`](../src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.cpp)：API-070 签名 companion 与可重定位 Python 树闭集校验；`CompilerPythonRuntimeProfile::load`、`CompilerPythonRuntimeProfile::validateCurrent`
   - [`src/plugins/ethercatprojectcompiler/compileroperationstore.cpp`](../src/plugins/ethercatprojectcompiler/compileroperationstore.cpp)：持久幂等账本；`CompilerOperationStore`
 - 公共合同：
   - [`src/plugins/ethercatcore/runtimepackagecompilerprovider.h`](../src/plugins/ethercatcore/runtimepackagecompilerprovider.h)：可替换编译器 Provider 合同；`class ETHERCATCORE_EXPORT RuntimePackageCompilerProvider`
+  - [`src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.h`](../src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.h)：API-068 固定版本、外部公钥和不可变树身份合同；`struct CompilerRuntimeBundleExpectation`、`class CompilerRuntimeBundleProfile`
+  - [`src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.h`](../src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.h)：API-070 固定版本、独立公钥和便携身份合同；`struct CompilerPythonRuntimeExpectation`、`class CompilerPythonRuntimeProfile`
 - 定向测试：
-  - [`src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp`](../src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp)（`artifact`）：`testRuntimeBundleProfileVerifiesInstalledTree`、`testCompileProcessAndImmutableEvidence`、`testFinalizeQueryVerifyAndRestart`
+  - [`src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp`](../src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp)（`artifact`）：`testPythonRuntimeProfileVerifiesSignedInstalledTree`、`testRuntimeBundleProfileVerifiesInstalledTree`、`testCompileProcessAndImmutableEvidence`、`testFinalizeQueryVerifyAndRestart`
 - 相关文档：[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)、[`docs/ethercat-compiler-runtime.md`](../docs/ethercat-compiler-runtime.md)
 - 前置功能：`ethercat.compiler.project-projection`
 - 边界提醒：生产私钥不进入 IDE；签名由外部 signer 或 HSM 完成。
+- 边界提醒：API-068 与 API-070 使用独立外部信任锚；Provider 不从 PATH、系统 Python 或复制出的 wrapper 推断运行时。
+- 边界提醒：当前双 Profile 正例是 unit/artifact 动态修正版 fixture，不代表产品 bootstrap、原生修正版 API-070 或真机验收。
 
 #### `ethercat.compiler.preparation` — 可恢复的编译准备事务
 

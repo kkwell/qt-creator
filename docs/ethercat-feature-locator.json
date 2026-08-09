@@ -506,19 +506,22 @@
       "evidenceBoundary": ["unit", "artifact"],
       "keywords": ["编译器", "compile", "finalize", "verify", "签名", "OperationId"],
       "implementation": [
-        {"path": "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp", "symbols": ["ProvisionedRuntimePackageCompilerProvider::compile", "ProvisionedRuntimePackageCompilerProvider::verify"], "roleZh": "外部编译器进程与结果验证"},
-        {"path": "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp", "symbols": ["CompilerRuntimeBundleProfile::load", "CompilerRuntimeBundleProfile::validateCurrent"], "roleZh": "签名运行树、外部信任锚和闭集校验"},
+        {"path": "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp", "symbols": ["ProvisionedRuntimePackageCompilerProvider::compile", "ProvisionedRuntimePackageCompilerProvider::verify", "validateExecutionFiles"], "roleZh": "双 Profile 外部进程、空白环境和启动前后复验"},
+        {"path": "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp", "symbols": ["CompilerRuntimeBundleProfile::load", "CompilerRuntimeBundleProfile::validateCurrent", "CompilerRuntimeBundleProfile::compilerImportRoot"], "roleZh": "API-068 签名编译器树、外部信任锚和导入根闭集校验"},
+        {"path": "src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.cpp", "symbols": ["CompilerPythonRuntimeProfile::load", "CompilerPythonRuntimeProfile::validateCurrent"], "roleZh": "API-070 签名 companion 与可重定位 Python 树闭集校验"},
         {"path": "src/plugins/ethercatprojectcompiler/compileroperationstore.cpp", "symbols": ["CompilerOperationStore"], "roleZh": "持久幂等账本"}
       ],
       "contracts": [
-        {"path": "src/plugins/ethercatcore/runtimepackagecompilerprovider.h", "symbols": ["class ETHERCATCORE_EXPORT RuntimePackageCompilerProvider"], "roleZh": "可替换编译器 Provider 合同"}
+        {"path": "src/plugins/ethercatcore/runtimepackagecompilerprovider.h", "symbols": ["class ETHERCATCORE_EXPORT RuntimePackageCompilerProvider"], "roleZh": "可替换编译器 Provider 合同"},
+        {"path": "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.h", "symbols": ["struct CompilerRuntimeBundleExpectation", "class CompilerRuntimeBundleProfile"], "roleZh": "API-068 固定版本、外部公钥和不可变树身份合同"},
+        {"path": "src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.h", "symbols": ["struct CompilerPythonRuntimeExpectation", "class CompilerPythonRuntimeProfile"], "roleZh": "API-070 固定版本、独立公钥和便携身份合同"}
       ],
       "tests": [
-        {"path": "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "cases": ["testRuntimeBundleProfileVerifiesInstalledTree", "testCompileProcessAndImmutableEvidence", "testFinalizeQueryVerifyAndRestart"], "kind": "artifact"}
+        {"path": "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "cases": ["testPythonRuntimeProfileVerifiesSignedInstalledTree", "testRuntimeBundleProfileVerifiesInstalledTree", "testCompileProcessAndImmutableEvidence", "testFinalizeQueryVerifyAndRestart"], "kind": "artifact"}
       ],
       "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-compiler-runtime.md"],
       "dependsOn": ["ethercat.compiler.project-projection"],
-      "notesZh": ["生产私钥不进入 IDE；签名由外部 signer 或 HSM 完成。"]
+      "notesZh": ["生产私钥不进入 IDE；签名由外部 signer 或 HSM 完成。", "API-068 与 API-070 使用独立外部信任锚；Provider 不从 PATH、系统 Python 或复制出的 wrapper 推断运行时。", "当前双 Profile 正例是 unit/artifact 动态修正版 fixture，不代表产品 bootstrap、原生修正版 API-070 或真机验收。"]
     },
     {
       "id": "ethercat.compiler.preparation",
@@ -1082,11 +1085,11 @@
       "severity": "p0",
       "affectedFeatures": ["ethercat.compiler.project-projection", "ethercat.compiler.backend", "ethercat.compiler.preparation", "ethercat.workbench.deployment"],
       "problemZh": "Mac 端受信编译器可执行 bundle、provisioning.json 和当前工程 compile-inputs 尚未形成用户可重复安装和发现的交付路径。",
-      "currentBoundaryZh": "API-068 完整运行树已在 Mac 验签、自检并接入 IDE 严格闭集校验；API-069 供应链验收通过，但其 Python.org 系统安装会修改全局目录与 shell profile，未获授权且不能作为产品运行时。Provider 完整树执行、可重定位 Python 和当前工程 input catalog 仍未闭合。",
-      "nextActionZh": "完成 Provider 的完整运行树执行和空白环境门禁，验收无需 root/不改系统的 API-070 可重定位 Python，再单独实现当前 ProjectSnapshot input catalog bridge。",
-      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-compiler-runtime.md", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilerplugin.cpp", "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp", "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp"],
+      "currentBoundaryZh": "IDE 已实现 API-068 编译器树与 API-070 可重定位 Python 树的独立闭集 Profile；双 Profile Provider 路径在进程启动前及退出后复验两树，并固定空白环境和 API-068 导入根。当前证据仅为 unit/artifact 动态修正版 fixture；已收到的 API-070 1.0.0 因 identity_fields 契约缺口仍 fail closed，修正版尚未交付。产品插件固定版本 bootstrap、管理员 provisioning 和当前 ProjectSnapshot input catalog 仍未实现。",
+      "nextActionZh": "先用独立外部公钥完成修正版 API-070 的 Mac 原生 arm64 验签、双根迁移和联合自检；再分别实现产品固定版本 bootstrap 与管理员 provisioning，最后接入当前 ProjectSnapshot input catalog bridge。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-compiler-runtime.md", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilerplugin.cpp", "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp", "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.h", "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp", "src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.h", "src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.cpp", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp"],
       "resolutionCriteriaZh": ["干净环境可发现并校验固定版本和哈希的编译器。", "当前工程可确定性生成输入并完成 compile/query/finalize/verify。", "重启和响应丢失后可由持久 OperationId 恢复。"],
-      "notesZh": ["生产私钥不得进入 IDE 或编译器 bundle。", "API-068 runtime key 只绑定 exact 1.0.0 release，不能作为未来产品全局信任根。", "API-068 provisioning 输出完整 compiler request，不能覆盖 IDE 当前同名 compile-input catalog。"]
+      "notesZh": ["生产私钥不得进入 IDE 或编译器 bundle。", "API-068 与 API-070 的 release key 必须独立固定，当前证据不能作为未来产品全局信任根。", "产品插件仍故意使用 legacy constructor；在 bootstrap 完成前不得回退到 PATH、系统 Python 或未验证目录。", "管理员 provisioning 必须是独立、可审计的安装流程，不能由产品插件启动时隐式执行。", "API-068 provisioning 输出完整 compiler request，不能覆盖 IDE 当前同名 compile-input catalog。"]
     },
     {
       "id": "ethercat.issue.detached-sign-ui-flow",

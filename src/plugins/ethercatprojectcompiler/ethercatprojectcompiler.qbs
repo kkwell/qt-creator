@@ -19,6 +19,8 @@ Project {
         files: [
             "compileroperationstore.cpp",
             "compileroperationstore.h",
+            "compilerpythonruntimeprofile.cpp",
+            "compilerpythonruntimeprofile.h",
             "compilerinputprovisioningprofile.cpp",
             "compilerinputprovisioningprofile.h",
             "compilerprovisioningprofile.cpp",

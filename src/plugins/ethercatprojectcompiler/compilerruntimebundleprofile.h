@@ -62,6 +62,7 @@ public:
     Utils::FilePath verifyExecutable() const;
     Utils::FilePath selfTestExecutable() const;
     Utils::FilePath runtimeRequirements() const;
+    Utils::FilePath compilerImportRoot() const;
     const CompilerRuntimeBundleExpectation &expectation() const;
     const CompilerRuntimeBundleIdentity &identity() const;
 
@@ -76,6 +77,7 @@ private:
     Utils::FilePath m_verifyExecutable;
     Utils::FilePath m_selfTestExecutable;
     Utils::FilePath m_runtimeRequirements;
+    Utils::FilePath m_compilerImportRoot;
     CompilerRuntimeBundleExpectation m_expectation;
     CompilerRuntimeBundleIdentity m_identity;
 };

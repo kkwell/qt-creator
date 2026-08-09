@@ -3,13 +3,16 @@
 #include "provisionedruntimepackagecompilerprovider.h"
 
 #include "compileroperationstore.h"
+#include "compilerpythonruntimeprofile.h"
 #include "compilerprovisioningprofile.h"
+#include "compilerruntimebundleprofile.h"
 #include "ethercatprojectcompilerconstants.h"
 #include "ethercatprojectcompilertr.h"
 
 #include <ethercatcore/runtimepackagecompilercodec.h>
 
 #include <utils/commandline.h>
+#include <utils/environment.h>
 #include <utils/qtcprocess.h>
 
 #include <QProcess>
@@ -98,6 +101,7 @@ public:
         JobResultDecoder decodePrimary;
         QueryResultDecoder decodeReconciliation;
         std::function<Utils::Result<>(const CompilerOperationLease &)> validateProvisioning;
+        std::optional<Utils::Environment> processEnvironment;
     };
 
     explicit ProvisionedCompilerJob(Setup setup, QObject *parent)
@@ -192,6 +196,8 @@ private:
         m_timedOut = false;
         m_process.setCommand(command);
         m_process.setWorkingDirectory(m_setup.workingDirectory);
+        if (m_setup.processEnvironment)
+            m_process.setEnvironment(*m_setup.processEnvironment);
         m_process.setProcessChannelMode(QProcess::SeparateChannels);
         m_process.setAbortOnMetaChars(true);
         m_process.start();
@@ -265,6 +271,11 @@ private:
         if (m_shutdown)
             return;
         const Core::RuntimePackageCompilerProcessOutput output = processOutput();
+        if (!m_setup.validateProvisioning
+            || !m_setup.validateProvisioning(m_setup.lease)) {
+            finishWithError(Core::RuntimePackageCompilerJobCompletionError::BackendProcessFailure);
+            return;
+        }
 
         if (m_phase == Phase::Reconciliation) {
             reconciliationDone(output);
@@ -355,7 +366,9 @@ public:
         ProvisionedRuntimePackageCompilerProvider *q,
         const Utils::FilePath &provisioningFile,
         const Utils::FilePath &compilerRoot,
-        RuntimePackageCompilerProcessLimits processLimits)
+        RuntimePackageCompilerProcessLimits processLimits,
+        std::optional<CompilerRuntimeBundleProfile> runtimeBundle = std::nullopt,
+        std::optional<CompilerPythonRuntimeProfile> pythonRuntime = std::nullopt)
         : q(q)
         , store(compilerRoot)
         , limits(processLimits)
@@ -383,16 +396,6 @@ public:
             profile.reset();
             return;
         }
-        const Utils::Result<Utils::FilePath> pinnedExecutable = store.pinProvisionedFile(
-            *lease,
-            profile->exactExecutableBytes(),
-            profile->executableSha256(),
-            CompilerProvisionedFileKind::Executable);
-        if (!pinnedExecutable) {
-            error = pinnedExecutable.error();
-            profile.reset();
-            return;
-        }
         const Utils::Result<Utils::FilePath> pinnedPublicKey = store.pinProvisionedFile(
             *lease,
             profile->exactProductionPublicKeyBytes(),
@@ -403,14 +406,99 @@ public:
             profile.reset();
             return;
         }
-        if (const Utils::Result<> pinned
-            = profile->usePinnedFiles(*pinnedExecutable, *pinnedPublicKey);
-            !pinned) {
-            error = pinned.error();
+
+        if (runtimeBundle.has_value() != pythonRuntime.has_value()) {
+            error = Tr::tr("Compiler and Python runtime profiles must be provisioned together.");
             profile.reset();
             return;
         }
+
+        Utils::FilePath selectedExecutable;
+        if (runtimeBundle) {
+            if (const Utils::Result<> current = runtimeBundle->validateCurrent(); !current) {
+                error = current.error();
+                profile.reset();
+                return;
+            }
+            if (const Utils::Result<> current = pythonRuntime->validateCurrent(); !current) {
+                error = current.error();
+                profile.reset();
+                return;
+            }
+            selectedExecutable = runtimeBundle->compilerExecutable();
+            this->runtimeBundle = std::move(runtimeBundle);
+            this->pythonRuntime = std::move(pythonRuntime);
+            processEnvironment.emplace(Utils::NameValuePairs{
+                {QStringLiteral("EMBEDLABS_COMPILER_PYTHON"),
+                 this->pythonRuntime->pythonExecutable().toFSPathString()},
+                {QStringLiteral("LANG"), QStringLiteral("C")},
+                {QStringLiteral("LC_ALL"), QStringLiteral("C")},
+                {QStringLiteral("PATH"), QStringLiteral("/usr/bin:/bin")},
+                {QStringLiteral("PYTHONBREAKPOINT"), QStringLiteral("0")},
+                {QStringLiteral("PYTHONDONTWRITEBYTECODE"), QStringLiteral("1")},
+                {QStringLiteral("PYTHONHASHSEED"), QStringLiteral("0")},
+                {QStringLiteral("PYTHONIOENCODING"), QStringLiteral("utf-8")},
+                {QStringLiteral("PYTHONNOUSERSITE"), QStringLiteral("1")},
+                {QStringLiteral("PYTHONPATH"),
+                 this->runtimeBundle->compilerImportRoot().toFSPathString()},
+                {QStringLiteral("PYTHONSAFEPATH"), QStringLiteral("1")},
+                {QStringLiteral("PYTHONUTF8"), QStringLiteral("1")},
+                {QStringLiteral("TZ"), QStringLiteral("UTC")},
+            });
+        } else {
+            const Utils::Result<Utils::FilePath> pinnedExecutable = store.pinProvisionedFile(
+                *lease,
+                profile->exactExecutableBytes(),
+                profile->executableSha256(),
+                CompilerProvisionedFileKind::Executable);
+            if (!pinnedExecutable) {
+                error = pinnedExecutable.error();
+                profile.reset();
+                return;
+            }
+            selectedExecutable = *pinnedExecutable;
+        }
+        if (const Utils::Result<> pinned
+            = profile->usePinnedFiles(selectedExecutable, *pinnedPublicKey);
+            !pinned) {
+            error = pinned.error();
+            profile.reset();
+            this->runtimeBundle.reset();
+            this->pythonRuntime.reset();
+            return;
+        }
         q->setAvailable(true);
+    }
+
+    Utils::Result<> validateExecutionFiles(const CompilerOperationLease &lease)
+    {
+        if (!profile)
+            return Utils::ResultError(error);
+        if (runtimeBundle) {
+            if (const Utils::Result<> current = runtimeBundle->validateCurrent(); !current)
+                return current;
+            if (!pythonRuntime)
+                return Utils::ResultError(Tr::tr("Python runtime profile is unavailable."));
+            if (const Utils::Result<> current = pythonRuntime->validateCurrent(); !current)
+                return current;
+        } else if (const Utils::Result<> executable = store.validatePinnedProvisionedFile(
+                       lease,
+                       profile->executable(),
+                       profile->executableSha256(),
+                       CompilerProvisionedFileKind::Executable);
+                   !executable) {
+            return executable;
+        }
+        return store.validatePinnedProvisionedFile(
+            lease,
+            profile->productionPublicKey(),
+            profile->productionPublicKeySha256(),
+            CompilerProvisionedFileKind::ProductionPublicKey);
+    }
+
+    Utils::FilePath compilerExecutable() const
+    {
+        return runtimeBundle ? runtimeBundle->compilerExecutable() : profile->executable();
     }
 
     Utils::Result<> validateProfile(const Data::RuntimePackageCompilerContractIdentity &identity)
@@ -425,6 +513,25 @@ public:
             q->setAvailable(false);
             return Utils::ResultError(error);
         }
+        if (runtimeBundle) {
+            const Utils::Result<> bundleCurrent = runtimeBundle->validateCurrent();
+            if (!bundleCurrent) {
+                error = bundleCurrent.error();
+                q->setAvailable(false);
+                return Utils::ResultError(error);
+            }
+            if (!pythonRuntime) {
+                error = Tr::tr("Python runtime profile is unavailable.");
+                q->setAvailable(false);
+                return Utils::ResultError(error);
+            }
+            const Utils::Result<> pythonCurrent = pythonRuntime->validateCurrent();
+            if (!pythonCurrent) {
+                error = pythonCurrent.error();
+                q->setAvailable(false);
+                return Utils::ResultError(error);
+            }
+        }
         if (identity != profile->contractIdentity()) {
             return Utils::ResultError(
                 Tr::tr("Compiler request contract does not match provisioning."));
@@ -436,22 +543,14 @@ public:
     {
         if (shuttingDown)
             return Utils::ResultError(Tr::tr("Compiler provider is shutting down."));
+        setup.processEnvironment = processEnvironment;
         setup.validateProvisioning = [this](const CompilerOperationLease &lease) -> Utils::Result<> {
-            if (!profile)
-                return Utils::ResultError(error);
-            if (const Utils::Result<> executable = store.validatePinnedProvisionedFile(
-                    lease,
-                    profile->executable(),
-                    profile->executableSha256(),
-                    CompilerProvisionedFileKind::Executable);
-                !executable) {
-                return executable;
+            const Utils::Result<> current = validateExecutionFiles(lease);
+            if (!current) {
+                error = current.error();
+                q->setAvailable(false);
             }
-            return store.validatePinnedProvisionedFile(
-                lease,
-                profile->productionPublicKey(),
-                profile->productionPublicKeySha256(),
-                CompilerProvisionedFileKind::ProductionPublicKey);
+            return current;
         };
         auto *job = new ProvisionedCompilerJob(std::move(setup), q);
         jobs.insert(job);
@@ -487,7 +586,7 @@ public:
         if (!profile)
             return std::nullopt;
         return commandLine(
-            profile->executable(),
+            compilerExecutable(),
             QStringLiteral("query"),
             {QStringLiteral("--operation-id"),
              operationId.value(),
@@ -499,6 +598,9 @@ public:
     CompilerOperationStore store;
     RuntimePackageCompilerProcessLimits limits;
     std::optional<CompilerProvisioningProfile> profile;
+    std::optional<CompilerRuntimeBundleProfile> runtimeBundle;
+    std::optional<CompilerPythonRuntimeProfile> pythonRuntime;
+    std::optional<Utils::Environment> processEnvironment;
     QString error;
     QSet<ProvisionedCompilerJob *> jobs;
     bool shuttingDown = false;
@@ -512,6 +614,24 @@ ProvisionedRuntimePackageCompilerProvider::ProvisionedRuntimePackageCompilerProv
     : Core::RuntimePackageCompilerProvider(
           Constants::PROJECT_COMPILER_PROVIDER_ID, Tr::tr("Provisioned project compiler"), parent)
     , d(std::make_unique<Private>(this, provisioningFile, compilerRoot, limits))
+{}
+
+ProvisionedRuntimePackageCompilerProvider::ProvisionedRuntimePackageCompilerProvider(
+    const Utils::FilePath &provisioningFile,
+    const Utils::FilePath &compilerRoot,
+    const CompilerRuntimeBundleProfile &runtimeBundle,
+    const CompilerPythonRuntimeProfile &pythonRuntime,
+    RuntimePackageCompilerProcessLimits limits,
+    QObject *parent)
+    : Core::RuntimePackageCompilerProvider(
+          Constants::PROJECT_COMPILER_PROVIDER_ID, Tr::tr("Provisioned project compiler"), parent)
+    , d(std::make_unique<Private>(
+          this,
+          provisioningFile,
+          compilerRoot,
+          limits,
+          runtimeBundle,
+          pythonRuntime))
 {}
 
 ProvisionedRuntimePackageCompilerProvider::~ProvisionedRuntimePackageCompilerProvider()
@@ -633,7 +753,7 @@ Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompil
     return d->schedule({
         Data::RuntimePackageCompilerCommand::Compile,
         commandLine(
-            d->profile->executable(),
+            d->compilerExecutable(),
             QStringLiteral("compile"),
             {QStringLiteral("--request"),
              paths->compileRequest.toFSPathString(),
@@ -653,6 +773,7 @@ Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompil
         std::move(*lease),
         std::move(decoder),
         d->queryDecoder(queryRequest),
+        {},
         {},
     });
 }
@@ -728,7 +849,7 @@ Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompil
     return d->schedule({
         Data::RuntimePackageCompilerCommand::Finalize,
         commandLine(
-            d->profile->executable(),
+            d->compilerExecutable(),
             QStringLiteral("finalize"),
             {QStringLiteral("--request"),
              paths->compileRequest.toFSPathString(),
@@ -752,6 +873,7 @@ Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompil
         std::move(*lease),
         std::move(decoder),
         d->queryDecoder(queryRequest),
+        {},
         {},
     });
 }
@@ -797,6 +919,7 @@ Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompil
             std::move(decoder),
             {},
             {},
+            {},
         });
     }
     JobResultDecoder decoder = [decode = d->queryDecoder(request)](
@@ -820,6 +943,7 @@ Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompil
         d->limits.maximumStandardErrorBytes,
         std::move(*lease),
         std::move(decoder),
+        {},
         {},
         {},
     });
@@ -861,7 +985,7 @@ Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompil
     return d->schedule({
         Data::RuntimePackageCompilerCommand::Verify,
         commandLine(
-            d->profile->executable(),
+            d->compilerExecutable(),
             QStringLiteral("verify"),
             {QStringLiteral("--package"),
              paths->package.toFSPathString(),
@@ -876,6 +1000,7 @@ Utils::Result<Core::RuntimePackageCompilerJob *> ProvisionedRuntimePackageCompil
         d->limits.maximumStandardErrorBytes,
         std::move(*lease),
         std::move(decoder),
+        {},
         {},
         {},
     });
