@@ -1,5 +1,6 @@
 {
   "apiVersion": "controller-tools/v1",
+  "contractRevision": "controller-tools/v1.1",
   "mcpProtocolVersion": "2025-11-25",
   "tools": [
     {
@@ -613,6 +614,607 @@
           }
         },
         "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "topology.list-selected",
+      "title": "List selected topology evidence",
+      "description": "Return the current read-only evidence for each topology source explicitly selected in the IDE. This tool never scans a bus or calls a Provider directly.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "oneOf": [
+          {
+            "$ref": "#/$defs/successEnvelope"
+          },
+          {
+            "$ref": "#/$defs/errorEnvelope"
+          }
+        ],
+        "$defs": {
+          "identity": {
+            "type": "object",
+            "required": [
+              "vendorId",
+              "productCode",
+              "revision"
+            ],
+            "properties": {
+              "vendorId": {
+                "type": "string",
+                "pattern": "^0x[0-9a-f]{8}$"
+              },
+              "productCode": {
+                "type": "string",
+                "pattern": "^0x[0-9a-f]{8}$"
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^0x[0-9a-f]{8}$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "realSlave": {
+            "type": "object",
+            "required": [
+              "position",
+              "identity",
+              "serial",
+              "stationAddress",
+              "alState"
+            ],
+            "properties": {
+              "position": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "identity": {
+                "$ref": "#/$defs/identity"
+              },
+              "serial": {
+                "type": "string",
+                "pattern": "^[0-9]+$"
+              },
+              "stationAddress": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "alState": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              }
+            },
+            "additionalProperties": false
+          },
+          "mockSlave": {
+            "type": "object",
+            "required": [
+              "position",
+              "name",
+              "identity",
+              "serial",
+              "alias"
+            ],
+            "properties": {
+              "position": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "name": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "identity": {
+                "$ref": "#/$defs/identity"
+              },
+              "serial": {
+                "type": "string",
+                "pattern": "^[0-9]+$"
+              },
+              "alias": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              }
+            },
+            "additionalProperties": false
+          },
+          "freshRecord": {
+            "type": "object",
+            "required": [
+              "controllerId",
+              "projectId",
+              "masterId",
+              "source",
+              "lookupStatus",
+              "freshness",
+              "current",
+              "generationHash",
+              "evidenceHash",
+              "observedAt",
+              "complete",
+              "slaves"
+            ],
+            "properties": {
+              "controllerId": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 128
+              },
+              "projectId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "masterId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "real-controller",
+                  "mock-scan"
+                ]
+              },
+              "lookupStatus": {
+                "type": "string",
+                "const": "success"
+              },
+              "freshness": {
+                "type": "string",
+                "const": "fresh"
+              },
+              "current": {
+                "type": "boolean",
+                "const": true
+              },
+              "generationHash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "evidenceHash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "observedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "complete": {
+                "type": "boolean",
+                "const": true
+              },
+              "slaves": {
+                "type": "array",
+                "maxItems": 4096
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "source": {
+                      "const": "real-controller"
+                    }
+                  },
+                  "required": [
+                    "source"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "slaves": {
+                      "items": {
+                        "$ref": "#/$defs/realSlave"
+                      }
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "slaves": {
+                      "items": {
+                        "$ref": "#/$defs/mockSlave"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "additionalProperties": false
+          },
+          "unavailableRecord": {
+            "type": "object",
+            "required": [
+              "controllerId",
+              "projectId",
+              "masterId",
+              "source",
+              "lookupStatus",
+              "freshness",
+              "current"
+            ],
+            "properties": {
+              "controllerId": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 128
+              },
+              "projectId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "masterId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "real-controller",
+                  "mock-scan"
+                ]
+              },
+              "lookupStatus": {
+                "type": "string",
+                "enum": [
+                  "success",
+                  "invalid-selection",
+                  "provider-not-found",
+                  "provider-kind-mismatch",
+                  "evidence-unavailable",
+                  "scope-mismatch",
+                  "evidence-invalid"
+                ]
+              },
+              "freshness": {
+                "type": "string",
+                "enum": [
+                  "stale",
+                  "incomplete",
+                  "unavailable"
+                ]
+              },
+              "current": {
+                "type": "boolean",
+                "const": false
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "lookupStatus": {
+                      "const": "success"
+                    }
+                  },
+                  "required": [
+                    "lookupStatus"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "freshness": {
+                      "enum": [
+                        "stale",
+                        "incomplete"
+                      ]
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "freshness": {
+                      "const": "unavailable"
+                    }
+                  }
+                }
+              }
+            ],
+            "additionalProperties": false
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "apiVersion",
+              "source",
+              "readOnly",
+              "scanTriggeredByRequest",
+              "topologies"
+            ],
+            "properties": {
+              "apiVersion": {
+                "type": "string",
+                "const": "selected-topology-evidence/v1"
+              },
+              "source": {
+                "type": "string",
+                "const": "ide-automation-service"
+              },
+              "readOnly": {
+                "type": "boolean",
+                "const": true
+              },
+              "scanTriggeredByRequest": {
+                "type": "boolean",
+                "const": false
+              },
+              "topologies": {
+                "type": "array",
+                "maxItems": 512,
+                "items": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/freshRecord"
+                    },
+                    {
+                      "$ref": "#/$defs/unavailableRecord"
+                    }
+                  ]
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "client": {
+            "type": "object",
+            "required": [
+              "name",
+              "version"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "successAudit": {
+            "type": "object",
+            "required": [
+              "transport",
+              "sessionId",
+              "client",
+              "requestHash",
+              "beforeStateHash",
+              "afterStateHash",
+              "decision",
+              "recordedAt"
+            ],
+            "properties": {
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "mcp",
+                  "rest"
+                ]
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "client": {
+                "$ref": "#/$defs/client"
+              },
+              "requestHash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "beforeStateHash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "afterStateHash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "decision": {
+                "type": "string",
+                "const": "allow-selected-topology-evidence"
+              },
+              "recordedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": false
+          },
+          "errorAudit": {
+            "type": "object",
+            "required": [
+              "transport",
+              "sessionId",
+              "client",
+              "requestHash",
+              "beforeStateHash",
+              "afterStateHash",
+              "decision",
+              "recordedAt"
+            ],
+            "properties": {
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "mcp",
+                  "rest"
+                ]
+              },
+              "sessionId": {
+                "type": "string"
+              },
+              "client": {
+                "$ref": "#/$defs/client"
+              },
+              "requestHash": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "beforeStateHash": {
+                "type": "string",
+                "const": ""
+              },
+              "afterStateHash": {
+                "type": "string",
+                "const": ""
+              },
+              "decision": {
+                "type": "string",
+                "const": "deny"
+              },
+              "recordedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": false
+          },
+          "errorDetails": {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 1,
+            "properties": {
+              "argument": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "path",
+              "recovery"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "pattern": "^CT[0-9]{3}_[A-Z0-9_]+$"
+              },
+              "message": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "recovery": {
+                "type": "string"
+              },
+              "details": {
+                "$ref": "#/$defs/errorDetails"
+              }
+            },
+            "additionalProperties": false
+          },
+          "successEnvelope": {
+            "type": "object",
+            "required": [
+              "apiVersion",
+              "operationId",
+              "ok",
+              "data",
+              "warnings",
+              "audit"
+            ],
+            "properties": {
+              "apiVersion": {
+                "type": "string",
+                "const": "controller-tools/v1"
+              },
+              "operationId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "ok": {
+                "type": "boolean",
+                "const": true
+              },
+              "data": {
+                "$ref": "#/$defs/data"
+              },
+              "warnings": {
+                "type": "array",
+                "maxItems": 0
+              },
+              "audit": {
+                "$ref": "#/$defs/successAudit"
+              }
+            },
+            "additionalProperties": false
+          },
+          "errorEnvelope": {
+            "type": "object",
+            "required": [
+              "apiVersion",
+              "operationId",
+              "ok",
+              "data",
+              "warnings",
+              "audit",
+              "error"
+            ],
+            "properties": {
+              "apiVersion": {
+                "type": "string",
+                "const": "controller-tools/v1"
+              },
+              "operationId": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "ok": {
+                "type": "boolean",
+                "const": false
+              },
+              "data": {
+                "type": "object",
+                "maxProperties": 0,
+                "additionalProperties": false
+              },
+              "warnings": {
+                "type": "array",
+                "maxItems": 0
+              },
+              "audit": {
+                "$ref": "#/$defs/errorAudit"
+              },
+              "error": {
+                "$ref": "#/$defs/error"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
       },
       "annotations": {
         "readOnlyHint": true,

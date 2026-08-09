@@ -3,13 +3,13 @@
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "info": {
     "title": "EtherCAT Controller Tools",
-    "version": "1.0.0",
-    "description": "Loopback controller-tools-v1 facade. Controller views remain Mock-only/read-only; the semantic action tool submits approval-required signed intent to the shared IDE service and never calls a Provider directly."
+    "version": "1.1.0",
+    "description": "Loopback controller-tools/v1.1 facade. Legacy controller views remain Mock-only/read-only. The additive selected-topology evidence view reports only explicit IDE selections, remains read-only, and never scans or calls a Provider directly."
   },
   "servers": [
     {
       "url": "http://127.0.0.1:8765",
-      "description": "Loopback mock server"
+      "description": "IDE-owned loopback gateway"
     }
   ],
   "security": [],
@@ -19,6 +19,9 @@
     },
     {
       "name": "Controller"
+    },
+    {
+      "name": "Topology"
     },
     {
       "name": "Adapter"
@@ -60,6 +63,35 @@
           }
         },
         "x-read-only": true
+      }
+    },
+    "/api/controller-tools/v1/topologies/selected": {
+      "get": {
+        "tags": [
+          "Topology"
+        ],
+        "operationId": "topology.list-selected",
+        "summary": "List explicitly selected topology evidence",
+        "description": "Returns current read-only Fresh evidence or an Unavailable record for every topology source explicitly selected in the IDE. It never triggers a scan.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OperationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/SelectedTopologyEnvelope"
+          },
+          "400": {
+            "$ref": "#/components/responses/SelectedTopologyEnvelope"
+          },
+          "409": {
+            "$ref": "#/components/responses/SelectedTopologyEnvelope"
+          }
+        },
+        "x-read-only": true,
+        "x-scan-triggered-by-request": false,
+        "x-direct-provider-calls": false
       }
     },
     "/api/controller-tools/v1/controllers/{controllerId}/capabilities": {
@@ -613,6 +645,581 @@
       }
     },
     "schemas": {
+      "SelectedTopologyIdentity": {
+        "type": "object",
+        "required": [
+          "vendorId",
+          "productCode",
+          "revision"
+        ],
+        "properties": {
+          "vendorId": {
+            "type": "string",
+            "pattern": "^0x[0-9a-f]{8}$"
+          },
+          "productCode": {
+            "type": "string",
+            "pattern": "^0x[0-9a-f]{8}$"
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^0x[0-9a-f]{8}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedRealTopologySlave": {
+        "type": "object",
+        "required": [
+          "position",
+          "identity",
+          "serial",
+          "stationAddress",
+          "alState"
+        ],
+        "properties": {
+          "position": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "identity": {
+            "$ref": "#/components/schemas/SelectedTopologyIdentity"
+          },
+          "serial": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          },
+          "stationAddress": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "alState": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedMockTopologySlave": {
+        "type": "object",
+        "required": [
+          "position",
+          "name",
+          "identity",
+          "serial",
+          "alias"
+        ],
+        "properties": {
+          "position": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "identity": {
+            "$ref": "#/components/schemas/SelectedTopologyIdentity"
+          },
+          "serial": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          },
+          "alias": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologyFreshRecord": {
+        "type": "object",
+        "required": [
+          "controllerId",
+          "projectId",
+          "masterId",
+          "source",
+          "lookupStatus",
+          "freshness",
+          "current",
+          "generationHash",
+          "evidenceHash",
+          "observedAt",
+          "complete",
+          "slaves"
+        ],
+        "properties": {
+          "controllerId": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128
+          },
+          "projectId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "masterId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "real-controller",
+              "mock-scan"
+            ]
+          },
+          "lookupStatus": {
+            "type": "string",
+            "const": "success"
+          },
+          "freshness": {
+            "type": "string",
+            "const": "fresh"
+          },
+          "current": {
+            "type": "boolean",
+            "const": true
+          },
+          "generationHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "evidenceHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "complete": {
+            "type": "boolean",
+            "const": true
+          },
+          "slaves": {
+            "type": "array",
+            "maxItems": 4096
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "source": {
+                  "const": "real-controller"
+                }
+              },
+              "required": [
+                "source"
+              ]
+            },
+            "then": {
+              "properties": {
+                "slaves": {
+                  "items": {
+                    "$ref": "#/components/schemas/SelectedRealTopologySlave"
+                  }
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "slaves": {
+                  "items": {
+                    "$ref": "#/components/schemas/SelectedMockTopologySlave"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "additionalProperties": false
+      },
+      "SelectedTopologyUnavailableRecord": {
+        "type": "object",
+        "description": "An explicitly selected source whose current evidence cannot be published. This object intentionally has no slaves field.",
+        "required": [
+          "controllerId",
+          "projectId",
+          "masterId",
+          "source",
+          "lookupStatus",
+          "freshness",
+          "current"
+        ],
+        "properties": {
+          "controllerId": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128
+          },
+          "projectId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "masterId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "real-controller",
+              "mock-scan"
+            ]
+          },
+          "lookupStatus": {
+            "type": "string",
+            "enum": [
+              "success",
+              "invalid-selection",
+              "provider-not-found",
+              "provider-kind-mismatch",
+              "evidence-unavailable",
+              "scope-mismatch",
+              "evidence-invalid"
+            ]
+          },
+          "freshness": {
+            "type": "string",
+            "enum": [
+              "stale",
+              "incomplete",
+              "unavailable"
+            ]
+          },
+          "current": {
+            "type": "boolean",
+            "const": false
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "lookupStatus": {
+                  "const": "success"
+                }
+              },
+              "required": [
+                "lookupStatus"
+              ]
+            },
+            "then": {
+              "properties": {
+                "freshness": {
+                  "enum": [
+                    "stale",
+                    "incomplete"
+                  ]
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "freshness": {
+                  "const": "unavailable"
+                }
+              }
+            }
+          }
+        ],
+        "additionalProperties": false
+      },
+      "SelectedTopologyData": {
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "source",
+          "readOnly",
+          "scanTriggeredByRequest",
+          "topologies"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "selected-topology-evidence/v1"
+          },
+          "source": {
+            "type": "string",
+            "const": "ide-automation-service"
+          },
+          "readOnly": {
+            "type": "boolean",
+            "const": true
+          },
+          "scanTriggeredByRequest": {
+            "type": "boolean",
+            "const": false
+          },
+          "topologies": {
+            "type": "array",
+            "maxItems": 512,
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/SelectedTopologyFreshRecord"
+                },
+                {
+                  "$ref": "#/components/schemas/SelectedTopologyUnavailableRecord"
+                }
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologyAuditClient": {
+        "type": "object",
+        "required": [
+          "name",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologySuccessAudit": {
+        "type": "object",
+        "required": [
+          "transport",
+          "sessionId",
+          "client",
+          "requestHash",
+          "beforeStateHash",
+          "afterStateHash",
+          "decision",
+          "recordedAt"
+        ],
+        "properties": {
+          "transport": {
+            "type": "string",
+            "enum": [
+              "mcp",
+              "rest"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "client": {
+            "$ref": "#/components/schemas/SelectedTopologyAuditClient"
+          },
+          "requestHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "beforeStateHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "afterStateHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "decision": {
+            "type": "string",
+            "const": "allow-selected-topology-evidence"
+          },
+          "recordedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologyErrorAudit": {
+        "type": "object",
+        "required": [
+          "transport",
+          "sessionId",
+          "client",
+          "requestHash",
+          "beforeStateHash",
+          "afterStateHash",
+          "decision",
+          "recordedAt"
+        ],
+        "properties": {
+          "transport": {
+            "type": "string",
+            "enum": [
+              "mcp",
+              "rest"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "client": {
+            "$ref": "#/components/schemas/SelectedTopologyAuditClient"
+          },
+          "requestHash": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "beforeStateHash": {
+            "type": "string",
+            "const": ""
+          },
+          "afterStateHash": {
+            "type": "string",
+            "const": ""
+          },
+          "decision": {
+            "type": "string",
+            "const": "deny"
+          },
+          "recordedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologyErrorDetails": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "properties": {
+          "argument": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologyError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "path",
+          "recovery"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^CT[0-9]{3}_[A-Z0-9_]+$"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "recovery": {
+            "type": "string"
+          },
+          "details": {
+            "$ref": "#/components/schemas/SelectedTopologyErrorDetails"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologySuccessEnvelope": {
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/SelectedTopologyData"
+          },
+          "warnings": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "audit": {
+            "$ref": "#/components/schemas/SelectedTopologySuccessAudit"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologyErrorEnvelope": {
+        "type": "object",
+        "required": [
+          "apiVersion",
+          "operationId",
+          "ok",
+          "data",
+          "warnings",
+          "audit",
+          "error"
+        ],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "const": "controller-tools/v1"
+          },
+          "operationId": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "ok": {
+            "type": "boolean",
+            "const": false
+          },
+          "data": {
+            "type": "object",
+            "maxProperties": 0,
+            "additionalProperties": false
+          },
+          "warnings": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "audit": {
+            "$ref": "#/components/schemas/SelectedTopologyErrorAudit"
+          },
+          "error": {
+            "$ref": "#/components/schemas/SelectedTopologyError"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SelectedTopologyEnvelope": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/SelectedTopologySuccessEnvelope"
+          },
+          {
+            "$ref": "#/components/schemas/SelectedTopologyErrorEnvelope"
+          }
+        ]
+      },
       "ToolEnvelope": {
         "type": "object",
         "required": [
@@ -695,6 +1302,16 @@
       }
     },
     "responses": {
+      "SelectedTopologyEnvelope": {
+        "description": "Exact selected-topology evidence envelope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SelectedTopologyEnvelope"
+            }
+          }
+        }
+      },
       "ToolEnvelope": {
         "description": "Versioned result envelope with loopback audit evidence",
         "content": {
@@ -708,10 +1325,20 @@
     }
   },
   "x-controller-tools-version": "controller-tools/v1",
+  "x-controller-tools-revision": "controller-tools/v1.1",
   "x-safety-boundary": {
     "controllerViews": {
       "mockOnly": true,
       "readOnly": true
+    },
+    "selectedTopologyEvidence": {
+      "apiVersion": "selected-topology-evidence/v1",
+      "readOnly": true,
+      "explicitSelectionOnly": true,
+      "realController": true,
+      "mockScan": true,
+      "scanTriggeredByRequest": false,
+      "directProviderCalls": false
     },
     "semanticRuntime": {
       "verifiedContextRead": true,

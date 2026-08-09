@@ -199,9 +199,9 @@
       "tests": [
         {"path": "src/plugins/ethercatcore/ethercatcoretests.cpp", "cases": ["testTopologyServiceKeepsRealAndMockEvidenceSeparate"], "kind": "unit"}
       ],
-      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-automation-gateway.md"],
       "dependsOn": ["ethercat.data.domain-contracts", "ethercat.core.provider-registry"],
-      "notesZh": ["服务不缓存拓扑、不触发连接或扫描；Real 与 Mock 永不自动替补。Fresh 只表示所选 Provider 仍暴露这一代证据，不证明与当前 ProjectSnapshot 修订匹配，也不授权编译或执行。", "标记为 mock 的 ControllerConnectionSnapshot 会被拒绝，不能借 ControllerConnectionProvider 类型冒充真实来源。", "Workbench 已按显式 Provider/Profile 消费 Fresh RealController，并按 Core Scan Provider 选择消费 Fresh Mock 证据；ScanWorkflow 也已按同一选择锁定 Fresh Mock snapshot generation，Gateway 仍待迁移。"]
+      "notesZh": ["服务不缓存拓扑、不触发连接或扫描；Real 与 Mock 永不自动替补。Fresh 只表示所选 Provider 仍暴露这一代证据，不证明与当前 ProjectSnapshot 修订匹配，也不授权编译或执行。", "标记为 mock 的 ControllerConnectionSnapshot 会被拒绝，不能借 ControllerConnectionProvider 类型冒充真实来源。", "Workbench 已按显式 Provider/Profile 消费 Fresh RealController，并按 Core Scan Provider 选择消费 Fresh Mock 证据；ScanWorkflow 按同一选择锁定 Fresh Mock snapshot generation；Gateway 只消费 Workbench 经 TopologyService 生成的 AutomationService 值快照，不持有 Provider 或扫描入口。"]
     },
     {
       "id": "ethercat.core.scan-provider-selection",
@@ -1015,24 +1015,29 @@
       "id": "ethercat.gateway.controller-views-intents",
       "area": "automation",
       "titleZh": "自动化只读视图与语义意图",
-      "summaryZh": "让 MCP/REST 读取 IDE 共享上下文，并提交需要审批的语义操作意图。",
+      "summaryZh": "让 MCP/REST 读取 IDE 共享上下文和精确选择的 Real/Mock 拓扑值证据，并提交需要审批的语义操作意图。",
       "owner": "ethercat-automation-gateway",
       "runtimeBoundary": "loopback-only",
       "evidenceBoundary": ["unit", "loopback"],
-      "keywords": ["AI 操作", "controller.get-state", "runtime.read", "operation.request", "审批"],
+      "keywords": ["AI 操作", "controller.get-state", "topology.list-selected", "selected-topology-evidence/v1", "runtime.read", "operation.request", "审批"],
       "implementation": [
-        {"path": "src/plugins/ethercatautomationgateway/automationdispatcher.cpp", "symbols": ["AutomationDispatcher::mockContexts", "AutomationDispatcher::rejectMutation", "runtime.operation.request"], "roleZh": "共享视图、脱敏和变更拒绝"}
+        {"path": "src/plugins/ethercatautomationgateway/automationdispatcher.cpp", "symbols": ["AutomationDispatcher::mockContexts", "topology.list-selected", "AutomationDispatcher::rejectMutation", "runtime.operation.request"], "roleZh": "旧 Mock 视图、selected-topology 值投影、脱敏和变更拒绝"},
+        {"path": "src/plugins/ethercatautomationgateway/gatewayserver.cpp", "symbols": ["/api/controller-tools/v1/topologies/selected", "topology.list-selected"], "roleZh": "selected-topology REST 与共享 Dispatcher 路由"}
       ],
       "contracts": [
-        {"path": "src/plugins/ethercatcore/automationservice.h", "symbols": ["class ETHERCATCORE_EXPORT AutomationService"], "roleZh": "Workbench 自动化快照"},
-        {"path": "src/plugins/ethercatcore/semanticruntimeservice.h", "symbols": ["class ETHERCATCORE_EXPORT SemanticRuntimeService"], "roleZh": "语义读取和意图合同"}
+        {"path": "src/plugins/ethercatcore/automationservice.h", "symbols": ["AutomationTopologyView", "AutomationContextSnapshot", "class ETHERCATCORE_EXPORT AutomationService"], "roleZh": "Workbench 自动化值快照和精确拓扑 lookup 投影"},
+        {"path": "src/plugins/ethercatcore/topologyservice.h", "symbols": ["TopologySelection", "TopologyLookupResult", "hasFreshProviderEvidence"], "roleZh": "Real/Mock 来源、Scope、generation 与 freshness 公共合同"},
+        {"path": "src/plugins/ethercatcore/semanticruntimeservice.h", "symbols": ["class ETHERCATCORE_EXPORT SemanticRuntimeService"], "roleZh": "语义读取和意图合同"},
+        {"path": "ethercat-ai-controller/api/controller-tools-v1.mcp-tools.json", "symbols": ["controller-tools/v1.1", "topology.list-selected"], "roleZh": "additive MCP 工具协商和闭集 schema"},
+        {"path": "ethercat-ai-controller/api/controller-tools-v1.openapi.json", "symbols": ["/api/controller-tools/v1/topologies/selected", "SelectedTopologyEnvelope"], "roleZh": "additive REST 路由和响应 schema"}
       ],
       "tests": [
-        {"path": "src/plugins/ethercatautomationgateway/ethercatautomationgatewaytests.cpp", "cases": ["testMutationsAreRejectedWithoutProviderCalls", "testSemanticRuntimeOperationIntentAndJournal", "testVendorDetailsAreNotProjected"], "kind": "loopback"}
+        {"path": "src/plugins/ethercatautomationgateway/ethercatautomationgatewaytests.cpp", "cases": ["testSelectedTopologyEvidenceOrderingAndRedaction", "testSelectedTopologyEvidenceFailureClosure", "testSelectedTopologyJournalAndLegacyIsolation", "testMutationsAreRejectedWithoutProviderCalls", "testSemanticRuntimeOperationIntentAndJournal", "testVendorDetailsAreNotProjected"], "kind": "loopback"},
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testWorkbenchUsesExactRealTopologySelection", "testWorkbenchUsesExactMockTopologySelection"], "kind": "offscreen-ui"}
       ],
       "docs": ["docs/ethercat-automation-gateway.md"],
-      "dependsOn": ["ethercat.gateway.loopback-transport", "ethercat.runtime.manual-control"],
-      "notesZh": ["当前 controller.* 视图只接受 Mock context；网关不能审批，也不能直接调用 Product API 或厂家协议。"]
+      "dependsOn": ["ethercat.gateway.loopback-transport", "ethercat.core.topology-service", "ethercat.runtime.manual-control"],
+      "notesZh": ["原有 controller.* 视图仍只接受 Mock context；additive negotiated controller-tools/v1.1 单独新增 topology.list-selected，不改变 controller-tools/v1 envelope 和旧工具语义。", "Workbench 经 TopologyService 为每个 Scope 生成最多各一个精确 Real/Mock AutomationTopologyView；Gateway 只消费 AutomationService 值快照，不持有/选择/调用 Provider，也不触发扫描。", "只有 Fresh 当前证据携带 slaves；陈旧、不完整、错 Scope、Provider 移除或其他 lookup 失败只发布 status，不缓存旧拓扑、不在 Real/Mock 间替补。网关不能审批，也不能直接调用 Product API 或厂家协议。", "selected-topology 整次响应最多 512 条、合计 4096 个从站和 2 MiB 紧凑 JSON；OperationId journal 最多 1024 项且总计 8 MiB。字段越界、Real 结果不完整或任一预算越界都整体 fail closed。"]
     },
     {
       "id": "ethercat.gateway.contract-tools",
@@ -1143,8 +1148,8 @@
       "titleZh": "自动化网关知识卡",
       "purposeZh": "让外部 AI 通过本机受限入口读取 IDE 共享事实并提交需审批的语义意图。",
       "readOrder": ["ethercat.gateway.loopback-transport", "ethercat.gateway.controller-views-intents", "ethercat.gateway.contract-tools"],
-      "callFlowsZh": ["默认关闭设置 -> 事务启动 -> 127.0.0.1 MCP/REST -> 同一 AutomationDispatcher。", "只读工具 -> AutomationService/SemanticRuntimeService 共享快照；变更请求 -> OperationId 意图 -> IDE 审批/策略层。"],
-      "invariantsZh": ["监听器默认关闭且只绑定 127.0.0.1，启动失败必须整体回滚。", "MCP 与 REST 共用分发、journal、审计、错误和证据边界。", "网关不能审批自己的请求，不能点击 UI，不能直接调用厂家 Product API、原始 PDO/SDO 或 Shell。", "当前 controller.* 在线视图只支持 Mock context，不能标记为真实控制器能力。"],
+      "callFlowsZh": ["默认关闭设置 -> 事务启动 -> 127.0.0.1 MCP/REST -> 同一 AutomationDispatcher。", "Workbench 显式 Real/Mock 选择 -> TopologyService 即时 lookup -> AutomationService 值快照 -> topology.list-selected；Gateway 不查询 Provider 或扫描。", "其他只读工具 -> AutomationService/SemanticRuntimeService 共享快照；变更请求 -> OperationId 意图 -> IDE 审批/策略层。"],
+      "invariantsZh": ["监听器默认关闭且只绑定 127.0.0.1，启动失败必须整体回滚。", "MCP 与 REST 共用分发、journal、审计、错误和证据边界。", "网关不能审批自己的请求，不能点击 UI，不能直接调用厂家 Product API、原始 PDO/SDO 或 Shell。", "原有 controller.* 在线视图只支持 Mock context；独立 selected-topology 扩展可发布显式选择的 Real/Mock 值证据，但只有 Fresh 记录含 slaves，且不能标记为真实状态、遥测或控制能力。"],
       "changeChecklistZh": ["先在公共服务中建立无 UI 语义能力，再暴露 MCP/REST 薄适配。", "测试默认关闭、回环绑定、协议一致性、拒绝变更、脱敏、重启和端口冲突回滚。", "新增工具时同步闭集目录、参数 schema、权限、OperationId 和审计记录。"],
       "avoidZh": ["不要绑定 0.0.0.0 或局域网地址。", "不要让 Gateway 持有第二套工程、控制器会话或运行状态。", "不要用自动点击界面实现控制流程。"]
     }
@@ -1216,19 +1221,6 @@
       "notesZh": []
     },
     {
-      "id": "ethercat.issue.topology-service",
-      "titleZh": "统一拓扑服务尚未接入 Gateway",
-      "status": "open",
-      "severity": "p1",
-      "affectedFeatures": ["ethercat.core.scan-provider-selection", "ethercat.core.topology-service", "ethercat.product-api.topology-evidence", "ethercat.scan.mock-workflow", "ethercat.workbench.mock-topology-selection", "ethercat.workbench.project-navigation", "ethercat.workbench.communication", "ethercat.gateway.controller-views-intents"],
-      "problemZh": "Workbench 的 Real/Mock 拓扑展示和 ScanWorkflow 的 Mock 操作已统一到公共选择与拓扑合同，但 Gateway 尚未消费同一公共拓扑快照。",
-      "currentBoundaryZh": "Core 已提供无 UI、无缓存的 TopologyService 和会话级 ScanProviderSelectionService；Workbench 只投影精确选择的 Fresh Real/Mock 证据，Mock Provider 偏好以单个最多 128 项的本地记录恢复，移除、陈旧、不完整或错 Scope 均清空且不替补。ScanWorkflow 的 start、compare、accept 和 discard 已复核同一 Provider 实例、Scope 与 Fresh Mock snapshotId，并以 GUI 线程同步工程修订检查保护写入前边界；Gateway 仍没有真实公共视图。",
-      "nextActionZh": "让 Gateway 读取同一公共只读拓扑快照，并保持来源、Provider、Scope、generation 与 freshness 的精确语义。",
-      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatcore/scanproviderselectionservice.h", "src/plugins/ethercatcore/scanproviderselectionservice.cpp", "src/plugins/ethercatcore/topologyservice.h", "src/plugins/ethercatcore/topologyservice.cpp", "src/plugins/ethercatcore/ethercatcoretests.cpp", "src/plugins/ethercatworkbench/workbenchcontroller.cpp", "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "src/plugins/ethercatscan/scanworkflow.h", "src/plugins/ethercatscan/scanworkflow.cpp", "src/plugins/ethercatscan/ethercatscantests.cpp"],
-      "resolutionCriteriaZh": ["UI 与 Gateway 读取同一拓扑快照合同。", "Real/Mock 来源和新鲜度不可混淆。", "连接不扫描、显式重新扫描语义保持不变。"],
-      "notesZh": []
-    },
-    {
       "id": "ethercat.issue.scan-operation-cas",
       "titleZh": "扫描接受缺少跨调用者操作令牌与工程 CAS",
       "status": "planned",
@@ -1282,15 +1274,15 @@
     },
     {
       "id": "ethercat.issue.gateway-real-read-views",
-      "titleZh": "Gateway controller 视图尚未接入真实公共事实",
+      "titleZh": "Gateway 真实状态、遥测与操作视图尚未接入",
       "status": "planned",
       "severity": "p1",
-      "affectedFeatures": ["ethercat.gateway.controller-views-intents", "ethercat.product-api.telemetry", "ethercat.product-api.topology-evidence", "ethercat.runtime.manual-control", "ethercat.workbench.output-status"],
-      "problemZh": "Gateway 的 controller.* 视图当前只接受 Mock context，不能读取真实 Product API/Workbench 共享状态。",
-      "currentBoundaryZh": "监听器仍必须默认关闭并只绑定回环；变更操作仍必须经过策略和人工审批。",
-      "nextActionZh": "在公共无 UI 服务完善后，让 AutomationDispatcher 投影同一只读快照和 OperationJournal，而非持有第二套 Provider。",
+      "affectedFeatures": ["ethercat.gateway.controller-views-intents", "ethercat.product-api.telemetry", "ethercat.runtime.manual-control", "ethercat.workbench.output-status"],
+      "problemZh": "Gateway 原有 controller state/capability/device/diagnostics 视图仍只接受 Mock context，也没有真实遥测和跨层 OperationJournal 视图。",
+      "currentBoundaryZh": "显式选择的 Real/Mock 拓扑已通过独立 topology.list-selected 值视图接入；这不放宽旧 controller.*，不代表真实状态、遥测、运行操作或控制已经接入。监听器仍默认关闭并只绑定回环，变更操作仍须经过策略和人工审批。",
+      "nextActionZh": "在公共无 UI state/telemetry/operation read model 完善后，让 AutomationDispatcher 投影同一只读值快照和 OperationJournal，而非持有第二套 Provider 或 Product API 会话。",
       "evidencePaths": ["docs/ethercat-automation-gateway.md", "src/plugins/ethercatautomationgateway/automationdispatcher.cpp", "src/plugins/ethercatautomationgateway/ethercatautomationgatewaytests.cpp"],
-      "resolutionCriteriaZh": ["真实只读状态与 Workbench 同源并明确标记 Real。", "MCP/REST 结果和错误保持一致。", "未经审批的变更仍不调用控制器 Provider。"],
+      "resolutionCriteriaZh": ["真实 state/telemetry/operation 只读值与 Workbench 同源并明确标记 Real。", "MCP/REST 结果、错误和 OperationId 时间线保持一致。", "未经审批的变更仍不调用控制器 Provider。"],
       "notesZh": []
     },
     {

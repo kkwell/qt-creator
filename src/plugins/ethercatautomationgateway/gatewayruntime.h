@@ -60,7 +60,11 @@ struct GatewayRuntimeSnapshot
     QUrl mcpEndpoint;
     QUrl restEndpoint;
     QString lastError;
-    bool mockOnly = true;
+    // The legacy controller.* views remain Mock-only. The separate selected
+    // topology evidence extension may expose an explicitly selected Real or
+    // Mock topology, but is always read-only.
+    bool controllerViewsMockOnly = true;
+    bool selectedTopologyEvidenceReadOnly = true;
     bool readOnly = true;
 };
 

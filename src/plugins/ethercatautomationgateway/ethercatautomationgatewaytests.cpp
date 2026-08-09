@@ -17,6 +17,8 @@
 
 #include <extensionsystem/pluginmanager.h>
 
+#include <mcp/schemas/schema_2025_11_25.h>
+
 #include <utils/qtcsettings.h>
 
 #include <QCheckBox>
@@ -38,6 +40,7 @@
 #include <QProcessEnvironment>
 #include <QScopeGuard>
 #include <QSettings>
+#include <QSet>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTcpServer>
@@ -45,6 +48,8 @@
 #include <QTest>
 #include <QTimer>
 #include <QUrlQuery>
+
+#include <algorithm>
 
 namespace EtherCAT::AutomationGateway::Internal {
 
@@ -421,6 +426,85 @@ static Core::AutomationContextSnapshot mockContext()
     return context;
 }
 
+static Core::AutomationTopologyView realTopologyView(
+    const Core::AutomationContextSnapshot &context,
+    Core::TopologyEvidenceFreshness freshness = Core::TopologyEvidenceFreshness::Fresh)
+{
+    Core::AutomationTopologyView view;
+    view.selection = {
+        Core::TopologyEvidenceSource::RealController,
+        Utils::Id("SECRET_REAL_TOPOLOGY_PROVIDER"),
+        context.scope,
+    };
+
+    Data::ControllerTopologySlave slave;
+    slave.position = 0;
+    slave.stationAddress = 0x1001;
+    slave.alState = 8;
+    slave.vendorId = 0x00000002;
+    slave.productCode = 0x20000001;
+    slave.revision = 0x00000003;
+    slave.serial = 29;
+
+    Data::ControllerTopologySnapshot evidence;
+    evidence.firstStationAddress = slave.stationAddress;
+    evidence.respondingCount = 1;
+    evidence.slaves = {slave};
+    evidence.discoveredAt = QDateTime::fromString("2026-08-10T01:02:03.004Z", Qt::ISODateWithMs);
+    evidence.scope = context.scope;
+    evidence.sessionGeneration = 110001;
+    evidence.sessionId = 220002;
+    evidence.bootId = 330003;
+    evidence.requestId = 440004;
+    evidence.responseSequence = 550005;
+    evidence.cpu1RequestSequence = 660006;
+    evidence.topologyCaptureSequence = 770007;
+    evidence.cpu1CompletedTimeNs = 880008;
+    evidence.topologyCompletedTimeNs = 990009;
+    evidence.receivedAt = QDateTime::fromString("2026-08-10T01:02:03.005Z", Qt::ISODateWithMs);
+
+    Core::TopologySnapshot snapshot;
+    snapshot.selection = view.selection;
+    snapshot.freshness = freshness;
+    snapshot.controllerEvidence = evidence;
+    view.lookup = {Core::TopologyLookupStatus::Success, snapshot};
+    return view;
+}
+
+static Core::AutomationTopologyView mockTopologyView(
+    const Core::AutomationContextSnapshot &context,
+    Core::TopologyEvidenceFreshness freshness = Core::TopologyEvidenceFreshness::Fresh)
+{
+    if (!context.scan)
+        return {};
+
+    Core::AutomationTopologyView view;
+    view.selection = {
+        Core::TopologyEvidenceSource::MockScan,
+        Utils::Id("SECRET_MOCK_TOPOLOGY_PROVIDER"),
+        context.scope,
+    };
+    Core::TopologySnapshot snapshot;
+    snapshot.selection = view.selection;
+    snapshot.freshness = freshness;
+    snapshot.mockEvidence = *context.scan;
+    view.lookup = {Core::TopologyLookupStatus::Success, snapshot};
+    return view;
+}
+
+static Core::AutomationTopologyView missingTopologyView(
+    const Core::AutomationContextSnapshot &context)
+{
+    Core::AutomationTopologyView view;
+    view.selection = {
+        Core::TopologyEvidenceSource::RealController,
+        Utils::Id("SECRET_MISSING_TOPOLOGY_PROVIDER"),
+        context.scope,
+    };
+    view.lookup.status = Core::TopologyLookupStatus::ProviderNotFound;
+    return view;
+}
+
 static Data::SemanticRuntimeContext semanticRuntimeContext(
     const Core::AutomationContextSnapshot &automation)
 {
@@ -706,7 +790,11 @@ void EtherCATAutomationGatewayTests::testPluginDiscoveryAndSettingsPageContract(
     QVERIFY(state->isReadOnly());
     QVERIFY(mcpEndpoint->isReadOnly());
     QVERIFY(restEndpoint->isReadOnly());
+    QVERIFY(safety->text().contains("legacy controller views"));
     QVERIFY(safety->text().contains("Mock-only"));
+    QVERIFY(safety->text().contains("Selected topology evidence"));
+    QVERIFY(safety->text().contains("Real or Mock"));
+    QVERIFY(safety->text().contains("never triggers a scan"));
     QVERIFY(safety->text().contains("read-only"));
     QCOMPARE(mcpPort->minimum(), 0);
     QCOMPARE(mcpPort->maximum(), 65535);
@@ -717,7 +805,9 @@ void EtherCATAutomationGatewayTests::testPluginDiscoveryAndSettingsPageContract(
     restPort->setValue(0);
     enabled->setChecked(true);
     widget->apply();
-    QCOMPARE(runtime.snapshot().state, GatewayRuntimeState::Running);
+    QVERIFY2(
+        runtime.snapshot().state == GatewayRuntimeState::Running,
+        qPrintable(runtime.snapshot().lastError));
     QVERIFY(!runtime.snapshot().mcpEndpoint.isEmpty());
     QVERIFY(!runtime.snapshot().restEndpoint.isEmpty());
     QVERIFY(!mcpPort->isEnabled());
@@ -988,6 +1078,507 @@ void EtherCATAutomationGatewayTests::testOperationJournalAcrossTransports()
         conflict.value("error").toObject().value("details").toObject().value("reason").toString(),
         "operation-id-conflict");
     QCOMPARE(service.readCount, readsAfterMcp);
+}
+
+void EtherCATAutomationGatewayTests::testSelectedTopologyEvidenceOrderingAndRedaction()
+{
+    FakeAutomationService service;
+    Core::AutomationContextSnapshot first = mockContext();
+    Core::AutomationContextSnapshot second = mockContext();
+    first.topologyViews = {mockTopologyView(first), realTopologyView(first)};
+    second.topologyViews = {mockTopologyView(second), realTopologyView(second)};
+    service.current = {second, first};
+    AutomationDispatcher dispatcher(&service);
+
+    const QJsonObject response = dispatcher.dispatch(
+        "topology.list-selected",
+        withOperation("selected-topology-order-a"),
+        {"mcp", "topology-session", "topology-client", "1"});
+    QVERIFY(response.value("ok").toBool());
+    const QJsonObject data = response.value("data").toObject();
+    QCOMPARE(data.value("apiVersion").toString(), "selected-topology-evidence/v1");
+    QVERIFY(data.value("readOnly").toBool());
+    QVERIFY(!data.value("scanTriggeredByRequest").toBool());
+    const QJsonArray topologies = data.value("topologies").toArray();
+    QCOMPARE(topologies.size(), 4);
+
+    QStringList expectedControllers{first.controllerId, second.controllerId};
+    expectedControllers.sort();
+    for (int controllerIndex = 0; controllerIndex < expectedControllers.size(); ++controllerIndex) {
+        const QJsonObject real = topologies.at(controllerIndex * 2).toObject();
+        const QJsonObject mock = topologies.at(controllerIndex * 2 + 1).toObject();
+        QCOMPARE(real.value("controllerId").toString(), expectedControllers.at(controllerIndex));
+        QCOMPARE(mock.value("controllerId").toString(), expectedControllers.at(controllerIndex));
+        QCOMPARE(real.value("source").toString(), "real-controller");
+        QCOMPARE(mock.value("source").toString(), "mock-scan");
+        QCOMPARE(real.value("lookupStatus").toString(), "success");
+        QCOMPARE(mock.value("lookupStatus").toString(), "success");
+        QCOMPARE(real.value("freshness").toString(), "fresh");
+        QCOMPARE(mock.value("freshness").toString(), "fresh");
+        QVERIFY(real.value("current").toBool());
+        QVERIFY(mock.value("current").toBool());
+        QCOMPARE(real.value("generationHash").toString().size(), 64);
+        QCOMPARE(mock.value("generationHash").toString().size(), 64);
+        QCOMPARE(real.value("evidenceHash").toString().size(), 64);
+        QCOMPARE(mock.value("evidenceHash").toString().size(), 64);
+        QCOMPARE(real.value("slaves").toArray().size(), 1);
+        QCOMPARE(mock.value("slaves").toArray().size(), 1);
+        QVERIFY(!real.value("slaves").toArray().first().toObject().contains("name"));
+        QCOMPARE(
+            mock.value("slaves").toArray().first().toObject().value("name").toString(),
+            "Mock Digital I/O");
+    }
+
+    std::reverse(first.topologyViews.begin(), first.topologyViews.end());
+    std::reverse(second.topologyViews.begin(), second.topologyViews.end());
+    service.current = {first, second};
+    const QJsonObject reordered = dispatcher.dispatch(
+        "topology.list-selected",
+        withOperation("selected-topology-order-b"),
+        {"rest", "topology-session-2", "topology-client", "1"});
+    QVERIFY(reordered.value("ok").toBool());
+    QCOMPARE(reordered.value("data").toObject(), data);
+
+    const QByteArray encoded = QJsonDocument(data).toJson(QJsonDocument::Compact);
+    const QList<QByteArray> hiddenGenerationFields{
+        "sessionGeneration",
+        "sessionId",
+        "bootId",
+        "requestId",
+        "responseSequence",
+        "cpu1RequestSequence",
+        "topologyCaptureSequence",
+        "snapshotId",
+        "providerId",
+        "profileId",
+        "endpoint",
+    };
+    for (const QByteArray &field : hiddenGenerationFields) {
+        const QByteArray encodedField = QByteArrayLiteral("\"") + field + '"';
+        QVERIFY2(!encoded.contains(encodedField), field.constData());
+    }
+    const QList<QByteArray> forbiddenValues{
+        "SECRET_REAL_TOPOLOGY_PROVIDER",
+        "SECRET_MOCK_TOPOLOGY_PROVIDER",
+    };
+    for (const QByteArray &value : forbiddenValues)
+        QVERIFY2(!encoded.contains(value), value.constData());
+
+    Core::AutomationContextSnapshot generationContext = first;
+    Core::AutomationTopologyView baseView = realTopologyView(generationContext);
+    generationContext.topologyViews = {baseView};
+    service.current = {generationContext};
+    const QJsonObject baseResponse = dispatcher.dispatch(
+        "topology.list-selected", withOperation("selected-topology-generation-base"), {});
+    QVERIFY(baseResponse.value("ok").toBool());
+    const QString baseGenerationHash = baseResponse.value("data")
+                                           .toObject()
+                                           .value("topologies")
+                                           .toArray()
+                                           .first()
+                                           .toObject()
+                                           .value("generationHash")
+                                           .toString();
+    QCOMPARE(baseGenerationHash.size(), 64);
+
+    for (int field = 0; field < 7; ++field) {
+        Core::AutomationTopologyView changed = baseView;
+        Data::ControllerTopologySnapshot &evidence
+            = *changed.lookup.snapshot->controllerEvidence;
+        switch (field) {
+        case 0:
+            ++evidence.sessionGeneration;
+            break;
+        case 1:
+            ++evidence.sessionId;
+            break;
+        case 2:
+            ++evidence.bootId;
+            break;
+        case 3:
+            ++evidence.requestId;
+            break;
+        case 4:
+            ++evidence.responseSequence;
+            break;
+        case 5:
+            ++evidence.cpu1RequestSequence;
+            break;
+        case 6:
+            ++evidence.topologyCaptureSequence;
+            break;
+        }
+        generationContext.topologyViews = {changed};
+        service.current = {generationContext};
+        const QJsonObject changedResponse = dispatcher.dispatch(
+            "topology.list-selected",
+            withOperation(QString("selected-topology-generation-%1").arg(field)),
+            {});
+        QVERIFY(changedResponse.value("ok").toBool());
+        const QJsonObject record = changedResponse.value("data")
+                                       .toObject()
+                                       .value("topologies")
+                                       .toArray()
+                                       .first()
+                                       .toObject();
+        QCOMPARE(record.value("generationHash").toString().size(), 64);
+        QVERIFY(record.value("generationHash").toString() != baseGenerationHash);
+    }
+}
+
+void EtherCATAutomationGatewayTests::testSelectedTopologyEvidenceFailureClosure()
+{
+    FakeAutomationService service;
+    Core::AutomationContextSnapshot stale = mockContext();
+    Core::AutomationContextSnapshot incomplete = mockContext();
+    Core::AutomationContextSnapshot missing = mockContext();
+    stale.topologyViews = {
+        realTopologyView(stale, Core::TopologyEvidenceFreshness::Stale),
+    };
+    incomplete.topologyViews = {
+        mockTopologyView(incomplete, Core::TopologyEvidenceFreshness::Incomplete),
+    };
+    missing.topologyViews = {missingTopologyView(missing)};
+    service.current = {missing, incomplete, stale};
+    AutomationDispatcher dispatcher(&service);
+
+    const QJsonObject unavailable = dispatcher.dispatch(
+        "topology.list-selected", withOperation("selected-topology-unavailable"), {});
+    QVERIFY(unavailable.value("ok").toBool());
+    const QJsonArray records
+        = unavailable.value("data").toObject().value("topologies").toArray();
+    QCOMPARE(records.size(), 3);
+    QSet<QString> states;
+    for (const QJsonValue &value : records) {
+        const QJsonObject record = value.toObject();
+        QVERIFY(!record.value("current").toBool());
+        QVERIFY(!record.contains("slaves"));
+        QVERIFY(!record.contains("generationHash"));
+        QVERIFY(!record.contains("evidenceHash"));
+        QVERIFY(!record.contains("observedAt"));
+        QVERIFY(!record.contains("complete"));
+        states.insert(
+            record.value("lookupStatus").toString() + ':'
+            + record.value("freshness").toString());
+    }
+    const QSet<QString> expectedStates{
+        "success:stale",
+        "success:incomplete",
+        "provider-not-found:unavailable",
+    };
+    QCOMPARE(states, expectedStates);
+
+    Core::AutomationContextSnapshot duplicateSource = mockContext();
+    duplicateSource.topologyViews = {
+        realTopologyView(duplicateSource),
+        realTopologyView(duplicateSource),
+    };
+    service.current = {duplicateSource};
+    const QJsonObject sourceRejected = dispatcher.dispatch(
+        "topology.list-selected", withOperation("selected-topology-duplicate-source"), {});
+    QVERIFY(!sourceRejected.value("ok").toBool());
+    QCOMPARE(
+        sourceRejected.value("error").toObject().value("code").toString(),
+        "CT024_TOPOLOGY_EVIDENCE_UNAVAILABLE");
+    QCOMPARE(
+        sourceRejected.value("error")
+            .toObject()
+            .value("details")
+            .toObject()
+            .value("reason")
+            .toString(),
+        "invalid-selected-evidence");
+
+    Core::AutomationContextSnapshot wrongScope = mockContext();
+    Core::AutomationTopologyView wrongScopeView = realTopologyView(wrongScope);
+    wrongScopeView.selection.scope.masterId = Data::NodeId::create();
+    wrongScopeView.lookup.snapshot->selection = wrongScopeView.selection;
+    wrongScopeView.lookup.snapshot->controllerEvidence->scope = wrongScopeView.selection.scope;
+    QVERIFY(wrongScopeView.isValid());
+    wrongScope.topologyViews = {wrongScopeView};
+    service.current = {wrongScope};
+    const QJsonObject scopeRejected = dispatcher.dispatch(
+        "topology.list-selected", withOperation("selected-topology-wrong-scope"), {});
+    QVERIFY(!scopeRejected.value("ok").toBool());
+    QCOMPARE(
+        scopeRejected.value("error").toObject().value("code").toString(),
+        "CT024_TOPOLOGY_EVIDENCE_UNAVAILABLE");
+    QCOMPARE(
+        scopeRejected.value("error")
+            .toObject()
+            .value("details")
+            .toObject()
+            .value("reason")
+            .toString(),
+        "invalid-selected-evidence");
+
+    Core::AutomationContextSnapshot duplicateController = mockContext();
+    duplicateController.topologyViews = {mockTopologyView(duplicateController)};
+    service.current = {duplicateController, duplicateController};
+    const QJsonObject controllerRejected = dispatcher.dispatch(
+        "topology.list-selected", withOperation("selected-topology-duplicate-controller"), {});
+    QVERIFY(!controllerRejected.value("ok").toBool());
+    QCOMPARE(
+        controllerRejected.value("error").toObject().value("code").toString(),
+        "CT024_TOPOLOGY_EVIDENCE_UNAVAILABLE");
+    QCOMPARE(
+        controllerRejected.value("error")
+            .toObject()
+            .value("details")
+            .toObject()
+            .value("reason")
+            .toString(),
+        "duplicate-controller-id");
+
+    const auto expectRejected = [&service, &dispatcher](
+                                    const Core::AutomationContextSnapshot &context,
+                                    const QString &operationId,
+                                    const QString &reason) {
+        service.current = {context};
+        const QJsonObject response = dispatcher.dispatch(
+            "topology.list-selected", withOperation(operationId), {"mcp", {}, {}, {}});
+        QVERIFY(!response.value("ok").toBool());
+        QCOMPARE(
+            response.value("error").toObject().value("code").toString(),
+            "CT024_TOPOLOGY_EVIDENCE_UNAVAILABLE");
+        QCOMPARE(
+            response.value("error")
+                .toObject()
+                .value("details")
+                .toObject()
+                .value("reason")
+                .toString(),
+            reason);
+    };
+
+    Core::AutomationContextSnapshot invalidRealPosition = mockContext();
+    Core::AutomationTopologyView invalidRealPositionView = realTopologyView(invalidRealPosition);
+    invalidRealPositionView.lookup.snapshot->controllerEvidence->slaves[0].position = 65536;
+    invalidRealPosition.topologyViews = {invalidRealPositionView};
+    expectRejected(
+        invalidRealPosition, "selected-topology-real-position", "evidence-field-invalid");
+
+    Core::AutomationContextSnapshot invalidRealAlState = mockContext();
+    Core::AutomationTopologyView invalidRealAlStateView = realTopologyView(invalidRealAlState);
+    invalidRealAlStateView.lookup.snapshot->controllerEvidence->slaves[0].alState = 256;
+    invalidRealAlState.topologyViews = {invalidRealAlStateView};
+    expectRejected(
+        invalidRealAlState, "selected-topology-real-al-state", "evidence-field-invalid");
+
+    Core::AutomationContextSnapshot invalidMockPosition = mockContext();
+    Core::AutomationTopologyView invalidMockPositionView = mockTopologyView(invalidMockPosition);
+    invalidMockPositionView.lookup.snapshot->mockEvidence->snapshot.slaves[0].position = -1;
+    invalidMockPosition.topologyViews = {invalidMockPositionView};
+    expectRejected(
+        invalidMockPosition, "selected-topology-mock-position-negative", "evidence-field-invalid");
+    invalidMockPositionView.lookup.snapshot->mockEvidence->snapshot.slaves[0].position = 65536;
+    invalidMockPosition.topologyViews = {invalidMockPositionView};
+    expectRejected(
+        invalidMockPosition, "selected-topology-mock-position-high", "evidence-field-invalid");
+
+    Core::AutomationContextSnapshot failedRealResult = mockContext();
+    Core::AutomationTopologyView failedRealResultView = realTopologyView(failedRealResult);
+    failedRealResultView.lookup.snapshot->controllerEvidence->result = -1;
+    failedRealResult.topologyViews = {failedRealResultView};
+    expectRejected(failedRealResult, "selected-topology-real-result", "evidence-incomplete");
+
+    Core::AutomationContextSnapshot incompleteRealCount = mockContext();
+    Core::AutomationTopologyView incompleteRealCountView = realTopologyView(incompleteRealCount);
+    incompleteRealCountView.lookup.snapshot->controllerEvidence->respondingCount = 2;
+    incompleteRealCount.topologyViews = {incompleteRealCountView};
+    expectRejected(
+        incompleteRealCount, "selected-topology-real-count", "evidence-incomplete");
+
+    Core::AutomationContextSnapshot boundary = mockContext();
+    Core::AutomationTopologyView boundaryReal = realTopologyView(boundary);
+    boundaryReal.lookup.snapshot->controllerEvidence->slaves[0].position = 65535;
+    boundaryReal.lookup.snapshot->controllerEvidence->slaves[0].alState = 255;
+    Core::AutomationTopologyView boundaryMock = mockTopologyView(boundary);
+    boundaryMock.lookup.snapshot->mockEvidence->snapshot.slaves[0].position = 65535;
+    boundary.topologyViews = {boundaryReal, boundaryMock};
+    service.current = {boundary};
+    const QJsonObject boundaryAccepted = dispatcher.dispatch(
+        "topology.list-selected",
+        withOperation("selected-topology-public-boundaries"),
+        {"mcp", {}, {}, {}});
+    QVERIFY(boundaryAccepted.value("ok").toBool());
+
+    Core::AutomationContextSnapshot aggregate = mockContext();
+    Core::AutomationTopologyView aggregateReal = realTopologyView(aggregate);
+    Data::ControllerTopologySlave realSeed
+        = aggregateReal.lookup.snapshot->controllerEvidence->slaves.constFirst();
+    QList<Data::ControllerTopologySlave> realSlaves;
+    realSlaves.reserve(2048);
+    for (int position = 0; position < 2048; ++position) {
+        realSeed.position = quint32(position);
+        realSlaves.append(realSeed);
+    }
+    aggregateReal.lookup.snapshot->controllerEvidence->slaves = realSlaves;
+    aggregateReal.lookup.snapshot->controllerEvidence->respondingCount = quint32(realSlaves.size());
+
+    Core::AutomationTopologyView aggregateMock = mockTopologyView(aggregate);
+    Data::ScannedSlave mockSeed
+        = aggregateMock.lookup.snapshot->mockEvidence->snapshot.slaves.constFirst();
+    QList<Data::ScannedSlave> mockSlaves;
+    mockSlaves.reserve(2049);
+    for (int position = 0; position < 2049; ++position) {
+        mockSeed.position = position;
+        mockSlaves.append(mockSeed);
+    }
+    aggregateMock.lookup.snapshot->mockEvidence->snapshot.slaves = mockSlaves;
+    aggregate.topologyViews = {aggregateReal, aggregateMock};
+    expectRejected(
+        aggregate, "selected-topology-aggregate-limit", "aggregate-topology-limit-exceeded");
+
+    Core::AutomationContextSnapshot oversizedResponse = mockContext();
+    Core::AutomationTopologyView oversizedView = mockTopologyView(oversizedResponse);
+    mockSeed = oversizedView.lookup.snapshot->mockEvidence->snapshot.slaves.constFirst();
+    mockSeed.name = QString(256, QLatin1Char('\\'));
+    mockSlaves.clear();
+    mockSlaves.reserve(4096);
+    for (int position = 0; position < 4096; ++position) {
+        mockSeed.position = position;
+        mockSlaves.append(mockSeed);
+    }
+    oversizedView.lookup.snapshot->mockEvidence->snapshot.slaves = mockSlaves;
+    oversizedResponse.topologyViews = {oversizedView};
+    expectRejected(
+        oversizedResponse, "selected-topology-response-limit", "response-limit-exceeded");
+}
+
+void EtherCATAutomationGatewayTests::testSelectedTopologyJournalAndLegacyIsolation()
+{
+    FakeAutomationService service;
+    Core::AutomationContextSnapshot real = mockContext();
+    real.mock = false;
+    real.connection.mock = false;
+    real.topologyViews = {realTopologyView(real)};
+    service.current = {real};
+
+    FakeProviderCounters provider;
+    CountingConnectionProvider connectionProvider(&provider);
+    CountingScanProvider scanProvider(&provider);
+    ExtensionSystem::PluginManager::addObject(&connectionProvider);
+    ExtensionSystem::PluginManager::addObject(&scanProvider);
+    const QScopeGuard removeProviders([&] {
+        ExtensionSystem::PluginManager::removeObject(&scanProvider);
+        ExtensionSystem::PluginManager::removeObject(&connectionProvider);
+    });
+
+    AutomationDispatcher dispatcher(&service);
+    const QJsonObject arguments = withOperation("selected-topology-replay");
+    const QJsonObject first = dispatcher.dispatch(
+        "topology.list-selected",
+        arguments,
+        {"mcp", "selected-topology-session", "selected-topology-client", "1"});
+    QVERIFY(first.value("ok").toBool());
+    const int readsAfterFirst = service.readCount;
+    const QJsonObject replayed = dispatcher.dispatch(
+        "topology.list-selected",
+        arguments,
+        {"rest", "different-session", "different-client", "2"});
+    QCOMPARE(replayed, first);
+    QCOMPARE(service.readCount, readsAfterFirst);
+
+    const QJsonObject listed
+        = dispatcher.dispatch("controller.list", withOperation("legacy-real-list"), {});
+    QVERIFY(listed.value("ok").toBool());
+    QVERIFY(listed.value("data").toObject().value("controllers").toArray().isEmpty());
+
+    const QStringList legacyTools{
+        "controller.get-capabilities",
+        "controller.get-device",
+        "controller.get-diagnostics",
+        "controller.get-state",
+        "controller.get-topology",
+    };
+    for (const QString &tool : legacyTools) {
+        QJsonObject legacyArguments
+            = withOperation("legacy-real-" + tool, real.controllerId);
+        if (tool == "controller.get-device")
+            legacyArguments.insert("position", 0);
+        const QJsonObject rejected = dispatcher.dispatch(tool, legacyArguments, {});
+        QVERIFY(!rejected.value("ok").toBool());
+        QCOMPARE(
+            rejected.value("error").toObject().value("code").toString(), "CT008_READ_ONLY");
+        QCOMPARE(
+            rejected.value("error")
+                .toObject()
+                .value("details")
+                .toObject()
+                .value("reason")
+                .toString(),
+            "approval-required");
+    }
+
+    const QByteArray encoded
+        = QJsonDocument(first.value("data").toObject()).toJson(QJsonDocument::Compact);
+    QVERIFY(!encoded.contains("SECRET_REAL_TOPOLOGY_PROVIDER"));
+    QVERIFY(!encoded.contains("sessionGeneration"));
+    QVERIFY(!encoded.contains("sessionId"));
+    QVERIFY(!encoded.contains("bootId"));
+    QVERIFY(!encoded.contains("requestId"));
+
+    Core::AutomationContextSnapshot journalContext = mockContext();
+    Core::AutomationTopologyView journalView = mockTopologyView(journalContext);
+    Data::ScannedSlave journalSlave
+        = journalView.lookup.snapshot->mockEvidence->snapshot.slaves.constFirst();
+    journalSlave.name = QString(256, QLatin1Char('\\'));
+    QList<Data::ScannedSlave> journalSlaves;
+    journalSlaves.reserve(1024);
+    for (int position = 0; position < 1024; ++position) {
+        journalSlave.position = position;
+        journalSlaves.append(journalSlave);
+    }
+    journalView.lookup.snapshot->mockEvidence->snapshot.slaves = journalSlaves;
+    journalContext.topologyViews = {journalView};
+    service.current = {journalContext};
+
+    const QString firstBudgetOperation = "selected-topology-budget-0";
+    const QJsonObject firstBudgetResponse = dispatcher.dispatch(
+        "topology.list-selected",
+        withOperation(firstBudgetOperation),
+        {"mcp", "bounded-journal", "topology-client", "1"});
+    QVERIFY(firstBudgetResponse.value("ok").toBool());
+    const qsizetype budgetResponseBytes
+        = QJsonDocument(firstBudgetResponse).toJson(QJsonDocument::Compact).size();
+    QVERIFY(budgetResponseBytes > 0);
+    QVERIFY(budgetResponseBytes < 2 * 1024 * 1024);
+    const int additionalBudgetResponses = int((8 * 1024 * 1024) / budgetResponseBytes) + 2;
+    QVERIFY(additionalBudgetResponses < 128);
+
+    QString latestBudgetOperation;
+    QJsonObject latestBudgetResponse;
+    for (int index = 1; index <= additionalBudgetResponses; ++index) {
+        latestBudgetOperation = QString("selected-topology-budget-%1").arg(index);
+        latestBudgetResponse = dispatcher.dispatch(
+            "topology.list-selected",
+            withOperation(latestBudgetOperation),
+            {"mcp", "bounded-journal", "topology-client", "1"});
+        QVERIFY(latestBudgetResponse.value("ok").toBool());
+    }
+
+    const int readsBeforeLatestReplay = service.readCount;
+    QCOMPARE(
+        dispatcher.dispatch(
+            "topology.list-selected",
+            withOperation(latestBudgetOperation),
+            {"rest", "different-session", "different-client", "2"}),
+        latestBudgetResponse);
+    QCOMPARE(service.readCount, readsBeforeLatestReplay);
+
+    const int readsBeforeEvictedReplay = service.readCount;
+    const QJsonObject recomputedFirst = dispatcher.dispatch(
+        "topology.list-selected",
+        withOperation(firstBudgetOperation),
+        {"mcp", "bounded-journal", "topology-client", "1"});
+    QVERIFY(recomputedFirst.value("ok").toBool());
+    QCOMPARE(service.readCount, readsBeforeEvictedReplay + 1);
+
+    QCOMPARE(provider.connect, 0);
+    QCOMPARE(provider.control, 0);
+    QCOMPARE(provider.scan, 0);
+    QCOMPARE(provider.write, 0);
 }
 
 void EtherCATAutomationGatewayTests::testMutationsAreRejectedWithoutProviderCalls()
@@ -1443,6 +2034,35 @@ void EtherCATAutomationGatewayTests::testSemanticRuntimeOperationIntentAndJourna
     QCOMPARE(provider.write, 0);
 }
 
+void EtherCATAutomationGatewayTests::testMcpToolSchemaRoundTrip()
+{
+    const QJsonObject inputSchema{
+        {"$schema", "https://json-schema.org/draft/2020-12/schema"},
+        {"type", "object"},
+        {"properties", QJsonObject{{"operationId", QJsonObject{{"type", "string"}}}}},
+        {"additionalProperties", false},
+        {"unevaluatedProperties", false},
+    };
+    const QJsonObject outputSchema{
+        {"$schema", "https://json-schema.org/draft/2020-12/schema"},
+        {"type", "object"},
+        {"$defs", QJsonObject{{"payload", QJsonObject{{"type", "object"}}}}},
+        {"oneOf", QJsonArray{QJsonObject{{"$ref", "#/$defs/payload"}}}},
+        {"allOf", QJsonArray{QJsonObject{{"type", "object"}}}},
+        {"x-controller-tools-round-trip", QJsonObject{{"strict", true}}},
+    };
+    const QJsonObject tool{
+        {"name", "schema.round-trip"},
+        {"inputSchema", inputSchema},
+        {"outputSchema", outputSchema},
+    };
+
+    const Utils::Result<Mcp::Schema::Tool> parsed
+        = Mcp::Schema::fromJson<Mcp::Schema::Tool>(tool);
+    QVERIFY_RESULT(parsed);
+    QCOMPARE(Mcp::Schema::toJson(*parsed), tool);
+}
+
 static quint16 unusedPort()
 {
     QTcpServer probe;
@@ -1543,11 +2163,54 @@ void EtherCATAutomationGatewayTests::testMcpRestIntegrationAndOriginBoundary()
         mcpHeaders(initialized.sessionId, "http://127.0.0.1"));
     QCOMPARE(listed.status, 200);
     QJsonArray tools = jsonObject(listed).value("result").toObject().value("tools").toArray();
+    QFile contract(Constants::MCP_RESOURCE_PATH);
+    QVERIFY(contract.open(QIODevice::ReadOnly));
+    const QJsonDocument contractDocument = QJsonDocument::fromJson(contract.readAll());
+    QVERIFY(contractDocument.isObject());
+    QHash<QString, QJsonObject> expectedTools;
+    for (const QJsonValue &value : contractDocument.object().value("tools").toArray()) {
+        const QJsonObject tool = value.toObject();
+        expectedTools.insert(tool.value("name").toString(), tool);
+    }
+    QCOMPARE(expectedTools.size(), tools.size());
     QStringList toolNames;
-    for (const QJsonValue &tool : tools)
-        toolNames.append(tool.toObject().value("name").toString());
+    QJsonObject selectedTopologyTool;
+    for (const QJsonValue &tool : tools) {
+        const QJsonObject toolObject = tool.toObject();
+        const QString toolName = toolObject.value("name").toString();
+        toolNames.append(toolName);
+        QCOMPARE(toolObject, expectedTools.take(toolName));
+        if (toolName == "topology.list-selected")
+            selectedTopologyTool = toolObject;
+    }
+    QVERIFY(expectedTools.isEmpty());
     toolNames.sort();
     QCOMPARE(toolNames, AutomationDispatcher::toolNames());
+    QVERIFY(!selectedTopologyTool.isEmpty());
+
+    const QJsonObject inputSchema = selectedTopologyTool.value("inputSchema").toObject();
+    QCOMPARE(
+        inputSchema.keys(),
+        QStringList({"$schema", "additionalProperties", "properties", "type"}));
+    QCOMPARE(inputSchema.value("type").toString(), "object");
+    QCOMPARE(inputSchema.value("additionalProperties"), QJsonValue(false));
+
+    const QJsonObject outputSchema = selectedTopologyTool.value("outputSchema").toObject();
+    QCOMPARE(outputSchema.keys(), QStringList({"$defs", "$schema", "oneOf", "type"}));
+    QCOMPARE(outputSchema.value("type").toString(), "object");
+    QCOMPARE(outputSchema.value("oneOf").toArray().size(), 2);
+    const QJsonObject definitions = outputSchema.value("$defs").toObject();
+    QVERIFY(definitions.contains("successEnvelope"));
+    QVERIFY(definitions.contains("errorEnvelope"));
+    QCOMPARE(
+        definitions.value("successEnvelope").toObject().value("additionalProperties"),
+        QJsonValue(false));
+    QCOMPARE(
+        definitions.value("errorEnvelope").toObject().value("additionalProperties"),
+        QJsonValue(false));
+    const QJsonObject freshRecord = definitions.value("freshRecord").toObject();
+    QCOMPARE(freshRecord.value("additionalProperties"), QJsonValue(false));
+    QVERIFY(!freshRecord.value("allOf").toArray().isEmpty());
 
     const QJsonObject replayCall{
         {"jsonrpc", "2.0"},
@@ -1726,7 +2389,7 @@ void EtherCATAutomationGatewayTests::testExternalProcessProbe()
     const QJsonDocument report = QJsonDocument::fromJson(standardOutput);
     QVERIFY2(report.isObject(), standardOutput.constData());
     QVERIFY(report.object().value("ok").toBool());
-    QCOMPARE(report.object().value("toolCount").toInt(), 13);
+    QCOMPARE(report.object().value("toolCount").toInt(), 14);
     QCOMPARE(report.object().value("mutationsRejected").toInt(), 7);
     QCOMPARE(report.object().value("topologySource").toString(), "ide-workbench-scan-snapshot");
     QVERIFY(report.object().value("diagnosticsAvailable").toBool());

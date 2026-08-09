@@ -4,6 +4,7 @@
 
 #include "workbenchtreemodel.h"
 
+#include <ethercatcore/automationservice.h>
 #include <ethercatcore/runtimepackageactivationservice.h>
 #include <ethercatcore/scanproviderselectionservice.h>
 #include <ethercatcore/topologyservice.h>
@@ -129,6 +130,8 @@ public:
     OptionalProviderPresentation diagnosticsProviderPresentation() const;
     DiagnosticsStatusPresentation diagnosticsStatusPresentation() const;
     std::optional<Data::ScanResult> automationScanResult(
+        const Data::ControllerConnectionScope &scope) const;
+    QList<Core::AutomationTopologyView> automationTopologyViews(
         const Data::ControllerConnectionScope &scope) const;
     std::optional<Data::DiagnosticsSnapshot> automationDiagnosticsSnapshot(
         const Data::ControllerConnectionScope &scope) const;

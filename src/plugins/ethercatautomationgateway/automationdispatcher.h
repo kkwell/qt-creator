@@ -42,6 +42,7 @@ private:
     {
         QString requestHash;
         QJsonObject response;
+        qsizetype responseBytes = 0;
     };
 
     QJsonObject dispatchUnjournaled(
@@ -72,12 +73,16 @@ private:
     QList<Core::AutomationContextSnapshot> mockContexts() const;
     std::optional<Data::SemanticRuntimeContext> semanticContext(const QString &controllerId) const;
     void remember(
-        const QString &operationId, const QString &requestHash, const QJsonObject &response);
+        const QString &operationId,
+        const QString &requestHash,
+        const QJsonObject &response,
+        qsizetype responseBytes);
 
     QPointer<Core::AutomationService> m_service;
     QPointer<Core::SemanticRuntimeService> m_semanticRuntimeService;
     QHash<QString, JournalEntry> m_journal;
     QStringList m_journalOrder;
+    qsizetype m_journalBytes = 0;
 };
 
 } // namespace EtherCAT::AutomationGateway::Internal

@@ -18,10 +18,14 @@ private slots:
     void testWorkbenchPublishesSingleAutomationService();
     void testSharedSnapshotUpdatesWithoutGatewayCache();
     void testOperationJournalAcrossTransports();
+    void testSelectedTopologyEvidenceOrderingAndRedaction();
+    void testSelectedTopologyEvidenceFailureClosure();
+    void testSelectedTopologyJournalAndLegacyIsolation();
     void testMutationsAreRejectedWithoutProviderCalls();
     void testVendorDetailsAreNotProjected();
     void testSemanticRuntimeFailsClosedAndRedactsBindings();
     void testSemanticRuntimeOperationIntentAndJournal();
+    void testMcpToolSchemaRoundTrip();
     void testListenerLifecycleAndAtomicRollback();
     void testMcpRestIntegrationAndOriginBoundary();
     void testExternalProcessProbe();

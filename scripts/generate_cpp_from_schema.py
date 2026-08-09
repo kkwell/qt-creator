@@ -1557,6 +1557,15 @@ def _emit_toJson(name, props, types, required, lines, has_additional_props,
     lines.append("")  # blank line after toJson
 
 
+def needs_additional_property_storage(spec):
+    """Whether an object struct must retain fields outside its named properties."""
+    return (
+        spec.get("additionalProperties") in ({}, True)
+        or "oneOf" in spec
+        or "anyOf" in spec
+    )
+
+
 def parse_struct(name, props, types, required=None, description='', nested_children=None, children_of=None, original_name=None, has_additional_props=False):
     if required is None:
         required = []
@@ -1648,7 +1657,17 @@ def parse_struct(name, props, types, required=None, description='', nested_child
         grandchildren = (children_of or {}).get(child_name, {})
         short_name = nested_short_name(effective_prefix, child_name)
         nested_short_names[child_name] = short_name
-        child_full = parse_struct(short_name, child_props_n, types, child_required_n, child_desc_n, nested_children=grandchildren, children_of=children_of, original_name=child_name)
+        child_full = parse_struct(
+            short_name,
+            child_props_n,
+            types,
+            child_required_n,
+            child_desc_n,
+            nested_children=grandchildren,
+            children_of=children_of,
+            original_name=child_name,
+            has_additional_props=needs_additional_property_storage(child_details),
+        )
         _collect_sub_struct_output(child_full, short_name, name,
                                    child_preamble_blocks, child_struct_inserts, child_serial_blocks)
 
@@ -1661,7 +1680,8 @@ def parse_struct(name, props, types, required=None, description='', nested_child
                                     types,
                                     spec.get("required", []),
                                     spec.get("description", ""),
-                                    original_name=sub_name)
+                                    original_name=sub_name,
+                                    has_additional_props=needs_additional_property_storage(spec))
             _collect_sub_struct_output(sub_code, short_sub_name, name,
                                        child_preamble_blocks, child_struct_inserts, child_serial_blocks)
             sub_struct_names[prop] = short_sub_name
@@ -1674,7 +1694,8 @@ def parse_struct(name, props, types, required=None, description='', nested_child
                                     types,
                                     items_spec.get("required", []),
                                     items_spec.get("description", ""),
-                                    original_name=sub_name)
+                                    original_name=sub_name,
+                                    has_additional_props=needs_additional_property_storage(items_spec))
             _collect_sub_struct_output(sub_code, short_sub_name, name,
                                        child_preamble_blocks, child_struct_inserts, child_serial_blocks)
             array_item_struct_names[prop] = short_sub_name
@@ -2894,11 +2915,7 @@ def main():
                     code.append(parse_struct(name, merged_props, types, merged_required, spec.get("description", "")))
                     emitted.add(name)
             else:
-                has_additional_props = spec.get("additionalProperties") in ({}, True)
-                # Types with both properties and oneOf (discriminated struct+variant pattern)
-                # need additionalProperties to preserve variant-specific fields
-                if not has_additional_props and ("oneOf" in spec or "anyOf" in spec):
-                    has_additional_props = True
+                has_additional_props = needs_additional_property_storage(spec)
                 code.append(parse_struct(name, spec["properties"], types, spec.get("required", []), spec.get("description", ""), has_additional_props=has_additional_props))
                 emitted.add(name)
             continue

@@ -24,6 +24,11 @@ WorkbenchAutomationService::WorkbenchAutomationService(
         &AutomationService::contextsChanged);
     connect(
         m_controller,
+        &WorkbenchController::scanProviderChanged,
+        this,
+        &AutomationService::contextsChanged);
+    connect(
+        m_controller,
         &WorkbenchController::diagnosticsStatusChanged,
         this,
         &AutomationService::contextsChanged);
@@ -72,6 +77,7 @@ QList<Core::AutomationContextSnapshot> WorkbenchAutomationService::contexts() co
             }
 
             context.scan = m_controller->automationScanResult(context.scope);
+            context.topologyViews = m_controller->automationTopologyViews(context.scope);
             context.diagnostics = m_controller->automationDiagnosticsSnapshot(context.scope);
             const bool hasMockSource = context.connection.mock
                                        || (context.scan && context.scan->snapshot.mock)

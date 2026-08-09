@@ -10,16 +10,51 @@
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QRegularExpression>
+#include <QSet>
 #include <QUuid>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace EtherCAT::AutomationGateway::Internal {
 
 using namespace EtherCAT::AutomationGateway::Constants;
 
 static constexpr qsizetype maximumJournalEntries = 1024;
+static constexpr qsizetype maximumJournalBytes = 8 * 1024 * 1024;
+static constexpr qsizetype maximumSerializedResponseBytes = 2 * 1024 * 1024;
+static constexpr qsizetype maximumAutomationContexts = 256;
+static constexpr qsizetype maximumSelectedTopologySlavesPerRecord = 4096;
+static constexpr qsizetype maximumSelectedTopologyAggregateSlaves = 4096;
+static constexpr qsizetype maximumAuditIdentityCharacters = 512;
+
+static QString boundedAuditIdentity(const QString &value)
+{
+    const bool containsControl = std::any_of(value.cbegin(), value.cend(), [](QChar character) {
+        return character.category() == QChar::Other_Control;
+    });
+    if (!containsControl && value.size() <= maximumAuditIdentityCharacters)
+        return value;
+    return "sha256:"
+           + QString::fromLatin1(
+               QCryptographicHash::hash(value.toUtf8(), QCryptographicHash::Sha256).toHex());
+}
+
+static AutomationActor boundedAuditActor(const AutomationActor &actor)
+{
+    return {
+        actor.transport,
+        boundedAuditIdentity(actor.sessionId),
+        boundedAuditIdentity(actor.clientName),
+        boundedAuditIdentity(actor.clientVersion),
+    };
+}
+
+static qsizetype serializedResponseBytes(const QJsonObject &response)
+{
+    return QJsonDocument(response).toJson(QJsonDocument::Compact).size();
+}
 
 static QString connectionStateName(Data::ControllerConnectionState state)
 {
@@ -241,6 +276,275 @@ static QJsonObject topologyObject(const Core::AutomationContextSnapshot &context
         {"scanTriggeredByRequest", false},
         {"slaves", slaves},
     };
+}
+
+static QString topologySourceName(Core::TopologyEvidenceSource source)
+{
+    switch (source) {
+    case Core::TopologyEvidenceSource::RealController:
+        return "real-controller";
+    case Core::TopologyEvidenceSource::MockScan:
+        return "mock-scan";
+    case Core::TopologyEvidenceSource::None:
+        break;
+    }
+    return "none";
+}
+
+static QString topologyLookupStatusName(Core::TopologyLookupStatus status)
+{
+    switch (status) {
+    case Core::TopologyLookupStatus::Success:
+        return "success";
+    case Core::TopologyLookupStatus::InvalidSelection:
+        return "invalid-selection";
+    case Core::TopologyLookupStatus::ProviderNotFound:
+        return "provider-not-found";
+    case Core::TopologyLookupStatus::ProviderKindMismatch:
+        return "provider-kind-mismatch";
+    case Core::TopologyLookupStatus::EvidenceUnavailable:
+        return "evidence-unavailable";
+    case Core::TopologyLookupStatus::ScopeMismatch:
+        return "scope-mismatch";
+    case Core::TopologyLookupStatus::EvidenceInvalid:
+        return "evidence-invalid";
+    }
+    return "evidence-invalid";
+}
+
+static QString topologyFreshnessName(const Core::TopologyLookupResult &lookup)
+{
+    if (!lookup.isSuccess())
+        return "unavailable";
+    switch (lookup.snapshot->freshness) {
+    case Core::TopologyEvidenceFreshness::Fresh:
+        return "fresh";
+    case Core::TopologyEvidenceFreshness::Stale:
+        return "stale";
+    case Core::TopologyEvidenceFreshness::Incomplete:
+        return "incomplete";
+    }
+    return "unavailable";
+}
+
+static QString domainHash(const QByteArray &domain, const QJsonValue &value)
+{
+    QByteArray bytes = domain;
+    bytes.append('\0');
+    bytes.append(AutomationDispatcher::canonicalJson(value));
+    return QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
+}
+
+static QString boundedTopologyName(const QString &name)
+{
+    QString result = name.simplified();
+    result.removeIf([](QChar character) {
+        return character.category() == QChar::Other_Control;
+    });
+    return result.left(256);
+}
+
+static QJsonObject internalGenerationObject(const Core::TopologyGeneration &generation)
+{
+    if (const auto *real = std::get_if<Core::RealTopologyGeneration>(&generation.value)) {
+        return {
+            {"source", "real-controller"},
+            {"sessionGeneration", QString::number(real->sessionGeneration)},
+            {"sessionId", QString::number(real->sessionId)},
+            {"bootId", QString::number(real->bootId)},
+            {"requestId", QString::number(real->requestId)},
+            {"responseSequence", QString::number(real->responseSequence)},
+            {"cpu1RequestSequence", QString::number(real->cpu1RequestSequence)},
+            {"topologyCaptureSequence", QString::number(real->topologyCaptureSequence)},
+        };
+    }
+    if (const auto *mock = std::get_if<Core::MockTopologyGeneration>(&generation.value)) {
+        return {
+            {"source", "mock-scan"},
+            {"snapshotId", mock->snapshotId.toString()},
+        };
+    }
+    return {};
+}
+
+static QJsonObject currentTopologyObject(const Core::AutomationTopologyView &view)
+{
+    QJsonArray slaves;
+    QString observedAt;
+    if (view.selection.source == Core::TopologyEvidenceSource::RealController
+        && view.lookup.snapshot && view.lookup.snapshot->controllerEvidence) {
+        const Data::ControllerTopologySnapshot &evidence
+            = *view.lookup.snapshot->controllerEvidence;
+        const QDateTime observed = evidence.discoveredAt.isValid() ? evidence.discoveredAt
+                                                                    : evidence.receivedAt;
+        observedAt = observed.toUTC().toString(Qt::ISODateWithMs);
+        for (const Data::ControllerTopologySlave &slave : evidence.slaves) {
+            slaves.append(QJsonObject{
+                {"position", int(slave.position)},
+                {"identity",
+                 QJsonObject{
+                     {"vendorId", hex32(slave.vendorId)},
+                     {"productCode", hex32(slave.productCode)},
+                     {"revision", hex32(slave.revision)},
+                 }},
+                {"serial", QString::number(slave.serial)},
+                {"stationAddress", int(slave.stationAddress)},
+                {"alState", int(slave.alState)},
+            });
+        }
+    } else if (view.selection.source == Core::TopologyEvidenceSource::MockScan
+               && view.lookup.snapshot && view.lookup.snapshot->mockEvidence) {
+        const Data::ScanSnapshot &evidence = view.lookup.snapshot->mockEvidence->snapshot;
+        observedAt = evidence.capturedAt.toUTC().toString(Qt::ISODateWithMs);
+        for (const Data::ScannedSlave &slave : evidence.slaves) {
+            slaves.append(QJsonObject{
+                {"position", slave.position},
+                {"name", boundedTopologyName(slave.name)},
+                {"identity", identityObject(slave.identity)},
+                {"serial", QString::number(slave.serialNumber)},
+                {"alias", int(slave.alias)},
+            });
+        }
+    }
+    return {
+        {"observedAt", observedAt},
+        {"complete", true},
+        {"slaves", slaves},
+    };
+}
+
+static QJsonObject selectedTopologyRecord(
+    const Core::AutomationContextSnapshot &context, const Core::AutomationTopologyView &view)
+{
+    const QString source = topologySourceName(view.selection.source);
+    QJsonObject record{
+        {"controllerId", context.controllerId},
+        {"projectId", context.scope.projectId.toString()},
+        {"masterId", context.scope.masterId.toString()},
+        {"source", source},
+        {"lookupStatus", topologyLookupStatusName(view.lookup.status)},
+        {"freshness", topologyFreshnessName(view.lookup)},
+        {"current", view.lookup.hasFreshProviderEvidence()},
+    };
+    if (!view.lookup.hasFreshProviderEvidence())
+        return record;
+
+    const Core::TopologyGeneration generation = view.lookup.snapshot->generation();
+    const QJsonObject internalGeneration = internalGenerationObject(generation);
+    const QString generationHash = domainHash(
+        "embedlabs-ethercat-topology-generation-v1", internalGeneration);
+    const QJsonObject topology = currentTopologyObject(view);
+    const QJsonObject internalEvidence{
+        {"controllerId", context.controllerId},
+        {"projectId", context.scope.projectId.toString()},
+        {"masterId", context.scope.masterId.toString()},
+        {"source", source},
+        {"providerId", view.selection.providerId.toString()},
+        {"generation", internalGeneration},
+        {"topology", topology},
+    };
+    record.insert("generationHash", generationHash);
+    record.insert(
+        "evidenceHash",
+        domainHash("embedlabs-ethercat-selected-topology-evidence-v1", internalEvidence));
+    record.insert("observedAt", topology.value("observedAt"));
+    record.insert("complete", topology.value("complete"));
+    record.insert("slaves", topology.value("slaves"));
+    return record;
+}
+
+static bool freshTopologyEvidenceMatchesPublicContract(
+    const Core::AutomationTopologyView &view, QString *reason, qsizetype *slaveCount)
+{
+    *slaveCount = 0;
+    if (!view.lookup.hasFreshProviderEvidence())
+        return true;
+
+    if (view.selection.source == Core::TopologyEvidenceSource::RealController) {
+        const Data::ControllerTopologySnapshot &evidence
+            = *view.lookup.snapshot->controllerEvidence;
+        if (evidence.result != 0
+            || quint64(evidence.respondingCount) != quint64(evidence.slaves.size())) {
+            *reason = "evidence-incomplete";
+            return false;
+        }
+        for (const Data::ControllerTopologySlave &slave : evidence.slaves) {
+            if (slave.position > std::numeric_limits<quint16>::max()
+                || slave.alState > std::numeric_limits<quint8>::max()) {
+                *reason = "evidence-field-invalid";
+                return false;
+            }
+        }
+        *slaveCount = evidence.slaves.size();
+        return true;
+    }
+
+    if (view.selection.source == Core::TopologyEvidenceSource::MockScan) {
+        const QList<Data::ScannedSlave> &slaves
+            = view.lookup.snapshot->mockEvidence->snapshot.slaves;
+        for (const Data::ScannedSlave &slave : slaves) {
+            if (slave.position < 0
+                || slave.position > int(std::numeric_limits<quint16>::max())) {
+                *reason = "evidence-field-invalid";
+                return false;
+            }
+        }
+        *slaveCount = slaves.size();
+        return true;
+    }
+
+    *reason = "invalid-selected-evidence";
+    return false;
+}
+
+static bool automationContextCanPublishTopology(
+    const Core::AutomationContextSnapshot &context,
+    QString *reason,
+    qsizetype *aggregateSlaveCount)
+{
+    if (!context.project.valid || context.project.id != context.scope.projectId
+        || Core::automationControllerId(context.scope) != context.controllerId
+        || context.topologyViews.size() > 2) {
+        *reason = "invalid-context";
+        return false;
+    }
+
+    const bool masterExists = std::any_of(
+        context.project.nodes.cbegin(),
+        context.project.nodes.cend(),
+        [&context](const Data::ProjectNodeSnapshot &node) {
+            return node.id == context.scope.masterId && node.kind == Data::ProjectNodeKind::Master;
+        });
+    if (!masterExists) {
+        *reason = "scope-master-unavailable";
+        return false;
+    }
+
+    QSet<Core::TopologyEvidenceSource> sources;
+    for (const Core::AutomationTopologyView &view : context.topologyViews) {
+        if (!view.isValid() || view.selection.scope != context.scope
+            || view.selection.source == Core::TopologyEvidenceSource::None
+            || sources.contains(view.selection.source)) {
+            *reason = "invalid-selected-evidence";
+            return false;
+        }
+        if (view.lookup.hasFreshProviderEvidence()) {
+            qsizetype slaveCount = 0;
+            if (!freshTopologyEvidenceMatchesPublicContract(view, reason, &slaveCount))
+                return false;
+            if (slaveCount > maximumSelectedTopologySlavesPerRecord) {
+                *reason = "topology-limit-exceeded";
+                return false;
+            }
+            if (*aggregateSlaveCount > maximumSelectedTopologyAggregateSlaves - slaveCount) {
+                *reason = "aggregate-topology-limit-exceeded";
+                return false;
+            }
+            *aggregateSlaveCount += slaveCount;
+        }
+        sources.insert(view.selection.source);
+    }
+    return true;
 }
 
 static const Data::DeviceDescription *descriptionFor(
@@ -808,6 +1112,7 @@ QStringList AutomationDispatcher::toolNames()
         "runtime.operation.get",
         "runtime.operation.request",
         "runtime.read",
+        "topology.list-selected",
     };
 }
 
@@ -950,6 +1255,7 @@ QJsonObject AutomationDispatcher::dispatch(
     const QString &tool, const QJsonObject &arguments, const AutomationActor &actor)
 {
     const QString requestHash = requestHashFor(tool, arguments);
+    const AutomationActor auditActor = boundedAuditActor(actor);
     if (operationIdIsInvalid(arguments)) {
         const QString rejectedId = arguments.value("operationId").toString();
         return makeError(
@@ -960,7 +1266,7 @@ QJsonObject AutomationDispatcher::dispatch(
             "Correct the request fields and retry with a new operation ID.",
             {},
             requestHash,
-            actor);
+            auditActor);
     }
     const QString operationId = operationIdFrom(arguments);
 
@@ -976,12 +1282,30 @@ QJsonObject AutomationDispatcher::dispatch(
             "Retry the different request with a new operation ID.",
             {{"reason", "operation-id-conflict"}},
             requestHash,
-            actor);
+            auditActor);
     }
 
-    const QJsonObject response
-        = dispatchUnjournaled(tool, arguments, operationId, requestHash, actor);
-    remember(operationId, requestHash, response);
+    QJsonObject response
+        = dispatchUnjournaled(tool, arguments, operationId, requestHash, auditActor);
+    qsizetype responseBytes = serializedResponseBytes(response);
+    if (responseBytes > maximumSerializedResponseBytes) {
+        const bool selectedTopology = tool == "topology.list-selected";
+        response = makeError(
+            operationId,
+            selectedTopology ? QStringLiteral("CT024_TOPOLOGY_EVIDENCE_UNAVAILABLE")
+                             : QStringLiteral("CT011_PROTOCOL_UNSUPPORTED"),
+            selectedTopology
+                ? QStringLiteral("The selected topology response exceeds the bounded contract.")
+                : QStringLiteral("The Gateway response exceeds the bounded contract."),
+            "$",
+            "Reduce the selected IDE context or evidence size and retry with a new operation ID.",
+            {{"reason", "response-limit-exceeded"}},
+            requestHash,
+            auditActor);
+        responseBytes = serializedResponseBytes(response);
+    }
+    if (responseBytes <= maximumSerializedResponseBytes)
+        remember(operationId, requestHash, response, responseBytes);
     return response;
 }
 
@@ -989,6 +1313,7 @@ QJsonObject AutomationDispatcher::rejectMutation(
     const QString &operation, const QJsonObject &arguments, const AutomationActor &actor)
 {
     const QString requestHash = requestHashFor(operation, arguments);
+    const AutomationActor auditActor = boundedAuditActor(actor);
     if (operationIdIsInvalid(arguments)) {
         return makeError(
             arguments.value("operationId").toString(),
@@ -998,7 +1323,7 @@ QJsonObject AutomationDispatcher::rejectMutation(
             "Correct the request fields and retry with a new operation ID.",
             {},
             requestHash,
-            actor);
+            auditActor);
     }
     const QString operationId = operationIdFrom(arguments);
     const auto existing = m_journal.constFind(operationId);
@@ -1013,7 +1338,7 @@ QJsonObject AutomationDispatcher::rejectMutation(
             "Retry the different request with a new operation ID.",
             {{"reason", "operation-id-conflict"}},
             requestHash,
-            actor);
+            auditActor);
     }
     const QJsonObject response = makeError(
         operationId,
@@ -1027,14 +1352,17 @@ QJsonObject AutomationDispatcher::rejectMutation(
             {"providerCalls", 0},
         },
         requestHash,
-        actor);
-    remember(operationId, requestHash, response);
+        auditActor);
+    const qsizetype responseBytes = serializedResponseBytes(response);
+    if (responseBytes <= maximumSerializedResponseBytes)
+        remember(operationId, requestHash, response, responseBytes);
     return response;
 }
 
 static QStringList allowedArguments(const QString &tool)
 {
-    if (tool == "controller.list" || tool == "adapter.list" || tool == "gateway.get-protocol") {
+    if (tool == "controller.list" || tool == "adapter.list" || tool == "gateway.get-protocol"
+        || tool == "topology.list-selected") {
         return {"operationId"};
     }
     if (tool == "runtime.get-context")
@@ -1128,6 +1456,7 @@ QJsonObject AutomationDispatcher::dispatchUnjournaled(
             operationId,
             {
                 {"apiVersion", API_VERSION},
+                {"contractRevision", "controller-tools/v1.1"},
                 {"mcpProtocolVersion", MCP_PROTOCOL_VERSION},
                 {"mcpTransport", "streamable-http"},
                 {"restOpenApi", "3.1.1"},
@@ -1137,6 +1466,17 @@ QJsonObject AutomationDispatcher::dispatchUnjournaled(
                  QJsonObject{
                      {"mockOnly", true},
                      {"readOnly", true},
+                     {"directProviderCalls", false},
+                 }},
+                {"selectedTopologyEvidence",
+                 QJsonObject{
+                     {"apiVersion", "selected-topology-evidence/v1"},
+                     {"available", bool(m_service)},
+                     {"readOnly", true},
+                     {"explicitSelectionOnly", true},
+                     {"realController", true},
+                     {"mockScan", true},
+                     {"scanTriggeredByRequest", false},
                      {"directProviderCalls", false},
                  }},
                 {"semanticRuntime",
@@ -1714,6 +2054,85 @@ QJsonObject AutomationDispatcher::dispatchUnjournaled(
             actor);
     }
 
+    if (tool == "topology.list-selected") {
+        if (!m_service) {
+            return makeError(
+                operationId,
+                "CT024_TOPOLOGY_EVIDENCE_UNAVAILABLE",
+                "The IDE topology evidence service is unavailable.",
+                "$",
+                "Open the EtherCAT Workbench and retry after its shared services are available.",
+                {{"reason", "automation-service-unavailable"}},
+                requestHash,
+                actor);
+        }
+
+        QList<Core::AutomationContextSnapshot> contexts = m_service->contexts();
+        if (contexts.size() > maximumAutomationContexts) {
+            return makeError(
+                operationId,
+                "CT024_TOPOLOGY_EVIDENCE_UNAVAILABLE",
+                "The IDE returned too many topology contexts.",
+                "$",
+                "Close unused EtherCAT projects and retry.",
+                {{"reason", "context-limit-exceeded"}},
+                requestHash,
+                actor);
+        }
+        std::sort(contexts.begin(), contexts.end(), [](const auto &left, const auto &right) {
+            return left.controllerId < right.controllerId;
+        });
+
+        QJsonArray topologies;
+        QString previousControllerId;
+        qsizetype aggregateSlaveCount = 0;
+        for (const Core::AutomationContextSnapshot &candidate : contexts) {
+            QString invalidReason;
+            if ((!previousControllerId.isEmpty()
+                 && previousControllerId == candidate.controllerId)
+                || !automationContextCanPublishTopology(
+                    candidate, &invalidReason, &aggregateSlaveCount)) {
+                return makeError(
+                    operationId,
+                    "CT024_TOPOLOGY_EVIDENCE_UNAVAILABLE",
+                    "The IDE returned inconsistent selected topology evidence.",
+                    "$",
+                    "Retry after the EtherCAT Workbench topology selection is repaired.",
+                    {{"reason",
+                      invalidReason.isEmpty() ? "duplicate-controller-id" : invalidReason}},
+                    requestHash,
+                    actor);
+            }
+            previousControllerId = candidate.controllerId;
+
+            QList<Core::AutomationTopologyView> views = candidate.topologyViews;
+            std::sort(views.begin(), views.end(), [](const auto &left, const auto &right) {
+                return left.selection.source < right.selection.source;
+            });
+            for (const Core::AutomationTopologyView &view : views)
+                topologies.append(selectedTopologyRecord(candidate, view));
+        }
+
+        const QJsonObject data{
+            {"apiVersion", "selected-topology-evidence/v1"},
+            {"source", "ide-automation-service"},
+            {"readOnly", true},
+            {"scanTriggeredByRequest", false},
+            {"topologies", topologies},
+        };
+        const QString stateHash = domainHash(
+            "embedlabs-ethercat-selected-topology-list-v1", data);
+        return makeSuccess(
+            operationId,
+            data,
+            {},
+            requestHash,
+            stateHash,
+            stateHash,
+            actor,
+            "allow-selected-topology-evidence");
+    }
+
     const QJsonValue controllerIdValue = arguments.value("controllerId");
     const QString controllerId = controllerIdValue.toString();
     if (!controllerIdValue.isString() || controllerId.size() < 3 || controllerId.size() > 128) {
@@ -1944,13 +2363,30 @@ QJsonObject AutomationDispatcher::makeError(
 }
 
 void AutomationDispatcher::remember(
-    const QString &operationId, const QString &requestHash, const QJsonObject &response)
+    const QString &operationId,
+    const QString &requestHash,
+    const QJsonObject &response,
+    qsizetype responseBytes)
 {
-    if (m_journal.size() >= maximumJournalEntries && !m_journalOrder.isEmpty()) {
-        m_journal.remove(m_journalOrder.takeFirst());
+    if (responseBytes <= 0 || responseBytes > maximumSerializedResponseBytes)
+        return;
+
+    while (!m_journalOrder.isEmpty()
+           && (m_journal.size() >= maximumJournalEntries
+               || responseBytes > maximumJournalBytes - m_journalBytes)) {
+        const QString oldestOperationId = m_journalOrder.takeFirst();
+        const auto oldest = m_journal.find(oldestOperationId);
+        if (oldest == m_journal.end())
+            continue;
+        m_journalBytes -= oldest->responseBytes;
+        m_journal.erase(oldest);
     }
-    m_journal.insert(operationId, {requestHash, response});
+    if (responseBytes > maximumJournalBytes - m_journalBytes)
+        return;
+
+    m_journal.insert(operationId, {requestHash, response, responseBytes});
     m_journalOrder.append(operationId);
+    m_journalBytes += responseBytes;
 }
 
 } // namespace EtherCAT::AutomationGateway::Internal

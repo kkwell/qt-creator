@@ -15,6 +15,7 @@
 #include "generalpage.h"
 #include "runtimepackagecompilerpreparationbridge.h"
 #include "semanticcontrolpage.h"
+#include "workbenchautomationservice.h"
 #include "workbenchcontroller.h"
 #include "workbenchnavigation.h"
 #include "workbenchstatuswidget.h"
@@ -10399,6 +10400,19 @@ void EtherCATWorkbenchTests::testWorkbenchUsesExactRealTopologySelection()
     QTRY_VERIFY(selectedTopology().has_value());
     QCOMPARE(selectedTopology()->slaves.constFirst().productCode, quint32(0xbbbbbbbb));
     QTRY_COMPARE(treeProductCode(), std::optional<quint32>(0xbbbbbbbb));
+    const QList<Core::AutomationTopologyView> freshAutomationViews
+        = controller.automationTopologyViews(scope);
+    QCOMPARE(freshAutomationViews.size(), 1);
+    QCOMPARE(
+        freshAutomationViews.constFirst().selection.source,
+        Core::TopologyEvidenceSource::RealController);
+    QVERIFY(freshAutomationViews.constFirst().lookup.hasFreshProviderEvidence());
+    QCOMPARE(freshAutomationViews.constFirst().selection.providerId, selectedProvider.id());
+    WorkbenchAutomationService automationService(&controller);
+    const std::optional<Core::AutomationContextSnapshot> automationContext
+        = automationService.context(Core::automationControllerId(scope));
+    QVERIFY(automationContext);
+    QCOMPARE(automationContext->topologyViews, freshAutomationViews);
     QVERIFY(!controller.projectedControllerConnectionSnapshot(&alternateProvider, scope).topology);
     QVERIFY(controller.projectedControllerConnectionSnapshot(&selectedProvider, scope).topology);
     QVERIFY(noControlWasIssued());
@@ -10407,6 +10421,10 @@ void EtherCATWorkbenchTests::testWorkbenchUsesExactRealTopologySelection()
     selectedProvider.publishSnapshot(selected);
     QTRY_VERIFY(!selectedTopology());
     QTRY_VERIFY(!treeProductCode());
+    const QList<Core::AutomationTopologyView> staleAutomationViews
+        = controller.automationTopologyViews(scope);
+    QCOMPARE(staleAutomationViews.size(), 1);
+    QVERIFY(!staleAutomationViews.constFirst().lookup.hasFreshProviderEvidence());
     QVERIFY(noControlWasIssued());
 
     selected.mock = false;
@@ -10592,6 +10610,21 @@ void EtherCATWorkbenchTests::testWorkbenchUsesExactMockTopologySelection()
         std::optional(Core::ScanProviderSelection{scope, selectedProvider.id()}));
     QTRY_VERIFY(selectedResult().has_value());
     QCOMPARE(selectedResult()->snapshot.id, selected.snapshot.id);
+    const QList<Core::AutomationTopologyView> freshAutomationViews
+        = controller->automationTopologyViews(scope);
+    QCOMPARE(freshAutomationViews.size(), 1);
+    QCOMPARE(
+        freshAutomationViews.constFirst().selection.source,
+        Core::TopologyEvidenceSource::MockScan);
+    QVERIFY(freshAutomationViews.constFirst().lookup.hasFreshProviderEvidence());
+    QCOMPARE(freshAutomationViews.constFirst().selection.providerId, selectedProvider.id());
+    {
+        WorkbenchAutomationService automationService(controller.get());
+        const std::optional<Core::AutomationContextSnapshot> automationContext
+            = automationService.context(Core::automationControllerId(scope));
+        QVERIFY(automationContext);
+        QCOMPARE(automationContext->topologyViews, freshAutomationViews);
+    }
     QTRY_VERIFY(masterSearchText().contains("Selected provider evidence"));
     QVERIFY(!masterSearchText().contains("Alternate provider evidence"));
     QCOMPARE(
@@ -10612,6 +10645,10 @@ void EtherCATWorkbenchTests::testWorkbenchUsesExactMockTopologySelection()
     selectedProvider.publishResult(invalid);
     QTRY_VERIFY(!selectedResult());
     QTRY_VERIFY(!controller->treeModel()->firstTopologyDifference().isValid());
+    const QList<Core::AutomationTopologyView> incompleteAutomationViews
+        = controller->automationTopologyViews(scope);
+    QCOMPARE(incompleteAutomationViews.size(), 1);
+    QVERIFY(!incompleteAutomationViews.constFirst().lookup.hasFreshProviderEvidence());
 
     invalid = freshMockScanResult(scope, "Incomplete selected evidence");
     invalid.snapshot.complete = false;

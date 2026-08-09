@@ -249,8 +249,10 @@ Utils::Result<> GatewayRuntimeController::startAndPersist(
     setState(GatewayRuntimeState::Running);
     emitEvent(
         GatewayRuntimeEventKind::Started,
-        Tr::tr("Listening on MCP %1 and REST %2 (controller views are Mock-only/read-only; "
-               "signed semantic action intents require separate user approval).")
+        Tr::tr("Listening on MCP %1 and REST %2 (legacy controller views remain "
+               "Mock-only/read-only; selected topology evidence may include an explicitly "
+               "selected Real or Mock source, remains read-only, and never scans; signed "
+               "semantic action intents require separate user approval).")
             .arg(m_server->mcpEndpoint().toString(), m_server->restEndpoint().toString()));
     return Utils::ResultOk;
 }

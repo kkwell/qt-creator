@@ -3,6 +3,7 @@
 #pragma once
 
 #include "ethercatcore_global.h"
+#include "topologyservice.h"
 
 #include <ethercatdata/controllerconnection.h>
 #include <ethercatdata/devicedescription.h>
@@ -16,6 +17,20 @@
 #include <optional>
 
 namespace EtherCAT::Core {
+
+// A value-only projection of one explicit IDE topology selection. The
+// selection identity remains internal to the IDE; consumers must validate the
+// lookup before exposing any evidence. In particular this type never owns a
+// Provider pointer or introduces a source preference/fallback.
+struct ETHERCATCORE_EXPORT AutomationTopologyView
+{
+    TopologySelection selection;
+    TopologyLookupResult lookup;
+
+    bool isValid() const;
+
+    friend bool operator==(const AutomationTopologyView &, const AutomationTopologyView &) = default;
+};
 
 // This aggregate is deliberately value-only. In particular, it must never grow
 // Provider pointers or callbacks: automation clients observe the same IDE state
@@ -31,6 +46,7 @@ struct ETHERCATCORE_EXPORT AutomationContextSnapshot
     std::optional<Data::ScanResult> scan;
     std::optional<Data::DiagnosticsSnapshot> diagnostics;
     QList<Data::DeviceDescription> deviceDescriptions;
+    QList<AutomationTopologyView> topologyViews;
     bool mock = false;
 
     friend bool operator==(const AutomationContextSnapshot &, const AutomationContextSnapshot &)

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -29,8 +30,28 @@ EXPECTED_TOOLS = sorted(
         "runtime.operation.get",
         "runtime.operation.request",
         "runtime.read",
+        "topology.list-selected",
     ]
 )
+
+HEX32_PATTERN = re.compile(r"^0x[0-9a-f]{8}$")
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+SELECTED_TOPOLOGY_BASE_FIELDS = {
+    "controllerId",
+    "projectId",
+    "masterId",
+    "source",
+    "lookupStatus",
+    "freshness",
+    "current",
+}
+SELECTED_TOPOLOGY_FRESH_FIELDS = SELECTED_TOPOLOGY_BASE_FIELDS | {
+    "generationHash",
+    "evidenceHash",
+    "observedAt",
+    "complete",
+    "slaves",
+}
 
 
 class ProbeFailure(RuntimeError):
@@ -157,6 +178,160 @@ def expect_ok(envelope: dict[str, Any], operation: str) -> dict[str, Any]:
     if before != after:
         raise ProbeFailure(f"{operation} changed IDE state")
     return envelope.get("data", {})
+
+
+def expect_exact_keys(value: dict[str, Any], expected: set[str], label: str) -> None:
+    actual = set(value)
+    if actual != expected:
+        raise ProbeFailure(
+            f"{label} fields differ: missing={sorted(expected - actual)}, "
+            f"unexpected={sorted(actual - expected)}"
+        )
+
+
+def validate_topology_identity(identity: Any, label: str) -> None:
+    if not isinstance(identity, dict):
+        raise ProbeFailure(f"{label} identity is not an object")
+    expect_exact_keys(identity, {"vendorId", "productCode", "revision"}, label)
+    if any(
+        not isinstance(identity[field], str)
+        or not HEX32_PATTERN.fullmatch(identity[field])
+        for field in ("vendorId", "productCode", "revision")
+    ):
+        raise ProbeFailure(f"{label} identity is not canonical lowercase hex32")
+
+
+def validate_selected_topology_data(data: dict[str, Any]) -> tuple[int, int]:
+    expect_exact_keys(
+        data,
+        {
+            "apiVersion",
+            "source",
+            "readOnly",
+            "scanTriggeredByRequest",
+            "topologies",
+        },
+        "selected topology data",
+    )
+    if (
+        data.get("apiVersion") != "selected-topology-evidence/v1"
+        or data.get("source") != "ide-automation-service"
+        or data.get("readOnly") is not True
+        or data.get("scanTriggeredByRequest") is not False
+    ):
+        raise ProbeFailure("selected topology evidence boundary changed")
+
+    topologies = data.get("topologies")
+    if not isinstance(topologies, list) or len(topologies) > 512:
+        raise ProbeFailure("selected topology records exceed the closed bound")
+
+    statuses = {
+        "success",
+        "invalid-selection",
+        "provider-not-found",
+        "provider-kind-mismatch",
+        "evidence-unavailable",
+        "scope-mismatch",
+        "evidence-invalid",
+    }
+    source_rank = {"real-controller": 0, "mock-scan": 1}
+    previous_key: tuple[str, int] | None = None
+    fresh_count = 0
+    for index, record in enumerate(topologies):
+        label = f"selected topology record {index}"
+        if not isinstance(record, dict):
+            raise ProbeFailure(f"{label} is not an object")
+        if not SELECTED_TOPOLOGY_BASE_FIELDS.issubset(record):
+            raise ProbeFailure(f"{label} is missing identity or freshness fields")
+
+        controller_id = record.get("controllerId")
+        project_id = record.get("projectId")
+        master_id = record.get("masterId")
+        source = record.get("source")
+        lookup_status = record.get("lookupStatus")
+        freshness = record.get("freshness")
+        if (
+            not isinstance(controller_id, str)
+            or not 3 <= len(controller_id) <= 128
+            or not isinstance(project_id, str)
+            or not project_id
+            or not isinstance(master_id, str)
+            or not master_id
+            or source not in source_rank
+            or lookup_status not in statuses
+        ):
+            raise ProbeFailure(f"{label} has an invalid selected-source identity")
+
+        record_key = (controller_id, source_rank[source])
+        if previous_key is not None and record_key <= previous_key:
+            raise ProbeFailure("selected topology records are not unique and deterministic")
+        previous_key = record_key
+
+        current = record.get("current")
+        if current is True:
+            fresh_count += 1
+            expect_exact_keys(record, SELECTED_TOPOLOGY_FRESH_FIELDS, label)
+            if (
+                lookup_status != "success"
+                or freshness != "fresh"
+                or record.get("complete") is not True
+                or not isinstance(record.get("observedAt"), str)
+                or not record.get("observedAt")
+                or not isinstance(record.get("generationHash"), str)
+                or not SHA256_PATTERN.fullmatch(record["generationHash"])
+                or not isinstance(record.get("evidenceHash"), str)
+                or not SHA256_PATTERN.fullmatch(record["evidenceHash"])
+            ):
+                raise ProbeFailure(f"{label} is not canonical Fresh evidence")
+            slaves = record.get("slaves")
+            if not isinstance(slaves, list) or len(slaves) > 4096:
+                raise ProbeFailure(f"{label} exceeds the slave evidence bound")
+            for slave_index, slave in enumerate(slaves):
+                slave_label = f"{label} slave {slave_index}"
+                if not isinstance(slave, dict):
+                    raise ProbeFailure(f"{slave_label} is not an object")
+                if source == "real-controller":
+                    expect_exact_keys(
+                        slave,
+                        {"position", "identity", "serial", "stationAddress", "alState"},
+                        slave_label,
+                    )
+                    bounded_integers = (
+                        ("position", 65535),
+                        ("stationAddress", 65535),
+                        ("alState", 255),
+                    )
+                else:
+                    expect_exact_keys(
+                        slave,
+                        {"position", "name", "identity", "serial", "alias"},
+                        slave_label,
+                    )
+                    bounded_integers = (("position", 65535), ("alias", 65535))
+                    name = slave.get("name")
+                    if not isinstance(name, str) or len(name) > 256:
+                        raise ProbeFailure(f"{slave_label} name exceeds the public bound")
+                if any(
+                    type(slave.get(field)) is not int
+                    or not 0 <= slave[field] <= maximum
+                    for field, maximum in bounded_integers
+                ):
+                    raise ProbeFailure(f"{slave_label} has an invalid bounded integer")
+                serial = slave.get("serial")
+                if not isinstance(serial, str) or not serial.isdigit():
+                    raise ProbeFailure(f"{slave_label} serial is not an unsigned decimal string")
+                validate_topology_identity(slave.get("identity"), slave_label)
+        elif current is False:
+            expect_exact_keys(record, SELECTED_TOPOLOGY_BASE_FIELDS, label)
+            if lookup_status == "success":
+                if freshness not in {"stale", "incomplete"}:
+                    raise ProbeFailure(f"{label} has an invalid non-Fresh success state")
+            elif freshness != "unavailable":
+                raise ProbeFailure(f"{label} has an invalid Unavailable state")
+        else:
+            raise ProbeFailure(f"{label} current is not boolean")
+
+    return len(topologies), fresh_count
 
 
 def rest_get(
@@ -300,11 +475,22 @@ def run_probe(mcp_url: str, rest_url: str, timeout: float) -> dict[str, Any]:
         "gateway.get-protocol", {"operationId": "probe-mcp-audit"}
     )
     protocol_data = expect_ok(protocol, "gateway.get-protocol")
+    selected_topology_capability = protocol_data.get("selectedTopologyEvidence", {})
     if (
         protocol_data.get("apiVersion") != "controller-tools/v1"
+        or protocol_data.get("contractRevision") != "controller-tools/v1.1"
         or protocol_data.get("mcpProtocolVersion") != MCP_PROTOCOL_VERSION
         or not protocol_data.get("controllerViews", {}).get("mockOnly")
         or not protocol_data.get("controllerViews", {}).get("readOnly")
+        or selected_topology_capability.get("apiVersion")
+        != "selected-topology-evidence/v1"
+        or not selected_topology_capability.get("available")
+        or not selected_topology_capability.get("readOnly")
+        or not selected_topology_capability.get("explicitSelectionOnly")
+        or not selected_topology_capability.get("realController")
+        or not selected_topology_capability.get("mockScan")
+        or selected_topology_capability.get("scanTriggeredByRequest")
+        or selected_topology_capability.get("directProviderCalls")
         or not protocol_data.get("semanticRuntime", {}).get("available")
         or not protocol_data.get("semanticRuntime", {}).get(
             "semanticActionIntentSubmission"
@@ -320,6 +506,20 @@ def run_probe(mcp_url: str, rest_url: str, timeout: float) -> dict[str, Any]:
         or protocol_data.get("semanticRuntime", {}).get("directProviderCalls")
     ):
         raise ProbeFailure("protocol boundary changed")
+    expect_exact_keys(
+        selected_topology_capability,
+        {
+            "apiVersion",
+            "available",
+            "readOnly",
+            "explicitSelectionOnly",
+            "realController",
+            "mockScan",
+            "scanTriggeredByRequest",
+            "directProviderCalls",
+        },
+        "selected topology protocol capability",
+    )
     protocol_audit = protocol.get("audit", {})
     if (
         protocol_audit.get("sessionId") != mcp.session_id
@@ -328,6 +528,19 @@ def run_probe(mcp_url: str, rest_url: str, timeout: float) -> dict[str, Any]:
         or protocol_audit.get("client", {}).get("version") != "1.0"
     ):
         raise ProbeFailure("MCP SessionId/clientInfo audit is incomplete")
+
+    selected_topology_data = compare_read(
+        mcp,
+        rest_url,
+        "topology.list-selected",
+        "/api/controller-tools/v1/topologies/selected",
+        {},
+        "probe-cross-selected-topologies",
+        timeout,
+    )
+    selected_topology_count, fresh_topology_count = validate_selected_topology_data(
+        selected_topology_data
+    )
 
     listed = compare_read(
         mcp,
@@ -530,8 +743,11 @@ def run_probe(mcp_url: str, rest_url: str, timeout: float) -> dict[str, Any]:
     return {
         "ok": True,
         "apiVersion": protocol_data["apiVersion"],
+        "contractRevision": protocol_data["contractRevision"],
         "mcpProtocolVersion": protocol_data["mcpProtocolVersion"],
         "toolCount": len(tools),
+        "selectedTopologyCount": selected_topology_count,
+        "freshSelectedTopologyCount": fresh_topology_count,
         "controllerId": controller_id,
         "position": position,
         "contextHash": state.get("contextHash"),

@@ -3634,6 +3634,7 @@
                     "type": "array"
                 },
                 "inputSchema": {
+                    "additionalProperties": true,
                     "description": "A JSON Schema object defining the expected parameters for the tool.",
                     "properties": {
                         "$schema": {
@@ -3668,6 +3669,7 @@
                     "type": "string"
                 },
                 "outputSchema": {
+                    "additionalProperties": true,
                     "description": "An optional JSON Schema object defining the structure of the tool's output returned in\nthe structuredContent field of a CallToolResult.\n\nDefaults to JSON Schema 2020-12 when no explicit $schema is provided.\nCurrently restricted to type: \"object\" at the root level.",
                     "properties": {
                         "$schema": {

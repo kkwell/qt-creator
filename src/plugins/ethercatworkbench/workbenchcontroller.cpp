@@ -2058,6 +2058,37 @@ std::optional<Data::ScanResult> WorkbenchController::automationScanResult(
                : std::nullopt;
 }
 
+QList<Core::AutomationTopologyView> WorkbenchController::automationTopologyViews(
+    const Data::ControllerConnectionScope &scope) const
+{
+    QList<Core::AutomationTopologyView> result;
+    if (m_shuttingDown || !controllerConnectionScopeIsValid(scope))
+        return result;
+
+    const ControllerConnectionSelection realSelection = controllerConnectionSelection(scope);
+    if (realSelection.providerExplicitlySelected && realSelection.providerId.isValid()
+        && realSelection.profileExplicitlySelected && !realSelection.profileId.isNull()) {
+        const Core::TopologySelection topologySelection{
+            Core::TopologyEvidenceSource::RealController,
+            realSelection.providerId,
+            scope,
+        };
+        result.append({topologySelection, selectedRealTopology(scope)});
+    }
+
+    if (const std::optional<Core::ScanProviderSelection> mockSelection
+        = scanProviderSelection(scope)) {
+        const Core::TopologySelection topologySelection{
+            Core::TopologyEvidenceSource::MockScan,
+            mockSelection->providerId,
+            scope,
+        };
+        result.append({topologySelection, selectedMockTopology(scope)});
+    }
+
+    return result;
+}
+
 std::optional<Data::DiagnosticsSnapshot>
 WorkbenchController::automationDiagnosticsSnapshot(
     const Data::ControllerConnectionScope &scope) const

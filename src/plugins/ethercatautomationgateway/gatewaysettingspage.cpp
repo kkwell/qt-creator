@@ -95,9 +95,11 @@ public:
         m_error->setWordWrap(true);
 
         m_safety = new QLabel(
-            Tr::tr("Safety boundary: controller views are loopback-only, Mock-only, and read-only. "
-                   "The semantic action tool only submits signed, cycle-bounded intents to the "
-                   "IDE service; a verified user must approve them separately, and the Gateway "
+            Tr::tr("Safety boundary: legacy controller views are loopback-only, Mock-only, and "
+                   "read-only. Selected topology evidence may include an explicitly selected "
+                   "Real or Mock source, remains read-only, and never triggers a scan. The "
+                   "semantic action tool only submits signed, cycle-bounded intents to the IDE "
+                   "service; a verified user must approve them separately, and the Gateway "
                    "never calls a Provider or controller directly."),
             this);
         m_safety->setObjectName(SETTINGS_SAFETY_OBJECT_NAME);
@@ -231,6 +233,7 @@ public:
             Tr::tr("REST"),
             Tr::tr("loopback"),
             Tr::tr("Mock-only"),
+            Tr::tr("topology evidence"),
             Tr::tr("read-only"),
         });
     }

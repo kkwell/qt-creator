@@ -111,7 +111,9 @@ Qt Creator Core / ExtensionSystem / ProjectExplorer / Utils
                          EtherCATWorkbench
                          /        |         \
                     Scan(Mock) Diagnostics  AutomationGateway
-                                  (Mock)
+                                             /          \
+                              controller.*(Mock)   selected topology
+                                                   (Real/Mock, read-only)
 ```
 
 箭头表示上层消费下层的公开接口。实现插件不得被 Core 反向依赖。
@@ -129,7 +131,7 @@ Qt Creator Core / ExtensionSystem / ProjectExplorer / Utils
 | `EtherCATWorkbench` | `src/plugins/ethercatworkbench` | 设备树、属性页、统一命令、连接、扫描应用、运行和手动控制界面 | ECAP 编解码、ESI XML 解析 |
 | `EtherCATScan` | `src/plugins/ethercatscan` | 可选的本地 Mock 扫描与工程比较 | 真实 Product API 扫描 |
 | `EtherCATDiagnostics` | `src/plugins/ethercatdiagnostics` | 可选的本地 Mock WKC/DC/告警趋势 | 真实控制器诊断生产 |
-| `EtherCATAutomationGateway` | `src/plugins/ethercatautomationgateway` | 默认关闭的本机 MCP/REST、Mock-only 控制器视图和经审批语义动作意图 | 点击 UI、直接调用 Product API、原始 PDO/SDO |
+| `EtherCATAutomationGateway` | `src/plugins/ethercatautomationgateway` | 默认关闭的本机 MCP/REST、Mock-only 旧控制器视图、显式选择的 Real/Mock 拓扑证据和经审批语义动作意图 | 点击 UI、选择/调用 Provider、触发扫描、直接调用 Product API、原始 PDO/SDO |
 
 `EasyBoard` 是独立的历史插件，不属于这条 EtherCAT 控制链。新的 EtherCAT 功能不得依赖
 或复用它的状态。
@@ -226,8 +228,14 @@ Provider 移除、选择变化、错 scope、陈旧或被替换的结果都会 f
 
 这个接受门禁依赖 GUI 线程中连续的同步检查与写入，不能解释成通用原子事务：`ProjectService`
 尚无 offline topology compare-and-swap API，`ScanProvider` 也没有跨调用者 operation generation。
-需要跨线程或多个协调器共同修改工程时，应先补齐公共 CAS/operation 合同。Gateway 仍尚未迁移到
-同一公共拓扑只读合同。
+需要跨线程或多个协调器共同修改工程时，应先补齐公共 CAS/operation 合同。
+
+Workbench 还通过 `AutomationService` 为 Gateway 生成同一选择的值快照：每个
+Project/Master scope 最多各含一个精确 Real 和 Mock `AutomationTopologyView`，其 lookup 仍由
+`TopologyService` 即时产生。Gateway 只消费这个值快照，不持有/查询 Provider，也不能改变选择
+或触发扫描。新增 `topology.list-selected` 对每个选择发布来源、lookup 状态和 freshness；只有
+`Fresh` 当前证据携带 slaves 与脱敏的 generation/evidence hash，失效、陈旧、不完整、错 scope
+或 Provider 移除仅发布状态，不保留旧 slaves，也不在 Real/Mock 间替补。
 
 ## 5. 插件间调用规范
 
@@ -478,16 +486,22 @@ ActionManager `QAction`。不要为每个视图复制按钮逻辑。
 
 ## 10. 扩展 Automation Gateway
 
-Gateway 当前有 13 个工具，包括 Mock-only 的只读控制器视图、运行时上下文读取和经审批
-语义动作意图。控制器工具当前明确拒绝非 Mock controller context，不能把它们当成真实
-Product API 会话的查询入口。扩展规则是：
+Gateway 当前有 14 个工具。原有 `controller.*` 仍是 Mock-only 只读视图，运行时上下文读取和
+经审批语义动作意图的边界也不变；不能把它们当成真实 Product API 会话的查询入口。向后兼容
+的 `controller-tools/v1` envelope 通过 `gateway.get-protocol` 协商 additive
+`controller-tools/v1.1` revision，后者新增独立 `topology.list-selected`：它只列出 Workbench
+按 `TopologyService` 精确选择后写入 `AutomationService` 的 Real/Mock 拓扑值证据。扩展规则是：
 
 1. MCP 与 REST 调用同一个 Dispatcher、参数校验、OperationId journal 和 audit。
 2. 监听默认关闭，只绑定 `127.0.0.1`。
-3. 只读查询每次从 `AutomationService`/`SemanticRuntimeService` 获取新鲜值。
+3. 只读查询每次从 `AutomationService`/`SemanticRuntimeService` 获取新鲜值；Gateway 不查询
+   Provider，不自行挑选来源，也不把 status-only 记录恢复成拓扑。
 4. 写操作只能提交已经签名、已绑定、需要审批的通用语义动作。
 5. 自动化调用者不能批准自己的操作。
 6. Gateway 不连接控制器、不获取租约、不扫描、不部署、不直接运动。
+7. selected-topology 每次最多 512 条记录、合计 4096 个从站、紧凑 JSON 最大
+   2 MiB；OperationId 重放 journal 同时受 1024 项和 8 MiB 总预算约束。越界或
+   不完整证据必须整个请求 fail closed，不得截断后伪装成成功。
 7. 禁止添加 Product API message number、PDO/SDO、寄存器、Shell 或 CPU1 接口。
 
 需要自动化连接、扫描、部署和运行时，应先建立通用、策略化的
@@ -551,7 +565,8 @@ Product API 连接。对输出的 API/过程映像证据不能宣称为物理端
 - 选中设备、模块或通道后的语义 Control 页面。
 - XB6 完整 16 通道 ConsistencyGroup 的原子手动输出链路。
 - MCP/REST 共用 SemanticRuntime 的动作意图入口；动作意图不等于绕过审批自动执行。
-  当前控制器状态/拓扑/诊断工具仍是 Mock-only，尚未接入真实 Product API 快照。
+  原有控制器状态/拓扑/设备/诊断工具仍是 Mock-only；独立 `topology.list-selected` 可读取
+  Workbench 已精确选择的 Real/Mock 拓扑值证据，但不是完整真实状态、遥测或操作查询入口。
 
 ### 12.2 历史真实硬件证据边界
 
@@ -577,9 +592,10 @@ DC 运行记录宣称为真机运动验证。
 
 ### P1：统一业务协调层
 
-1. Core 已建立来源隔离 `TopologyService` 和会话级 `ScanProviderSelectionService`，Workbench
-   的 Real/Mock 展示与 ScanWorkflow 的 Mock 操作已按显式选择接入同一 Provider、Scope 和
-   generation；下一步让 Gateway 消费同一只读合同。
+1. Core 已建立来源隔离 `TopologyService` 和会话级 `ScanProviderSelectionService`；Workbench
+   的 Real/Mock 展示、ScanWorkflow 的 Mock 操作，以及 Gateway 的 selected-topology 只读视图
+   已按显式选择接入同一 Provider、Scope、generation/freshness 合同。Gateway 只收到
+   `AutomationService` 值快照，不拥有 Provider 或扫描入口。
 2. 将连接、租约、扫描、配置、编译、部署、运行和停止从 5,000 行级
    `WorkbenchController` 逐步迁移到无 UI 的 `EngineeringOperationCoordinator`。
 3. 建立 UI、Gateway、SemanticRuntime、Compiler 和 Activation 共用的持久 Operation

@@ -29,8 +29,10 @@ static Mcp::Schema::Implementation serverImplementation()
     return Mcp::Schema::Implementation()
         .name("ethercat-automation-gateway")
         .title("EtherCAT Automation Gateway")
-        .version("1.0.0")
-        .description("IDE-owned loopback controller views and approval-gated semantic intents");
+        .version("1.1.0")
+        .description(
+            "IDE-owned loopback Mock controller views, selected topology evidence, and "
+            "approval-gated semantic intents");
 }
 
 static QHttpServerResponse jsonResponse(
@@ -150,6 +152,10 @@ void GatewayServer::loadAndRegisterTools()
             m_contractError = QString("Invalid MCP tool contract: %1").arg(parsed.error());
             return;
         }
+        if (Mcp::Schema::toJson(*parsed) != value.toObject()) {
+            m_contractError = "The embedded MCP catalog cannot be represented without data loss";
+            return;
+        }
         parsedNames.append(parsed->name());
         parsedTools.append(*parsed);
     }
@@ -199,6 +205,12 @@ void GatewayServer::configureRestRoutes()
         QHttpServerRequest::Method::Get,
         [this](const QHttpServerRequest &request) {
             return restDispatch("controller.list", argumentsFromQuery(request), request);
+        });
+    m_restServer.route(
+        "/api/controller-tools/v1/topologies/selected",
+        QHttpServerRequest::Method::Get,
+        [this](const QHttpServerRequest &request) {
+            return restDispatch("topology.list-selected", argumentsFromQuery(request), request);
         });
     m_restServer.route(
         "/api/controller-tools/v1/adapters",
