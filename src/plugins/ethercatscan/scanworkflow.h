@@ -12,9 +12,12 @@ class QAction;
 QT_END_NAMESPACE
 
 namespace EtherCAT::Core {
+class ProviderRegistry;
+class ScanProviderSelectionService;
 class SelectionService;
 class StateService;
-}
+class TopologyService;
+} // namespace EtherCAT::Core
 
 namespace EtherCAT::Scan::Internal {
 
@@ -33,7 +36,7 @@ public:
     Utils::Result<> rescanSelectedBranch();
     Utils::Result<> compareWithProject();
     Utils::Result<> acceptScan();
-    void keepExistingConfiguration();
+    Utils::Result<> keepExistingConfiguration();
     void cancelScan();
     void shutdown();
 
@@ -44,15 +47,23 @@ signals:
 
 private:
     Utils::Result<Data::ScanRequest> requestForSelection(Data::ScanOperation operation) const;
+    Utils::Result<> validateExactProviderSelection(
+        const Data::ControllerConnectionScope &scope) const;
+    Utils::Result<Data::ScanResult> freshMockResult(
+        const Data::ControllerConnectionScope &scope,
+        const Data::NodeId &expectedSnapshotId = {}) const;
     Utils::Result<> start(Data::ScanOperation operation);
     void updateActions();
     void updateStatus(Data::ScanState state);
     void reportError(const QString &error) const;
 
     QPointer<MockScanProvider> m_provider;
+    QPointer<Core::ProviderRegistry> m_providerRegistry;
     QPointer<Core::SelectionService> m_selectionService;
     QPointer<Core::ProjectService> m_projectService;
+    QPointer<Core::ScanProviderSelectionService> m_scanProviderSelectionService;
     QPointer<Core::StateService> m_stateService;
+    QPointer<Core::TopologyService> m_topologyService;
     QList<QAction *> m_actions;
     bool m_shuttingDown = false;
 };

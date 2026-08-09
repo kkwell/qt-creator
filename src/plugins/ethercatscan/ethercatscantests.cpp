@@ -11,6 +11,7 @@
 #include <coreplugin/actionmanager/actionmanager.h>
 
 #include <ethercatcore/providerregistry.h>
+#include <ethercatcore/scanproviderselectionservice.h>
 #include <ethercatcore/selectionservice.h>
 #include <ethercatcore/stateservice.h>
 
@@ -22,6 +23,7 @@
 #include <projectexplorer/projectmanager.h>
 
 #include <utils/filepath.h>
+#include <utils/qtcsettings.h>
 
 #include <QComboBox>
 #include <QCoreApplication>
@@ -36,12 +38,52 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QWidget>
 
 #include <algorithm>
 
 namespace EtherCAT::Scan::Internal {
+
+class InertScanProvider final : public Core::ScanProvider
+{
+public:
+    InertScanProvider(Utils::Id id, const QString &displayName)
+        : Core::ScanProvider(id, displayName)
+    {
+        setAvailable(true);
+    }
+
+    Data::ScanState scanState() const final { return Data::ScanState::Idle; }
+    Data::ScanProgress scanProgress() const final { return {}; }
+    std::optional<Data::ScanResult> lastScanResult() const final { return std::nullopt; }
+    QString lastScanError() const final { return {}; }
+    Utils::Result<> startScan(const Data::ScanRequest &) final
+    {
+        ++startCalls;
+        return Utils::ResultError("The inert test provider cannot scan.");
+    }
+    void cancelScan() final { ++cancelCalls; }
+    void clearScanResult() final { ++clearCalls; }
+
+    int startCalls = 0;
+    int cancelCalls = 0;
+    int clearCalls = 0;
+};
+
+class OrdinaryScanTestProject final : public ProjectExplorer::Project
+{
+public:
+    explicit OrdinaryScanTestProject(const Utils::FilePath &filePath)
+        : Project("text/plain", filePath)
+    {
+        setType(Utils::Id("EtherCAT.Scan.Tests.OrdinaryProject"));
+        setDisplayName("Ordinary Scan Test Project");
+    }
+
+    bool needsConfiguration() const final { return false; }
+};
 
 static Data::ProjectSnapshot projectSnapshot(
     const Data::NodeId &projectId,
@@ -421,8 +463,11 @@ void EtherCATScanTests::testMockProviderStateCancellationAndFailure()
 {
     auto *provider = ExtensionSystem::PluginManager::getObject<MockScanProvider>();
     auto *service = ExtensionSystem::PluginManager::getObject<Core::ProjectService>();
+    auto *scanSelection
+        = ExtensionSystem::PluginManager::getObject<Core::ScanProviderSelectionService>();
     QVERIFY(provider);
     QVERIFY(service);
+    QVERIFY(scanSelection);
     QVERIFY(service->projects().isEmpty());
 
     QTemporaryDir directory;
@@ -437,9 +482,22 @@ void EtherCATScanTests::testMockProviderStateCancellationAndFailure()
     const ProjectExplorer::OpenProjectResult opened
         = ProjectExplorer::ProjectExplorerPlugin::openProject(filePath, false);
     QVERIFY2(opened, qPrintable(opened.errorMessage()));
-    ProjectExplorer::Project *project = opened.project();
+    QPointer<ProjectExplorer::Project> project = opened.project();
     QVERIFY(project);
     ProjectExplorer::ProjectManager::setStartupProject(project);
+    const Data::ControllerConnectionScope scope{projectId, masterId};
+    const QScopeGuard cleanup([&] {
+        scanSelection->clear(scope);
+        provider->clearScanResult();
+        provider->setScenario(MockScanScenario::Normal);
+        provider->setStepIntervalForTests(-1);
+        if (project && ProjectExplorer::ProjectManager::hasProject(project))
+            ProjectExplorer::ProjectManager::removeProject(project);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QVERIFY_RESULT(scanSelection->select(scope, provider->id()));
     auto *pages = ExtensionSystem::PluginManager::getObject<ScanPropertyPageProvider>();
     QVERIFY(pages);
     QWidget pageParent;
@@ -551,10 +609,13 @@ void EtherCATScanTests::testProjectCloseClearsOwnedScanLifecycle()
     auto *service = ExtensionSystem::PluginManager::getObject<Core::ProjectService>();
     auto *stateService = ExtensionSystem::PluginManager::getObject<Core::StateService>();
     auto *pages = ExtensionSystem::PluginManager::getObject<ScanPropertyPageProvider>();
+    auto *scanSelection
+        = ExtensionSystem::PluginManager::getObject<Core::ScanProviderSelectionService>();
     QVERIFY(provider);
     QVERIFY(service);
     QVERIFY(stateService);
     QVERIFY(pages);
+    QVERIFY(scanSelection);
     QVERIFY(service->projects().isEmpty());
 
     QTemporaryDir directory;
@@ -579,7 +640,9 @@ void EtherCATScanTests::testProjectCloseClearsOwnedScanLifecycle()
     QPointer<ProjectExplorer::Project> ownerProject;
     QPointer<ProjectExplorer::Project> otherProject;
     QPointer<ProjectExplorer::Project> reopenedProject;
+    const Data::ControllerConnectionScope ownerScope{ownerProjectId, ownerMasterId};
     const QScopeGuard cleanup([&] {
+        scanSelection->clear(ownerScope);
         provider->clearScanResult();
         provider->setScenario(MockScanScenario::Normal);
         provider->setStepIntervalForTests(-1);
@@ -616,6 +679,7 @@ void EtherCATScanTests::testProjectCloseClearsOwnedScanLifecycle()
     QVERIFY(otherProject);
     ProjectExplorer::ProjectManager::setStartupProject(ownerProject);
     QTRY_COMPARE(service->projects().size(), 2);
+    QVERIFY_RESULT(scanSelection->select(ownerScope, provider->id()));
     const Data::ProjectSnapshot ownerBaseline = *service->project(ownerProjectId);
     QVERIFY(!service->canUndoProject(ownerProjectId));
     QVERIFY(!service->canRedoProject(ownerProjectId));
@@ -680,9 +744,7 @@ void EtherCATScanTests::testProjectCloseClearsOwnedScanLifecycle()
 
     const bool expectedCompare = targetState == Data::ScanState::Completed;
     const bool expectedAccept = targetState == Data::ScanState::Completed;
-    const bool expectedKeep = targetState == Data::ScanState::Completed
-                              || targetState == Data::ScanState::Failed
-                              || targetState == Data::ScanState::Cancelled;
+    const bool expectedKeep = targetState == Data::ScanState::Completed;
     const bool expectedCancel = targetState == Data::ScanState::Preparing;
     QTRY_COMPARE(compareAction->isEnabled(), expectedCompare);
     QTRY_COMPARE(acceptAction->isEnabled(), expectedAccept);
@@ -744,6 +806,7 @@ void EtherCATScanTests::testProjectCloseClearsOwnedScanLifecycle()
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     QTRY_COMPARE(service->projects().size(), 1);
     QVERIFY(service->project(otherProjectId));
+    QVERIFY(!scanSelection->selection(ownerScope));
     QTRY_COMPARE(provider->scanState(), Data::ScanState::Idle);
     QCOMPARE(provider->scanProgress(), Data::ScanProgress());
     QVERIFY(!provider->lastScanResult());
@@ -809,15 +872,546 @@ void EtherCATScanTests::testProjectCloseClearsOwnedScanLifecycle()
     QCOMPARE(provider->scanState(), Data::ScanState::Idle);
 }
 
+void EtherCATScanTests::testWorkflowRejectsUnselectedAndStaleMockEvidence()
+{
+    auto *provider = ExtensionSystem::PluginManager::getObject<MockScanProvider>();
+    auto *service = ExtensionSystem::PluginManager::getObject<Core::ProjectService>();
+    auto *nodeSelection = ExtensionSystem::PluginManager::getObject<Core::SelectionService>();
+    auto *scanSelection
+        = ExtensionSystem::PluginManager::getObject<Core::ScanProviderSelectionService>();
+    QVERIFY(provider);
+    QVERIFY(service);
+    QVERIFY(nodeSelection);
+    QVERIFY(scanSelection);
+    QVERIFY(service->projects().isEmpty());
+
+    const Utils::Key preferenceKey("EtherCAT/Workbench/MockTopologyProviderBindings/v1");
+    const bool preferenceExisted = Utils::userSettings().contains(preferenceKey);
+    const QVariant previousPreference = Utils::userSettings().value(preferenceKey);
+    const QScopeGuard restorePreference([&] {
+        if (preferenceExisted)
+            Utils::userSettings().setValue(preferenceKey, previousPreference);
+        else
+            Utils::userSettings().remove(preferenceKey);
+    });
+    Utils::userSettings().remove(preferenceKey);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Data::NodeId projectId = Data::NodeId::create();
+    const Data::NodeId targetId = Data::NodeId::create();
+    const Data::NodeId masterId = Data::NodeId::create();
+    const Data::ControllerConnectionScope scope{projectId, masterId};
+    const Utils::FilePath filePath = Utils::FilePath::fromString(directory.path())
+                                         .canonicalPath()
+                                         .pathAppended("workflow-selection.ecatproject");
+    QVERIFY(filePath.writeFileContents(projectDocument(projectId, targetId, masterId)));
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(filePath, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    QPointer<ProjectExplorer::Project> project = opened.project();
+    QVERIFY(project);
+    ProjectExplorer::ProjectManager::setStartupProject(project);
+    QTRY_VERIFY(service->project(projectId).has_value());
+
+    InertScanProvider alternateProvider(
+        Utils::Id("EtherCAT.Scan.Tests.InertAlternate"), "Inert alternate scanner");
+    InertScanProvider imposterProvider(provider->id(), "Imposter local scanner");
+    bool alternateRegistered = false;
+    bool imposterRegistered = false;
+    bool workflowProviderRegistered = true;
+    const QScopeGuard cleanup([&] {
+        if (imposterRegistered) {
+            ExtensionSystem::PluginManager::removeObject(&imposterProvider);
+            imposterRegistered = false;
+        }
+        if (!workflowProviderRegistered) {
+            ExtensionSystem::PluginManager::addObject(provider);
+            workflowProviderRegistered = true;
+        }
+        scanSelection->clear(scope);
+        if (alternateRegistered)
+            ExtensionSystem::PluginManager::removeObject(&alternateProvider);
+        provider->clearScanResult();
+        provider->setScenario(MockScanScenario::Normal);
+        provider->setStepIntervalForTests(-1);
+        nodeSelection->clear();
+        if (project && ProjectExplorer::ProjectManager::hasProject(project))
+            ProjectExplorer::ProjectManager::removeProject(project);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    ExtensionSystem::PluginManager::addObject(&alternateProvider);
+    alternateRegistered = true;
+
+    nodeSelection->setCurrentNodeId(masterId);
+    provider->clearScanResult();
+    provider->setScenario(MockScanScenario::Normal);
+    provider->setStepIntervalForTests(0);
+    QVERIFY_RESULT(scanSelection->clear(scope));
+    ScanWorkflow workflow(provider);
+    const Data::ProjectSnapshot baseline = *service->project(projectId);
+
+    QVERIFY(!workflow.scanSlaves());
+    QVERIFY(!workflow.compareWithProject());
+    QVERIFY(!workflow.acceptScan());
+    QVERIFY(!workflow.keepExistingConfiguration());
+    QCOMPARE(provider->scanState(), Data::ScanState::Idle);
+    QVERIFY(!provider->lastScanResult());
+    QCOMPARE(*service->project(projectId), baseline);
+
+    QVERIFY_RESULT(scanSelection->select(scope, alternateProvider.id()));
+    QVERIFY(!workflow.scanSlaves());
+    QVERIFY(!workflow.compareWithProject());
+    QVERIFY(!workflow.acceptScan());
+    QVERIFY(!workflow.keepExistingConfiguration());
+    QCOMPARE(alternateProvider.startCalls, 0);
+    QCOMPARE(alternateProvider.cancelCalls, 0);
+    QCOMPARE(alternateProvider.clearCalls, 0);
+    QCOMPARE(provider->scanState(), Data::ScanState::Idle);
+    QCOMPARE(*service->project(projectId), baseline);
+
+    QVERIFY_RESULT(scanSelection->select(scope, provider->id()));
+    provider->setScenario(MockScanScenario::Slow);
+    provider->setStepIntervalForTests(60000);
+    QVERIFY(workflow.scanSlaves());
+    QCOMPARE(provider->scanState(), Data::ScanState::Preparing);
+    QVERIFY(!scanSelection->select(scope, alternateProvider.id()));
+    QVERIFY(!scanSelection->clear(scope));
+    QCOMPARE(
+        scanSelection->selection(scope),
+        std::optional(Core::ScanProviderSelection{scope, provider->id()}));
+    workflow.cancelScan();
+    QTRY_COMPARE(provider->scanState(), Data::ScanState::Cancelled);
+    provider->clearScanResult();
+    QCOMPARE(provider->scanState(), Data::ScanState::Idle);
+
+    provider->setScenario(MockScanScenario::Normal);
+    provider->setStepIntervalForTests(0);
+    QVERIFY(workflow.scanSlaves());
+    QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
+    QVERIFY(provider->lastScanResult());
+    const Data::NodeId retainedWithoutSelection = provider->lastScanResult()->snapshot.id;
+    QVERIFY_RESULT(scanSelection->clear(scope));
+    QVERIFY(!workflow.compareWithProject());
+    QVERIFY(!workflow.acceptScan());
+    QVERIFY(!workflow.keepExistingConfiguration());
+    QVERIFY(provider->lastScanResult());
+    QCOMPARE(provider->lastScanResult()->snapshot.id, retainedWithoutSelection);
+
+    QVERIFY_RESULT(scanSelection->select(scope, alternateProvider.id()));
+    QVERIFY(!workflow.compareWithProject());
+    QVERIFY(!workflow.acceptScan());
+    QVERIFY(!workflow.keepExistingConfiguration());
+    QVERIFY(provider->lastScanResult());
+    QCOMPARE(provider->lastScanResult()->snapshot.id, retainedWithoutSelection);
+    QCOMPARE(alternateProvider.startCalls, 0);
+    QCOMPARE(alternateProvider.clearCalls, 0);
+
+    QVERIFY_RESULT(scanSelection->select(scope, provider->id()));
+    QVERIFY_RESULT(workflow.keepExistingConfiguration());
+    QVERIFY(!provider->lastScanResult());
+    QVERIFY(workflow.scanSlaves());
+    QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
+    QVERIFY(provider->lastScanResult());
+    const Data::NodeId resultBeforeRemoval = provider->lastScanResult()->snapshot.id;
+    ExtensionSystem::PluginManager::removeObject(provider);
+    workflowProviderRegistered = false;
+    QCOMPARE(
+        scanSelection->selection(scope),
+        std::optional(Core::ScanProviderSelection{scope, provider->id()}));
+    QVERIFY(!scanSelection->selectionIsAvailable(scope));
+    QVERIFY(!workflow.scanSlaves());
+    QVERIFY(!workflow.compareWithProject());
+    QVERIFY(!workflow.acceptScan());
+    QVERIFY(!workflow.keepExistingConfiguration());
+    QVERIFY(provider->lastScanResult());
+    QCOMPARE(provider->lastScanResult()->snapshot.id, resultBeforeRemoval);
+    QCOMPARE(alternateProvider.startCalls, 0);
+    QCOMPARE(*service->project(projectId), baseline);
+
+    ExtensionSystem::PluginManager::addObject(&imposterProvider);
+    imposterRegistered = true;
+    QTRY_VERIFY(scanSelection->selectionIsAvailable(scope));
+    QVERIFY(!workflow.scanSlaves());
+    QVERIFY(!workflow.compareWithProject());
+    QVERIFY(!workflow.acceptScan());
+    QVERIFY(!workflow.keepExistingConfiguration());
+    QVERIFY(provider->lastScanResult());
+    QCOMPARE(provider->lastScanResult()->snapshot.id, resultBeforeRemoval);
+    QCOMPARE(imposterProvider.startCalls, 0);
+    QCOMPARE(imposterProvider.cancelCalls, 0);
+    QCOMPARE(imposterProvider.clearCalls, 0);
+
+    ExtensionSystem::PluginManager::removeObject(&imposterProvider);
+    imposterRegistered = false;
+    QTRY_VERIFY(!scanSelection->selectionIsAvailable(scope));
+
+    ExtensionSystem::PluginManager::addObject(provider);
+    workflowProviderRegistered = true;
+    QTRY_VERIFY(scanSelection->selectionIsAvailable(scope));
+    QVERIFY_RESULT(workflow.keepExistingConfiguration());
+    QVERIFY(!provider->lastScanResult());
+    QCOMPARE(*service->project(projectId), baseline);
+
+    QVERIFY(workflow.scanSlaves());
+    QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
+    QVERIFY(provider->lastScanResult());
+    const Data::NodeId compareGeneration = provider->lastScanResult()->snapshot.id;
+    bool clearedDuringCompare = false;
+    QMetaObject::Connection compareConnection;
+    compareConnection = connect(
+        provider,
+        &Core::ScanProvider::scanResultChanged,
+        provider,
+        [&] {
+            if (clearedDuringCompare)
+                return;
+            clearedDuringCompare = true;
+            disconnect(compareConnection);
+            provider->clearScanResult();
+        },
+        Qt::DirectConnection);
+    QVERIFY(!workflow.compareWithProject());
+    QVERIFY(clearedDuringCompare);
+    QVERIFY(!provider->lastScanResult());
+    QVERIFY(!compareGeneration.isNull());
+    QCOMPARE(*service->project(projectId), baseline);
+
+    QVERIFY(workflow.scanSlaves());
+    QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
+    QVERIFY(provider->lastScanResult());
+    const Data::NodeId clearedGeneration = provider->lastScanResult()->snapshot.id;
+    bool clearedDuringAccept = false;
+    QMetaObject::Connection clearConnection;
+    clearConnection = connect(
+        provider,
+        &Core::ScanProvider::scanResultChanged,
+        provider,
+        [&] {
+            if (clearedDuringAccept)
+                return;
+            clearedDuringAccept = true;
+            disconnect(clearConnection);
+            provider->clearScanResult();
+        },
+        Qt::DirectConnection);
+    QVERIFY(!workflow.acceptScan());
+    QVERIFY(clearedDuringAccept);
+    QVERIFY(!provider->lastScanResult());
+    QVERIFY(!clearedGeneration.isNull());
+    QCOMPARE(*service->project(projectId), baseline);
+    QVERIFY(!service->canUndoProject(projectId));
+
+    QVERIFY(workflow.scanSlaves());
+    QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
+    QVERIFY(provider->lastScanResult());
+    const Data::NodeId replacedGeneration = provider->lastScanResult()->snapshot.id;
+    bool replacedDuringAccept = false;
+    bool replacementStarted = false;
+    bool replacementCompleted = false;
+    QMetaObject::Connection replaceConnection;
+    replaceConnection = connect(
+        provider,
+        &Core::ScanProvider::scanResultChanged,
+        provider,
+        [&] {
+            if (replacedDuringAccept)
+                return;
+            replacedDuringAccept = true;
+            disconnect(replaceConnection);
+            provider->clearScanResult();
+            replacementStarted = bool(provider->startScan(
+                {projectId, masterId, Data::ScanOperation::Slaves, {}}));
+            if (!replacementStarted)
+                return;
+            QEventLoop completionLoop;
+            QTimer timeout;
+            timeout.setSingleShot(true);
+            connect(&timeout, &QTimer::timeout, &completionLoop, &QEventLoop::quit);
+            connect(
+                provider,
+                &Core::ScanProvider::scanFinished,
+                &completionLoop,
+                &QEventLoop::quit);
+            timeout.start(5000);
+            completionLoop.exec();
+            replacementCompleted = provider->scanState() == Data::ScanState::Completed;
+        },
+        Qt::DirectConnection);
+    QVERIFY(!workflow.acceptScan());
+    QVERIFY(replacedDuringAccept);
+    QVERIFY(replacementStarted);
+    QVERIFY(replacementCompleted);
+    QVERIFY(provider->lastScanResult());
+    QVERIFY(provider->lastScanResult()->snapshot.id != replacedGeneration);
+    QCOMPARE(*service->project(projectId), baseline);
+    QVERIFY(!service->canUndoProject(projectId));
+    QVERIFY_RESULT(workflow.keepExistingConfiguration());
+
+    QVERIFY(workflow.scanSlaves());
+    QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
+    QVERIFY(provider->lastScanResult());
+    const Data::NodeId projectCaptureGeneration = provider->lastScanResult()->snapshot.id;
+    bool projectChangedBeforeWrite = false;
+    bool projectChangeApplied = false;
+    QMetaObject::Connection projectChangeConnection;
+    projectChangeConnection = connect(
+        provider,
+        &Core::ScanProvider::scanResultChanged,
+        provider,
+        [&] {
+            if (projectChangedBeforeWrite)
+                return;
+            projectChangedBeforeWrite = true;
+            disconnect(projectChangeConnection);
+            projectChangeApplied = bool(
+                service->renameProject(projectId, "Concurrent Project Edit"));
+        },
+        Qt::DirectConnection);
+    const Utils::Result<> projectChangedResult = workflow.acceptScan();
+    QVERIFY(!projectChangedResult);
+    QVERIFY(projectChangedResult.error().contains("project changed", Qt::CaseInsensitive));
+    QVERIFY(projectChangedBeforeWrite);
+    QVERIFY(projectChangeApplied);
+    QVERIFY(provider->lastScanResult());
+    QCOMPARE(provider->lastScanResult()->snapshot.id, projectCaptureGeneration);
+    QCOMPARE(service->project(projectId)->name, QString("Concurrent Project Edit"));
+    QVERIFY(service->project(projectId)->slaves.isEmpty());
+    QVERIFY(service->canUndoProject(projectId));
+    QVERIFY_RESULT(service->undoProject(projectId));
+    QCOMPARE(service->project(projectId)->name, baseline.name);
+    QVERIFY(service->project(projectId)->slaves.isEmpty());
+    QVERIFY_RESULT(workflow.keepExistingConfiguration());
+
+    QVERIFY(workflow.scanSlaves());
+    QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
+    QVERIFY(provider->lastScanResult());
+    int acceptComparisonCount = 0;
+    bool clearedAfterProjectWrite = false;
+    QMetaObject::Connection postWriteConnection;
+    postWriteConnection = connect(
+        provider,
+        &Core::ScanProvider::scanResultChanged,
+        provider,
+        [&] {
+            ++acceptComparisonCount;
+            if (acceptComparisonCount != 2)
+                return;
+            clearedAfterProjectWrite = true;
+            disconnect(postWriteConnection);
+            provider->clearScanResult();
+        },
+        Qt::DirectConnection);
+    const Utils::Result<> postWriteResult = workflow.acceptScan();
+    QVERIFY(!postWriteResult);
+    QVERIFY(postWriteResult.error().contains(
+        "offline EtherCAT project was updated", Qt::CaseInsensitive));
+    QVERIFY(postWriteResult.error().contains(
+        "locked Mock scan evidence could not be refreshed", Qt::CaseInsensitive));
+    QVERIFY(clearedAfterProjectWrite);
+    QCOMPARE(acceptComparisonCount, 2);
+    QVERIFY(!provider->lastScanResult());
+    QCOMPARE(service->project(projectId)->slaves.size(), 4);
+    QVERIFY(service->canUndoProject(projectId));
+    QVERIFY_RESULT(service->undoProject(projectId));
+    QVERIFY(service->project(projectId)->slaves.isEmpty());
+
+    QVERIFY(workflow.scanSlaves());
+    QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
+    QVERIFY(provider->lastScanResult());
+    const QList<Data::OfflineSlaveConfiguration> acceptedTopology = offlineConfigurationFromScan(
+        *service->project(projectId), masterId, provider->lastScanResult()->snapshot);
+    const QList<Data::OfflineSlaveConfiguration> concurrentTopology{
+        offlineSlave(masterId, 7, 0x7700, 1, 707),
+    };
+    bool concurrentTopologyTriggered = false;
+    bool concurrentTopologyApplied = false;
+    QMetaObject::Connection concurrentProjectConnection;
+    concurrentProjectConnection = connect(
+        service,
+        &Core::ProjectService::projectChanged,
+        service,
+        [&](const Data::ProjectSnapshot &changedProject) {
+            if (concurrentTopologyTriggered || changedProject.id != projectId
+                || changedProject.slaves != acceptedTopology) {
+                return;
+            }
+            concurrentTopologyTriggered = true;
+            disconnect(concurrentProjectConnection);
+            concurrentTopologyApplied = bool(service->replaceOfflineSlaves(
+                projectId, masterId, concurrentTopology));
+        },
+        Qt::DirectConnection);
+    const Utils::Result<> concurrentProjectResult = workflow.acceptScan();
+    disconnect(concurrentProjectConnection);
+    QVERIFY(!concurrentProjectResult);
+    QVERIFY(concurrentProjectResult.error().contains(
+        "offline EtherCAT project was updated", Qt::CaseInsensitive));
+    QVERIFY(concurrentProjectResult.error().contains(
+        "changed again before", Qt::CaseInsensitive));
+    QVERIFY(concurrentProjectResult.error().contains("verified", Qt::CaseInsensitive));
+    QVERIFY(concurrentTopologyTriggered);
+    QVERIFY(concurrentTopologyApplied);
+    QCOMPARE(service->project(projectId)->slaves, concurrentTopology);
+    QVERIFY(service->canUndoProject(projectId));
+    QVERIFY_RESULT(service->undoProject(projectId));
+    QVERIFY(service->project(projectId)->slaves.isEmpty());
+    QVERIFY(service->canRedoProject(projectId));
+    QVERIFY_RESULT(service->redoProject(projectId));
+    QCOMPARE(service->project(projectId)->slaves, concurrentTopology);
+    QVERIFY_RESULT(service->undoProject(projectId));
+    QVERIFY(service->project(projectId)->slaves.isEmpty());
+    QVERIFY_RESULT(workflow.keepExistingConfiguration());
+
+    QVERIFY(workflow.scanSlaves());
+    QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
+    QVERIFY(provider->lastScanResult());
+    ProjectExplorer::ProjectManager::removeProject(project);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QTRY_VERIFY(!service->project(projectId));
+    QTRY_VERIFY(!scanSelection->selection(scope));
+    QVERIFY(!provider->lastScanResult());
+    QVERIFY(!workflow.scanSlaves());
+    QVERIFY(!workflow.compareWithProject());
+    QVERIFY(!workflow.acceptScan());
+    QVERIFY(!workflow.keepExistingConfiguration());
+    QCOMPARE(alternateProvider.startCalls, 0);
+}
+
+void EtherCATScanTests::testWorkflowScopesDuplicateNodeSelection()
+{
+    auto *provider = ExtensionSystem::PluginManager::getObject<MockScanProvider>();
+    auto *service = ExtensionSystem::PluginManager::getObject<Core::ProjectService>();
+    auto *nodeSelection = ExtensionSystem::PluginManager::getObject<Core::SelectionService>();
+    auto *scanSelection
+        = ExtensionSystem::PluginManager::getObject<Core::ScanProviderSelectionService>();
+    QVERIFY(provider);
+    QVERIFY(service);
+    QVERIFY(nodeSelection);
+    QVERIFY(scanSelection);
+    QVERIFY(service->projects().isEmpty());
+
+    const Utils::Key preferenceKey("EtherCAT/Workbench/MockTopologyProviderBindings/v1");
+    const bool preferenceExisted = Utils::userSettings().contains(preferenceKey);
+    const QVariant previousPreference = Utils::userSettings().value(preferenceKey);
+    const QScopeGuard restorePreference([&] {
+        if (preferenceExisted)
+            Utils::userSettings().setValue(preferenceKey, previousPreference);
+        else
+            Utils::userSettings().remove(preferenceKey);
+    });
+    Utils::userSettings().remove(preferenceKey);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QPointer<ProjectExplorer::Project> ordinaryProject = new OrdinaryScanTestProject(
+        Utils::FilePath::fromString(directory.path()).pathAppended("ordinary.scanproject"));
+    ProjectExplorer::ProjectManager::addProject(ordinaryProject);
+    ProjectExplorer::ProjectManager::setStartupProject(ordinaryProject);
+    const Data::NodeId sharedMasterId = Data::NodeId::create();
+    const Data::ControllerConnectionScope firstScope{
+        Data::NodeId::create(), sharedMasterId};
+    const Data::ControllerConnectionScope secondScope{
+        Data::NodeId::create(), sharedMasterId};
+    const Utils::FilePath firstPath = Utils::FilePath::fromString(directory.path())
+                                          .canonicalPath()
+                                          .pathAppended("duplicate-node-first.ecatproject");
+    const Utils::FilePath secondPath = Utils::FilePath::fromString(directory.path())
+                                           .canonicalPath()
+                                           .pathAppended("duplicate-node-second.ecatproject");
+    QVERIFY(firstPath.writeFileContents(
+        projectDocument(firstScope.projectId, Data::NodeId::create(), sharedMasterId)));
+    QVERIFY(secondPath.writeFileContents(
+        projectDocument(secondScope.projectId, Data::NodeId::create(), sharedMasterId)));
+    const ProjectExplorer::OpenProjectResult firstOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(firstPath, false);
+    QVERIFY2(firstOpened, qPrintable(firstOpened.errorMessage()));
+    QPointer<ProjectExplorer::Project> firstProject = firstOpened.project();
+    QVERIFY(firstProject);
+    const ProjectExplorer::OpenProjectResult secondOpened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(secondPath, false);
+    QVERIFY2(secondOpened, qPrintable(secondOpened.errorMessage()));
+    QPointer<ProjectExplorer::Project> secondProject = secondOpened.project();
+    QVERIFY(secondProject);
+
+    const QScopeGuard cleanup([&] {
+        scanSelection->clear(secondScope);
+        scanSelection->clear(firstScope);
+        provider->clearScanResult();
+        provider->setScenario(MockScanScenario::Normal);
+        provider->setStepIntervalForTests(-1);
+        nodeSelection->clear();
+        if (secondProject && ProjectExplorer::ProjectManager::hasProject(secondProject))
+            ProjectExplorer::ProjectManager::removeProject(secondProject);
+        if (firstProject && ProjectExplorer::ProjectManager::hasProject(firstProject))
+            ProjectExplorer::ProjectManager::removeProject(firstProject);
+        if (ordinaryProject && ProjectExplorer::ProjectManager::hasProject(ordinaryProject))
+            ProjectExplorer::ProjectManager::removeProject(ordinaryProject);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+
+    QTRY_COMPARE(service->projects().size(), 2);
+    QVERIFY_RESULT(scanSelection->select(firstScope, provider->id()));
+    QVERIFY_RESULT(scanSelection->select(secondScope, provider->id()));
+    provider->clearScanResult();
+    provider->setScenario(MockScanScenario::Normal);
+    provider->setStepIntervalForTests(0);
+    nodeSelection->setCurrentNodeId(sharedMasterId);
+    ScanWorkflow workflow(provider);
+
+    ProjectExplorer::ProjectManager::setStartupProject(ordinaryProject);
+    QTRY_VERIFY(service->activeProjectId().isNull());
+    QVERIFY(!workflow.scanSlaves());
+    QCOMPARE(provider->scanState(), Data::ScanState::Idle);
+    QVERIFY(!provider->lastScanResult());
+
+    QVERIFY_RESULT(service->activateProject(secondScope.projectId));
+    QTRY_COMPARE(service->activeProjectId(), secondScope.projectId);
+    QVERIFY(workflow.scanSlaves());
+    QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
+    QVERIFY(provider->lastScanResult());
+    QCOMPARE(provider->lastScanResult()->snapshot.projectId, secondScope.projectId);
+    QCOMPARE(provider->lastScanResult()->snapshot.masterId, sharedMasterId);
+    QVERIFY_RESULT(workflow.keepExistingConfiguration());
+
+    QVERIFY_RESULT(service->activateProject(firstScope.projectId));
+    QTRY_COMPARE(service->activeProjectId(), firstScope.projectId);
+    QVERIFY(workflow.scanSlaves());
+    QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
+    QVERIFY(provider->lastScanResult());
+    QCOMPARE(provider->lastScanResult()->snapshot.projectId, firstScope.projectId);
+    QCOMPARE(provider->lastScanResult()->snapshot.masterId, sharedMasterId);
+    QVERIFY_RESULT(workflow.keepExistingConfiguration());
+}
+
 void EtherCATScanTests::testWorkflowAcceptUndoAndRedo()
 {
     auto *provider = ExtensionSystem::PluginManager::getObject<MockScanProvider>();
     auto *service = ExtensionSystem::PluginManager::getObject<Core::ProjectService>();
     auto *selection = ExtensionSystem::PluginManager::getObject<Core::SelectionService>();
+    auto *scanSelection
+        = ExtensionSystem::PluginManager::getObject<Core::ScanProviderSelectionService>();
     QVERIFY(provider);
     QVERIFY(service);
     QVERIFY(selection);
+    QVERIFY(scanSelection);
     QVERIFY(service->projects().isEmpty());
+
+    const Utils::Key preferenceKey("EtherCAT/Workbench/MockTopologyProviderBindings/v1");
+    const bool preferenceExisted = Utils::userSettings().contains(preferenceKey);
+    const QVariant previousPreference = Utils::userSettings().value(preferenceKey);
+    const QScopeGuard restorePreference([&] {
+        if (preferenceExisted)
+            Utils::userSettings().setValue(preferenceKey, previousPreference);
+        else
+            Utils::userSettings().remove(preferenceKey);
+    });
+    Utils::userSettings().remove(preferenceKey);
 
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
@@ -831,14 +1425,29 @@ void EtherCATScanTests::testWorkflowAcceptUndoAndRedo()
     const ProjectExplorer::OpenProjectResult opened
         = ProjectExplorer::ProjectExplorerPlugin::openProject(filePath, false);
     QVERIFY2(opened, qPrintable(opened.errorMessage()));
-    ProjectExplorer::Project *project = opened.project();
+    QPointer<ProjectExplorer::Project> project = opened.project();
     QVERIFY(project);
     ProjectExplorer::ProjectManager::setStartupProject(project);
+
+    const Data::ControllerConnectionScope scope{projectId, masterId};
+    const QScopeGuard cleanup([&] {
+        scanSelection->clear(scope);
+        provider->clearScanResult();
+        provider->setScenario(MockScanScenario::Normal);
+        provider->setStepIntervalForTests(-1);
+        selection->clear();
+        if (project && ProjectExplorer::ProjectManager::hasProject(project))
+            ProjectExplorer::ProjectManager::removeProject(project);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
 
     selection->setCurrentNodeId(masterId);
     provider->clearScanResult();
     provider->setScenario(MockScanScenario::Normal);
     provider->setStepIntervalForTests(0);
+    QVERIFY_RESULT(scanSelection->select(scope, provider->id()));
     ScanWorkflow workflow(provider);
     QVERIFY(workflow.scanInterfaces());
     QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
@@ -847,6 +1456,8 @@ void EtherCATScanTests::testWorkflowAcceptUndoAndRedo()
     provider->clearScanResult();
     QVERIFY(workflow.scanSlaves());
     QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
+    QVERIFY(provider->lastScanResult());
+    const Data::NodeId fullScanSnapshotId = provider->lastScanResult()->snapshot.id;
     const QList<Data::OfflineSlaveConfiguration> blocker{
         {Data::NodeId::create(),
          masterId,
@@ -868,6 +1479,7 @@ void EtherCATScanTests::testWorkflowAcceptUndoAndRedo()
     QCOMPARE(service->project(projectId)->slaves.size(), 4);
     QVERIFY(service->canUndoProject(projectId));
     QVERIFY(provider->lastScanResult()->comparison.exactMatch);
+    QCOMPARE(provider->lastScanResult()->snapshot.id, fullScanSnapshotId);
     const Data::ProjectSnapshot baseline = *service->project(projectId);
     const Data::OfflineSlaveConfiguration selectedSlave = baseline.slaves.at(2);
 
@@ -876,6 +1488,7 @@ void EtherCATScanTests::testWorkflowAcceptUndoAndRedo()
     selection->setCurrentNodeId(selectedSlave.id);
     QVERIFY(workflow.rescanSelectedBranch());
     QTRY_COMPARE_WITH_TIMEOUT(provider->scanState(), Data::ScanState::Completed, 5000);
+    const Data::NodeId branchScanSnapshotId = provider->lastScanResult()->snapshot.id;
     QCOMPARE(provider->lastScanResult()->snapshot.operation,
              Data::ScanOperation::SelectedBranch);
     QCOMPARE(provider->lastScanResult()->snapshot.branchNodeId, selectedSlave.id);
@@ -888,6 +1501,7 @@ void EtherCATScanTests::testWorkflowAcceptUndoAndRedo()
     QVERIFY(provider->lastScanResult()->comparison.acceptAllowed);
     QVERIFY(workflow.acceptScan());
     QVERIFY(provider->lastScanResult()->comparison.exactMatch);
+    QCOMPARE(provider->lastScanResult()->snapshot.id, branchScanSnapshotId);
     const Data::ProjectSnapshot acceptedBranch = *service->project(projectId);
     QCOMPARE(acceptedBranch.slaves.size(), 4);
     const auto updatedSlave = std::find_if(
@@ -902,23 +1516,17 @@ void EtherCATScanTests::testWorkflowAcceptUndoAndRedo()
 
     QVERIFY(service->undoProject(projectId));
     QCOMPARE(service->project(projectId)->slaves, baseline.slaves);
+    QCOMPARE(provider->lastScanResult()->snapshot.id, branchScanSnapshotId);
     QVERIFY(service->undoProject(projectId));
     QVERIFY(service->project(projectId)->slaves.isEmpty());
+    QCOMPARE(provider->lastScanResult()->snapshot.id, branchScanSnapshotId);
     QVERIFY(service->canRedoProject(projectId));
     QVERIFY(service->redoProject(projectId));
     QCOMPARE(service->project(projectId)->slaves, baseline.slaves);
+    QCOMPARE(provider->lastScanResult()->snapshot.id, branchScanSnapshotId);
     QVERIFY(service->redoProject(projectId));
     QCOMPARE(service->project(projectId)->slaves, acceptedBranch.slaves);
-
-    workflow.shutdown();
-    provider->clearScanResult();
-    provider->setScenario(MockScanScenario::Normal);
-    selection->clear();
-    QTest::qWait(100);
-    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    ProjectExplorer::ProjectManager::removeProject(project);
-    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    QVERIFY(service->projects().isEmpty());
+    QCOMPARE(provider->lastScanResult()->snapshot.id, branchScanSnapshotId);
 }
 
 } // namespace EtherCAT::Scan::Internal

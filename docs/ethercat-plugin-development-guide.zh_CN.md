@@ -214,8 +214,20 @@ Mock 扫描 Provider 的选择由 Core `ScanProviderSelectionService` 按 `proje
 Workbench 已在 Master General 页提供显式 Mock topology Provider 选择，并通过 `TopologyService`
 只把该 scope 的 `Fresh MockScan` 证据投影到树和自动化只读结果。偏好存于单个最多 128 项的
 本地 LRU 记录；Provider 移除时保留 ID 但立即清空结果，同 ID 重新注册后才恢复。选择和恢复不
-调用扫描、控制或 Discover，也不修改工程字节。`ScanWorkflow` 的 start/compare/accept/clear
-仍需在后续问题中接入同一选择与 generation 门禁，Gateway 也尚未迁移。
+调用扫描、控制或 Discover，也不修改工程字节。
+
+`ScanWorkflow` 的 start/compare/accept/discard 现在也复核同一 `project/master scope`、
+显式 Provider ID、Registry 中的同一 Provider 实例以及 `Fresh MockScan` 证据。start 在清除旧
+结果前完成请求和绑定校验；compare 与 accept 在一次操作中持续锁定同一个 snapshot `NodeId`，
+Provider 移除、选择变化、错 scope、陈旧或被替换的结果都会 fail closed。cancel 和 shutdown
+仍可无条件安全停止。accept 会在比较后及写入前同步重读工程修订；如果工程已经写入但随后刷新
+证据失败，或 direct `projectChanged` 使最终 `exactMatch/acceptAllowed` 失效，结果会明确报告“工程
+已更新但验证失败”，不会误报成未写入，也不会显示接受成功。
+
+这个接受门禁依赖 GUI 线程中连续的同步检查与写入，不能解释成通用原子事务：`ProjectService`
+尚无 offline topology compare-and-swap API，`ScanProvider` 也没有跨调用者 operation generation。
+需要跨线程或多个协调器共同修改工程时，应先补齐公共 CAS/operation 合同。Gateway 仍尚未迁移到
+同一公共拓扑只读合同。
 
 ## 5. 插件间调用规范
 
@@ -566,8 +578,8 @@ DC 运行记录宣称为真机运动验证。
 ### P1：统一业务协调层
 
 1. Core 已建立来源隔离 `TopologyService` 和会话级 `ScanProviderSelectionService`，Workbench
-   已按显式选择接入 Real 与 Mock 拓扑；下一步让 ScanWorkflow 复核同一 Provider 与 generation，
-   再让 Gateway 消费同一只读合同。
+   的 Real/Mock 展示与 ScanWorkflow 的 Mock 操作已按显式选择接入同一 Provider、Scope 和
+   generation；下一步让 Gateway 消费同一只读合同。
 2. 将连接、租约、扫描、配置、编译、部署、运行和停止从 5,000 行级
    `WorkbenchController` 逐步迁移到无 UI 的 `EngineeringOperationCoordinator`。
 3. 建立 UI、Gateway、SemanticRuntime、Compiler 和 Activation 共用的持久 Operation

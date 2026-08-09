@@ -18,6 +18,8 @@ private slots:
     void testMockProviderStateCancellationAndFailure();
     void testProjectCloseClearsOwnedScanLifecycle_data();
     void testProjectCloseClearsOwnedScanLifecycle();
+    void testWorkflowRejectsUnselectedAndStaleMockEvidence();
+    void testWorkflowScopesDuplicateNodeSelection();
     void testWorkflowAcceptUndoAndRedo();
 };
 

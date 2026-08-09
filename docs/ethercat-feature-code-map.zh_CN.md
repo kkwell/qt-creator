@@ -138,7 +138,7 @@ python3 scripts/ethercat_feature_locator.py check
 - 前置功能：`ethercat.data.domain-contracts`、`ethercat.core.provider-registry`
 - 边界提醒：服务不缓存拓扑、不触发连接或扫描；Real 与 Mock 永不自动替补。Fresh 只表示所选 Provider 仍暴露这一代证据，不证明与当前 ProjectSnapshot 修订匹配，也不授权编译或执行。
 - 边界提醒：标记为 mock 的 ControllerConnectionSnapshot 会被拒绝，不能借 ControllerConnectionProvider 类型冒充真实来源。
-- 边界提醒：Workbench 已按显式 Provider/Profile 消费 Fresh RealController，并按 Core Scan Provider 选择消费 Fresh Mock 证据；ScanWorkflow 与 Gateway 仍待迁移。
+- 边界提醒：Workbench 已按显式 Provider/Profile 消费 Fresh RealController，并按 Core Scan Provider 选择消费 Fresh Mock 证据；ScanWorkflow 也已按同一选择锁定 Fresh Mock snapshot generation，Gateway 仍待迁移。
 
 #### `ethercat.core.scan-provider-selection` — 显式 Mock 扫描 Provider 选择
 
@@ -740,22 +740,28 @@ python3 scripts/ethercat_feature_locator.py check
 
 #### `ethercat.scan.mock-workflow` — Mock 扫描与拓扑比较
 
-为离线开发提供可取消的模拟扫描、差异比较和接受到工程流程。
+为离线开发提供按显式 Provider、工程 Scope 和 Fresh snapshot generation 锁定的可取消模拟扫描、差异比较和接受到工程流程。
 
 - Owner：`EtherCATScan`（[`src/plugins/ethercatscan`](../src/plugins/ethercatscan)）
 - 运行边界：`mock-only`
 - 证据边界：`unit`、`offscreen-ui`
 - 修改入口：
   - [`src/plugins/ethercatscan/mockscanprovider.cpp`](../src/plugins/ethercatscan/mockscanprovider.cpp)：确定性模拟扫描 Provider；`MockScanProvider`
-  - [`src/plugins/ethercatscan/scanworkflow.cpp`](../src/plugins/ethercatscan/scanworkflow.cpp)：Mock 扫描和接受编排；`ScanWorkflow::start`、`ScanWorkflow::acceptScan`
+  - [`src/plugins/ethercatscan/scanworkflow.cpp`](../src/plugins/ethercatscan/scanworkflow.cpp)：精确 Provider/Scope 选择、Fresh generation 和工程修订门禁下的 Mock 扫描编排；`ScanWorkflow::start`、`ScanWorkflow::compareWithProject`、`ScanWorkflow::acceptScan`、`ScanWorkflow::keepExistingConfiguration`、`ScanWorkflow::validateExactProviderSelection`、`ScanWorkflow::freshMockResult`
 - 公共合同：
+  - [`src/plugins/ethercatscan/scanworkflow.h`](../src/plugins/ethercatscan/scanworkflow.h)：工作流入口及精确选择、证据代际校验边界；`class ScanWorkflow`、`validateExactProviderSelection`、`freshMockResult`
+  - [`src/plugins/ethercatcore/scanproviderselectionservice.h`](../src/plugins/ethercatcore/scanproviderselectionservice.h)：工程与主站 Scope 的显式 Scan Provider 选择合同；`class ETHERCATCORE_EXPORT ScanProviderSelectionService`、`ScanProviderSelection`
+  - [`src/plugins/ethercatcore/topologyservice.h`](../src/plugins/ethercatcore/topologyservice.h)：来源隔离的 Fresh Mock 拓扑证据合同；`class ETHERCATCORE_EXPORT TopologyService`、`TopologySelection`、`hasFreshProviderEvidence`
   - [`src/plugins/ethercatcore/providers.h`](../src/plugins/ethercatcore/providers.h)：扫描 Provider 合同；`class ETHERCATCORE_EXPORT ScanProvider`
   - [`src/libs/ethercatdata/scansnapshot.h`](../src/libs/ethercatdata/scansnapshot.h)：扫描快照值类型；`ScanSnapshot`
 - 定向测试：
-  - [`src/plugins/ethercatscan/ethercatscantests.cpp`](../src/plugins/ethercatscan/ethercatscantests.cpp)（`offscreen-ui`）：`testMockProviderStateCancellationAndFailure`、`testWorkflowAcceptUndoAndRedo`
-- 相关文档：[`docs/ethercat-scan.md`](../docs/ethercat-scan.md)
-- 前置功能：`ethercat.devices.esi-repository`、`ethercat.project.mutation`
+  - [`src/plugins/ethercatscan/ethercatscantests.cpp`](../src/plugins/ethercatscan/ethercatscantests.cpp)（`offscreen-ui`）：`testMockProviderStateCancellationAndFailure`、`testWorkflowRejectsUnselectedAndStaleMockEvidence`、`testWorkflowScopesDuplicateNodeSelection`、`testWorkflowAcceptUndoAndRedo`
+- 相关文档：[`docs/ethercat-scan.md`](../docs/ethercat-scan.md)、[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
+- 前置功能：`ethercat.devices.esi-repository`、`ethercat.project.mutation`、`ethercat.core.scan-provider-selection`、`ethercat.core.topology-service`
 - 边界提醒：此插件不打开 socket、不访问物理网卡，不能作为真实扫描证据。
+- 边界提醒：start、compare、accept 和 discard 只操作 Registry 中同一实例、同一 project/master Scope 显式选择的 Provider；比较和接受持续锁定同一个 Fresh Mock snapshotId，取消与 shutdown 保留无条件安全停止语义。
+- 边界提醒：接受路径在 GUI 线程同步重读工程修订并在写入前再次校验证据，但 ProjectService 尚无通用 offline-topology CAS，ScanProvider 也没有跨调用者 operation generation；这是当前工作流的同步门禁，不是跨调用者原子事务合同。
+- 边界提醒：testWorkflowRejectsUnselectedAndStaleMockEvidence 还通过 direct projectChanged 注入覆盖写后并发拓扑变化：最终 exactMatch 或 acceptAllowed 失效时返回“工程已更新但验证失败”，不得显示接受成功。
 
 #### `ethercat.diagnostics.mock-stream` — Mock 诊断流
 
@@ -877,7 +883,8 @@ python3 scripts/ethercat_feature_locator.py check
 | `ethercat.issue.current-project-hardware-acceptance` | `blocked` | `p0` | `ethercat.compiler.project-projection`、`ethercat.product-api.topology-evidence`、`ethercat.product-api.package-deployment`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.output-transactions`、`ethercat.runtime.activation`、`ethercat.runtime.manual-control`、`ethercat.workbench.deployment`、`ethercat.workbench.semantic-control` | 当前工程到真实硬件的完整验收尚未闭环 |
 | `ethercat.issue.startup-sdo-compiler` | `open` | `p0` | `ethercat.project.model-format`、`ethercat.project.mutation`、`ethercat.workbench.configuration-pages`、`ethercat.compiler.project-projection`、`ethercat.compiler.backend` | 非空 Startup SDO 尚未进入编译闭环 |
 | `ethercat.issue.restore-project-binding-guard` | `open` | `p0` | `ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.product-api.semantic-attestation`、`ethercat.runtime.package-evidence`、`ethercat.runtime.binding-actions`、`ethercat.runtime.activation`、`ethercat.workbench.communication` | Restore 运行前缺少当前工程绑定门禁 |
-| `ethercat.issue.topology-service` | `open` | `p1` | `ethercat.core.scan-provider-selection`、`ethercat.core.topology-service`、`ethercat.product-api.topology-evidence`、`ethercat.scan.mock-workflow`、`ethercat.workbench.mock-topology-selection`、`ethercat.workbench.project-navigation`、`ethercat.workbench.communication`、`ethercat.gateway.controller-views-intents` | 统一拓扑服务尚未接入 ScanWorkflow 与 Gateway |
+| `ethercat.issue.topology-service` | `open` | `p1` | `ethercat.core.scan-provider-selection`、`ethercat.core.topology-service`、`ethercat.product-api.topology-evidence`、`ethercat.scan.mock-workflow`、`ethercat.workbench.mock-topology-selection`、`ethercat.workbench.project-navigation`、`ethercat.workbench.communication`、`ethercat.gateway.controller-views-intents` | 统一拓扑服务尚未接入 Gateway |
+| `ethercat.issue.scan-operation-cas` | `planned` | `p1` | `ethercat.scan.mock-workflow`、`ethercat.project.mutation`、`ethercat.core.scan-provider-selection`、`ethercat.core.topology-service`、`ethercat.core.provider-registry` | 扫描接受缺少跨调用者操作令牌与工程 CAS |
 | `ethercat.issue.engineering-coordinator` | `planned` | `p1` | `ethercat.workbench.communication`、`ethercat.workbench.deployment`、`ethercat.workbench.output-status`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.runtime.activation`、`ethercat.gateway.controller-views-intents` | 工程操作协调逻辑仍集中在 WorkbenchController |
 | `ethercat.issue.operation-journal` | `planned` | `p1` | `ethercat.compiler.preparation`、`ethercat.runtime.activation`、`ethercat.runtime.manual-control`、`ethercat.gateway.controller-views-intents` | 操作记录尚无统一查询与审计索引 |
 | `ethercat.issue.scan-diagnostics-dependency` | `planned` | `p1` | `ethercat.scan.mock-workflow`、`ethercat.diagnostics.mock-stream`、`ethercat.core.provider-registry` | Scan 与 Diagnostics 对 Workbench 存在反向依赖 |

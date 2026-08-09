@@ -201,7 +201,7 @@
       ],
       "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
       "dependsOn": ["ethercat.data.domain-contracts", "ethercat.core.provider-registry"],
-      "notesZh": ["服务不缓存拓扑、不触发连接或扫描；Real 与 Mock 永不自动替补。Fresh 只表示所选 Provider 仍暴露这一代证据，不证明与当前 ProjectSnapshot 修订匹配，也不授权编译或执行。", "标记为 mock 的 ControllerConnectionSnapshot 会被拒绝，不能借 ControllerConnectionProvider 类型冒充真实来源。", "Workbench 已按显式 Provider/Profile 消费 Fresh RealController，并按 Core Scan Provider 选择消费 Fresh Mock 证据；ScanWorkflow 与 Gateway 仍待迁移。"]
+      "notesZh": ["服务不缓存拓扑、不触发连接或扫描；Real 与 Mock 永不自动替补。Fresh 只表示所选 Provider 仍暴露这一代证据，不证明与当前 ProjectSnapshot 修订匹配，也不授权编译或执行。", "标记为 mock 的 ControllerConnectionSnapshot 会被拒绝，不能借 ControllerConnectionProvider 类型冒充真实来源。", "Workbench 已按显式 Provider/Profile 消费 Fresh RealController，并按 Core Scan Provider 选择消费 Fresh Mock 证据；ScanWorkflow 也已按同一选择锁定 Fresh Mock snapshot generation，Gateway 仍待迁移。"]
     },
     {
       "id": "ethercat.core.scan-provider-selection",
@@ -941,25 +941,28 @@
       "id": "ethercat.scan.mock-workflow",
       "area": "mock",
       "titleZh": "Mock 扫描与拓扑比较",
-      "summaryZh": "为离线开发提供可取消的模拟扫描、差异比较和接受到工程流程。",
+      "summaryZh": "为离线开发提供按显式 Provider、工程 Scope 和 Fresh snapshot generation 锁定的可取消模拟扫描、差异比较和接受到工程流程。",
       "owner": "ethercat-scan",
       "runtimeBoundary": "mock-only",
       "evidenceBoundary": ["unit", "offscreen-ui"],
       "keywords": ["Mock 扫描", "拓扑比较", "接受扫描", "离线"],
       "implementation": [
         {"path": "src/plugins/ethercatscan/mockscanprovider.cpp", "symbols": ["MockScanProvider"], "roleZh": "确定性模拟扫描 Provider"},
-        {"path": "src/plugins/ethercatscan/scanworkflow.cpp", "symbols": ["ScanWorkflow::start", "ScanWorkflow::acceptScan"], "roleZh": "Mock 扫描和接受编排"}
+        {"path": "src/plugins/ethercatscan/scanworkflow.cpp", "symbols": ["ScanWorkflow::start", "ScanWorkflow::compareWithProject", "ScanWorkflow::acceptScan", "ScanWorkflow::keepExistingConfiguration", "ScanWorkflow::validateExactProviderSelection", "ScanWorkflow::freshMockResult"], "roleZh": "精确 Provider/Scope 选择、Fresh generation 和工程修订门禁下的 Mock 扫描编排"}
       ],
       "contracts": [
+        {"path": "src/plugins/ethercatscan/scanworkflow.h", "symbols": ["class ScanWorkflow", "validateExactProviderSelection", "freshMockResult"], "roleZh": "工作流入口及精确选择、证据代际校验边界"},
+        {"path": "src/plugins/ethercatcore/scanproviderselectionservice.h", "symbols": ["class ETHERCATCORE_EXPORT ScanProviderSelectionService", "ScanProviderSelection"], "roleZh": "工程与主站 Scope 的显式 Scan Provider 选择合同"},
+        {"path": "src/plugins/ethercatcore/topologyservice.h", "symbols": ["class ETHERCATCORE_EXPORT TopologyService", "TopologySelection", "hasFreshProviderEvidence"], "roleZh": "来源隔离的 Fresh Mock 拓扑证据合同"},
         {"path": "src/plugins/ethercatcore/providers.h", "symbols": ["class ETHERCATCORE_EXPORT ScanProvider"], "roleZh": "扫描 Provider 合同"},
         {"path": "src/libs/ethercatdata/scansnapshot.h", "symbols": ["ScanSnapshot"], "roleZh": "扫描快照值类型"}
       ],
       "tests": [
-        {"path": "src/plugins/ethercatscan/ethercatscantests.cpp", "cases": ["testMockProviderStateCancellationAndFailure", "testWorkflowAcceptUndoAndRedo"], "kind": "offscreen-ui"}
+        {"path": "src/plugins/ethercatscan/ethercatscantests.cpp", "cases": ["testMockProviderStateCancellationAndFailure", "testWorkflowRejectsUnselectedAndStaleMockEvidence", "testWorkflowScopesDuplicateNodeSelection", "testWorkflowAcceptUndoAndRedo"], "kind": "offscreen-ui"}
       ],
-      "docs": ["docs/ethercat-scan.md"],
-      "dependsOn": ["ethercat.devices.esi-repository", "ethercat.project.mutation"],
-      "notesZh": ["此插件不打开 socket、不访问物理网卡，不能作为真实扫描证据。"]
+      "docs": ["docs/ethercat-scan.md", "docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.devices.esi-repository", "ethercat.project.mutation", "ethercat.core.scan-provider-selection", "ethercat.core.topology-service"],
+      "notesZh": ["此插件不打开 socket、不访问物理网卡，不能作为真实扫描证据。", "start、compare、accept 和 discard 只操作 Registry 中同一实例、同一 project/master Scope 显式选择的 Provider；比较和接受持续锁定同一个 Fresh Mock snapshotId，取消与 shutdown 保留无条件安全停止语义。", "接受路径在 GUI 线程同步重读工程修订并在写入前再次校验证据，但 ProjectService 尚无通用 offline-topology CAS，ScanProvider 也没有跨调用者 operation generation；这是当前工作流的同步门禁，不是跨调用者原子事务合同。", "testWorkflowRejectsUnselectedAndStaleMockEvidence 还通过 direct projectChanged 注入覆盖写后并发拓扑变化：最终 exactMatch 或 acceptAllowed 失效时返回“工程已更新但验证失败”，不得显示接受成功。"]
     },
     {
       "id": "ethercat.diagnostics.mock-stream",
@@ -1214,15 +1217,28 @@
     },
     {
       "id": "ethercat.issue.topology-service",
-      "titleZh": "统一拓扑服务尚未接入 ScanWorkflow 与 Gateway",
+      "titleZh": "统一拓扑服务尚未接入 Gateway",
       "status": "open",
       "severity": "p1",
       "affectedFeatures": ["ethercat.core.scan-provider-selection", "ethercat.core.topology-service", "ethercat.product-api.topology-evidence", "ethercat.scan.mock-workflow", "ethercat.workbench.mock-topology-selection", "ethercat.workbench.project-navigation", "ethercat.workbench.communication", "ethercat.gateway.controller-views-intents"],
-      "problemZh": "Workbench 的 Real 与 Mock 拓扑展示已统一，但 ScanWorkflow 尚未在启动和接受结果时复核共享选择与 generation，Gateway 也尚未消费公共拓扑合同。",
-      "currentBoundaryZh": "Core 已提供无 UI、无缓存的 TopologyService 和会话级 ScanProviderSelectionService；Workbench 只投影精确选择的 Fresh Real/Mock 证据，Mock Provider 偏好以单个最多 128 项的本地记录恢复，移除、陈旧、不完整或错 scope 均清空且不替补。ScanWorkflow 仍持具体 Provider，Gateway 仍没有真实公共视图。",
-      "nextActionZh": "让 ScanWorkflow 在启动、比较、接受和清除时复核同一共享 Provider 选择与 Mock snapshot generation；然后让 Gateway 读取同一公共只读快照。",
-      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatcore/scanproviderselectionservice.h", "src/plugins/ethercatcore/scanproviderselectionservice.cpp", "src/plugins/ethercatcore/topologyservice.h", "src/plugins/ethercatcore/topologyservice.cpp", "src/plugins/ethercatcore/ethercatcoretests.cpp", "src/plugins/ethercatworkbench/workbenchcontroller.cpp", "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp"],
+      "problemZh": "Workbench 的 Real/Mock 拓扑展示和 ScanWorkflow 的 Mock 操作已统一到公共选择与拓扑合同，但 Gateway 尚未消费同一公共拓扑快照。",
+      "currentBoundaryZh": "Core 已提供无 UI、无缓存的 TopologyService 和会话级 ScanProviderSelectionService；Workbench 只投影精确选择的 Fresh Real/Mock 证据，Mock Provider 偏好以单个最多 128 项的本地记录恢复，移除、陈旧、不完整或错 Scope 均清空且不替补。ScanWorkflow 的 start、compare、accept 和 discard 已复核同一 Provider 实例、Scope 与 Fresh Mock snapshotId，并以 GUI 线程同步工程修订检查保护写入前边界；Gateway 仍没有真实公共视图。",
+      "nextActionZh": "让 Gateway 读取同一公共只读拓扑快照，并保持来源、Provider、Scope、generation 与 freshness 的精确语义。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatcore/scanproviderselectionservice.h", "src/plugins/ethercatcore/scanproviderselectionservice.cpp", "src/plugins/ethercatcore/topologyservice.h", "src/plugins/ethercatcore/topologyservice.cpp", "src/plugins/ethercatcore/ethercatcoretests.cpp", "src/plugins/ethercatworkbench/workbenchcontroller.cpp", "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "src/plugins/ethercatscan/scanworkflow.h", "src/plugins/ethercatscan/scanworkflow.cpp", "src/plugins/ethercatscan/ethercatscantests.cpp"],
       "resolutionCriteriaZh": ["UI 与 Gateway 读取同一拓扑快照合同。", "Real/Mock 来源和新鲜度不可混淆。", "连接不扫描、显式重新扫描语义保持不变。"],
+      "notesZh": []
+    },
+    {
+      "id": "ethercat.issue.scan-operation-cas",
+      "titleZh": "扫描接受缺少跨调用者操作令牌与工程 CAS",
+      "status": "planned",
+      "severity": "p1",
+      "affectedFeatures": ["ethercat.scan.mock-workflow", "ethercat.project.mutation", "ethercat.core.scan-provider-selection", "ethercat.core.topology-service", "ethercat.core.provider-registry"],
+      "problemZh": "ScanProvider 没有跨调用者 operation generation，ProjectService::replaceOfflineSlaves 也不接受 expected project revision；多个协调器无法用一个公共原子合同绑定扫描操作、结果代际和待写工程修订。",
+      "currentBoundaryZh": "ScanWorkflow 通过精确 Provider 实例、Scope、Fresh snapshotId 和写入前工程修订重读，在 GUI 线程连续同步调用范围内 fail closed；该门禁不覆盖其他调用者、迟到信号或 Provider 以同一 ID 重新注册后的旧操作。",
+      "nextActionZh": "为 ScanProvider 冻结跨调用者 operation token/generation，并为 replaceOfflineSlaves 增加 expected revision CAS；让结果、信号、取消和工程写入共同校验同一令牌与修订。",
+      "evidencePaths": ["src/plugins/ethercatcore/providers.h", "src/plugins/ethercatcore/providerregistry.h", "src/plugins/ethercatcore/scanproviderselectionservice.h", "src/plugins/ethercatproject/projectserviceimpl.h", "src/plugins/ethercatproject/projectserviceimpl.cpp", "src/plugins/ethercatproject/ethercatprojectdocument.h", "src/plugins/ethercatproject/ethercatprojectdocument.cpp", "src/plugins/ethercatscan/scanworkflow.h", "src/plugins/ethercatscan/scanworkflow.cpp", "src/plugins/ethercatscan/ethercatscantests.cpp"],
+      "resolutionCriteriaZh": ["每次扫描操作产生不可混淆的 operation token，结果、进度、完成和取消均携带并校验该令牌。", "迟到信号和旧操作结果被拒绝，不能覆盖当前选择或当前快照。", "Provider 移除后以同一 ID 重新注册不会复活或接受旧 operation token。", "expected project revision 陈旧时 replaceOfflineSlaves 返回明确 stale 结果且工程、Undo 栈和持久字节均零写入。"],
       "notesZh": []
     },
     {
