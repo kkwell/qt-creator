@@ -248,48 +248,72 @@
       "notesZh": ["厂家对象、PDO 偏移和 CiA402 步骤应由 Adapter 提供，Core 不得写死。"]
     },
     {
+      "id": "ethercat.core.device-parameter-contract",
+      "area": "architecture",
+      "titleZh": "设备参数工程意图合同",
+      "summaryZh": "为工程拥有的设备参数提供有界 ASCII 标识、canonical EngineeringValue 和严格顺序校验，不定义厂家对象或在线读写。",
+      "owner": "ethercat-core",
+      "runtimeBoundary": "contract-only",
+      "evidenceBoundary": ["unit"],
+      "keywords": ["设备参数", "deviceParameters", "EngineeringValue", "ASCII", "工程意图"],
+      "implementation": [
+        {"path": "src/plugins/ethercatcore/deviceparametercontract.cpp", "symbols": ["validateDeviceParameterConfiguration"], "roleZh": "数量、ASCII 标识、唯一顺序和工程值校验"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/deviceparameters.h", "symbols": ["DeviceParameterValue", "DeviceParameterConfiguration", "maximumDeviceParametersPerProject"], "roleZh": "有界工程参数值类型和数量上限"},
+        {"path": "src/plugins/ethercatcore/deviceparametercontract.h", "symbols": ["DeviceParameterContractValidation", "validateDeviceParameterConfiguration"], "roleZh": "跨插件设备参数校验合同"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatcore/ethercatcoretests.cpp", "cases": ["testDeviceParameterConfigurationContract"], "kind": "unit"}
+      ],
+      "docs": ["docs/ethercat-project-format.md", "docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.data.domain-contracts"],
+      "notesZh": ["该合同只验证可持久化的工程意图；签名 Adapter 参数定义仍须资格化 ID、类型、单位、范围和投影。", "在线扫描实测值属于独立会话证据，不得写入 DeviceParameterConfiguration 或 ProjectSnapshot。"]
+    },
+    {
       "id": "ethercat.project.model-format",
       "area": "project",
       "titleZh": "工程格式与迁移",
-      "summaryZh": "维护当前 v7 工程 JSON、严格结构校验和旧版本逐级迁移。",
+      "summaryZh": "维护当前 v8 工程 JSON、严格结构校验和旧版本迁移，包括每从站 canonical deviceParameters 工程意图。",
       "owner": "ethercat-project",
       "runtimeBoundary": "engineering-only",
       "evidenceBoundary": ["unit"],
-      "keywords": ["工程文件", "JSON", "v7", "迁移", "保存"],
+      "keywords": ["工程文件", "JSON", "v8", "deviceParameters", "迁移", "保存"],
       "implementation": [
-        {"path": "src/plugins/ethercatproject/ethercatprojectformat.cpp", "symbols": ["formatVersion", "CURRENT_FORMAT_VERSION"], "roleZh": "工程读写、校验和迁移"}
+        {"path": "src/plugins/ethercatproject/ethercatprojectformat.cpp", "symbols": ["parseDeviceParameterConfiguration", "serializeDeviceParameterConfiguration", "CURRENT_FORMAT_VERSION"], "roleZh": "v8 工程读写、设备参数严格形状校验和迁移"}
       ],
       "contracts": [
         {"path": "src/libs/ethercatdata/projectsnapshot.h", "symbols": ["ProjectSnapshot", "OfflineSlaveConfiguration"], "roleZh": "对外工程快照"}
       ],
       "tests": [
-        {"path": "src/plugins/ethercatproject/ethercatprojecttests.cpp", "cases": ["testFormatRoundTripAndCorruption", "testVersionSixStationAddressMigration"], "kind": "unit"}
+        {"path": "src/plugins/ethercatproject/ethercatprojecttests.cpp", "cases": ["testFormatRoundTripAndCorruption", "testDeviceParameterConfigurationPersistenceAndUndo", "testVersionSevenDeviceParameterMigration"], "kind": "unit"}
       ],
       "docs": ["docs/ethercat-project-format.md"],
-      "dependsOn": ["ethercat.data.domain-contracts"],
-      "notesZh": ["新增持久化字段时必须同时提供迁移、严格解析、往返和损坏输入测试。"]
+      "dependsOn": ["ethercat.data.domain-contracts", "ethercat.core.device-parameter-contract"],
+      "notesZh": ["新增持久化字段时必须同时提供迁移、严格解析、往返和损坏输入测试。", "v8 deviceParameters 只保存工程意图；扫描实测值不进入 ProjectSnapshot。"]
     },
     {
       "id": "ethercat.project.mutation",
       "area": "project",
       "titleZh": "工程变更、Undo 与 CAS",
-      "summaryZh": "所有界面编辑通过 ProjectService 写入工程，并保留 Undo/Redo 与激活比较交换语义。",
+      "summaryZh": "所有界面编辑通过 ProjectService 写入工程；设备参数提交还校验预期 ESI/Adapter value token，并保留 Undo/Redo 与激活比较交换语义。",
       "owner": "ethercat-project",
       "runtimeBoundary": "engineering-only",
       "evidenceBoundary": ["unit"],
-      "keywords": ["ProjectService", "Undo", "Redo", "应用总线", "CAS"],
+      "keywords": ["ProjectService", "Undo", "Redo", "设备参数", "expected token", "CAS"],
       "implementation": [
-        {"path": "src/plugins/ethercatproject/projectserviceimpl.cpp", "symbols": ["ProjectServiceImpl::replaceOfflineSlaves", "ProjectServiceImpl::setStartupProject"], "roleZh": "工程变更服务实现"}
+        {"path": "src/plugins/ethercatproject/projectserviceimpl.cpp", "symbols": ["ProjectServiceImpl::replaceOfflineSlaves", "ProjectServiceImpl::setDeviceParameterConfiguration", "ProjectServiceImpl::setStartupProject"], "roleZh": "工程变更服务实现"},
+        {"path": "src/plugins/ethercatproject/ethercatprojectdocument.cpp", "symbols": ["EtherCATProjectDocument::setDeviceParameterConfiguration"], "roleZh": "预期 ESI/Adapter 比较、绑定失效和原子 Undo 命令"}
       ],
       "contracts": [
-        {"path": "src/plugins/ethercatcore/providers.h", "symbols": ["class ETHERCATCORE_EXPORT ProjectService", "replaceOfflineSlaves"], "roleZh": "跨插件工程服务"}
+        {"path": "src/plugins/ethercatcore/providers.h", "symbols": ["class ETHERCATCORE_EXPORT ProjectService", "replaceOfflineSlaves", "setDeviceParameterConfiguration"], "roleZh": "跨插件工程服务和设备参数 expected-token 入口"}
       ],
       "tests": [
-        {"path": "src/plugins/ethercatproject/ethercatprojecttests.cpp", "cases": ["testDocumentUndoRedoAndAtomicFailure", "testRuntimePackageActivationProjectCompareAndSet"], "kind": "unit"}
+        {"path": "src/plugins/ethercatproject/ethercatprojecttests.cpp", "cases": ["testDocumentUndoRedoAndAtomicFailure", "testDeviceParameterConfigurationPersistenceAndUndo", "testRuntimePackageActivationProjectCompareAndSet"], "kind": "unit"}
       ],
       "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
-      "dependsOn": ["ethercat.project.model-format", "ethercat.core.provider-registry"],
-      "notesZh": ["页面不得直接修改文档内部对象，也不得维护第二份工程状态。"]
+      "dependsOn": ["ethercat.project.model-format", "ethercat.core.device-parameter-contract", "ethercat.core.provider-registry"],
+      "notesZh": ["页面不得直接修改文档内部对象，也不得维护第二份工程状态。", "设备参数非空时从站必须保持精确 ESI 和完整 Adapter 选择；token 陈旧、ESI 或 Adapter 改变必须拒绝或清空，不能隐式重绑。"]
     },
     {
       "id": "ethercat.devices.esi-repository",
@@ -522,23 +546,25 @@
       "id": "ethercat.compiler.project-projection",
       "area": "compiler",
       "titleZh": "工程快照到编译请求",
-      "summaryZh": "把工程、真实拓扑、ESI、Adapter、目标能力和固定构建身份投影为严格编译输入。",
+      "summaryZh": "把工程、真实拓扑、ESI、Adapter、目标能力和固定构建身份投影为严格编译输入；当前任意非空设备参数在外部编译前 fail closed。",
       "owner": "ethercat-project-compiler",
       "runtimeBoundary": "engineering-only",
       "evidenceBoundary": ["unit", "artifact"],
-      "keywords": ["编译请求", "ProjectSnapshot", "拓扑证据", "Adapter", "能力配置"],
+      "keywords": ["编译请求", "ProjectSnapshot", "设备参数", "fail closed", "compile recovery v2"],
       "implementation": [
-        {"path": "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp", "symbols": ["ProvisionedRuntimePackageCompilerProjectRequestBuilder::build"], "roleZh": "严格工程投影和 fail-closed 校验"}
+        {"path": "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp", "symbols": ["ProvisionedRuntimePackageCompilerProjectRequestBuilder::build"], "roleZh": "严格工程投影和非空设备参数 fail-closed 校验"},
+        {"path": "src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp", "symbols": ["writeDeviceParameterConfiguration", "readDeviceParameterConfiguration", "writeOfflineSlave", "readOfflineSlave"], "roleZh": "compile-recovery payload v2 保留设备参数字段，v1 兼容为空"}
       ],
       "contracts": [
-        {"path": "src/plugins/ethercatcore/runtimepackagecompilerprojectrequestbuilder.h", "symbols": ["class ETHERCATCORE_EXPORT RuntimePackageCompilerProjectRequestBuilder"], "roleZh": "工程编译请求构建边界"}
+        {"path": "src/plugins/ethercatcore/runtimepackagecompilerprojectrequestbuilder.h", "symbols": ["class ETHERCATCORE_EXPORT RuntimePackageCompilerProjectRequestBuilder"], "roleZh": "工程编译请求构建边界"},
+        {"path": "src/libs/ethercatdata/runtimepackagecompiler.cpp", "symbols": ["projectDeviceParametersAreEmpty", "RuntimePackageCompilerCompileRequest::hasValidReservationInputs"], "roleZh": "编译请求值合同拒绝未投影的非空设备参数"}
       ],
       "tests": [
-        {"path": "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "cases": ["testProjectRequestBuilderProvisioningAndDeterminism", "testProjectRequestBuilderFailsClosedOnUnprovenTopology"], "kind": "artifact"}
+        {"path": "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "cases": ["testProjectRequestBuilderProvisioningAndDeterminism", "testDeviceParametersFailClosedBeforeCompilation", "testCompileRecoveryRoundTrip", "testCompileRecoveryVersionOneCompatibility", "testProjectRequestBuilderFailsClosedOnUnprovenTopology"], "kind": "artifact"}
       ],
       "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
-      "dependsOn": ["ethercat.project.model-format", "ethercat.adapters.catalog-authorization", "ethercat.product-api.topology-evidence"],
-      "notesZh": ["不受支持的 PDO、Startup SDO 或 DC 选择必须结构化拒绝，不能静默回退。"]
+      "dependsOn": ["ethercat.project.model-format", "ethercat.core.device-parameter-contract", "ethercat.adapters.catalog-authorization", "ethercat.product-api.topology-evidence"],
+      "notesZh": ["不受支持的 PDO、Startup SDO、DC 或非空设备参数必须结构化拒绝，不能静默回退。", "compile-recovery v2 编解码设备参数字段且兼容 v1 空值，但这不是完整 compiler projection，也不授权部署。"]
     },
     {
       "id": "ethercat.compiler.backend",
@@ -948,7 +974,8 @@
       "keywords": ["Mock 扫描", "拓扑比较", "接受扫描", "离线"],
       "implementation": [
         {"path": "src/plugins/ethercatscan/mockscanprovider.cpp", "symbols": ["MockScanProvider"], "roleZh": "确定性模拟扫描 Provider"},
-        {"path": "src/plugins/ethercatscan/scanworkflow.cpp", "symbols": ["ScanWorkflow::start", "ScanWorkflow::compareWithProject", "ScanWorkflow::acceptScan", "ScanWorkflow::keepExistingConfiguration", "ScanWorkflow::validateExactProviderSelection", "ScanWorkflow::freshMockResult"], "roleZh": "精确 Provider/Scope 选择、Fresh generation 和工程修订门禁下的 Mock 扫描编排"}
+        {"path": "src/plugins/ethercatscan/scanworkflow.cpp", "symbols": ["ScanWorkflow::start", "ScanWorkflow::compareWithProject", "ScanWorkflow::acceptScan", "ScanWorkflow::keepExistingConfiguration", "ScanWorkflow::validateExactProviderSelection", "ScanWorkflow::freshMockResult"], "roleZh": "精确 Provider/Scope 选择、Fresh generation 和工程修订门禁下的 Mock 扫描编排"},
+        {"path": "src/plugins/ethercatscan/topologycomparison.cpp", "symbols": ["offlineConfigurationFromScan"], "roleZh": "同一精确设备身份保留工程参数意图，身份或 Adapter 证据变化时清空"}
       ],
       "contracts": [
         {"path": "src/plugins/ethercatscan/scanworkflow.h", "symbols": ["class ScanWorkflow", "validateExactProviderSelection", "freshMockResult"], "roleZh": "工作流入口及精确选择、证据代际校验边界"},
@@ -958,11 +985,11 @@
         {"path": "src/libs/ethercatdata/scansnapshot.h", "symbols": ["ScanSnapshot"], "roleZh": "扫描快照值类型"}
       ],
       "tests": [
-        {"path": "src/plugins/ethercatscan/ethercatscantests.cpp", "cases": ["testMockProviderStateCancellationAndFailure", "testWorkflowRejectsUnselectedAndStaleMockEvidence", "testWorkflowScopesDuplicateNodeSelection", "testWorkflowAcceptUndoAndRedo"], "kind": "offscreen-ui"}
+        {"path": "src/plugins/ethercatscan/ethercatscantests.cpp", "cases": ["testScanPreservesManualConfigurationByIdentity", "testMockProviderStateCancellationAndFailure", "testWorkflowRejectsUnselectedAndStaleMockEvidence", "testWorkflowScopesDuplicateNodeSelection", "testWorkflowAcceptUndoAndRedo"], "kind": "offscreen-ui"}
       ],
       "docs": ["docs/ethercat-scan.md", "docs/ethercat-plugin-development-guide.zh_CN.md"],
       "dependsOn": ["ethercat.devices.esi-repository", "ethercat.project.mutation", "ethercat.core.scan-provider-selection", "ethercat.core.topology-service"],
-      "notesZh": ["此插件不打开 socket、不访问物理网卡，不能作为真实扫描证据。", "start、compare、accept 和 discard 只操作 Registry 中同一实例、同一 project/master Scope 显式选择的 Provider；比较和接受持续锁定同一个 Fresh Mock snapshotId，取消与 shutdown 保留无条件安全停止语义。", "接受路径在 GUI 线程同步重读工程修订并在写入前再次校验证据，但 ProjectService 尚无通用 offline-topology CAS，ScanProvider 也没有跨调用者 operation generation；这是当前工作流的同步门禁，不是跨调用者原子事务合同。", "testWorkflowRejectsUnselectedAndStaleMockEvidence 还通过 direct projectChanged 注入覆盖写后并发拓扑变化：最终 exactMatch 或 acceptAllowed 失效时返回“工程已更新但验证失败”，不得显示接受成功。"]
+      "notesZh": ["此插件不打开 socket、不访问物理网卡，不能作为真实扫描证据。", "Mock 接受只在同一精确设备身份仍成立时保留 ProjectSnapshot 中已有的 deviceParameters 工程意图；Revision、设备或 Adapter 证据变化时清空。它不读取实测设备参数，也不得把 observed 值写入 ProjectSnapshot。", "start、compare、accept 和 discard 只操作 Registry 中同一实例、同一 project/master Scope 显式选择的 Provider；比较和接受持续锁定同一个 Fresh Mock snapshotId，取消与 shutdown 保留无条件安全停止语义。", "接受路径在 GUI 线程同步重读工程修订并在写入前再次校验证据，但 ProjectService 尚无通用 offline-topology CAS，ScanProvider 也没有跨调用者 operation generation；这是当前工作流的同步门禁，不是跨调用者原子事务合同。", "testWorkflowRejectsUnselectedAndStaleMockEvidence 还通过 direct projectChanged 注入覆盖写后并发拓扑变化：最终 exactMatch 或 acceptAllowed 失效时返回“工程已更新但验证失败”，不得显示接受成功。"]
     },
     {
       "id": "ethercat.diagnostics.mock-stream",
@@ -1067,9 +1094,9 @@
       "id": "architecture",
       "titleZh": "架构与公共合同知识卡",
       "purposeZh": "在不遍历实现插件的前提下确认跨插件值对象、Provider 和公共服务的正确边界。",
-      "readOrder": ["ethercat.data.domain-contracts", "ethercat.core.provider-registry", "ethercat.core.scan-provider-selection", "ethercat.core.topology-service", "ethercat.core.manual-control-contract"],
-      "callFlowsZh": ["EtherCATData 不可变值对象 -> EtherCATCore 公共合同 -> ProviderRegistry 唯一实现 -> 消费者复制快照。", "工程/主站 Scope -> ScanProviderSelectionService 精确 Provider ID -> TopologyService Mock 证据查询；无选择或失效时为空且不替补。", "真实或 Mock Provider 原始证据 -> TopologyService 精确来源选择 -> 派生 generation/freshness -> 消费者重新读取。", "插件初始化时注册稳定 Provider ID，卸载前注销；消费者只依赖公开合同和稳定 ID。"],
-      "invariantsZh": ["跨插件数据只能通过公开值类型和 Provider/Service 合同传递。", "Provider ID 在进程内唯一且稳定，冲突诊断必须有界并按稳定身份合并。", "Core、Workbench 和 Gateway 不得出现厂家型号、CiA 402 对象或 PDO 偏移分支。"],
+      "readOrder": ["ethercat.data.domain-contracts", "ethercat.core.provider-registry", "ethercat.core.scan-provider-selection", "ethercat.core.topology-service", "ethercat.core.manual-control-contract", "ethercat.core.device-parameter-contract"],
+      "callFlowsZh": ["EtherCATData 不可变值对象 -> EtherCATCore 公共合同 -> ProviderRegistry 唯一实现 -> 消费者复制快照。", "设备参数工程意图 -> DeviceParameterConfiguration 有界值 -> Core canonical 合同 -> Project checked mutation；在线 observed 证据保持分离。", "工程/主站 Scope -> ScanProviderSelectionService 精确 Provider ID -> TopologyService Mock 证据查询；无选择或失效时为空且不替补。", "真实或 Mock Provider 原始证据 -> TopologyService 精确来源选择 -> 派生 generation/freshness -> 消费者重新读取。", "插件初始化时注册稳定 Provider ID，卸载前注销；消费者只依赖公开合同和稳定 ID。"],
+      "invariantsZh": ["跨插件数据只能通过公开值类型和 Provider/Service 合同传递。", "Provider ID 在进程内唯一且稳定，冲突诊断必须有界并按稳定身份合并。", "设备参数 Project intent 与控制器 observed 证据必须分离，observed 不进入 ProjectSnapshot。", "Core、Workbench 和 Gateway 不得出现厂家型号、CiA 402 对象或 PDO 偏移分支。"],
       "changeChecklistZh": ["先判断变更属于值类型、公共合同还是具体 Provider。", "新增值类型时同步元类型、相等语义、序列化边界和合同测试。", "新增 Provider 时验证注册、冲突、卸载、重入和消费者失效路径。", "修改构建依赖时同步同目录 CMake 与 qbs。"],
       "avoidZh": ["不要创建第二个全局服务或通过 QObject::findChild 查找其他插件对象。", "不要让消费者保存 Provider 私有指针、Socket 或协议对象。", "不要用运行时冲突诊断替代设计时稳定 ID 审查。"]
     },
@@ -1078,8 +1105,8 @@
       "titleZh": "工程模型知识卡",
       "purposeZh": "维护 .ecatproject 的唯一事实来源、格式迁移和可撤销变更。",
       "readOrder": ["ethercat.project.model-format", "ethercat.project.mutation"],
-      "callFlowsZh": ["工程文件 -> v0-v6 迁移/校验 -> v7 ProjectSnapshot -> ProjectService 查询。", "UI 意图 -> ProjectService 检查式 mutation -> Undo 命令 -> projectChanged -> 消费者重新读取快照。"],
-      "invariantsZh": ["ProjectSnapshot 是唯一工程事实，页面不得维护第二份可写模型。", "当前持久化格式为 v7，旧版本只能经明确迁移进入当前模型。", "涉及绑定激活的写入必须比较预期 document revision，拒绝陈旧快照。"],
+      "callFlowsZh": ["工程文件 -> v0-v7 迁移/校验 -> v8 ProjectSnapshot -> ProjectService 查询。", "设备参数 UI 意图 -> 精确 ESI/Adapter expected token -> ProjectService 检查式 mutation -> Undo 命令 -> projectChanged -> 消费者重新读取快照。"],
+      "invariantsZh": ["ProjectSnapshot 是唯一工程意图事实，页面不得维护第二份可写模型，在线 observed 也不得持久化进来。", "当前持久化格式为 v8，旧版本只能经明确迁移进入当前模型。", "涉及绑定激活的写入必须比较预期 document revision；设备参数写入必须比较预期 ESI/Adapter，拒绝陈旧值。"],
       "changeChecklistZh": ["先更新数据合同和格式版本/迁移，再接入 Service mutation。", "为合法、非法、旧版本迁移、Undo/Redo 和陈旧 revision 添加测试。", "确认保存后重新打开得到等价快照。"],
       "avoidZh": ["不要从页面直接修改文档内部对象。", "不要用树节点顺序、显示名或临时指针作为稳定工程身份。", "不要静默丢弃新字段或把未知格式当当前格式读取。"]
     },
@@ -1206,6 +1233,19 @@
       "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp"],
       "resolutionCriteriaZh": ["合法非空序列有正向编译和包证据。", "错误类型、范围、顺序、对象和状态被结构化拒绝。", "真实从站启动阶段可关联具体 Index/SubIndex 和 abort 诊断。"],
       "notesZh": []
+    },
+    {
+      "id": "ethercat.issue.device-parameter-qualification",
+      "titleZh": "设备参数资格、扫描实测与编译投影尚未闭环",
+      "status": "open",
+      "severity": "p0",
+      "affectedFeatures": ["ethercat.core.device-parameter-contract", "ethercat.project.model-format", "ethercat.project.mutation", "ethercat.adapters.catalog-authorization", "ethercat.product-api.topology-evidence", "ethercat.compiler.project-projection", "ethercat.workbench.configuration-pages", "ethercat.scan.mock-workflow"],
+      "problemZh": "工程 v8 已能保存设备参数意图，但尚无签名 Adapter 参数定义、真实 Product API 扫描实测证据、configured/observed/match 界面和完整 compiler projection，因此不能把用户配置或扫描拓扑解释为已应用的控制器参数。",
+      "currentBoundaryZh": "v8 仅提供有界 ASCII/canonical EngineeringValue 持久化、精确 ESI+Adapter 绑定和 expected value token；参数或 Adapter 变化会使旧 binding 失效。编译请求值合同和 Project request builder 对任意非空参数 fail closed。compile-recovery payload v2 保留设备参数字段并兼容 v1 空值；Mock 扫描只在精确设备身份不变时保留已有工程意图，绝不产生或持久化 observed 值。",
+      "nextActionZh": "先冻结并实现签名 Adapter parameter definitions，再增加绑定 Session/Boot/拓扑/从站身份的 Product API 只读扫描实测证据和 configured/observed/match UI，最后把已资格化值完整投影进 compiler request、签名包和恢复证据。",
+      "evidencePaths": ["docs/ethercat-project-format.md", "docs/ethercat-plugin-development-guide.zh_CN.md", "src/libs/ethercatdata/deviceparameters.h", "src/plugins/ethercatcore/deviceparametercontract.h", "src/plugins/ethercatcore/deviceparametercontract.cpp", "src/plugins/ethercatproject/ethercatprojectformat.cpp", "src/plugins/ethercatproject/ethercatprojectdocument.cpp", "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp", "src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "src/plugins/ethercatscan/topologycomparison.cpp"],
+      "resolutionCriteriaZh": ["签名 Adapter 定义闭合集合化声明参数 ID、类型、单位、范围、工程到设备投影和允许的实测来源。", "真实扫描证据绑定当前 Session、BootId、拓扑 capture 和精确从站身份；界面明确显示设定值、实测值、一致/不一致/不可用/陈旧状态。", "observed 证据保持会话级并与 ProjectSnapshot 分离；保存、重开、Undo/Redo 和 Mock 扫描均不能把实测值改写成工程意图。", "已资格化非空参数可确定性进入 compiler request、签名包和 recovery；缺失、越界、陈旧或不一致证据继续 fail closed。"],
+      "notesZh": ["当前 v8 参数字段不授权部署、SDO 下载或电机运动。", "在完整资格和真机安全门禁通过前，不得用用户手填值、Mock 结果或拓扑扫描结果宣称正反转能力。"]
     },
     {
       "id": "ethercat.issue.restore-project-binding-guard",

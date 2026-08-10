@@ -45,11 +45,30 @@ documentation, review, and local-commit gates.
 
 `EtherCATData` is an infrastructure library, not a feature container. Its
 offline configuration contract is persisted by the current EtherCATProject
-format version 7 and exposed through checked Project service commands. Earlier
+format version 8 and exposed through checked Project service commands. Earlier
 version numbers in the serial-delivery table and historical issue sections are
 milestone records, not the current persistence contract. The Phase-1 product
 is not Ready until editable pages, complete tree workflows, integration tests,
 and the policy-deferred upstream rehearsal pass.
+
+Version 8 adds only the persistence and checked-command foundation for
+project-owned device-parameter intent. Each slave's
+`configuration.deviceParameters` is a strictly bounded, unique,
+ASCII-identified, canonically ordered list of exact `EngineeringValue` values.
+Non-empty values require the slave's exact ESI SHA-256 and complete Adapter
+selection. `ProjectService::setDeviceParameterConfiguration()` additionally
+accepts the caller's expected ESI digest and expected Adapter selection as a
+value token, and rejects a stale edit instead of rebinding it to another
+device definition.
+
+This persistence foundation is not an online parameter feature. Signed Adapter
+parameter definitions, compiler projection, and scan-time observed-parameter
+evidence are not implemented by this issue. The compiler therefore rejects any
+ProjectSnapshot with non-empty device parameters before invoking the external
+compiler. Future observed values belong to separately bound controller-session
+evidence used for configured/observed comparison; they must not be serialized
+back into `ProjectSnapshot`. Persisted intent alone authorizes neither
+deployment nor motion.
 
 ## Dependency direction
 

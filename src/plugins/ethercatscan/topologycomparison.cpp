@@ -308,7 +308,10 @@ QList<Data::OfflineSlaveConfiguration> offlineConfigurationFromScan(
              sameAdapterIdentity ? matchedConfiguration->adapterSelection
                                  : Data::DeviceAdapterProjectSelection{},
              sameAdapterIdentity ? matchedConfiguration->manualControlEnvelope
-                                 : Data::ManualControlEnvelope{}});
+                                 : Data::ManualControlEnvelope{},
+             0,
+             sameAdapterIdentity ? matchedConfiguration->deviceParameters
+                                 : Data::DeviceParameterConfiguration{}});
     }
     std::sort(result.begin(), result.end(), [](const auto &left, const auto &right) {
         return left.position < right.position;

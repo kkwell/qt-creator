@@ -748,6 +748,14 @@ bool projectContainsMaster(const ProjectSnapshot &project, const NodeId &masterI
     });
 }
 
+bool projectDeviceParametersAreEmpty(const ProjectSnapshot &project)
+{
+    return std::all_of(
+        project.slaves.cbegin(), project.slaves.cend(), [](const OfflineSlaveConfiguration &slave) {
+            return slave.deviceParameters.values.isEmpty();
+        });
+}
+
 const RuntimePackageCompilerDeviceSourceEvidence *findDeviceSourceEvidence(
     const QList<RuntimePackageCompilerDeviceSourceEvidence> &sources,
     const NodeId &projectSlaveNodeId)
@@ -1703,6 +1711,7 @@ bool RuntimePackageCompilerCompileRequest::hasValidReservationInputs() const
     return operationId.isValid() && isStableId(intentId) && configurationId != 0
            && buildTimestampNs != 0 && compileTimeNs != 0 && manifestFormatVersion == 2
            && contractIdentity.isValid() && projectSnapshotEvidence.isValid()
+           && projectDeviceParametersAreEmpty(projectSnapshotEvidence.snapshot())
            && projectProjection.isValid() && sourceArtifactReferencesAreValid(sourceArtifacts);
 }
 

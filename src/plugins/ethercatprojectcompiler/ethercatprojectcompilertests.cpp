@@ -284,7 +284,7 @@ struct CompilerFixture
         Data::ProjectSnapshot project;
         project.id = projectId;
         project.name = QStringLiteral("Compiler fixture");
-        project.formatVersion = 7;
+        project.formatVersion = 8;
         project.valid = true;
         project.nodes = {
             {projectId, {}, Data::ProjectNodeKind::Project, QStringLiteral("Project")},
@@ -819,6 +819,15 @@ public:
         const Data::NodeId &,
         const QByteArray &,
         const Data::DeviceAdapterProjectSelection &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> setDeviceParameterConfiguration(
+        const Data::NodeId &,
+        const Data::NodeId &,
+        const QByteArray &,
+        const Data::DeviceAdapterProjectSelection &,
+        const Data::DeviceParameterConfiguration &) final
     {
         return unsupported();
     }
@@ -2742,6 +2751,12 @@ void EtherCATProjectCompilerTests::testCompileRecoveryRoundTrip()
     QVERIFY(second);
     QCOMPARE(*second, *first);
     QVERIFY(first->endsWith('\n'));
+    const QJsonObject recoveryObject = QJsonDocument::fromJson(*first).object();
+    const QByteArray payload = QByteArray::fromBase64(
+        recoveryObject.value(QStringLiteral("payload_base64")).toString().toLatin1(),
+        QByteArray::AbortOnBase64DecodingErrors);
+    QCOMPARE(payload.first(8), QByteArray("ELPCRQ01", 8));
+    QCOMPARE(payload.sliced(8, 4), QByteArray::fromHex("00000002"));
 
     const auto decoded = decodeRuntimePackageCompilerCompileRecovery(*first, sha256(*first));
     QVERIFY2(decoded, qPrintable(decoded.error()));
@@ -2763,6 +2778,52 @@ void EtherCATProjectCompilerTests::testCompileRecoveryRoundTrip()
     wrongProject.serializedProject.append(' ');
     QVERIFY(!wrongProject.isValid());
     QVERIFY(!encodeRuntimePackageCompilerCompileRecovery(wrongProject));
+}
+
+void EtherCATProjectCompilerTests::testCompileRecoveryVersionOneCompatibility()
+{
+    const CompilerFixture fixture;
+    const RuntimePackageCompilerCompileRecovery recovery{fixture.request, fixture.serializedProject};
+    const auto encoded = encodeRuntimePackageCompilerCompileRecovery(recovery);
+    QVERIFY(encoded);
+
+    QJsonObject root = QJsonDocument::fromJson(*encoded).object();
+    QByteArray payload = QByteArray::fromBase64(
+        root.value(QStringLiteral("payload_base64")).toString().toLatin1(),
+        QByteArray::AbortOnBase64DecodingErrors);
+    QVERIFY(!payload.isEmpty());
+    QCOMPARE(payload.sliced(8, 4), QByteArray::fromHex("00000002"));
+
+    QByteArray slaveTail(9, '\0');
+    slaveTail.append(QByteArray::fromHex("1001"));
+    slaveTail.append(QByteArray(4, '\0'));
+    slaveTail.append(QByteArray::fromHex("000000010001e848"));
+    slaveTail.append(QByteArray(16, '\0'));
+    QCOMPARE(fixture.serializedProject.size(), 0x29);
+    slaveTail.append(QByteArray::fromHex("00000029"));
+    slaveTail.append(fixture.serializedProject);
+    const qsizetype tailOffset = payload.indexOf(slaveTail);
+    QVERIFY(tailOffset >= 0);
+    QCOMPARE(payload.lastIndexOf(slaveTail), tailOffset);
+
+    const qsizetype deviceParameterCountOffset = tailOffset + 9 + 2;
+    QCOMPARE(payload.sliced(deviceParameterCountOffset, 4), QByteArray(4, '\0'));
+    payload.remove(deviceParameterCountOffset, 4);
+    payload.replace(8, 4, QByteArray::fromHex("00000001"));
+    root.insert(
+        QStringLiteral("payload_base64"), QString::fromLatin1(payload.toBase64()));
+    root.insert(
+        QStringLiteral("payload_sha256"), QString::fromLatin1(sha256(payload).value().toHex()));
+    QByteArray legacyRecovery = QJsonDocument(root).toJson(QJsonDocument::Compact);
+    legacyRecovery.append('\n');
+
+    const auto decoded
+        = decodeRuntimePackageCompilerCompileRecovery(legacyRecovery, sha256(legacyRecovery));
+    QVERIFY2(decoded, qPrintable(decoded.error()));
+    QCOMPARE(*decoded, recovery);
+    QVERIFY(decoded->request.projectSnapshotEvidence.snapshot()
+                .slaves.constFirst()
+                .deviceParameters.values.isEmpty());
 }
 
 void EtherCATProjectCompilerTests::testCompileRecoveryRejectsMutations()
@@ -2961,6 +3022,70 @@ void EtherCATProjectCompilerTests::testProjectRequestBuilderProvisioningAndDeter
     runtime.close();
     QVERIFY(!builder.build(seed));
     QVERIFY(!builder.isAvailable());
+}
+
+void EtherCATProjectCompilerTests::testDeviceParametersFailClosedBeforeCompilation()
+{
+    CompilerFixture fixture;
+    const Data::RuntimePackageActivationProjectCapture originalCapture = projectCapture(fixture);
+    Data::ProjectSnapshot parameterizedProject = originalCapture.snapshot();
+    parameterizedProject.slaves[0].deviceParameters.values = {
+        {QStringLiteral("motor.encoder_resolution_counts_per_revolution"),
+         Data::EngineeringValue::fromUnsignedInteger(8'388'608)},
+    };
+    const Data::RuntimePackageActivationProjectCapture parameterizedCapture{
+        parameterizedProject,
+        originalCapture.serializedProject(),
+        originalCapture.documentRevisionNumber(),
+        originalCapture.documentRevision(),
+        originalCapture.originalBinding(),
+    };
+    Data::RuntimePackageCompilerCompileRequest directRequest = fixture.request;
+    directRequest.projectSnapshotEvidence
+        = Data::RuntimePackageCompilerProjectSnapshotEvidence{parameterizedCapture};
+    QVERIFY(directRequest.projectSnapshotEvidence.isValid());
+    QVERIFY(!directRequest.hasValidReservationInputs());
+    QVERIFY(!directRequest.isValid());
+    QVERIFY(!Core::encodeRuntimePackageCompilerCompileRequest(directRequest));
+    QVERIFY(!encodeRuntimePackageCompilerCompileRecovery(
+        {directRequest, originalCapture.serializedProject()}));
+
+    BuilderInputEnvironment inputs(fixture);
+    Core::ProviderRegistry *registry
+        = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+    QVERIFY(registry);
+    BuilderProjectService project(fixture);
+    project.setCapture(parameterizedCapture);
+    BuilderConnectionProvider connection(fixture);
+    BuilderDeviceRepository repository(fixture);
+    BuilderAdapterProvider adapters(fixture);
+    ScopedProviderKindRegistration projectRegistration(registry, &project);
+    ScopedProviderKindRegistration connectionRegistration(registry, &connection);
+    ScopedProviderKindRegistration repositoryRegistration(registry, &repository);
+    ScopedProviderKindRegistration adapterRegistration(registry, &adapters);
+
+    ProvisionedRuntimePackageCompilerProjectRequestBuilder builder(
+        registry,
+        Utils::FilePath::fromString(inputs.profilePath),
+        nullptr,
+        [&fixture] { return fixture.request.compileTimeNs; });
+    QVERIFY2(builder.isAvailable(), qPrintable(builder.provisioningError()));
+    const Core::RuntimePackageCompilerProjectRequestSeed seed{
+        fixture.request.topologyEvidence.scope,
+        fixture.request.operationId,
+        Data::RuntimePackageCompilerOperationId{
+            QStringLiteral("04204204-2001-4000-8001-000000000001")},
+        Data::RuntimePackageActivationOperationId{
+            QStringLiteral("operation/compiler-entry-activation-1")},
+        fixture.request.intentId,
+        fixture.request.configurationId,
+        fixture.request.buildTimestampNs,
+        fixture.request.compileTimeNs,
+        true,
+    };
+    const auto rejected = builder.build(seed);
+    QVERIFY(!rejected);
+    QVERIFY(rejected.error().contains(QStringLiteral("device parameter"), Qt::CaseInsensitive));
 }
 
 void EtherCATProjectCompilerTests::testProjectRequestBuilderFailsClosedOnUnprovenTopology()

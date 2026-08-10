@@ -28,27 +28,29 @@ All Project objects are GUI-thread-owned. This plugin has no worker thread,
 timer, future, or cancellation path. Document signals are disconnected before
 the document and undo stack are destroyed.
 
-## Version 7 format
+## Version 8 format
 
 The current file is indented UTF-8 JSON with MIME type
 `application/x-ethercat-project`, format name `ethercat-project`, and
-`formatVersion` 7. Version 2 added per-slave Process Data, Startup, and DC
+`formatVersion` 8. Version 2 added per-slave Process Data, Startup, and DC
 configuration. Version 3 adds the provider-neutral master timing mode and
 cycle period needed to build a controller package. Version 4 adds reproducible
 ESI/device-adapter selection and one compiler-produced semantic-binding
 artifact reference. Version 5 adds bounded manual-control envelopes and retains
 the binding reference. Version 6 adds the canonical `projectDeviceBindings`
 field to a present artifact reference. Version 7 adds the configured station
-address used by fresh topology and compiler evidence. It is local editor data,
-not ECPKG, ECFG, ETIR, a
-network message, or a TwinCAT project file.
+address used by fresh topology and compiler evidence. Version 8 adds bounded,
+canonical project-owned device-parameter intent under each slave's
+`configuration.deviceParameters`. It is local editor data, not ECPKG, ECFG,
+ETIR, a network message, observed controller evidence, or a TwinCAT project
+file.
 
 The top-level shape is:
 
 ```json
 {
     "format": "ethercat-project",
-    "formatVersion": 7,
+    "formatVersion": 8,
     "project": {
         "id": "lowercase-uuid-without-braces",
         "name": "Packaging Line",
@@ -139,6 +141,17 @@ Every slave has this structural data plus one required `configuration` object:
                 "shiftTimeNs": 0
             },
             "potentialReferenceClock": false
+        },
+        "deviceParameters": {
+            "values": [
+                {
+                    "parameterId": "parameter.example",
+                    "value": {
+                        "kind": "unsigned-integer",
+                        "unsignedInteger": "1048576"
+                    }
+                }
+            ]
         }
     }
 }
@@ -157,6 +170,52 @@ exactly 64 lowercase hexadecimal characters. Module slots are non-negative
 and unique, `moduleIdent` is non-zero, and both index offsets fit unsigned
 16-bit values. Modules are normalized to ascending slot order before entering
 the project and are serialized in that canonical order.
+
+`deviceParameters` is required inside every version-8 slave `configuration`
+object and contains exactly one `values` array. Each entry contains exactly
+`parameterId` and `value`. A parameter ID is 1 through 256 ASCII characters:
+the first character is an ASCII letter or digit, and subsequent characters
+may additionally be `.`, `_`, or `-`. IDs are unique and serialized in strict
+ascending order. One slave may contain at most 256 values and one project at
+most 4096 values.
+
+The canonical `EngineeringValue` object uses exactly one of these shapes:
+
+```json
+{"kind":"boolean","boolean":true}
+{"kind":"signed-integer","signedInteger":"-1000"}
+{"kind":"unsigned-integer","unsignedInteger":"1000"}
+{"kind":"exact-rational","exactRational":{"numerator":"1","denominator":"2"}}
+{"kind":"enumeration","enumerationName":"profile.csv"}
+```
+
+Integer and rational components are decimal strings so JSON floating-point
+conversion cannot change them. Leading zeroes, `+`, and other non-canonical
+spellings are rejected. A rational must have a positive denominator, coprime
+numerator and denominator, and canonical zero `0/1`. Enumeration names use the
+same bounded ASCII identifier grammar as parameter IDs. Unknown fields,
+unsupported kinds, duplicate or unsorted IDs, and non-canonical values reject
+the complete project.
+
+A non-empty device-parameter configuration is valid only on a slave with an
+exact ESI SHA-256 and complete Adapter selection. The checked
+`setDeviceParameterConfiguration()` command also receives the caller's
+expected ESI digest and expected complete Adapter selection as a value token;
+it rejects the edit if either no longer matches the current slave. Changing
+the ESI or Adapter clears the device parameters. Parameter edits clear the
+master semantic-binding artifact in the same undo command, and Undo restores
+both values atomically.
+
+These values are engineering intent only. Version 8 does not yet provide the
+signed Adapter parameter definitions that qualify IDs, kinds, units, ranges,
+and device-object projection; it also does not yet project parameters into the
+compiler request or capture scanned parameter observations. Consequently every
+compile request containing a non-empty device-parameter configuration fails
+closed before compilation. A later observed value must remain separately
+bound, session-scoped controller evidence for configured/observed comparison;
+it must never be persisted into `ProjectSnapshot` as engineering intent. No
+device-parameter value in this format authorizes deployment, SDO download, or
+motor motion.
 
 `semanticBindingArtifact` is optional and appears only once at master level.
 It is an immutable reference containing a non-empty trimmed artifact ID, the
@@ -246,6 +305,8 @@ cycle range, and shift range.
 - one slave's complete Startup configuration;
 - one slave's complete DC configuration;
 - one slave's atomic ESI digest and device-adapter selection;
+- one slave's complete device-parameter configuration, guarded by the expected
+  exact ESI digest and Adapter selection;
 - the master's single semantic-binding artifact reference.
 
 Structural-node rename is intentionally limited to Target and Master. Project
@@ -261,10 +322,10 @@ document modified.
 
 The binding artifact is fail-closed against its compile inputs. Changing the
 master timing configuration, replacing the topology, changing Process Data,
-Startup, DC, ESI, or adapter selection clears the reference in the same undo
-command. Undo restores both the previous compile input and its previous
-artifact reference atomically. Display-only Project, Target, and Master
-renames preserve the artifact.
+Startup, DC, device parameters, ESI, or adapter selection clears the reference
+in the same undo command. Undo restores both the previous compile input and its
+previous artifact reference atomically. Display-only Project, Target, and
+Master renames preserve the artifact.
 
 The QUndoStack clean index and pending migration state are the only modified
 sources. A successful atomic save marks the stack clean. Failed validation or
@@ -275,14 +336,14 @@ unchanged.
 
 Version 1 contains the same structural project and optional slave list but no
 per-slave `configuration`. It loads with empty Process Data and Startup values
-and disabled DC, is marked migrated/modified, and is rewritten as version 7
+and disabled DC, is marked migrated/modified, and is rewritten as version 8
 only after explicit Save or Save All. Before replacement, the exact source
 bytes are copied to `<project>.v1.bak`; existing backups receive a numeric
 suffix and are never overwritten.
 
 Version 2 preserves all per-slave configuration but has no master timing
 configuration. It loads with an unassigned master, is marked
-migrated/modified, and is rewritten as version 7 only after explicit Save or
+migrated/modified, and is rewritten as version 8 only after explicit Save or
 Save All. The exact version-2 bytes are first copied to
 `<project>.v2.bak`.
 
@@ -290,7 +351,7 @@ Version 3 preserves its master timing, Process Data, Startup, and DC values
 exactly. It loads with empty ESI digests, adapter selections, and binding
 artifact reference; the loader never guesses an adapter from identity, name,
 position, or device-description ID. It is marked migrated/modified and is
-rewritten as version 7 only after explicit Save or Save All, after first
+rewritten as version 8 only after explicit Save or Save All, after first
 copying the exact source bytes to `<project>.v3.bak`.
 
 Version 4 preserves exact ESI and adapter selection, but its pre-instance
@@ -298,9 +359,11 @@ semantic artifact reference is not retained as writable evidence. Version 5
 adds manual-control envelopes and retains the artifact reference without
 project-device bindings. Version 6 requires the `projectDeviceBindings` field
 when an artifact reference is present, but has no configured station address.
-Each loads as migrated/modified, is
-backed up with its matching `.v4.bak`, `.v5.bak`, or `.v6.bak` suffix, and is
-rewritten as version 7 only after explicit Save or Save All.
+Version 7 preserves its configured station addresses but has no
+`deviceParameters` object. Versions 4 through 7 load with empty device
+parameters, are marked migrated/modified, are backed up with their matching
+`.v4.bak`, `.v5.bak`, `.v6.bak`, or `.v7.bak` suffix, and are rewritten as
+version 8 only after explicit Save or Save All.
 
 The legacy version-0 root shape with `id`, `name`, and `createdBy` remains
 supported. It preserves the project ID, creates stable target/master IDs, and
@@ -324,7 +387,7 @@ explicit Save and Save All are the supported persistence paths.
 
 ## New-project and close behavior
 
-The `EtherCAT Engineering Project` wizard creates one version-7 file and opens
+The `EtherCAT Engineering Project` wizard creates one version-8 file and opens
 it through ProjectExplorer. The wizard uses current Qt Creator factory and
 GeneratedFile APIs.
 
@@ -338,15 +401,16 @@ unload or shutdown. There is no second close-time serializer.
 The focused Project suite covers:
 
 - metadata, dependencies, service registration, and wizard discovery;
-- current-format structural, master-cycle, slave-configuration, ESI/adapter, and
-  binding-artifact round trips;
+- current-format structural, master-cycle, slave-configuration, ESI/adapter,
+  device-parameter, and binding-artifact round trips;
 - malformed JSON, unsupported versions, missing configuration, duplicate IDs,
   invalid raw hex/digests, partial selections, invalid module assignments, and
   domain-invalid PDO mapping;
 - Project and Target/Master rename, topology replacement, Process Data,
-  Startup, DC, adapter selection, binding invalidation, and atomic Undo/Redo;
+  Startup, DC, adapter selection, expected-token device-parameter edits,
+  binding invalidation, and atomic Undo/Redo;
 - Save All registration, Save As rejection, atomic write failure, and success;
-- exact version-0 through version-6 migration and recovery behavior;
+- exact version-0 through version-7 migration and recovery behavior;
 - two real ProjectExplorer projects, startup-project switching, close-save,
   signal publication, close order, and cleanup.
 

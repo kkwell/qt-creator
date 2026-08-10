@@ -4,6 +4,8 @@ add_qtc_plugin(EtherCATCore
   SOURCES
     automationservice.cpp
     automationservice.h
+    deviceparametercontract.cpp
+    deviceparametercontract.h
     ethercatcore_global.h
     ethercatcoreconstants.h
     ethercatcoreplugin.cpp

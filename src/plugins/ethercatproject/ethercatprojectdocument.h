@@ -39,6 +39,11 @@ public:
         const Data::NodeId &slaveId,
         const QByteArray &esiSha256,
         const Data::DeviceAdapterProjectSelection &selection);
+    Utils::Result<> setDeviceParameterConfiguration(
+        const Data::NodeId &slaveId,
+        const QByteArray &expectedEsiSha256,
+        const Data::DeviceAdapterProjectSelection &expectedAdapterSelection,
+        const Data::DeviceParameterConfiguration &configuration);
     Utils::Result<> setManualControlEnvelope(
         const Data::NodeId &slaveId, const Data::ManualControlEnvelope &envelope);
     Utils::Result<> setMasterBindingArtifact(

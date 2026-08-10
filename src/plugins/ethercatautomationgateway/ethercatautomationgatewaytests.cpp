@@ -254,7 +254,7 @@ static Core::AutomationContextSnapshot mockContext()
     context.identitySource = "ide-project-master";
     context.project.id = context.scope.projectId;
     context.project.name = "Mock Packaging Line";
-    context.project.formatVersion = 7;
+    context.project.formatVersion = 8;
     context.project.createdBy = "Gateway Tests";
     context.project.valid = true;
     const Data::NodeId targetId = Data::NodeId::create();

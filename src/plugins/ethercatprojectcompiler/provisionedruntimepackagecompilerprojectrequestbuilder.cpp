@@ -392,6 +392,17 @@ public:
             seed.scope.projectId);
         if (!capture)
             return Utils::ResultError(capture.error());
+        const bool hasDeviceParameters = std::any_of(
+            capture->snapshot().slaves.cbegin(),
+            capture->snapshot().slaves.cend(),
+            [](const Data::OfflineSlaveConfiguration &slave) {
+                return !slave.deviceParameters.values.isEmpty();
+            });
+        if (hasDeviceParameters) {
+            return Utils::ResultError(
+                Tr::tr("Device parameter compiler projection is not provisioned; compilation is "
+                       "denied."));
+        }
         const Data::ControllerConnectionSnapshot after = (*connectionProvider)->connectionSnapshot();
         if (before != after) {
             return Utils::ResultError(

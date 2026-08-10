@@ -170,10 +170,24 @@ ExtensionSystem、McpServerLib 和 qtcMonocypher 等库依赖。
 - 主站循环周期和运行模式；
 - 从站精确身份、ESI 引用、Alias 和站地址；
 - PDO、Startup SDO、DC 和模块选择；
-- Adapter 选择、手动控制 envelope 和语义绑定引用。
+- Adapter 选择、手动控制 envelope、设备参数工程意图和语义绑定引用。
 
 页面不得保留第二份可写工程模型。编辑必须调用 `ProjectService` 的检查方法，再监听
 `projectChanged()` 重新读取快照。
+
+当前工程格式为 v8。每个从站的 `configuration.deviceParameters` 只保存用户配置意图：
+单从站最多 256 项、全工程最多 4096 项；参数 ID 使用最长 256 字符的有界 ASCII 文法并
+严格升序、不得重复；值使用无浮点歧义的 canonical `EngineeringValue`（Boolean、十进制
+字符串整数、最简精确有理数或 ASCII 枚举）。非空参数必须绑定该从站的精确 ESI SHA-256
+和完整 Adapter 选择。写入时还必须把调用者所见的 ESI 摘要和 Adapter 选择作为 expected
+value token 传给 `setDeviceParameterConfiguration()`；当前值已变化时必须拒绝，不能把草稿
+重绑到另一个设备定义。
+
+这只是持久化底座。签名 Adapter 参数定义、compiler projection 和扫描实测参数证据尚未
+完成，因此任一非空设备参数都会在调用外部编译器前 fail closed。后续扫描得到的实测值
+属于带 Session/Boot/拓扑/设备身份的在线证据，只用于界面显示“工程设定值 / 扫描实测值 /
+是否一致”，不得写回 `ProjectSnapshot` 冒充工程意图。当前字段本身不授权部署、SDO 下载或
+电机运动。
 
 ### 4.2 设备目录状态
 
@@ -354,10 +368,13 @@ ShutdownFlag Plugin::aboutToShutdown()
   -> 写入 ProjectSnapshot，保留可证明兼容的配置
 编辑
   -> PDO / Startup SDO / DC / Adapter / 手动 envelope
+  -> 设备参数工程意图（当前仅有 v8 持久化底座）
 保存工程
 ```
 
 连接不是扫描。物理总线未变化时，用户不需要每次运行都重新扫描。
+扫描实测设备参数的读取、证据绑定和 configured/observed/match 页面尚未实现；扫描拓扑成功
+不能伪造这些值，也不能把上一次会话的观察值保存进工程。
 
 ### 6.2 编译、签名和激活
 
@@ -448,6 +465,11 @@ ShutdownFlag Plugin::aboutToShutdown()
    - `share/qtcreator/ethercat/adapter-authorizations`
    - `share/qtcreator/ethercat/adapter-authorization-trust`
 7. 为真实硬件资格增加正例和签名/哈希/范围/缺失信号负例。
+
+设备参数页面不得按厂家或对象索引硬编码字段。后续 Adapter 合同必须用签名参数定义声明
+稳定参数 ID、工程值类型、单位、范围、Startup/运行时投影和允许读取的实测证据来源，再由
+Workbench 数据驱动呈现。当前 v8 工程值尚未获得这层定义资格，所以不能编译、部署或用于
+运动。
 
 Adapter 中不得硬编码运行时 ResourceId、站地址或 PI offset。它们由当前工程和编译产物
 绑定。
@@ -590,6 +612,9 @@ DC 运行记录宣称为真机运动验证。
 3. 用当前真实 ProjectSnapshot 和新鲜扫描证据重新编译、部署并完成 DC/XB6 输出验收。
 4. Startup SDO 目前可编辑，但当前 compiler request builder 对非空 Startup SDO 仍会
    fail closed；需由编译器合同和 IDE 同步支持后再开放。
+5. 完成签名 Adapter 设备参数定义、ProjectSnapshot 到编译请求的精确 projection，以及
+   Product API 扫描实测参数证据；在三者闭合前，v8 中任一非空设备参数继续 fail closed，
+   不进入部署或运动路径。
 
 ### P1：统一业务协调层
 

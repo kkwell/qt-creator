@@ -60,6 +60,12 @@ public:
         const Data::NodeId &slaveId,
         const QByteArray &esiSha256,
         const Data::DeviceAdapterProjectSelection &selection) final;
+    Utils::Result<> setDeviceParameterConfiguration(
+        const Data::NodeId &projectId,
+        const Data::NodeId &slaveId,
+        const QByteArray &expectedEsiSha256,
+        const Data::DeviceAdapterProjectSelection &expectedAdapterSelection,
+        const Data::DeviceParameterConfiguration &configuration) final;
     Utils::Result<> setManualControlEnvelope(
         const Data::NodeId &projectId,
         const Data::NodeId &slaveId,

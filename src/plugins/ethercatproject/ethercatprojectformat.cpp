@@ -5,6 +5,7 @@
 #include "ethercatprojectconstants.h"
 #include "ethercatprojecttr.h"
 
+#include <ethercatcore/deviceparametercontract.h>
 #include <ethercatcore/manualcontrolcontract.h>
 
 #include <QJsonArray>
@@ -371,6 +372,59 @@ static Utils::Result<Data::EngineeringValue> parseEngineeringValue(
 
     if (!EtherCAT::Core::validateEngineeringValue(result).accepted())
         return Utils::ResultError(Tr::tr("%1 is not canonical.").arg(objectName));
+    return result;
+}
+
+static Utils::Result<Data::DeviceParameterConfiguration> parseDeviceParameterConfiguration(
+    const QJsonObject &configurationObject, const QString &slaveName)
+{
+    const auto object = parseObject(configurationObject, "deviceParameters", slaveName);
+    if (!object)
+        return Utils::ResultError(object.error());
+    static const QSet<QString> keys{"values"};
+    if (object->size() != keys.size() || !hasOnlyKeys(*object, keys)) {
+        return Utils::ResultError(
+            Tr::tr("Device parameters for '%1' have an invalid shape.").arg(slaveName));
+    }
+    const auto values = parseArray(*object, "values", slaveName);
+    if (!values)
+        return Utils::ResultError(values.error());
+    if (values->size() > Data::maximumDeviceParametersPerConfiguration) {
+        return Utils::ResultError(
+            Tr::tr("Device parameters for '%1' exceed the supported limit.").arg(slaveName));
+    }
+
+    Data::DeviceParameterConfiguration result;
+    result.values.reserve(values->size());
+    for (qsizetype index = 0; index < values->size(); ++index) {
+        if (!values->at(index).isObject()) {
+            return Utils::ResultError(
+                Tr::tr("Device parameter %1 for '%2' must be an object.")
+                    .arg(index)
+                    .arg(slaveName));
+        }
+        const QJsonObject valueObject = values->at(index).toObject();
+        static const QSet<QString> valueKeys{"parameterId", "value"};
+        if (valueObject.size() != valueKeys.size() || !hasOnlyKeys(valueObject, valueKeys)) {
+            return Utils::ResultError(
+                Tr::tr("Device parameter %1 for '%2' has an invalid shape.")
+                    .arg(index)
+                    .arg(slaveName));
+        }
+        const QString valueName
+            = Tr::tr("Device parameter %1 for '%2'").arg(index).arg(slaveName);
+        const auto parameterId = parseString(valueObject, "parameterId", valueName);
+        if (!parameterId)
+            return Utils::ResultError(parameterId.error());
+        const auto value = parseEngineeringValue(valueObject.value("value"), valueName);
+        if (!value)
+            return Utils::ResultError(value.error());
+        result.values.append({*parameterId, *value});
+    }
+    const Core::DeviceParameterContractValidation validation
+        = Core::validateDeviceParameterConfiguration(result);
+    if (!validation.accepted())
+        return Utils::ResultError(validation.detail);
     return result;
 }
 
@@ -1628,6 +1682,7 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
     const bool parseAdapterData = version >= 4;
     const bool parseManualControl = version >= 5;
     const bool parseStationAddress = version >= 7;
+    const bool parseDeviceParameters = version >= 8;
     const QJsonValue slavesValue = masterObject.value("slaves");
     if (slavesValue.isUndefined() && !parseConfiguration)
         return QList<Data::OfflineSlaveConfiguration>();
@@ -1637,6 +1692,7 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
     QList<Data::OfflineSlaveConfiguration> slaves;
     QSet<int> positions;
     QSet<quint16> stationAddresses;
+    qsizetype projectDeviceParameterCount = 0;
     const QJsonArray array = slavesValue.toArray();
     slaves.reserve(array.size());
     for (qsizetype index = 0; index < array.size(); ++index) {
@@ -1737,11 +1793,14 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
         Data::ProcessDataConfiguration processData;
         Data::StartupConfiguration startup;
         Data::DcConfiguration dc;
+        Data::DeviceParameterConfiguration deviceParameters;
         if (parseConfiguration) {
             const auto configuration = parseObject(object, "configuration", objectName);
             if (!configuration)
                 return Utils::ResultError(configuration.error());
-            static const QSet<QString> configurationKeys{"processData", "startup", "dc"};
+            QSet<QString> configurationKeys{"processData", "startup", "dc"};
+            if (parseDeviceParameters)
+                configurationKeys.insert("deviceParameters");
             if (configuration->size() != configurationKeys.size()
                 || !hasOnlyKeys(*configuration, configurationKeys)) {
                 return Utils::ResultError(
@@ -1760,6 +1819,20 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
             processData = *parsedProcessData;
             startup = *parsedStartup;
             dc = *parsedDc;
+            if (parseDeviceParameters) {
+                const auto parsedDeviceParameters
+                    = parseDeviceParameterConfiguration(*configuration, *name);
+                if (!parsedDeviceParameters)
+                    return Utils::ResultError(parsedDeviceParameters.error());
+                deviceParameters = *parsedDeviceParameters;
+                if (deviceParameters.values.size()
+                    > Data::maximumDeviceParametersPerProject - projectDeviceParameterCount) {
+                    return Utils::ResultError(
+                        Tr::tr("The EtherCAT project exceeds the supported device parameter "
+                               "limit."));
+                }
+                projectDeviceParameterCount += deviceParameters.values.size();
+            }
         }
 
         QByteArray esiSha256;
@@ -1798,6 +1871,18 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
                         .arg(objectName));
             }
         }
+        if (!deviceParameters.values.isEmpty()) {
+            const bool hasAdapterSelection = !adapterSelection.adapterId.value.isEmpty()
+                                             || !adapterSelection.adapterVersion.isEmpty()
+                                             || !adapterSelection.adapterContentSha256.isEmpty()
+                                             || !adapterSelection.processDataProfileId.isEmpty()
+                                             || !adapterSelection.moduleAssignments.isEmpty();
+            if (!hasAdapterSelection) {
+                return Utils::ResultError(
+                    Tr::tr("%1 device parameters require an exact adapter selection.")
+                        .arg(objectName));
+            }
+        }
 
         positions.insert(int(*position));
         if (stationAddress)
@@ -1817,7 +1902,8 @@ static Utils::Result<QList<Data::OfflineSlaveConfiguration>> parseOfflineSlaves(
              esiSha256,
              adapterSelection,
              manualControlEnvelope,
-             stationAddress});
+             stationAddress,
+             deviceParameters});
     }
     std::sort(slaves.begin(), slaves.end(), [](const auto &left, const auto &right) {
         return left.position < right.position;
@@ -1912,7 +1998,7 @@ Utils::Result<LoadedProject> parseProject(const QByteArray &contents, const QStr
         return parseVersionZero(root, fallbackName);
     }
     if (version != 1 && version != 2 && version != 3 && version != 4 && version != 5
-        && version != 6
+        && version != 6 && version != 7
         && version != Constants::CURRENT_FORMAT_VERSION) {
         return Utils::ResultError(
             Tr::tr("Unsupported EtherCAT project format version %1.").arg(version));
@@ -2196,6 +2282,21 @@ static QJsonObject serializeEngineeringValue(const Data::EngineeringValue &value
     return object;
 }
 
+static QJsonObject serializeDeviceParameterConfiguration(
+    const Data::DeviceParameterConfiguration &configuration)
+{
+    QJsonArray values;
+    for (const Data::DeviceParameterValue &parameter : configuration.values) {
+        QJsonObject object;
+        object.insert("parameterId", parameter.parameterId);
+        object.insert("value", serializeEngineeringValue(parameter.value));
+        values.append(object);
+    }
+    QJsonObject object;
+    object.insert("values", values);
+    return object;
+}
+
 static QJsonValue serializeOptionalEngineeringValue(
     const std::optional<Data::EngineeringValue> &value)
 {
@@ -2398,6 +2499,8 @@ QByteArray serializeProject(const Data::ProjectSnapshot &snapshot)
         configuration.insert("processData", serializeProcessData(slave.processData));
         configuration.insert("startup", serializeStartup(slave.startup));
         configuration.insert("dc", serializeDc(slave.dc));
+        configuration.insert(
+            "deviceParameters", serializeDeviceParameterConfiguration(slave.deviceParameters));
         object.insert("configuration", configuration);
         slaves.append(object);
     }

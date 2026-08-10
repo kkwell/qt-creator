@@ -17,8 +17,10 @@ private slots:
     void testProvisioningRejectsUnsafeExecutables();
     void testCompilerInputProvisioningVerifiesTargetSignature();
     void testCompileRecoveryRoundTrip();
+    void testCompileRecoveryVersionOneCompatibility();
     void testCompileRecoveryRejectsMutations();
     void testProjectRequestBuilderProvisioningAndDeterminism();
+    void testDeviceParametersFailClosedBeforeCompilation();
     void testProjectRequestBuilderFailsClosedOnUnprovenTopology();
     void testScheduledJobUsesPinnedProvisioning();
     void testStoreAnchorsAncestorsAndPreservesEvidence();

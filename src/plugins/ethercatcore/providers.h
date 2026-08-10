@@ -173,6 +173,12 @@ public:
         const Data::NodeId &slaveId,
         const QByteArray &esiSha256,
         const Data::DeviceAdapterProjectSelection &selection) = 0;
+    virtual Utils::Result<> setDeviceParameterConfiguration(
+        const Data::NodeId &projectId,
+        const Data::NodeId &slaveId,
+        const QByteArray &expectedEsiSha256,
+        const Data::DeviceAdapterProjectSelection &expectedAdapterSelection,
+        const Data::DeviceParameterConfiguration &configuration) = 0;
     virtual Utils::Result<> setManualControlEnvelope(
         const Data::NodeId &projectId,
         const Data::NodeId &slaveId,

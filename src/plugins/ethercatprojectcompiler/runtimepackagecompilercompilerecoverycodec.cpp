@@ -26,6 +26,8 @@ constexpr qsizetype maximumArtifactBytes = 8 * 1024 * 1024;
 constexpr qsizetype maximumTextBytes = 256 * 1024;
 constexpr quint32 maximumCollectionItems = 4096;
 constexpr char payloadMagic[] = {'E', 'L', 'P', 'C', 'R', 'Q', '0', '1'};
+constexpr quint32 minimumPayloadVersion = 1;
+constexpr quint32 currentPayloadVersion = 2;
 
 QByteArray sha256(QByteArrayView bytes)
 {
@@ -438,6 +440,27 @@ Data::EngineeringValue readEngineeringValue(BinaryReader &reader)
     return result;
 }
 
+void writeDeviceParameterConfiguration(
+    BinaryWriter &writer, const Data::DeviceParameterConfiguration &configuration)
+{
+    writeList(
+        writer,
+        configuration.values,
+        [](BinaryWriter &binary, const Data::DeviceParameterValue &parameter) {
+            binary.string(parameter.parameterId);
+            writeEngineeringValue(binary, parameter.value);
+        });
+}
+
+Data::DeviceParameterConfiguration readDeviceParameterConfiguration(BinaryReader &reader)
+{
+    Data::DeviceParameterConfiguration result;
+    result.values = readList<Data::DeviceParameterValue>(reader, [](BinaryReader &binary) {
+        return Data::DeviceParameterValue{binary.string(), readEngineeringValue(binary)};
+    });
+    return result;
+}
+
 template<typename Value, typename Writer>
 void writeOptional(BinaryWriter &writer, const std::optional<Value> &value, Writer writeValue)
 {
@@ -731,7 +754,10 @@ Data::DeviceAdapterProjectSelection readAdapterSelection(BinaryReader &reader)
     return result;
 }
 
-void writeOfflineSlave(BinaryWriter &writer, const Data::OfflineSlaveConfiguration &slave)
+void writeOfflineSlave(
+    BinaryWriter &writer,
+    const Data::OfflineSlaveConfiguration &slave,
+    quint32 payloadVersion)
 {
     writeNodeId(writer, slave.id);
     writeNodeId(writer, slave.masterId);
@@ -748,9 +774,11 @@ void writeOfflineSlave(BinaryWriter &writer, const Data::OfflineSlaveConfigurati
     writeAdapterSelection(writer, slave.adapterSelection);
     writeManualControl(writer, slave.manualControlEnvelope);
     writer.u16(slave.stationAddress);
+    if (payloadVersion >= 2)
+        writeDeviceParameterConfiguration(writer, slave.deviceParameters);
 }
 
-Data::OfflineSlaveConfiguration readOfflineSlave(BinaryReader &reader)
+Data::OfflineSlaveConfiguration readOfflineSlave(BinaryReader &reader, quint32 payloadVersion)
 {
     Data::OfflineSlaveConfiguration result;
     result.id = readNodeId(reader);
@@ -769,6 +797,8 @@ Data::OfflineSlaveConfiguration readOfflineSlave(BinaryReader &reader)
     result.adapterSelection = readAdapterSelection(reader);
     result.manualControlEnvelope = readManualControl(reader);
     result.stationAddress = reader.u16();
+    if (payloadVersion >= 2)
+        result.deviceParameters = readDeviceParameterConfiguration(reader);
     return result;
 }
 
@@ -818,7 +848,8 @@ Data::SemanticBindingArtifactReference readBindingReference(BinaryReader &reader
     return result;
 }
 
-void writeProjectSnapshot(BinaryWriter &writer, const Data::ProjectSnapshot &snapshot)
+void writeProjectSnapshot(
+    BinaryWriter &writer, const Data::ProjectSnapshot &snapshot, quint32 payloadVersion)
 {
     writeNodeId(writer, snapshot.id);
     writer.string(snapshot.name);
@@ -829,13 +860,18 @@ void writeProjectSnapshot(BinaryWriter &writer, const Data::ProjectSnapshot &sna
     writer.boolean(snapshot.valid);
     writer.boolean(snapshot.migrated);
     writer.string(snapshot.error);
-    writeList(writer, snapshot.slaves, writeOfflineSlave);
+    writeList(
+        writer,
+        snapshot.slaves,
+        [payloadVersion](BinaryWriter &binary, const Data::OfflineSlaveConfiguration &slave) {
+            writeOfflineSlave(binary, slave, payloadVersion);
+        });
     writer.enumeration(snapshot.masterConfiguration.timingMode, 2);
     writer.u32(snapshot.masterConfiguration.cyclePeriodNs);
     writeBindingReference(writer, snapshot.masterBindingArtifact);
 }
 
-Data::ProjectSnapshot readProjectSnapshot(BinaryReader &reader)
+Data::ProjectSnapshot readProjectSnapshot(BinaryReader &reader, quint32 payloadVersion)
 {
     Data::ProjectSnapshot result;
     result.id = readNodeId(reader);
@@ -847,7 +883,10 @@ Data::ProjectSnapshot readProjectSnapshot(BinaryReader &reader)
     result.valid = reader.boolean();
     result.migrated = reader.boolean();
     result.error = reader.string();
-    result.slaves = readList<Data::OfflineSlaveConfiguration>(reader, readOfflineSlave);
+    result.slaves = readList<Data::OfflineSlaveConfiguration>(
+        reader, [payloadVersion](BinaryReader &binary) {
+            return readOfflineSlave(binary, payloadVersion);
+        });
     result.masterConfiguration.timingMode = reader.enumeration<Data::MasterTimingMode>(2);
     result.masterConfiguration.cyclePeriodNs = reader.u32();
     result.masterBindingArtifact = readBindingReference(reader);
@@ -1295,12 +1334,16 @@ Data::RuntimePackageCompilerSignedTargetProfileEvidence readTarget(BinaryReader 
     return result;
 }
 
-QByteArray encodePayload(const RuntimePackageCompilerCompileRecovery &recovery)
+QByteArray encodePayload(
+    const RuntimePackageCompilerCompileRecovery &recovery,
+    quint32 payloadVersion = currentPayloadVersion)
 {
+    if (payloadVersion < minimumPayloadVersion || payloadVersion > currentPayloadVersion)
+        return {};
     const Data::RuntimePackageCompilerCompileRequest &request = recovery.request;
     BinaryWriter writer;
     writer.raw(QByteArrayView(payloadMagic, qsizetype(sizeof(payloadMagic))));
-    writer.u32(1);
+    writer.u32(payloadVersion);
     writer.string(request.operationId.value());
     writer.string(request.intentId);
     writer.u64(request.configurationId);
@@ -1313,7 +1356,7 @@ QByteArray encodePayload(const RuntimePackageCompilerCompileRecovery &recovery)
 
     const Data::RuntimePackageCompilerProjectSnapshotEvidence &snapshot
         = request.projectSnapshotEvidence;
-    writeProjectSnapshot(writer, snapshot.snapshot());
+    writeProjectSnapshot(writer, snapshot.snapshot(), payloadVersion);
     writer.bytes(recovery.serializedProject, maximumProjectBytes);
     writeSha(writer, snapshot.serializedProjectSha256());
     writer.u64(snapshot.documentRevisionNumber());
@@ -1328,13 +1371,17 @@ QByteArray encodePayload(const RuntimePackageCompilerCompileRecovery &recovery)
     return writer.take();
 }
 
-Utils::Result<RuntimePackageCompilerCompileRecovery> decodePayload(QByteArrayView payload)
+Utils::Result<RuntimePackageCompilerCompileRecovery> decodePayload(
+    QByteArrayView payload, quint32 *decodedPayloadVersion)
 {
     if (payload.isEmpty() || payload.size() > maximumPayloadBytes)
         return Utils::ResultError(QStringLiteral("Compiler recovery payload size is invalid."));
     BinaryReader reader(payload);
-    if (reader.raw(sizeof(payloadMagic)) != QByteArray(payloadMagic, qsizetype(sizeof(payloadMagic)))
-        || reader.u32() != 1) {
+    if (reader.raw(sizeof(payloadMagic)) != QByteArray(payloadMagic, qsizetype(sizeof(payloadMagic)))) {
+        return Utils::ResultError(QStringLiteral("Compiler recovery payload header is invalid."));
+    }
+    const quint32 payloadVersion = reader.u32();
+    if (payloadVersion < minimumPayloadVersion || payloadVersion > currentPayloadVersion) {
         return Utils::ResultError(QStringLiteral("Compiler recovery payload header is invalid."));
     }
 
@@ -1349,7 +1396,7 @@ Utils::Result<RuntimePackageCompilerCompileRecovery> decodePayload(QByteArrayVie
     request.contractIdentity.contractVersion = reader.u32();
     request.contractIdentity.schemaBundleSha256 = readSha(reader);
 
-    Data::ProjectSnapshot snapshot = readProjectSnapshot(reader);
+    Data::ProjectSnapshot snapshot = readProjectSnapshot(reader, payloadVersion);
     QByteArray serializedProject = reader.bytes(maximumProjectBytes);
     const Data::RuntimePackageCompilerSha256 expectedSerializedSha = readSha(reader);
     const quint64 documentRevisionNumber = reader.u64();
@@ -1378,6 +1425,7 @@ Utils::Result<RuntimePackageCompilerCompileRecovery> decodePayload(QByteArrayVie
     RuntimePackageCompilerCompileRecovery recovery{std::move(request), std::move(serializedProject)};
     if (!reader.atEnd() || !recovery.isValid())
         return Utils::ResultError(QStringLiteral("Compiler recovery payload is invalid."));
+    *decodedPayloadVersion = payloadVersion;
     return recovery;
 }
 
@@ -1502,7 +1550,9 @@ Utils::Result<RuntimePackageCompilerCompileRecovery> decodeRuntimePackageCompile
         || payload.toBase64() != encodedPayload || sha256(payload) != *expectedPayloadSha) {
         return Utils::ResultError(QStringLiteral("Compiler recovery payload integrity is invalid."));
     }
-    const Utils::Result<RuntimePackageCompilerCompileRecovery> recovery = decodePayload(payload);
+    quint32 payloadVersion = 0;
+    const Utils::Result<RuntimePackageCompilerCompileRecovery> recovery
+        = decodePayload(payload, &payloadVersion);
     if (!recovery)
         return Utils::ResultError(recovery.error());
     const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> canonicalCompileRequest
@@ -1511,7 +1561,7 @@ Utils::Result<RuntimePackageCompilerCompileRecovery> decodeRuntimePackageCompile
         || canonicalCompileRequest->sha256().value() != *expectedCompileSha) {
         return Utils::ResultError(QStringLiteral("Compiler recovery request digest is invalid."));
     }
-    if (encodePayload(*recovery) != payload
+    if (encodePayload(*recovery, payloadVersion) != payload
         || encodeRecoveryJson(payload, canonicalCompileRequest->sha256()) != exactBytes) {
         return Utils::ResultError(QStringLiteral("Compiler recovery JSON is not canonical."));
     }

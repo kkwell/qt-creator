@@ -21,6 +21,7 @@ private slots:
     void testMasterConfigurationPersistenceAndUndo();
     void testOfflineConfigurationPersistenceAndUndo();
     void testAdapterSelectionPersistenceAndUndo();
+    void testDeviceParameterConfigurationPersistenceAndUndo();
     void testManualControlEnvelopePersistenceAndUndo();
     void testBindingArtifactInvalidationAndUndo();
     void testProjectDeviceBindingPersistenceAndValidation();
@@ -30,6 +31,7 @@ private slots:
     void testVersionFourManualControlMigration();
     void testVersionFiveBindingArtifactMigration();
     void testVersionSixStationAddressMigration();
+    void testVersionSevenDeviceParameterMigration();
     void testOfflineConfigurationCorruption();
     void testAdapterSelectionCorruption();
     void testManualControlEnvelopeCorruption();

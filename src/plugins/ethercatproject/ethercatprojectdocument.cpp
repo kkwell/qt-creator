@@ -6,6 +6,7 @@
 #include "ethercatprojectformat.h"
 #include "ethercatprojecttr.h"
 
+#include <ethercatcore/deviceparametercontract.h>
 #include <utils/fileutils.h>
 
 #include <QCryptographicHash>
@@ -418,6 +419,7 @@ static Utils::Result<> validateProjectConfigurations(const Data::ProjectSnapshot
         ids.insert(node.id);
 
     QHash<Data::NodeId, QSet<quint16>> stationAddressesByMaster;
+    qsizetype projectDeviceParameterCount = 0;
     for (const Data::OfflineSlaveConfiguration &slave : snapshot.slaves) {
         if (slave.stationAddress) {
             QSet<quint16> &stationAddresses = stationAddressesByMaster[slave.masterId];
@@ -445,6 +447,21 @@ static Utils::Result<> validateProjectConfigurations(const Data::ProjectSnapshot
         if (hasManualControl && adapterSelectionIsEmpty(slave.adapterSelection)) {
             return Utils::ResultError(
                 Tr::tr("Manual control requires an exact device adapter selection."));
+        }
+        const Core::DeviceParameterContractValidation parameterValidation
+            = Core::validateDeviceParameterConfiguration(slave.deviceParameters);
+        if (!parameterValidation.accepted())
+            return Utils::ResultError(parameterValidation.detail);
+        if (slave.deviceParameters.values.size()
+            > Data::maximumDeviceParametersPerProject - projectDeviceParameterCount) {
+            return Utils::ResultError(
+                Tr::tr("The EtherCAT project exceeds the supported device parameter limit."));
+        }
+        projectDeviceParameterCount += slave.deviceParameters.values.size();
+        if (!slave.deviceParameters.values.isEmpty()
+            && adapterSelectionIsEmpty(slave.adapterSelection)) {
+            return Utils::ResultError(
+                Tr::tr("Device parameters require an exact device adapter selection."));
         }
         if (const Utils::Result<> validation
             = validateManualControlEnvelopeStructure(slave.manualControlEnvelope);
@@ -742,6 +759,7 @@ Utils::Result<> EtherCATProjectDocument::replaceOfflineSlaves(
             && (existing->esiSha256 != slave.esiSha256
                 || existing->adapterSelection != slave.adapterSelection)) {
             slave.manualControlEnvelope = {};
+            slave.deviceParameters = {};
         }
         ids.insert(slave.id);
         positions.insert(slave.position);
@@ -916,6 +934,7 @@ Utils::Result<> EtherCATProjectDocument::setDeviceAdapterSelection(
     updated.esiSha256 = esiSha256;
     updated.adapterSelection = *normalizedSelection;
     updated.manualControlEnvelope = {};
+    updated.deviceParameters = {};
     Data::ProjectSnapshot candidate = m_snapshot;
     *std::find_if(candidate.slaves.begin(), candidate.slaves.end(), [&slaveId](const auto &entry) {
         return entry.id == slaveId;
@@ -930,6 +949,66 @@ Utils::Result<> EtherCATProjectDocument::setDeviceAdapterSelection(
         updated,
         oldBindingArtifact,
         Tr::tr("Select EtherCAT device adapter")));
+    return Utils::ResultOk;
+}
+
+Utils::Result<> EtherCATProjectDocument::setDeviceParameterConfiguration(
+    const Data::NodeId &slaveId,
+    const QByteArray &expectedEsiSha256,
+    const Data::DeviceAdapterProjectSelection &expectedAdapterSelection,
+    const Data::DeviceParameterConfiguration &configuration)
+{
+    if (!m_snapshot.valid)
+        return Utils::ResultError(Tr::tr("Cannot edit an invalid EtherCAT project."));
+    const auto slave = std::find_if(
+        m_snapshot.slaves.cbegin(), m_snapshot.slaves.cend(), [&slaveId](const auto &entry) {
+            return entry.id == slaveId;
+        });
+    if (slave == m_snapshot.slaves.cend())
+        return Utils::ResultError(Tr::tr("The requested offline slave does not exist."));
+    const auto normalizedExpectedSelection
+        = normalizeAdapterSelection(expectedAdapterSelection, expectedEsiSha256);
+    if (!normalizedExpectedSelection || adapterSelectionIsEmpty(*normalizedExpectedSelection)) {
+        return Utils::ResultError(
+            Tr::tr("Device parameter edits require an exact expected adapter selection."));
+    }
+    if (slave->esiSha256 != expectedEsiSha256
+        || slave->adapterSelection != *normalizedExpectedSelection) {
+        return Utils::ResultError(
+            Tr::tr("The device adapter or ESI changed before the parameters were applied."));
+    }
+    const Core::DeviceParameterContractValidation validation
+        = Core::validateDeviceParameterConfiguration(configuration);
+    if (!validation.accepted())
+        return Utils::ResultError(validation.detail);
+    if (!configuration.values.isEmpty() && adapterSelectionIsEmpty(slave->adapterSelection)) {
+        return Utils::ResultError(
+            Tr::tr("Device parameters require an exact device adapter selection."));
+    }
+    if (slave->deviceParameters == configuration)
+        return Utils::ResultOk;
+
+    const Data::OfflineSlaveConfiguration oldSlave = *slave;
+    const Data::SemanticBindingArtifactReference oldBindingArtifact
+        = m_snapshot.masterBindingArtifact;
+    Data::OfflineSlaveConfiguration updated = oldSlave;
+    updated.deviceParameters = configuration;
+    Data::ProjectSnapshot candidate = m_snapshot;
+    *std::find_if(candidate.slaves.begin(), candidate.slaves.end(), [&slaveId](const auto &entry) {
+        return entry.id == slaveId;
+    }) = updated;
+    candidate.masterBindingArtifact = {};
+    if (const Utils::Result<> projectValidation = validateProjectConfigurations(candidate);
+        !projectValidation) {
+        return projectValidation;
+    }
+
+    m_undoStack.push(new UpdateOfflineSlaveCommand(
+        this,
+        oldSlave,
+        updated,
+        oldBindingArtifact,
+        Tr::tr("Configure EtherCAT device parameters")));
     return Utils::ResultOk;
 }
 

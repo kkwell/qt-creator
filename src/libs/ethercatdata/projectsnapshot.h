@@ -3,6 +3,7 @@
 #pragma once
 
 #include "deviceadapterselection.h"
+#include "deviceparameters.h"
 #include "devicedescription.h"
 #include "ethercatdata_global.h"
 #include "manualcontrol.h"
@@ -34,6 +35,7 @@ struct ETHERCATDATA_EXPORT OfflineSlaveConfiguration
     DeviceAdapterProjectSelection adapterSelection;
     ManualControlEnvelope manualControlEnvelope = {};
     quint16 stationAddress = 0;
+    DeviceParameterConfiguration deviceParameters;
 
     friend bool operator==(const OfflineSlaveConfiguration &, const OfflineSlaveConfiguration &)
         = default;

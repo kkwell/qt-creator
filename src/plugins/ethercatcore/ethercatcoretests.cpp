@@ -3,6 +3,7 @@
 #include "ethercatcoretests.h"
 
 #include "automationservice.h"
+#include "deviceparametercontract.h"
 #include "ethercatcoreconstants.h"
 #include "ethercatcoresettings.h"
 #include "ethercatcoretr.h"
@@ -515,7 +516,7 @@ struct RuntimePackageCompilerFixture
         Data::ProjectSnapshot project;
         project.id = projectId;
         project.name = QStringLiteral("Compiler contract fixture");
-        project.formatVersion = 7;
+        project.formatVersion = 8;
         project.valid = true;
         project.nodes = {
             {projectId, {}, Data::ProjectNodeKind::Project, QStringLiteral("Project")},
@@ -886,7 +887,7 @@ static Data::RuntimePackageCompilerCompileRequest api042GoldenCompileRequest()
     Data::ProjectSnapshot project;
     project.id = projectNodeId;
     project.name = QStringLiteral("API-042 golden project");
-    project.formatVersion = 7;
+    project.formatVersion = 8;
     project.valid = true;
     project.masterConfiguration.timingMode = Data::MasterTimingMode::DistributedClocks;
     project.masterConfiguration.cyclePeriodNs = quint32(
@@ -3273,6 +3274,15 @@ public:
         const Data::NodeId &,
         const QByteArray &,
         const Data::DeviceAdapterProjectSelection &) final
+    {
+        return unsupported();
+    }
+    Utils::Result<> setDeviceParameterConfiguration(
+        const Data::NodeId &,
+        const Data::NodeId &,
+        const QByteArray &,
+        const Data::DeviceAdapterProjectSelection &,
+        const Data::DeviceParameterConfiguration &) final
     {
         return unsupported();
     }
@@ -9456,6 +9466,70 @@ void EtherCATCoreTests::testExactEngineeringConstraintContract()
     QCOMPARE(
         validateEngineeringConstraint(missingOrigin).error,
         EngineeringContractError::InvalidConstraint);
+}
+
+void EtherCATCoreTests::testDeviceParameterConfigurationContract()
+{
+    Data::DeviceParameterConfiguration configuration{{
+        {"parameter.boolean", Data::EngineeringValue::fromBoolean(true)},
+        {"parameter.enumeration", Data::EngineeringValue::fromEnumeration("mode.one")},
+        {"parameter.rational", Data::EngineeringValue::fromExactRational({1, 2})},
+        {"parameter.signed", Data::EngineeringValue::fromSignedInteger(-1000)},
+        {"parameter.unsigned", Data::EngineeringValue::fromUnsignedInteger(1000)},
+    }};
+    QVERIFY(validateDeviceParameterConfiguration({}).accepted());
+    QVERIFY(validateDeviceParameterConfiguration(configuration).accepted());
+
+    Data::DeviceParameterConfiguration duplicate = configuration;
+    duplicate.values[1].parameterId = duplicate.values[0].parameterId;
+    QCOMPARE(
+        validateDeviceParameterConfiguration(duplicate).error,
+        DeviceParameterContractError::DuplicateIdentifier);
+
+    Data::DeviceParameterConfiguration unordered = configuration;
+    std::reverse(unordered.values.begin(), unordered.values.end());
+    QCOMPARE(
+        validateDeviceParameterConfiguration(unordered).error,
+        DeviceParameterContractError::NonCanonicalIdentifierOrder);
+
+    Data::DeviceParameterConfiguration invalidIdentifier = configuration;
+    invalidIdentifier.values[0].parameterId = " drive.encoder-resolution";
+    QCOMPARE(
+        validateDeviceParameterConfiguration(invalidIdentifier).error,
+        DeviceParameterContractError::InvalidIdentifier);
+
+    Data::DeviceParameterConfiguration invalidValue = configuration;
+    invalidValue.values[2].value = Data::EngineeringValue::fromExactRational({2, 4});
+    QCOMPARE(
+        validateDeviceParameterConfiguration(invalidValue).error,
+        DeviceParameterContractError::InvalidValue);
+
+    Data::DeviceParameterConfiguration unicodeIdentifier = configuration;
+    unicodeIdentifier.values[0].parameterId = QString::fromUtf8("parameter.参数");
+    QCOMPARE(
+        validateDeviceParameterConfiguration(unicodeIdentifier).error,
+        DeviceParameterContractError::InvalidIdentifier);
+
+    Data::DeviceParameterConfiguration unicodeEnumeration = configuration;
+    unicodeEnumeration.values[1].value
+        = Data::EngineeringValue::fromEnumeration(QString::fromUtf8("模式"));
+    QCOMPARE(
+        validateDeviceParameterConfiguration(unicodeEnumeration).error,
+        DeviceParameterContractError::InvalidValue);
+
+    Data::DeviceParameterConfiguration maximumConfiguration;
+    maximumConfiguration.values.reserve(Data::maximumDeviceParametersPerConfiguration + 1);
+    for (qsizetype index = 0; index < Data::maximumDeviceParametersPerConfiguration; ++index) {
+        maximumConfiguration.values.append(
+            {QString("parameter.%1").arg(index, 3, 10, QLatin1Char('0')),
+             Data::EngineeringValue::fromUnsignedInteger(quint64(index))});
+    }
+    QVERIFY(validateDeviceParameterConfiguration(maximumConfiguration).accepted());
+    maximumConfiguration.values.append(
+        {"parameter.overflow", Data::EngineeringValue::fromUnsignedInteger(0)});
+    QCOMPARE(
+        validateDeviceParameterConfiguration(maximumConfiguration).error,
+        DeviceParameterContractError::TooManyParameters);
 }
 
 void EtherCATCoreTests::testManualControlEnvelopeContract()

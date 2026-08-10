@@ -172,6 +172,16 @@ public:
         return unsupported();
     }
 
+    Utils::Result<> setDeviceParameterConfiguration(
+        const Data::NodeId &,
+        const Data::NodeId &,
+        const QByteArray &,
+        const Data::DeviceAdapterProjectSelection &,
+        const Data::DeviceParameterConfiguration &) final
+    {
+        return unsupported();
+    }
+
     Utils::Result<> setManualControlEnvelope(
         const Data::NodeId &, const Data::NodeId &, const Data::ManualControlEnvelope &) final
     {
@@ -1649,7 +1659,7 @@ static Data::ProjectSnapshot factoryProject(const VerifiedRuntimePackageEvidence
     Data::ProjectSnapshot project;
     project.id = Data::NodeId::create();
     project.name = QStringLiteral("API-037 semantic binding factory");
-    project.formatVersion = 7;
+    project.formatVersion = 8;
     project.createdBy = QStringLiteral("EtherCATSemanticRuntimeTests");
     project.valid = true;
 

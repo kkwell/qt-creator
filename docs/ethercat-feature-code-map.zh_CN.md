@@ -46,6 +46,7 @@ python3 scripts/ethercat_feature_locator.py check
 | `ethercat.core.topology-service` | 来源隔离的统一拓扑服务 | `EtherCATCore` | `engineering-only` | [`src/plugins/ethercatcore/topologyservice.cpp`](../src/plugins/ethercatcore/topologyservice.cpp) |
 | `ethercat.core.scan-provider-selection` | 显式 Mock 扫描 Provider 选择 | `EtherCATCore` | `engineering-only` | [`src/plugins/ethercatcore/scanproviderselectionservice.cpp`](../src/plugins/ethercatcore/scanproviderselectionservice.cpp) |
 | `ethercat.core.manual-control-contract` | 通用手动控制合同 | `EtherCATCore` | `contract-only` | [`src/plugins/ethercatcore/manualcontrolcontract.cpp`](../src/plugins/ethercatcore/manualcontrolcontract.cpp) |
+| `ethercat.core.device-parameter-contract` | 设备参数工程意图合同 | `EtherCATCore` | `contract-only` | [`src/plugins/ethercatcore/deviceparametercontract.cpp`](../src/plugins/ethercatcore/deviceparametercontract.cpp) |
 | `ethercat.project.model-format` | 工程格式与迁移 | `EtherCATProject` | `engineering-only` | [`src/plugins/ethercatproject/ethercatprojectformat.cpp`](../src/plugins/ethercatproject/ethercatprojectformat.cpp) |
 | `ethercat.project.mutation` | 工程变更、Undo 与 CAS | `EtherCATProject` | `engineering-only` | [`src/plugins/ethercatproject/projectserviceimpl.cpp`](../src/plugins/ethercatproject/projectserviceimpl.cpp) |
 | `ethercat.devices.esi-repository` | ESI 设备库与 XML 解析 | `EtherCATDevices` | `engineering-only` | [`src/plugins/ethercatdevices/devicerepository.cpp`](../src/plugins/ethercatdevices/devicerepository.cpp) |
@@ -176,41 +177,63 @@ python3 scripts/ethercat_feature_locator.py check
 - 前置功能：`ethercat.data.domain-contracts`
 - 边界提醒：厂家对象、PDO 偏移和 CiA402 步骤应由 Adapter 提供，Core 不得写死。
 
+#### `ethercat.core.device-parameter-contract` — 设备参数工程意图合同
+
+为工程拥有的设备参数提供有界 ASCII 标识、canonical EngineeringValue 和严格顺序校验，不定义厂家对象或在线读写。
+
+- Owner：`EtherCATCore`（[`src/plugins/ethercatcore`](../src/plugins/ethercatcore)）
+- 运行边界：`contract-only`
+- 证据边界：`unit`
+- 修改入口：
+  - [`src/plugins/ethercatcore/deviceparametercontract.cpp`](../src/plugins/ethercatcore/deviceparametercontract.cpp)：数量、ASCII 标识、唯一顺序和工程值校验；`validateDeviceParameterConfiguration`
+- 公共合同：
+  - [`src/libs/ethercatdata/deviceparameters.h`](../src/libs/ethercatdata/deviceparameters.h)：有界工程参数值类型和数量上限；`DeviceParameterValue`、`DeviceParameterConfiguration`、`maximumDeviceParametersPerProject`
+  - [`src/plugins/ethercatcore/deviceparametercontract.h`](../src/plugins/ethercatcore/deviceparametercontract.h)：跨插件设备参数校验合同；`DeviceParameterContractValidation`、`validateDeviceParameterConfiguration`
+- 定向测试：
+  - [`src/plugins/ethercatcore/ethercatcoretests.cpp`](../src/plugins/ethercatcore/ethercatcoretests.cpp)（`unit`）：`testDeviceParameterConfigurationContract`
+- 相关文档：[`docs/ethercat-project-format.md`](../docs/ethercat-project-format.md)、[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
+- 前置功能：`ethercat.data.domain-contracts`
+- 边界提醒：该合同只验证可持久化的工程意图；签名 Adapter 参数定义仍须资格化 ID、类型、单位、范围和投影。
+- 边界提醒：在线扫描实测值属于独立会话证据，不得写入 DeviceParameterConfiguration 或 ProjectSnapshot。
+
 ### 4.2 工程模型
 
 #### `ethercat.project.model-format` — 工程格式与迁移
 
-维护当前 v7 工程 JSON、严格结构校验和旧版本逐级迁移。
+维护当前 v8 工程 JSON、严格结构校验和旧版本迁移，包括每从站 canonical deviceParameters 工程意图。
 
 - Owner：`EtherCATProject`（[`src/plugins/ethercatproject`](../src/plugins/ethercatproject)）
 - 运行边界：`engineering-only`
 - 证据边界：`unit`
 - 修改入口：
-  - [`src/plugins/ethercatproject/ethercatprojectformat.cpp`](../src/plugins/ethercatproject/ethercatprojectformat.cpp)：工程读写、校验和迁移；`formatVersion`、`CURRENT_FORMAT_VERSION`
+  - [`src/plugins/ethercatproject/ethercatprojectformat.cpp`](../src/plugins/ethercatproject/ethercatprojectformat.cpp)：v8 工程读写、设备参数严格形状校验和迁移；`parseDeviceParameterConfiguration`、`serializeDeviceParameterConfiguration`、`CURRENT_FORMAT_VERSION`
 - 公共合同：
   - [`src/libs/ethercatdata/projectsnapshot.h`](../src/libs/ethercatdata/projectsnapshot.h)：对外工程快照；`ProjectSnapshot`、`OfflineSlaveConfiguration`
 - 定向测试：
-  - [`src/plugins/ethercatproject/ethercatprojecttests.cpp`](../src/plugins/ethercatproject/ethercatprojecttests.cpp)（`unit`）：`testFormatRoundTripAndCorruption`、`testVersionSixStationAddressMigration`
+  - [`src/plugins/ethercatproject/ethercatprojecttests.cpp`](../src/plugins/ethercatproject/ethercatprojecttests.cpp)（`unit`）：`testFormatRoundTripAndCorruption`、`testDeviceParameterConfigurationPersistenceAndUndo`、`testVersionSevenDeviceParameterMigration`
 - 相关文档：[`docs/ethercat-project-format.md`](../docs/ethercat-project-format.md)
-- 前置功能：`ethercat.data.domain-contracts`
+- 前置功能：`ethercat.data.domain-contracts`、`ethercat.core.device-parameter-contract`
 - 边界提醒：新增持久化字段时必须同时提供迁移、严格解析、往返和损坏输入测试。
+- 边界提醒：v8 deviceParameters 只保存工程意图；扫描实测值不进入 ProjectSnapshot。
 
 #### `ethercat.project.mutation` — 工程变更、Undo 与 CAS
 
-所有界面编辑通过 ProjectService 写入工程，并保留 Undo/Redo 与激活比较交换语义。
+所有界面编辑通过 ProjectService 写入工程；设备参数提交还校验预期 ESI/Adapter value token，并保留 Undo/Redo 与激活比较交换语义。
 
 - Owner：`EtherCATProject`（[`src/plugins/ethercatproject`](../src/plugins/ethercatproject)）
 - 运行边界：`engineering-only`
 - 证据边界：`unit`
 - 修改入口：
-  - [`src/plugins/ethercatproject/projectserviceimpl.cpp`](../src/plugins/ethercatproject/projectserviceimpl.cpp)：工程变更服务实现；`ProjectServiceImpl::replaceOfflineSlaves`、`ProjectServiceImpl::setStartupProject`
+  - [`src/plugins/ethercatproject/projectserviceimpl.cpp`](../src/plugins/ethercatproject/projectserviceimpl.cpp)：工程变更服务实现；`ProjectServiceImpl::replaceOfflineSlaves`、`ProjectServiceImpl::setDeviceParameterConfiguration`、`ProjectServiceImpl::setStartupProject`
+  - [`src/plugins/ethercatproject/ethercatprojectdocument.cpp`](../src/plugins/ethercatproject/ethercatprojectdocument.cpp)：预期 ESI/Adapter 比较、绑定失效和原子 Undo 命令；`EtherCATProjectDocument::setDeviceParameterConfiguration`
 - 公共合同：
-  - [`src/plugins/ethercatcore/providers.h`](../src/plugins/ethercatcore/providers.h)：跨插件工程服务；`class ETHERCATCORE_EXPORT ProjectService`、`replaceOfflineSlaves`
+  - [`src/plugins/ethercatcore/providers.h`](../src/plugins/ethercatcore/providers.h)：跨插件工程服务和设备参数 expected-token 入口；`class ETHERCATCORE_EXPORT ProjectService`、`replaceOfflineSlaves`、`setDeviceParameterConfiguration`
 - 定向测试：
-  - [`src/plugins/ethercatproject/ethercatprojecttests.cpp`](../src/plugins/ethercatproject/ethercatprojecttests.cpp)（`unit`）：`testDocumentUndoRedoAndAtomicFailure`、`testRuntimePackageActivationProjectCompareAndSet`
+  - [`src/plugins/ethercatproject/ethercatprojecttests.cpp`](../src/plugins/ethercatproject/ethercatprojecttests.cpp)（`unit`）：`testDocumentUndoRedoAndAtomicFailure`、`testDeviceParameterConfigurationPersistenceAndUndo`、`testRuntimePackageActivationProjectCompareAndSet`
 - 相关文档：[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
-- 前置功能：`ethercat.project.model-format`、`ethercat.core.provider-registry`
+- 前置功能：`ethercat.project.model-format`、`ethercat.core.device-parameter-contract`、`ethercat.core.provider-registry`
 - 边界提醒：页面不得直接修改文档内部对象，也不得维护第二份工程状态。
+- 边界提醒：设备参数非空时从站必须保持精确 ESI 和完整 Adapter 选择；token 陈旧、ESI 或 Adapter 改变必须拒绝或清空，不能隐式重绑。
 
 ### 4.3 设备、ESI 与 Adapter
 
@@ -399,20 +422,23 @@ python3 scripts/ethercat_feature_locator.py check
 
 #### `ethercat.compiler.project-projection` — 工程快照到编译请求
 
-把工程、真实拓扑、ESI、Adapter、目标能力和固定构建身份投影为严格编译输入。
+把工程、真实拓扑、ESI、Adapter、目标能力和固定构建身份投影为严格编译输入；当前任意非空设备参数在外部编译前 fail closed。
 
 - Owner：`EtherCATProjectCompiler`（[`src/plugins/ethercatprojectcompiler`](../src/plugins/ethercatprojectcompiler)）
 - 运行边界：`engineering-only`
 - 证据边界：`unit`、`artifact`
 - 修改入口：
-  - [`src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp`](../src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp)：严格工程投影和 fail-closed 校验；`ProvisionedRuntimePackageCompilerProjectRequestBuilder::build`
+  - [`src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp`](../src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp)：严格工程投影和非空设备参数 fail-closed 校验；`ProvisionedRuntimePackageCompilerProjectRequestBuilder::build`
+  - [`src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp`](../src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp)：compile-recovery payload v2 保留设备参数字段，v1 兼容为空；`writeDeviceParameterConfiguration`、`readDeviceParameterConfiguration`、`writeOfflineSlave`、`readOfflineSlave`
 - 公共合同：
   - [`src/plugins/ethercatcore/runtimepackagecompilerprojectrequestbuilder.h`](../src/plugins/ethercatcore/runtimepackagecompilerprojectrequestbuilder.h)：工程编译请求构建边界；`class ETHERCATCORE_EXPORT RuntimePackageCompilerProjectRequestBuilder`
+  - [`src/libs/ethercatdata/runtimepackagecompiler.cpp`](../src/libs/ethercatdata/runtimepackagecompiler.cpp)：编译请求值合同拒绝未投影的非空设备参数；`projectDeviceParametersAreEmpty`、`RuntimePackageCompilerCompileRequest::hasValidReservationInputs`
 - 定向测试：
-  - [`src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp`](../src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp)（`artifact`）：`testProjectRequestBuilderProvisioningAndDeterminism`、`testProjectRequestBuilderFailsClosedOnUnprovenTopology`
+  - [`src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp`](../src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp)（`artifact`）：`testProjectRequestBuilderProvisioningAndDeterminism`、`testDeviceParametersFailClosedBeforeCompilation`、`testCompileRecoveryRoundTrip`、`testCompileRecoveryVersionOneCompatibility`、`testProjectRequestBuilderFailsClosedOnUnprovenTopology`
 - 相关文档：[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
-- 前置功能：`ethercat.project.model-format`、`ethercat.adapters.catalog-authorization`、`ethercat.product-api.topology-evidence`
-- 边界提醒：不受支持的 PDO、Startup SDO 或 DC 选择必须结构化拒绝，不能静默回退。
+- 前置功能：`ethercat.project.model-format`、`ethercat.core.device-parameter-contract`、`ethercat.adapters.catalog-authorization`、`ethercat.product-api.topology-evidence`
+- 边界提醒：不受支持的 PDO、Startup SDO、DC 或非空设备参数必须结构化拒绝，不能静默回退。
+- 边界提醒：compile-recovery v2 编解码设备参数字段且兼容 v1 空值，但这不是完整 compiler projection，也不授权部署。
 
 #### `ethercat.compiler.backend` — 外部编译器与不可变工件
 
@@ -748,6 +774,7 @@ python3 scripts/ethercat_feature_locator.py check
 - 修改入口：
   - [`src/plugins/ethercatscan/mockscanprovider.cpp`](../src/plugins/ethercatscan/mockscanprovider.cpp)：确定性模拟扫描 Provider；`MockScanProvider`
   - [`src/plugins/ethercatscan/scanworkflow.cpp`](../src/plugins/ethercatscan/scanworkflow.cpp)：精确 Provider/Scope 选择、Fresh generation 和工程修订门禁下的 Mock 扫描编排；`ScanWorkflow::start`、`ScanWorkflow::compareWithProject`、`ScanWorkflow::acceptScan`、`ScanWorkflow::keepExistingConfiguration`、`ScanWorkflow::validateExactProviderSelection`、`ScanWorkflow::freshMockResult`
+  - [`src/plugins/ethercatscan/topologycomparison.cpp`](../src/plugins/ethercatscan/topologycomparison.cpp)：同一精确设备身份保留工程参数意图，身份或 Adapter 证据变化时清空；`offlineConfigurationFromScan`
 - 公共合同：
   - [`src/plugins/ethercatscan/scanworkflow.h`](../src/plugins/ethercatscan/scanworkflow.h)：工作流入口及精确选择、证据代际校验边界；`class ScanWorkflow`、`validateExactProviderSelection`、`freshMockResult`
   - [`src/plugins/ethercatcore/scanproviderselectionservice.h`](../src/plugins/ethercatcore/scanproviderselectionservice.h)：工程与主站 Scope 的显式 Scan Provider 选择合同；`class ETHERCATCORE_EXPORT ScanProviderSelectionService`、`ScanProviderSelection`
@@ -755,10 +782,11 @@ python3 scripts/ethercat_feature_locator.py check
   - [`src/plugins/ethercatcore/providers.h`](../src/plugins/ethercatcore/providers.h)：扫描 Provider 合同；`class ETHERCATCORE_EXPORT ScanProvider`
   - [`src/libs/ethercatdata/scansnapshot.h`](../src/libs/ethercatdata/scansnapshot.h)：扫描快照值类型；`ScanSnapshot`
 - 定向测试：
-  - [`src/plugins/ethercatscan/ethercatscantests.cpp`](../src/plugins/ethercatscan/ethercatscantests.cpp)（`offscreen-ui`）：`testMockProviderStateCancellationAndFailure`、`testWorkflowRejectsUnselectedAndStaleMockEvidence`、`testWorkflowScopesDuplicateNodeSelection`、`testWorkflowAcceptUndoAndRedo`
+  - [`src/plugins/ethercatscan/ethercatscantests.cpp`](../src/plugins/ethercatscan/ethercatscantests.cpp)（`offscreen-ui`）：`testScanPreservesManualConfigurationByIdentity`、`testMockProviderStateCancellationAndFailure`、`testWorkflowRejectsUnselectedAndStaleMockEvidence`、`testWorkflowScopesDuplicateNodeSelection`、`testWorkflowAcceptUndoAndRedo`
 - 相关文档：[`docs/ethercat-scan.md`](../docs/ethercat-scan.md)、[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
 - 前置功能：`ethercat.devices.esi-repository`、`ethercat.project.mutation`、`ethercat.core.scan-provider-selection`、`ethercat.core.topology-service`
 - 边界提醒：此插件不打开 socket、不访问物理网卡，不能作为真实扫描证据。
+- 边界提醒：Mock 接受只在同一精确设备身份仍成立时保留 ProjectSnapshot 中已有的 deviceParameters 工程意图；Revision、设备或 Adapter 证据变化时清空。它不读取实测设备参数，也不得把 observed 值写入 ProjectSnapshot。
 - 边界提醒：start、compare、accept 和 discard 只操作 Registry 中同一实例、同一 project/master Scope 显式选择的 Provider；比较和接受持续锁定同一个 Fresh Mock snapshotId，取消与 shutdown 保留无条件安全停止语义。
 - 边界提醒：接受路径在 GUI 线程同步重读工程修订并在写入前再次校验证据，但 ProjectService 尚无通用 offline-topology CAS，ScanProvider 也没有跨调用者 operation generation；这是当前工作流的同步门禁，不是跨调用者原子事务合同。
 - 边界提醒：testWorkflowRejectsUnselectedAndStaleMockEvidence 还通过 direct projectChanged 注入覆盖写后并发拓扑变化：最终 exactMatch 或 acceptAllowed 失效时返回“工程已更新但验证失败”，不得显示接受成功。
@@ -869,7 +897,7 @@ python3 scripts/ethercat_feature_locator.py check
 
 | Area | 知识卡 | 功能数 | 用途 |
 |---|---|---:|---|
-| `architecture` | 架构与公共合同知识卡 | 5 | 在不遍历实现插件的前提下确认跨插件值对象、Provider 和公共服务的正确边界。 |
+| `architecture` | 架构与公共合同知识卡 | 6 | 在不遍历实现插件的前提下确认跨插件值对象、Provider 和公共服务的正确边界。 |
 | `project` | 工程模型知识卡 | 2 | 维护 .ecatproject 的唯一事实来源、格式迁移和可撤销变更。 |
 | `devices` | 设备、ESI 与 Adapter 知识卡 | 2 | 用原始厂家证据和数据驱动适配完成精确设备识别，避免在上层写死型号逻辑。 |
 | `online` | 真实控制器在线功能知识卡 | 8 | 维护 Product API 三通道、会话、控制权、拓扑证据、部署和原子输出的一致在线快照。 |
@@ -890,6 +918,7 @@ python3 scripts/ethercat_feature_locator.py check
 | `ethercat.issue.detached-sign-ui-flow` | `open` | `p0` | `ethercat.compiler.preparation`、`ethercat.runtime.package-evidence`、`ethercat.runtime.activation`、`ethercat.workbench.deployment` | Workbench detached-sign 流程未形成完整用户闭环 |
 | `ethercat.issue.current-project-hardware-acceptance` | `blocked` | `p0` | `ethercat.compiler.project-projection`、`ethercat.product-api.topology-evidence`、`ethercat.product-api.package-deployment`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.output-transactions`、`ethercat.runtime.activation`、`ethercat.runtime.manual-control`、`ethercat.workbench.deployment`、`ethercat.workbench.semantic-control` | 当前工程到真实硬件的完整验收尚未闭环 |
 | `ethercat.issue.startup-sdo-compiler` | `open` | `p0` | `ethercat.project.model-format`、`ethercat.project.mutation`、`ethercat.workbench.configuration-pages`、`ethercat.compiler.project-projection`、`ethercat.compiler.backend` | 非空 Startup SDO 尚未进入编译闭环 |
+| `ethercat.issue.device-parameter-qualification` | `open` | `p0` | `ethercat.core.device-parameter-contract`、`ethercat.project.model-format`、`ethercat.project.mutation`、`ethercat.adapters.catalog-authorization`、`ethercat.product-api.topology-evidence`、`ethercat.compiler.project-projection`、`ethercat.workbench.configuration-pages`、`ethercat.scan.mock-workflow` | 设备参数资格、扫描实测与编译投影尚未闭环 |
 | `ethercat.issue.restore-project-binding-guard` | `open` | `p0` | `ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.product-api.semantic-attestation`、`ethercat.runtime.package-evidence`、`ethercat.runtime.binding-actions`、`ethercat.runtime.activation`、`ethercat.workbench.communication` | Restore 运行前缺少当前工程绑定门禁 |
 | `ethercat.issue.scan-operation-cas` | `planned` | `p1` | `ethercat.scan.mock-workflow`、`ethercat.project.mutation`、`ethercat.core.scan-provider-selection`、`ethercat.core.topology-service`、`ethercat.core.provider-registry` | 扫描接受缺少跨调用者操作令牌与工程 CAS |
 | `ethercat.issue.engineering-coordinator` | `planned` | `p1` | `ethercat.workbench.communication`、`ethercat.workbench.deployment`、`ethercat.workbench.output-status`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.runtime.activation`、`ethercat.gateway.controller-views-intents` | 工程操作协调逻辑仍集中在 WorkbenchController |

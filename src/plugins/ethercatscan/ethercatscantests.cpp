@@ -189,6 +189,38 @@ static Data::ManualControlEnvelope manualControlEnvelope()
     return {true, {signal}, {}};
 }
 
+static Data::DeviceParameterConfiguration deviceParameterConfiguration()
+{
+    return {{
+        {"parameter.boolean", Data::EngineeringValue::fromBoolean(true)},
+        {"parameter.enumeration", Data::EngineeringValue::fromEnumeration("mode.one")},
+        {"parameter.rational", Data::EngineeringValue::fromExactRational({1, 2})},
+        {"parameter.signed", Data::EngineeringValue::fromSignedInteger(-1000)},
+    }};
+}
+
+static Data::SemanticBindingArtifactReference bindingArtifact(
+    const QList<Data::OfflineSlaveConfiguration> &slaves)
+{
+    Data::SemanticBindingArtifactReference reference{
+        "binding/com.embedlabs.scan-test/1",
+        QByteArray(32, '\x6b'),
+        QByteArray(32, '\x7c'),
+        {},
+    };
+    for (const Data::OfflineSlaveConfiguration &slave : slaves) {
+        reference.projectDeviceBindings.append(
+            {slave.id, QString("embedlabs:scan-test:project-device:%1").arg(slave.position)});
+    }
+    std::sort(
+        reference.projectDeviceBindings.begin(),
+        reference.projectDeviceBindings.end(),
+        [](const auto &left, const auto &right) {
+            return left.slaveId.toString() < right.slaveId.toString();
+        });
+    return reference;
+}
+
 static int differenceCount(
     const Data::TopologyComparison &comparison, Data::TopologyDifferenceKind kind)
 {
@@ -412,6 +444,7 @@ void EtherCATScanTests::testScanPreservesManualConfigurationByIdentity()
         {{0, 0x10000001, 0, 0}},
     };
     configured.manualControlEnvelope = manualControlEnvelope();
+    configured.deviceParameters = deviceParameterConfiguration();
     const Data::ProjectSnapshot project
         = projectSnapshot(projectId, masterId, {configured});
 
@@ -428,6 +461,7 @@ void EtherCATScanTests::testScanPreservesManualConfigurationByIdentity()
     QCOMPARE(
         preserved.first().manualControlEnvelope,
         configured.manualControlEnvelope);
+    QCOMPARE(preserved.first().deviceParameters, configured.deviceParameters);
 
     const Data::ScannedSlave revisedDevice
         = scannedSlave(1, configured.identity.productCode, 2, configured.serialNumber);
@@ -443,6 +477,9 @@ void EtherCATScanTests::testScanPreservesManualConfigurationByIdentity()
     QCOMPARE(
         revised.first().manualControlEnvelope,
         Data::ManualControlEnvelope());
+    QCOMPARE(
+        revised.first().deviceParameters,
+        Data::DeviceParameterConfiguration());
 
     const Data::ScannedSlave replacement
         = scannedSlave(0, configured.identity.productCode + 1, 1, configured.serialNumber);
@@ -457,6 +494,9 @@ void EtherCATScanTests::testScanPreservesManualConfigurationByIdentity()
     QCOMPARE(
         reset.first().manualControlEnvelope,
         Data::ManualControlEnvelope());
+    QCOMPARE(
+        reset.first().deviceParameters,
+        Data::DeviceParameterConfiguration());
 }
 
 void EtherCATScanTests::testMockProviderStateCancellationAndFailure()
@@ -1480,8 +1520,39 @@ void EtherCATScanTests::testWorkflowAcceptUndoAndRedo()
     QVERIFY(service->canUndoProject(projectId));
     QVERIFY(provider->lastScanResult()->comparison.exactMatch);
     QCOMPARE(provider->lastScanResult()->snapshot.id, fullScanSnapshotId);
+    const Data::ProjectSnapshot unconfiguredBaseline = *service->project(projectId);
+    const Data::OfflineSlaveConfiguration selectedSlave = unconfiguredBaseline.slaves.at(2);
+    const QByteArray esiSha256(32, '\x31');
+    const Data::DeviceAdapterProjectSelection adapterSelection{
+        Data::DeviceAdapterId{"com.embedlabs.test.io"},
+        "2.0.0",
+        QByteArray(32, '\x32'),
+        "default",
+        {{0, 0x10000001, 0, 0}},
+    };
+    QVERIFY_RESULT(service->setDeviceAdapterSelection(
+        projectId, selectedSlave.id, esiSha256, adapterSelection));
+    QVERIFY_RESULT(service->setManualControlEnvelope(
+        projectId, selectedSlave.id, manualControlEnvelope()));
+    QVERIFY_RESULT(service->setDeviceParameterConfiguration(
+        projectId,
+        selectedSlave.id,
+        esiSha256,
+        adapterSelection,
+        deviceParameterConfiguration()));
+    const Data::SemanticBindingArtifactReference configuredBinding
+        = bindingArtifact(service->project(projectId)->slaves);
+    QVERIFY_RESULT(service->setMasterBindingArtifact(projectId, configuredBinding));
     const Data::ProjectSnapshot baseline = *service->project(projectId);
-    const Data::OfflineSlaveConfiguration selectedSlave = baseline.slaves.at(2);
+    const auto baselineSelected = std::find_if(
+        baseline.slaves.cbegin(),
+        baseline.slaves.cend(),
+        [&selectedSlave](const Data::OfflineSlaveConfiguration &slave) {
+            return slave.id == selectedSlave.id;
+        });
+    QVERIFY(baselineSelected != baseline.slaves.cend());
+    QCOMPARE(baselineSelected->deviceParameters, deviceParameterConfiguration());
+    QCOMPARE(baseline.masterBindingArtifact, configuredBinding);
 
     provider->clearScanResult();
     provider->setScenario(MockScanScenario::RevisionMismatch);
@@ -1513,19 +1584,38 @@ void EtherCATScanTests::testWorkflowAcceptUndoAndRedo()
     QVERIFY(updatedSlave != acceptedBranch.slaves.cend());
     QCOMPARE(updatedSlave->identity.revisionNumber,
              selectedSlave.identity.revisionNumber + 1);
+    QCOMPARE(updatedSlave->esiSha256, QByteArray());
+    QCOMPARE(updatedSlave->adapterSelection, Data::DeviceAdapterProjectSelection());
+    QCOMPARE(updatedSlave->manualControlEnvelope, Data::ManualControlEnvelope());
+    QCOMPARE(updatedSlave->deviceParameters, Data::DeviceParameterConfiguration());
+    QCOMPARE(
+        acceptedBranch.masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
 
     QVERIFY(service->undoProject(projectId));
     QCOMPARE(service->project(projectId)->slaves, baseline.slaves);
-    QCOMPARE(provider->lastScanResult()->snapshot.id, branchScanSnapshotId);
-    QVERIFY(service->undoProject(projectId));
-    QVERIFY(service->project(projectId)->slaves.isEmpty());
-    QCOMPARE(provider->lastScanResult()->snapshot.id, branchScanSnapshotId);
-    QVERIFY(service->canRedoProject(projectId));
-    QVERIFY(service->redoProject(projectId));
-    QCOMPARE(service->project(projectId)->slaves, baseline.slaves);
+    QCOMPARE(service->project(projectId)->masterBindingArtifact, configuredBinding);
     QCOMPARE(provider->lastScanResult()->snapshot.id, branchScanSnapshotId);
     QVERIFY(service->redoProject(projectId));
     QCOMPARE(service->project(projectId)->slaves, acceptedBranch.slaves);
+    QCOMPARE(
+        service->project(projectId)->masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    QCOMPARE(provider->lastScanResult()->snapshot.id, branchScanSnapshotId);
+    QVERIFY(service->undoProject(projectId));
+    QCOMPARE(service->project(projectId)->slaves, baseline.slaves);
+    QCOMPARE(service->project(projectId)->masterBindingArtifact, configuredBinding);
+    while (service->canUndoProject(projectId))
+        QVERIFY(service->undoProject(projectId));
+    QVERIFY(service->project(projectId)->slaves.isEmpty());
+    QCOMPARE(provider->lastScanResult()->snapshot.id, branchScanSnapshotId);
+    QVERIFY(service->canRedoProject(projectId));
+    while (service->canRedoProject(projectId))
+        QVERIFY(service->redoProject(projectId));
+    QCOMPARE(service->project(projectId)->slaves, acceptedBranch.slaves);
+    QCOMPARE(
+        service->project(projectId)->masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
     QCOMPARE(provider->lastScanResult()->snapshot.id, branchScanSnapshotId);
 }
 

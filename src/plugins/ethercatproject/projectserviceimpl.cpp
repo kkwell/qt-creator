@@ -208,6 +208,21 @@ Utils::Result<> ProjectServiceImpl::setManualControlEnvelope(
     return project->document()->setManualControlEnvelope(slaveId, envelope);
 }
 
+Utils::Result<> ProjectServiceImpl::setDeviceParameterConfiguration(
+    const Data::NodeId &projectId,
+    const Data::NodeId &slaveId,
+    const QByteArray &expectedEsiSha256,
+    const Data::DeviceAdapterProjectSelection &expectedAdapterSelection,
+    const Data::DeviceParameterConfiguration &configuration)
+{
+    QTC_ASSERT(isGuiThread(), return Utils::ResultError(Tr::tr("Project service thread error.")));
+    EtherCATProject *project = findProject(projectId);
+    if (!project)
+        return Utils::ResultError(Tr::tr("The requested EtherCAT project is not open."));
+    return project->document()->setDeviceParameterConfiguration(
+        slaveId, expectedEsiSha256, expectedAdapterSelection, configuration);
+}
+
 Utils::Result<> ProjectServiceImpl::setMasterBindingArtifact(
     const Data::NodeId &projectId,
     const Data::SemanticBindingArtifactReference &reference)
