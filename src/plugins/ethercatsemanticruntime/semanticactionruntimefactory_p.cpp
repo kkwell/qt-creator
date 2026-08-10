@@ -531,6 +531,20 @@ std::optional<std::variant<qint64, quint64>> exactRawValue(
     return {};
 }
 
+bool exactRawValuesEqual(
+    const std::variant<qint64, quint64> &left,
+    const std::variant<qint64, quint64> &right)
+{
+    if (left.index() == right.index())
+        return left == right;
+    if (std::holds_alternative<qint64>(left)) {
+        const qint64 signedValue = std::get<qint64>(left);
+        return signedValue >= 0 && quint64(signedValue) == std::get<quint64>(right);
+    }
+    const qint64 signedValue = std::get<qint64>(right);
+    return signedValue >= 0 && std::get<quint64>(left) == quint64(signedValue);
+}
+
 const Data::SemanticSignalDefinition *uniqueAdapterSignal(
     const Data::DeviceAdapterManifest &manifest, QStringView signalId)
 {
@@ -640,7 +654,7 @@ bool signalContractMatchesSignedBinding(
     }
     const std::optional<std::variant<qint64, quint64>> adapterSafeValue = exactRawValue(
         *signal->engineeringSafeValue, reference.primitive, reference.bitWidth, transform);
-    return adapterSafeValue && *adapterSafeValue == *binding->safeValue;
+    return adapterSafeValue && exactRawValuesEqual(*adapterSafeValue, *binding->safeValue);
 }
 
 std::optional<Data::EngineeringConstraint> signedParameterConstraint(
@@ -1086,7 +1100,8 @@ bool exactActionSteps(
                         *reference, assignment.value.engineeringLiteralValue);
                     if (!literalValue(assignment.value) || !(*signedAssignment)->constantValue
                         || (*signedAssignment)->parameterId || !raw
-                        || *raw != *(*signedAssignment)->constantValue) {
+                        || !exactRawValuesEqual(
+                            *raw, *(*signedAssignment)->constantValue)) {
                         return false;
                     }
                 } else if (

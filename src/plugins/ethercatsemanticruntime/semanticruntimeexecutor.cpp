@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -561,6 +562,8 @@ enum class SemanticExecutionPhase {
     Apply,
     AfterSnapshot,
     AfterState,
+    WaitSnapshot,
+    RecoveryState,
 };
 
 QString conciseExecutionText(QString text)
@@ -597,15 +600,21 @@ Data::SemanticRuntimeActor executorActor()
 }
 
 QString executionCorrelationId(
-    const Data::SemanticOperationId &operationId, QStringView phase, quint32 index = 0)
+    const Data::SemanticOperationId &operationId,
+    QStringView phase,
+    quint32 stepIndex = 0,
+    quint32 attempt = 0)
 {
     QByteArray material = operationId.value.toUtf8();
     material.append('\0');
     material.append(phase.toUtf8());
     material.append('\0');
-    const quint32 bigEndianIndex = qToBigEndian(index);
+    const quint32 bigEndianIndex = qToBigEndian(stepIndex);
     material.append(
         reinterpret_cast<const char *>(&bigEndianIndex), qsizetype(sizeof(bigEndianIndex)));
+    const quint32 bigEndianAttempt = qToBigEndian(attempt);
+    material.append(
+        reinterpret_cast<const char *>(&bigEndianAttempt), qsizetype(sizeof(bigEndianAttempt)));
     return QStringLiteral("semantic-")
            + QString::fromLatin1(
                QCryptographicHash::hash(material, QCryptographicHash::Sha256).toHex())
@@ -630,6 +639,109 @@ bool sameResourceIds(
             return false;
     }
     return true;
+}
+
+bool snapshotHasExactResourceIds(
+    const Data::RuntimeResourceSnapshot &snapshot,
+    const QList<Data::RuntimeResourceId> &resourceIds)
+{
+    if (!snapshot.complete || snapshot.samples.size() != resourceIds.size())
+        return false;
+
+    QList<QByteArray> expected;
+    expected.reserve(resourceIds.size());
+    for (const Data::RuntimeResourceId &resourceId : resourceIds) {
+        if (!resourceId.isValid())
+            return false;
+        expected.append(resourceId.value);
+    }
+    std::sort(expected.begin(), expected.end());
+    if (std::adjacent_find(expected.cbegin(), expected.cend()) != expected.cend())
+        return false;
+
+    QList<QByteArray> actual;
+    actual.reserve(snapshot.samples.size());
+    for (const Data::RuntimeResourceSample &sample : snapshot.samples) {
+        if (!sample.resourceId.isValid())
+            return false;
+        actual.append(sample.resourceId.value);
+    }
+    std::sort(actual.begin(), actual.end());
+    return actual == expected
+           && std::adjacent_find(actual.cbegin(), actual.cend()) == actual.cend();
+}
+
+bool snapshotMatchesWrites(
+    const Data::RuntimeResourceSnapshot &snapshot,
+    const QList<Data::RuntimeOutputValueWrite> &writes)
+{
+    for (const Data::RuntimeOutputValueWrite &write : writes) {
+        const auto sample = std::find_if(
+            snapshot.samples.cbegin(),
+            snapshot.samples.cend(),
+            [&write](const Data::RuntimeResourceSample &candidate) {
+                return candidate.resourceId == write.resourceId;
+            });
+        if (sample == snapshot.samples.cend() || sample->value != write.value)
+            return false;
+    }
+    return true;
+}
+
+bool waitConditionMatches(
+    const SemanticActionPlanStep &step,
+    const Data::RuntimeResourceSample &sample)
+{
+    if (!step.waitBinding() || sample.resourceId != step.waitBinding()->resourceId
+        || sample.value.primitiveType != step.waitBinding()->primitiveType
+        || sample.value.typeIdentity != step.waitBinding()->valueTypeIdentity
+        || !sample.value.opaqueRepresentation.isEmpty()) {
+        return false;
+    }
+
+    const quint32 bitWidth = step.waitBinding()->bitWidth;
+    if (!bitWidth || bitWidth > 64)
+        return false;
+
+    if (step.kind() == SemanticActionPlanStepKind::WaitMasked) {
+        quint64 bits = 0;
+        switch (sample.value.primitiveType) {
+        case Data::RuntimeResourcePrimitiveType::Boolean:
+            if (bitWidth != 1 || sample.value.value.metaType().id() != QMetaType::Bool)
+                return false;
+            bits = sample.value.value.toBool() ? 1 : 0;
+            break;
+        case Data::RuntimeResourcePrimitiveType::SignedInteger:
+            if (sample.value.value.metaType().id() != QMetaType::LongLong)
+                return false;
+            bits = quint64(sample.value.value.toLongLong());
+            if (bitWidth < 64)
+                bits &= (quint64(1) << bitWidth) - 1;
+            break;
+        case Data::RuntimeResourcePrimitiveType::UnsignedInteger:
+            if (sample.value.value.metaType().id() != QMetaType::ULongLong)
+                return false;
+            bits = sample.value.value.toULongLong();
+            break;
+        case Data::RuntimeResourcePrimitiveType::Opaque:
+        case Data::RuntimeResourcePrimitiveType::FloatingPoint:
+        case Data::RuntimeResourcePrimitiveType::Text:
+        case Data::RuntimeResourcePrimitiveType::ByteArray:
+            return false;
+        }
+        return (bits & step.mask()) == step.expectedValue();
+    }
+
+    if (step.kind() != SemanticActionPlanStepKind::WaitAbsoluteLimit
+        || sample.value.primitiveType != Data::RuntimeResourcePrimitiveType::SignedInteger
+        || sample.value.value.metaType().id() != QMetaType::LongLong) {
+        return false;
+    }
+    const qint64 signedValue = sample.value.value.toLongLong();
+    const quint64 magnitude = signedValue >= 0
+                                  ? quint64(signedValue)
+                                  : quint64(-(signedValue + 1)) + 1;
+    return magnitude <= step.absoluteLimit();
 }
 
 QByteArray semanticOperationSnapshotDigest(
@@ -736,16 +848,29 @@ private:
         QList<Data::RuntimeResourceId> resourceIds;
         qsizetype policyIndex = 0;
         QList<Data::RuntimeOutputGroupPolicy> policies;
+        qsizetype stepIndex = 0;
+        quint32 attempt = 0;
+        quint32 waitAttempts = 0;
+        quint64 waitDeadlineCycle = 0;
+        quint64 lastCaptureCycle = 0;
         quint64 outputGeneration = 0;
         quint64 appliedCycle = 0;
         quint64 expiryCycle = 0;
         quint64 appliedOutputGeneration = 0;
+        quint64 appliedControllerTimestampNs = 0;
         bool mutationMayHaveExecuted = false;
+        bool applyOutcomePending = false;
         Data::SemanticOperationState completionState = Data::SemanticOperationState::Executing;
+        Data::SemanticOperationState recoveryState = Data::SemanticOperationState::Failed;
+        QString recoveryCode;
+        QString recoveryDetail;
+        std::optional<Data::ControllerOperationError> recoveryError;
+        quint32 recoveryAttempts = 0;
         std::optional<Data::RuntimeResourceSnapshotRequest> snapshotRequest;
         std::optional<Data::RuntimeOutputGroupPolicyRequest> policyRequest;
         std::optional<Data::RuntimeOutputTransactionStateRequest> stateRequest;
         std::optional<Data::RuntimeOutputTransactionRequest> applyRequest;
+        std::optional<Data::RuntimeOutputTransactionRequest> lastAppliedRequest;
         std::optional<Data::SemanticOperationSnapshot> pendingAfterSnapshot;
     };
 
@@ -796,9 +921,26 @@ private:
     void beginBeforeSnapshot(const QString &controllerId);
     void beginNextPolicy(const QString &controllerId);
     void beginState(const QString &controllerId);
+    void beginCurrentStep(const QString &controllerId);
     void beginApply(const QString &controllerId);
+    void beginWaitSnapshot(const QString &controllerId);
     void beginAfterSnapshot(const QString &controllerId);
     void beginAfterState(const QString &controllerId);
+    void scheduleWaitRetry(const QString &controllerId);
+    bool recordCurrentStep(
+        const QString &controllerId,
+        bool failed,
+        const QString &detail,
+        const std::optional<Data::ControllerOperationError> &error = {});
+    void completeCurrentStep(const QString &controllerId);
+    void beginRecovery(
+        const QString &controllerId,
+        Data::SemanticOperationState state,
+        const QString &code,
+        const QString &detail,
+        const std::optional<Data::ControllerOperationError> &error = {});
+    void beginRecoveryState(const QString &controllerId);
+    void finishRecovery(const QString &controllerId);
     void failActive(
         const QString &controllerId,
         const QString &code,
@@ -810,6 +952,7 @@ private:
         const QString &detail,
         const std::optional<Data::ControllerOperationError> &error = {});
     void expireActive(const QString &controllerId, const QString &detail);
+    void timeOutActive(const QString &controllerId, const QString &code, const QString &detail);
     void succeedActive(const QString &controllerId);
     void finishActive(const QString &controllerId);
 
@@ -825,6 +968,13 @@ private:
     bool afterSnapshotMatchesWrites(
         const ActiveExecution &active,
         const Data::RuntimeResourceSnapshot &snapshot) const;
+    bool stateProvesLastOverride(
+        const ActiveExecution &active,
+        const Data::RuntimeOutputTransactionState &state,
+        quint64 minimumControllerTimestampNs) const;
+    bool stateProvesLastSafeHold(
+        const ActiveExecution &active,
+        const Data::RuntimeOutputTransactionState &state) const;
 
     SemanticRuntimeExecutor *q = nullptr;
     SemanticOperationJournal m_journal;
@@ -991,8 +1141,11 @@ SemanticRuntimeExecutorExecution::validateCurrentExecution(
 void SemanticRuntimeExecutorExecution::publishJournalResult(
     const SemanticOperationJournalResult &result, const QString &controllerId)
 {
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     if (result.record)
         emit q->operationChanged(result.record->request.operationId);
+    if (!guardedExecutor)
+        return;
     if (result.disposition != SemanticOperationJournalDisposition::Replayed
         && result.disposition != SemanticOperationJournalDisposition::NotFound
         && !controllerId.isEmpty()) {
@@ -1013,10 +1166,14 @@ Data::SemanticOperationRecord SemanticRuntimeExecutorExecution::submit(
         context.detail = error;
     }
     const SemanticOperationJournalResult result = m_journal.submit(request, actor, context);
+    const Data::SemanticOperationRecord returned
+        = result.record ? *result.record
+                        : q->Core::SemanticRuntimeService::submit(request, actor);
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     publishJournalResult(result, request.target.controllerId);
-    if (result.record)
-        return *result.record;
-    return q->Core::SemanticRuntimeService::submit(request, actor);
+    if (!guardedExecutor)
+        return returned;
+    return returned;
 }
 
 Data::SemanticOperationRecord SemanticRuntimeExecutorExecution::approve(
@@ -1038,13 +1195,17 @@ Data::SemanticOperationRecord SemanticRuntimeExecutorExecution::approve(
         context.detail = error;
     }
     const SemanticOperationJournalResult result = m_journal.approve(approval, actor, context);
+    const Data::SemanticOperationRecord returned = result.record.value_or(*existing);
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     publishJournalResult(result, existing->request.target.controllerId);
+    if (!guardedExecutor)
+        return returned;
     if (result.record
         && result.record->state == Data::SemanticOperationState::Approved
         && result.accepted()) {
         enqueue(*result.record);
     }
-    return result.record.value_or(*existing);
+    return returned;
 }
 
 std::optional<Data::SemanticOperationRecord> SemanticRuntimeExecutorExecution::operation(
@@ -1391,21 +1552,101 @@ void SemanticRuntimeExecutorExecution::startNext(const QString &controllerId)
                 0,
                 0,
             });
+        QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
         publishJournalResult(failed, controllerId);
+        if (!guardedExecutor)
+            return;
         QTimer::singleShot(0, q, [this, controllerId] { startNext(controllerId); });
         return;
     }
 
-    bool shapeValid = provider && plan->groups().size() == 1 && plan->steps().size() == 1
-                      && plan->steps().constFirst().kind()
-                             == SemanticActionPlanStepKind::WriteGroup
-                      && !plan->steps().constFirst().completeGroupWrites().isEmpty()
-                      && plan->steps().constFirst().completeGroupWrites().size() <= 64
-                      && plan->groups().constFirst().consistencyGroupId()
-                             == plan->steps().constFirst().consistencyGroupId()
-                      && sameResourceIds(
-                          plan->groups().constFirst().completeResourceIds(),
-                          plan->steps().constFirst().completeGroupWrites());
+    bool shapeValid = provider && !plan->steps().isEmpty() && plan->steps().size() <= 64
+                      && !plan->groups().isEmpty() && plan->groups().size() <= 64;
+    quint64 totalWaitCycles = 0;
+    bool hasWriteStep = false;
+    QSet<QByteArray> uniqueResources;
+    QSet<QByteArray> uniqueGroups;
+    if (shapeValid) {
+        for (const SemanticActionPlanGroup &group : plan->groups()) {
+            if (!group.consistencyGroupId().isValid()
+                || uniqueGroups.contains(group.consistencyGroupId().value)
+                || group.completeResourceIds().isEmpty()
+                || group.completeResourceIds().size() > 64) {
+                shapeValid = false;
+                break;
+            }
+            uniqueGroups.insert(group.consistencyGroupId().value);
+        }
+    }
+    for (qsizetype index = 0; shapeValid && index < plan->steps().size(); ++index) {
+        const SemanticActionPlanStep &step = plan->steps().at(index);
+        if (step.index() != quint32(index)) {
+            shapeValid = false;
+            break;
+        }
+        if (step.kind() == SemanticActionPlanStepKind::WriteGroup) {
+            hasWriteStep = true;
+            const auto group = std::find_if(
+                plan->groups().cbegin(),
+                plan->groups().cend(),
+                [&step](const SemanticActionPlanGroup &candidate) {
+                    return candidate.consistencyGroupId() == step.consistencyGroupId();
+                });
+            if (group == plan->groups().cend() || step.completeGroupWrites().isEmpty()
+                || step.completeGroupWrites().size() > 64
+                || !sameResourceIds(
+                    group->completeResourceIds(), step.completeGroupWrites())) {
+                shapeValid = false;
+                break;
+            }
+            for (const Data::RuntimeOutputValueWrite &write : step.completeGroupWrites()) {
+                if (!write.isValid()) {
+                    shapeValid = false;
+                    break;
+                }
+                uniqueResources.insert(write.resourceId.value);
+            }
+        } else if (step.kind() == SemanticActionPlanStepKind::WaitMasked
+                   || step.kind() == SemanticActionPlanStepKind::WaitAbsoluteLimit) {
+            const Data::RuntimeResourcePrimitiveType primitive
+                = step.waitBinding()
+                      ? step.waitBinding()->primitiveType
+                      : Data::RuntimeResourcePrimitiveType::Opaque;
+            const bool primitiveSupported
+                = step.kind() == SemanticActionPlanStepKind::WaitMasked
+                      ? (primitive == Data::RuntimeResourcePrimitiveType::Boolean
+                         || primitive == Data::RuntimeResourcePrimitiveType::SignedInteger
+                         || primitive == Data::RuntimeResourcePrimitiveType::UnsignedInteger)
+                      : primitive == Data::RuntimeResourcePrimitiveType::SignedInteger;
+            if (!step.waitBinding() || !step.waitBinding()->resourceId.isValid()
+                || step.waitBinding()->bitWidth == 0 || step.waitBinding()->bitWidth > 64
+                || step.waitBinding()->direction != Data::RuntimeResourceDirection::Input
+                || step.waitBinding()->access != Data::RuntimeResourceAccess::ReadOnly
+                || !primitiveSupported
+                || (primitive == Data::RuntimeResourcePrimitiveType::Boolean
+                    && step.waitBinding()->bitWidth != 1)
+                || !step.timeoutCycles() || step.timeoutCycles() > 65535
+                || totalWaitCycles > 65535 - step.timeoutCycles()) {
+                shapeValid = false;
+                break;
+            }
+            totalWaitCycles += step.timeoutCycles();
+            uniqueResources.insert(step.waitBinding()->resourceId.value);
+        } else {
+            shapeValid = false;
+        }
+        if (uniqueResources.size() > 64)
+            shapeValid = false;
+    }
+    shapeValid = shapeValid && hasWriteStep;
+    if (shapeValid && plan->steps().size() > 1) {
+        shapeValid = std::all_of(
+            plan->groups().cbegin(),
+            plan->groups().cend(),
+            [](const SemanticActionPlanGroup &group) {
+                return group.recoveryPolicy() == Data::RuntimeOutputRecoveryPolicy::HoldSafe;
+            });
+    }
     if (!shapeValid) {
         const SemanticOperationJournalResult failed = m_journal.transition(
             operationId,
@@ -1415,21 +1656,24 @@ void SemanticRuntimeExecutorExecution::startNext(const QString &controllerId)
                 executorActor(),
                 QStringLiteral("action-shape-unsupported"),
                 QStringLiteral(
-                    "Only one complete signed output-group write is currently executable."),
+                    "The signed action exceeds bounded multi-step execution limits."),
                 {},
                 0,
                 0,
             });
+        QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
         publishJournalResult(failed, controllerId);
+        if (!guardedExecutor)
+            return;
         QTimer::singleShot(0, q, [this, controllerId] { startNext(controllerId); });
         return;
     }
 
     ActiveExecution active(operationId, record->actor, *plan, provider);
-    for (const Data::RuntimeOutputValueWrite &write :
-         active.plan.steps().constFirst().completeGroupWrites()) {
-        active.resourceIds.append(write.resourceId);
-    }
+    QList<QByteArray> sortedResourceIds = uniqueResources.values();
+    std::sort(sortedResourceIds.begin(), sortedResourceIds.end());
+    for (const QByteArray &resourceId : std::as_const(sortedResourceIds))
+        active.resourceIds.append({resourceId});
     queue->active.emplace(std::move(active));
     const SemanticOperationJournalResult executing = m_journal.transition(
         operationId,
@@ -1443,7 +1687,10 @@ void SemanticRuntimeExecutorExecution::startNext(const QString &controllerId)
             0,
             0,
         });
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     publishJournalResult(executing, controllerId);
+    if (!guardedExecutor)
+        return;
     if (!executing.accepted()) {
         finishActive(controllerId);
         return;
@@ -1468,7 +1715,8 @@ void SemanticRuntimeExecutorExecution::beginBeforeSnapshot(const QString &contro
     }
 
     Data::RuntimeResourceSnapshotRequest request;
-    request.correlationId = executionCorrelationId(active.operationId, u"before");
+    const quint32 attempt = ++active.attempt;
+    request.correlationId = executionCorrelationId(active.operationId, u"before", 0, attempt);
     request.scope = active.plan.scope();
     request.sessionGeneration = active.plan.sessionGeneration();
     request.expectedEpoch = active.plan.epoch();
@@ -1482,7 +1730,10 @@ void SemanticRuntimeExecutorExecution::beginBeforeSnapshot(const QString &contro
     }
     active.phase = SemanticExecutionPhase::BeforeSnapshot;
     active.snapshotRequest = request;
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     const Utils::Result<> started = current->provider->requestRuntimeResourceSnapshot(request);
+    if (!guardedExecutor)
+        return;
     if (!started) {
         auto check = m_queues.find(controllerId);
         if (check != m_queues.end() && check->active
@@ -1518,8 +1769,9 @@ void SemanticRuntimeExecutorExecution::beginNextPolicy(const QString &controller
     }
     const SemanticActionPlanGroup &group = active.plan.groups().at(active.policyIndex);
     Data::RuntimeOutputGroupPolicyRequest request;
+    const quint32 attempt = ++active.attempt;
     request.correlationId = executionCorrelationId(
-        active.operationId, u"policy", quint32(active.policyIndex));
+        active.operationId, u"policy", quint32(active.policyIndex), attempt);
     request.scope = active.plan.scope();
     request.sessionGeneration = active.plan.sessionGeneration();
     request.expectedEpoch = active.plan.epoch();
@@ -1534,7 +1786,10 @@ void SemanticRuntimeExecutorExecution::beginNextPolicy(const QString &controller
     }
     active.phase = SemanticExecutionPhase::Policy;
     active.policyRequest = request;
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     const Utils::Result<> started = current->provider->requestRuntimeOutputGroupPolicy(request);
+    if (!guardedExecutor)
+        return;
     if (!started) {
         auto check = m_queues.find(controllerId);
         if (check != m_queues.end() && check->active
@@ -1565,15 +1820,19 @@ void SemanticRuntimeExecutorExecution::beginState(const QString &controllerId)
     }
 
     Data::RuntimeOutputTransactionStateRequest request;
-    request.correlationId = executionCorrelationId(active.operationId, u"state");
+    const quint32 attempt = ++active.attempt;
+    request.correlationId = executionCorrelationId(active.operationId, u"state", 0, attempt);
     request.scope = active.plan.scope();
     request.sessionGeneration = active.plan.sessionGeneration();
     request.expectedEpoch = active.plan.epoch();
     request.expectedMappingDigest = active.plan.mappingDigest();
     active.phase = SemanticExecutionPhase::State;
     active.stateRequest = request;
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     const Utils::Result<> started
         = current->provider->requestRuntimeOutputTransactionState(request);
+    if (!guardedExecutor)
+        return;
     if (!started) {
         auto check = m_queues.find(controllerId);
         if (check != m_queues.end() && check->active
@@ -1585,6 +1844,45 @@ void SemanticRuntimeExecutorExecution::beginState(const QString &controllerId)
                 conciseExecutionText(started.error()));
         }
     }
+}
+
+void SemanticRuntimeExecutorExecution::beginCurrentStep(const QString &controllerId)
+{
+    auto queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->active)
+        return;
+    ActiveExecution &active = *queue->active;
+    if (active.stepIndex < 0 || active.stepIndex >= active.plan.steps().size()) {
+        failActive(
+            controllerId,
+            QStringLiteral("execution-step-invalid"),
+            QStringLiteral("The signed execution step index is invalid."));
+        return;
+    }
+
+    QString error;
+    if (!validateCurrentExecution(active, &error)) {
+        failActive(
+            controllerId,
+            QStringLiteral("execution-precondition-changed"),
+            conciseExecutionText(error));
+        return;
+    }
+
+    const SemanticActionPlanStep &step = active.plan.steps().at(active.stepIndex);
+    switch (step.kind()) {
+    case SemanticActionPlanStepKind::WriteGroup:
+        beginApply(controllerId);
+        return;
+    case SemanticActionPlanStepKind::WaitMasked:
+    case SemanticActionPlanStepKind::WaitAbsoluteLimit:
+        beginWaitSnapshot(controllerId);
+        return;
+    }
+    failActive(
+        controllerId,
+        QStringLiteral("execution-step-unsupported"),
+        QStringLiteral("The signed execution step kind is unsupported."));
 }
 
 SemanticActionPlanGroup SemanticRuntimeExecutorExecution::groupFor(
@@ -1636,7 +1934,21 @@ void SemanticRuntimeExecutorExecution::beginApply(const QString &controllerId)
         }
     }
 
-    const SemanticActionPlanStep &step = active.plan.steps().constFirst();
+    if (active.stepIndex < 0 || active.stepIndex >= active.plan.steps().size()) {
+        failActive(
+            controllerId,
+            QStringLiteral("execution-step-invalid"),
+            QStringLiteral("The signed write step is unavailable."));
+        return;
+    }
+    const SemanticActionPlanStep &step = active.plan.steps().at(active.stepIndex);
+    if (step.kind() != SemanticActionPlanStepKind::WriteGroup) {
+        failActive(
+            controllerId,
+            QStringLiteral("execution-step-invalid"),
+            QStringLiteral("The current signed step is not an output write."));
+        return;
+    }
     bool found = false;
     const SemanticActionPlanGroup group = groupFor(
         active, step.consistencyGroupId(), &found);
@@ -1674,8 +1986,12 @@ void SemanticRuntimeExecutorExecution::beginApply(const QString &controllerId)
     // Once dispatch begins, a transport or decoder failure can no longer prove
     // that the controller did not accept the mutation.
     active.mutationMayHaveExecuted = true;
+    active.applyOutcomePending = true;
     const Data::SemanticOperationId semanticOperationId = active.operationId;
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     const Utils::Result<> started = current->provider->applyRuntimeOutputTransaction(request);
+    if (!guardedExecutor)
+        return;
     if (!started) {
         auto check = m_queues.find(controllerId);
         const auto record = m_journal.operation(semanticOperationId);
@@ -1683,11 +1999,101 @@ void SemanticRuntimeExecutorExecution::beginApply(const QString &controllerId)
             && check->active->phase == SemanticExecutionPhase::Apply
             && check->active->applyRequest == request && record
             && record->state == Data::SemanticOperationState::Executing
-            && record->currentStep == 0) {
-            check->active->mutationMayHaveExecuted = false;
+            && record->currentStep == quint32(check->active->stepIndex)) {
+            check->active->applyOutcomePending = false;
+            check->active->mutationMayHaveExecuted
+                = check->active->lastAppliedRequest.has_value();
             failActive(
                 controllerId,
                 QStringLiteral("output-request-start-failed"),
+                conciseExecutionText(started.error()));
+        }
+    }
+}
+
+void SemanticRuntimeExecutorExecution::beginWaitSnapshot(const QString &controllerId)
+{
+    auto queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->active)
+        return;
+    ActiveExecution &active = *queue->active;
+    if (active.stepIndex < 0 || active.stepIndex >= active.plan.steps().size()) {
+        failActive(
+            controllerId,
+            QStringLiteral("execution-step-invalid"),
+            QStringLiteral("The signed wait step is unavailable."));
+        return;
+    }
+    const SemanticActionPlanStep &step = active.plan.steps().at(active.stepIndex);
+    if ((step.kind() != SemanticActionPlanStepKind::WaitMasked
+         && step.kind() != SemanticActionPlanStepKind::WaitAbsoluteLimit)
+        || !step.waitBinding() || !step.waitBinding()->resourceId.isValid()) {
+        failActive(
+            controllerId,
+            QStringLiteral("wait-step-invalid"),
+            QStringLiteral("The signed wait binding is invalid."));
+        return;
+    }
+
+    QString error;
+    const auto current = validateCurrentExecution(active, &error);
+    if (!current) {
+        failActive(
+            controllerId,
+            QStringLiteral("execution-precondition-changed"),
+            conciseExecutionText(error));
+        return;
+    }
+    if (!active.waitDeadlineCycle) {
+        if (!active.lastCaptureCycle
+            || active.lastCaptureCycle
+                   > std::numeric_limits<quint64>::max() - step.timeoutCycles()) {
+            failActive(
+                controllerId,
+                QStringLiteral("wait-deadline-invalid"),
+                QStringLiteral("The signed wait deadline cannot be represented."));
+            return;
+        }
+        active.waitDeadlineCycle = active.lastCaptureCycle + step.timeoutCycles();
+    }
+    if (active.waitAttempts >= step.timeoutCycles() + 1) {
+        failActive(
+            controllerId,
+            QStringLiteral("wait-retry-limit-exceeded"),
+            QStringLiteral("The controller wait capture did not advance within its bound."));
+        return;
+    }
+
+    Data::RuntimeResourceSnapshotRequest request;
+    const quint32 attempt = ++active.attempt;
+    request.correlationId = executionCorrelationId(
+        active.operationId, u"wait", quint32(active.stepIndex), attempt);
+    request.scope = active.plan.scope();
+    request.sessionGeneration = active.plan.sessionGeneration();
+    request.expectedEpoch = active.plan.epoch();
+    request.resourceIds = active.resourceIds;
+    if (!request.isValid()) {
+        failActive(
+            controllerId,
+            QStringLiteral("wait-snapshot-invalid"),
+            QStringLiteral("The exact signed wait snapshot request is invalid."));
+        return;
+    }
+    ++active.waitAttempts;
+    active.phase = SemanticExecutionPhase::WaitSnapshot;
+    active.snapshotRequest = request;
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    const Utils::Result<> started = current->provider->requestRuntimeResourceSnapshot(request);
+    if (!guardedExecutor)
+        return;
+    if (!started) {
+        auto check = m_queues.find(controllerId);
+        if (check != m_queues.end() && check->active
+            && check->active->phase == SemanticExecutionPhase::WaitSnapshot
+            && check->active->snapshotRequest == request) {
+            failActive(
+                controllerId,
+                QStringLiteral("wait-snapshot-start-failed"),
                 conciseExecutionText(started.error()));
         }
     }
@@ -1708,16 +2114,37 @@ void SemanticRuntimeExecutorExecution::beginAfterSnapshot(const QString &control
             conciseExecutionText(error));
         return;
     }
+    if (active.stepIndex < 0 || active.stepIndex >= active.plan.steps().size()
+        || active.plan.steps().at(active.stepIndex).kind()
+               != SemanticActionPlanStepKind::WriteGroup) {
+        failActive(
+            controllerId,
+            QStringLiteral("after-snapshot-step-invalid"),
+            QStringLiteral("The signed write step changed before confirmation."));
+        return;
+    }
 
     Data::RuntimeResourceSnapshotRequest request;
-    request.correlationId = executionCorrelationId(active.operationId, u"after");
+    const quint32 attempt = ++active.attempt;
+    request.correlationId = executionCorrelationId(
+        active.operationId, u"after", quint32(active.stepIndex), attempt);
     request.scope = active.plan.scope();
     request.sessionGeneration = active.plan.sessionGeneration();
     request.expectedEpoch = active.plan.epoch();
     request.resourceIds = active.resourceIds;
+    if (!request.isValid()) {
+        failActive(
+            controllerId,
+            QStringLiteral("after-snapshot-invalid"),
+            QStringLiteral("The exact post-write snapshot request is invalid."));
+        return;
+    }
     active.phase = SemanticExecutionPhase::AfterSnapshot;
     active.snapshotRequest = request;
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     const Utils::Result<> started = current->provider->requestRuntimeResourceSnapshot(request);
+    if (!guardedExecutor)
+        return;
     if (!started) {
         auto check = m_queues.find(controllerId);
         if (check != m_queues.end() && check->active
@@ -1746,7 +2173,7 @@ void SemanticRuntimeExecutorExecution::beginAfterState(const QString &controller
             conciseExecutionText(error));
         return;
     }
-    if (!active.pendingAfterSnapshot || !active.applyRequest) {
+    if (!active.pendingAfterSnapshot || !active.lastAppliedRequest) {
         failActive(
             controllerId,
             QStringLiteral("post-state-evidence-missing"),
@@ -1755,7 +2182,9 @@ void SemanticRuntimeExecutorExecution::beginAfterState(const QString &controller
     }
 
     Data::RuntimeOutputTransactionStateRequest request;
-    request.correlationId = executionCorrelationId(active.operationId, u"post-state");
+    const quint32 attempt = ++active.attempt;
+    request.correlationId = executionCorrelationId(
+        active.operationId, u"post-state", quint32(active.stepIndex), attempt);
     request.scope = active.plan.scope();
     request.sessionGeneration = active.plan.sessionGeneration();
     request.expectedEpoch = active.plan.epoch();
@@ -1769,8 +2198,11 @@ void SemanticRuntimeExecutorExecution::beginAfterState(const QString &controller
     }
     active.phase = SemanticExecutionPhase::AfterState;
     active.stateRequest = request;
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     const Utils::Result<> started
         = current->provider->requestRuntimeOutputTransactionState(request);
+    if (!guardedExecutor)
+        return;
     if (!started) {
         auto check = m_queues.find(controllerId);
         if (check != m_queues.end() && check->active
@@ -1782,6 +2214,103 @@ void SemanticRuntimeExecutorExecution::beginAfterState(const QString &controller
                 conciseExecutionText(started.error()));
         }
     }
+}
+
+void SemanticRuntimeExecutorExecution::scheduleWaitRetry(const QString &controllerId)
+{
+    auto queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->active)
+        return;
+    ActiveExecution &active = *queue->active;
+    const Data::SemanticOperationId operationId = active.operationId;
+    const qsizetype stepIndex = active.stepIndex;
+    const quint32 attempt = active.attempt;
+    QTimer::singleShot(1, q, [this, controllerId, operationId, stepIndex, attempt] {
+        auto currentQueue = m_queues.find(controllerId);
+        if (currentQueue == m_queues.end() || !currentQueue->active
+            || currentQueue->active->operationId != operationId
+            || currentQueue->active->stepIndex != stepIndex
+            || currentQueue->active->attempt != attempt
+            || currentQueue->active->phase != SemanticExecutionPhase::WaitSnapshot
+            || currentQueue->active->snapshotRequest) {
+            return;
+        }
+        beginWaitSnapshot(controllerId);
+    });
+}
+
+bool SemanticRuntimeExecutorExecution::recordCurrentStep(
+    const QString &controllerId,
+    bool failed,
+    const QString &detail,
+    const std::optional<Data::ControllerOperationError> &error)
+{
+    auto queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->active)
+        return false;
+    ActiveExecution &active = *queue->active;
+    if (active.stepIndex < 0 || active.stepIndex >= active.plan.steps().size())
+        return false;
+    const quint32 stepNumber = active.plan.steps().at(active.stepIndex).index() + 1;
+    const auto existing = m_journal.operation(active.operationId);
+    if (!existing)
+        return false;
+    if (existing->currentStep == stepNumber)
+        return !failed && existing->failedStep == 0;
+    const SemanticOperationJournalResult recorded = m_journal.recordStep(
+        active.operationId,
+        {
+            Data::SemanticOperationState::Executing,
+            executorActor(),
+            stepNumber,
+            quint32(active.plan.steps().size()),
+            failed,
+            conciseExecutionText(detail),
+            error,
+        });
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    publishJournalResult(recorded, controllerId);
+    if (!guardedExecutor)
+        return false;
+    if (!recorded.accepted()) {
+        failActive(
+            controllerId,
+            QStringLiteral("execution-step-record-failed"),
+            QStringLiteral("The signed execution step could not be recorded."));
+        return false;
+    }
+    return true;
+}
+
+void SemanticRuntimeExecutorExecution::completeCurrentStep(const QString &controllerId)
+{
+    auto queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->active)
+        return;
+    ActiveExecution &active = *queue->active;
+    if (active.stepIndex < 0 || active.stepIndex + 1 >= active.plan.steps().size()) {
+        failActive(
+            controllerId,
+            QStringLiteral("execution-step-sequence-invalid"),
+            QStringLiteral("The executor cannot advance beyond the signed plan."));
+        return;
+    }
+    ++active.stepIndex;
+    active.waitAttempts = 0;
+    active.waitDeadlineCycle = 0;
+    active.snapshotRequest.reset();
+    active.stateRequest.reset();
+    active.applyRequest.reset();
+    active.pendingAfterSnapshot.reset();
+    const Data::SemanticOperationId operationId = active.operationId;
+    QTimer::singleShot(0, q, [this, controllerId, operationId] {
+        auto currentQueue = m_queues.find(controllerId);
+        if (currentQueue == m_queues.end() || !currentQueue->active
+            || currentQueue->active->operationId != operationId) {
+            return;
+        }
+        beginCurrentStep(controllerId);
+    });
 }
 
 std::optional<Data::SemanticOperationSnapshot>
@@ -1858,17 +2387,56 @@ SemanticRuntimeExecutorExecution::operationSnapshot(
 bool SemanticRuntimeExecutorExecution::afterSnapshotMatchesWrites(
     const ActiveExecution &active, const Data::RuntimeResourceSnapshot &snapshot) const
 {
-    const QList<Data::RuntimeOutputValueWrite> &writes
-        = active.plan.steps().constFirst().completeGroupWrites();
-    if (snapshot.samples.size() != writes.size())
+    if (active.stepIndex < 0 || active.stepIndex >= active.plan.steps().size())
         return false;
-    for (qsizetype index = 0; index < writes.size(); ++index) {
-        if (snapshot.samples.at(index).resourceId != writes.at(index).resourceId
-            || snapshot.samples.at(index).value != writes.at(index).value) {
-            return false;
-        }
-    }
-    return true;
+    const SemanticActionPlanStep &step = active.plan.steps().at(active.stepIndex);
+    if (step.kind() != SemanticActionPlanStepKind::WriteGroup)
+        return false;
+    const QList<Data::RuntimeOutputValueWrite> &writes = step.completeGroupWrites();
+    if (snapshot.samples.size() != active.resourceIds.size())
+        return false;
+    return snapshotMatchesWrites(snapshot, writes);
+}
+
+bool SemanticRuntimeExecutorExecution::stateProvesLastOverride(
+    const ActiveExecution &active,
+    const Data::RuntimeOutputTransactionState &state,
+    quint64 minimumControllerTimestampNs) const
+{
+    if (!active.lastAppliedRequest)
+        return false;
+    const Data::RuntimeOutputTransactionRequest &apply = *active.lastAppliedRequest;
+    return state.operationId && *state.operationId == apply.operationId
+           && state.state == Data::RuntimeOutputState::OverrideActive
+           && state.outputGeneration == active.appliedOutputGeneration
+           && state.appliedCycle == active.appliedCycle
+           && state.expiryCycle == active.expiryCycle
+           && state.consistencyGroupId == apply.consistencyGroupId
+           && state.ttlCycles == apply.ttlCycles
+           && state.recoveryPolicy == apply.expectedRecoveryPolicy
+           && state.valueCount == quint16(apply.completeGroupWrites.size())
+           && state.controllerTimestampNs >= minimumControllerTimestampNs;
+}
+
+bool SemanticRuntimeExecutorExecution::stateProvesLastSafeHold(
+    const ActiveExecution &active,
+    const Data::RuntimeOutputTransactionState &state) const
+{
+    if (!active.lastAppliedRequest)
+        return false;
+    const Data::RuntimeOutputTransactionRequest &apply = *active.lastAppliedRequest;
+    return apply.expectedRecoveryPolicy == Data::RuntimeOutputRecoveryPolicy::HoldSafe
+           && state.operationId && *state.operationId == apply.operationId
+           && state.state == Data::RuntimeOutputState::SafeHold
+           && state.outputGeneration == apply.expectedOutputGeneration + 2
+           && state.appliedCycle == active.appliedCycle
+           && state.expiryCycle == active.expiryCycle
+           && state.consistencyGroupId == apply.consistencyGroupId
+           && state.ttlCycles == apply.ttlCycles
+           && state.recoveryPolicy == Data::RuntimeOutputRecoveryPolicy::HoldSafe
+           && state.valueCount == quint16(apply.completeGroupWrites.size())
+           && state.controllerTimestampNs >= active.appliedControllerTimestampNs
+           && state.controllerTimestampNs != 0;
 }
 
 bool SemanticRuntimeExecutorExecution::handleLiveSnapshot(
@@ -2037,7 +2605,10 @@ bool SemanticRuntimeExecutorExecution::handleLiveSnapshot(
     }
     q->m_liveRuntimeCaches.insert(provider, updated);
     q->scheduleLiveCacheExpiry(provider, receivedAt);
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     q->publishContexts();
+    if (!guardedExecutor)
+        return true;
     finishLiveRefresh(
         controllerId,
         refresh.attemptNonce,
@@ -2057,7 +2628,8 @@ void SemanticRuntimeExecutorExecution::handleSnapshot(
     for (auto candidate = m_queues.cbegin(); candidate != m_queues.cend(); ++candidate) {
         if (!candidate->active || candidate->active->provider != provider
             || (candidate->active->phase != SemanticExecutionPhase::BeforeSnapshot
-                && candidate->active->phase != SemanticExecutionPhase::AfterSnapshot)
+                && candidate->active->phase != SemanticExecutionPhase::AfterSnapshot
+                && candidate->active->phase != SemanticExecutionPhase::WaitSnapshot)
             || !candidate->active->snapshotRequest) {
             continue;
         }
@@ -2112,14 +2684,38 @@ void SemanticRuntimeExecutorExecution::handleSnapshot(
                 error.isEmpty() ? QStringLiteral("The snapshot is unavailable.") : error));
         return;
     }
+    if (!snapshotHasExactResourceIds(*result.snapshot, expected.resourceIds)) {
+        failActive(
+            controllerId,
+            QStringLiteral("snapshot-resource-set-mismatch"),
+            QStringLiteral("The controller snapshot is not the exact requested resource set."));
+        return;
+    }
+    if (active.lastCaptureCycle
+        && result.snapshot->captureCycle < active.lastCaptureCycle) {
+        failActive(
+            controllerId,
+            QStringLiteral("snapshot-cycle-regressed"),
+            QStringLiteral("The controller snapshot capture cycle regressed."));
+        return;
+    }
     if (active.phase == SemanticExecutionPhase::AfterSnapshot
         && (!active.appliedCycle || !active.expiryCycle
-            || result.snapshot->captureCycle < active.appliedCycle
-            || result.snapshot->captureCycle >= active.expiryCycle)) {
+            || result.snapshot->captureCycle < active.appliedCycle)) {
         failActive(
             controllerId,
             QStringLiteral("after-snapshot-stale"),
-            QStringLiteral("The post-operation snapshot is outside the active TTL window."));
+            QStringLiteral("The post-operation snapshot predates the applied output."));
+        return;
+    }
+    if (active.phase == SemanticExecutionPhase::AfterSnapshot
+        && result.snapshot->captureCycle >= active.expiryCycle) {
+        active.snapshotRequest.reset();
+        beginRecovery(
+            controllerId,
+            Data::SemanticOperationState::Expired,
+            QStringLiteral("output-override-expired"),
+            QStringLiteral("The output TTL expired before post-write proof completed."));
         return;
     }
     const std::optional<Data::SemanticOperationSnapshot> snapshot
@@ -2131,6 +2727,7 @@ void SemanticRuntimeExecutorExecution::handleSnapshot(
             conciseExecutionText(error));
         return;
     }
+    active.lastCaptureCycle = result.snapshot->captureCycle;
 
     if (active.phase == SemanticExecutionPhase::BeforeSnapshot) {
         const SemanticOperationJournalResult recorded = m_journal.recordBeforeSnapshot(
@@ -2138,7 +2735,10 @@ void SemanticRuntimeExecutorExecution::handleSnapshot(
             Data::SemanticOperationState::Executing,
             *snapshot,
             executorActor());
+        QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
         publishJournalResult(recorded, controllerId);
+        if (!guardedExecutor)
+            return;
         if (!recorded.accepted()) {
             failActive(
                 controllerId,
@@ -2148,6 +2748,92 @@ void SemanticRuntimeExecutorExecution::handleSnapshot(
         }
         active.snapshotRequest.reset();
         beginNextPolicy(controllerId);
+        return;
+    }
+
+    if (active.phase == SemanticExecutionPhase::WaitSnapshot) {
+        if (active.stepIndex < 0 || active.stepIndex >= active.plan.steps().size()) {
+            failActive(
+                controllerId,
+                QStringLiteral("wait-step-invalid"),
+                QStringLiteral("The signed wait step changed during capture."));
+            return;
+        }
+        const SemanticActionPlanStep &step = active.plan.steps().at(active.stepIndex);
+        const auto waitSample = step.waitBinding()
+                                    ? std::find_if(
+                                        result.snapshot->samples.cbegin(),
+                                        result.snapshot->samples.cend(),
+                                        [&step](const Data::RuntimeResourceSample &sample) {
+                                            return sample.resourceId
+                                                   == step.waitBinding()->resourceId;
+                                        })
+                                    : result.snapshot->samples.cend();
+        if (!step.waitBinding() || waitSample == result.snapshot->samples.cend()) {
+            failActive(
+                controllerId,
+                QStringLiteral("wait-snapshot-binding-mismatch"),
+                QStringLiteral("The wait snapshot does not match its signed target."));
+            return;
+        }
+        active.snapshotRequest.reset();
+        if (active.lastAppliedRequest
+            && result.snapshot->captureCycle >= active.expiryCycle) {
+            active.pendingAfterSnapshot = *snapshot;
+            beginRecovery(
+                controllerId,
+                Data::SemanticOperationState::Expired,
+                QStringLiteral("output-override-expired"),
+                QStringLiteral("The output TTL expired while waiting for signed feedback."));
+            return;
+        }
+        if (active.lastAppliedRequest
+            && !snapshotMatchesWrites(
+                *result.snapshot, active.lastAppliedRequest->completeGroupWrites)) {
+            failActive(
+                controllerId,
+                QStringLiteral("wait-snapshot-output-mismatch"),
+                QStringLiteral(
+                    "The wait snapshot does not preserve the last complete signed write."));
+            return;
+        }
+        if (waitConditionMatches(step, *waitSample)) {
+            active.pendingAfterSnapshot = *snapshot;
+            if (active.stepIndex + 1 == active.plan.steps().size()) {
+                beginAfterState(controllerId);
+                return;
+            }
+            if (!recordCurrentStep(
+                    controllerId,
+                    false,
+                    QStringLiteral("The signed wait condition was satisfied."))) {
+                return;
+            }
+            completeCurrentStep(controllerId);
+            return;
+        }
+        if (result.snapshot->captureCycle >= active.waitDeadlineCycle) {
+            if (active.lastAppliedRequest) {
+                beginRecovery(
+                    controllerId,
+                    Data::SemanticOperationState::TimedOut,
+                    QStringLiteral("wait-deadline-reached"),
+                    QStringLiteral("The signed wait condition timed out."));
+            } else {
+                if (!recordCurrentStep(
+                        controllerId,
+                        true,
+                        QStringLiteral("The signed wait condition timed out."))) {
+                    return;
+                }
+                timeOutActive(
+                    controllerId,
+                    QStringLiteral("wait-deadline-reached"),
+                    QStringLiteral("The signed wait condition timed out."));
+            }
+            return;
+        }
+        scheduleWaitRetry(controllerId);
         return;
     }
 
@@ -2257,7 +2943,8 @@ void SemanticRuntimeExecutorExecution::handleState(
     for (auto candidate = m_queues.cbegin(); candidate != m_queues.cend(); ++candidate) {
         if (!candidate->active || candidate->active->provider != provider
             || (candidate->active->phase != SemanticExecutionPhase::State
-                && candidate->active->phase != SemanticExecutionPhase::AfterState)
+                && candidate->active->phase != SemanticExecutionPhase::AfterState
+                && candidate->active->phase != SemanticExecutionPhase::RecoveryState)
             || !candidate->active->stateRequest) {
             continue;
         }
@@ -2285,6 +2972,14 @@ void SemanticRuntimeExecutorExecution::handleState(
     if (result.request.correlationId != expected.correlationId)
         return;
     if (result.request != expected || !result.isValid()) {
+        if (active.phase == SemanticExecutionPhase::RecoveryState) {
+            active.stateRequest.reset();
+            freezeUnknown(
+                controllerId,
+                QStringLiteral("safe-recovery-response-invalid"),
+                QStringLiteral("The controller returned an invalid SafeHold state response."));
+            return;
+        }
         failActive(
             controllerId,
             QStringLiteral("state-response-invalid"),
@@ -2292,6 +2987,20 @@ void SemanticRuntimeExecutorExecution::handleState(
         return;
     }
     if (result.error) {
+        if (active.phase == SemanticExecutionPhase::RecoveryState) {
+            active.stateRequest.reset();
+            if (active.recoveryAttempts
+                >= qMin<quint32>(active.plan.ttlCycles() + 1, 65535)) {
+                freezeUnknown(
+                    controllerId,
+                    QStringLiteral("safe-recovery-unproven"),
+                    providerFailureText(QStringLiteral("Safe recovery state failed"), *result.error),
+                    result.error);
+                return;
+            }
+            QTimer::singleShot(1, q, [this, controllerId] { beginRecoveryState(controllerId); });
+            return;
+        }
         failActive(
             controllerId,
             active.phase == SemanticExecutionPhase::AfterState
@@ -2306,8 +3015,48 @@ void SemanticRuntimeExecutorExecution::handleState(
         return;
     }
 
+    if (active.phase == SemanticExecutionPhase::RecoveryState) {
+        active.stateRequest.reset();
+        if (!result.state) {
+            freezeUnknown(
+                controllerId,
+                QStringLiteral("safe-recovery-unproven"),
+                QStringLiteral("The controller returned no safe recovery state."));
+            return;
+        }
+        if (stateProvesLastSafeHold(active, *result.state)) {
+            finishRecovery(controllerId);
+            return;
+        }
+        if (!stateProvesLastOverride(active, *result.state, active.appliedControllerTimestampNs)) {
+            freezeUnknown(
+                controllerId,
+                QStringLiteral("safe-recovery-proof-mismatch"),
+                QStringLiteral("The controller did not prove the last signed transaction safe."));
+            return;
+        }
+        if (active.recoveryAttempts
+            >= qMin<quint32>(active.plan.ttlCycles() + 1, 65535)) {
+            freezeUnknown(
+                controllerId,
+                QStringLiteral("safe-recovery-unproven"),
+                QStringLiteral("The controller did not reach signed SafeHold in time."));
+            return;
+        }
+        QTimer::singleShot(1, q, [this, controllerId] { beginRecoveryState(controllerId); });
+        return;
+    }
+
     if (active.phase == SemanticExecutionPhase::AfterState) {
-        if (!result.state || !active.applyRequest || !active.pendingAfterSnapshot) {
+        QString executionError;
+        if (!validateCurrentExecution(active, &executionError)) {
+            failActive(
+                controllerId,
+                QStringLiteral("post-state-precondition-changed"),
+                conciseExecutionText(executionError));
+            return;
+        }
+        if (!result.state || !active.lastAppliedRequest || !active.pendingAfterSnapshot) {
             failActive(
                 controllerId,
                 QStringLiteral("post-state-evidence-missing"),
@@ -2315,20 +3064,10 @@ void SemanticRuntimeExecutorExecution::handleState(
             return;
         }
         const Data::RuntimeOutputTransactionState &state = *result.state;
-        const Data::RuntimeOutputTransactionRequest &apply = *active.applyRequest;
-        const bool provesActiveOverride
-            = state.operationId && *state.operationId == apply.operationId
-              && state.state == Data::RuntimeOutputState::OverrideActive
-              && state.outputGeneration == active.appliedOutputGeneration
-              && state.appliedCycle == active.appliedCycle
-              && state.expiryCycle == active.expiryCycle
-              && state.consistencyGroupId == apply.consistencyGroupId
-              && state.ttlCycles == apply.ttlCycles
-              && state.recoveryPolicy == apply.expectedRecoveryPolicy
-              && state.valueCount == quint16(apply.completeGroupWrites.size())
-              && state.controllerTimestampNs
-                     >= active.pendingAfterSnapshot->controllerTimestampNs;
+        const bool provesActiveOverride = stateProvesLastOverride(
+            active, state, active.pendingAfterSnapshot->controllerTimestampNs);
         if (!provesActiveOverride) {
+            const Data::RuntimeOutputTransactionRequest &apply = *active.lastAppliedRequest;
             const bool provesRecovered
                 = state.operationId && *state.operationId == apply.operationId
                   && state.outputGeneration == apply.expectedOutputGeneration + 2
@@ -2343,9 +3082,7 @@ void SemanticRuntimeExecutorExecution::handleState(
                   && ((apply.expectedRecoveryPolicy
                            == Data::RuntimeOutputRecoveryPolicy::ReturnTask
                        && state.state == Data::RuntimeOutputState::Idle)
-                      || (apply.expectedRecoveryPolicy
-                              == Data::RuntimeOutputRecoveryPolicy::HoldSafe
-                          && state.state == Data::RuntimeOutputState::SafeHold));
+                      || stateProvesLastSafeHold(active, state));
             if (provesRecovered) {
                 expireActive(
                     controllerId,
@@ -2360,13 +3097,43 @@ void SemanticRuntimeExecutorExecution::handleState(
             }
             return;
         }
+        active.outputGeneration = state.outputGeneration;
+        active.stateRequest.reset();
+        const bool stepWasAlreadyRecorded
+            = active.completionState == Data::SemanticOperationState::OutcomeUnknown;
+        if (!stepWasAlreadyRecorded
+            && !recordCurrentStep(
+                controllerId,
+                false,
+                active.plan.steps().at(active.stepIndex).kind()
+                        == SemanticActionPlanStepKind::WriteGroup
+                    ? QStringLiteral("The complete signed output group was applied and verified.")
+                    : QStringLiteral("The signed wait condition was satisfied and verified."))) {
+            return;
+        }
+        if (active.stepIndex + 1 != active.plan.steps().size()) {
+            if (stepWasAlreadyRecorded) {
+                beginRecovery(
+                    controllerId,
+                    Data::SemanticOperationState::Failed,
+                    QStringLiteral("uncertain-intermediate-step"),
+                    QStringLiteral(
+                        "An uncertain intermediate write was reconciled; no later write is allowed."));
+            } else {
+                completeCurrentStep(controllerId);
+            }
+            return;
+        }
 
         const SemanticOperationJournalResult recorded = m_journal.recordAfterSnapshot(
             active.operationId,
             active.completionState,
             *active.pendingAfterSnapshot,
             executorActor());
+        QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
         publishJournalResult(recorded, controllerId);
+        if (!guardedExecutor)
+            return;
         if (!recorded.accepted()) {
             failActive(
                 controllerId,
@@ -2374,7 +3141,6 @@ void SemanticRuntimeExecutorExecution::handleState(
                 QStringLiteral("The post-operation snapshot could not be recorded."));
             return;
         }
-        active.stateRequest.reset();
         succeedActive(controllerId);
         return;
     }
@@ -2392,7 +3158,7 @@ void SemanticRuntimeExecutorExecution::handleState(
         return;
     }
     active.stateRequest.reset();
-    beginApply(controllerId);
+    beginCurrentStep(controllerId);
 }
 
 void SemanticRuntimeExecutorExecution::handleApply(
@@ -2452,36 +3218,20 @@ void SemanticRuntimeExecutorExecution::handleApply(
         && state != Data::SemanticOperationState::OutcomeUnknown) {
         return;
     }
-    if (state == Data::SemanticOperationState::Executing && currentRecord->currentStep == 0) {
-        const bool failed
-            = result.outcome == Data::RuntimeOutputTransactionOutcome::Rejected;
-        const SemanticOperationJournalResult step = m_journal.recordStep(
-            active.operationId,
-            {
-                Data::SemanticOperationState::Executing,
-                executorActor(),
-                active.plan.steps().constFirst().index() + 1,
-                quint32(active.plan.steps().size()),
-                failed,
-                failed ? providerFailureText(
-                             QStringLiteral("Output transaction rejected"), *result.error)
-                       : QStringLiteral("The complete signed output group was applied."),
-                result.error,
-            });
-        publishJournalResult(step, controllerId);
-        if (!step.accepted()) {
-            failActive(
-                controllerId,
-                QStringLiteral("output-step-record-failed"),
-                QStringLiteral("The output execution step could not be recorded."));
-            return;
-        }
-    }
-
     if (result.outcome == Data::RuntimeOutputTransactionOutcome::Rejected) {
         // A valid terminal rejection proves that the atomic mutation was not
         // applied, so the queue can safely advance after recording failure.
-        active.mutationMayHaveExecuted = false;
+        active.applyOutcomePending = false;
+        active.mutationMayHaveExecuted = active.lastAppliedRequest.has_value();
+        if (state == Data::SemanticOperationState::Executing
+            && !recordCurrentStep(
+                controllerId,
+                true,
+                providerFailureText(
+                    QStringLiteral("Output transaction rejected"), *result.error),
+                result.error)) {
+            return;
+        }
         failActive(
             controllerId,
             QStringLiteral("output-transaction-rejected"),
@@ -2490,9 +3240,20 @@ void SemanticRuntimeExecutorExecution::handleApply(
         return;
     }
     if (result.outcome == Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered) {
+        active.applyOutcomePending = false;
+        active.lastAppliedRequest = expected;
         active.appliedCycle = result.state ? result.state->appliedCycle : 0;
         active.expiryCycle = result.state ? result.state->expiryCycle : 0;
-        active.appliedOutputGeneration = result.state ? result.state->outputGeneration : 0;
+        active.appliedOutputGeneration = expected.expectedOutputGeneration + 1;
+        active.appliedControllerTimestampNs
+            = result.state ? result.state->controllerTimestampNs : 0;
+        if (state == Data::SemanticOperationState::Executing
+            && !recordCurrentStep(
+                controllerId,
+                true,
+                QStringLiteral("The signed output expired before confirmation."))) {
+            return;
+        }
         expireActive(
             controllerId,
             QStringLiteral("The output override expired before completion was observed."));
@@ -2506,9 +3267,12 @@ void SemanticRuntimeExecutorExecution::handleApply(
         return;
     }
 
+    active.applyOutcomePending = false;
+    active.lastAppliedRequest = expected;
     active.appliedCycle = result.state->appliedCycle;
     active.expiryCycle = result.state->expiryCycle;
     active.appliedOutputGeneration = result.state->outputGeneration;
+    active.appliedControllerTimestampNs = result.state->controllerTimestampNs;
     active.completionState = state;
     beginAfterSnapshot(controllerId);
 }
@@ -2524,7 +3288,16 @@ void SemanticRuntimeExecutorExecution::failActive(
         return;
     const ActiveExecution &active = *queue->active;
     if (active.mutationMayHaveExecuted) {
-        freezeUnknown(controllerId, code, detail, error);
+        if (active.applyOutcomePending) {
+            freezeUnknown(controllerId, code, detail, error);
+        } else {
+            beginRecovery(
+                controllerId,
+                Data::SemanticOperationState::Failed,
+                code,
+                detail,
+                error);
+        }
         return;
     }
     const auto record = m_journal.operation(active.operationId);
@@ -2543,8 +3316,188 @@ void SemanticRuntimeExecutorExecution::failActive(
                 active.appliedCycle,
                 active.plan.epoch().runtimeGeneration,
             });
+        QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
         publishJournalResult(failed, controllerId);
+        if (!guardedExecutor)
+            return;
     }
+    finishActive(controllerId);
+}
+
+void SemanticRuntimeExecutorExecution::beginRecovery(
+    const QString &controllerId,
+    Data::SemanticOperationState state,
+    const QString &code,
+    const QString &detail,
+    const std::optional<Data::ControllerOperationError> &error)
+{
+    auto queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->active)
+        return;
+    ActiveExecution &active = *queue->active;
+    if (active.applyOutcomePending) {
+        freezeUnknown(controllerId, code, detail, error);
+        return;
+    }
+    if (!active.lastAppliedRequest
+        || active.lastAppliedRequest->expectedRecoveryPolicy
+               != Data::RuntimeOutputRecoveryPolicy::HoldSafe) {
+        freezeUnknown(
+            controllerId,
+            QStringLiteral("safe-recovery-unavailable"),
+            QStringLiteral("The last signed output transaction has no HoldSafe proof."),
+            error);
+        return;
+    }
+    if (active.phase == SemanticExecutionPhase::RecoveryState)
+        return;
+
+    active.recoveryState = state;
+    active.recoveryCode = code;
+    active.recoveryDetail = conciseExecutionText(detail);
+    active.recoveryError = error;
+    active.recoveryAttempts = 0;
+    active.snapshotRequest.reset();
+    active.policyRequest.reset();
+    active.stateRequest.reset();
+    active.applyRequest.reset();
+    active.phase = SemanticExecutionPhase::RecoveryState;
+    const Data::SemanticOperationId operationId = active.operationId;
+    QTimer::singleShot(0, q, [this, controllerId, operationId] {
+        auto currentQueue = m_queues.find(controllerId);
+        if (currentQueue == m_queues.end() || !currentQueue->active
+            || currentQueue->active->operationId != operationId
+            || currentQueue->active->phase != SemanticExecutionPhase::RecoveryState) {
+            return;
+        }
+        beginRecoveryState(controllerId);
+    });
+}
+
+void SemanticRuntimeExecutorExecution::beginRecoveryState(const QString &controllerId)
+{
+    auto queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->active)
+        return;
+    ActiveExecution &active = *queue->active;
+    if (active.phase != SemanticExecutionPhase::RecoveryState || active.stateRequest)
+        return;
+    if (!active.provider || !active.provider->isAvailable()
+        || !active.provider->supportsRuntimeOutputTransactions()) {
+        freezeUnknown(
+            controllerId,
+            QStringLiteral("safe-recovery-provider-unavailable"),
+            QStringLiteral("The controller provider cannot prove signed SafeHold."));
+        return;
+    }
+    const Data::ControllerConnectionSnapshot connection
+        = active.provider->connectionSnapshot();
+    if (!isConnected(connection.state) || connection.scope != active.plan.scope()
+        || connection.sessionGeneration != active.plan.sessionGeneration()) {
+        freezeUnknown(
+            controllerId,
+            QStringLiteral("safe-recovery-session-changed"),
+            QStringLiteral("The controller session changed before SafeHold was proved."));
+        return;
+    }
+    if (active.recoveryAttempts
+        >= qMin<quint32>(active.plan.ttlCycles() + 1, 65535)) {
+        freezeUnknown(
+            controllerId,
+            QStringLiteral("safe-recovery-unproven"),
+            QStringLiteral("The controller did not prove signed SafeHold within its bound."));
+        return;
+    }
+
+    Data::RuntimeOutputTransactionStateRequest request;
+    const quint32 attempt = ++active.attempt;
+    request.correlationId = executionCorrelationId(
+        active.operationId, u"recovery-state", quint32(active.stepIndex), attempt);
+    request.scope = active.plan.scope();
+    request.sessionGeneration = active.plan.sessionGeneration();
+    request.expectedEpoch = active.plan.epoch();
+    request.expectedMappingDigest = active.plan.mappingDigest();
+    if (!request.isValid()) {
+        freezeUnknown(
+            controllerId,
+            QStringLiteral("safe-recovery-request-invalid"),
+            QStringLiteral("The signed SafeHold state request is invalid."));
+        return;
+    }
+    ++active.recoveryAttempts;
+    active.stateRequest = request;
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    const Utils::Result<> started
+        = active.provider->requestRuntimeOutputTransactionState(request);
+    if (!guardedExecutor)
+        return;
+    if (!started) {
+        auto check = m_queues.find(controllerId);
+        if (check == m_queues.end() || !check->active
+            || check->active->phase != SemanticExecutionPhase::RecoveryState
+            || check->active->stateRequest != request) {
+            return;
+        }
+        check->active->stateRequest.reset();
+        if (check->active->recoveryAttempts
+            >= qMin<quint32>(check->active->plan.ttlCycles() + 1, 65535)) {
+            freezeUnknown(
+                controllerId,
+                QStringLiteral("safe-recovery-start-failed"),
+                conciseExecutionText(started.error()));
+            return;
+        }
+        QTimer::singleShot(1, q, [this, controllerId] { beginRecoveryState(controllerId); });
+    }
+}
+
+void SemanticRuntimeExecutorExecution::finishRecovery(const QString &controllerId)
+{
+    auto queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->active)
+        return;
+    ActiveExecution &active = *queue->active;
+    const auto record = m_journal.operation(active.operationId);
+    if (!record)
+        return;
+    if (record->state == Data::SemanticOperationState::Executing
+        && record->currentStep == quint32(active.stepIndex)
+        && !recordCurrentStep(
+            controllerId,
+            true,
+            active.recoveryDetail,
+            active.recoveryError)) {
+        return;
+    }
+    const auto refreshed = m_journal.operation(active.operationId);
+    if (!refreshed)
+        return;
+    Data::SemanticOperationState terminalState = active.recoveryState;
+    if (refreshed->state == Data::SemanticOperationState::OutcomeUnknown
+        && terminalState == Data::SemanticOperationState::TimedOut) {
+        terminalState = Data::SemanticOperationState::Failed;
+    }
+    const SemanticOperationJournalResult terminal = m_journal.transition(
+        active.operationId,
+        {
+            refreshed->state,
+            terminalState,
+            executorActor(),
+            active.recoveryCode,
+            active.recoveryDetail,
+            active.recoveryError,
+            active.appliedCycle,
+            active.plan.epoch().runtimeGeneration,
+        });
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    publishJournalResult(terminal, controllerId);
+    if (!guardedExecutor)
+        return;
+    if (!terminal.accepted()
+        && (!terminal.record || terminal.record->state != terminalState)) {
+        return;
+    }
+    active.mutationMayHaveExecuted = false;
     finishActive(controllerId);
 }
 
@@ -2566,19 +3519,23 @@ void SemanticRuntimeExecutorExecution::freezeUnknown(
     if (record->state != Data::SemanticOperationState::Executing)
         return;
 
-    if (record->currentStep == 0) {
+    if (active.applyOutcomePending
+        && record->currentStep == quint32(active.stepIndex)) {
         const SemanticOperationJournalResult step = m_journal.recordStep(
             active.operationId,
             {
                 Data::SemanticOperationState::Executing,
                 executorActor(),
-                active.plan.steps().constFirst().index() + 1,
+                active.plan.steps().at(active.stepIndex).index() + 1,
                 quint32(active.plan.steps().size()),
                 false,
                 QStringLiteral("Waiting for the same output transaction to be reconciled."),
                 error,
             });
+        QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
         publishJournalResult(step, controllerId);
+        if (!guardedExecutor)
+            return;
         if (!step.accepted())
             return;
     }
@@ -2622,10 +3579,47 @@ void SemanticRuntimeExecutorExecution::expireActive(
             active.appliedCycle,
             active.plan.epoch().runtimeGeneration,
         });
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     publishJournalResult(expired, controllerId);
+    if (!guardedExecutor)
+        return;
     if (!expired.accepted()
         && (!expired.record
             || expired.record->state != Data::SemanticOperationState::Expired)) {
+        return;
+    }
+    finishActive(controllerId);
+}
+
+void SemanticRuntimeExecutorExecution::timeOutActive(
+    const QString &controllerId, const QString &code, const QString &detail)
+{
+    auto queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->active)
+        return;
+    const ActiveExecution &active = *queue->active;
+    const auto record = m_journal.operation(active.operationId);
+    if (!record || record->state != Data::SemanticOperationState::Executing)
+        return;
+    const SemanticOperationJournalResult timedOut = m_journal.transition(
+        active.operationId,
+        {
+            Data::SemanticOperationState::Executing,
+            Data::SemanticOperationState::TimedOut,
+            executorActor(),
+            code,
+            conciseExecutionText(detail),
+            {},
+            active.appliedCycle,
+            active.plan.epoch().runtimeGeneration,
+        });
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    publishJournalResult(timedOut, controllerId);
+    if (!guardedExecutor)
+        return;
+    if (!timedOut.accepted()
+        && (!timedOut.record
+            || timedOut.record->state != Data::SemanticOperationState::TimedOut)) {
         return;
     }
     finishActive(controllerId);
@@ -2652,7 +3646,10 @@ void SemanticRuntimeExecutorExecution::succeedActive(const QString &controllerId
             active.appliedCycle,
             active.plan.epoch().runtimeGeneration,
         });
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     publishJournalResult(succeeded, controllerId);
+    if (!guardedExecutor)
+        return;
     if (!succeeded.accepted()
         && (!succeeded.record
             || succeeded.record->state != Data::SemanticOperationState::Succeeded)) {
@@ -2685,13 +3682,15 @@ void SemanticRuntimeExecutorExecution::providerRemoved(
             refreshes.append({queue.key(), queue->liveRefresh->attemptNonce});
         }
     }
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     for (const QString &controllerId : std::as_const(affected)) {
         failActive(
             controllerId,
             QStringLiteral("controller-provider-removed"),
             QStringLiteral("The controller provider was removed during execution."));
+        if (!guardedExecutor)
+            return;
     }
-    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     for (const auto &[controllerId, attemptNonce] : std::as_const(refreshes)) {
         finishLiveRefresh(
             controllerId,
@@ -2714,13 +3713,15 @@ void SemanticRuntimeExecutorExecution::providerRegistryRemoved()
         if (queue->liveRefresh)
             refreshes.append({queue.key(), queue->liveRefresh->attemptNonce});
     }
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     for (const QString &controllerId : std::as_const(affected)) {
         failActive(
             controllerId,
             QStringLiteral("provider-registry-removed"),
             QStringLiteral("The controller provider registry was removed during execution."));
+        if (!guardedExecutor)
+            return;
     }
-    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     for (const auto &[controllerId, attemptNonce] : std::as_const(refreshes)) {
         finishLiveRefresh(
             controllerId,
@@ -2748,13 +3749,15 @@ void SemanticRuntimeExecutorExecution::projectRemoved(const Data::NodeId &projec
             refreshes.append({queue.key(), queue->liveRefresh->attemptNonce});
         }
     }
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     for (const QString &controllerId : std::as_const(affected)) {
         failActive(
             controllerId,
             QStringLiteral("project-removed"),
             QStringLiteral("The project was removed during execution."));
+        if (!guardedExecutor)
+            return;
     }
-    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     for (const auto &[controllerId, attemptNonce] : std::as_const(refreshes)) {
         finishLiveRefresh(
             controllerId,
@@ -2783,13 +3786,15 @@ void SemanticRuntimeExecutorExecution::projectServiceRemoved()
         if (queue->liveRefresh)
             refreshes.append({queue.key(), queue->liveRefresh->attemptNonce});
     }
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     for (const QString &controllerId : std::as_const(affected)) {
         failActive(
             controllerId,
             QStringLiteral("project-service-removed"),
             QStringLiteral("The project service was removed during execution."));
+        if (!guardedExecutor)
+            return;
     }
-    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     for (const auto &[controllerId, attemptNonce] : std::as_const(refreshes)) {
         finishLiveRefresh(
             controllerId,
@@ -2850,7 +3855,10 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
             this,
             [this](const Data::NodeId &projectId) {
                 m_projectsBeingRemoved.insert(projectId);
+                QPointer<SemanticRuntimeExecutor> guardedExecutor(this);
                 m_execution->projectRemoved(projectId);
+                if (!guardedExecutor)
+                    return;
                 clearEvidenceCache();
                 publishContexts();
             });
@@ -2858,7 +3866,10 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
             publishContexts();
         });
         connect(m_projectService, &QObject::destroyed, this, [this] {
+            QPointer<SemanticRuntimeExecutor> guardedExecutor(this);
             m_execution->projectServiceRemoved();
+            if (!guardedExecutor)
+                return;
             m_projectService = nullptr;
             m_liveRuntimeCaches.clear();
             publishContexts();
@@ -2883,16 +3894,22 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
             &Core::ProviderRegistry::providerAboutToBeRemoved,
             this,
             [this](Core::Provider *provider) {
+                QPointer<SemanticRuntimeExecutor> guardedExecutor(this);
                 if (auto *connectionProvider = qobject_cast<Core::ControllerConnectionProvider *>(
                         provider)) {
                     m_providersBeingRemoved.insert(connectionProvider);
                     m_execution->providerRemoved(connectionProvider);
+                    if (!guardedExecutor)
+                        return;
                 }
                 untrackProvider(provider);
                 publishContexts();
             });
         connect(m_providerRegistry, &QObject::destroyed, this, [this] {
+            QPointer<SemanticRuntimeExecutor> guardedExecutor(this);
             m_execution->providerRegistryRemoved();
+            if (!guardedExecutor)
+                return;
             m_providerRegistry = nullptr;
             for (const QList<QMetaObject::Connection> &connections :
                  std::as_const(m_providerConnections)) {
@@ -3511,7 +4528,10 @@ void SemanticRuntimeExecutor::processRuntimeBootstrap()
             ++state.refreshAttemptCount;
             state.refreshRetrySignalBaseline = bootstrapSignalGeneration;
             const QByteArray identityKey = state.identityKey;
+            QPointer<SemanticRuntimeExecutor> guardedExecutor(this);
             const Utils::Result<> accepted = candidate.provider->refreshRuntimeResources();
+            if (!guardedExecutor)
+                return;
             if (provider) {
                 const auto current = m_runtimeBootstrapStates.find(candidate.provider);
                 if (current != m_runtimeBootstrapStates.end()
@@ -3570,8 +4590,11 @@ void SemanticRuntimeExecutor::processRuntimeBootstrap()
         if (!request.isValid())
             continue;
 
+        QPointer<SemanticRuntimeExecutor> guardedExecutor(this);
         const Utils::Result<> accepted
             = candidate.provider->requestRuntimeSemanticMappingAttestation(request);
+        if (!guardedExecutor)
+            return;
         if (provider && accepted) {
             const auto current = m_runtimeBootstrapStates.find(candidate.provider);
             if (current != m_runtimeBootstrapStates.end()
@@ -3701,7 +4724,10 @@ void SemanticRuntimeExecutor::trackProvider(Core::Provider *provider)
         }));
     connections.append(
         connect(connectionProvider, &QObject::destroyed, this, [this, connectionProvider] {
+            QPointer<SemanticRuntimeExecutor> guardedExecutor(this);
             m_execution->providerRemoved(connectionProvider);
+            if (!guardedExecutor)
+                return;
             m_providerConnections.remove(connectionProvider);
             m_providersBeingRemoved.remove(connectionProvider);
             m_runtimeBootstrapStates.remove(connectionProvider);

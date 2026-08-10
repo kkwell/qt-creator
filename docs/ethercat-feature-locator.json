@@ -650,7 +650,7 @@
       "keywords": ["语义绑定", "动作", "实例", "SemanticSignal", "手动控制", "映射"],
       "implementation": [
         {"path": "src/plugins/ethercatsemanticruntime/semanticbindingartifact_p.cpp", "symbols": ["verifySemanticBindingArtifact"], "roleZh": "签名语义绑定验证"},
-        {"path": "src/plugins/ethercatsemanticruntime/semanticactionruntimefactory_p.cpp", "symbols": ["buildSemanticActionRuntimeStates"], "roleZh": "动作运行态投影"}
+        {"path": "src/plugins/ethercatsemanticruntime/semanticactionruntimefactory_p.cpp", "symbols": ["buildSemanticActionRuntimeStates", "exactRawValuesEqual"], "roleZh": "动作运行态投影，以及有符号/无符号原始整数的无溢出精确比较"}
       ],
       "contracts": [
         {"path": "src/libs/ethercatdata/semanticruntime.h", "symbols": ["SemanticRuntimeContext", "SemanticActionRuntimeState"], "roleZh": "只公开已验证的通用语义运行态"}
@@ -660,7 +660,7 @@
       ],
       "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-device-adapters.md"],
       "dependsOn": ["ethercat.runtime.package-evidence", "ethercat.adapters.catalog-authorization", "ethercat.product-api.runtime-resources", "ethercat.product-api.semantic-attestation"],
-      "notesZh": ["同型号多个实例必须使用各自签名绑定 ID，禁止按名字、位置或站号推断可写资源。"]
+      "notesZh": ["同型号多个实例必须使用各自签名绑定 ID，禁止按名字、位置或站号推断可写资源。", "safeValue 和 literal 原始整数同 variant 时逐值精确比较；跨 qint64/quint64 只允许非负 qint64 与同值 quint64 相等，负数或超范围值不得混等。"]
     },
     {
       "id": "ethercat.runtime.activation",
@@ -688,25 +688,26 @@
       "id": "ethercat.runtime.manual-control",
       "area": "runtime",
       "titleZh": "通用语义手动控制执行",
-      "summaryZh": "在审批、实时读取、完整组校验和超时策略后执行签名语义动作。",
+      "summaryZh": "在审批和受信运行上下文内执行由 WriteGroup、WaitMasked 与 WaitAbsoluteLimit 组成的有界有序签名动作。",
       "owner": "ethercat-semantic-runtime",
       "runtimeBoundary": "real-controller",
       "evidenceBoundary": ["unit", "loopback", "not-hardware-qualified"],
-      "keywords": ["手动控制", "输入读取", "输出", "动作执行", "审批", "电机"],
+      "keywords": ["手动控制", "输入读取", "输出", "动作执行", "审批", "WriteGroup", "WaitMasked", "WaitAbsoluteLimit", "SafeHold", "OutcomeUnknown", "电机"],
       "implementation": [
-        {"path": "src/plugins/ethercatsemanticruntime/semanticruntimeexecutor.cpp", "symbols": ["SemanticRuntimeExecutor::submit", "SemanticRuntimeExecutor::approve", "applyRuntimeOutputTransaction"], "roleZh": "语义读取、审批和输出事务编排"},
-        {"path": "src/plugins/ethercatsemanticruntime/semanticactionplan_p.cpp", "symbols": ["buildSemanticActionPlan"], "roleZh": "私有签名动作计划构建"}
+        {"path": "src/plugins/ethercatsemanticruntime/semanticruntimeexecutor.cpp", "symbols": ["SemanticRuntimeExecutor::submit", "SemanticRuntimeExecutor::approve", "SemanticRuntimeExecutorExecution::beginCurrentStep", "SemanticRuntimeExecutorExecution::beginRecovery", "SemanticRuntimeExecutorExecution::freezeUnknown", "SemanticRuntimeExecutorExecution::stateProvesLastSafeHold"], "roleZh": "有界有序步骤、完整资源并集快照、输出事务和故障安全恢复编排"},
+        {"path": "src/plugins/ethercatsemanticruntime/semanticactionplan_p.cpp", "symbols": ["buildSemanticActionPlan"], "roleZh": "私有签名动作计划构建"},
+        {"path": "src/plugins/ethercatsemanticruntime/semanticoperationjournal_p.cpp", "symbols": ["SemanticOperationJournal::recordStep", "SemanticOperationJournal::transition"], "roleZh": "步骤证据和终态闭集；失败步骤只允许 Failed、TimedOut 或 Expired"}
       ],
       "contracts": [
         {"path": "src/plugins/ethercatcore/semanticruntimeservice.h", "symbols": ["class ETHERCATCORE_EXPORT SemanticRuntimeService"], "roleZh": "UI 与自动化共享的语义服务"},
         {"path": "src/libs/ethercatdata/semanticruntime.h", "symbols": ["SemanticOperationRequest", "SemanticOperationRecord"], "roleZh": "语义操作和审计合同"}
       ],
       "tests": [
-        {"path": "src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp", "cases": ["testExecutorExecutesApi038Xb6Action", "testExecutorRejectsUnauthorizedManualActionBeforeApply"], "kind": "loopback"}
+        {"path": "src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp", "cases": ["testExecutorExecutesApi038Xb6Action", "testExecutorRejectsUnauthorizedManualActionBeforeApply", "testExecutorExecutesQualifiedMultiStepAction", "testExecutorBoundsMultiStepWaitFailures", "testExecutorFailsClosedOnMultiStepDrift"], "kind": "loopback"}
       ],
-      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-device-adapters.md"],
       "dependsOn": ["ethercat.runtime.binding-actions", "ethercat.product-api.output-transactions", "ethercat.core.manual-control-contract"],
-      "notesZh": ["动作只使用 Adapter 和签名包定义的通用语义，不直接访问原始 PDO、SDO、寄存器或厂家协议。"]
+      "notesZh": ["执行闭集为 1..64 个有序步骤和 1..64 个唯一资源；每个多步动作的全部输出组必须为 HoldSafe。", "动作 before/after 记录都覆盖所有写入和等待资源的完整并集；每个 WriteGroup 使用签名步骤自己的输出 OperationId，并从已证明的 OutputGeneration 串接。", "任一写入可能生效后，TTL 到期优先于值或等待条件判定；失败、超时或漂移只有在控制器精确证明最后一笔事务已经进入 SafeHold 后才释放后续队列。", "OutcomeUnknown 保留同一 apply request 和输出 OperationId，权威 reconcile 之前禁止后续变更；SemanticRuntimeService 当前没有显式动作 cancel 或输出 TTL refresh 接口。", "动作只使用 Adapter 和签名包定义的通用语义，不直接访问原始 PDO、SDO、寄存器或厂家协议。生产 SV630N 动作仍为 disabled/unqualified，本功能只有 unit/loopback 证据，不能宣称真机运动。"]
     },
     {
       "id": "ethercat.workbench.details-routing",
@@ -1170,10 +1171,10 @@
       "titleZh": "签名运行时与控制知识卡",
       "purposeZh": "在签名包、项目实例、控制器证明和审批一致时执行厂家无关的语义动作。",
       "readOrder": ["ethercat.runtime.package-evidence", "ethercat.runtime.binding-actions", "ethercat.runtime.activation", "ethercat.runtime.manual-control"],
-      "callFlowsZh": ["production ECPKG -> 容器/签名/payload 校验 -> RuntimePackageEvidence。", "semantic binding/action definitions + Controller attestation + 完整 epoch -> SemanticRuntimeContext。", "用户动作 + 参数/envelope/qualification -> 审批 -> 完整 consistency group -> 原子输出事务 -> journal。"],
-      "invariantsZh": ["SemanticSignalId 到 ResourceId 只能来自同一受信包的签名绑定，不能运行时猜测。", "写事务必须覆盖完整 consistency group、精确类型/宽度、预期 OutputGeneration、有限 TTL 和恢复策略。", "只有 enabled 且 qualified 的动作可进入审批；审批不能扩大签名 envelope。", "激活、手动控制和任务运行都必须绑定同一工程、包、拓扑和运行时代际。"],
-      "changeChecklistZh": ["验证 package、manifest、mapping、action definitions、controller attestation 和 epoch 的一一对应。", "为拒绝原因、审批取消、幂等重放、TTL recovery 和断线后自主运行添加测试。", "UI 和 Gateway 必须调用同一语义服务并观察同一 OperationId。"],
-      "avoidZh": ["不要按名称、Vendor、站地址、ordinal、slot 或 PI offset 推断 ResourceId。", "不要从 SemanticRuntime 直接访问原始 PDO/SDO、厂家协议或 Shell。", "不要为演示绕过未 qualified 动作或安全 envelope。"]
+      "callFlowsZh": ["production ECPKG -> 容器/签名/payload 校验 -> RuntimePackageEvidence。", "semantic binding/action definitions + Controller attestation + 完整 epoch -> SemanticRuntimeContext。", "用户动作 + 参数/envelope/qualification -> 审批 -> 1..64 个 WriteGroup/WaitMasked/WaitAbsoluteLimit -> 逐步骤 journal。", "写入后异常 -> TTL 优先判定 -> 同一事务状态重读 -> 精确 SafeHold 证明 -> 终态和队列释放；无法证明则保持 OutcomeUnknown。"],
+      "invariantsZh": ["SemanticSignalId 到 ResourceId 只能来自同一受信包的签名绑定，不能运行时猜测。", "可执行计划只接受 1..64 个有序步骤、1..64 个唯一资源和至少一个完整 WriteGroup；多步计划的所有组必须为 HoldSafe。", "动作 before/after 快照必须覆盖所有写入和等待资源的完整并集，回调必须逐字匹配带 step/attempt correlation 的原请求。", "每个 WriteGroup 使用步骤专属输出 OperationId，并以控制器证明的 OutputGeneration 串接；写事务仍覆盖完整 consistency group、精确类型/宽度、有限 TTL 和恢复策略。", "写入可能生效后的失败、超时或漂移只有精确 SafeHold 证明才能释放队列；到期 capture 优先进入 Expired recovery。", "OutcomeUnknown 必须保留同一 apply request 和输出 OperationId，在权威 reconcile 前阻止后续变更。", "只有 enabled 且 qualified 的动作可进入审批；审批不能扩大签名 envelope。", "激活、手动控制和任务运行都必须绑定同一工程、包、拓扑、租约、控制器状态、mapping/action-definition digest 和运行时代际。"],
+      "changeChecklistZh": ["验证 package、manifest、mapping、action definitions、controller attestation、lease/state 和 epoch 的一一对应。", "覆盖 1/64/65 步和资源、三种可执行步骤、typed wait、INT64_MIN、完整并集 before/after、step/attempt correlation 与逐字 request match。", "覆盖 TTL 优先、SafeHold 精确恢复、OutcomeUnknown 同请求 reconcile、failedStep 终态闭集和队列解锁负例。", "当前无显式动作 cancel、hold-to-run 或输出 TTL refresh；扩展公共合同前不得用输入 live refresh 冒充输出续期。", "UI 和 Gateway 必须调用同一语义服务并观察同一 OperationId。"],
+      "avoidZh": ["不要按名称、Vendor、站地址、ordinal、slot 或 PI offset 推断 ResourceId。", "不要从 SemanticRuntime 直接访问原始 PDO/SDO、厂家协议或 Shell。", "不要为演示绕过未 qualified 动作或安全 envelope。", "不要把有界多步 loopback 证据解释为生产 SV630N 已启用或已完成真机运动。"]
     },
     {
       "id": "ui",
@@ -1325,6 +1326,19 @@
       "notesZh": []
     },
     {
+      "id": "ethercat.issue.semantic-action-continuous-control",
+      "titleZh": "持续动作的 hold-to-run、输出续期和显式取消尚未冻结",
+      "status": "planned",
+      "severity": "p1",
+      "affectedFeatures": ["ethercat.core.manual-control-contract", "ethercat.runtime.manual-control", "ethercat.product-api.output-transactions", "ethercat.workbench.semantic-control"],
+      "problemZh": "当前有界多步 executor 只接受 holdToRun=false 的一次性签名动作；SemanticRuntimeService 没有输出 TTL refresh 或显式动作 cancel 命令，输入 live refresh 也不能替代这两个安全合同。",
+      "currentBoundaryZh": "当前可执行闭集是 1..64 个 WriteGroup/WaitMasked/WaitAbsoluteLimit 步骤和 1..64 个唯一资源。写入后的失败或超时必须取得最后一笔事务的精确 SafeHold 证明才释放队列，OutcomeUnknown 保留同一 apply request 并阻止后续变更；这不等于用户已经拥有持续按住运行、输出续期或主动停止接口。",
+      "nextActionZh": "先冻结厂家无关的 hold-to-run、同一输出事务续期和分阶段取消合同，再同步 Core、Product API、SemanticRuntime、Workbench 与审计测试；生产驱动器动作仍须独立完成真实资格化。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-device-adapters.md", "src/plugins/ethercatcore/semanticruntimeservice.h", "src/plugins/ethercatsemanticruntime/semanticactionplan_p.cpp", "src/plugins/ethercatsemanticruntime/semanticruntimeexecutor.cpp", "src/plugins/ethercatsemanticruntime/semanticoperationjournal_p.cpp"],
+      "resolutionCriteriaZh": ["hold-to-run 和 refresh 始终绑定同一签名动作、语义 OperationId、步骤输出 OperationId、request、OutputGeneration、epoch、mapping/action-definition digest、租约、状态和 TTL envelope。", "变更派发前的 cancel 可证明零写入；写入可能生效后的 cancel 只有取得精确 SafeHold 证明才释放队列，OutcomeUnknown 期间不得换 request 或派发新变更。", "取消、续期、到期、断连、迟到响应、重复请求和 UI 释放竞态均有确定终态、逐步骤审计和失败闭集。", "真实型号启用仍需独立的签名单位、范围、安全策略和真机验收，软件接口完成不能替代设备资格。"],
+      "notesZh": ["SemanticRuntime 的 requestLiveRefresh 只刷新输入语义信号快照，不续期输出覆盖。"]
+    },
+    {
       "id": "ethercat.issue.scan-diagnostics-dependency",
       "titleZh": "Scan 与 Diagnostics 对 Workbench 存在反向依赖",
       "status": "planned",
@@ -1409,11 +1423,11 @@
       "severity": "p2",
       "affectedFeatures": ["ethercat.adapters.catalog-authorization", "ethercat.runtime.binding-actions", "ethercat.runtime.manual-control", "ethercat.workbench.semantic-control"],
       "problemZh": "0x60FF/0x606C 的 reference unit/s 到 RPM 换算还依赖未绑定的电子齿轮和编码器证据，因此速度动作必须保持 disabled/unqualified。",
-      "currentBoundaryZh": "离线动作定义和历史 DC 运行记录都不能证明真实速度单位或允许运动。",
-      "nextActionZh": "取得并签入精确型号的单位换算、0x6091/编码器依赖、参数范围和安全门禁，再更新 Adapter 动作资格。",
+      "currentBoundaryZh": "有界多步 executor 的 unit/loopback 覆盖只证明通用步骤闭集；生产 SV630N v3 动作仍为 disabled/unqualified，离线动作定义和历史 DC 运行记录都不能证明真实速度单位、允许正反转或实际电机运动。",
+      "nextActionZh": "取得并签入精确型号的实际编码器分辨率、0x6091 电子齿轮换算、速度限制、停止阈值和安全门禁，完成扫描 observed evidence 与 configured/observed 判定后，再更新 Adapter 动作资格并执行受控真机验收。",
       "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-device-adapters.md", "share/qtcreator/ethercat/adapters/v3/inovance-sv630n-rev00010000.adapter.json", "share/qtcreator/ethercat/adapter-authorizations/inovance-sv630n-rev00010000.authorization.json", "src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp"],
       "resolutionCriteriaZh": ["换算公式和全部依赖参数进入受签名 evidence。", "UI 显示 reference unit 与工程单位的明确关系和范围。", "按受控运动测试验证设速、反馈、停止、TTL 和故障路径。"],
-      "notesZh": ["资格闭环前不得为了演示启用真机速度动作。"]
+      "notesZh": ["资格闭环前不得为了演示启用真机速度动作；当前 ISSUE 未访问硬件，也没有新增真机运动证据。"]
     },
     {
       "id": "ethercat.issue.coe-online-sdo",

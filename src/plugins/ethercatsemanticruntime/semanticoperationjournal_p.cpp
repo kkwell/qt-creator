@@ -404,6 +404,7 @@ SemanticOperationJournalResult SemanticOperationJournal::transition(
              || found->failedStep))
         || (found->failedStep
             && update.state != Data::SemanticOperationState::Failed
+            && update.state != Data::SemanticOperationState::TimedOut
             && update.state != Data::SemanticOperationState::Expired)) {
         const Core::SemanticRuntimeValidation validation = rejection(
             Core::SemanticRuntimeValidationError::InvalidRequest,

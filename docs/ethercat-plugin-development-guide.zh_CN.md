@@ -436,12 +436,36 @@ Session/Boot/拓扑/设备身份证据绑定和 configured/observed match 判定
   -> 控制器 Attestation
   -> 用户确认
   -> SemanticRuntimeService::submit
-  -> 完整 ConsistencyGroup OutputTransaction
-  -> CPU1 周期边界整组生效或整组拒绝
+  -> 1..64 个有序 WriteGroup / WaitMasked / WaitAbsoluteLimit
+  -> 每个 WriteGroup 在 CPU1 周期边界整组生效或整组拒绝
+  -> 逐步骤 journal + 完整资源并集 after 证据
 ```
 
 仅在线扫描到、但还未应用到工程和激活匹配运行包的节点，必须显示控制不可用原因，
 不能临时猜测 PDO 位或直接写对象。
+
+当前 executor 的可执行闭集是 1..64 个有序步骤、1..64 个唯一写入/等待资源、至少一个
+`WriteGroup`，以及三种精确步骤类型。每个 wait 必须有有界 cycle timeout，总等待 cycle
+也受限；多步动作引用的全部输出组必须使用 `HoldSafe`。不在闭集内的步骤、资源或策略
+在调用 Product API 前 fail closed。
+
+动作级 `beforeSnapshot` 和 `afterSnapshot` 都覆盖全部写入与等待资源的完整并集，而不是只
+记录最后一个 wait。每个 `WriteGroup` 使用签名步骤专属的输出 `OperationId`，并从控制器
+已证明的 `OutputGeneration` 串接下一次写入。snapshot、policy、state 和 apply 回调必须逐字
+匹配原请求；内部 correlation 同时绑定语义操作、phase、step 和 attempt。整个过程持续重验
+同一工程、包、拓扑、Session、租约、控制器状态、epoch、mapping digest 和 action-definition
+digest。
+
+任一写入可能生效后，capture cycle 到达 TTL expiry 必须先进入 `Expired` 恢复，不能先按
+值不匹配或等待条件失败处理。后续失败、等待超时或运行时漂移只有在控制器精确证明最后
+一笔事务已经进入签名 `SafeHold` 后才释放队列；无法证明时保持 `OutcomeUnknown`。未知
+结果保留同一 apply request 和步骤输出 `OperationId`，权威 reconcile 前不允许换请求或
+执行后续变更。
+
+`SemanticRuntimeService` 当前没有显式动作 cancel，也没有输出 TTL refresh/hold-to-run
+执行接口；现有 `requestLiveRefresh` 只刷新输入语义信号，不能续期输出覆盖。生产 SV630N
+动作仍是 disabled/unqualified；本轮有界多步能力只有 unit/loopback 证据，不代表已经完成
+正反转或任何真机运动。
 
 ### 6.4 自动运行和停止
 
@@ -614,6 +638,9 @@ Product API 连接。对输出的 API/过程映像证据不能宣称为物理端
 - 受信 ECPKG、语义绑定、动作定义、控制器 Attestation 和激活服务。
 - 选中设备、模块或通道后的语义 Control 页面。
 - XB6 完整 16 通道 ConsistencyGroup 的原子手动输出链路。
+- SemanticRuntime 已接入 1..64 步/资源的有界有序执行闭集，支持 `WriteGroup`、
+  `WaitMasked` 和 `WaitAbsoluteLimit`，记录完整资源并集 before/after，并在写后异常时以
+  TTL 优先和精确 `SafeHold` 证明控制队列释放。当前新增证据仅为 unit/loopback。
 - MCP/REST 共用 SemanticRuntime 的动作意图入口；动作意图不等于绕过审批自动执行。
   原有控制器状态/拓扑/设备/诊断工具仍是 Mock-only；独立 `topology.list-selected` 可读取
   Workbench 已精确选择的 Real/Mock 拓扑值证据，但不是完整真实状态、遥测或操作查询入口。
@@ -625,8 +652,9 @@ Product API 连接。对输出的 API/过程映像证据不能宣称为物理端
 和当前工程已经自动通过。每次交付仍必须使用精确二进制、ECPKG、BootId、拓扑和完整
 epoch 重新验收。
 
-SV630N 速度动作仍因参考单位到 RPM 的换算证据不足而禁用，不能把离线动作定义或历史
-DC 运行记录宣称为真机运动验证。
+SV630N 速度动作仍因实际编码器分辨率、0x6091 电子齿轮换算、速度限制和停止阈值等签名
+证据不足而禁用。不能把有界多步 executor、离线动作定义或历史 DC 运行记录宣称为正反转
+或其他真机运动验证。
 
 ## 13. 当前缺口和工程化路线
 
@@ -653,7 +681,9 @@ DC 运行记录宣称为真机运动验证。
    `WorkbenchController` 逐步迁移到无 UI 的 `EngineeringOperationCoordinator`。
 3. 建立 UI、Gateway、SemanticRuntime、Compiler 和 Activation 共用的持久 Operation
    journal 与审计索引。
-4. 将 Scan/Diagnostics 的菜单贡献点移到 Core 公共契约，移除它们对 Workbench 的反向
+4. 冻结厂家无关的 hold-to-run、同一输出事务 TTL refresh 和显式 cancel 合同；写入可能
+   生效后的取消仍必须经过精确 `SafeHold` 证明，不能用输入 live refresh 冒充输出续期。
+5. 将 Scan/Diagnostics 的菜单贡献点移到 Core 公共契约，移除它们对 Workbench 的反向
    编译依赖。
 
 ### P2：扩展通用设备和自动流程

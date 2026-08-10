@@ -515,7 +515,7 @@ python3 scripts/ethercat_feature_locator.py check
 - 证据边界：`unit`、`artifact`
 - 修改入口：
   - [`src/plugins/ethercatsemanticruntime/semanticbindingartifact_p.cpp`](../src/plugins/ethercatsemanticruntime/semanticbindingartifact_p.cpp)：签名语义绑定验证；`verifySemanticBindingArtifact`
-  - [`src/plugins/ethercatsemanticruntime/semanticactionruntimefactory_p.cpp`](../src/plugins/ethercatsemanticruntime/semanticactionruntimefactory_p.cpp)：动作运行态投影；`buildSemanticActionRuntimeStates`
+  - [`src/plugins/ethercatsemanticruntime/semanticactionruntimefactory_p.cpp`](../src/plugins/ethercatsemanticruntime/semanticactionruntimefactory_p.cpp)：动作运行态投影，以及有符号/无符号原始整数的无溢出精确比较；`buildSemanticActionRuntimeStates`、`exactRawValuesEqual`
 - 公共合同：
   - [`src/libs/ethercatdata/semanticruntime.h`](../src/libs/ethercatdata/semanticruntime.h)：只公开已验证的通用语义运行态；`SemanticRuntimeContext`、`SemanticActionRuntimeState`
 - 定向测试：
@@ -523,6 +523,7 @@ python3 scripts/ethercat_feature_locator.py check
 - 相关文档：[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)、[`docs/ethercat-device-adapters.md`](../docs/ethercat-device-adapters.md)
 - 前置功能：`ethercat.runtime.package-evidence`、`ethercat.adapters.catalog-authorization`、`ethercat.product-api.runtime-resources`、`ethercat.product-api.semantic-attestation`
 - 边界提醒：同型号多个实例必须使用各自签名绑定 ID，禁止按名字、位置或站号推断可写资源。
+- 边界提醒：safeValue 和 literal 原始整数同 variant 时逐值精确比较；跨 qint64/quint64 只允许非负 qint64 与同值 quint64 相等，负数或超范围值不得混等。
 
 #### `ethercat.runtime.activation` — 受信运行包激活事务
 
@@ -543,22 +544,27 @@ python3 scripts/ethercat_feature_locator.py check
 
 #### `ethercat.runtime.manual-control` — 通用语义手动控制执行
 
-在审批、实时读取、完整组校验和超时策略后执行签名语义动作。
+在审批和受信运行上下文内执行由 WriteGroup、WaitMasked 与 WaitAbsoluteLimit 组成的有界有序签名动作。
 
 - Owner：`EtherCATSemanticRuntime`（[`src/plugins/ethercatsemanticruntime`](../src/plugins/ethercatsemanticruntime)）
 - 运行边界：`real-controller`
 - 证据边界：`unit`、`loopback`、`not-hardware-qualified`
 - 修改入口：
-  - [`src/plugins/ethercatsemanticruntime/semanticruntimeexecutor.cpp`](../src/plugins/ethercatsemanticruntime/semanticruntimeexecutor.cpp)：语义读取、审批和输出事务编排；`SemanticRuntimeExecutor::submit`、`SemanticRuntimeExecutor::approve`、`applyRuntimeOutputTransaction`
+  - [`src/plugins/ethercatsemanticruntime/semanticruntimeexecutor.cpp`](../src/plugins/ethercatsemanticruntime/semanticruntimeexecutor.cpp)：有界有序步骤、完整资源并集快照、输出事务和故障安全恢复编排；`SemanticRuntimeExecutor::submit`、`SemanticRuntimeExecutor::approve`、`SemanticRuntimeExecutorExecution::beginCurrentStep`、`SemanticRuntimeExecutorExecution::beginRecovery`、`SemanticRuntimeExecutorExecution::freezeUnknown`、`SemanticRuntimeExecutorExecution::stateProvesLastSafeHold`
   - [`src/plugins/ethercatsemanticruntime/semanticactionplan_p.cpp`](../src/plugins/ethercatsemanticruntime/semanticactionplan_p.cpp)：私有签名动作计划构建；`buildSemanticActionPlan`
+  - [`src/plugins/ethercatsemanticruntime/semanticoperationjournal_p.cpp`](../src/plugins/ethercatsemanticruntime/semanticoperationjournal_p.cpp)：步骤证据和终态闭集；失败步骤只允许 Failed、TimedOut 或 Expired；`SemanticOperationJournal::recordStep`、`SemanticOperationJournal::transition`
 - 公共合同：
   - [`src/plugins/ethercatcore/semanticruntimeservice.h`](../src/plugins/ethercatcore/semanticruntimeservice.h)：UI 与自动化共享的语义服务；`class ETHERCATCORE_EXPORT SemanticRuntimeService`
   - [`src/libs/ethercatdata/semanticruntime.h`](../src/libs/ethercatdata/semanticruntime.h)：语义操作和审计合同；`SemanticOperationRequest`、`SemanticOperationRecord`
 - 定向测试：
-  - [`src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp`](../src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp)（`loopback`）：`testExecutorExecutesApi038Xb6Action`、`testExecutorRejectsUnauthorizedManualActionBeforeApply`
-- 相关文档：[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
+  - [`src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp`](../src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp)（`loopback`）：`testExecutorExecutesApi038Xb6Action`、`testExecutorRejectsUnauthorizedManualActionBeforeApply`、`testExecutorExecutesQualifiedMultiStepAction`、`testExecutorBoundsMultiStepWaitFailures`、`testExecutorFailsClosedOnMultiStepDrift`
+- 相关文档：[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)、[`docs/ethercat-device-adapters.md`](../docs/ethercat-device-adapters.md)
 - 前置功能：`ethercat.runtime.binding-actions`、`ethercat.product-api.output-transactions`、`ethercat.core.manual-control-contract`
-- 边界提醒：动作只使用 Adapter 和签名包定义的通用语义，不直接访问原始 PDO、SDO、寄存器或厂家协议。
+- 边界提醒：执行闭集为 1..64 个有序步骤和 1..64 个唯一资源；每个多步动作的全部输出组必须为 HoldSafe。
+- 边界提醒：动作 before/after 记录都覆盖所有写入和等待资源的完整并集；每个 WriteGroup 使用签名步骤自己的输出 OperationId，并从已证明的 OutputGeneration 串接。
+- 边界提醒：任一写入可能生效后，TTL 到期优先于值或等待条件判定；失败、超时或漂移只有在控制器精确证明最后一笔事务已经进入 SafeHold 后才释放后续队列。
+- 边界提醒：OutcomeUnknown 保留同一 apply request 和输出 OperationId，权威 reconcile 之前禁止后续变更；SemanticRuntimeService 当前没有显式动作 cancel 或输出 TTL refresh 接口。
+- 边界提醒：动作只使用 Adapter 和签名包定义的通用语义，不直接访问原始 PDO、SDO、寄存器或厂家协议。生产 SV630N 动作仍为 disabled/unqualified，本功能只有 unit/loopback 证据，不能宣称真机运动。
 
 ### 4.7 Workbench 界面
 
@@ -951,6 +957,7 @@ python3 scripts/ethercat_feature_locator.py check
 | `ethercat.issue.scan-operation-cas` | `planned` | `p1` | `ethercat.scan.mock-workflow`、`ethercat.project.mutation`、`ethercat.core.scan-provider-selection`、`ethercat.core.topology-service`、`ethercat.core.provider-registry` | 扫描接受缺少跨调用者操作令牌与工程 CAS |
 | `ethercat.issue.engineering-coordinator` | `planned` | `p1` | `ethercat.workbench.communication`、`ethercat.workbench.deployment`、`ethercat.workbench.output-status`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.runtime.activation`、`ethercat.gateway.controller-views-intents` | 工程操作协调逻辑仍集中在 WorkbenchController |
 | `ethercat.issue.operation-journal` | `planned` | `p1` | `ethercat.compiler.preparation`、`ethercat.runtime.activation`、`ethercat.runtime.manual-control`、`ethercat.gateway.controller-views-intents` | 操作记录尚无统一查询与审计索引 |
+| `ethercat.issue.semantic-action-continuous-control` | `planned` | `p1` | `ethercat.core.manual-control-contract`、`ethercat.runtime.manual-control`、`ethercat.product-api.output-transactions`、`ethercat.workbench.semantic-control` | 持续动作的 hold-to-run、输出续期和显式取消尚未冻结 |
 | `ethercat.issue.scan-diagnostics-dependency` | `planned` | `p1` | `ethercat.scan.mock-workflow`、`ethercat.diagnostics.mock-stream`、`ethercat.core.provider-registry` | Scan 与 Diagnostics 对 Workbench 存在反向依赖 |
 | `ethercat.issue.gateway-real-read-views` | `planned` | `p1` | `ethercat.gateway.controller-views-intents`、`ethercat.product-api.telemetry`、`ethercat.runtime.manual-control`、`ethercat.workbench.output-status` | Gateway 真实状态、遥测与操作视图尚未接入 |
 | `ethercat.issue.adapter-catalog-service` | `planned` | `p2` | `ethercat.adapters.catalog-authorization`、`ethercat.workbench.esi-library`、`ethercat.gateway.contract-tools` | Adapter 目录尚无统一公共查询服务 |

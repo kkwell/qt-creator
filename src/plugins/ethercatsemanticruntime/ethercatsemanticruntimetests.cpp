@@ -45,6 +45,8 @@
 #include <QUuid>
 #include <QtEndian>
 
+#include <monocypher-ed25519.h>
+
 #include <algorithm>
 #include <array>
 #include <functional>
@@ -393,6 +395,8 @@ public:
     Utils::Result<> refreshRuntimeResources() final
     {
         ++runtimeResourceRefreshCalls;
+        if (runtimeResourceRefreshStarted)
+            runtimeResourceRefreshStarted();
         return runtimeResourceRefreshError
                    ? Utils::ResultError(*runtimeResourceRefreshError)
                    : Utils::ResultOk;
@@ -420,6 +424,8 @@ public:
         const Data::RuntimeSemanticMappingAttestationRequest &request) final
     {
         semanticMappingAttestationRequests.append(request);
+        if (semanticMappingAttestationRequestStarted)
+            semanticMappingAttestationRequestStarted(request);
         return semanticMappingAttestationRequestError
                    ? Utils::ResultError(*semanticMappingAttestationRequestError)
                    : Utils::ResultOk;
@@ -472,6 +478,9 @@ public:
         semanticMappingAttestationRequests;
     std::optional<QString> runtimeResourceRefreshError;
     std::optional<QString> semanticMappingAttestationRequestError;
+    std::function<void()> runtimeResourceRefreshStarted;
+    std::function<void(const Data::RuntimeSemanticMappingAttestationRequest &)>
+        semanticMappingAttestationRequestStarted;
     bool runtimeResourcesSupported = true;
     bool semanticMappingAttestationSupported = true;
     Data::ControllerConnectionSnapshot snapshot;
@@ -1542,6 +1551,69 @@ static CanonicalTestEcpkg buildCanonicalTestEcpkg(
     return package;
 }
 
+static QByteArray buildCanonicalTestEcpkg(
+    const QList<std::pair<QByteArray, QByteArray>> &entries)
+{
+    QByteArray wire;
+    QList<quint32> crcs;
+    QList<quint32> localOffsets;
+    crcs.reserve(entries.size());
+    localOffsets.reserve(entries.size());
+
+    for (const auto &[name, payload] : entries) {
+        localOffsets.append(quint32(wire.size()));
+        crcs.append(testZipCrc32(payload));
+        appendLe32(wire, 0x04034b50);
+        appendLe16(wire, 20);
+        appendLe16(wire, 0);
+        appendLe16(wire, 0);
+        appendLe16(wire, 0);
+        appendLe16(wire, 33);
+        appendLe32(wire, crcs.constLast());
+        appendLe32(wire, quint32(payload.size()));
+        appendLe32(wire, quint32(payload.size()));
+        appendLe16(wire, quint16(name.size()));
+        appendLe16(wire, 0);
+        wire.append(name);
+        wire.append(payload);
+    }
+
+    const quint32 centralOffset = quint32(wire.size());
+    for (qsizetype index = 0; index < entries.size(); ++index) {
+        const QByteArray &name = entries.at(index).first;
+        const QByteArray &payload = entries.at(index).second;
+        appendLe32(wire, 0x02014b50);
+        appendLe16(wire, 0x0314);
+        appendLe16(wire, 20);
+        appendLe16(wire, 0);
+        appendLe16(wire, 0);
+        appendLe16(wire, 0);
+        appendLe16(wire, 33);
+        appendLe32(wire, crcs.at(index));
+        appendLe32(wire, quint32(payload.size()));
+        appendLe32(wire, quint32(payload.size()));
+        appendLe16(wire, quint16(name.size()));
+        appendLe16(wire, 0);
+        appendLe16(wire, 0);
+        appendLe16(wire, 0);
+        appendLe16(wire, 0);
+        appendLe32(wire, 0x81a40000);
+        appendLe32(wire, localOffsets.at(index));
+        wire.append(name);
+    }
+
+    const quint32 eocdOffset = quint32(wire.size());
+    appendLe32(wire, 0x06054b50);
+    appendLe16(wire, 0);
+    appendLe16(wire, 0);
+    appendLe16(wire, quint16(entries.size()));
+    appendLe16(wire, quint16(entries.size()));
+    appendLe32(wire, eocdOffset - centralOffset);
+    appendLe32(wire, centralOffset);
+    appendLe16(wire, 0);
+    return wire;
+}
+
 static QByteArray readFile(const QString &path)
 {
     QFile file(path);
@@ -2496,12 +2568,14 @@ static Utils::Result<QList<Data::DeviceAdapterManifest>> api038HistoricalTestAda
 // provider parser, then bind only the test copy to that package's exact lower
 // adapter identity. The evidence-derived mirror remains a diagnostic fallback.
 static QList<Data::DeviceAdapterManifest> factoryApi038MutationAdapters(
-    const VerifiedRuntimePackageEvidence &evidence)
+    const VerifiedRuntimePackageEvidence &evidence, bool preferHistorical = true)
 {
-    const Utils::Result<QList<Data::DeviceAdapterManifest>> historical
-        = api038HistoricalTestAdapters(evidence);
-    if (historical)
-        return *historical;
+    if (preferHistorical) {
+        const Utils::Result<QList<Data::DeviceAdapterManifest>> historical
+            = api038HistoricalTestAdapters(evidence);
+        if (historical)
+            return *historical;
+    }
 
     const VerifiedSemanticBindingArtifact &artifact = evidence.semanticBindingArtifact();
     QHash<QString, Data::DeviceAdapterManifest> manifests;
@@ -4132,6 +4206,19 @@ static Data::RuntimeResourceSnapshot targetedSnapshot(
     return snapshot;
 }
 
+static Data::RuntimeResourceSample *snapshotSample(
+    Data::RuntimeResourceSnapshot &snapshot,
+    const Data::RuntimeResourceId &resourceId)
+{
+    const auto sample = std::find_if(
+        snapshot.samples.begin(),
+        snapshot.samples.end(),
+        [&resourceId](const Data::RuntimeResourceSample &candidate) {
+            return candidate.resourceId == resourceId;
+        });
+    return sample == snapshot.samples.end() ? nullptr : &*sample;
+}
+
 static Data::RuntimeOutputGroupPolicy outputPolicy(
     const Data::RuntimeOutputGroupPolicyRequest &request,
     const SemanticActionPlanGroup &group,
@@ -4256,6 +4343,365 @@ static Data::SemanticOperationRecord submitAndApprove(
     return executor.approve(approval, api038Approver());
 }
 
+struct QualifiedMultiStepPackage
+{
+    QByteArray packageBytes;
+    QByteArray projectBytes;
+    QByteArray publicKey;
+};
+
+static Utils::Result<QualifiedMultiStepPackage> qualifiedMultiStepPackage(
+    bool waitBeforeFirstWrite = false)
+{
+    const QByteArray originalPackage = readTestData(
+        "testdata/api038/three-slave-manual-control-cfg3701.ecpkg");
+    const QByteArray projectBytes = readTestData("testdata/api038/project.json");
+    const QByteArray originalPublicKey = readTestData(
+        "testdata/api038/"
+        "eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub");
+    if (originalPackage.isEmpty() || projectBytes.isEmpty() || originalPublicKey.size() != 32) {
+        return Utils::ResultError(
+            "The API-038 source package for the multi-step fixture is incomplete");
+    }
+
+    const Utils::Result<VerifiedEcpkgPackage> source = verifyProductionEcpkg(
+        originalPackage,
+        {{originalPublicKey, EcpkgTrustClass::Production}},
+        projectBytes);
+    if (!source)
+        return Utils::ResultError(source.error());
+
+    Utils::Result<StrictJson> report = parseStrictJson(
+        source->container.compileReportJson, defaultMaximumSemanticCompileReportBytes);
+    Utils::Result<StrictJson> definitions = parseCanonicalJson(
+        source->container.semanticActionDefinitionsJson,
+        defaultMaximumSemanticActionDefinitionsBytes);
+    Utils::Result<StrictJson> manifest = parseCanonicalJson(
+        source->container.manifestJson, 1024 * 1024);
+    if (!report || !definitions || !manifest) {
+        return Utils::ResultError(
+            "The API-038 multi-step fixture JSON could not be parsed");
+    }
+
+    constexpr auto stopDefinitionId
+        = "org.embedlabs.inovance.sv630n.action.stop-csv";
+    constexpr auto axis0StopBindingId
+        = "embedlabs:project:action:axis0:stop-csv";
+    constexpr auto axis1StopBindingId
+        = "embedlabs:project:action:axis1:stop-csv";
+
+    StrictJson *stopDefinition = nullptr;
+    for (StrictJson &candidate : definitions->at("definitions")) {
+        if (candidate.at("action_definition_id") == stopDefinitionId) {
+            stopDefinition = &candidate;
+            break;
+        }
+    }
+    if (!stopDefinition)
+        return Utils::ResultError("The signed stop definition is unavailable");
+
+    StrictJson &definition = stopDefinition->at("definition");
+    StrictJson &definitionSteps = definition.at("steps");
+    if (!definitionSteps.is_array() || definitionSteps.size() != 4)
+        return Utils::ResultError("The signed stop definition shape differs");
+    std::swap(definitionSteps[2], definitionSteps[3]);
+    definitionSteps[1]["timeout_cycles"] = 5;
+    definitionSteps[3]["timeout_cycles"] = 5;
+    if (waitBeforeFirstWrite)
+        std::swap(definitionSteps[0], definitionSteps[1]);
+    definition["enabled"] = true;
+    definition["qualification"] = "qualified";
+    definition["disabled_reason"] = nullptr;
+
+    const Utils::Result<QByteArray> canonicalDefinition = serializeCanonicalJson(
+        definition, defaultMaximumSemanticActionDefinitionsBytes);
+    if (!canonicalDefinition)
+        return Utils::ResultError(canonicalDefinition.error());
+    const QByteArray definitionSha256 = QCryptographicHash::hash(
+        *canonicalDefinition, QCryptographicHash::Sha256);
+    (*stopDefinition)["action_definition_sha256"]
+        = definitionSha256.toHex().toStdString();
+
+    const auto qualifyActions = [&definitionSha256, waitBeforeFirstWrite](StrictJson &actions) {
+        qsizetype changed = 0;
+        for (StrictJson &action : actions) {
+            const std::string bindingId
+                = action.at("action_binding_id").get<std::string>();
+            if (bindingId != axis0StopBindingId && bindingId != axis1StopBindingId)
+                continue;
+            StrictJson &steps = action.at("steps");
+            if (!steps.is_array() || steps.size() != 4)
+                return false;
+            std::swap(steps[2], steps[3]);
+            steps[1]["timeout_cycles"] = 5;
+            steps[3]["timeout_cycles"] = 5;
+            if (waitBeforeFirstWrite)
+                std::swap(steps[0], steps[1]);
+            action["enabled"] = true;
+            action["qualification"] = "qualified";
+            action["disabled_reason"] = nullptr;
+            action["action_definition_sha256"]
+                = definitionSha256.toHex().toStdString();
+            ++changed;
+        }
+        return changed == 2;
+    };
+    if (!qualifyActions(report->at("semantic_binding_manifest").at("actions"))
+        || !qualifyActions(report->at("semantic_action_plans"))) {
+        return Utils::ResultError(
+            "The two signed stop action instances could not be projected");
+    }
+
+    const Utils::Result<QByteArray> canonicalArtifact = serializeCanonicalJson(
+        report->at("semantic_binding_manifest"), defaultMaximumSemanticArtifactBytes);
+    if (!canonicalArtifact)
+        return Utils::ResultError(canonicalArtifact.error());
+    const QByteArray mappingSha256 = QCryptographicHash::hash(
+        *canonicalArtifact, QCryptographicHash::Sha256);
+    (*report)["semantic_binding_manifest_sha256"]
+        = mappingSha256.toHex().toStdString();
+    (*definitions)["semantic_binding_artifact_sha256"]
+        = mappingSha256.toHex().toStdString();
+
+    const Utils::Result<QByteArray> canonicalDefinitions = serializeCanonicalJson(
+        *definitions, defaultMaximumSemanticActionDefinitionsBytes);
+    if (!canonicalDefinitions)
+        return Utils::ResultError(canonicalDefinitions.error());
+    const QByteArray definitionsSha256 = QCryptographicHash::hash(
+        *canonicalDefinitions, QCryptographicHash::Sha256);
+    (*report)["semantic_action_definitions_manifest"] = *definitions;
+    (*report)["semantic_action_definitions_sha256"]
+        = definitionsSha256.toHex().toStdString();
+
+    std::string reportText = report->dump(2);
+    reportText.push_back('\n');
+    const QByteArray reportBytes(reportText.data(), qsizetype(reportText.size()));
+    const QByteArray reportSha256 = QCryptographicHash::hash(
+        reportBytes, QCryptographicHash::Sha256);
+
+    for (StrictJson &payload : manifest->at("payloads")) {
+        const std::string name = payload.at("name").get<std::string>();
+        if (name == "compile_report.json") {
+            payload["bytes"] = quint64(reportBytes.size());
+            payload["sha256"] = reportSha256.toHex().toStdString();
+        } else if (name == "semantic-action-definitions-v1.json") {
+            payload["bytes"] = quint64(canonicalDefinitions->size());
+            payload["sha256"] = definitionsSha256.toHex().toStdString();
+        }
+    }
+    (*manifest)["semantic_binding"]["artifact_sha256"]
+        = mappingSha256.toHex().toStdString();
+    (*manifest)["semantic_binding"]["action_definitions_sha256"]
+        = definitionsSha256.toHex().toStdString();
+
+    // RFC 8032 test vector 1 is deliberately public test material, never a
+    // production signing root. It gives this in-memory fixture a real detached
+    // signature without granting authority to the shipped SV630N adapter.
+    QByteArray seed = QByteArray::fromHex(
+        "9d61b19deffd5a60ba844af492ec2cc4"
+        "4449c5697b326919703bac031cae7f60");
+    QByteArray secretKey(64, '\0');
+    QByteArray publicKey(32, '\0');
+    crypto_ed25519_key_pair(
+        reinterpret_cast<uint8_t *>(secretKey.data()),
+        reinterpret_cast<uint8_t *>(publicKey.data()),
+        reinterpret_cast<uint8_t *>(seed.data()));
+    const QByteArray keyId = QCryptographicHash::hash(
+        publicKey, QCryptographicHash::Sha256);
+    (*manifest)["signature"]["key_id"] = keyId.toHex().toStdString();
+    const Utils::Result<QByteArray> canonicalManifest = serializeCanonicalJson(
+        *manifest, 1024 * 1024);
+    if (!canonicalManifest)
+        return Utils::ResultError(canonicalManifest.error());
+
+    QByteArray signature(64, '\0');
+    crypto_ed25519_sign(
+        reinterpret_cast<uint8_t *>(signature.data()),
+        reinterpret_cast<const uint8_t *>(secretKey.constData()),
+        reinterpret_cast<const uint8_t *>(canonicalManifest->constData()),
+        std::size_t(canonicalManifest->size()));
+    secretKey.fill('\0');
+    seed.fill('\0');
+
+    const QByteArray packageBytes = buildCanonicalTestEcpkg({
+        {QByteArray("manifest.json"), *canonicalManifest},
+        {QByteArray("capability.bin"), source->container.capabilityBin},
+        {QByteArray("configuration.ecfg"), source->container.configurationEcfg},
+        {QByteArray("runtime.erun"), source->container.runtimeErun},
+        {QByteArray("compile_report.json"), reportBytes},
+        {QByteArray("semantic-action-definitions-v1.json"), *canonicalDefinitions},
+        {QByteArray("manifest.sig"), signature},
+    });
+    const Utils::Result<VerifiedEcpkgPackage> verified = verifyProductionEcpkg(
+        packageBytes,
+        {{publicKey, EcpkgTrustClass::Production}},
+        projectBytes);
+    if (!verified)
+        return Utils::ResultError(verified.error());
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidence
+        = verifyRuntimePackageEvidence(*verified);
+    if (!evidence)
+        return Utils::ResultError(evidence.error());
+    if (!evidence->invocableAction(u"embedlabs:project:action:axis0:stop-csv", true)) {
+        return Utils::ResultError(
+            "The qualified multi-step fixture is not invocable");
+    }
+    return QualifiedMultiStepPackage{packageBytes, projectBytes, publicKey};
+}
+
+static Utils::Result<QList<Data::DeviceAdapterManifest>> qualifiedMultiStepAdapters(
+    const VerifiedRuntimePackageEvidence &evidence,
+    bool waitBeforeFirstWrite = false)
+{
+    Utils::Result<QList<Data::DeviceAdapterManifest>> result
+        = api038HistoricalTestAdapters(evidence);
+    if (!result)
+        return Utils::ResultError(result.error());
+    QList<Data::DeviceAdapterManifest> adapters = *result;
+
+    const VerifiedSemanticAction *axis0Stop = evidence.semanticBindingArtifact().findAction(
+        u"embedlabs:project:action:axis0:stop-csv");
+    if (!axis0Stop)
+        return Utils::ResultError("The projected signed stop action is unavailable");
+
+    const auto sv630n = std::find_if(
+        adapters.begin(),
+        adapters.end(),
+        [](const Data::DeviceAdapterManifest &manifest) {
+            return manifest.controllerAdapterTarget.adapterId
+                   == QStringLiteral("inovance.sv630n_1axis_rev00010000_csp");
+        });
+    if (sv630n == adapters.end())
+        return Utils::ResultError("The test SV630N adapter is unavailable");
+    const auto stop = std::find_if(
+        sv630n->controlActions.begin(),
+        sv630n->controlActions.end(),
+        [](const Data::DeviceControlAction &action) {
+            return action.id.value
+                   == QStringLiteral("org.embedlabs.inovance.sv630n.action.stop-csv");
+        });
+    if (stop == sv630n->controlActions.end() || stop->steps.size() != 4) {
+        return Utils::ResultError("The test SV630N stop definition differs");
+    }
+    std::swap(stop->steps[2], stop->steps[3]);
+    stop->steps[1].timeoutCycles = 5;
+    stop->steps[3].timeoutCycles = 5;
+    if (waitBeforeFirstWrite)
+        std::swap(stop->steps[0], stop->steps[1]);
+    stop->enabled = true;
+    stop->signedQualification = Data::DeviceControlActionQualification::Qualified;
+    stop->disabledReason.clear();
+    stop->expectedSignedDefinitionSha256 = axis0Stop->actionDefinitionSha256;
+
+    if (stop->consistencyGroups.size() != 1
+        || axis0Stop->consistencyGroups.size() != 1) {
+        return Utils::ResultError("The projected stop group shape differs");
+    }
+    Data::DeviceControlConsistencyGroup &stopGroup = stop->consistencyGroups[0];
+    const VerifiedSemanticActionGroup &signedGroup = axis0Stop->consistencyGroups.constFirst();
+    stopGroup.recovery
+        = signedGroup.recoveryPolicy == EcfgOutputRecoveryPolicy::HoldSafe
+              ? Data::DeviceControlGroupRecovery::HoldSafe
+              : Data::DeviceControlGroupRecovery::ReturnTask;
+    stopGroup.maximumTtlCycles = signedGroup.maximumTtlCycles;
+    stopGroup.members.clear();
+    for (const auto *references : {&axis0Stop->requiredBindings, &axis0Stop->optionalBindings}) {
+        for (const VerifiedSemanticActionBindingReference &reference : *references) {
+            if (reference.consistencyGroupId == signedGroup.consistencyGroupId
+                && reference.direction == EcfgResourceDirection::Output
+                && reference.access == EcfgResourceAccess::ReadWrite) {
+                stopGroup.members.append({reference.semanticSignalDefinitionId});
+            }
+        }
+    }
+    std::sort(
+        stopGroup.members.begin(),
+        stopGroup.members.end(),
+        [](const Data::SemanticSignalId &left, const Data::SemanticSignalId &right) {
+            return left.value < right.value;
+        });
+    for (const auto *references : {&axis0Stop->requiredBindings, &axis0Stop->optionalBindings}) {
+        for (const VerifiedSemanticActionBindingReference &reference : *references) {
+            const VerifiedSemanticBinding *binding
+                = evidence.semanticBindingArtifact().findBySemanticSignalId(
+                    reference.semanticBindingId);
+            const std::optional<Data::EtherCATDataType> dataType = factoryDataType(
+                reference.primitive);
+            const std::optional<Data::EngineeringConstraint> constraint = factoryConstraint(
+                reference.primitive, reference.bitWidth);
+            if (!binding || !dataType || !constraint)
+                return Utils::ResultError("A projected stop signal is unsupported");
+
+            Data::SemanticSignalDefinition signal;
+            signal.id = {reference.semanticSignalDefinitionId};
+            signal.displayName = reference.semanticSignalDefinitionId;
+            signal.direction = reference.direction == EcfgResourceDirection::Output
+                                   ? Data::SemanticSignalDirection::Output
+                                   : Data::SemanticSignalDirection::Input;
+            signal.access = reference.access == EcfgResourceAccess::ReadWrite
+                                ? Data::SemanticSignalAccess::ReadWrite
+                                : Data::SemanticSignalAccess::ReadOnly;
+            signal.exposure = Data::SemanticSignalExposure::ActionOnly;
+            Data::DeviceSignalBinding deviceBinding;
+            deviceBinding.kind = Data::DeviceSignalBindingKind::ProcessDataObject;
+            deviceBinding.pdoDirection = reference.direction == EcfgResourceDirection::Output
+                                             ? Data::PdoDirection::Rx
+                                             : Data::PdoDirection::Tx;
+            deviceBinding.physicalType = *dataType;
+            deviceBinding.bitWidth = reference.bitWidth;
+            signal.bindings.append(deviceBinding);
+            Data::EngineeringTransform transform;
+            transform.unit = reference.unit.value_or(QString());
+            transform.scale = {
+                reference.scaleNumerator,
+                reference.scaleDenominator,
+            };
+            transform.offset = {reference.scaleOffset, 1};
+            transform.constraint = *constraint;
+            transform.rounding = Data::EngineeringRounding::RejectInexact;
+            signal.engineeringTransform = transform;
+            if (binding->safeValueDeclared && binding->safeValue) {
+                std::variant<qint64, quint64> safeValue = *binding->safeValue;
+                if ((binding->primitive == EcfgResourcePrimitive::Bool
+                     || binding->primitive == EcfgResourcePrimitive::U8
+                     || binding->primitive == EcfgResourcePrimitive::U16
+                     || binding->primitive == EcfgResourcePrimitive::U32
+                     || binding->primitive == EcfgResourcePrimitive::U64)
+                    && std::holds_alternative<qint64>(safeValue)
+                    && std::get<qint64>(safeValue) >= 0) {
+                    safeValue = quint64(std::get<qint64>(safeValue));
+                } else if ((binding->primitive == EcfgResourcePrimitive::S8
+                            || binding->primitive == EcfgResourcePrimitive::S16
+                            || binding->primitive == EcfgResourcePrimitive::S32
+                            || binding->primitive == EcfgResourcePrimitive::S64)
+                           && std::holds_alternative<quint64>(safeValue)
+                           && std::get<quint64>(safeValue)
+                                  <= quint64(std::numeric_limits<qint64>::max())) {
+                    safeValue = qint64(std::get<quint64>(safeValue));
+                }
+                signal.engineeringSafeValue = factoryEngineeringValue(
+                    binding->primitive, safeValue);
+                if (!signal.engineeringSafeValue) {
+                    return Utils::ResultError(
+                        "A projected stop safe value is unsupported");
+                }
+            }
+
+            const auto existing = std::find_if(
+                sv630n->semanticSignals.begin(),
+                sv630n->semanticSignals.end(),
+                [&signal](const Data::SemanticSignalDefinition &candidate) {
+                    return candidate.id == signal.id;
+                });
+            if (existing == sv630n->semanticSignals.end())
+                sv630n->semanticSignals.append(std::move(signal));
+            else
+                *existing = std::move(signal);
+        }
+    }
+    return adapters;
+}
+
 static Utils::Id nextSemanticExecutorFixtureProviderId(QStringView kind)
 {
     static quint64 sequence = 0;
@@ -4299,21 +4745,38 @@ public:
         bool configureManualPolicy = true,
         int liveRefreshTimeoutMs = 5000,
         int liveSampleFreshnessMs = 5000,
-        std::function<QDateTime()> utcNow = {})
+        std::function<QDateTime()> utcNow = {},
+        bool qualifiedMultiStep = false,
+        bool waitBeforeFirstWrite = false)
     {
         if (!temporary.isValid())
             return Utils::ResultError("The semantic executor temporary directory is invalid");
 
-        const QByteArray packageBytes = readTestData(
-            "testdata/api038/three-slave-manual-control-cfg3701.ecpkg");
-        const QByteArray projectBytes = readTestData("testdata/api038/project.json");
-        const QString keyFileName = QStringLiteral(
-            "eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub");
-        const QByteArray publicKey = readTestData(
-            QStringLiteral("testdata/api038/") + keyFileName);
+        QByteArray packageBytes;
+        QByteArray projectBytes;
+        QByteArray publicKey;
+        if (qualifiedMultiStep) {
+            const Utils::Result<QualifiedMultiStepPackage> package
+                = qualifiedMultiStepPackage(waitBeforeFirstWrite);
+            if (!package)
+                return Utils::ResultError(package.error());
+            packageBytes = package->packageBytes;
+            projectBytes = package->projectBytes;
+            publicKey = package->publicKey;
+        } else {
+            packageBytes = readTestData(
+                "testdata/api038/three-slave-manual-control-cfg3701.ecpkg");
+            projectBytes = readTestData("testdata/api038/project.json");
+            publicKey = readTestData(
+                "testdata/api038/"
+                "eceffa53d8903e70e4e317c066a2a1de8cf58a616bb8337a6f4dc9e7f4c10ac6.pub");
+        }
         if (packageBytes.isEmpty() || projectBytes.isEmpty() || publicKey.size() != 32)
             return Utils::ResultError("The API-038 executor fixture is incomplete");
 
+        const QString keyFileName = QString::fromLatin1(
+            QCryptographicHash::hash(publicKey, QCryptographicHash::Sha256).toHex())
+                                    + QStringLiteral(".pub");
         const QString trustRoot = QDir(temporary.path()).filePath("trust");
         if (!QDir().mkpath(trustRoot)
             || !writeFile(QDir(trustRoot).filePath(keyFileName), publicKey)) {
@@ -4331,7 +4794,9 @@ public:
 
         project = factoryProject(*evidence);
         const Utils::Result<QList<Data::DeviceAdapterManifest>> historicalAdapters
-            = api038HistoricalTestAdapters(*evidence);
+            = qualifiedMultiStep
+                  ? qualifiedMultiStepAdapters(*evidence, waitBeforeFirstWrite)
+                                 : api038HistoricalTestAdapters(*evidence);
         if (!historicalAdapters)
             return Utils::ResultError(historicalAdapters.error());
         adapterManifests = *historicalAdapters;
@@ -4374,16 +4839,33 @@ public:
             return Utils::ResultError("The API-038 semantic execution context is incomplete");
         const Data::SemanticRuntimeContext &context = executor->contexts().constFirst();
         if (configureManualPolicy) {
+            const QString readyActionId
+                = qualifiedMultiStep
+                      ? QStringLiteral("embedlabs:project:action:axis0:stop-csv")
+                      : QStringLiteral("embedlabs:project:action:xb6:set-outputs");
             const auto readyAction = std::find_if(
                 context.actionStates.cbegin(),
                 context.actionStates.cend(),
-                [](const Data::SemanticActionRuntimeState &action) {
-                    return action.actionBindingId
-                               == QStringLiteral("embedlabs:project:action:xb6:set-outputs")
+                [&readyActionId](const Data::SemanticActionRuntimeState &action) {
+                    return action.actionBindingId == readyActionId
                            && action.availability == Data::SemanticActionAvailability::Ready;
                 });
-            if (readyAction == context.actionStates.cend())
-                return Utils::ResultError("The API-038 XB6 action is not executable");
+            if (readyAction == context.actionStates.cend()) {
+                const auto unavailableAction = std::find_if(
+                    context.actionStates.cbegin(),
+                    context.actionStates.cend(),
+                    [&readyActionId](const Data::SemanticActionRuntimeState &action) {
+                        return action.actionBindingId == readyActionId;
+                    });
+                return Utils::ResultError(
+                    unavailableAction != context.actionStates.cend()
+                        ? QStringLiteral("The test action is unavailable: %1")
+                              .arg(unavailableAction->detail)
+                        : (qualifiedMultiStep
+                               ? QStringLiteral(
+                                     "The test-only qualified multi-step action is not executable")
+                               : QStringLiteral("The API-038 XB6 action is not executable")));
+            }
         }
         return Utils::ResultOk;
     }
@@ -4452,6 +4934,73 @@ static bool advanceExecutorToApply(
         return false;
     fixture.provider.sendStateResult(stateResult);
     return fixture.provider.pendingApplyRequest.has_value();
+}
+
+struct QualifiedFirstWaitProgress
+{
+    Data::RuntimeOutputTransactionRequest applyRequest;
+    Data::RuntimeOutputTransactionState appliedState;
+};
+
+static Utils::Result<QualifiedFirstWaitProgress> advanceQualifiedMultiStepToFirstWait(
+    SemanticExecutorFixture &fixture,
+    const SemanticActionPlan &plan,
+    quint64 outputGeneration = 41,
+    quint64 appliedCycle = 120)
+{
+    if (!advanceExecutorToApply(fixture, plan, outputGeneration, 2, appliedCycle - 10))
+        return Utils::ResultError("The multi-step preflight did not reach the first write");
+
+    const Data::RuntimeOutputTransactionRequest applyRequest
+        = *fixture.provider.pendingApplyRequest;
+    if (applyRequest.operationId != plan.steps().constFirst().outputOperationId())
+        return Utils::ResultError("The first multi-step operation identifier differs");
+    const Data::RuntimeOutputTransactionState appliedState = completedOutputState(
+        applyRequest, Data::RuntimeOutputTransactionOutcome::Applied, appliedCycle);
+    const Data::RuntimeOutputTransactionResult appliedResult{
+        applyRequest,
+        Data::RuntimeOutputTransactionOutcome::Applied,
+        true,
+        appliedState,
+        {},
+    };
+    if (!appliedResult.isValid())
+        return Utils::ResultError("The first multi-step applied result is invalid");
+    fixture.provider.sendApplyResult(appliedResult);
+    if (!fixture.provider.pendingSnapshotRequest)
+        return Utils::ResultError("The first multi-step after snapshot was not requested");
+
+    const Data::RuntimeResourceSnapshotRequest afterRequest
+        = *fixture.provider.pendingSnapshotRequest;
+    const Data::RuntimeResourceSnapshot afterSnapshot = targetedSnapshot(
+        fixture.snapshot,
+        afterRequest,
+        applyRequest.completeGroupWrites,
+        3,
+        appliedCycle + 1,
+        appliedCycle * 10 + 10);
+    const Data::RuntimeResourceSnapshotResult afterResult{afterRequest, afterSnapshot, {}};
+    if (!afterResult.isValid())
+        return Utils::ResultError("The first multi-step after snapshot is invalid");
+    fixture.provider.sendSnapshotResult(afterResult);
+    if (!fixture.provider.pendingStateRequest)
+        return Utils::ResultError("The first multi-step post-state was not requested");
+
+    const Data::RuntimeOutputTransactionStateRequest postStateRequest
+        = *fixture.provider.pendingStateRequest;
+    Data::RuntimeOutputTransactionState postState = appliedState;
+    postState.controllerTimestampNs = afterSnapshot.controllerTimestampNs + 1;
+    const Data::RuntimeOutputTransactionStateResult postStateResult{
+        postStateRequest, postState, {}};
+    if (!postStateResult.isValid())
+        return Utils::ResultError("The first multi-step post-state result is invalid");
+    fixture.provider.sendStateResult(postStateResult);
+
+    for (int attempt = 0; attempt < 50 && !fixture.provider.pendingSnapshotRequest; ++attempt)
+        QTest::qWait(1);
+    if (!fixture.provider.pendingSnapshotRequest)
+        return Utils::ResultError("The first multi-step wait snapshot was not requested");
+    return QualifiedFirstWaitProgress{applyRequest, appliedState};
 }
 
 static quint32 testReadLe32(QByteArrayView bytes, qsizetype offset)
@@ -10772,6 +11321,37 @@ void EtherCATSemanticRuntimeTests::testSemanticOperationJournal()
             failedStepRequest.operationId, prematureSuccess, submittedAt.addSecs(5))
             .disposition,
         SemanticOperationJournalDisposition::Rejected);
+    SemanticOperationJournalStateUpdate failedUnknown;
+    failedUnknown.expectedState = Data::SemanticOperationState::Executing;
+    failedUnknown.state = Data::SemanticOperationState::OutcomeUnknown;
+    failedUnknown.actor = submitter;
+    failedUnknown.resultCode = QStringLiteral("outcome-unknown");
+    QCOMPARE(
+        failedStepJournal.transition(
+            failedStepRequest.operationId, failedUnknown, submittedAt.addSecs(6))
+            .disposition,
+        SemanticOperationJournalDisposition::Rejected);
+    SemanticOperationJournalStateUpdate failedCanceled = failedUnknown;
+    failedCanceled.state = Data::SemanticOperationState::Canceled;
+    failedCanceled.resultCode = QStringLiteral("canceled");
+    QCOMPARE(
+        failedStepJournal.transition(
+            failedStepRequest.operationId, failedCanceled, submittedAt.addMSecs(6500))
+            .disposition,
+        SemanticOperationJournalDisposition::Rejected);
+    SemanticOperationJournalStateUpdate failedTimedOut;
+    failedTimedOut.expectedState = Data::SemanticOperationState::Executing;
+    failedTimedOut.state = Data::SemanticOperationState::TimedOut;
+    failedTimedOut.actor = submitter;
+    failedTimedOut.resultCode = QStringLiteral("wait-deadline-reached");
+    QCOMPARE(
+        failedStepJournal.transition(
+            failedStepRequest.operationId, failedTimedOut, submittedAt.addSecs(7))
+            .disposition,
+        SemanticOperationJournalDisposition::Updated);
+    QCOMPARE(
+        failedStepJournal.operation(failedStepRequest.operationId)->state,
+        Data::SemanticOperationState::TimedOut);
 }
 
 void EtherCATSemanticRuntimeTests::testSemanticActionPlan()
@@ -11869,6 +12449,452 @@ void EtherCATSemanticRuntimeTests::testExecutorSurvivesCompletionDeletingExecuto
     QVERIFY(!fixture.executor);
 }
 
+void EtherCATSemanticRuntimeTests::testExecutorSurvivesSynchronousActionDeletion()
+{
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context
+            = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/api038/executor/delete-during-before");
+        setApi038DigitalOutputParameters(request);
+
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        bool dispatchingBeforeResult = false;
+        bool executorDeleted = false;
+        fixture.provider.snapshotRequestStarted =
+            [&fixture, &dispatchingBeforeResult](
+                const Data::RuntimeResourceSnapshotRequest &providerRequest) {
+                QVERIFY(providerRequest.correlationId.endsWith(QStringLiteral("-before")));
+                dispatchingBeforeResult = true;
+                fixture.provider.sendSnapshotResult({
+                    providerRequest,
+                    targetedSnapshot(
+                        fixture.snapshot, providerRequest, {}, 2, 110, 1100),
+                    {},
+                });
+                dispatchingBeforeResult = false;
+            };
+        fixture.provider.failSnapshotStartAfterCallback = true;
+        QObject::connect(
+            fixture.executor.get(),
+            &Core::SemanticRuntimeService::operationChanged,
+            fixture.executor.get(),
+            [&fixture,
+             &request,
+             &dispatchingBeforeResult,
+             &executorDeleted](const Data::SemanticOperationId &operationId) {
+                if (operationId != request.operationId || !dispatchingBeforeResult)
+                    return;
+                executorDeleted = true;
+                fixture.executor.reset();
+            },
+            Qt::DirectConnection);
+
+        QTRY_VERIFY(executorDeleted);
+        QVERIFY(!fixture.executor);
+        QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(1));
+        QVERIFY(fixture.provider.policyRequests.isEmpty());
+        QVERIFY(fixture.provider.stateRequests.isEmpty());
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+        QCOMPARE(fixture.provider.pendingRequestCount(), 0);
+        QTest::qWait(20);
+        QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.pendingRequestCount(), 0);
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            false, true, 5000, 5000, {}, true);
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context
+            = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:axis0:stop-csv",
+            u"operation/api038/executor/delete-during-wait");
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        QVERIFY(advanceExecutorToApply(fixture, *plan, 41, 2, 110));
+
+        const Data::RuntimeOutputTransactionRequest firstApply
+            = *fixture.provider.pendingApplyRequest;
+        const Data::RuntimeOutputTransactionState firstApplied = completedOutputState(
+            firstApply, Data::RuntimeOutputTransactionOutcome::Applied, 120);
+        fixture.provider.sendApplyResult({
+            firstApply,
+            Data::RuntimeOutputTransactionOutcome::Applied,
+            true,
+            firstApplied,
+            {},
+        });
+        QVERIFY(fixture.provider.pendingSnapshotRequest);
+        const Data::RuntimeResourceSnapshotRequest firstAfterRequest
+            = *fixture.provider.pendingSnapshotRequest;
+        const Data::RuntimeResourceSnapshot firstAfter = targetedSnapshot(
+            fixture.snapshot,
+            firstAfterRequest,
+            firstApply.completeGroupWrites,
+            3,
+            121,
+            1210);
+        fixture.provider.sendSnapshotResult({firstAfterRequest, firstAfter, {}});
+        QVERIFY(fixture.provider.pendingStateRequest);
+        const Data::RuntimeOutputTransactionStateRequest firstPostRequest
+            = *fixture.provider.pendingStateRequest;
+        Data::RuntimeOutputTransactionState firstPost = firstApplied;
+        firstPost.controllerTimestampNs = firstAfter.controllerTimestampNs + 1;
+
+        bool dispatchingWaitResult = false;
+        bool executorDeleted = false;
+        fixture.provider.snapshotRequestStarted =
+            [&fixture, &plan, &firstApply, &dispatchingWaitResult](
+                const Data::RuntimeResourceSnapshotRequest &providerRequest) {
+                if (!providerRequest.correlationId.endsWith(QStringLiteral("-wait")))
+                    return;
+                Data::RuntimeResourceSnapshot waitSnapshot = targetedSnapshot(
+                    fixture.snapshot,
+                    providerRequest,
+                    firstApply.completeGroupWrites,
+                    4,
+                    122,
+                    1220);
+                QVERIFY(plan->steps().at(1).waitBinding());
+                Data::RuntimeResourceSample *waitSample = snapshotSample(
+                    waitSnapshot, plan->steps().at(1).waitBinding()->resourceId);
+                QVERIFY(waitSample);
+                waitSample->value.value = QVariant::fromValue<qulonglong>(64);
+                dispatchingWaitResult = true;
+                fixture.provider.sendSnapshotResult(
+                    {providerRequest, waitSnapshot, {}});
+                dispatchingWaitResult = false;
+            };
+        fixture.provider.failSnapshotStartAfterCallback = true;
+        QObject::connect(
+            fixture.executor.get(),
+            &Core::SemanticRuntimeService::operationChanged,
+            fixture.executor.get(),
+            [&fixture,
+             &request,
+             &dispatchingWaitResult,
+             &executorDeleted](const Data::SemanticOperationId &operationId) {
+                if (operationId != request.operationId || !dispatchingWaitResult)
+                    return;
+                executorDeleted = true;
+                fixture.executor.reset();
+            },
+            Qt::DirectConnection);
+
+        fixture.provider.sendStateResult({firstPostRequest, firstPost, {}});
+        QTRY_VERIFY(executorDeleted);
+        QVERIFY(!fixture.executor);
+        QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(3));
+        QCOMPARE(fixture.provider.policyRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.stateRequests.size(), qsizetype(2));
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.pendingRequestCount(), 0);
+        QTest::qWait(20);
+        QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(3));
+        QCOMPARE(fixture.provider.pendingRequestCount(), 0);
+    }
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorSurvivesSynchronousLifecycleDeletion()
+{
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            false, true, 5000, 5000, {}, true, true);
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context
+            = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:axis0:stop-csv",
+            u"operation/api038/executor/delete-during-first-wait-timeout");
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(plan->steps().constFirst().kind(), SemanticActionPlanStepKind::WaitMasked);
+        QCOMPARE(plan->steps().constFirst().timeoutCycles(), quint32(5));
+        QCOMPARE(plan->steps().at(1).kind(), SemanticActionPlanStepKind::WriteGroup);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        const Data::RuntimeResourceSnapshotRequest beforeRequest
+            = *fixture.provider.pendingSnapshotRequest;
+        fixture.provider.sendSnapshotResult({
+            beforeRequest,
+            targetedSnapshot(fixture.snapshot, beforeRequest, {}, 2, 110, 1100),
+            {},
+        });
+        QVERIFY(fixture.provider.pendingPolicyRequest);
+        const Data::RuntimeOutputGroupPolicyRequest policyRequest
+            = *fixture.provider.pendingPolicyRequest;
+        fixture.provider.sendPolicyResult({
+            policyRequest,
+            outputPolicy(policyRequest, plan->groups().constFirst(), 41),
+            {},
+        });
+        QVERIFY(fixture.provider.pendingStateRequest);
+        const Data::RuntimeOutputTransactionStateRequest stateRequest
+            = *fixture.provider.pendingStateRequest;
+        fixture.provider.sendStateResult({stateRequest, idleOutputState(stateRequest, 41), {}});
+
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        const Data::RuntimeResourceSnapshotRequest waitRequest
+            = *fixture.provider.pendingSnapshotRequest;
+        Data::RuntimeResourceSnapshot deadlineSnapshot = targetedSnapshot(
+            fixture.snapshot, waitRequest, {}, 3, 115, 1150);
+        QVERIFY(plan->steps().constFirst().waitBinding());
+        Data::RuntimeResourceSample *waitSample = snapshotSample(
+            deadlineSnapshot, plan->steps().constFirst().waitBinding()->resourceId);
+        QVERIFY(waitSample);
+        waitSample->value.value = QVariant::fromValue<qulonglong>(0);
+
+        bool dispatchingDeadlineResult = false;
+        bool executorDeleted = false;
+        QObject::connect(
+            fixture.executor.get(),
+            &Core::SemanticRuntimeService::operationChanged,
+            fixture.executor.get(),
+            [&fixture,
+             &request,
+             &dispatchingDeadlineResult,
+             &executorDeleted](const Data::SemanticOperationId &operationId) {
+                if (operationId != request.operationId || !dispatchingDeadlineResult)
+                    return;
+                executorDeleted = true;
+                fixture.executor.reset();
+            },
+            Qt::DirectConnection);
+        dispatchingDeadlineResult = true;
+        fixture.provider.sendSnapshotResult({waitRequest, deadlineSnapshot, {}});
+        dispatchingDeadlineResult = false;
+
+        QVERIFY(executorDeleted);
+        QVERIFY(!fixture.executor);
+        QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(2));
+        QCOMPARE(fixture.provider.policyRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.stateRequests.size(), qsizetype(1));
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+        QCOMPARE(fixture.provider.pendingRequestCount(), 0);
+    }
+
+    for (const bool removeProvider : {false, true}) {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context
+            = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            removeProvider
+                ? u"operation/api038/executor/delete-during-provider-removal"
+                : u"operation/api038/executor/delete-during-project-removal");
+        setApi038DigitalOutputParameters(request);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+
+        bool removingLifecycleObject = false;
+        bool executorDeleted = false;
+        int failurePublications = 0;
+        QObject::connect(
+            fixture.executor.get(),
+            &Core::SemanticRuntimeService::operationChanged,
+            fixture.executor.get(),
+            [&fixture,
+             &request,
+             &removingLifecycleObject,
+             &executorDeleted,
+             &failurePublications](const Data::SemanticOperationId &operationId) {
+                if (operationId != request.operationId || !removingLifecycleObject)
+                    return;
+                ++failurePublications;
+                executorDeleted = true;
+                fixture.executor.reset();
+            },
+            Qt::DirectConnection);
+        removingLifecycleObject = true;
+        if (removeProvider) {
+            QVERIFY(fixture.registration);
+            fixture.registration->remove();
+        } else {
+            fixture.projects.removeProject(fixture.project.id);
+        }
+        removingLifecycleObject = false;
+
+        QVERIFY(executorDeleted);
+        QVERIFY(!fixture.executor);
+        QCOMPARE(failurePublications, 1);
+        QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(1));
+        QTest::qWait(20);
+        QCOMPARE(failurePublications, 1);
+        QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(1));
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context
+            = fixture.executor->contexts().constFirst();
+        const Data::SemanticSignalRuntimeState signal = context.signalStates.constFirst();
+        Data::SemanticLiveRefreshRequest request;
+        request.controllerId = context.controllerId;
+        request.scope = context.scope;
+        request.targets = {{signal.target.deviceId, signal.target.signalId}};
+        request.expectedContextHash = context.contextHash;
+        request.correlationId = QStringLiteral(
+            "semantic-refresh/delete-during-context-publication");
+
+        int completionCount = 0;
+        QObject::connect(
+            fixture.executor.get(),
+            &Core::SemanticRuntimeService::liveRefreshCompleted,
+            &fixture.provider,
+            [&completionCount] { ++completionCount; },
+            Qt::DirectConnection);
+        QCOMPARE(
+            fixture.executor->requestLiveRefresh(request).outcome,
+            Data::SemanticLiveRefreshOutcome::Accepted);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        const Data::RuntimeResourceSnapshotRequest providerRequest
+            = *fixture.provider.pendingSnapshotRequest;
+
+        bool publishingLiveResult = false;
+        bool executorDeleted = false;
+        int contextPublications = 0;
+        QObject::connect(
+            fixture.executor.get(),
+            &Core::SemanticRuntimeService::contextsChanged,
+            fixture.executor.get(),
+            [&fixture,
+             &publishingLiveResult,
+             &executorDeleted,
+             &contextPublications] {
+                if (!publishingLiveResult)
+                    return;
+                ++contextPublications;
+                executorDeleted = true;
+                fixture.executor.reset();
+            },
+            Qt::DirectConnection);
+        publishingLiveResult = true;
+        fixture.provider.sendSnapshotResult({
+            providerRequest,
+            targetedSnapshot(
+                fixture.snapshot,
+                providerRequest,
+                {},
+                fixture.snapshot.snapshotSequence + 70,
+                fixture.snapshot.captureCycle + 70,
+                fixture.snapshot.controllerTimestampNs + 700),
+            {},
+        });
+        publishingLiveResult = false;
+
+        QVERIFY(executorDeleted);
+        QVERIFY(!fixture.executor);
+        QCOMPARE(contextPublications, 1);
+        QCOMPARE(completionCount, 0);
+        QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.pendingRequestCount(), 0);
+        QTest::qWait(20);
+        QCOMPARE(completionCount, 0);
+        QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(1));
+    }
+
+    {
+        RuntimeBootstrapFixture fixture;
+        QVERIFY_RESULT(fixture.initialize());
+        QVERIFY(fixture.evidence);
+        auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+        QVERIFY(registry);
+        TestProjectService projects;
+        projects.addProject(fixture.project);
+        const Data::RuntimeResourceCatalog catalog
+            = factoryCatalog(fixture.project, *fixture.evidence);
+        CountingControllerProvider provider(
+            "EtherCAT.SemanticRuntime.Tests.RuntimeBootstrap.DeleteDuringRefresh");
+        provider.publishSnapshot(connectedSnapshot(
+            projectScope(fixture.project), catalog.sessionGeneration));
+        provider.setAvailable(true);
+        RegisteredObject registration(&provider);
+        std::unique_ptr<SemanticRuntimeExecutor> executor;
+        bool callbackEntered = false;
+        provider.runtimeResourceRefreshStarted = [&executor, &callbackEntered] {
+            callbackEntered = true;
+            executor.reset();
+        };
+        executor = std::make_unique<SemanticRuntimeExecutor>(
+            &projects, registry, nullptr, fixture.repository);
+
+        QTRY_VERIFY(callbackEntered);
+        QVERIFY(!executor);
+        QCOMPARE(provider.runtimeResourceRefreshCalls, 1);
+        QVERIFY(provider.semanticMappingAttestationRequests.isEmpty());
+        QTest::qWait(20);
+        QCOMPARE(provider.runtimeResourceRefreshCalls, 1);
+        QVERIFY(provider.semanticMappingAttestationRequests.isEmpty());
+    }
+
+    {
+        RuntimeBootstrapFixture fixture;
+        QVERIFY_RESULT(fixture.initialize());
+        QVERIFY(fixture.evidence);
+        auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
+        QVERIFY(registry);
+        TestProjectService projects;
+        projects.addProject(fixture.project);
+        const Data::RuntimeResourceCatalog catalog
+            = factoryCatalog(fixture.project, *fixture.evidence);
+        CountingControllerProvider provider(
+            "EtherCAT.SemanticRuntime.Tests.RuntimeBootstrap.DeleteDuringAttestation");
+        provider.publishSnapshot(connectedSnapshot(
+            projectScope(fixture.project), catalog.sessionGeneration));
+        provider.setAvailable(true);
+        RegisteredObject registration(&provider);
+        std::unique_ptr<SemanticRuntimeExecutor> executor
+            = std::make_unique<SemanticRuntimeExecutor>(
+                &projects, registry, nullptr, fixture.repository);
+        QTRY_COMPARE(provider.runtimeResourceRefreshCalls, 1);
+
+        bool callbackEntered = false;
+        provider.semanticMappingAttestationRequestStarted
+            = [&executor, &callbackEntered](
+                  const Data::RuntimeSemanticMappingAttestationRequest &) {
+                  callbackEntered = true;
+                  executor.reset();
+              };
+        provider.publishCatalog(catalog);
+        QTRY_VERIFY(callbackEntered);
+        QVERIFY(!executor);
+        QCOMPARE(provider.runtimeResourceRefreshCalls, 1);
+        QCOMPARE(provider.semanticMappingAttestationRequests.size(), qsizetype(1));
+        QTest::qWait(20);
+        QCOMPARE(provider.runtimeResourceRefreshCalls, 1);
+        QCOMPARE(provider.semanticMappingAttestationRequests.size(), qsizetype(1));
+    }
+}
+
 void EtherCATSemanticRuntimeTests::testExecutorExpiresAndSeparatesLiveCaptureCohorts()
 {
     QDateTime now = QDateTime::currentDateTimeUtc();
@@ -12062,6 +13088,701 @@ void EtherCATSemanticRuntimeTests::testExecutorExecutesApi038Xb6Action()
         }));
     QCOMPARE(fixture.provider.maximumConcurrentRequests, 1);
     QCOMPARE(fixture.provider.pendingRequestCount(), 0);
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorExecutesQualifiedMultiStepAction()
+{
+    SemanticExecutorFixture fixture;
+    const Utils::Result<> initialized = fixture.initialize(
+        false, true, 5000, 5000, {}, true);
+    QVERIFY_RESULT(initialized);
+    const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+    const Data::SemanticOperationRequest request = api038ActionRequest(
+        context,
+        u"embedlabs:project:action:axis0:stop-csv",
+        u"operation/api038/executor/multi-step/happy");
+    const Utils::Result<SemanticActionPlan> plan
+        = buildSemanticActionPlan(*fixture.evidence, request, context);
+    QVERIFY_RESULT(plan);
+    QCOMPARE(plan->groups().size(), qsizetype(1));
+    QCOMPARE(plan->steps().size(), qsizetype(4));
+    QCOMPARE(plan->steps().at(0).kind(), SemanticActionPlanStepKind::WriteGroup);
+    QCOMPARE(plan->steps().at(1).kind(), SemanticActionPlanStepKind::WaitMasked);
+    QCOMPARE(plan->steps().at(2).kind(), SemanticActionPlanStepKind::WriteGroup);
+    QCOMPARE(plan->steps().at(3).kind(), SemanticActionPlanStepKind::WaitAbsoluteLimit);
+    QVERIFY(plan->steps().at(0).outputOperationId().isValid());
+    QVERIFY(plan->steps().at(2).outputOperationId().isValid());
+    QVERIFY(plan->steps().at(0).outputOperationId() != plan->steps().at(2).outputOperationId());
+
+    QCOMPARE(
+        submitAndApprove(*fixture.executor, context, request).state,
+        Data::SemanticOperationState::Approved);
+    QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+    const Data::RuntimeResourceSnapshotRequest beforeRequest
+        = *fixture.provider.pendingSnapshotRequest;
+    QCOMPARE(beforeRequest.resourceIds.size(), qsizetype(5));
+    fixture.provider.sendSnapshotResult({
+        beforeRequest,
+        targetedSnapshot(fixture.snapshot, beforeRequest, {}, 2, 100, 1000),
+        {},
+    });
+    QVERIFY(fixture.provider.pendingPolicyRequest);
+    const Data::RuntimeOutputGroupPolicyRequest policyRequest
+        = *fixture.provider.pendingPolicyRequest;
+    fixture.provider.sendPolicyResult({
+        policyRequest,
+        outputPolicy(policyRequest, plan->groups().constFirst(), 41),
+        {},
+    });
+    QVERIFY(fixture.provider.pendingStateRequest);
+    const Data::RuntimeOutputTransactionStateRequest stateRequest
+        = *fixture.provider.pendingStateRequest;
+    fixture.provider.sendStateResult({stateRequest, idleOutputState(stateRequest, 41), {}});
+
+    QVERIFY(fixture.provider.pendingApplyRequest);
+    const Data::RuntimeOutputTransactionRequest firstApply
+        = *fixture.provider.pendingApplyRequest;
+    QCOMPARE(firstApply.operationId, plan->steps().at(0).outputOperationId());
+    QCOMPARE(firstApply.expectedOutputGeneration, quint64(41));
+    const Data::RuntimeOutputTransactionState firstApplied = completedOutputState(
+        firstApply, Data::RuntimeOutputTransactionOutcome::Applied, 120);
+    fixture.provider.sendApplyResult({
+        firstApply,
+        Data::RuntimeOutputTransactionOutcome::Applied,
+        true,
+        firstApplied,
+        {},
+    });
+    QVERIFY(fixture.provider.pendingSnapshotRequest);
+    const Data::RuntimeResourceSnapshotRequest firstAfter
+        = *fixture.provider.pendingSnapshotRequest;
+    const Data::RuntimeResourceSnapshot firstAfterSnapshot = targetedSnapshot(
+        fixture.snapshot,
+        firstAfter,
+        firstApply.completeGroupWrites,
+        3,
+        121,
+        1210);
+    fixture.provider.sendSnapshotResult({firstAfter, firstAfterSnapshot, {}});
+    QVERIFY(fixture.provider.pendingStateRequest);
+    const Data::RuntimeOutputTransactionStateRequest firstPostStateRequest
+        = *fixture.provider.pendingStateRequest;
+    Data::RuntimeOutputTransactionState firstPostState = firstApplied;
+    firstPostState.controllerTimestampNs = 1211;
+    fixture.provider.sendStateResult({firstPostStateRequest, firstPostState, {}});
+    QTRY_COMPARE(fixture.executor->operation(request.operationId)->currentStep, quint32(1));
+
+    QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+    const Data::RuntimeResourceSnapshotRequest maskedFalseRequest
+        = *fixture.provider.pendingSnapshotRequest;
+    QCOMPARE(maskedFalseRequest.resourceIds.size(), qsizetype(5));
+    Data::RuntimeResourceSnapshot maskedFalse = targetedSnapshot(
+        fixture.snapshot,
+        maskedFalseRequest,
+        firstApply.completeGroupWrites,
+        4,
+        122,
+        1220);
+    QCOMPARE(maskedFalse.samples.size(), qsizetype(5));
+    QVERIFY(plan->steps().at(1).waitBinding());
+    Data::RuntimeResourceSample *maskedFalseSample = snapshotSample(
+        maskedFalse, plan->steps().at(1).waitBinding()->resourceId);
+    QVERIFY(maskedFalseSample);
+    maskedFalseSample->value.value = QVariant::fromValue<qulonglong>(0);
+    fixture.provider.sendSnapshotResult({maskedFalseRequest, maskedFalse, {}});
+    QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+    const Data::RuntimeResourceSnapshotRequest maskedTrueRequest
+        = *fixture.provider.pendingSnapshotRequest;
+    QVERIFY(maskedTrueRequest.correlationId != maskedFalseRequest.correlationId);
+    fixture.provider.sendSnapshotResult(
+        {maskedFalseRequest, maskedFalse, {}}, false);
+    QCOMPARE(*fixture.provider.pendingSnapshotRequest, maskedTrueRequest);
+    Data::RuntimeResourceSnapshot maskedTrue = targetedSnapshot(
+        fixture.snapshot,
+        maskedTrueRequest,
+        firstApply.completeGroupWrites,
+        5,
+        123,
+        1230);
+    QCOMPARE(maskedTrue.samples.size(), qsizetype(5));
+    Data::RuntimeResourceSample *maskedTrueSample = snapshotSample(
+        maskedTrue, plan->steps().at(1).waitBinding()->resourceId);
+    QVERIFY(maskedTrueSample);
+    maskedTrueSample->value.value = QVariant::fromValue<qulonglong>(64);
+    fixture.provider.sendSnapshotResult({maskedTrueRequest, maskedTrue, {}});
+    QTRY_COMPARE(fixture.executor->operation(request.operationId)->currentStep, quint32(2));
+
+    QTRY_VERIFY(fixture.provider.pendingApplyRequest);
+    const Data::RuntimeOutputTransactionRequest secondApply
+        = *fixture.provider.pendingApplyRequest;
+    QCOMPARE(secondApply.operationId, plan->steps().at(2).outputOperationId());
+    QCOMPARE(secondApply.expectedOutputGeneration, firstApplied.outputGeneration);
+    const Data::RuntimeOutputTransactionState secondApplied = completedOutputState(
+        secondApply, Data::RuntimeOutputTransactionOutcome::Applied, 130);
+    fixture.provider.sendApplyResult({
+        secondApply,
+        Data::RuntimeOutputTransactionOutcome::Applied,
+        true,
+        secondApplied,
+        {},
+    });
+    QVERIFY(fixture.provider.pendingSnapshotRequest);
+    const Data::RuntimeResourceSnapshotRequest secondAfter
+        = *fixture.provider.pendingSnapshotRequest;
+    const Data::RuntimeResourceSnapshot secondAfterSnapshot = targetedSnapshot(
+        fixture.snapshot,
+        secondAfter,
+        secondApply.completeGroupWrites,
+        6,
+        131,
+        1310);
+    fixture.provider.sendSnapshotResult({secondAfter, secondAfterSnapshot, {}});
+    QVERIFY(fixture.provider.pendingStateRequest);
+    const Data::RuntimeOutputTransactionStateRequest secondPostStateRequest
+        = *fixture.provider.pendingStateRequest;
+    Data::RuntimeOutputTransactionState secondPostState = secondApplied;
+    secondPostState.controllerTimestampNs = 1311;
+    fixture.provider.sendStateResult({secondPostStateRequest, secondPostState, {}});
+    QTRY_COMPARE(fixture.executor->operation(request.operationId)->currentStep, quint32(3));
+
+    QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+    const Data::RuntimeResourceSnapshotRequest absoluteFalseRequest
+        = *fixture.provider.pendingSnapshotRequest;
+    Data::RuntimeResourceSnapshot absoluteFalse = targetedSnapshot(
+        fixture.snapshot,
+        absoluteFalseRequest,
+        secondApply.completeGroupWrites,
+        7,
+        132,
+        1320);
+    QCOMPARE(absoluteFalse.samples.size(), qsizetype(5));
+    QVERIFY(plan->steps().at(3).waitBinding());
+    Data::RuntimeResourceSample *absoluteFalseSample = snapshotSample(
+        absoluteFalse, plan->steps().at(3).waitBinding()->resourceId);
+    QVERIFY(absoluteFalseSample);
+    absoluteFalseSample->value.value = QVariant::fromValue<qlonglong>(
+        qint64(std::numeric_limits<qint32>::min()));
+    fixture.provider.sendSnapshotResult({absoluteFalseRequest, absoluteFalse, {}});
+    QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+    const Data::RuntimeResourceSnapshotRequest absoluteTrueRequest
+        = *fixture.provider.pendingSnapshotRequest;
+    Data::RuntimeResourceSnapshot absoluteTrue = targetedSnapshot(
+        fixture.snapshot,
+        absoluteTrueRequest,
+        secondApply.completeGroupWrites,
+        8,
+        133,
+        1330);
+    QCOMPARE(absoluteTrue.samples.size(), qsizetype(5));
+    Data::RuntimeResourceSample *absoluteTrueSample = snapshotSample(
+        absoluteTrue, plan->steps().at(3).waitBinding()->resourceId);
+    QVERIFY(absoluteTrueSample);
+    absoluteTrueSample->value.value = QVariant::fromValue<qlonglong>(-10);
+    fixture.provider.sendSnapshotResult({absoluteTrueRequest, absoluteTrue, {}});
+
+    QTRY_VERIFY(fixture.provider.pendingStateRequest);
+    const Data::RuntimeOutputTransactionStateRequest finalStateRequest
+        = *fixture.provider.pendingStateRequest;
+    Data::RuntimeOutputTransactionState finalState = secondApplied;
+    finalState.controllerTimestampNs = absoluteTrue.controllerTimestampNs + 1;
+    fixture.provider.sendStateResult({finalStateRequest, finalState, {}});
+
+    QTRY_VERIFY(fixture.executor->operation(request.operationId).has_value());
+    const Data::SemanticOperationRecord completed
+        = *fixture.executor->operation(request.operationId);
+    QCOMPARE(completed.state, Data::SemanticOperationState::Succeeded);
+    QCOMPARE(completed.currentStep, quint32(4));
+    QCOMPARE(completed.totalSteps, quint32(4));
+    QCOMPARE(completed.appliedCycle, quint64(130));
+    QVERIFY(completed.beforeSnapshot);
+    QVERIFY(completed.afterSnapshot);
+    QCOMPARE(completed.beforeSnapshot->observations.size(), qsizetype(5));
+    QCOMPARE(completed.afterSnapshot->observations.size(), qsizetype(5));
+    QCOMPARE(fixture.provider.policyRequests.size(), qsizetype(1));
+    QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(2));
+    QCOMPARE(fixture.provider.applyRequests.at(0).operationId, firstApply.operationId);
+    QCOMPARE(fixture.provider.applyRequests.at(1).operationId, secondApply.operationId);
+    QCOMPARE(fixture.provider.maximumConcurrentRequests, 1);
+    QCOMPARE(fixture.provider.pendingRequestCount(), 0);
+    QCOMPARE(
+        fixture.provider.requestTrace,
+        QStringList({
+            QStringLiteral("snapshot-before"),
+            QStringLiteral("policy"),
+            QStringLiteral("state-pre"),
+            QStringLiteral("apply"),
+            QStringLiteral("snapshot-after"),
+            QStringLiteral("state-post"),
+            QStringLiteral("snapshot-before"),
+            QStringLiteral("snapshot-before"),
+            QStringLiteral("apply"),
+            QStringLiteral("snapshot-after"),
+            QStringLiteral("state-post"),
+            QStringLiteral("snapshot-before"),
+            QStringLiteral("snapshot-before"),
+            QStringLiteral("state-post"),
+        }));
+
+    QList<quint32> stepAudit;
+    for (const Data::SemanticRuntimeAuditEvent &event : fixture.executor->audit(
+             context.controllerId)) {
+        if (event.operationId == request.operationId
+            && event.kind == Data::SemanticAuditEventKind::ExecutionStep
+            && event.code == QStringLiteral("execution-step-recorded")) {
+            stepAudit.append(event.stepIndex);
+        }
+    }
+    QCOMPARE(stepAudit, QList<quint32>({1, 2, 3, 4}));
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorBoundsMultiStepWaitFailures()
+{
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            false, true, 5000, 5000, {}, true);
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context
+            = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:axis0:stop-csv",
+            u"operation/api038/executor/multi-step/wait-deadline");
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(plan->steps().at(1).timeoutCycles(), quint32(5));
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+
+        const Data::SemanticOperationRequest queuedRequest = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:clear-outputs",
+            u"operation/api038/executor/multi-step/queued-after-timeout");
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, queuedRequest).state,
+            Data::SemanticOperationState::Approved);
+
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        const Utils::Result<QualifiedFirstWaitProgress> progress
+            = advanceQualifiedMultiStepToFirstWait(fixture, *plan);
+        QVERIFY_RESULT(progress);
+        const Data::RuntimeResourceSnapshotRequest waitRequest
+            = *fixture.provider.pendingSnapshotRequest;
+        Data::RuntimeResourceSnapshot deadlineSnapshot = targetedSnapshot(
+            fixture.snapshot,
+            waitRequest,
+            progress->applyRequest.completeGroupWrites,
+            4,
+            126,
+            1260);
+        QVERIFY(plan->steps().at(1).waitBinding());
+        Data::RuntimeResourceSample *waitSample = snapshotSample(
+            deadlineSnapshot, plan->steps().at(1).waitBinding()->resourceId);
+        QVERIFY(waitSample);
+        waitSample->value.value = QVariant::fromValue<qulonglong>(0);
+
+        Data::RuntimeResourceSnapshotRequest lateRequest = waitRequest;
+        lateRequest.correlationId.append(QStringLiteral("-late"));
+        fixture.provider.sendSnapshotResult(
+            {lateRequest, targetedSnapshot(
+                              fixture.snapshot,
+                              lateRequest,
+                              progress->applyRequest.completeGroupWrites,
+                              4,
+                              126,
+                              1260), {}},
+            false);
+        QVERIFY(fixture.provider.pendingSnapshotRequest);
+        QCOMPARE(*fixture.provider.pendingSnapshotRequest, waitRequest);
+
+        fixture.provider.sendSnapshotResult({waitRequest, deadlineSnapshot, {}});
+        QTRY_VERIFY(fixture.provider.pendingStateRequest);
+        const Data::RuntimeOutputTransactionStateRequest recoveryRequest
+            = *fixture.provider.pendingStateRequest;
+        QVERIFY(recoveryRequest.correlationId.endsWith(QStringLiteral("-recovery-state")));
+        Data::RuntimeOutputTransactionState safeHold = completedOutputState(
+            progress->applyRequest,
+            Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered,
+            progress->appliedState.appliedCycle);
+        safeHold.controllerTimestampNs = progress->appliedState.controllerTimestampNs + 1;
+        Data::RuntimeOutputTransactionStateRequest mismatchedRecovery = recoveryRequest;
+        mismatchedRecovery.correlationId.append(QStringLiteral("-late"));
+        fixture.provider.sendStateResult(
+            {mismatchedRecovery, safeHold, {}}, false);
+        QVERIFY(fixture.provider.pendingStateRequest);
+        QCOMPARE(*fixture.provider.pendingStateRequest, recoveryRequest);
+        QCOMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::Executing);
+
+        const Data::RuntimeOutputTransactionStateResult safeHoldResult{
+            recoveryRequest, safeHold, {}};
+        QVERIFY(safeHoldResult.isValid());
+        fixture.provider.sendStateResult(safeHoldResult);
+        QTRY_COMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::TimedOut);
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(1));
+        QCOMPARE(
+            fixture.provider.applyRequests.constFirst().operationId,
+            plan->steps().constFirst().outputOperationId());
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        QCOMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Executing);
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            false, true, 5000, 5000, {}, true);
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context
+            = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:axis0:stop-csv",
+            u"operation/api038/executor/multi-step/return-task-rejected");
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        const Data::RuntimeResourceSnapshotRequest beforeRequest
+            = *fixture.provider.pendingSnapshotRequest;
+        fixture.provider.sendSnapshotResult({
+            beforeRequest,
+            targetedSnapshot(fixture.snapshot, beforeRequest, {}, 2, 110, 1100),
+            {},
+        });
+        QVERIFY(fixture.provider.pendingPolicyRequest);
+        const Data::RuntimeOutputGroupPolicyRequest policyRequest
+            = *fixture.provider.pendingPolicyRequest;
+        Data::RuntimeOutputGroupPolicy returnTaskPolicy = outputPolicy(
+            policyRequest, plan->groups().constFirst(), 41);
+        returnTaskPolicy.recoveryPolicy = Data::RuntimeOutputRecoveryPolicy::ReturnTask;
+        fixture.provider.sendPolicyResult({policyRequest, returnTaskPolicy, {}});
+        QTRY_COMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::Failed);
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            false, true, 5000, 5000, {}, true);
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context
+            = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:axis0:stop-csv",
+            u"operation/api038/executor/multi-step/after-at-expiry");
+        request.ttlCycles = 1;
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        const Data::SemanticOperationRequest queuedRequest = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:clear-outputs",
+            u"operation/api038/executor/multi-step/queued-after-expiry");
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, queuedRequest).state,
+            Data::SemanticOperationState::Approved);
+
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        QVERIFY(advanceExecutorToApply(fixture, *plan, 41, 2, 110));
+        const Data::RuntimeOutputTransactionRequest applyRequest
+            = *fixture.provider.pendingApplyRequest;
+        const Data::RuntimeOutputTransactionState appliedState = completedOutputState(
+            applyRequest, Data::RuntimeOutputTransactionOutcome::Applied, 120);
+        QCOMPARE(appliedState.expiryCycle, quint64(121));
+        fixture.provider.sendApplyResult({
+            applyRequest,
+            Data::RuntimeOutputTransactionOutcome::Applied,
+            true,
+            appliedState,
+            {},
+        });
+        QVERIFY(fixture.provider.pendingSnapshotRequest);
+        const Data::RuntimeResourceSnapshotRequest afterRequest
+            = *fixture.provider.pendingSnapshotRequest;
+        const Data::RuntimeResourceSnapshot atExpiry = targetedSnapshot(
+            fixture.snapshot,
+            afterRequest,
+            applyRequest.completeGroupWrites,
+            3,
+            appliedState.expiryCycle,
+            3010);
+        fixture.provider.sendSnapshotResult({afterRequest, atExpiry, {}});
+
+        QTRY_VERIFY(fixture.provider.pendingStateRequest);
+        const Data::RuntimeOutputTransactionStateRequest recoveryRequest
+            = *fixture.provider.pendingStateRequest;
+        QVERIFY(recoveryRequest.correlationId.endsWith(QStringLiteral("-recovery-state")));
+        Data::RuntimeOutputTransactionState safeHold = completedOutputState(
+            applyRequest,
+            Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered,
+            appliedState.appliedCycle);
+        safeHold.controllerTimestampNs = atExpiry.controllerTimestampNs + 1;
+        fixture.provider.sendStateResult({recoveryRequest, safeHold, {}});
+        QTRY_COMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::Expired);
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(1));
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        QCOMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Executing);
+    }
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorFailsClosedOnMultiStepDrift()
+{
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            false, true, 5000, 5000, {}, true);
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context
+            = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:axis0:stop-csv",
+            u"operation/api038/executor/multi-step/final-wait-output-drift");
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        const Data::SemanticOperationRequest queuedRequest = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:clear-outputs",
+            u"operation/api038/executor/multi-step/queued-after-drift");
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, queuedRequest).state,
+            Data::SemanticOperationState::Approved);
+
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        const Utils::Result<QualifiedFirstWaitProgress> progress
+            = advanceQualifiedMultiStepToFirstWait(fixture, *plan);
+        QVERIFY_RESULT(progress);
+        const Data::RuntimeResourceSnapshotRequest firstWaitRequest
+            = *fixture.provider.pendingSnapshotRequest;
+        Data::RuntimeResourceSnapshot firstWait = targetedSnapshot(
+            fixture.snapshot,
+            firstWaitRequest,
+            progress->applyRequest.completeGroupWrites,
+            4,
+            122,
+            1220);
+        QVERIFY(plan->steps().at(1).waitBinding());
+        Data::RuntimeResourceSample *firstWaitSample = snapshotSample(
+            firstWait, plan->steps().at(1).waitBinding()->resourceId);
+        QVERIFY(firstWaitSample);
+        firstWaitSample->value.value = QVariant::fromValue<qulonglong>(64);
+        fixture.provider.sendSnapshotResult({firstWaitRequest, firstWait, {}});
+
+        QTRY_VERIFY(fixture.provider.pendingApplyRequest);
+        const Data::RuntimeOutputTransactionRequest secondApply
+            = *fixture.provider.pendingApplyRequest;
+        QCOMPARE(secondApply.operationId, plan->steps().at(2).outputOperationId());
+        const Data::RuntimeOutputTransactionState secondApplied = completedOutputState(
+            secondApply, Data::RuntimeOutputTransactionOutcome::Applied, 130);
+        fixture.provider.sendApplyResult({
+            secondApply,
+            Data::RuntimeOutputTransactionOutcome::Applied,
+            true,
+            secondApplied,
+            {},
+        });
+        QVERIFY(fixture.provider.pendingSnapshotRequest);
+        const Data::RuntimeResourceSnapshotRequest secondAfterRequest
+            = *fixture.provider.pendingSnapshotRequest;
+        const Data::RuntimeResourceSnapshot secondAfter = targetedSnapshot(
+            fixture.snapshot,
+            secondAfterRequest,
+            secondApply.completeGroupWrites,
+            5,
+            131,
+            1310);
+        fixture.provider.sendSnapshotResult({secondAfterRequest, secondAfter, {}});
+        QVERIFY(fixture.provider.pendingStateRequest);
+        const Data::RuntimeOutputTransactionStateRequest secondPostRequest
+            = *fixture.provider.pendingStateRequest;
+        Data::RuntimeOutputTransactionState secondPost = secondApplied;
+        secondPost.controllerTimestampNs = secondApplied.controllerTimestampNs + 1;
+        fixture.provider.sendStateResult({secondPostRequest, secondPost, {}});
+
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        const Data::RuntimeResourceSnapshotRequest finalWaitRequest
+            = *fixture.provider.pendingSnapshotRequest;
+        Data::RuntimeResourceSnapshot tamperedWait = targetedSnapshot(
+            fixture.snapshot,
+            finalWaitRequest,
+            secondApply.completeGroupWrites,
+            6,
+            132,
+            1320);
+        QVERIFY(plan->steps().at(3).waitBinding());
+        Data::RuntimeResourceSample *finalWaitSample = snapshotSample(
+            tamperedWait, plan->steps().at(3).waitBinding()->resourceId);
+        QVERIFY(finalWaitSample);
+        finalWaitSample->value.value = QVariant::fromValue<qlonglong>(-10);
+        QVERIFY(!secondApply.completeGroupWrites.isEmpty());
+        Data::RuntimeResourceSample *tamperedOutput = snapshotSample(
+            tamperedWait,
+            secondApply.completeGroupWrites.constFirst().resourceId);
+        QVERIFY(tamperedOutput);
+        switch (tamperedOutput->value.primitiveType) {
+        case Data::RuntimeResourcePrimitiveType::Boolean:
+            tamperedOutput->value.value = !tamperedOutput->value.value.toBool();
+            break;
+        case Data::RuntimeResourcePrimitiveType::SignedInteger:
+            tamperedOutput->value.value = QVariant::fromValue<qlonglong>(
+                tamperedOutput->value.value.toLongLong() + 1);
+            break;
+        case Data::RuntimeResourcePrimitiveType::UnsignedInteger:
+            tamperedOutput->value.value = QVariant::fromValue<qulonglong>(
+                tamperedOutput->value.value.toULongLong() + 1);
+            break;
+        default:
+            QFAIL("The signed output drift fixture has an unsupported primitive");
+        }
+        fixture.provider.sendSnapshotResult({finalWaitRequest, tamperedWait, {}});
+
+        QTRY_VERIFY(fixture.provider.pendingStateRequest);
+        const Data::RuntimeOutputTransactionStateRequest firstRecoveryRequest
+            = *fixture.provider.pendingStateRequest;
+        fixture.provider.sendStateResult({firstRecoveryRequest, secondPost, {}});
+        QTRY_VERIFY(fixture.provider.pendingStateRequest);
+        const Data::RuntimeOutputTransactionStateRequest safeRecoveryRequest
+            = *fixture.provider.pendingStateRequest;
+        QVERIFY(safeRecoveryRequest.correlationId
+                != firstRecoveryRequest.correlationId);
+        QCOMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::Executing);
+        QCOMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Approved);
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(2));
+
+        Data::RuntimeOutputTransactionState safeHold = completedOutputState(
+            secondApply,
+            Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered,
+            secondApplied.appliedCycle);
+        safeHold.controllerTimestampNs = secondPost.controllerTimestampNs + 1;
+        fixture.provider.sendStateResult({safeRecoveryRequest, safeHold, {}});
+        QTRY_COMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::Failed);
+        QVERIFY(
+            fixture.executor->operation(request.operationId)->state
+            != Data::SemanticOperationState::Succeeded);
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(2));
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        QCOMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Executing);
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context
+            = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:axis0:stop-csv",
+            u"operation/api038/executor/multi-step/unqualified-sv630n");
+        QVERIFY(!buildSemanticActionPlan(*fixture.evidence, request, context));
+        const Data::SemanticOperationRecord rejected
+            = fixture.executor->submit(request, api038Submitter());
+        QCOMPARE(rejected.state, Data::SemanticOperationState::Rejected);
+        QVERIFY(!rejected.executionAttempted);
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+    }
+
+    for (const bool largeUnsigned : {false, true}) {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            false, true, 5000, 5000, {}, true);
+        QVERIFY_RESULT(initialized);
+        QList<Data::DeviceAdapterManifest> mismatched = fixture.adapterManifests;
+        const auto sv630n = std::find_if(
+            mismatched.begin(),
+            mismatched.end(),
+            [](const Data::DeviceAdapterManifest &manifest) {
+                return manifest.controllerAdapterTarget.adapterId
+                       == QStringLiteral("inovance.sv630n_1axis_rev00010000_csp");
+            });
+        QVERIFY(sv630n != mismatched.end());
+        const auto stop = std::find_if(
+            sv630n->controlActions.begin(),
+            sv630n->controlActions.end(),
+            [](const Data::DeviceControlAction &action) {
+                return action.id.value
+                       == QStringLiteral("org.embedlabs.inovance.sv630n.action.stop-csv");
+            });
+        QVERIFY(stop != sv630n->controlActions.end());
+        QVERIFY(!stop->steps.isEmpty());
+        const auto modeAssignment = std::find_if(
+            stop->steps[0].assignments.begin(),
+            stop->steps[0].assignments.end(),
+            [](const Data::DeviceControlGroupAssignment &assignment) {
+                return assignment.signalId.value
+                       == QStringLiteral("org.embedlabs.inovance.sv630n.mode-command");
+            });
+        QVERIFY(modeAssignment != stop->steps[0].assignments.end());
+        modeAssignment->value.engineeringLiteralValue
+            = largeUnsigned
+                  ? Data::EngineeringValue::fromUnsignedInteger(
+                        std::numeric_limits<quint64>::max())
+                  : Data::EngineeringValue::fromSignedInteger(-1);
+        fixture.ownedAdapterProvider->replaceManifests(mismatched);
+
+        QTRY_VERIFY(([&fixture] {
+            const QList<Data::SemanticRuntimeContext> contexts
+                = fixture.executor->contexts();
+            if (contexts.size() != 1)
+                return false;
+            const auto action = std::find_if(
+                contexts.constFirst().actionStates.cbegin(),
+                contexts.constFirst().actionStates.cend(),
+                [](const Data::SemanticActionRuntimeState &candidate) {
+                    return candidate.actionBindingId
+                           == QStringLiteral("embedlabs:project:action:axis0:stop-csv");
+                });
+            return action != contexts.constFirst().actionStates.cend()
+                   && action->availability == Data::SemanticActionAvailability::Rejected
+                   && action->detail == QStringLiteral("manual_step_contract_mismatch");
+        }()));
+        const Data::SemanticRuntimeContext mismatchedContext
+            = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request = api038ActionRequest(
+            mismatchedContext,
+            u"embedlabs:project:action:axis0:stop-csv",
+            largeUnsigned
+                ? u"operation/api038/executor/multi-step/large-unsigned-literal"
+                : u"operation/api038/executor/multi-step/negative-literal");
+        QVERIFY(!buildSemanticActionPlan(
+            *fixture.evidence, request, mismatchedContext));
+        QCOMPARE(
+            fixture.executor->submit(request, api038Submitter()).state,
+            Data::SemanticOperationState::Rejected);
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+    }
 }
 
 void EtherCATSemanticRuntimeTests::testExecutorFailsClosedBeforeApply_data()

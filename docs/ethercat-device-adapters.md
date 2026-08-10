@@ -155,7 +155,31 @@ network requests issued by a Provider. It may contain only a finite list of:
 
 Every wait has a timeout. Actions declare their resource dependencies,
 controller/runtime preconditions, command TTL, exclusive-control requirement,
-DC requirement, hold-to-run policy, and timeout/failure behavior.
+DC requirement, hold-to-run policy, and timeout/failure behavior. The current
+executor admits only 1..64 ordered `WriteGroup`, `WaitMasked`, and
+`WaitAbsoluteLimit` steps over 1..64 unique resources, with at least one
+complete-group write and a bounded aggregate wait. A multi-step plan requires
+`HoldSafe` for every referenced output group. Other signed definition kinds,
+including a standalone delay, remain non-executable until independently
+qualified and implemented.
+
+The action-level before and after evidence is one complete snapshot of the
+union of every write and wait resource. Each `WriteGroup` carries its own
+signed output OperationId and chains the exact controller-proved output
+generation. Snapshot, policy, state, and apply results must reproduce the
+whole request; correlations also bind phase, step, and attempt. The executor
+continues to pin project/package/topology, lease and controller state, session,
+runtime epoch, mapping digest, and action-definition digest throughout the
+sequence.
+
+After any write might have applied, TTL expiry takes precedence over value or
+wait-condition evaluation. A failure, wait timeout, or drift can release later
+mutations only after the controller exactly proves `SafeHold` for the last
+signed transaction. `OutcomeUnknown` retains that same apply request and
+output OperationId and blocks later mutations until authoritative
+reconciliation. The public semantic runtime API currently has no explicit
+action cancel or output-TTL refresh/hold-to-run execution command; input live
+refresh is not an output renewal.
 
 Raw drive Controlword and mode-command signals are internal action resources.
 They must not become generic editable UI fields. Candidate actions remain
@@ -243,6 +267,14 @@ vendor/model branch, object index, process-image offset, or a stale ResourceId.
 Output changes use the generic atomic output-transaction contract; Adapter
 actions remain engineering/compiler data and do not become vendor commands in
 ProductApi or CPU1.
+
+This bounded executor capability has unit and loopback coverage only. It does
+not enable an unqualified production action, and it is not evidence of a real
+controller mutation or motor movement. In particular, the production SV630N
+v3 actions remain disabled/unqualified until encoder resolution, 0x6091
+electronic gearing, engineering-unit conversion, speed limits, stop thresholds,
+the complete safety envelope, and controlled hardware acceptance are bound to
+the exact signed artifacts.
 
 ## Qualification boundary
 

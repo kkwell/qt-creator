@@ -63,8 +63,13 @@ private slots:
     void testExecutorReleasesLiveRefreshOnRemoval();
     void testExecutorRejectsRecursiveRefreshDuringProjectRemoval();
     void testExecutorSurvivesCompletionDeletingExecutor();
+    void testExecutorSurvivesSynchronousActionDeletion();
+    void testExecutorSurvivesSynchronousLifecycleDeletion();
     void testExecutorExpiresAndSeparatesLiveCaptureCohorts();
     void testExecutorExecutesApi038Xb6Action();
+    void testExecutorExecutesQualifiedMultiStepAction();
+    void testExecutorBoundsMultiStepWaitFailures();
+    void testExecutorFailsClosedOnMultiStepDrift();
     void testExecutorFailsClosedBeforeApply_data();
     void testExecutorFailsClosedBeforeApply();
     void testExecutorReconcilesUnknownOutput_data();
