@@ -10,6 +10,8 @@ add_qtc_plugin(EtherCATProjectCompiler
     compilerinputprovisioningprofile.h
     compilerprovisioningprofile.cpp
     compilerprovisioningprofile.h
+    compilerruntimebootstrapprofile.cpp
+    compilerruntimebootstrapprofile.h
     compilerruntimebundleprofile.cpp
     compilerruntimebundleprofile.h
     durableruntimepackagecompilerpreparationcoordinator.cpp

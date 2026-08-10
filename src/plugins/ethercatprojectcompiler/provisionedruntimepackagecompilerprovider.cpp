@@ -5,6 +5,7 @@
 #include "compileroperationstore.h"
 #include "compilerpythonruntimeprofile.h"
 #include "compilerprovisioningprofile.h"
+#include "compilerruntimebootstrapprofile.h"
 #include "compilerruntimebundleprofile.h"
 #include "ethercatprojectcompilerconstants.h"
 #include "ethercatprojectcompilertr.h"
@@ -15,6 +16,8 @@
 #include <utils/environment.h>
 #include <utils/qtcprocess.h>
 
+#include <QDir>
+#include <QFileInfo>
 #include <QProcess>
 #include <QSet>
 #include <QThread>
@@ -28,8 +31,34 @@ namespace EtherCAT::ProjectCompiler {
 
 namespace {
 
+std::optional<QString> plannedCanonicalPath(const Utils::FilePath &path)
+{
+    if (!path.isAbsolutePath() || !path.scheme().isEmpty())
+        return std::nullopt;
+    QString current = QDir::cleanPath(path.path());
+    QStringList missingComponents;
+    while (!QFileInfo::exists(current)) {
+        const QFileInfo info(current);
+        const QString parent = QDir::cleanPath(info.dir().absolutePath());
+        if (parent == current || info.fileName().isEmpty())
+            return std::nullopt;
+        missingComponents.prepend(info.fileName());
+        current = parent;
+    }
+    current = QFileInfo(current).canonicalFilePath();
+    if (current.isEmpty())
+        return std::nullopt;
+    for (const QString &component : std::as_const(missingComponents))
+        current = QDir(current).filePath(component);
+    return QDir::cleanPath(current);
+}
+
 QString userFacingProvisioningError(const QString &error)
 {
+    if (error.startsWith(
+            QStringLiteral("Compiler runtime expectation profile is unavailable:"))) {
+        return Tr::tr("No trusted compiler runtime expectation profile is installed.");
+    }
     if (error.startsWith(QStringLiteral("Provisioned path is not a regular non-symlink file:"))) {
         return Tr::tr("No trusted compiler provisioning profile is installed.");
     }
@@ -37,6 +66,7 @@ QString userFacingProvisioningError(const QString &error)
         || error.startsWith(QStringLiteral("Provisioned compiler is not executable:"))
         || error.startsWith(QStringLiteral("Cannot securely open provisioned file:"))
         || error.startsWith(QStringLiteral("Provisioned file changed while it was opened:"))
+        || error.startsWith(QStringLiteral("Provisioned file changed while it was read:"))
         || error.startsWith(QStringLiteral("Cannot completely read provisioned file:"))
         || error.startsWith(QStringLiteral("Pinned compiler or production key changed"))) {
         return Tr::tr("Trusted compiler provisioning files do not meet security requirements.");
@@ -368,7 +398,8 @@ public:
         const Utils::FilePath &compilerRoot,
         RuntimePackageCompilerProcessLimits processLimits,
         std::optional<CompilerRuntimeBundleProfile> runtimeBundle = std::nullopt,
-        std::optional<CompilerPythonRuntimeProfile> pythonRuntime = std::nullopt)
+        std::optional<CompilerPythonRuntimeProfile> pythonRuntime = std::nullopt,
+        std::optional<Utils::FilePath> runtimeExpectationFile = std::nullopt)
         : q(q)
         , store(compilerRoot)
         , limits(processLimits)
@@ -377,6 +408,32 @@ public:
             error = Tr::tr("Compiler process limits are invalid.");
             return;
         }
+        std::optional<CompilerRuntimeBootstrapProfile> loadedBootstrap;
+        if (runtimeExpectationFile) {
+            const Utils::Result<CompilerRuntimeBootstrapProfile> loaded
+                = CompilerRuntimeBootstrapProfile::load(*runtimeExpectationFile);
+            if (!loaded) {
+                error = loaded.error();
+                return;
+            }
+            loadedBootstrap = *loaded;
+            runtimeBundle = loadedBootstrap->compilerRuntime();
+            pythonRuntime = loadedBootstrap->pythonRuntime();
+            const auto pathsOverlap = [](const Utils::FilePath &left,
+                                         const Utils::FilePath &right) {
+                const std::optional<QString> canonicalLeft = plannedCanonicalPath(left);
+                const std::optional<QString> canonicalRight = plannedCanonicalPath(right);
+                return !canonicalLeft || !canonicalRight || *canonicalLeft == *canonicalRight
+                       || canonicalLeft->startsWith(*canonicalRight + QLatin1Char('/'))
+                       || canonicalRight->startsWith(*canonicalLeft + QLatin1Char('/'));
+            };
+            if (pathsOverlap(compilerRoot, runtimeBundle->bundleRoot())
+                || pathsOverlap(compilerRoot, pythonRuntime->companionRoot())
+                || pathsOverlap(compilerRoot, pythonRuntime->runtimeRoot())) {
+                error = Tr::tr("Compiler operation storage must be outside signed runtime trees.");
+                return;
+            }
+        }
         const Utils::Result<CompilerProvisioningProfile> loaded = CompilerProvisioningProfile::load(
             provisioningFile);
         if (!loaded) {
@@ -384,6 +441,16 @@ public:
             return;
         }
         profile = *loaded;
+        if (loadedBootstrap
+            && (profile->profileSha256() != loadedBootstrap->provisioningProfileSha256()
+                || profile->executable() != runtimeBundle->compilerExecutable()
+                || profile->contractIdentity().contractVersion
+                       != runtimeBundle->identity().compilerContractVersion)) {
+            error = Tr::tr(
+                "Compiler provisioning does not match the runtime bootstrap identity.");
+            profile.reset();
+            return;
+        }
         const Utils::Result<> initialized = store.initialize();
         if (!initialized) {
             error = initialized.error();
@@ -428,6 +495,7 @@ public:
             selectedExecutable = runtimeBundle->compilerExecutable();
             this->runtimeBundle = std::move(runtimeBundle);
             this->pythonRuntime = std::move(pythonRuntime);
+            this->runtimeBootstrap = std::move(loadedBootstrap);
             processEnvironment.emplace(Utils::NameValuePairs{
                 {QStringLiteral("EMBEDLABS_COMPILER_PYTHON"),
                  this->pythonRuntime->pythonExecutable().toFSPathString()},
@@ -463,6 +531,7 @@ public:
             !pinned) {
             error = pinned.error();
             profile.reset();
+            this->runtimeBootstrap.reset();
             this->runtimeBundle.reset();
             this->pythonRuntime.reset();
             return;
@@ -474,7 +543,10 @@ public:
     {
         if (!profile)
             return Utils::ResultError(error);
-        if (runtimeBundle) {
+        if (runtimeBootstrap) {
+            if (const Utils::Result<> current = runtimeBootstrap->validateCurrent(); !current)
+                return current;
+        } else if (runtimeBundle) {
             if (const Utils::Result<> current = runtimeBundle->validateCurrent(); !current)
                 return current;
             if (!pythonRuntime)
@@ -513,7 +585,14 @@ public:
             q->setAvailable(false);
             return Utils::ResultError(error);
         }
-        if (runtimeBundle) {
+        if (runtimeBootstrap) {
+            const Utils::Result<> current = runtimeBootstrap->validateCurrent();
+            if (!current) {
+                error = current.error();
+                q->setAvailable(false);
+                return Utils::ResultError(error);
+            }
+        } else if (runtimeBundle) {
             const Utils::Result<> bundleCurrent = runtimeBundle->validateCurrent();
             if (!bundleCurrent) {
                 error = bundleCurrent.error();
@@ -598,6 +677,7 @@ public:
     CompilerOperationStore store;
     RuntimePackageCompilerProcessLimits limits;
     std::optional<CompilerProvisioningProfile> profile;
+    std::optional<CompilerRuntimeBootstrapProfile> runtimeBootstrap;
     std::optional<CompilerRuntimeBundleProfile> runtimeBundle;
     std::optional<CompilerPythonRuntimeProfile> pythonRuntime;
     std::optional<Utils::Environment> processEnvironment;
@@ -614,6 +694,24 @@ ProvisionedRuntimePackageCompilerProvider::ProvisionedRuntimePackageCompilerProv
     : Core::RuntimePackageCompilerProvider(
           Constants::PROJECT_COMPILER_PROVIDER_ID, Tr::tr("Provisioned project compiler"), parent)
     , d(std::make_unique<Private>(this, provisioningFile, compilerRoot, limits))
+{}
+
+ProvisionedRuntimePackageCompilerProvider::ProvisionedRuntimePackageCompilerProvider(
+    const Utils::FilePath &provisioningFile,
+    const Utils::FilePath &compilerRoot,
+    const Utils::FilePath &runtimeExpectationFile,
+    RuntimePackageCompilerProcessLimits limits,
+    QObject *parent)
+    : Core::RuntimePackageCompilerProvider(
+          Constants::PROJECT_COMPILER_PROVIDER_ID, Tr::tr("Provisioned project compiler"), parent)
+    , d(std::make_unique<Private>(
+          this,
+          provisioningFile,
+          compilerRoot,
+          limits,
+          std::nullopt,
+          std::nullopt,
+          runtimeExpectationFile))
 {}
 
 ProvisionedRuntimePackageCompilerProvider::ProvisionedRuntimePackageCompilerProvider(

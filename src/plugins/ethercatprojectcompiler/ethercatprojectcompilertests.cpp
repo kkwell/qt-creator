@@ -6,6 +6,7 @@
 #include "compilerpythonruntimeprofile.h"
 #include "compilerinputprovisioningprofile.h"
 #include "compilerprovisioningprofile.h"
+#include "compilerruntimebootstrapprofile.h"
 #include "compilerruntimebundleprofile.h"
 #include "durableruntimepackagecompilerpreparationcoordinator.h"
 #include "ethercatprojectcompilerconstants.h"
@@ -1504,6 +1505,10 @@ void EtherCATProjectCompilerTests::testPluginMetadataAndDefaultAvailability()
 
     auto *registry = ExtensionSystem::PluginManager::getObject<Core::ProviderRegistry>();
     QVERIFY(registry);
+    auto *registeredProvider = qobject_cast<ProvisionedRuntimePackageCompilerProvider *>(
+        registry->provider(Constants::PROJECT_COMPILER_PROVIDER_ID));
+    QVERIFY(registeredProvider);
+    QCOMPARE(registeredProvider->id(), Constants::PROJECT_COMPILER_PROVIDER_ID);
     ProvisionedRuntimePackageCompilerProjectRequestBuilder builder(
         registry,
         Utils::FilePath::fromString(temporary.filePath(QStringLiteral("missing-inputs.json"))));
@@ -1511,6 +1516,23 @@ void EtherCATProjectCompilerTests::testPluginMetadataAndDefaultAvailability()
     QCOMPARE(
         builder.unavailableReason(),
         QStringLiteral("No trusted compiler input profile is installed."));
+}
+
+void EtherCATProjectCompilerTests::testProductBootstrapFailsClosedWithoutRuntimeExpectations()
+{
+    TestEnvironment environment;
+    const QByteArray before = storeWriteFingerprint(environment.root);
+    ProvisionedRuntimePackageCompilerProvider provider(
+        Utils::FilePath::fromString(environment.provisioning),
+        Utils::FilePath::fromString(environment.root),
+        Utils::FilePath::fromString(
+            QDir(environment.root).filePath(QStringLiteral("runtime-expectations.json"))));
+    QVERIFY(!provider.isAvailable());
+    QVERIFY(provider.provisioningError().contains(QStringLiteral("expectation profile")));
+    QCOMPARE(
+        provider.unavailableReason(),
+        QStringLiteral("No trusted compiler runtime expectation profile is installed."));
+    QCOMPARE(storeWriteFingerprint(environment.root), before);
 }
 
 void EtherCATProjectCompilerTests::testPythonRuntimeProfileVerifiesSignedInstalledTree()
@@ -2263,18 +2285,200 @@ void EtherCATProjectCompilerTests::testPythonRuntimeProfileVerifiesSignedInstall
 
     TestEnvironment environment;
     environment.rewriteProfile(compilerProfile->compilerExecutable().path());
+    const QString runtimeTrustRoot
+        = QDir(base).filePath(QStringLiteral("product-runtime-trust"));
+    const QString compilerReleaseKeyFile
+        = QDir(runtimeTrustRoot).filePath(QStringLiteral("compiler-release.pub"));
+    const QString pythonReleaseKeyFile
+        = QDir(runtimeTrustRoot).filePath(QStringLiteral("python-release.pub"));
+    QVERIFY(writeFile(compilerReleaseKeyFile, compilerPublicKey));
+    QVERIFY(writeFile(pythonReleaseKeyFile, publicKey));
+    QVERIFY(::chmod(QFile::encodeName(compilerReleaseKeyFile).constData(), 0600) == 0);
+    QVERIFY(::chmod(QFile::encodeName(pythonReleaseKeyFile).constData(), 0600) == 0);
+    const QJsonObject runtimeExpectations{
+        {QStringLiteral("compiler_bundle_root"), compilerRoot},
+        {QStringLiteral("compiler_bundle_version"), QStringLiteral("1.0.0")},
+        {QStringLiteral("compiler_manifest_sha256"),
+         QString::fromLatin1(sha256(compilerManifestBytes).value().toHex())},
+        {QStringLiteral("compiler_provisioning_profile_sha256"),
+         QString::fromLatin1(sha256(readFile(environment.provisioning)).value().toHex())},
+        {QStringLiteral("compiler_release_public_key_path"), compilerReleaseKeyFile},
+        {QStringLiteral("compiler_release_public_key_sha256"),
+         QString::fromLatin1(sha256(compilerPublicKey).value().toHex())},
+        {QStringLiteral("format"),
+         QStringLiteral("ethercat-ide-compiler-runtime-expectations-v1")},
+        {QStringLiteral("format_version"), 1},
+        {QStringLiteral("python_companion_bundle_sha256"),
+         QString::fromLatin1(expectation.companionBundleSha256.value().toHex())},
+        {QStringLiteral("python_companion_manifest_sha256"),
+         QString::fromLatin1(expectation.companionManifestSha256.value().toHex())},
+        {QStringLiteral("python_companion_root"), companionRoot},
+        {QStringLiteral("python_companion_version"), expectation.companionVersion},
+        {QStringLiteral("python_executable_sha256"),
+         QString::fromLatin1(expectation.pythonExecutableSha256.value().toHex())},
+        {QStringLiteral("python_installed_tree_sha256"),
+         QString::fromLatin1(expectation.installedTreeSha256.value().toHex())},
+        {QStringLiteral("python_portable_identity_sha256"),
+         QString::fromLatin1(expectation.portableIdentitySha256.value().toHex())},
+        {QStringLiteral("python_release_public_key_path"), pythonReleaseKeyFile},
+        {QStringLiteral("python_release_public_key_sha256"),
+         QString::fromLatin1(sha256(publicKey).value().toHex())},
+        {QStringLiteral("python_runtime_root"), runtimeRoot},
+    };
+    const QString runtimeExpectationFile
+        = QDir(runtimeTrustRoot).filePath(QStringLiteral("runtime-expectations.json"));
+    const auto writeRuntimeExpectations = [&](const QJsonObject &value) {
+        return writeFile(runtimeExpectationFile, pythonCanonicalJson(value))
+               && ::chmod(QFile::encodeName(runtimeExpectationFile).constData(), 0600) == 0;
+    };
+    QVERIFY(writeRuntimeExpectations(runtimeExpectations));
+    const auto bootstrap = CompilerRuntimeBootstrapProfile::load(
+        Utils::FilePath::fromString(runtimeExpectationFile));
+    QVERIFY_RESULT(bootstrap);
+    QVERIFY_RESULT(bootstrap->validateCurrent());
+
+    QVERIFY(::chmod(QFile::encodeName(runtimeExpectationFile).constData(), 0660) == 0);
+    QVERIFY(!CompilerRuntimeBootstrapProfile::load(
+        Utils::FilePath::fromString(runtimeExpectationFile)));
+    QVERIFY(::chmod(QFile::encodeName(runtimeExpectationFile).constData(), 0600) == 0);
+    const QString compilerReleaseKeyHardLink
+        = QDir(runtimeTrustRoot).filePath(QStringLiteral("compiler-release-hardlink.pub"));
+    QVERIFY(::link(
+                QFile::encodeName(compilerReleaseKeyFile).constData(),
+                QFile::encodeName(compilerReleaseKeyHardLink).constData())
+            == 0);
+    QVERIFY(!CompilerRuntimeBootstrapProfile::load(
+        Utils::FilePath::fromString(runtimeExpectationFile)));
+    QVERIFY(::unlink(QFile::encodeName(compilerReleaseKeyHardLink).constData()) == 0);
+
+    const QStringList requiredInstalledIdentityFields{
+        QStringLiteral("python_executable_sha256"),
+        QStringLiteral("python_installed_tree_sha256"),
+        QStringLiteral("python_portable_identity_sha256"),
+    };
+    for (const QString &field : requiredInstalledIdentityFields) {
+        QJsonObject incomplete = runtimeExpectations;
+        incomplete.remove(field);
+        QVERIFY(writeRuntimeExpectations(incomplete));
+        QVERIFY(!CompilerRuntimeBootstrapProfile::load(
+            Utils::FilePath::fromString(runtimeExpectationFile)));
+    }
+    QJsonObject unexpected = runtimeExpectations;
+    unexpected.insert(QStringLiteral("derive_missing_identity"), true);
+    QVERIFY(writeRuntimeExpectations(unexpected));
+    QVERIFY(!CompilerRuntimeBootstrapProfile::load(
+        Utils::FilePath::fromString(runtimeExpectationFile)));
+
+    QJsonObject selfTrusted = runtimeExpectations;
+    selfTrusted.insert(
+        QStringLiteral("compiler_release_public_key_path"),
+        QDir(compilerRoot).filePath(compilerTrustPath));
+    QVERIFY(writeRuntimeExpectations(selfTrusted));
+    QVERIFY(!CompilerRuntimeBootstrapProfile::load(
+        Utils::FilePath::fromString(runtimeExpectationFile)));
+
+    const QString runtimeTrustAlias
+        = QDir(environment.root).filePath(QStringLiteral("runtime-trust-alias"));
+    QVERIFY(::symlink(
+                QFile::encodeName(runtimeTrustRoot).constData(),
+                QFile::encodeName(runtimeTrustAlias).constData())
+            == 0);
+    QJsonObject aliasedKey = runtimeExpectations;
+    aliasedKey.insert(
+        QStringLiteral("compiler_release_public_key_path"),
+        QDir(runtimeTrustAlias).filePath(QStringLiteral("compiler-release.pub")));
+    QVERIFY(writeRuntimeExpectations(aliasedKey));
+    QVERIFY(!CompilerRuntimeBootstrapProfile::load(
+        Utils::FilePath::fromString(runtimeExpectationFile)));
+    QVERIFY(::unlink(QFile::encodeName(runtimeTrustAlias).constData()) == 0);
+
+    QJsonObject swappedKeys = runtimeExpectations;
+    swappedKeys.insert(QStringLiteral("compiler_release_public_key_path"), pythonReleaseKeyFile);
+    swappedKeys.insert(
+        QStringLiteral("compiler_release_public_key_sha256"),
+        QString::fromLatin1(sha256(publicKey).value().toHex()));
+    swappedKeys.insert(QStringLiteral("python_release_public_key_path"), compilerReleaseKeyFile);
+    swappedKeys.insert(
+        QStringLiteral("python_release_public_key_sha256"),
+        QString::fromLatin1(sha256(compilerPublicKey).value().toHex()));
+    QVERIFY(writeRuntimeExpectations(swappedKeys));
+    QVERIFY(!CompilerRuntimeBootstrapProfile::load(
+        Utils::FilePath::fromString(runtimeExpectationFile)));
+    QVERIFY(writeRuntimeExpectations(runtimeExpectations));
+
     RuntimePackageCompilerProcessLimits processLimits;
     processLimits.commandTimeout = 10s;
     processLimits.queryTimeout = 2s;
     processLimits.cancellationGrace = 50ms;
+
+    const QString nestedOperationRoot
+        = QDir(compilerRoot).filePath(QStringLiteral("operation-store"));
+    {
+        ProvisionedRuntimePackageCompilerProvider nestedProvider(
+            Utils::FilePath::fromString(environment.provisioning),
+            Utils::FilePath::fromString(nestedOperationRoot),
+            Utils::FilePath::fromString(runtimeExpectationFile),
+            processLimits);
+        QVERIFY(!nestedProvider.isAvailable());
+        QVERIFY(!QFileInfo::exists(nestedOperationRoot));
+    }
+    {
+        ProvisionedRuntimePackageCompilerProvider parentProvider(
+            Utils::FilePath::fromString(environment.provisioning),
+            Utils::FilePath::fromString(compilerContainer),
+            Utils::FilePath::fromString(runtimeExpectationFile),
+            processLimits);
+        QVERIFY(!parentProvider.isAvailable());
+    }
+
     const auto makeProvider = [&] {
         return std::make_unique<ProvisionedRuntimePackageCompilerProvider>(
             Utils::FilePath::fromString(environment.provisioning),
             Utils::FilePath::fromString(environment.root),
-            *compilerProfile,
-            *loaded,
+            Utils::FilePath::fromString(runtimeExpectationFile),
             processLimits);
     };
+    QJsonObject wrongProvisioning = runtimeExpectations;
+    wrongProvisioning.insert(
+        QStringLiteral("compiler_provisioning_profile_sha256"),
+        QString::fromLatin1(QByteArray(32, '\x42').toHex()));
+    QVERIFY(writeRuntimeExpectations(wrongProvisioning));
+    QVERIFY(!makeProvider()->isAvailable());
+    QVERIFY(writeRuntimeExpectations(runtimeExpectations));
+
+    const QString copiedCompiler
+        = environment.temporary.filePath(QStringLiteral("copied-runtime-entrypoint"));
+    QVERIFY(writeFile(copiedCompiler, compilerWrapper));
+    QVERIFY(::chmod(QFile::encodeName(copiedCompiler).constData(), 0700) == 0);
+    environment.rewriteProfile(copiedCompiler);
+    QJsonObject copiedExecutableProvisioning = runtimeExpectations;
+    copiedExecutableProvisioning.insert(
+        QStringLiteral("compiler_provisioning_profile_sha256"),
+        QString::fromLatin1(sha256(readFile(environment.provisioning)).value().toHex()));
+    QVERIFY(writeRuntimeExpectations(copiedExecutableProvisioning));
+    QVERIFY(!makeProvider()->isAvailable());
+
+    environment.rewriteProfile(compilerProfile->compilerExecutable().path());
+    QVERIFY(writeRuntimeExpectations(runtimeExpectations));
+
+    QJsonDocument versionDocument = QJsonDocument::fromJson(readFile(environment.provisioning));
+    QVERIFY(versionDocument.isObject());
+    QJsonObject versionTwoProvisioning = versionDocument.object();
+    versionTwoProvisioning.insert(QStringLiteral("contract_version"), 2);
+    QByteArray versionTwoBytes = QJsonDocument(versionTwoProvisioning).toJson(
+        QJsonDocument::Compact);
+    versionTwoBytes.append('\n');
+    QVERIFY(writeFile(environment.provisioning, versionTwoBytes));
+    QJsonObject versionTwoExpectations = runtimeExpectations;
+    versionTwoExpectations.insert(
+        QStringLiteral("compiler_provisioning_profile_sha256"),
+        QString::fromLatin1(sha256(versionTwoBytes).value().toHex()));
+    QVERIFY(writeRuntimeExpectations(versionTwoExpectations));
+    QVERIFY(!makeProvider()->isAvailable());
+
+    environment.rewriteProfile(compilerProfile->compilerExecutable().path());
+    QVERIFY(writeRuntimeExpectations(runtimeExpectations));
+
     auto provider = makeProvider();
     QVERIFY(provider->isAvailable());
     const auto scheduled = provider->compile(environment.fixture.request);
@@ -2376,6 +2580,32 @@ void EtherCATProjectCompilerTests::testPythonRuntimeProfileVerifiesSignedInstall
         return bool(compilerProfile->validateCurrent()) && bool(loaded->validateCurrent());
     };
 
+    provider.reset();
+    provider = makeProvider();
+    QVERIFY(provider->isAvailable());
+    const auto expectationDriftRequest = requestFor(
+        u"04204204-2001-4000-8000-000000001000", 4210);
+    const auto expectationDriftJob = provider->compile(expectationDriftRequest);
+    QVERIFY_RESULT(expectationDriftJob);
+    QJsonObject driftedExpectations = runtimeExpectations;
+    driftedExpectations.insert(
+        QStringLiteral("python_installed_tree_sha256"),
+        QString::fromLatin1(QByteArray(32, '\x42').toHex()));
+    QVERIFY(writeRuntimeExpectations(driftedExpectations));
+    QVERIFY(awaitTerminal(*expectationDriftJob));
+    QCOMPARE(
+        (*expectationDriftJob)->completionError(),
+        Core::RuntimePackageCompilerJobCompletionError::BackendProcessFailure);
+    QVERIFY(!(*expectationDriftJob)->result());
+    QByteArray expectationDriftCall("compile ");
+    expectationDriftCall.append(expectationDriftRequest.operationId.value().toLatin1());
+    expectationDriftCall.append('\n');
+    QVERIFY(!readFile(environment.root + QStringLiteral("/compiler-ledger.json.calls"))
+                 .contains(expectationDriftCall));
+    QVERIFY(!provider->isAvailable());
+    QVERIFY(writeRuntimeExpectations(runtimeExpectations));
+    QVERIFY_RESULT(bootstrap->validateCurrent());
+
     const auto preLaunchTamper = [&](const TamperTarget &target,
                                      QStringView operationId,
                                      quint64 configurationId) {
@@ -2466,6 +2696,25 @@ void EtherCATProjectCompilerTests::testPythonRuntimeProfileVerifiesSignedInstall
                   + QStringLiteral("/output/sign-request.json"));
         return rewriteTarget(target, false) && profilesAreCurrent() && rejected;
     };
+
+    provider.reset();
+    provider = makeProvider();
+    QVERIFY(provider->isAvailable());
+    const auto runningTrustDriftRequest = requestFor(
+        u"04204204-2001-4000-8000-000000000003", 4230);
+    const auto runningTrustDriftJob = provider->compile(runningTrustDriftRequest);
+    QVERIFY_RESULT(runningTrustDriftJob);
+    QVERIFY(awaitJobState(*runningTrustDriftJob, Core::RuntimePackageCompilerJobState::Running));
+    QVERIFY(::chmod(QFile::encodeName(compilerReleaseKeyFile).constData(), 0660) == 0);
+    QVERIFY(awaitTerminal(*runningTrustDriftJob));
+    QCOMPARE(
+        (*runningTrustDriftJob)->completionError(),
+        Core::RuntimePackageCompilerJobCompletionError::BackendProcessFailure);
+    QVERIFY(!(*runningTrustDriftJob)->result());
+    QVERIFY(!provider->isAvailable());
+    QVERIFY(::chmod(QFile::encodeName(compilerReleaseKeyFile).constData(), 0600) == 0);
+    QVERIFY_RESULT(bootstrap->validateCurrent());
+
     QVERIFY(postRunTamper(
         compilerTarget,
         u"04204204-2001-4000-8000-000000000004",

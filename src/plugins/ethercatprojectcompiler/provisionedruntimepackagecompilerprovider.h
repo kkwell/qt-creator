@@ -39,6 +39,12 @@ public:
     ProvisionedRuntimePackageCompilerProvider(
         const Utils::FilePath &provisioningFile,
         const Utils::FilePath &compilerRoot,
+        const Utils::FilePath &runtimeExpectationFile,
+        RuntimePackageCompilerProcessLimits limits = {},
+        QObject *parent = nullptr);
+    ProvisionedRuntimePackageCompilerProvider(
+        const Utils::FilePath &provisioningFile,
+        const Utils::FilePath &compilerRoot,
         const CompilerRuntimeBundleProfile &runtimeBundle,
         const CompilerPythonRuntimeProfile &pythonRuntime,
         RuntimePackageCompilerProcessLimits limits = {},

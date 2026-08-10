@@ -54,7 +54,9 @@ void EtherCATProjectCompilerPlugin::initialize()
 {
     const Utils::FilePath compilerRoot = ::Core::ICore::userResourcePath("ethercat/compiler");
     m_provider = std::make_unique<ProvisionedRuntimePackageCompilerProvider>(
-        compilerRoot / "provisioning.json", compilerRoot);
+        compilerRoot / "provisioning.json",
+        compilerRoot,
+        compilerRoot / "runtime-expectations.json");
     ExtensionSystem::PluginManager::addObject(m_provider.get());
     m_providerRegistered = true;
 

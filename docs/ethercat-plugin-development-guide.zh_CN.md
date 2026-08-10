@@ -667,8 +667,12 @@ SV630N 速度动作仍因实际编码器分辨率、0x6091 电子齿轮换算、
 
 ### P0：形成可重复交付闭环
 
-1. 完成 Mac 受信编译器可执行 bundle、`provisioning.json` 和当前工程
-   `compile-inputs.json` 的交付与验收。
+1. ProductCompiler 已用只读 `runtime-expectations.json` 显式选择编译器与 Python 双
+   Profile；18 项外置信任值、双 release key、三棵签名树和可写 operation root 均严格
+   绑定，缺失时注册 unavailable Provider，禁止 legacy、PATH 或系统 Python 回退。下一步
+   仍需在 Mac 验收 API-073 v1.0.4 双根并取得 Python executable、installed-tree、
+   portable-identity 三项安装后 SHA-256，再由管理员分别提供 expectation、
+   `provisioning.json` 和当前工程 `compile-inputs.json`。IDE 不安装运行时，也不生成这些文件。
 2. 在 Workbench 中完成用户可见的“编译—等待 detached signature—恢复—验证—激活”
    流程，而不要求手工选择任意 ECPKG。
 3. 用当前真实 ProjectSnapshot 和新鲜扫描证据重新编译、部署并完成 DC/XB6 输出验收。

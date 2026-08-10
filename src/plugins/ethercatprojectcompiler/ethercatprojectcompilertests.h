@@ -12,6 +12,7 @@ class EtherCATProjectCompilerTests final : public QObject
 
 private slots:
     void testPluginMetadataAndDefaultAvailability();
+    void testProductBootstrapFailsClosedWithoutRuntimeExpectations();
     void testPythonRuntimeProfileVerifiesSignedInstalledTree();
     void testRuntimeBundleProfileVerifiesInstalledTree();
     void testProvisioningRejectsUnsafeExecutables();

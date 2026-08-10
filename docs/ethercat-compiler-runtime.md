@@ -92,20 +92,47 @@ This proves the external compiler runtime and its golden contract. It does not
 prove IDE discovery, current-project input generation, controller deployment
 or real hardware operation.
 
+## Product runtime bootstrap
+
+The product plugin reads the administrator-owned
+`ethercat/compiler/runtime-expectations.json` before `provisioning.json` or
+operation-store initialization. It is exact canonical ASCII JSON with format
+`ethercat-ide-compiler-runtime-expectations-v1`, format version 1, and a closed
+set of 18 fields. The fields bind the compiler root, version, manifest,
+external release key and exact provisioning-profile SHA-256, plus the Python
+companion root, installed-runtime root, version, bundle, manifest, external
+release key, Python executable, installed-tree and portable-identity SHA-256.
+
+Every digest is supplied externally. The IDE never derives a missing Python
+executable, installed-tree or portable-identity expectation from the received
+runtime's own identity file. The expectation file and two independent raw32
+release keys remain outside all signed trees. The compiler, companion and
+Python roots are mutually disjoint, and the writable operation root is a
+sibling rather than an ancestor or descendant of any signed root.
+
+Trust inputs require canonical local paths, safe leaves and ancestors, stable
+metadata and exact bytes. Before becoming available, the provider also
+requires `provisioning.json` to have the expected exact SHA-256, name the
+signed compiler entrypoint by its exact path and use the contract version in
+the compiler bundle. The provisioning digest binds its contract ID, schema
+digest and production key without duplicating or freezing a future v2
+compiler-contract shape in this expectation format.
+
+Missing or invalid expectations register one unavailable provider. Product
+startup never falls back to the legacy single-file constructor, `PATH`, a
+system Python or a partially verified tree. Bootstrap is read-only: it does
+not install a runtime, execute an installer, create the expectation file,
+generate `provisioning.json` or initialize an operation store after failure.
+
 ## Current integration gaps
 
-- The legacy provider pins a single executable file; API-068 requires a
-  verified complete runtime tree.
 - API-068 intentionally does not supply the IDE's administrator-owned
-  `ethercat-ide-compiler-provisioning-v1` profile.
+  runtime expectation or `ethercat-ide-compiler-provisioning-v1` profile.
 - API-068 provisioning generates a complete
   `ethercat-ide-project-compiler-request-v1`; the current IDE file named
   `compile-inputs.json` is instead an
   `ethercat-ide-compiler-input-provisioning-v1` catalog. They are different
   contracts and must not overwrite one another.
-- The bundle does not embed a product Python runtime or an offline dependency
-  wheelhouse. A temporary development virtual environment is acceptance
-  evidence only.
 - The API-068 signing key is limited to this exact release. Future product
   releases need governed key rotation, revocation and recovery.
 
@@ -124,6 +151,14 @@ profiles. That side effect is outside the IDE bootstrap boundary and was not
 authorized or executed. Product integration therefore waits for API-070: a
 signed, relocatable macOS arm64 runtime that installs wholly under its chosen
 versioned root without root access or system/profile changes.
+
+The corrected API-073 v1.0.4 companion is prepared on Windows but has not yet
+been transferred and accepted into real macOS arm64 companion and runtime
+roots. Its archive, manifest and external release key do not establish the
+three installed-runtime expectations. Those values must come from independent
+Mac acceptance and be entered by the administrator. Until all 18 fields and
+both installed trees validate, the product provider remains unavailable. The
+offline bootstrap tests do not access a controller or prove hardware motion.
 
 Close the active compiler-provisioning issue only after a clean installation
 can discover and verify the runtime, generate inputs from the current

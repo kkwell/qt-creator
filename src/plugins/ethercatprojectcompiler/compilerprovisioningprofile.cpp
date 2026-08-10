@@ -68,9 +68,26 @@ Utils::Result<QByteArray> readRegularLeaf(
     } closer{descriptor};
 
     struct stat opened = {};
+    const auto sameStableMetadata = [](const struct stat &left, const struct stat &right) {
+        if (left.st_dev != right.st_dev || left.st_ino != right.st_ino
+            || left.st_size != right.st_size || left.st_mode != right.st_mode
+            || left.st_uid != right.st_uid || left.st_nlink != right.st_nlink) {
+            return false;
+        }
+#ifdef Q_OS_DARWIN
+        return left.st_mtimespec.tv_sec == right.st_mtimespec.tv_sec
+               && left.st_mtimespec.tv_nsec == right.st_mtimespec.tv_nsec
+               && left.st_ctimespec.tv_sec == right.st_ctimespec.tv_sec
+               && left.st_ctimespec.tv_nsec == right.st_ctimespec.tv_nsec;
+#else
+        return left.st_mtim.tv_sec == right.st_mtim.tv_sec
+               && left.st_mtim.tv_nsec == right.st_mtim.tv_nsec
+               && left.st_ctim.tv_sec == right.st_ctim.tv_sec
+               && left.st_ctim.tv_nsec == right.st_ctim.tv_nsec;
+#endif
+    };
     if (::fstat(descriptor, &opened) != 0 || !S_ISREG(opened.st_mode)
-        || opened.st_dev != before.st_dev || opened.st_ino != before.st_ino
-        || opened.st_size != before.st_size) {
+        || !sameStableMetadata(before, opened)) {
         return Utils::ResultError(QStringLiteral("Provisioned file changed while it was opened: %1")
                                       .arg(path.toUserOutput()));
     }
@@ -88,6 +105,16 @@ Utils::Result<QByteArray> readRegularLeaf(
                                           .arg(path.toUserOutput()));
         }
         offset += qsizetype(count);
+    }
+    struct stat finalDescriptor = {};
+    struct stat finalPath = {};
+    if (::fstat(descriptor, &finalDescriptor) != 0
+        || ::lstat(nativePath.constData(), &finalPath) != 0
+        || !sameStableMetadata(before, finalDescriptor)
+        || !sameStableMetadata(before, finalPath)) {
+        return Utils::ResultError(
+            QStringLiteral("Provisioned file changed while it was read: %1")
+                .arg(path.toUserOutput()));
     }
     return bytes;
 #else
