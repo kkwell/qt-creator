@@ -4,6 +4,8 @@
 
 #include "ethercatproductapitr.h"
 
+#include <ethercatdata/axisparameterevidence.h>
+
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QSet>
@@ -143,6 +145,33 @@ bool bytesAreZero(QByteArrayView bytes, qsizetype offset, qsizetype count)
 bool bytesAreNonzero(QByteArrayView bytes)
 {
     return !bytes.isEmpty() && !bytesAreZero(bytes, 0, bytes.size());
+}
+
+bool validAxisParameterEvidenceQueryPayload(QByteArrayView payload)
+{
+    return payload.size() == 96
+           && readBigEndian<quint32>(payload, 0) == fixedAxisParameterEvidenceProfileId()
+           && readBigEndian<quint16>(payload, 4)
+                  == fixedAxisParameterEvidenceProfileVersion()
+           && readBigEndian<quint16>(payload, 6)
+                  == Data::FixedAxisParameterEvidenceRecords.size()
+           && readBigEndian<quint32>(payload, 8)
+           && readBigEndian<quint16>(payload, 18)
+           && readBigEndian<quint32>(payload, 20)
+           && readBigEndian<quint32>(payload, 24)
+           && readBigEndian<quint32>(payload, 36) == 0
+           && readBigEndian<quint64>(payload, 40)
+           && payload.sliced(48, 32) == fixedAxisParameterEvidenceProfileSha256()
+           && bytesAreZero(payload, 80, 16);
+}
+
+bool validAxisParameterEvidenceQuery(const AxisParameterEvidenceQuery &query)
+{
+    return query.profileId == fixedAxisParameterEvidenceProfileId()
+           && query.profileVersion == fixedAxisParameterEvidenceProfileVersion()
+           && query.topologyCaptureSequence && query.stationAddress && query.vendorId
+           && query.productCode && query.topologyCompletedTimeNs
+           && query.profileSha256 == fixedAxisParameterEvidenceProfileSha256();
 }
 
 bool validRuntimeResourceBinding(const RuntimeResourceBinding &binding)
@@ -569,6 +598,7 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
                    || type == MessageType::GetCapability
                    || type == MessageType::DiscoverTopology
                    || type == MessageType::DiscoverTopologyEvidence
+                   || type == MessageType::QueryAxisParameterEvidence
                    || type == MessageType::ApplyOutputTransaction
                    || type == MessageType::GetPackageState
                    || type == MessageType::ValidatePackage
@@ -596,6 +626,7 @@ bool messageAllowedForRole(Role role, FrameDirection direction, MessageType type
         return type == MessageType::CommandStatus || type == MessageType::ControllerState
                || type == MessageType::Capability || type == MessageType::TopologyResult
                || type == MessageType::TopologyEvidence
+               || type == MessageType::AxisParameterEvidence
                || type == MessageType::PackageState || type == MessageType::FirmwareState
                || type == MessageType::OutputTransactionResult;
     }
@@ -1244,6 +1275,26 @@ quint32 alarmSequenceDistance(quint32 after, quint32 latest)
 
 } // namespace
 
+quint32 fixedAxisParameterEvidenceProfileId()
+{
+    return Data::FixedAxisParameterEvidenceProfileId;
+}
+
+quint16 fixedAxisParameterEvidenceProfileVersion()
+{
+    return Data::FixedAxisParameterEvidenceProfileVersion;
+}
+
+QByteArray fixedAxisParameterEvidenceProfileSha256()
+{
+    return Data::fixedAxisParameterEvidenceProfileSha256();
+}
+
+quint32 axisParameterEvidenceRequiredFlags()
+{
+    return Data::AxisParameterEvidenceRequiredFlags;
+}
+
 FrameParser::FrameParser(Role role, FrameDirection direction)
     : m_role(role)
     , m_direction(direction)
@@ -1421,7 +1472,8 @@ bool isReadOnlyRequest(MessageType type)
            || type == MessageType::GetResourceSnapshot
            || type == MessageType::QuerySemanticBindingAttestation
            || type == MessageType::QueryOutputGroupPolicy
-           || type == MessageType::GetOutputTransactionState;
+           || type == MessageType::GetOutputTransactionState
+           || type == MessageType::QueryAxisParameterEvidence;
 }
 
 bool isPackageDeploymentRequest(MessageType type)
@@ -1567,6 +1619,15 @@ QByteArray encodeRequest(
             -14);
         return {};
     }
+    if (type == MessageType::QueryAxisParameterEvidence
+        && protocolMinor < AxisParameterEvidenceMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            Tr::tr("Axis parameter evidence requires protocol v1.16."),
+            -14);
+        return {};
+    }
     bool payloadValid = false;
     if (type == MessageType::Hello) {
         payloadValid = payload.size() == 24;
@@ -1601,6 +1662,8 @@ QByteArray encodeRequest(
                        && readBigEndian<quint16>(payload, 6) == 0
                        && readBigEndian<quint32>(payload, 8) == 0
                        && readBigEndian<quint32>(payload, 12) == 0;
+    } else if (type == MessageType::QueryAxisParameterEvidence) {
+        payloadValid = validAxisParameterEvidenceQueryPayload(payload);
     } else if (type == MessageType::BulkBegin) {
         payloadValid = payload.size() == 24 && readBigEndian<quint64>(payload, 0)
                        && readBigEndian<quint32>(payload, 8)
@@ -1770,6 +1833,52 @@ QByteArray encodeDiscoverTopologyEvidence(
     appendBigEndian(payload, quint32(0));
     return encodeRequest(
         MessageType::DiscoverTopologyEvidence,
+        payload,
+        sessionId,
+        requestId,
+        sequence,
+        bootId,
+        protocolMinor,
+        error);
+}
+
+QByteArray encodeQueryAxisParameterEvidence(
+    const AxisParameterEvidenceQuery &query,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint64 bootId,
+    quint16 protocolMinor,
+    Error *error)
+{
+    clearError(error);
+    if (!validAxisParameterEvidenceQuery(query)) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            Tr::tr("The fixed axis parameter evidence query is invalid."));
+        return {};
+    }
+
+    QByteArray payload;
+    payload.reserve(96);
+    appendBigEndian(payload, query.profileId);
+    appendBigEndian(payload, query.profileVersion);
+    appendBigEndian(payload, quint16(8));
+    appendBigEndian(payload, query.topologyCaptureSequence);
+    appendBigEndian(payload, query.afterEvidenceSequence);
+    appendBigEndian(payload, query.position);
+    appendBigEndian(payload, query.stationAddress);
+    appendBigEndian(payload, query.vendorId);
+    appendBigEndian(payload, query.productCode);
+    appendBigEndian(payload, query.revision);
+    appendBigEndian(payload, query.serial);
+    appendBigEndian(payload, quint32(0));
+    appendBigEndian(payload, query.topologyCompletedTimeNs);
+    payload.append(query.profileSha256);
+    payload.append(16, '\0');
+    return encodeRequest(
+        MessageType::QueryAxisParameterEvidence,
         payload,
         sessionId,
         requestId,
@@ -3025,6 +3134,7 @@ std::optional<Data::ControllerCapabilitySummary> decodeCapability(
     result.semanticMappingAttestation = featureBits & SemanticBindingAttestationFeature;
     result.runtimeOutputTransactions = featureBits & OutputTransactionFeature;
     result.topologyEvidence = featureBits & TopologyEvidenceFeature;
+    result.axisParameterEvidence = featureBits & AxisParameterEvidenceFeature;
     return result;
 }
 
@@ -3418,6 +3528,192 @@ std::optional<TopologyEvidenceResult> decodeTopologyEvidence(
                 Tr::tr("TopologyEvidence module ownership is inconsistent."));
             return {};
         }
+    }
+    return result;
+}
+
+std::optional<AxisParameterEvidenceResult> decodeAxisParameterEvidence(
+    const Frame &frame, const AxisParameterEvidenceQuery &query, Error *error)
+{
+    clearError(error);
+    if (frame.header.protocolMajor != CurrentMajor
+        || frame.header.protocolMinor < AxisParameterEvidenceMinor
+        || frame.header.protocolMinor > CurrentMinor) {
+        setError(
+            error,
+            ErrorCategory::IncompatibleVersion,
+            Tr::tr("AxisParameterEvidence requires Product API v1.16."));
+        return {};
+    }
+    if (frame.header.messageType != MessageType::AxisParameterEvidence
+        || frame.payload.size() < 128) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            Tr::tr("Expected a complete AxisParameterEvidence response."));
+        return {};
+    }
+    if (!frame.header.sessionId || !frame.header.requestId || !frame.header.sequence
+        || !frame.header.bootId || !validAxisParameterEvidenceQuery(query)) {
+        setError(
+            error,
+            ErrorCategory::InvalidEnvelope,
+            Tr::tr("AxisParameterEvidence has an invalid query or response envelope."));
+        return {};
+    }
+
+    constexpr quint16 headerBytesRequired = 128;
+    constexpr quint16 recordBytesRequired = 32;
+    constexpr quint16 recordCountRequired = Data::FixedAxisParameterEvidenceRecords.size();
+    const QByteArrayView payload(frame.payload);
+    const quint16 originalType = readBigEndian<quint16>(payload, 0);
+    const quint16 headerBytes = readBigEndian<quint16>(payload, 2);
+    const qint32 status = readBigEndian<qint32>(payload, 4);
+    const qint32 operationResult = readBigEndian<qint32>(payload, 8);
+    const quint32 flags = readBigEndian<quint32>(payload, 12);
+    const quint32 evidenceSequence = readBigEndian<quint32>(payload, 16);
+    const quint32 topologyCaptureSequence = readBigEndian<quint32>(payload, 20);
+    const quint16 recordCount = readBigEndian<quint16>(payload, 24);
+    const quint16 recordBytes = readBigEndian<quint16>(payload, 26);
+    const quint32 profileId = readBigEndian<quint32>(payload, 28);
+    const quint16 profileVersion = readBigEndian<quint16>(payload, 32);
+    const quint16 position = readBigEndian<quint16>(payload, 34);
+    const quint16 stationAddress = readBigEndian<quint16>(payload, 36);
+    const quint16 reserved0 = readBigEndian<quint16>(payload, 38);
+    const quint32 vendorId = readBigEndian<quint32>(payload, 40);
+    const quint32 productCode = readBigEndian<quint32>(payload, 44);
+    const quint32 revision = readBigEndian<quint32>(payload, 48);
+    const quint32 serial = readBigEndian<quint32>(payload, 52);
+    const quint64 completedTimeNs = readBigEndian<quint64>(payload, 56);
+    const quint64 topologyCompletedTimeNs = readBigEndian<quint64>(payload, 64);
+    const quint64 payloadBootId = readBigEndian<quint64>(payload, 72);
+    const QByteArray profileSha256(payload.sliced(80, 32));
+    const quint64 detail = readBigEndian<quint64>(payload, 112);
+    const quint64 reserved1 = readBigEndian<quint64>(payload, 120);
+    const quint32 expectedFrameFlags
+        = flagValue(Flag::Response) | (status ? flagValue(Flag::Error) : 0);
+    if (originalType != quint16(MessageType::QueryAxisParameterEvidence)
+        || headerBytes != headerBytesRequired
+        || !Data::isAxisParameterEvidenceResultTupleValid(status, operationResult, detail)
+        || frame.header.flags != expectedFrameFlags || recordBytes != recordBytesRequired
+        || reserved0 || reserved1) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            Tr::tr("AxisParameterEvidence header fields violate the fixed contract."));
+        return {};
+    }
+
+    AxisParameterEvidenceResult result;
+    result.status = status;
+    result.operationResult = operationResult;
+    result.flags = flags;
+    result.evidenceSequence = evidenceSequence;
+    result.topologyCaptureSequence = topologyCaptureSequence;
+    result.profileId = profileId;
+    result.profileVersion = profileVersion;
+    result.position = position;
+    result.stationAddress = stationAddress;
+    result.vendorId = vendorId;
+    result.productCode = productCode;
+    result.revision = revision;
+    result.serial = serial;
+    result.completedTimeNs = completedTimeNs;
+    result.topologyCompletedTimeNs = topologyCompletedTimeNs;
+    result.bootId = payloadBootId;
+    result.profileSha256 = profileSha256;
+    result.detail = detail;
+
+    if (status) {
+        if (flags || evidenceSequence || topologyCaptureSequence || recordCount || profileId
+            || profileVersion || position || stationAddress || vendorId || productCode || revision
+            || serial || completedTimeNs || topologyCompletedTimeNs || payloadBootId
+            || !bytesAreZero(profileSha256, 0, profileSha256.size())
+            || frame.payload.size() != 128) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                Tr::tr("AxisParameterEvidence typed error fields are inconsistent."));
+            return {};
+        }
+        return result;
+    }
+
+    if (operationResult || detail || flags != axisParameterEvidenceRequiredFlags()
+        || !evidenceSequence
+        || evidenceSequence <= query.afterEvidenceSequence
+        || topologyCaptureSequence != query.topologyCaptureSequence
+        || recordCount != recordCountRequired || profileId != query.profileId
+        || profileVersion != query.profileVersion || position != query.position
+        || stationAddress != query.stationAddress || vendorId != query.vendorId
+        || productCode != query.productCode || revision != query.revision || serial != query.serial
+        || completedTimeNs <= query.topologyCompletedTimeNs
+        || topologyCompletedTimeNs != query.topologyCompletedTimeNs
+        || payloadBootId != frame.header.bootId || profileSha256 != query.profileSha256
+        || frame.payload.size() != 128 + recordCountRequired * recordBytesRequired) {
+        setError(
+            error,
+            ErrorCategory::InvalidPayload,
+            Tr::tr("AxisParameterEvidence does not match the fixed query context."));
+        return {};
+    }
+
+    result.records.reserve(recordCountRequired);
+    for (quint16 ordinal = 0; ordinal < recordCountRequired; ++ordinal) {
+        const qsizetype offset = 128 + qsizetype(ordinal) * recordBytesRequired;
+        AxisParameterEvidenceRecord record;
+        record.ordinal = readBigEndian<quint16>(payload, offset);
+        record.index = readBigEndian<quint16>(payload, offset + 2);
+        record.subIndex = quint8(payload.at(offset + 4));
+        const quint8 state = quint8(payload.at(offset + 5));
+        record.valueBytes = quint8(payload.at(offset + 6));
+        const quint8 encoding = quint8(payload.at(offset + 7));
+        record.abortCode = readBigEndian<quint32>(payload, offset + 8);
+        record.operationResult = readBigEndian<qint32>(payload, offset + 12);
+        const QByteArrayView rawValue = payload.sliced(offset + 16, 8);
+        record.detail = readBigEndian<quint64>(payload, offset + 24);
+        if (state < quint8(AxisParameterEvidenceRecordState::Valid)
+            || state > quint8(AxisParameterEvidenceRecordState::ReadFailed)
+            || encoding > quint8(AxisParameterEvidenceEncoding::RawLittleEndian)
+            || record.ordinal != ordinal
+            || record.index != Data::FixedAxisParameterEvidenceRecords.at(ordinal).index
+            || record.subIndex != Data::FixedAxisParameterEvidenceRecords.at(ordinal).subIndex) {
+            setError(
+                error,
+                ErrorCategory::InvalidPayload,
+                Tr::tr("AxisParameterEvidence contains an invalid fixed record identity."));
+            return {};
+        }
+        record.state = AxisParameterEvidenceRecordState(state);
+        record.encoding = AxisParameterEvidenceEncoding(encoding);
+        if (record.state == AxisParameterEvidenceRecordState::Valid) {
+            if (record.valueBytes
+                    != Data::FixedAxisParameterEvidenceRecords.at(ordinal).valueBytes
+                || record.encoding != AxisParameterEvidenceEncoding::RawLittleEndian
+                || record.abortCode || record.operationResult || record.detail
+                || !bytesAreZero(rawValue, record.valueBytes, 8 - record.valueBytes)) {
+                setError(
+                    error,
+                    ErrorCategory::InvalidPayload,
+                    Tr::tr("AxisParameterEvidence contains an invalid observed value."));
+                return {};
+            }
+            record.rawValue = QByteArray(rawValue.first(record.valueBytes));
+        } else {
+            const bool abortState
+                = record.state == AxisParameterEvidenceRecordState::SdoAbort;
+            if (record.valueBytes || record.encoding != AxisParameterEvidenceEncoding::None
+                || !bytesAreZero(rawValue, 0, 8) || record.operationResult >= 0
+                || abortState != bool(record.abortCode)
+                || (abortState ? record.detail != 0 : record.detail == 0)) {
+                setError(
+                    error,
+                    ErrorCategory::InvalidPayload,
+                    Tr::tr("AxisParameterEvidence contains an invalid failed read record."));
+                return {};
+            }
+        }
+        result.records.append(record);
     }
     return result;
 }

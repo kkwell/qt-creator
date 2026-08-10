@@ -964,6 +964,7 @@ public:
         RuntimeOutputGroupPolicy,
         RuntimeOutputTransactionState,
         RuntimeOutputTransactionApply,
+        AxisParameterEvidence,
         ResumeEvents,
         ResumeReplay,
         ControlCommand,
@@ -1009,6 +1010,14 @@ public:
         std::optional<Protocol::OutputTransactionRequest> outputTransactionProtocolRequest;
         std::optional<Data::RuntimeOutputTransactionRequest> outputTransactionRequest;
         std::optional<Data::RuntimeOutputTransactionRequest> outputReconciliationRequest;
+        std::optional<Protocol::AxisParameterEvidenceQuery> axisParameterEvidenceQuery;
+        Data::ControllerConnectionScope axisParameterScope;
+        quint64 axisParameterSessionGeneration = 0;
+        quint64 axisParameterSessionId = 0;
+        quint64 axisParameterBootId = 0;
+        quint64 axisParameterTopologyRequestId = 0;
+        quint64 axisParameterTopologyResponseSequence = 0;
+        QByteArray axisParameterTopologyPayloadSha256;
         QTimer *timer = nullptr;
     };
 
@@ -1175,6 +1184,52 @@ public:
     {
         QMetaObject::invokeMethod(
             q, [this] { emit q->runtimeResourceCatalogChanged(); }, Qt::QueuedConnection);
+    }
+
+    void notifyAxisParameterEvidenceBatchChanged()
+    {
+        QMetaObject::invokeMethod(
+            q, [q = q] { emit q->axisParameterEvidenceBatchChanged(); }, Qt::QueuedConnection);
+    }
+
+    bool ignoreLateAxisParameterEvidenceResponse(quint64 requestId)
+    {
+        constexpr qsizetype maximumIgnoredRequestIds = 64;
+        if (!requestId)
+            return false;
+        if (ignoredAxisParameterEvidenceRequestIds.contains(requestId))
+            return true;
+        if (ignoredAxisParameterEvidenceRequestIds.size() >= maximumIgnoredRequestIds)
+            return false;
+        ignoredAxisParameterEvidenceRequestIds.insert(requestId);
+        return true;
+    }
+
+    void invalidateAxisParameterEvidence()
+    {
+        for (auto request = pendingRequests.begin(); request != pendingRequests.end();) {
+            if (request->kind != PendingKind::AxisParameterEvidence) {
+                ++request;
+                continue;
+            }
+            const quint64 requestId = request.key();
+            if (!ignoreLateAxisParameterEvidenceResponse(requestId)) {
+                ++request;
+                continue;
+            }
+            if (request->timer) {
+                request->timer->stop();
+                request->timer->deleteLater();
+            }
+            request = pendingRequests.erase(request);
+        }
+        const bool published = axisParameterEvidenceBatch.has_value();
+        axisParameterEvidenceBatch.reset();
+        axisParameterEvidenceStaging.clear();
+        axisParameterEvidenceTopology.reset();
+        axisParameterEvidenceTargetIndex = 0;
+        if (published)
+            notifyAxisParameterEvidenceBatchChanged();
     }
 
     void notifyRuntimeResourceSnapshotChanged()
@@ -2141,6 +2196,7 @@ public:
 
     void advanceGeneration()
     {
+        invalidateAxisParameterEvidence();
         invalidateRuntimeSemanticMappingAttestation(
             Tr::tr("The semantic mapping attestation query ended with the controller session."));
         clearRuntimeOutputCache(true);
@@ -2150,6 +2206,9 @@ public:
         ignoredRuntimeResourceRequestIds.clear();
         ignoredSemanticMappingAttestationRequestIds.clear();
         ignoredRuntimeOutputRequestIds.clear();
+        ignoredAxisParameterEvidenceRequestIds.clear();
+        lastTopologyEvidenceCaptureSequence = 0;
+        lastAxisParameterEvidenceSequence = 0;
         snapshot.sessionGeneration = generation;
     }
 
@@ -2157,6 +2216,7 @@ public:
     {
         heartbeatTimer->stop();
         liveStateTimer->stop();
+        invalidateAxisParameterEvidence();
         invalidateRuntimeResources();
         invalidateRuntimeSemanticMappingAttestation(
             Tr::tr("The semantic mapping attestation query ended with the controller session."));
@@ -2813,6 +2873,35 @@ public:
                     || found->channelEpoch != expectedEpoch || generation != expectedGeneration) {
                     return;
                 }
+                if (kind == PendingKind::AxisParameterEvidence
+                    && found->axisParameterEvidenceQuery) {
+                    const PendingRequest pending = *found;
+                    if (!axisParameterPendingMatchesContext(pending)) {
+                        failProtocol(
+                            role,
+                            operation,
+                            Tr::tr("The timed-out axis parameter query lost its scan context."),
+                            {},
+                            requestId);
+                        return;
+                    }
+                    if (!ignoreLateAxisParameterEvidenceResponse(requestId)) {
+                        failNetwork(
+                            role,
+                            operation,
+                            Tr::tr("A timed-out axis parameter response cannot be tracked safely."),
+                            true,
+                            requestId);
+                        return;
+                    }
+                    Data::AxisParameterEvidenceTargetResult target
+                        = axisParameterTargetResult(
+                            *pending.axisParameterEvidenceQuery, requestId);
+                    target.outcome = Data::AxisParameterEvidenceTargetOutcome::TimedOut;
+                    removePending(requestId);
+                    finishAxisParameterEvidenceTarget(target);
+                    return;
+                }
                 if (kind == PendingKind::RuntimeResourceTargetedSnapshot
                     && found->targetedRuntimeResourceRequest) {
                     const Data::RuntimeResourceSnapshotRequest request
@@ -3053,6 +3142,281 @@ public:
             return 0;
         }
         return requestId;
+    }
+
+    bool axisParameterEvidenceContextIsCurrent() const
+    {
+        if (!axisParameterEvidenceTopology || snapshot.mock
+            || (snapshot.state != Data::ControllerConnectionState::Connected
+                && snapshot.state != Data::ControllerConnectionState::Degraded)
+            || negotiatedMinor < Protocol::AxisParameterEvidenceMinor
+            || !(featureBits & Protocol::AxisParameterEvidenceFeature)
+            || !snapshot.capability || !snapshot.capability->axisParameterEvidence
+            || !snapshot.session || !snapshot.topology
+            || *snapshot.topology != *axisParameterEvidenceTopology
+            || snapshot.scope != currentRequest.scope || snapshot.sessionGeneration != generation
+            || snapshot.session->sessionId != sessionId || snapshot.session->bootId != bootId
+            || axisParameterEvidenceTopology->scope != snapshot.scope
+            || axisParameterEvidenceTopology->sessionGeneration != generation
+            || axisParameterEvidenceTopology->sessionId != sessionId
+            || axisParameterEvidenceTopology->bootId != bootId
+            || !axisParameterEvidenceTopology->hasCompleteProvenance()
+            || !axisParameterEvidenceTopology->topologyCaptureSequence
+            || !axisParameterEvidenceTopology->topologyCompletedTimeNs
+            || axisParameterEvidenceTopology->topologyPayloadSha256.size() != 32
+            || axisParameterEvidenceTopology->respondingCount
+                   != axisParameterEvidenceTopology->slaves.size()
+            || axisParameterEvidenceTargetIndex
+                   > axisParameterEvidenceTopology->slaves.size()
+            || axisParameterEvidenceStaging.size() != axisParameterEvidenceTargetIndex) {
+            return false;
+        }
+        quint32 previousPosition = 0;
+        bool first = true;
+        for (const Data::ControllerTopologySlave &slave : axisParameterEvidenceTopology->slaves) {
+            if (!slave.stationAddress || !slave.vendorId || !slave.productCode
+                || (!first && slave.position <= previousPosition)) {
+                return false;
+            }
+            previousPosition = slave.position;
+            first = false;
+        }
+        return true;
+    }
+
+    bool axisParameterPendingMatchesContext(const PendingRequest &request) const
+    {
+        if (!request.axisParameterEvidenceQuery || !axisParameterEvidenceContextIsCurrent())
+            return false;
+        const Protocol::AxisParameterEvidenceQuery &query
+            = *request.axisParameterEvidenceQuery;
+        if (axisParameterEvidenceTargetIndex
+            >= axisParameterEvidenceTopology->slaves.size()) {
+            return false;
+        }
+        const Data::ControllerTopologySlave &slave
+            = axisParameterEvidenceTopology->slaves.at(axisParameterEvidenceTargetIndex);
+        return request.axisParameterScope == snapshot.scope
+               && request.axisParameterSessionGeneration == generation
+               && request.axisParameterSessionId == sessionId
+               && request.axisParameterBootId == bootId
+               && request.axisParameterTopologyRequestId
+                      == axisParameterEvidenceTopology->requestId
+               && request.axisParameterTopologyResponseSequence
+                      == axisParameterEvidenceTopology->responseSequence
+               && request.axisParameterTopologyPayloadSha256
+                      == axisParameterEvidenceTopology->topologyPayloadSha256
+               && query.profileId == Protocol::fixedAxisParameterEvidenceProfileId()
+               && query.profileVersion == Protocol::fixedAxisParameterEvidenceProfileVersion()
+               && query.profileSha256 == Protocol::fixedAxisParameterEvidenceProfileSha256()
+               && query.topologyCaptureSequence
+                      == axisParameterEvidenceTopology->topologyCaptureSequence
+               && query.topologyCompletedTimeNs
+                      == axisParameterEvidenceTopology->topologyCompletedTimeNs
+               && query.position == slave.position && query.stationAddress == slave.stationAddress
+               && query.vendorId == slave.vendorId && query.productCode == slave.productCode
+               && query.revision == slave.revision && query.serial == slave.serial;
+    }
+
+    Data::AxisParameterEvidenceTargetResult axisParameterTargetResult(
+        const Protocol::AxisParameterEvidenceQuery &query, quint64 requestId) const
+    {
+        Data::AxisParameterEvidenceTargetResult target;
+        target.position = query.position;
+        target.stationAddress = query.stationAddress;
+        target.vendorId = query.vendorId;
+        target.productCode = query.productCode;
+        target.revision = query.revision;
+        target.serial = query.serial;
+        target.requestId = requestId;
+        return target;
+    }
+
+    void publishAxisParameterEvidenceBatch()
+    {
+        if (!axisParameterEvidenceContextIsCurrent()
+            || axisParameterEvidenceTargetIndex
+                   != axisParameterEvidenceTopology->slaves.size()) {
+            invalidateAxisParameterEvidence();
+            return;
+        }
+        Data::AxisParameterEvidenceBatch batch;
+        batch.scope = snapshot.scope;
+        batch.sessionGeneration = generation;
+        batch.sessionId = sessionId;
+        batch.bootId = bootId;
+        batch.topologyRequestId = axisParameterEvidenceTopology->requestId;
+        batch.topologyResponseSequence = axisParameterEvidenceTopology->responseSequence;
+        batch.topologyCaptureSequence = axisParameterEvidenceTopology->topologyCaptureSequence;
+        batch.topologyCompletedTimeNs = axisParameterEvidenceTopology->topologyCompletedTimeNs;
+        batch.topologyPayloadSha256 = axisParameterEvidenceTopology->topologyPayloadSha256;
+        batch.profileId = Protocol::fixedAxisParameterEvidenceProfileId();
+        batch.profileVersion = Protocol::fixedAxisParameterEvidenceProfileVersion();
+        batch.profileSha256 = Protocol::fixedAxisParameterEvidenceProfileSha256();
+        batch.targets = axisParameterEvidenceStaging;
+        batch.completedAt = QDateTime::currentDateTimeUtc();
+        if (!batch.isValid()) {
+            failProtocol(
+                Protocol::Role::Control,
+                Data::ControllerOperation::QueryAxisParameterEvidence,
+                Tr::tr("The completed axis parameter evidence batch is internally inconsistent."));
+            return;
+        }
+        axisParameterEvidenceBatch = batch;
+        notifyAxisParameterEvidenceBatchChanged();
+    }
+
+    bool sendNextAxisParameterEvidenceQuery()
+    {
+        if (!axisParameterEvidenceContextIsCurrent()) {
+            invalidateAxisParameterEvidence();
+            return false;
+        }
+        if (axisParameterEvidenceTargetIndex
+            == axisParameterEvidenceTopology->slaves.size()) {
+            publishAxisParameterEvidenceBatch();
+            return true;
+        }
+        if (ignoredAxisParameterEvidenceRequestIds.size() >= 64) {
+            invalidateAxisParameterEvidence();
+            return false;
+        }
+        if (std::any_of(
+                pendingRequests.cbegin(),
+                pendingRequests.cend(),
+                [](const PendingRequest &request) {
+                    return request.kind == PendingKind::AxisParameterEvidence;
+                })) {
+            failProtocol(
+                Protocol::Role::Control,
+                Data::ControllerOperation::QueryAxisParameterEvidence,
+                Tr::tr("More than one axis parameter query would be in flight."));
+            return false;
+        }
+        Channel &control = channel(Protocol::Role::Control);
+        if (!control.handshaken || !control.socket) {
+            invalidateAxisParameterEvidence();
+            return false;
+        }
+        const Data::ControllerTopologySlave &slave
+            = axisParameterEvidenceTopology->slaves.at(axisParameterEvidenceTargetIndex);
+        Protocol::AxisParameterEvidenceQuery query;
+        query.profileId = Protocol::fixedAxisParameterEvidenceProfileId();
+        query.profileVersion = Protocol::fixedAxisParameterEvidenceProfileVersion();
+        query.topologyCaptureSequence
+            = axisParameterEvidenceTopology->topologyCaptureSequence;
+        query.afterEvidenceSequence = lastAxisParameterEvidenceSequence;
+        query.position = quint16(slave.position);
+        query.stationAddress = slave.stationAddress;
+        query.vendorId = slave.vendorId;
+        query.productCode = slave.productCode;
+        query.revision = slave.revision;
+        query.serial = slave.serial;
+        query.topologyCompletedTimeNs
+            = axisParameterEvidenceTopology->topologyCompletedTimeNs;
+        query.profileSha256 = Protocol::fixedAxisParameterEvidenceProfileSha256();
+
+        Protocol::Error codecError;
+        const quint64 requestId = allocateRequestId();
+        const QByteArray wire = Protocol::encodeQueryAxisParameterEvidence(
+            query,
+            sessionId,
+            requestId,
+            ++control.sendSequence,
+            bootId,
+            negotiatedMinor,
+            &codecError);
+        if (wire.isEmpty()) {
+            failProtocol(
+                Protocol::Role::Control,
+                Data::ControllerOperation::QueryAxisParameterEvidence,
+                Tr::tr("The fixed axis parameter evidence query could not be encoded."),
+                codecError.text,
+                requestId,
+                false);
+            return false;
+        }
+        PendingRequest request;
+        request.kind = PendingKind::AxisParameterEvidence;
+        request.role = Protocol::Role::Control;
+        request.operation = Data::ControllerOperation::QueryAxisParameterEvidence;
+        request.generation = generation;
+        request.channelEpoch = control.epoch;
+        request.requestType = Protocol::MessageType::QueryAxisParameterEvidence;
+        request.axisParameterEvidenceQuery = query;
+        request.axisParameterScope = snapshot.scope;
+        request.axisParameterSessionGeneration = generation;
+        request.axisParameterSessionId = sessionId;
+        request.axisParameterBootId = bootId;
+        request.axisParameterTopologyRequestId = axisParameterEvidenceTopology->requestId;
+        request.axisParameterTopologyResponseSequence
+            = axisParameterEvidenceTopology->responseSequence;
+        request.axisParameterTopologyPayloadSha256
+            = axisParameterEvidenceTopology->topologyPayloadSha256;
+        addPending(requestId, request, options.requestTimeoutMs);
+        if (!writeFrame(
+                control,
+                wire,
+                Protocol::Role::Control,
+                Data::ControllerOperation::QueryAxisParameterEvidence)) {
+            removePending(requestId);
+            return false;
+        }
+        return true;
+    }
+
+    void beginAxisParameterEvidenceBatch()
+    {
+        invalidateAxisParameterEvidence();
+        if (ignoredAxisParameterEvidenceRequestIds.size() >= 64 || snapshot.mock
+            || (snapshot.state != Data::ControllerConnectionState::Connected
+                && snapshot.state != Data::ControllerConnectionState::Degraded)
+            || negotiatedMinor < Protocol::AxisParameterEvidenceMinor
+            || !(featureBits & Protocol::AxisParameterEvidenceFeature)
+            || !snapshot.capability || !snapshot.capability->axisParameterEvidence
+            || !snapshot.session || !snapshot.topology
+            || !snapshot.topology->hasCompleteProvenance()
+            || !snapshot.topology->topologyCaptureSequence
+            || !snapshot.topology->topologyCompletedTimeNs
+            || snapshot.topology->topologyPayloadSha256.size() != 32
+            || snapshot.topology->scope != snapshot.scope
+            || snapshot.topology->sessionGeneration != generation
+            || snapshot.topology->sessionId != sessionId
+            || snapshot.topology->bootId != bootId
+            || snapshot.topology->slaves.size()
+                   > 64 - ignoredAxisParameterEvidenceRequestIds.size()) {
+            return;
+        }
+        axisParameterEvidenceTopology = snapshot.topology;
+        axisParameterEvidenceStaging.clear();
+        axisParameterEvidenceTargetIndex = 0;
+        sendNextAxisParameterEvidenceQuery();
+    }
+
+    void finishAxisParameterEvidenceTarget(
+        const Data::AxisParameterEvidenceTargetResult &target)
+    {
+        if (!axisParameterEvidenceContextIsCurrent()
+            || axisParameterEvidenceTargetIndex
+                   >= axisParameterEvidenceTopology->slaves.size()) {
+            invalidateAxisParameterEvidence();
+            return;
+        }
+        const Data::ControllerTopologySlave &slave
+            = axisParameterEvidenceTopology->slaves.at(axisParameterEvidenceTargetIndex);
+        if (!target.isValid() || target.position != slave.position
+            || target.stationAddress != slave.stationAddress || target.vendorId != slave.vendorId
+            || target.productCode != slave.productCode || target.revision != slave.revision
+            || target.serial != slave.serial) {
+            failProtocol(
+                Protocol::Role::Control,
+                Data::ControllerOperation::QueryAxisParameterEvidence,
+                Tr::tr("The axis parameter target result is internally inconsistent."));
+            return;
+        }
+        axisParameterEvidenceStaging.append(target);
+        ++axisParameterEvidenceTargetIndex;
+        sendNextAxisParameterEvidenceQuery();
     }
 
     bool sendRuntimeResourceTableQuery(const Protocol::RuntimeResourceTableQuery &query)
@@ -5941,6 +6305,23 @@ public:
 
         auto found = pendingRequests.find(requestId);
         if (found == pendingRequests.end()) {
+            if (ignoredAxisParameterEvidenceRequestIds.contains(requestId)) {
+                if (value.role == Protocol::Role::Control
+                    && frame.header.messageType
+                           == Protocol::MessageType::AxisParameterEvidence
+                    && frame.header.sessionId == sessionId && frame.header.bootId == bootId) {
+                    ignoredAxisParameterEvidenceRequestIds.remove(requestId);
+                    return;
+                }
+                failProtocol(
+                    value.role,
+                    Data::ControllerOperation::QueryAxisParameterEvidence,
+                    Tr::tr(
+                        "A canceled axis parameter request received a mismatched late response."),
+                    {},
+                    requestId);
+                return;
+            }
             if (ignoredRuntimeResourceRequestIds.remove(requestId))
                 return;
             if (ignoredSemanticMappingAttestationRequestIds.remove(requestId))
@@ -5992,6 +6373,16 @@ public:
         }
         if (!validateEstablishedIdentity(frame, request, requestId))
             return;
+        if (request.kind == PendingKind::AxisParameterEvidence
+            && frame.header.messageType != Protocol::MessageType::AxisParameterEvidence) {
+            failProtocol(
+                request.role,
+                request.operation,
+                Tr::tr("The controller returned the wrong axis parameter response type."),
+                {},
+                requestId);
+            return;
+        }
         if (request.kind == PendingKind::PackageBulk) {
             QString protocolDetail;
             if (frame.header.messageType != Protocol::MessageType::BulkStatus
@@ -6185,7 +6576,12 @@ public:
             capability->topologyEvidence
                 = negotiatedMinor >= Protocol::TopologyEvidenceMinor
                   && (featureBits & Protocol::TopologyEvidenceFeature);
+            capability->axisParameterEvidence
+                = negotiatedMinor >= Protocol::AxisParameterEvidenceMinor
+                  && (featureBits & Protocol::AxisParameterEvidenceFeature);
             snapshot.capability = *capability;
+            if (!capability->axisParameterEvidence)
+                invalidateAxisParameterEvidence();
             if (!capability->semanticMappingAttestation) {
                 invalidateRuntimeSemanticMappingAttestation(
                     Tr::tr(
@@ -6251,6 +6647,99 @@ public:
         case PendingKind::RuntimeOutputTransactionState:
         case PendingKind::RuntimeOutputTransactionApply:
             return;
+        case PendingKind::AxisParameterEvidence: {
+            if (!axisParameterPendingMatchesContext(request)) {
+                failProtocol(
+                    value.role,
+                    request.operation,
+                    Tr::tr("The axis parameter response no longer matches the active scan."),
+                    {},
+                    requestId);
+                return;
+            }
+            const Protocol::AxisParameterEvidenceQuery &query
+                = *request.axisParameterEvidenceQuery;
+            const auto decoded
+                = Protocol::decodeAxisParameterEvidence(frame, query, &decodeError);
+            if (!decoded)
+                break;
+            Data::AxisParameterEvidenceTargetResult target
+                = axisParameterTargetResult(query, requestId);
+            if (decoded->status) {
+                target.outcome
+                    = Data::AxisParameterEvidenceTargetOutcome::ControllerError;
+                target.status = decoded->status;
+                target.operationResult = decoded->operationResult;
+                target.detail = decoded->detail;
+                removePending(requestId);
+                finishAxisParameterEvidenceTarget(target);
+                return;
+            }
+
+            Data::AxisParameterEvidence evidence;
+            evidence.scope = request.axisParameterScope;
+            evidence.sessionGeneration = request.axisParameterSessionGeneration;
+            evidence.sessionId = request.axisParameterSessionId;
+            evidence.bootId = request.axisParameterBootId;
+            evidence.requestId = requestId;
+            evidence.responseSequence = frame.header.sequence;
+            evidence.controllerTimestampNs = frame.header.controllerTimestampNs;
+            evidence.topologyRequestId = request.axisParameterTopologyRequestId;
+            evidence.topologyResponseSequence
+                = request.axisParameterTopologyResponseSequence;
+            evidence.topologyCaptureSequence = decoded->topologyCaptureSequence;
+            evidence.topologyCompletedTimeNs = decoded->topologyCompletedTimeNs;
+            evidence.topologyPayloadSha256
+                = request.axisParameterTopologyPayloadSha256;
+            evidence.evidenceSequence = decoded->evidenceSequence;
+            evidence.completedTimeNs = decoded->completedTimeNs;
+            evidence.position = decoded->position;
+            evidence.stationAddress = decoded->stationAddress;
+            evidence.vendorId = decoded->vendorId;
+            evidence.productCode = decoded->productCode;
+            evidence.revision = decoded->revision;
+            evidence.serial = decoded->serial;
+            evidence.profileId = decoded->profileId;
+            evidence.profileVersion = decoded->profileVersion;
+            evidence.profileSha256 = decoded->profileSha256;
+            evidence.flags = decoded->flags;
+            evidence.detail = decoded->detail;
+            evidence.receivedAt = QDateTime::currentDateTimeUtc();
+            evidence.records.reserve(decoded->records.size());
+            for (const Protocol::AxisParameterEvidenceRecord &record : decoded->records) {
+                Data::AxisParameterEvidenceRecord mapped;
+                mapped.ordinal = record.ordinal;
+                mapped.index = record.index;
+                mapped.subIndex = record.subIndex;
+                mapped.state = Data::AxisParameterEvidenceRecordState(quint8(record.state));
+                mapped.valueBytes = record.valueBytes;
+                mapped.encoding
+                    = Data::AxisParameterEvidenceEncoding(quint8(record.encoding));
+                mapped.abortCode = record.abortCode;
+                mapped.operationResult = record.operationResult;
+                mapped.rawValue = record.rawValue;
+                mapped.detail = record.detail;
+                evidence.records.append(mapped);
+            }
+            target.outcome = Data::AxisParameterEvidenceTargetOutcome::Evidence;
+            target.status = 0;
+            target.operationResult = 0;
+            target.detail = 0;
+            target.evidence = evidence;
+            if (!target.isValid()) {
+                failProtocol(
+                    value.role,
+                    request.operation,
+                    Tr::tr("The decoded axis parameter evidence is internally inconsistent."),
+                    {},
+                    requestId);
+                return;
+            }
+            lastAxisParameterEvidenceSequence = decoded->evidenceSequence;
+            removePending(requestId);
+            finishAxisParameterEvidenceTarget(target);
+            return;
+        }
         case PendingKind::ResumeEvents:
             handleResumeResult(value, frame, requestId, &decodeError);
             return;
@@ -6301,6 +6790,8 @@ public:
                 result.result = topology->result;
                 result.topologyCaptureSequence = topology->captureSequence;
                 result.topologyCompletedTimeNs = topology->completedTimeNs;
+                result.topologyPayloadSha256
+                    = QCryptographicHash::hash(frame.payload, QCryptographicHash::Sha256);
                 result.slaves.reserve(topology->slaves.size());
                 for (const Protocol::TopologyEvidenceSlave &slave : topology->slaves) {
                     Data::ControllerTopologySlave mapped;
@@ -6375,6 +6866,8 @@ public:
                     requestId);
                 return;
             }
+            if (request.requestType == Protocol::MessageType::DiscoverTopologyEvidence)
+                lastTopologyEvidenceCaptureSequence = result.topologyCaptureSequence;
             invalidateRuntimeResources();
             invalidateRuntimeSemanticMappingAttestation(
                 Tr::tr(
@@ -7126,6 +7619,8 @@ public:
                 snapshot.controlProgress.operationResult,
                 Tr::tr("%1 completed successfully and its resulting state was confirmed.")
                     .arg(commandDisplayName(command)));
+            if (command == Data::ControllerControlCommand::DiscoverTopology)
+                beginAxisParameterEvidenceBatch();
             return;
         }
         if (refreshRejected) {
@@ -7149,10 +7644,17 @@ public:
     QSet<quint64> ignoredRuntimeResourceRequestIds;
     QSet<quint64> ignoredSemanticMappingAttestationRequestIds;
     QHash<quint64, PendingKind> ignoredRuntimeOutputRequestIds;
+    QSet<quint64> ignoredAxisParameterEvidenceRequestIds;
     QTimer *reconnectTimer = nullptr;
     QTimer *heartbeatTimer = nullptr;
     QTimer *liveStateTimer = nullptr;
     Data::ControllerConnectionRequest currentRequest;
+    std::optional<Data::AxisParameterEvidenceBatch> axisParameterEvidenceBatch;
+    QList<Data::AxisParameterEvidenceTargetResult> axisParameterEvidenceStaging;
+    std::optional<Data::ControllerTopologySnapshot> axisParameterEvidenceTopology;
+    qsizetype axisParameterEvidenceTargetIndex = 0;
+    quint32 lastTopologyEvidenceCaptureSequence = 0;
+    quint32 lastAxisParameterEvidenceSequence = 0;
     std::optional<Data::RuntimeResourceCatalog> runtimeCatalog;
     std::optional<Data::RuntimeResourceSnapshot> runtimeSnapshot;
     QList<Data::RuntimeResourceDescriptor> runtimeCatalogResources;
@@ -7429,6 +7931,64 @@ Utils::Result<> ProductApiSession::refreshController()
         return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
     d->beginRefresh();
     return {};
+}
+
+bool ProductApiSession::supportsAxisParameterEvidence() const
+{
+    return d->negotiatedMinor >= Protocol::AxisParameterEvidenceMinor
+           && (d->featureBits & Protocol::AxisParameterEvidenceFeature);
+}
+
+std::optional<Data::AxisParameterEvidenceBatch>
+ProductApiSession::axisParameterEvidenceBatch() const
+{
+    const Data::ControllerConnectionSnapshot &snapshot = d->snapshot;
+    if (!supportsAxisParameterEvidence() || snapshot.mock
+        || (snapshot.state != Data::ControllerConnectionState::Connected
+            && snapshot.state != Data::ControllerConnectionState::Degraded)
+        || !snapshot.capability || !snapshot.capability->axisParameterEvidence
+        || !snapshot.session || !snapshot.topology || !snapshot.topology->hasCompleteProvenance()
+        || !snapshot.topology->topologyCaptureSequence
+        || !snapshot.topology->topologyCompletedTimeNs
+        || snapshot.topology->topologyPayloadSha256.size() != 32
+        || snapshot.scope != d->currentRequest.scope
+        || snapshot.sessionGeneration != d->generation
+        || snapshot.session->sessionId != d->sessionId
+        || snapshot.session->bootId != d->bootId
+        || snapshot.topology->scope != snapshot.scope
+        || snapshot.topology->sessionGeneration != d->generation
+        || snapshot.topology->sessionId != d->sessionId
+        || snapshot.topology->bootId != d->bootId
+        || !d->axisParameterEvidenceBatch
+        || !d->axisParameterEvidenceTopology
+        || *d->axisParameterEvidenceTopology != *snapshot.topology
+        || d->axisParameterEvidenceTargetIndex != snapshot.topology->slaves.size()
+        || !d->axisParameterEvidenceBatch->isValid()
+        || d->axisParameterEvidenceBatch->targets.size()
+               != snapshot.topology->slaves.size()) {
+        return std::nullopt;
+    }
+
+    const Data::AxisParameterEvidenceBatch &batch = *d->axisParameterEvidenceBatch;
+    if (batch.scope != snapshot.scope || batch.sessionGeneration != d->generation
+        || batch.sessionId != d->sessionId || batch.bootId != d->bootId
+        || batch.topologyRequestId != snapshot.topology->requestId
+        || batch.topologyResponseSequence != snapshot.topology->responseSequence
+        || batch.topologyCaptureSequence != snapshot.topology->topologyCaptureSequence
+        || batch.topologyCompletedTimeNs != snapshot.topology->topologyCompletedTimeNs
+        || batch.topologyPayloadSha256 != snapshot.topology->topologyPayloadSha256) {
+        return std::nullopt;
+    }
+    for (qsizetype index = 0; index < batch.targets.size(); ++index) {
+        const Data::AxisParameterEvidenceTargetResult &target = batch.targets.at(index);
+        const Data::ControllerTopologySlave &slave = snapshot.topology->slaves.at(index);
+        if (target.position != slave.position || target.stationAddress != slave.stationAddress
+            || target.vendorId != slave.vendorId || target.productCode != slave.productCode
+            || target.revision != slave.revision || target.serial != slave.serial) {
+            return std::nullopt;
+        }
+    }
+    return batch;
 }
 
 bool ProductApiSession::supportsRuntimeResources() const
@@ -8040,6 +8600,18 @@ Utils::Result<> ProductApiSession::executeControlCommand(
     }
     if (d->hasActiveDeployment())
         return Utils::ResultError(Tr::tr("Wait for the package deployment to finish."));
+    if (request.command == Command::DiscoverTopology
+        && d->ignoredAxisParameterEvidenceRequestIds.size() >= 64
+        && std::any_of(
+            d->pendingRequests.cbegin(),
+            d->pendingRequests.cend(),
+            [](const ProductApiSessionPrivate::PendingRequest &pending) {
+                return pending.kind
+                       == ProductApiSessionPrivate::PendingKind::AxisParameterEvidence;
+            })) {
+        return Utils::ResultError(
+            Tr::tr("Wait for canceled axis parameter responses before starting another scan."));
+    }
 
     const bool ownsLease = d->snapshot.session->ownsControlLease;
     const auto state = d->snapshot.controllerState
@@ -8248,10 +8820,7 @@ Utils::Result<> ProductApiSession::executeControlCommand(
           && d->negotiatedMinor >= Protocol::TopologyEvidenceMinor
           && (d->featureBits & Protocol::TopologyEvidenceFeature);
     const quint32 afterTopologyCaptureSequence
-        = useTopologyEvidence && d->snapshot.topology
-                  && d->snapshot.topology->bootId == d->snapshot.session->bootId
-              ? d->snapshot.topology->topologyCaptureSequence
-              : 0;
+        = useTopologyEvidence ? d->lastTopologyEvidenceCaptureSequence : 0;
     if (request.command == Command::AcquireControl) {
         appendU32(quint32(request.leaseDurationMs));
     } else if (request.command == Command::DiscoverTopology) {
@@ -8285,6 +8854,7 @@ Utils::Result<> ProductApiSession::executeControlCommand(
     if (request.command == Command::DiscoverTopology) {
         kind = ProductApiSessionPrivate::PendingKind::Topology;
         terminalCommandStatus = false;
+        d->invalidateAxisParameterEvidence();
         d->snapshot.topology.reset();
     } else if (request.command == Command::RestoreActivePackage) {
         kind = ProductApiSessionPrivate::PendingKind::RestorePackage;

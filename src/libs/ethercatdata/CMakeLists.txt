@@ -1,6 +1,7 @@
 add_qtc_library(EtherCATData
   PUBLIC_DEPENDS Qt::Core
   SOURCES
+    axisparameterevidence.h
     controllerconnection.h
     deviceadapter.h
     deviceadapterselection.h

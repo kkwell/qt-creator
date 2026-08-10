@@ -457,10 +457,9 @@ static Core::AutomationTopologyView realTopologyView(
     evidence.bootId = 330003;
     evidence.requestId = 440004;
     evidence.responseSequence = 550005;
-    evidence.cpu1RequestSequence = 660006;
     evidence.topologyCaptureSequence = 770007;
-    evidence.cpu1CompletedTimeNs = 880008;
     evidence.topologyCompletedTimeNs = 990009;
+    evidence.topologyPayloadSha256 = QByteArray(32, char(0x34));
     evidence.receivedAt = QDateTime::fromString("2026-08-10T01:02:03.005Z", Qt::ISODateWithMs);
 
     Core::TopologySnapshot snapshot;
@@ -1181,7 +1180,7 @@ void EtherCATAutomationGatewayTests::testSelectedTopologyEvidenceOrderingAndReda
                                            .toString();
     QCOMPARE(baseGenerationHash.size(), 64);
 
-    for (int field = 0; field < 7; ++field) {
+    for (int field = 0; field < 6; ++field) {
         Core::AutomationTopologyView changed = baseView;
         Data::ControllerTopologySnapshot &evidence
             = *changed.lookup.snapshot->controllerEvidence;
@@ -1202,9 +1201,6 @@ void EtherCATAutomationGatewayTests::testSelectedTopologyEvidenceOrderingAndReda
             ++evidence.responseSequence;
             break;
         case 5:
-            ++evidence.cpu1RequestSequence;
-            break;
-        case 6:
             ++evidence.topologyCaptureSequence;
             break;
         }

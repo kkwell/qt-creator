@@ -428,6 +428,203 @@ QByteArray topologyEvidencePayload(quint32 captureSequence = 17)
     return payload;
 }
 
+QByteArray axisTopologyEvidencePayload(
+    quint32 captureSequence = 41, quint64 bootId = TestBootId, quint16 axisCount = 2)
+{
+    QByteArray payload(64 + qsizetype(axisCount) * 36, '\0');
+    putU16(payload, 0, quint16(Protocol::MessageType::DiscoverTopologyEvidence));
+    putU16(payload, 2, 64);
+    putU32(payload, 8, 0x0f);
+    putU32(payload, 12, captureSequence);
+    putU16(payload, 16, axisCount);
+    putU16(payload, 18, 0);
+    putU16(payload, 20, 36);
+    putU16(payload, 22, 12);
+    putU16(payload, 24, 0x1002);
+    putU16(payload, 26, 0x08);
+    putU64(payload, 32, 223456789);
+    putU64(payload, 40, bootId);
+
+    for (quint16 axis = 0; axis < axisCount; ++axis) {
+        const qsizetype offset = 64 + qsizetype(axis) * 36;
+        putU16(payload, offset, axis);
+        putU16(payload, offset + 2, 0x1002 + axis);
+        putU16(payload, offset + 4, 0x08);
+        putU32(payload, offset + 8, 0x00100000);
+        putU32(payload, offset + 12, 0x000c0112);
+        putU32(payload, offset + 16, 0x00010000);
+        putU32(payload, offset + 20, 0x00000022 + axis);
+        putU16(payload, offset + 24, 0x002b + axis);
+        payload[offset + 26] = char(Protocol::TopologyEvidenceValidity::Valid);
+        payload[offset + 27] = char(Protocol::TopologyEvidenceProvenance::Observed);
+        payload[offset + 28] = char(Protocol::TopologyEvidenceSource::EscStationAlias);
+        payload[offset + 29] = char(Protocol::TopologyEvidenceValidity::Unavailable);
+        payload[offset + 30] = char(Protocol::TopologyEvidenceProvenance::DeviceReported);
+        payload[offset + 31] = char(Protocol::TopologyEvidenceSource::SiiMailbox);
+    }
+    return payload;
+}
+
+struct AxisParameterObject
+{
+    quint16 index;
+    quint8 subIndex;
+};
+
+constexpr std::array<AxisParameterObject, 8> AxisParameterObjects{{
+    {0x2000, 0x01},
+    {0x2000, 0x05},
+    {0x2000, 0x06},
+    {0x6091, 0x01},
+    {0x6091, 0x02},
+    {0x2006, 0x09},
+    {0x2006, 0x0a},
+    {0x607f, 0x00},
+}};
+constexpr std::array<quint8, 8> AxisParameterValueBytes{{2, 2, 2, 4, 4, 2, 2, 4}};
+constexpr quint32 AxisParameterEvidenceProfileId = 1;
+constexpr quint16 AxisParameterEvidenceProfileVersion = 1;
+constexpr quint32 AxisParameterEvidenceCompleteFlags = 0x0000001f;
+
+QByteArray axisParameterEvidenceProfileSha256()
+{
+    return QByteArray::fromHex("7e73372de645920ef2da33454e1b7195476f8760a2a44f612803e67a21c7f77e");
+}
+
+struct AxisParameterEvidenceErrorTuple
+{
+    qint32 status;
+    qint32 operationResult;
+    quint64 detail;
+};
+
+constexpr std::array<AxisParameterEvidenceErrorTuple, 9> AxisParameterEvidenceErrorTuples{{
+    {-6, -1, 1},
+    {-6, -2, 2},
+    {-6, -3, 3},
+    {-6, -4, 4},
+    {-14, -5, 5},
+    {-15, -6, 6},
+    {-15, -7, 7},
+    {-15, -8, 8},
+    {-16, -9, 9},
+}};
+
+void setAxisParameterEvidenceFailedRecord(
+    QByteArray &payload,
+    qsizetype ordinal,
+    Protocol::AxisParameterEvidenceRecordState state,
+    quint32 abortCode,
+    qint32 operationResult,
+    quint64 detail)
+{
+    const qsizetype offset = 128 + ordinal * 32;
+    payload[offset + 5] = char(state);
+    payload[offset + 6] = 0;
+    payload[offset + 7] = char(Protocol::AxisParameterEvidenceEncoding::None);
+    putU32(payload, offset + 8, abortCode);
+    putI32(payload, offset + 12, operationResult);
+    payload.replace(offset + 16, 8, QByteArray(8, '\0'));
+    putU64(payload, offset + 24, detail);
+}
+
+Protocol::AxisParameterEvidenceQuery axisParameterEvidenceQuery()
+{
+    Protocol::AxisParameterEvidenceQuery query;
+    query.profileId = AxisParameterEvidenceProfileId;
+    query.profileVersion = AxisParameterEvidenceProfileVersion;
+    query.topologyCaptureSequence = 17;
+    query.afterEvidenceSequence = 19;
+    query.position = 1;
+    query.stationAddress = 0x1002;
+    query.vendorId = 0x00100000;
+    query.productCode = 0x000c0112;
+    query.revision = 0x00010000;
+    query.serial = 0x22;
+    query.topologyCompletedTimeNs = 123456789;
+    query.profileSha256 = axisParameterEvidenceProfileSha256();
+    return query;
+}
+
+QByteArray axisParameterEvidencePayload(
+    const Protocol::AxisParameterEvidenceQuery &query,
+    quint32 evidenceSequence = 23,
+    quint64 bootId = TestBootId,
+    std::optional<qsizetype> abortedRecord = {})
+{
+    QByteArray payload(128 + qsizetype(AxisParameterObjects.size()) * 32, '\0');
+    putU16(payload, 0, quint16(Protocol::MessageType::QueryAxisParameterEvidence));
+    putU16(payload, 2, 128);
+    putU32(payload, 12, AxisParameterEvidenceCompleteFlags);
+    putU32(payload, 16, evidenceSequence);
+    putU32(payload, 20, query.topologyCaptureSequence);
+    putU16(payload, 24, quint16(AxisParameterObjects.size()));
+    putU16(payload, 26, 32);
+    putU32(payload, 28, query.profileId);
+    putU16(payload, 32, query.profileVersion);
+    putU16(payload, 34, query.position);
+    putU16(payload, 36, query.stationAddress);
+    putU32(payload, 40, query.vendorId);
+    putU32(payload, 44, query.productCode);
+    putU32(payload, 48, query.revision);
+    putU32(payload, 52, query.serial);
+    putU64(payload, 56, query.topologyCompletedTimeNs + 100);
+    putU64(payload, 64, query.topologyCompletedTimeNs);
+    putU64(payload, 72, bootId);
+    payload.replace(80, 32, query.profileSha256);
+
+    for (qsizetype ordinal = 0; ordinal < qsizetype(AxisParameterObjects.size()); ++ordinal) {
+        const AxisParameterObject object = AxisParameterObjects.at(size_t(ordinal));
+        const qsizetype offset = 128 + ordinal * 32;
+        putU16(payload, offset, quint16(ordinal));
+        putU16(payload, offset + 2, object.index);
+        payload[offset + 4] = char(object.subIndex);
+        if (abortedRecord == ordinal) {
+            setAxisParameterEvidenceFailedRecord(
+                payload,
+                ordinal,
+                Protocol::AxisParameterEvidenceRecordState::SdoAbort,
+                0x06020000,
+                -7,
+                0);
+            continue;
+        }
+        payload[offset + 5] = char(Protocol::AxisParameterEvidenceRecordState::Valid);
+        const quint8 valueBytes = AxisParameterValueBytes.at(size_t(ordinal));
+        payload[offset + 6] = char(valueBytes);
+        payload[offset + 7] = char(Protocol::AxisParameterEvidenceEncoding::RawLittleEndian);
+        const quint32 value = 0x11220000U + quint32(ordinal);
+        payload[offset + 16] = char(value);
+        payload[offset + 17] = char(value >> 8);
+        if (valueBytes == 4) {
+            payload[offset + 18] = char(value >> 16);
+            payload[offset + 19] = char(value >> 24);
+        }
+    }
+    return payload;
+}
+
+QByteArray axisParameterEvidenceErrorPayload(qint32 status, qint32 operationResult, quint64 detail)
+{
+    QByteArray payload(128, '\0');
+    putU16(payload, 0, quint16(Protocol::MessageType::QueryAxisParameterEvidence));
+    putU16(payload, 2, 128);
+    putI32(payload, 4, status);
+    putI32(payload, 8, operationResult);
+    putU16(payload, 26, 32);
+    putU64(payload, 112, detail);
+    return payload;
+}
+
+QByteArray axisParameterEvidenceErrorPayload(qint32 status)
+{
+    for (const AxisParameterEvidenceErrorTuple &tuple : AxisParameterEvidenceErrorTuples) {
+        if (tuple.status == status)
+            return axisParameterEvidenceErrorPayload(status, tuple.operationResult, tuple.detail);
+    }
+    return axisParameterEvidenceErrorPayload(status, 0, 0);
+}
+
 QByteArray firmwareStatePayload(Protocol::MessageType originalType)
 {
     QByteArray payload(192, '\0');
@@ -1172,6 +1369,7 @@ public:
         RuntimeResources,
         SemanticAttestation,
         OutputTransactions,
+        AxisParameterEvidence,
     };
 
     enum class SnapshotStateBehavior {
@@ -1251,6 +1449,69 @@ public:
     {
         return int(std::count(m_requestTypes.cbegin(), m_requestTypes.cend(), type));
     }
+
+    QList<quint16> axisParameterQueryPositions() const { return m_axisParameterQueryPositions; }
+
+    QList<QByteArray> axisParameterQueryPayloads() const { return m_axisParameterQueryPayloads; }
+
+    QList<quint64> axisParameterRequestIds() const { return m_axisParameterRequestIds; }
+
+    void rejectNextAxisParameterEvidence(qint32 status = -14)
+    {
+        m_axisParameterStatuses.append(status);
+    }
+
+    void rejectAxisParameterEvidence(const QList<qint32> &statuses)
+    {
+        m_axisParameterStatuses.append(statuses);
+    }
+
+    void holdNextAxisParameterEvidence() { m_holdNextAxisParameterEvidence = true; }
+    void setAxisParameterTargetCount(quint16 count) { m_axisParameterTargetCount = count; }
+    void holdAxisParameterPosition(quint16 position)
+    {
+        m_holdAxisParameterPositions.append(position);
+    }
+    void holdAxisParameterPositions(const QList<quint16> &positions)
+    {
+        m_holdAxisParameterPositions.append(positions);
+    }
+    bool hasHeldAxisParameterEvidence() const
+    {
+        return m_heldAxisParameterPeer && m_heldAxisParameterRequest.header.requestId;
+    }
+    void releaseHeldAxisParameterEvidence(bool expectedByClient = true)
+    {
+        if (!hasHeldAxisParameterEvidence()) {
+            m_violations.append(QStringLiteral("No held axis parameter response was available."));
+            return;
+        }
+        Peer *peer = m_heldAxisParameterPeer;
+        const Protocol::Frame request = m_heldAxisParameterRequest;
+        m_heldAxisParameterPeer = nullptr;
+        m_heldAxisParameterRequest = {};
+        sendAxisParameterEvidenceResponse(*peer, request, expectedByClient);
+    }
+    void releaseHeldAxisParameterEvidenceOnRole(Protocol::Role role)
+    {
+        releaseHeldAxisParameterEvidenceOnRoleImpl(role);
+    }
+
+    void abortNextAxisParameterRecord(qsizetype ordinal)
+    {
+        m_nextAxisParameterAbortedRecord = ordinal;
+    }
+
+    void resetAxisParameterSequenceExpectation() { m_lastAxisParameterEvidenceSequence = 0; }
+
+    void corruptNextAxisParameterBootId() { m_corruptNextAxisParameterBootId = true; }
+    void corruptNextAxisParameterSessionId() { m_corruptNextAxisParameterSessionId = true; }
+    void corruptNextAxisParameterIdentity() { m_corruptNextAxisParameterIdentity = true; }
+    void corruptNextAxisParameterCapture() { m_corruptNextAxisParameterCapture = true; }
+    void corruptNextAxisParameterProfile() { m_corruptNextAxisParameterProfile = true; }
+    void corruptNextAxisParameterRequestId() { m_corruptNextAxisParameterRequestId = true; }
+    void corruptNextAxisParameterSequence() { m_corruptNextAxisParameterSequence = true; }
+    void sendNextAxisParameterWrongType() { m_sendNextAxisParameterWrongType = true; }
 
     quint64 lastRequestId(Protocol::MessageType type) const
     {
@@ -1520,6 +1781,7 @@ public:
     }
 
     void corruptNextTopologyResult() { m_corruptNextTopologyResult = true; }
+    void repeatNextTopologyEvidenceCapture() { m_repeatNextTopologyEvidenceCapture = true; }
 
     void omitFaultClearedEventOnce() { m_omitFaultClearedEventOnce = true; }
 
@@ -1693,6 +1955,31 @@ private:
         bool handshaken = false;
     };
 
+    void releaseHeldAxisParameterEvidenceOnRoleImpl(Protocol::Role role)
+    {
+        if (!hasHeldAxisParameterEvidence()) {
+            m_violations.append(QStringLiteral("No held axis parameter response was available."));
+            return;
+        }
+        Peer *responsePeer = nullptr;
+        for (const std::unique_ptr<Peer> &peer : m_peers) {
+            if (peer->role == role && peer->handshaken
+                && peer->socket->state() == QAbstractSocket::ConnectedState) {
+                responsePeer = peer.get();
+                break;
+            }
+        }
+        if (!responsePeer) {
+            m_violations.append(
+                QStringLiteral("No requested channel was available for a held response."));
+            return;
+        }
+        const Protocol::Frame request = m_heldAxisParameterRequest;
+        m_heldAxisParameterPeer = nullptr;
+        m_heldAxisParameterRequest = {};
+        sendAxisParameterEvidenceResponse(*responsePeer, request, false);
+    }
+
     QTcpServer &serverFor(Protocol::Role role)
     {
         switch (role) {
@@ -1799,6 +2086,9 @@ private:
         case Protocol::MessageType::ApplyOutputTransaction:
             handleOutputTransactionRequest(peer, frame);
             return;
+        case Protocol::MessageType::QueryAxisParameterEvidence:
+            handleAxisParameterEvidenceRequest(peer, frame);
+            return;
         case Protocol::MessageType::ValidatePackage:
         case Protocol::MessageType::ActivatePackage:
         case Protocol::MessageType::RollbackPackage:
@@ -1835,6 +2125,137 @@ private:
         binding.catalogRevision = m_runtimeCatalogRevision;
         binding.topologyIdentity = m_runtimeTopologyIdentity;
         return binding;
+    }
+
+    Protocol::AxisParameterEvidenceQuery axisParameterQueryFromPayload(const QByteArray &payload) const
+    {
+        Protocol::AxisParameterEvidenceQuery query;
+        if (payload.size() != 96)
+            return query;
+        query.profileId = readU32(payload, 0);
+        query.profileVersion = readU16(payload, 4);
+        query.topologyCaptureSequence = readU32(payload, 8);
+        query.afterEvidenceSequence = readU32(payload, 12);
+        query.position = readU16(payload, 16);
+        query.stationAddress = readU16(payload, 18);
+        query.vendorId = readU32(payload, 20);
+        query.productCode = readU32(payload, 24);
+        query.revision = readU32(payload, 28);
+        query.serial = readU32(payload, 32);
+        query.topologyCompletedTimeNs = readU64(payload, 40);
+        query.profileSha256 = payload.mid(48, 32);
+        return query;
+    }
+
+    void sendAxisParameterEvidenceResponse(
+        Peer &peer, const Protocol::Frame &request, bool expectedByClient = true)
+    {
+        if (std::exchange(m_sendNextAxisParameterWrongType, false)) {
+            sendResponse(
+                peer,
+                Protocol::MessageType::CommandStatus,
+                request.header.requestId,
+                rejectedCommandStatusPayload(
+                    Protocol::MessageType::QueryAxisParameterEvidence, 1, m_serviceState, -14, 0, -7),
+                Protocol::Flag::Response | Protocol::Flag::Error);
+            return;
+        }
+        if (!m_axisParameterStatuses.isEmpty()) {
+            const qint32 status = m_axisParameterStatuses.takeFirst();
+            sendResponse(
+                peer,
+                Protocol::MessageType::AxisParameterEvidence,
+                request.header.requestId,
+                axisParameterEvidenceErrorPayload(status),
+                Protocol::Flag::Response | Protocol::Flag::Error);
+            return;
+        }
+
+        Protocol::AxisParameterEvidenceQuery query = axisParameterQueryFromPayload(request.payload);
+        const quint32 evidenceSequence = ++m_axisParameterEvidenceSequence;
+        if (expectedByClient)
+            m_lastAxisParameterEvidenceSequence = evidenceSequence;
+        QByteArray payload = axisParameterEvidencePayload(
+            query,
+            evidenceSequence,
+            m_bootId,
+            std::exchange(m_nextAxisParameterAbortedRecord, std::nullopt));
+        if (std::exchange(m_corruptNextAxisParameterIdentity, false))
+            putU16(payload, 36, query.stationAddress + 1);
+        if (std::exchange(m_corruptNextAxisParameterCapture, false))
+            putU32(payload, 20, query.topologyCaptureSequence + 1);
+        if (std::exchange(m_corruptNextAxisParameterProfile, false))
+            payload[80] = char(quint8(payload.at(80)) ^ 1U);
+
+        Protocol::Frame frame = response(
+            peer, Protocol::MessageType::AxisParameterEvidence, request.header.requestId, payload);
+        QByteArray wire = wireFor(frame);
+        const bool corruptBoot = std::exchange(m_corruptNextAxisParameterBootId, false);
+        const bool corruptSession = std::exchange(m_corruptNextAxisParameterSessionId, false);
+        const bool corruptRequest = std::exchange(m_corruptNextAxisParameterRequestId, false);
+        const bool corruptSequence = std::exchange(m_corruptNextAxisParameterSequence, false);
+        if (!wire.isEmpty()
+            && (corruptBoot || corruptSession || corruptRequest || corruptSequence)) {
+            if (corruptSession)
+                putU64(wire, 20, frame.header.sessionId + 1);
+            if (corruptRequest)
+                putU64(wire, 28, 0);
+            if (corruptSequence)
+                putU64(wire, 36, 0);
+            if (corruptBoot)
+                putU64(wire, 44, frame.header.bootId + 1);
+            rewriteCrc(wire);
+        }
+        if (!wire.isEmpty())
+            peer.socket->write(wire);
+    }
+
+    void handleAxisParameterEvidenceRequest(Peer &peer, const Protocol::Frame &request)
+    {
+        if (m_behavior != Behavior::AxisParameterEvidence)
+            m_violations.append(QStringLiteral("An axis parameter request was unexpected."));
+        requireRoleAndPayload(peer, Protocol::Role::Control, request, 96);
+        const Protocol::AxisParameterEvidenceQuery query = axisParameterQueryFromPayload(
+            request.payload);
+        const quint16 expectedStation = quint16(0x1002 + query.position);
+        const quint32 expectedSerial = 0x22 + query.position;
+        if (!query.profileId || !query.profileVersion || readU16(request.payload, 6) != 8
+            || query.topologyCaptureSequence != m_lastAxisTopologyCaptureSequence
+            || query.afterEvidenceSequence != m_lastAxisParameterEvidenceSequence
+            || query.position >= m_axisParameterTargetCount
+            || query.stationAddress != expectedStation || query.vendorId != 0x00100000
+            || query.productCode != 0x000c0112 || query.revision != 0x00010000
+            || query.serial != expectedSerial || readU32(request.payload, 36)
+            || query.topologyCompletedTimeNs != 223456789 || query.profileSha256.size() != 32
+            || query.profileSha256 == QByteArray(32, '\0')
+            || request.payload.mid(80, 16) != QByteArray(16, '\0')) {
+            m_violations.append(QStringLiteral("The fixed axis parameter query was not exact."));
+        }
+        if (!m_axisParameterProfileSha256.isEmpty()
+            && (query.profileId != m_axisParameterProfileId
+                || query.profileVersion != m_axisParameterProfileVersion
+                || query.profileSha256 != m_axisParameterProfileSha256)) {
+            m_violations.append(
+                QStringLiteral("The fixed axis parameter profile changed within a session."));
+        } else if (m_axisParameterProfileSha256.isEmpty()) {
+            m_axisParameterProfileId = query.profileId;
+            m_axisParameterProfileVersion = query.profileVersion;
+            m_axisParameterProfileSha256 = query.profileSha256;
+        }
+        m_axisParameterQueryPositions.append(query.position);
+        m_axisParameterQueryPayloads.append(request.payload);
+        m_axisParameterRequestIds.append(request.header.requestId);
+        const bool holdPosition = !m_holdAxisParameterPositions.isEmpty()
+                                  && m_holdAxisParameterPositions.constFirst() == query.position;
+        if (m_holdNextAxisParameterEvidence || holdPosition) {
+            m_holdNextAxisParameterEvidence = false;
+            if (holdPosition)
+                m_holdAxisParameterPositions.takeFirst();
+            m_heldAxisParameterPeer = &peer;
+            m_heldAxisParameterRequest = request;
+            return;
+        }
+        sendAxisParameterEvidenceResponse(peer, request);
     }
 
     void handleRuntimeResourceRequest(Peer &peer, const Protocol::Frame &request)
@@ -2495,6 +2916,7 @@ private:
                                               || m_behavior == Behavior::RuntimeResources
                                               || m_behavior == Behavior::SemanticAttestation
                                               || m_behavior == Behavior::OutputTransactions
+                                              || m_behavior == Behavior::AxisParameterEvidence
                                           ? lifecycleControllerStatePayload(
                                                 m_serviceState,
                                                 cycleCount(),
@@ -2601,7 +3023,8 @@ private:
                 m_deploymentConfigurationId);
         } else if (
             m_behavior == Behavior::ControlLifecycle || m_behavior == Behavior::FaultReset
-            || m_behavior == Behavior::PackageDeployment) {
+            || m_behavior == Behavior::PackageDeployment
+            || m_behavior == Behavior::AxisParameterEvidence) {
             payload = packageStatePayload(
                 Protocol::MessageType::GetPackageState, m_controllerPackageActive);
         } else {
@@ -2819,7 +3242,8 @@ private:
         if (m_behavior != Behavior::ControlLifecycle && m_behavior != Behavior::FaultReset
             && m_behavior != Behavior::PackageDeployment && m_behavior != Behavior::RuntimeResources
             && m_behavior != Behavior::SemanticAttestation
-            && m_behavior != Behavior::OutputTransactions) {
+            && m_behavior != Behavior::OutputTransactions
+            && m_behavior != Behavior::AxisParameterEvidence) {
             m_violations.append(
                 QStringLiteral("A control request was emitted outside the lifecycle test."));
             return;
@@ -2976,11 +3400,13 @@ private:
                     payload);
             }
             return;
-        case Protocol::MessageType::DiscoverTopologyEvidence:
+        case Protocol::MessageType::DiscoverTopologyEvidence: {
+            const quint16 expectedFirstStation = m_behavior == Behavior::AxisParameterEvidence
+                                                     ? 0x1002
+                                                     : 0x1001;
             if (!m_leaseOwned || m_serviceState != 8 || m_controllerPackageActive
-                || readU16(request.payload, 0) != 0x1001
-                || readU16(request.payload, 2) != 64
-                || readU16(request.payload, 4) != 128
+                || readU16(request.payload, 0) != expectedFirstStation
+                || readU16(request.payload, 2) != 64 || readU16(request.payload, 4) != 128
                 || readU16(request.payload, 6) || readU32(request.payload, 8)
                 || readU32(request.payload, 12)) {
                 m_violations.append(
@@ -2988,7 +3414,18 @@ private:
             }
             sendCommandStages(peer, request, false);
             {
-                QByteArray payload = topologyEvidencePayload(m_topologyEvidenceCaptureSequence++);
+                const bool repeatCapture = std::exchange(m_repeatNextTopologyEvidenceCapture, false);
+                const quint32 captureSequence = repeatCapture
+                                                    ? m_lastAcceptedTopologyEvidenceCaptureSequence
+                                                    : m_topologyEvidenceCaptureSequence++;
+                QByteArray payload = m_behavior == Behavior::AxisParameterEvidence
+                                         ? axisTopologyEvidencePayload(
+                                               captureSequence, m_bootId, m_axisParameterTargetCount)
+                                         : topologyEvidencePayload(captureSequence);
+                if (!repeatCapture)
+                    m_lastAcceptedTopologyEvidenceCaptureSequence = captureSequence;
+                if (m_behavior == Behavior::AxisParameterEvidence && !repeatCapture)
+                    m_lastAxisTopologyCaptureSequence = captureSequence;
                 if (m_corruptNextTopologyResult) {
                     m_corruptNextTopologyResult = false;
                     putU32(payload, 8, 0x07);
@@ -3000,6 +3437,7 @@ private:
                     payload);
             }
             return;
+        }
         case Protocol::MessageType::RestoreActivePackage:
             if (!m_leaseOwned || readU32(request.payload, 0) != quint32('B')
                 || readU32(request.payload, 4) || readU64(request.payload, 8) != 33
@@ -3144,31 +3582,22 @@ private:
         putU64(
             payload,
             24,
-            m_helloLeaseOwnerSessionId
-                ? m_helloLeaseOwnerSessionId
-                : (m_leaseOwned ? TestSessionId : 0));
+            m_helloLeaseOwnerSessionId ? m_helloLeaseOwnerSessionId
+                                       : (m_leaseOwned ? TestSessionId : 0));
         const quint32 defaultFeatureBits
-            = m_protocolMinor >= Protocol::TopologyEvidenceMinor
-                  ? 0x1ffff
-              : m_protocolMinor >= Protocol::OutputTransactionMinor
-                  ? 0xffff
-              : m_protocolMinor >= Protocol::SemanticBindingAttestationMinor
-                  ? 0x7fff
-              : m_protocolMinor >= Protocol::RuntimeResourceMinor
-                  ? 0x3fff
-              : m_protocolMinor >= Protocol::ControlledFaultResetMinor
-                  ? 0x1fff
-                  : m_protocolMinor >= Protocol::ExplicitTimingModeMinor ? 0x0fff : 0x07ff;
-        const std::optional<quint32> roleFeatureBits
-            = m_roleFeatureBits.at(size_t(quint32(peer.role) - 1));
-        putU32(
-            payload,
-            32,
-            roleFeatureBits.value_or(m_featureBits.value_or(defaultFeatureBits)));
+            = m_protocolMinor >= Protocol::TopologyEvidenceMinor             ? 0x1ffff
+              : m_protocolMinor >= Protocol::OutputTransactionMinor          ? 0xffff
+              : m_protocolMinor >= Protocol::SemanticBindingAttestationMinor ? 0x7fff
+              : m_protocolMinor >= Protocol::RuntimeResourceMinor            ? 0x3fff
+              : m_protocolMinor >= Protocol::ControlledFaultResetMinor       ? 0x1fff
+              : m_protocolMinor >= Protocol::ExplicitTimingModeMinor         ? 0x0fff
+                                                                             : 0x07ff;
+        const std::optional<quint32> roleFeatureBits = m_roleFeatureBits.at(
+            size_t(quint32(peer.role) - 1));
+        putU32(payload, 32, roleFeatureBits.value_or(m_featureBits.value_or(defaultFeatureBits)));
         putU32(payload, 36, m_defaultLeaseDurationMs);
         peer.handshaken = true;
-        Protocol::Frame frame
-            = response(peer, Protocol::MessageType::HelloAck, requestId, payload);
+        Protocol::Frame frame = response(peer, Protocol::MessageType::HelloAck, requestId, payload);
         frame.header.protocolMinor = m_protocolMinor;
         const QByteArray wire = wireFor(frame);
         if (!wire.isEmpty())
@@ -3439,6 +3868,32 @@ private:
     bool m_omitFaultClearedEventOnce = false;
     bool m_corruptNextTopologyResult = false;
     quint32 m_topologyEvidenceCaptureSequence = 17;
+    quint32 m_lastAcceptedTopologyEvidenceCaptureSequence = 0;
+    bool m_repeatNextTopologyEvidenceCapture = false;
+    quint32 m_lastAxisTopologyCaptureSequence = 0;
+    quint32 m_axisParameterEvidenceSequence = 22;
+    quint32 m_lastAxisParameterEvidenceSequence = 0;
+    quint16 m_axisParameterTargetCount = 2;
+    quint32 m_axisParameterProfileId = 0;
+    quint16 m_axisParameterProfileVersion = 0;
+    QByteArray m_axisParameterProfileSha256;
+    QList<quint16> m_axisParameterQueryPositions;
+    QList<QByteArray> m_axisParameterQueryPayloads;
+    QList<quint64> m_axisParameterRequestIds;
+    QList<qint32> m_axisParameterStatuses;
+    std::optional<qsizetype> m_nextAxisParameterAbortedRecord;
+    bool m_holdNextAxisParameterEvidence = false;
+    QList<quint16> m_holdAxisParameterPositions;
+    bool m_corruptNextAxisParameterBootId = false;
+    bool m_corruptNextAxisParameterSessionId = false;
+    bool m_corruptNextAxisParameterIdentity = false;
+    bool m_corruptNextAxisParameterCapture = false;
+    bool m_corruptNextAxisParameterProfile = false;
+    bool m_corruptNextAxisParameterRequestId = false;
+    bool m_corruptNextAxisParameterSequence = false;
+    bool m_sendNextAxisParameterWrongType = false;
+    Peer *m_heldAxisParameterPeer = nullptr;
+    Protocol::Frame m_heldAxisParameterRequest;
     Data::ControllerSlot m_candidateSlot = Data::ControllerSlot::A;
     quint64 m_candidateGeneration = 55;
     quint64 m_deploymentConfigurationId = 0;
@@ -3705,8 +4160,8 @@ struct SnapshotOnlyHeartbeatEvidence
     bool isValid() const { return error.isEmpty(); }
 };
 
-constexpr quint32 SnapshotOnlyFeatureMask
-    = Protocol::TopologyEvidenceFeature | (Protocol::TopologyEvidenceFeature - 1U);
+constexpr quint32 SnapshotOnlyFeatureMask = Protocol::AxisParameterEvidenceFeature
+                                            | (Protocol::AxisParameterEvidenceFeature - 1U);
 
 constexpr std::array SnapshotOnlyMutationRequests{
     Protocol::MessageType::AcquireControl,
@@ -5678,6 +6133,7 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
     QVERIFY(outputCapability->semanticMappingAttestation);
     QVERIFY(outputCapability->runtimeOutputTransactions);
     QVERIFY(!outputCapability->topologyEvidence);
+    QVERIFY(!outputCapability->axisParameterEvidence);
 
     error = {};
     const auto topologyEvidenceCapability = Protocol::decodeCapability(
@@ -5685,6 +6141,15 @@ void EtherCATProductApiTests::testSemanticAuxiliaryRecords()
     QVERIFY(topologyEvidenceCapability);
     QVERIFY(!error);
     QVERIFY(topologyEvidenceCapability->topologyEvidence);
+    QVERIFY(!topologyEvidenceCapability->axisParameterEvidence);
+
+    error = {};
+    const auto axisParameterCapability = Protocol::decodeCapability(
+        responseFrame(Protocol::MessageType::Capability, descriptor), 0x3ffff, &error);
+    QVERIFY(axisParameterCapability);
+    QVERIFY(!error);
+    QVERIFY(axisParameterCapability->topologyEvidence);
+    QVERIFY(axisParameterCapability->axisParameterEvidence);
 
     error = {};
     const auto package = Protocol::decodePackageState(
@@ -6265,19 +6730,20 @@ void EtherCATProductApiTests::testTopologyEvidenceCodec()
     QVERIFY(!requestWire.isEmpty());
     QVERIFY(!error);
     QCOMPARE(requestWire.size(), 80);
-    Protocol::FrameParser requestParser(
-        Protocol::Role::Control, Protocol::FrameDirection::ClientRequest);
+    Protocol::FrameParser
+        requestParser(Protocol::Role::Control, Protocol::FrameDirection::ClientRequest);
     const Protocol::ParseResult requestResult = requestParser.append(requestWire);
     QVERIFY(!requestResult.error);
     QCOMPARE(requestResult.frames.size(), 1);
     QCOMPARE(
         requestResult.frames.constFirst().header.messageType,
         Protocol::MessageType::DiscoverTopologyEvidence);
-    QCOMPARE(requestResult.frames.constFirst().payload.toHex(),
-             QByteArray("10010040008000000000000000000000"));
+    QCOMPARE(
+        requestResult.frames.constFirst().payload.toHex(),
+        QByteArray("10010040008000000000000000000000"));
 
-    Protocol::Frame response = responseFrame(
-        Protocol::MessageType::TopologyEvidence, topologyEvidencePayload());
+    Protocol::Frame response
+        = responseFrame(Protocol::MessageType::TopologyEvidence, topologyEvidencePayload());
     response.header.protocolMinor = Protocol::TopologyEvidenceMinor;
     error = {};
     const QByteArray responseWire = Protocol::encodeFrame(response, &error);
@@ -6285,8 +6751,7 @@ void EtherCATProductApiTests::testTopologyEvidenceCodec()
     QVERIFY(!error);
     QCOMPARE(responseWire.size(), 212);
 
-    const auto topology = Protocol::decodeTopologyEvidence(
-        response, query, 16, &error);
+    const auto topology = Protocol::decodeTopologyEvidence(response, query, 16, &error);
     QVERIFY(topology);
     QVERIFY(!error);
     QCOMPARE(topology->captureSequence, quint32(17));
@@ -6296,9 +6761,7 @@ void EtherCATProductApiTests::testTopologyEvidenceCodec()
     QCOMPARE(topology->slaves.size(), 2);
     QCOMPARE(topology->modules.size(), 1);
     QCOMPARE(topology->slaves.constFirst().alias, quint16(0x002a));
-    QCOMPARE(
-        topology->slaves.constFirst().moduleValidity,
-        Protocol::TopologyEvidenceValidity::Valid);
+    QCOMPARE(topology->slaves.constFirst().moduleValidity, Protocol::TopologyEvidenceValidity::Valid);
     QCOMPARE(topology->slaves.constLast().alias, quint16(0x002b));
     QCOMPARE(
         topology->slaves.constLast().moduleValidity,
@@ -6336,6 +6799,662 @@ void EtherCATProductApiTests::testTopologyEvidenceCodec()
     QCOMPARE(error.category, Protocol::ErrorCategory::InvalidPayload);
 }
 
+void EtherCATProductApiTests::testAxisParameterEvidenceCodec()
+{
+    const Protocol::AxisParameterEvidenceQuery query = axisParameterEvidenceQuery();
+    QCOMPARE(Protocol::fixedAxisParameterEvidenceProfileId(), AxisParameterEvidenceProfileId);
+    QCOMPARE(
+        Protocol::fixedAxisParameterEvidenceProfileVersion(), AxisParameterEvidenceProfileVersion);
+    QCOMPARE(
+        Protocol::fixedAxisParameterEvidenceProfileSha256(), axisParameterEvidenceProfileSha256());
+    QCOMPARE(Protocol::axisParameterEvidenceRequiredFlags(), AxisParameterEvidenceCompleteFlags);
+    Protocol::Error error;
+    const QByteArray requestWire = Protocol::encodeQueryAxisParameterEvidence(
+        query, TestSessionId, 19, 3, TestBootId, Protocol::AxisParameterEvidenceMinor, &error);
+    QVERIFY(!requestWire.isEmpty());
+    QVERIFY(!error);
+    QCOMPARE(requestWire.size(), 64 + 96);
+    QCOMPARE(readU16(requestWire, 10), quint16(Protocol::MessageType::QueryAxisParameterEvidence));
+    QCOMPARE(readU32(requestWire, 12), quint32(0));
+    QCOMPARE(readU32(requestWire, 16), quint32(96));
+    QCOMPARE(readU64(requestWire, 20), TestSessionId);
+    QCOMPARE(readU64(requestWire, 28), quint64(19));
+    QCOMPARE(readU64(requestWire, 36), quint64(3));
+    QCOMPARE(readU64(requestWire, 44), TestBootId);
+    QCOMPARE(readU64(requestWire, 52), quint64(0));
+    QByteArray crcOracle = requestWire;
+    putU32(crcOracle, 60, 0);
+    QCOMPARE(readU32(requestWire, 60), oracleCrc32c(crcOracle));
+    QCOMPARE(
+        requestWire.mid(64).toHex(),
+        QByteArray(
+            "000000010001000800000011000000130001100200100000000c011200010000"
+            "000000220000000000000000075bcd15"
+            "7e73372de645920ef2da33454e1b7195476f8760a2a44f612803e67a21c7f77e"
+            "00000000000000000000000000000000"));
+
+    Protocol::FrameParser
+        requestParser(Protocol::Role::Control, Protocol::FrameDirection::ClientRequest);
+    const Protocol::ParseResult parsedRequest = requestParser.append(requestWire);
+    QVERIFY(!parsedRequest.error);
+    QCOMPARE(parsedRequest.frames.size(), 1);
+    QCOMPARE(
+        parsedRequest.frames.constFirst().header.messageType,
+        Protocol::MessageType::QueryAxisParameterEvidence);
+    Protocol::FrameParser
+        wrongRequestRole(Protocol::Role::Bulk, Protocol::FrameDirection::ClientRequest);
+    QVERIFY(wrongRequestRole.append(requestWire).error);
+
+    for (int mutation = 0; mutation < 7; ++mutation) {
+        QByteArray invalidPayload = requestWire.mid(64);
+        if (mutation == 0)
+            putU16(invalidPayload, 6, 7);
+        else if (mutation == 1)
+            putU32(invalidPayload, 36, 1);
+        else if (mutation == 2)
+            invalidPayload[80] = 1;
+        else if (mutation == 3)
+            putU32(invalidPayload, 0, AxisParameterEvidenceProfileId + 1);
+        else if (mutation == 4)
+            putU16(invalidPayload, 4, AxisParameterEvidenceProfileVersion + 1);
+        else if (mutation == 5)
+            invalidPayload[48] = char(quint8(invalidPayload.at(48)) ^ 1U);
+        else
+            invalidPayload.append(QByteArray::fromHex("609101"));
+        Protocol::Error requestError;
+        QVERIFY(
+            Protocol::encodeRequest(
+                Protocol::MessageType::QueryAxisParameterEvidence,
+                invalidPayload,
+                TestSessionId,
+                19,
+                3,
+                TestBootId,
+                Protocol::AxisParameterEvidenceMinor,
+                &requestError)
+                .isEmpty());
+        QCOMPARE(requestError.category, Protocol::ErrorCategory::InvalidPayload);
+    }
+
+    QByteArray corruptCrc = requestWire;
+    corruptCrc[159] = char(quint8(corruptCrc.at(159)) ^ 1U);
+    Protocol::FrameParser
+        corruptParser(Protocol::Role::Control, Protocol::FrameDirection::ClientRequest);
+    QVERIFY(corruptParser.append(corruptCrc).error);
+
+    const QByteArray payload = axisParameterEvidencePayload(query);
+    Protocol::Frame response
+        = responseFrame(Protocol::MessageType::AxisParameterEvidence, payload, 29);
+    response.header.protocolMinor = Protocol::AxisParameterEvidenceMinor;
+    const QByteArray responseWire = Protocol::encodeFrame(response, &error);
+    QVERIFY(!responseWire.isEmpty());
+    QVERIFY(!error);
+    QCOMPARE(responseWire.size(), 64 + 128 + 8 * 32);
+    QCOMPARE(readU16(responseWire, 10), quint16(Protocol::MessageType::AxisParameterEvidence));
+    QCOMPARE(readU32(responseWire, 16), quint32(128 + 8 * 32));
+    QCOMPARE(readU16(payload, 0), quint16(Protocol::MessageType::QueryAxisParameterEvidence));
+    QCOMPARE(readU16(payload, 2), quint16(128));
+    QCOMPARE(readU32(payload, 4), quint32(0));
+    QCOMPARE(readU32(payload, 8), quint32(0));
+    QCOMPARE(readU32(payload, 12), AxisParameterEvidenceCompleteFlags);
+    QCOMPARE(readU32(payload, 16), quint32(23));
+    QCOMPARE(readU32(payload, 20), query.topologyCaptureSequence);
+    QCOMPARE(readU16(payload, 24), quint16(8));
+    QCOMPARE(readU16(payload, 26), quint16(32));
+    QCOMPARE(readU32(payload, 28), query.profileId);
+    QCOMPARE(readU16(payload, 32), query.profileVersion);
+    QCOMPARE(readU16(payload, 34), query.position);
+    QCOMPARE(readU16(payload, 36), query.stationAddress);
+    QCOMPARE(readU16(payload, 38), quint16(0));
+    QCOMPARE(readU32(payload, 40), query.vendorId);
+    QCOMPARE(readU32(payload, 44), query.productCode);
+    QCOMPARE(readU32(payload, 48), query.revision);
+    QCOMPARE(readU32(payload, 52), query.serial);
+    QCOMPARE(readU64(payload, 56), query.topologyCompletedTimeNs + 100);
+    QCOMPARE(readU64(payload, 64), query.topologyCompletedTimeNs);
+    QCOMPARE(readU64(payload, 72), TestBootId);
+    QCOMPARE(payload.mid(80, 32), query.profileSha256);
+    QCOMPARE(readU64(payload, 112), quint64(0));
+    QCOMPARE(readU64(payload, 120), quint64(0));
+    QCOMPARE(
+        payload.mid(160, 32).toHex(),
+        QByteArray("0001200005010201000000000000000001000000000000000000000000000000"));
+    QCOMPARE(
+        payload.mid(352, 32).toHex(),
+        QByteArray("0007607f00010401000000000000000007002211000000000000000000000000"));
+    crcOracle = responseWire;
+    putU32(crcOracle, 60, 0);
+    QCOMPARE(readU32(responseWire, 60), oracleCrc32c(crcOracle));
+
+    Protocol::FrameParser
+        responseParser(Protocol::Role::Control, Protocol::FrameDirection::ServerResponse);
+    const Protocol::ParseResult parsedResponse = responseParser.append(responseWire);
+    QVERIFY(!parsedResponse.error);
+    QCOMPARE(parsedResponse.frames.size(), 1);
+    Protocol::FrameParser
+        wrongResponseRole(Protocol::Role::Bulk, Protocol::FrameDirection::ServerResponse);
+    QVERIFY(wrongResponseRole.append(responseWire).error);
+    QByteArray corruptResponseCrc = responseWire;
+    corruptResponseCrc[corruptResponseCrc.size() - 1] = char(
+        quint8(corruptResponseCrc.at(corruptResponseCrc.size() - 1)) ^ 1U);
+    Protocol::FrameParser
+        corruptResponseParser(Protocol::Role::Control, Protocol::FrameDirection::ServerResponse);
+    QVERIFY(corruptResponseParser.append(corruptResponseCrc).error);
+
+    error = {};
+    const auto evidence = Protocol::decodeAxisParameterEvidence(response, query, &error);
+    QVERIFY(evidence);
+    QVERIFY(!error);
+    QCOMPARE(evidence->status, qint32(0));
+    QCOMPARE(evidence->operationResult, qint32(0));
+    QCOMPARE(evidence->flags, AxisParameterEvidenceCompleteFlags);
+    QCOMPARE(evidence->evidenceSequence, quint32(23));
+    QCOMPARE(evidence->topologyCaptureSequence, query.topologyCaptureSequence);
+    QCOMPARE(evidence->profileId, query.profileId);
+    QCOMPARE(evidence->profileVersion, query.profileVersion);
+    QCOMPARE(evidence->position, query.position);
+    QCOMPARE(evidence->stationAddress, query.stationAddress);
+    QCOMPARE(evidence->vendorId, query.vendorId);
+    QCOMPARE(evidence->productCode, query.productCode);
+    QCOMPARE(evidence->revision, query.revision);
+    QCOMPARE(evidence->serial, query.serial);
+    QCOMPARE(evidence->completedTimeNs, query.topologyCompletedTimeNs + 100);
+    QCOMPARE(evidence->topologyCompletedTimeNs, query.topologyCompletedTimeNs);
+    QCOMPARE(evidence->bootId, TestBootId);
+    QCOMPARE(evidence->profileSha256, query.profileSha256);
+    QCOMPARE(evidence->detail, quint64(0));
+    QCOMPARE(evidence->records.size(), qsizetype(AxisParameterObjects.size()));
+    for (qsizetype ordinal = 0; ordinal < evidence->records.size(); ++ordinal) {
+        const Protocol::AxisParameterEvidenceRecord &record = evidence->records.at(ordinal);
+        QCOMPARE(record.ordinal, quint16(ordinal));
+        QCOMPARE(record.index, AxisParameterObjects.at(size_t(ordinal)).index);
+        QCOMPARE(record.subIndex, AxisParameterObjects.at(size_t(ordinal)).subIndex);
+        QCOMPARE(record.state, Protocol::AxisParameterEvidenceRecordState::Valid);
+        const quint8 expectedBytes = AxisParameterValueBytes.at(size_t(ordinal));
+        QCOMPARE(record.valueBytes, expectedBytes);
+        QCOMPARE(record.encoding, Protocol::AxisParameterEvidenceEncoding::RawLittleEndian);
+        QCOMPARE(record.abortCode, quint32(0));
+        QCOMPARE(record.operationResult, qint32(0));
+        QCOMPARE(record.rawValue.size(), expectedBytes);
+        const quint32 expectedValue = 0x11220000U + quint32(ordinal);
+        QByteArray expectedRaw;
+        for (quint8 byte = 0; byte < expectedBytes; ++byte)
+            expectedRaw.append(char(expectedValue >> (byte * 8)));
+        QCOMPARE(record.rawValue, expectedRaw);
+        QCOMPARE(record.detail, quint64(0));
+    }
+
+    QVERIFY(Protocol::isReadOnlyRequest(Protocol::MessageType::QueryAxisParameterEvidence));
+    QVERIFY(Protocol::isSupportedRequest(Protocol::MessageType::QueryAxisParameterEvidence));
+    error = {};
+    QVERIFY(
+        Protocol::encodeQueryAxisParameterEvidence(
+            query, TestSessionId, 19, 3, TestBootId, Protocol::TopologyEvidenceMinor, &error)
+            .isEmpty());
+    QCOMPARE(error.category, Protocol::ErrorCategory::IncompatibleVersion);
+    QCOMPARE(error.status, std::optional<qint32>(-14));
+
+    const auto expectInvalidQuery = [](const Protocol::AxisParameterEvidenceQuery &invalid) {
+        Protocol::Error queryError;
+        QVERIFY(
+            Protocol::encodeQueryAxisParameterEvidence(
+                invalid,
+                TestSessionId,
+                19,
+                3,
+                TestBootId,
+                Protocol::AxisParameterEvidenceMinor,
+                &queryError)
+                .isEmpty());
+        QCOMPARE(queryError.category, Protocol::ErrorCategory::InvalidPayload);
+    };
+    for (int mutation = 0; mutation < 13; ++mutation) {
+        Protocol::AxisParameterEvidenceQuery invalid = query;
+        switch (mutation) {
+        case 0:
+            invalid.profileId = 0;
+            break;
+        case 1:
+            invalid.profileId++;
+            break;
+        case 2:
+            invalid.profileVersion = 0;
+            break;
+        case 3:
+            invalid.profileVersion++;
+            break;
+        case 4:
+            invalid.topologyCaptureSequence = 0;
+            break;
+        case 5:
+            invalid.stationAddress = 0;
+            break;
+        case 6:
+            invalid.vendorId = 0;
+            break;
+        case 7:
+            invalid.productCode = 0;
+            break;
+        case 8:
+            invalid.topologyCompletedTimeNs = 0;
+            break;
+        case 9:
+            invalid.profileSha256 = QByteArray(32, '\0');
+            break;
+        case 10:
+            invalid.profileSha256[0] = char(quint8(invalid.profileSha256.at(0)) ^ 1U);
+            break;
+        case 11:
+            invalid.profileSha256.chop(1);
+            break;
+        case 12:
+            invalid.profileSha256.append('\0');
+            break;
+        }
+        expectInvalidQuery(invalid);
+    }
+
+    struct FailedRecordCase
+    {
+        qsizetype ordinal;
+        Protocol::AxisParameterEvidenceRecordState state;
+        quint32 abortCode;
+        qint32 operationResult;
+        quint64 detail;
+    };
+    const std::array<FailedRecordCase, 6> failedRecordCases{{
+        {0, Protocol::AxisParameterEvidenceRecordState::SdoAbort, 0x06020000, -7, 0},
+        {1, Protocol::AxisParameterEvidenceRecordState::SdoAbort, 0x05040005, -23, 0},
+        {2,
+         Protocol::AxisParameterEvidenceRecordState::SizeMismatch,
+         0,
+         -15,
+         quint64(AxisParameterValueBytes.at(2)) << 32 | 4},
+        {3,
+         Protocol::AxisParameterEvidenceRecordState::SizeMismatch,
+         0,
+         -23,
+         quint64(AxisParameterValueBytes.at(3)) << 32 | 2},
+        {4, Protocol::AxisParameterEvidenceRecordState::ReadFailed, 0, -15, 0x52414e4700001234ULL},
+        {5, Protocol::AxisParameterEvidenceRecordState::ReadFailed, 0, -23, quint64(quint32(-23))},
+    }};
+    for (const FailedRecordCase &failedCase : failedRecordCases) {
+        QByteArray failedPayload = axisParameterEvidencePayload(query);
+        setAxisParameterEvidenceFailedRecord(
+            failedPayload,
+            failedCase.ordinal,
+            failedCase.state,
+            failedCase.abortCode,
+            failedCase.operationResult,
+            failedCase.detail);
+        Protocol::Frame failedFrame
+            = responseFrame(Protocol::MessageType::AxisParameterEvidence, failedPayload, 29);
+        failedFrame.header.protocolMinor = Protocol::AxisParameterEvidenceMinor;
+        Protocol::Error failedError;
+        const auto failedEvidence
+            = Protocol::decodeAxisParameterEvidence(failedFrame, query, &failedError);
+        QVERIFY(failedEvidence);
+        QVERIFY(!failedError);
+        QCOMPARE(failedEvidence->records.size(), 8);
+        const Protocol::AxisParameterEvidenceRecord &record = failedEvidence->records.at(
+            failedCase.ordinal);
+        QCOMPARE(record.state, failedCase.state);
+        QCOMPARE(record.valueBytes, quint8(0));
+        QCOMPARE(record.encoding, Protocol::AxisParameterEvidenceEncoding::None);
+        QCOMPARE(record.abortCode, failedCase.abortCode);
+        QCOMPARE(record.operationResult, failedCase.operationResult);
+        QVERIFY(record.rawValue.isEmpty());
+        QCOMPARE(record.detail, failedCase.detail);
+    }
+
+    for (const AxisParameterEvidenceErrorTuple &tuple : AxisParameterEvidenceErrorTuples) {
+        const QByteArray errorPayload
+            = axisParameterEvidenceErrorPayload(tuple.status, tuple.operationResult, tuple.detail);
+        QCOMPARE(errorPayload.size(), 128);
+        QCOMPARE(readU16(errorPayload, 0), quint16(Protocol::MessageType::QueryAxisParameterEvidence));
+        QCOMPARE(readU16(errorPayload, 2), quint16(128));
+        QCOMPARE(qint32(readU32(errorPayload, 4)), tuple.status);
+        QCOMPARE(qint32(readU32(errorPayload, 8)), tuple.operationResult);
+        QCOMPARE(errorPayload.mid(12, 14), QByteArray(14, '\0'));
+        QCOMPARE(readU16(errorPayload, 26), quint16(32));
+        QCOMPARE(errorPayload.mid(28, 84), QByteArray(84, '\0'));
+        QCOMPARE(readU64(errorPayload, 112), tuple.detail);
+        QCOMPARE(readU64(errorPayload, 120), quint64(0));
+        Protocol::Frame errorFrame = responseFrame(
+            Protocol::MessageType::AxisParameterEvidence,
+            errorPayload,
+            29,
+            Protocol::Flag::Response | Protocol::Flag::Error);
+        errorFrame.header.protocolMinor = Protocol::AxisParameterEvidenceMinor;
+        Protocol::Error typedError;
+        const auto typedResult
+            = Protocol::decodeAxisParameterEvidence(errorFrame, query, &typedError);
+        QVERIFY(typedResult);
+        QVERIFY(!typedError);
+        QCOMPARE(typedResult->status, tuple.status);
+        QCOMPARE(typedResult->operationResult, tuple.operationResult);
+        QCOMPARE(typedResult->detail, tuple.detail);
+        QVERIFY(typedResult->records.isEmpty());
+    }
+}
+
+void EtherCATProductApiTests::testAxisParameterEvidenceCodecRejectsMalformed_data()
+{
+    QTest::addColumn<QByteArray>("payload");
+    QTest::addColumn<int>("messageType");
+    QTest::addColumn<quint32>("flags");
+    QTest::addColumn<quint16>("minor");
+
+    const Protocol::AxisParameterEvidenceQuery query = axisParameterEvidenceQuery();
+    const QByteArray base = axisParameterEvidencePayload(query);
+    const auto add = [](const char *name,
+                        const QByteArray &payload,
+                        Protocol::MessageType type = Protocol::MessageType::AxisParameterEvidence,
+                        quint32 flags = Protocol::flagValue(Protocol::Flag::Response),
+                        quint16 minor = Protocol::AxisParameterEvidenceMinor) {
+        QTest::newRow(name) << payload << int(type) << flags << minor;
+    };
+
+    add("short", base.first(base.size() - 1));
+    add("long", base + QByteArray(1, '\0'));
+    add("wrong-message", base, Protocol::MessageType::TopologyEvidence);
+    add("minor-15",
+        base,
+        Protocol::MessageType::AxisParameterEvidence,
+        Protocol::flagValue(Protocol::Flag::Response),
+        Protocol::TopologyEvidenceMinor);
+    add("error-flag-on-success",
+        base,
+        Protocol::MessageType::AxisParameterEvidence,
+        Protocol::Flag::Response | Protocol::Flag::Error);
+
+    const auto mutate =
+        [&add, &base](const char *name, qsizetype offset, quint64 value, qsizetype bytes = 4) {
+            QByteArray payload = base;
+            if (bytes == 1)
+                payload[offset] = char(value);
+            else if (bytes == 2)
+                putU16(payload, offset, quint16(value));
+            else if (bytes == 4)
+                putU32(payload, offset, quint32(value));
+            else
+                putU64(payload, offset, value);
+            add(name, payload);
+        };
+    mutate("original-type", 0, quint16(Protocol::MessageType::DiscoverTopologyEvidence), 2);
+    mutate("header-bytes", 2, 127, 2);
+    mutate("unknown-status", 4, quint32(-17));
+    mutate("success-operation-result", 8, quint32(-1));
+    mutate("missing-flag", 12, 0x1e);
+    mutate("extra-flag", 12, 0x3f);
+    mutate("stale-evidence-sequence", 16, query.afterEvidenceSequence);
+    mutate("topology-capture", 20, query.topologyCaptureSequence + 1);
+    mutate("record-count", 24, 7, 2);
+    mutate("record-bytes", 26, 31, 2);
+    mutate("profile-id", 28, query.profileId + 1);
+    mutate("profile-version", 32, query.profileVersion + 1, 2);
+    mutate("position", 34, query.position + 1, 2);
+    mutate("station", 36, query.stationAddress + 1, 2);
+    mutate("header-reserved", 38, 1, 2);
+    mutate("vendor", 40, query.vendorId + 1);
+    mutate("product", 44, query.productCode + 1);
+    mutate("revision", 48, query.revision + 1);
+    mutate("serial", 52, query.serial + 1);
+    mutate("completed-time-zero", 56, 0, 8);
+    mutate("completed-time", 56, query.topologyCompletedTimeNs, 8);
+    mutate("topology-time", 64, query.topologyCompletedTimeNs + 1, 8);
+    mutate("payload-boot", 72, TestBootId + 1, 8);
+    mutate("profile-sha", 80, 0, 1);
+    mutate("success-detail", 112, 1, 8);
+    mutate("trailing-reserved", 120, 1, 8);
+
+    constexpr qsizetype FirstRecord = 128;
+    mutate("ordinal", FirstRecord, 1, 2);
+    mutate("index", FirstRecord + 2, 0x6091, 2);
+    mutate("sub-index", FirstRecord + 4, 0x05, 1);
+    mutate("state-zero", FirstRecord + 5, 0, 1);
+    mutate("state-out-of-range", FirstRecord + 5, 5, 1);
+    mutate("value-bytes-zero", FirstRecord + 6, 0, 1);
+    mutate("profile-width-mismatch", FirstRecord + 6, 4, 1);
+    mutate("value-bytes-nine", FirstRecord + 6, 9, 1);
+    mutate("encoding-none-for-value", FirstRecord + 7, 0, 1);
+    mutate("encoding-out-of-range", FirstRecord + 7, 2, 1);
+    mutate("abort-on-valid", FirstRecord + 8, 0x06020000);
+    mutate("operation-result-on-valid", FirstRecord + 12, quint32(-15));
+    mutate("raw-padding", FirstRecord + 20, 1, 1);
+    mutate("record-detail-on-valid", FirstRecord + 24, 1, 8);
+
+    QByteArray duplicate = base;
+    duplicate.replace(160, 32, duplicate.mid(128, 32));
+    add("duplicate-record", duplicate);
+    QByteArray reordered = base;
+    const QByteArray first = reordered.mid(128, 32);
+    reordered.replace(128, 32, reordered.mid(160, 32));
+    reordered.replace(160, 32, first);
+    add("reordered-records", reordered);
+    QByteArray missing = base.first(base.size() - 32);
+    putU16(missing, 24, 7);
+    add("missing-record", missing);
+    QByteArray ninth = base;
+    QByteArray extra = ninth.right(32);
+    putU16(extra, 0, 8);
+    ninth.append(extra);
+    putU16(ninth, 24, 9);
+    add("ninth-record", ninth);
+
+    QByteArray invalidAbort = base;
+    setAxisParameterEvidenceFailedRecord(
+        invalidAbort, 0, Protocol::AxisParameterEvidenceRecordState::SdoAbort, 0x06020000, -7, 0);
+    putU32(invalidAbort, FirstRecord + 8, 0);
+    add("abort-without-code", invalidAbort);
+
+    QByteArray abortWithoutFailure = base;
+    setAxisParameterEvidenceFailedRecord(
+        abortWithoutFailure,
+        0,
+        Protocol::AxisParameterEvidenceRecordState::SdoAbort,
+        0x06020000,
+        0,
+        0);
+    add("abort-without-negative-operation", abortWithoutFailure);
+
+    QByteArray abortWithPositiveOperation = base;
+    setAxisParameterEvidenceFailedRecord(
+        abortWithPositiveOperation,
+        0,
+        Protocol::AxisParameterEvidenceRecordState::SdoAbort,
+        0x06020000,
+        1,
+        0);
+    add("abort-with-positive-operation", abortWithPositiveOperation);
+
+    QByteArray abortWithDetail = base;
+    setAxisParameterEvidenceFailedRecord(
+        abortWithDetail, 0, Protocol::AxisParameterEvidenceRecordState::SdoAbort, 0x06020000, -23, 1);
+    add("abort-with-detail", abortWithDetail);
+
+    QByteArray abortWithValue = axisParameterEvidencePayload(query, 23, TestBootId, 0);
+    abortWithValue[FirstRecord + 6] = 4;
+    abortWithValue[FirstRecord + 7] = char(Protocol::AxisParameterEvidenceEncoding::RawLittleEndian);
+    abortWithValue[FirstRecord + 16] = 1;
+    add("abort-with-value", abortWithValue);
+
+    QByteArray sizeMismatchWithAbort = base;
+    setAxisParameterEvidenceFailedRecord(
+        sizeMismatchWithAbort,
+        0,
+        Protocol::AxisParameterEvidenceRecordState::SizeMismatch,
+        0,
+        -23,
+        quint64(AxisParameterValueBytes.at(0)) << 32 | 4);
+    putU32(sizeMismatchWithAbort, FirstRecord + 8, 0x06020000);
+    add("size-mismatch-with-abort", sizeMismatchWithAbort);
+
+    QByteArray sizeMismatchWithoutFailure = base;
+    setAxisParameterEvidenceFailedRecord(
+        sizeMismatchWithoutFailure,
+        0,
+        Protocol::AxisParameterEvidenceRecordState::SizeMismatch,
+        0,
+        0,
+        quint64(AxisParameterValueBytes.at(0)) << 32 | 4);
+    add("size-mismatch-without-negative-operation", sizeMismatchWithoutFailure);
+
+    QByteArray sizeMismatchWithPositiveOperation = base;
+    setAxisParameterEvidenceFailedRecord(
+        sizeMismatchWithPositiveOperation,
+        0,
+        Protocol::AxisParameterEvidenceRecordState::SizeMismatch,
+        0,
+        1,
+        quint64(AxisParameterValueBytes.at(0)) << 32 | 4);
+    add("size-mismatch-with-positive-operation", sizeMismatchWithPositiveOperation);
+
+    QByteArray sizeMismatchWithoutDetail = base;
+    setAxisParameterEvidenceFailedRecord(
+        sizeMismatchWithoutDetail,
+        0,
+        Protocol::AxisParameterEvidenceRecordState::SizeMismatch,
+        0,
+        -23,
+        0);
+    add("size-mismatch-without-detail", sizeMismatchWithoutDetail);
+
+    QByteArray readFailureWithValue = base;
+    setAxisParameterEvidenceFailedRecord(
+        readFailureWithValue,
+        0,
+        Protocol::AxisParameterEvidenceRecordState::ReadFailed,
+        0,
+        -23,
+        quint64(quint32(-23)));
+    readFailureWithValue[FirstRecord + 6] = 1;
+    readFailureWithValue[FirstRecord + 7] = char(
+        Protocol::AxisParameterEvidenceEncoding::RawLittleEndian);
+    readFailureWithValue[FirstRecord + 16] = 1;
+    add("read-failure-with-value", readFailureWithValue);
+
+    QByteArray readFailureWithoutFailure = base;
+    setAxisParameterEvidenceFailedRecord(
+        readFailureWithoutFailure,
+        0,
+        Protocol::AxisParameterEvidenceRecordState::ReadFailed,
+        0,
+        0,
+        1);
+    add("read-failure-without-negative-operation", readFailureWithoutFailure);
+
+    QByteArray readFailureWithPositiveOperation = base;
+    setAxisParameterEvidenceFailedRecord(
+        readFailureWithPositiveOperation,
+        0,
+        Protocol::AxisParameterEvidenceRecordState::ReadFailed,
+        0,
+        1,
+        1);
+    add("read-failure-with-positive-operation", readFailureWithPositiveOperation);
+
+    QByteArray readFailureWithoutDetail = base;
+    setAxisParameterEvidenceFailedRecord(
+        readFailureWithoutDetail,
+        0,
+        Protocol::AxisParameterEvidenceRecordState::ReadFailed,
+        0,
+        -23,
+        0);
+    add("read-failure-without-detail", readFailureWithoutDetail);
+
+    for (const qint32 status : {-6, -14, -15, -16}) {
+        QByteArray errorPayload = axisParameterEvidenceErrorPayload(status);
+        errorPayload[12] = 1;
+        add(qPrintable(QString("error-%1-nonzero-flags").arg(status)),
+            errorPayload,
+            Protocol::MessageType::AxisParameterEvidence,
+            Protocol::Flag::Response | Protocol::Flag::Error);
+    }
+
+    const QByteArray errorBase = axisParameterEvidenceErrorPayload(-14);
+    const auto addErrorMutation =
+        [&add, &errorBase](const char *name, qsizetype offset, quint64 value, qsizetype bytes = 4) {
+            QByteArray payload = errorBase;
+            if (bytes == 1)
+                payload[offset] = char(value);
+            else if (bytes == 2)
+                putU16(payload, offset, quint16(value));
+            else if (bytes == 4)
+                putU32(payload, offset, quint32(value));
+            else
+                putU64(payload, offset, value);
+            add(name,
+                payload,
+                Protocol::MessageType::AxisParameterEvidence,
+                Protocol::Flag::Response | Protocol::Flag::Error);
+        };
+    addErrorMutation(
+        "error-original-type", 0, quint16(Protocol::MessageType::DiscoverTopologyEvidence), 2);
+    addErrorMutation("error-header-bytes", 2, 127, 2);
+    addErrorMutation("error-nonzero-flags", 12, 1);
+    addErrorMutation("error-nonzero-sequence", 16, 1);
+    addErrorMutation("error-nonzero-topology-capture", 20, 1);
+    addErrorMutation("error-nonzero-record-count", 24, 8, 2);
+    addErrorMutation("error-wrong-record-bytes", 26, 0, 2);
+    addErrorMutation("error-nonzero-profile-id", 28, 1);
+    addErrorMutation("error-nonzero-profile-version", 32, 1, 2);
+    addErrorMutation("error-nonzero-position", 34, 1, 2);
+    addErrorMutation("error-nonzero-station", 36, 1, 2);
+    addErrorMutation("error-nonzero-reserved0", 38, 1, 2);
+    addErrorMutation("error-nonzero-vendor", 40, 1);
+    addErrorMutation("error-nonzero-product", 44, 1);
+    addErrorMutation("error-nonzero-revision", 48, 1);
+    addErrorMutation("error-nonzero-serial", 52, 1);
+    addErrorMutation("error-nonzero-completed-time", 56, 1, 8);
+    addErrorMutation("error-nonzero-topology-time", 64, 1, 8);
+    addErrorMutation("error-nonzero-boot", 72, 1, 8);
+    addErrorMutation("error-nonzero-profile-sha", 80, 1, 1);
+    addErrorMutation("error-nonzero-reserved1", 120, 1, 8);
+
+    for (qsizetype i = 0; i < qsizetype(AxisParameterEvidenceErrorTuples.size()); ++i) {
+        const AxisParameterEvidenceErrorTuple tuple = AxisParameterEvidenceErrorTuples.at(size_t(i));
+        add(qPrintable(QString("error-tuple-%1-wrong-operation").arg(i)),
+            axisParameterEvidenceErrorPayload(tuple.status, tuple.operationResult - 100, tuple.detail),
+            Protocol::MessageType::AxisParameterEvidence,
+            Protocol::Flag::Response | Protocol::Flag::Error);
+        add(qPrintable(QString("error-tuple-%1-wrong-detail").arg(i)),
+            axisParameterEvidenceErrorPayload(tuple.status, tuple.operationResult, tuple.detail + 100),
+            Protocol::MessageType::AxisParameterEvidence,
+            Protocol::Flag::Response | Protocol::Flag::Error);
+    }
+
+    add("error-short",
+        errorBase.first(127),
+        Protocol::MessageType::AxisParameterEvidence,
+        Protocol::Flag::Response | Protocol::Flag::Error);
+    add("error-with-record-bytes",
+        errorBase + QByteArray(32, '\0'),
+        Protocol::MessageType::AxisParameterEvidence,
+        Protocol::Flag::Response | Protocol::Flag::Error);
+    add("error-status-without-error-flag", errorBase);
+    add("unknown-error-status",
+        axisParameterEvidenceErrorPayload(-17),
+        Protocol::MessageType::AxisParameterEvidence,
+        Protocol::Flag::Response | Protocol::Flag::Error);
+}
+
+void EtherCATProductApiTests::testAxisParameterEvidenceCodecRejectsMalformed()
+{
+    QFETCH(QByteArray, payload);
+    QFETCH(int, messageType);
+    QFETCH(quint32, flags);
+    QFETCH(quint16, minor);
+    const Protocol::AxisParameterEvidenceQuery query = axisParameterEvidenceQuery();
+    Protocol::Frame frame
+        = responseFrame(static_cast<Protocol::MessageType>(messageType), payload, 29, flags);
+    frame.header.protocolMinor = minor;
+    Protocol::Error error;
+    QVERIFY(!Protocol::decodeAxisParameterEvidence(frame, query, &error));
+    QVERIFY(error);
+}
+
 void EtherCATProductApiTests::testSupportedRequestPolicy()
 {
     const QList<Protocol::MessageType> allowed{
@@ -6345,6 +7464,7 @@ void EtherCATProductApiTests::testSupportedRequestPolicy()
         Protocol::MessageType::GetFirmwareState,
         Protocol::MessageType::ResumeEvents,
         Protocol::MessageType::QuerySemanticBindingAttestation,
+        Protocol::MessageType::QueryAxisParameterEvidence,
     };
     for (const Protocol::MessageType type : allowed)
         QVERIFY(Protocol::isReadOnlyRequest(type));
@@ -7035,7 +8155,7 @@ void EtherCATProductApiTests::testSnapshotOnlyHeartbeatGateFailures_data()
         << QStringLiteral("three-channel feature set") << 1;
     QTest::newRow("push-feature-unknown")
         << int(Behavior::Increment) << int(Protocol::CurrentMinor) << quint64(101)
-        << SnapshotOnlyFeatureMask << (SnapshotOnlyFeatureMask | 0x00020000U)
+        << SnapshotOnlyFeatureMask << (SnapshotOnlyFeatureMask | 0x00040000U)
         << SnapshotOnlyFeatureMask << QStringLiteral("three-channel feature set") << 1;
     QTest::newRow("bulk-feature-missing")
         << int(Behavior::Increment) << int(Protocol::CurrentMinor) << quint64(101)
@@ -7242,6 +8362,7 @@ void EtherCATProductApiTests::testProtocolMinorDowngrade()
 void EtherCATProductApiTests::testControlLifecycle()
 {
     LoopbackController controller(LoopbackController::Behavior::ControlLifecycle);
+    controller.setFeatureBits(0x0000ffff);
     QVERIFY(controller.start());
     ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
     QVERIFY(provider.connectToController(requestFor(provider)));
@@ -7419,6 +8540,7 @@ void EtherCATProductApiTests::testControlLifecycle()
 void EtherCATProductApiTests::testTopologyProvenanceLifecycle()
 {
     LoopbackController controller(LoopbackController::Behavior::ControlLifecycle);
+    controller.setFeatureBits(0x0000ffff);
     QVERIFY(controller.start());
     ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
     const Data::ControllerConnectionRequest connectionRequest = requestFor(provider);
@@ -7570,7 +8692,7 @@ void EtherCATProductApiTests::testTopologyProvenanceLifecycle()
 void EtherCATProductApiTests::testTopologyEvidenceLifecycle()
 {
     LoopbackController controller(LoopbackController::Behavior::ControlLifecycle);
-    controller.setProtocolMinor(Protocol::TopologyEvidenceMinor);
+    controller.setProtocolMinor(Protocol::AxisParameterEvidenceMinor);
     controller.setFeatureBits(0x0001ffff);
     QVERIFY(controller.start());
     ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
@@ -7620,17 +8742,719 @@ void EtherCATProductApiTests::testTopologyEvidenceLifecycle()
     QCOMPARE(controller.requestCount(Protocol::MessageType::DiscoverTopologyEvidence), 1);
     QCOMPARE(controller.requestCount(Protocol::MessageType::DiscoverTopology), 0);
 
+    controller.rejectNextControl(Protocol::MessageType::DiscoverTopologyEvidence, -14);
+    Data::ControllerControlRequest rejectedScan;
+    rejectedScan.command = Data::ControllerControlCommand::DiscoverTopology;
+    QVERIFY(provider.executeControlCommand(rejectedScan));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().controlProgress.state,
+        Data::ControllerControlState::Failed,
+        1000);
+    QVERIFY(!provider.connectionSnapshot().topology);
+
     executeAndWait(Data::ControllerControlCommand::DiscoverTopology);
     QVERIFY(provider.connectionSnapshot().topology);
     QCOMPARE(provider.connectionSnapshot().topology->topologyCaptureSequence, quint32(18));
-    QCOMPARE(controller.requestCount(Protocol::MessageType::DiscoverTopologyEvidence), 2);
 
-    executeAndWait(Data::ControllerControlCommand::ReleaseControl);
+    controller.rejectNextControl(Protocol::MessageType::DiscoverTopologyEvidence, -14);
+    QVERIFY(provider.executeControlCommand(rejectedScan));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().controlProgress.state,
+        Data::ControllerControlState::Failed,
+        1000);
+    QVERIFY(!provider.connectionSnapshot().topology);
+    controller.repeatNextTopologyEvidenceCapture();
+    QVERIFY(provider.executeControlCommand(rejectedScan));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected, 1000);
+    QVERIFY(!provider.connectionSnapshot().topology);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::DiscoverTopologyEvidence), 5);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::DiscoverTopology), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::QueryAxisParameterEvidence), 0);
+    QVERIFY(provider.connectionSnapshot().lastError);
+    QCOMPARE(provider.connectionSnapshot().lastError->source, Data::ControllerErrorSource::Protocol);
+    QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testAxisParameterEvidenceCapabilityGuards_data()
+{
+    QTest::addColumn<quint16>("minor");
+    QTest::addColumn<quint32>("featureBits");
+    QTest::addColumn<bool>("supportsAxisParameterEvidence");
+    QTest::newRow("minor-15") << Protocol::TopologyEvidenceMinor << quint32(0x0001ffff) << false;
+    QTest::newRow("minor-16-missing-bit")
+        << Protocol::AxisParameterEvidenceMinor << quint32(0x0001ffff) << false;
+    QTest::newRow("minor-16-legacy-topology")
+        << Protocol::AxisParameterEvidenceMinor << quint32(0x0002ffff) << true;
+}
+
+void EtherCATProductApiTests::testAxisParameterEvidenceCapabilityGuards()
+{
+    QFETCH(quint16, minor);
+    QFETCH(quint32, featureBits);
+    QFETCH(bool, supportsAxisParameterEvidence);
+    LoopbackController controller(LoopbackController::Behavior::AxisParameterEvidence);
+    controller.setProtocolMinor(minor);
+    controller.setFeatureBits(featureBits);
+    QVERIFY(controller.start());
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QSignalSpy
+        batchSpy(&provider, &Core::ControllerConnectionProvider::axisParameterEvidenceBatchChanged);
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.connectionSnapshot().capability);
+    QCOMPARE(
+        provider.connectionSnapshot().capability->axisParameterEvidence,
+        supportsAxisParameterEvidence);
+    QCOMPARE(provider.supportsAxisParameterEvidence(), supportsAxisParameterEvidence);
+
+    const auto executeAndWait = [&provider](Data::ControllerControlRequest request) {
+        QVERIFY(provider.executeControlCommand(request));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+    };
+    Data::ControllerControlRequest control;
+    control.command = Data::ControllerControlCommand::AcquireControl;
+    executeAndWait(control);
+    control.command = Data::ControllerControlCommand::EnterConfigurationMode;
+    executeAndWait(control);
+    control.command = Data::ControllerControlCommand::DiscoverTopology;
+    control.firstStationAddress = featureBits & Protocol::TopologyEvidenceFeature ? 0x1002 : 0x1001;
+    control.topologyCapacity = 64;
+    executeAndWait(control);
+    QVERIFY(provider.connectionSnapshot().topology);
+    QVERIFY(provider.connectionSnapshot().topology->hasCompleteProvenance());
+    if (supportsAxisParameterEvidence) {
+        QVERIFY(!provider.connectionSnapshot().capability->topologyEvidence);
+        QCOMPARE(provider.connectionSnapshot().topology->topologyCaptureSequence, quint32(0));
+        QVERIFY(provider.connectionSnapshot().topology->cpu1RequestSequence);
+    }
+    QCOMPARE(controller.requestCount(Protocol::MessageType::QueryAxisParameterEvidence), 0);
+    QVERIFY(!provider.axisParameterEvidenceBatch());
+    QCOMPARE(batchSpy.count(), 0);
+
+    control = {};
+    control.command = Data::ControllerControlCommand::ReleaseControl;
+    executeAndWait(control);
+    QVERIFY(provider.disconnectFromController());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected, 1000);
+    QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testAxisParameterEvidenceLifecycle()
+{
+    LoopbackController controller(LoopbackController::Behavior::AxisParameterEvidence);
+    controller.setProtocolMinor(Protocol::AxisParameterEvidenceMinor);
+    controller.setFeatureBits(0x0003ffff);
+    QVERIFY(controller.start());
+    ProductApiConnectionProvider provider(controller.endpoints(), testOptions());
+    QSignalSpy
+        batchSpy(&provider, &Core::ControllerConnectionProvider::axisParameterEvidenceBatchChanged);
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.connectionSnapshot().capability);
+    QVERIFY(provider.connectionSnapshot().capability->axisParameterEvidence);
+    QVERIFY(provider.supportsAxisParameterEvidence());
+    QVERIFY(!provider.axisParameterEvidenceBatch());
+
+    const auto executeAndWait = [&provider](Data::ControllerControlRequest request) {
+        QVERIFY(provider.executeControlCommand(request));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+    };
+    Data::ControllerControlRequest control;
+    control.command = Data::ControllerControlCommand::AcquireControl;
+    executeAndWait(control);
+    control.command = Data::ControllerControlCommand::EnterConfigurationMode;
+    executeAndWait(control);
+
+    control.command = Data::ControllerControlCommand::DiscoverTopology;
+    control.firstStationAddress = 0x1002;
+    control.topologyCapacity = 64;
+    controller.holdAxisParameterPositions({0, 1});
+    executeAndWait(control);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        controller.requestCount(Protocol::MessageType::QueryAxisParameterEvidence), 1, 1000);
+    QVERIFY(controller.hasHeldAxisParameterEvidence());
+    QVERIFY(!provider.axisParameterEvidenceBatch());
+    QCOMPARE(batchSpy.count(), 0);
+    QCOMPARE(provider.sessionForTests()->pendingRequestCountForTests(), qsizetype(1));
+    QCOMPARE(controller.axisParameterQueryPositions(), QList<quint16>({0}));
+    controller.releaseHeldAxisParameterEvidence();
+    QTRY_COMPARE_WITH_TIMEOUT(
+        controller.requestCount(Protocol::MessageType::QueryAxisParameterEvidence), 2, 1000);
+    QVERIFY(controller.hasHeldAxisParameterEvidence());
+    QVERIFY(!provider.axisParameterEvidenceBatch());
+    QCOMPARE(batchSpy.count(), 0);
+    QCOMPARE(provider.sessionForTests()->pendingRequestCountForTests(), qsizetype(1));
+    QCOMPARE(controller.axisParameterQueryPositions(), QList<quint16>({0, 1}));
+    const QList<QByteArray> queryPayloads = controller.axisParameterQueryPayloads();
+    QCOMPARE(queryPayloads.size(), 2);
+    for (qsizetype position = 0; position < queryPayloads.size(); ++position) {
+        const QByteArray &payload = queryPayloads.at(position);
+        QCOMPARE(payload.size(), 96);
+        QCOMPARE(readU16(payload, 6), quint16(8));
+        QCOMPARE(readU16(payload, 16), quint16(position));
+        QCOMPARE(readU16(payload, 18), quint16(0x1002 + position));
+        QCOMPARE(readU32(payload, 20), quint32(0x00100000));
+        QCOMPARE(readU32(payload, 24), quint32(0x000c0112));
+        QCOMPARE(readU32(payload, 28), quint32(0x00010000));
+        QCOMPARE(readU32(payload, 32), quint32(0x22 + position));
+        QCOMPARE(readU32(payload, 36), quint32(0));
+        QCOMPARE(payload.mid(80, 16), QByteArray(16, '\0'));
+    }
+
+    controller.releaseHeldAxisParameterEvidence();
+    QTRY_COMPARE_WITH_TIMEOUT(batchSpy.count(), 1, 1000);
+    const auto firstBatch = provider.axisParameterEvidenceBatch();
+    QVERIFY(firstBatch);
+    QVERIFY(firstBatch->isValid());
+    QCOMPARE(firstBatch->targets.size(), 2);
+    const Data::ControllerConnectionSnapshot firstSnapshot = provider.connectionSnapshot();
+    QVERIFY(firstSnapshot.topology);
+    QVERIFY(firstSnapshot.session);
+    QCOMPARE(firstBatch->scope, firstSnapshot.scope);
+    QCOMPARE(firstBatch->sessionGeneration, firstSnapshot.sessionGeneration);
+    QCOMPARE(firstBatch->sessionId, firstSnapshot.session->sessionId);
+    QCOMPARE(firstBatch->bootId, firstSnapshot.session->bootId);
+    QCOMPARE(firstBatch->topologyRequestId, firstSnapshot.topology->requestId);
+    QCOMPARE(firstBatch->topologyResponseSequence, firstSnapshot.topology->responseSequence);
+    QCOMPARE(firstBatch->topologyCaptureSequence, firstSnapshot.topology->topologyCaptureSequence);
+    QCOMPARE(firstBatch->topologyCompletedTimeNs, firstSnapshot.topology->topologyCompletedTimeNs);
+    QCOMPARE(firstBatch->topologyPayloadSha256, firstSnapshot.topology->topologyPayloadSha256);
+    QCOMPARE(firstBatch->profileId, readU32(queryPayloads.constFirst(), 0));
+    QCOMPARE(firstBatch->profileVersion, readU16(queryPayloads.constFirst(), 4));
+    QCOMPARE(firstBatch->profileSha256, queryPayloads.constFirst().mid(48, 32));
+    QVERIFY(firstBatch->completedAt.isValid());
+    QVERIFY(firstBatch->targets.at(0).requestId < firstBatch->targets.at(1).requestId);
+    QCOMPARE(controller.axisParameterRequestIds().first(), firstBatch->targets.at(0).requestId);
+    QCOMPARE(controller.axisParameterRequestIds().at(1), firstBatch->targets.at(1).requestId);
+    QCOMPARE(readU32(queryPayloads.at(0), 12), quint32(0));
+    QCOMPARE(readU32(queryPayloads.at(1), 12), firstBatch->targets.at(0).evidence->evidenceSequence);
+    QVERIFY(
+        firstBatch->targets.at(0).evidence->evidenceSequence
+        < firstBatch->targets.at(1).evidence->evidenceSequence);
+    for (qsizetype position = 0; position < firstBatch->targets.size(); ++position) {
+        const Data::AxisParameterEvidenceTargetResult &target = firstBatch->targets.at(position);
+        const Data::ControllerTopologySlave &slave = firstSnapshot.topology->slaves.at(position);
+        QCOMPARE(target.position, slave.position);
+        QCOMPARE(target.stationAddress, slave.stationAddress);
+        QCOMPARE(target.vendorId, slave.vendorId);
+        QCOMPARE(target.productCode, slave.productCode);
+        QCOMPARE(target.revision, slave.revision);
+        QCOMPARE(target.serial, slave.serial);
+        QCOMPARE(target.outcome, Data::AxisParameterEvidenceTargetOutcome::Evidence);
+        QCOMPARE(target.status, std::optional<qint32>(0));
+        QCOMPARE(target.operationResult, std::optional<qint32>(0));
+        QCOMPARE(target.detail, std::optional<quint64>(0));
+        QVERIFY(target.evidence);
+        const Data::AxisParameterEvidence &evidence = *target.evidence;
+        QVERIFY(evidence.isValid());
+        QCOMPARE(evidence.requestId, target.requestId);
+        QVERIFY(evidence.responseSequence);
+        QVERIFY(evidence.controllerTimestampNs);
+        QCOMPARE(evidence.scope, firstBatch->scope);
+        QCOMPARE(evidence.sessionGeneration, firstBatch->sessionGeneration);
+        QCOMPARE(evidence.sessionId, firstBatch->sessionId);
+        QCOMPARE(evidence.bootId, firstBatch->bootId);
+        QCOMPARE(evidence.topologyRequestId, firstBatch->topologyRequestId);
+        QCOMPARE(evidence.topologyResponseSequence, firstBatch->topologyResponseSequence);
+        QCOMPARE(evidence.topologyCaptureSequence, firstBatch->topologyCaptureSequence);
+        QCOMPARE(evidence.topologyCompletedTimeNs, firstBatch->topologyCompletedTimeNs);
+        QCOMPARE(evidence.topologyPayloadSha256, firstBatch->topologyPayloadSha256);
+        QCOMPARE(evidence.profileId, firstBatch->profileId);
+        QCOMPARE(evidence.profileVersion, firstBatch->profileVersion);
+        QCOMPARE(evidence.profileSha256, firstBatch->profileSha256);
+        QCOMPARE(evidence.records.size(), 8);
+        QVERIFY(evidence.completedTimeNs > evidence.topologyCompletedTimeNs);
+        QVERIFY(evidence.receivedAt.isValid());
+        for (qsizetype ordinal = 0; ordinal < evidence.records.size(); ++ordinal) {
+            const Data::AxisParameterEvidenceRecord &record = evidence.records.at(ordinal);
+            QCOMPARE(record.ordinal, quint16(ordinal));
+            QCOMPARE(record.index, AxisParameterObjects.at(size_t(ordinal)).index);
+            QCOMPARE(record.subIndex, AxisParameterObjects.at(size_t(ordinal)).subIndex);
+            QCOMPARE(record.valueBytes, AxisParameterValueBytes.at(size_t(ordinal)));
+            QCOMPARE(record.state, Data::AxisParameterEvidenceRecordState::Valid);
+        }
+    }
+
+    const int beforeRefreshSignals = batchSpy.count();
+    const auto beforeRefreshBatch = provider.axisParameterEvidenceBatch();
+    QSignalSpy snapshotSpy(&provider, &Core::ControllerConnectionProvider::connectionSnapshotChanged);
+    QVERIFY(provider.refreshController());
+    QTRY_VERIFY_WITH_TIMEOUT(snapshotSpy.count() > 0, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.sessionForTests()->pendingRequestCountForTests(), qsizetype(0), 1000);
+    QCOMPARE(batchSpy.count(), beforeRefreshSignals);
+    QCOMPARE(provider.axisParameterEvidenceBatch(), beforeRefreshBatch);
+
+    int expectedSignals = batchSpy.count() + 2;
+    controller.abortNextAxisParameterRecord(3);
+    executeAndWait(control);
+    QTRY_COMPARE_WITH_TIMEOUT(batchSpy.count(), expectedSignals, 1000);
+    const auto partialReadBatch = provider.axisParameterEvidenceBatch();
+    QVERIFY(partialReadBatch);
+    QCOMPARE(partialReadBatch->targets.size(), 2);
+    QVERIFY(partialReadBatch->targets.constFirst().evidence);
+    QCOMPARE(
+        partialReadBatch->targets.constFirst().evidence->records.at(3).state,
+        Data::AxisParameterEvidenceRecordState::SdoAbort);
+    const Data::AxisParameterEvidenceRecord &abortedRecord
+        = partialReadBatch->targets.constFirst().evidence->records.at(3);
+    QCOMPARE(abortedRecord.valueBytes, quint8(0));
+    QCOMPARE(abortedRecord.encoding, Data::AxisParameterEvidenceEncoding::None);
+    QVERIFY(abortedRecord.abortCode);
+    QCOMPARE(abortedRecord.operationResult, qint32(-7));
+    QVERIFY(abortedRecord.rawValue.isEmpty());
+    QCOMPARE(abortedRecord.detail, quint64(0));
+    QVERIFY(abortedRecord.state != Data::AxisParameterEvidenceRecordState::Valid);
+    QCOMPARE(partialReadBatch->targets.constFirst().evidence->records.size(), 8);
+    QVERIFY(partialReadBatch->targets.constLast().evidence);
+    QVERIFY(partialReadBatch->targets.at(0).requestId < partialReadBatch->targets.at(1).requestId);
+    {
+        const QList<QByteArray> payloads = controller.axisParameterQueryPayloads();
+        QCOMPARE(
+            readU32(payloads.at(2), 12), firstBatch->targets.constLast().evidence->evidenceSequence);
+        QCOMPARE(
+            readU32(payloads.at(3), 12),
+            partialReadBatch->targets.constFirst().evidence->evidenceSequence);
+    }
+
+    expectedSignals += 2;
+    controller.rejectNextAxisParameterEvidence(-14);
+    executeAndWait(control);
+    QTRY_COMPARE_WITH_TIMEOUT(batchSpy.count(), expectedSignals, 1000);
+    const auto partialErrorBatch = provider.axisParameterEvidenceBatch();
+    QVERIFY(partialErrorBatch);
+    QVERIFY(partialErrorBatch->isValid());
+    QCOMPARE(partialErrorBatch->targets.size(), 2);
+    QCOMPARE(
+        partialErrorBatch->targets.constFirst().outcome,
+        Data::AxisParameterEvidenceTargetOutcome::ControllerError);
+    QCOMPARE(partialErrorBatch->targets.constFirst().status, std::optional<qint32>(-14));
+    QCOMPARE(partialErrorBatch->targets.constFirst().operationResult, std::optional<qint32>(-5));
+    QCOMPARE(partialErrorBatch->targets.constFirst().detail, std::optional<quint64>(5));
+    QVERIFY(!partialErrorBatch->targets.constFirst().evidence);
+    QCOMPARE(
+        partialErrorBatch->targets.constLast().outcome,
+        Data::AxisParameterEvidenceTargetOutcome::Evidence);
+    QVERIFY(partialErrorBatch->targets.at(0).requestId < partialErrorBatch->targets.at(1).requestId);
+    {
+        const QList<QByteArray> payloads = controller.axisParameterQueryPayloads();
+        const quint32 prior = partialReadBatch->targets.constLast().evidence->evidenceSequence;
+        QCOMPARE(readU32(payloads.at(4), 12), prior);
+        QCOMPARE(readU32(payloads.at(5), 12), prior);
+    }
+
+    expectedSignals += 2;
+    controller.rejectAxisParameterEvidence({-15, -16});
+    executeAndWait(control);
+    QTRY_COMPARE_WITH_TIMEOUT(batchSpy.count(), expectedSignals, 1000);
+    const auto allErrorBatch = provider.axisParameterEvidenceBatch();
+    QVERIFY(allErrorBatch);
+    QVERIFY(allErrorBatch->isValid());
+    QCOMPARE(allErrorBatch->targets.size(), 2);
+    QCOMPARE(allErrorBatch->targets.at(0).status, std::optional<qint32>(-15));
+    QCOMPARE(allErrorBatch->targets.at(0).operationResult, std::optional<qint32>(-6));
+    QCOMPARE(allErrorBatch->targets.at(0).detail, std::optional<quint64>(6));
+    QCOMPARE(allErrorBatch->targets.at(1).status, std::optional<qint32>(-16));
+    QCOMPARE(allErrorBatch->targets.at(1).operationResult, std::optional<qint32>(-9));
+    QCOMPARE(allErrorBatch->targets.at(1).detail, std::optional<quint64>(9));
+    for (const Data::AxisParameterEvidenceTargetResult &target : allErrorBatch->targets) {
+        QCOMPARE(target.outcome, Data::AxisParameterEvidenceTargetOutcome::ControllerError);
+        QVERIFY(!target.evidence);
+    }
+    QVERIFY(allErrorBatch->targets.at(0).requestId < allErrorBatch->targets.at(1).requestId);
+    {
+        const QList<QByteArray> payloads = controller.axisParameterQueryPayloads();
+        const quint32 prior = partialErrorBatch->targets.constLast().evidence->evidenceSequence;
+        QCOMPARE(readU32(payloads.at(6), 12), prior);
+        QCOMPARE(readU32(payloads.at(7), 12), prior);
+    }
+
+    expectedSignals += 2;
+    controller.holdNextAxisParameterEvidence();
+    executeAndWait(control);
+    QCOMPARE(provider.sessionForTests()->pendingRequestCountForTests(), qsizetype(1));
+    QTRY_COMPARE_WITH_TIMEOUT(batchSpy.count(), expectedSignals, 2000);
+    const auto timeoutBatch = provider.axisParameterEvidenceBatch();
+    QVERIFY(timeoutBatch);
+    QVERIFY(timeoutBatch->isValid());
+    QCOMPARE(timeoutBatch->targets.size(), 2);
+    QCOMPARE(
+        timeoutBatch->targets.constFirst().outcome,
+        Data::AxisParameterEvidenceTargetOutcome::TimedOut);
+    QVERIFY(!timeoutBatch->targets.constFirst().status);
+    QVERIFY(!timeoutBatch->targets.constFirst().operationResult);
+    QVERIFY(!timeoutBatch->targets.constFirst().detail);
+    QVERIFY(!timeoutBatch->targets.constFirst().evidence);
+    QCOMPARE(
+        timeoutBatch->targets.constLast().outcome,
+        Data::AxisParameterEvidenceTargetOutcome::Evidence);
+    {
+        const QList<QByteArray> payloads = controller.axisParameterQueryPayloads();
+        const quint32 prior = partialErrorBatch->targets.constLast().evidence->evidenceSequence;
+        QCOMPARE(readU32(payloads.at(8), 12), prior);
+        QCOMPARE(readU32(payloads.at(9), 12), prior);
+        QVERIFY(timeoutBatch->targets.constLast().evidence->evidenceSequence > prior);
+    }
+    const int beforeTimeoutLateResponse = batchSpy.count();
+    controller.releaseHeldAxisParameterEvidence(false);
+    QTest::qWait(50);
+    QCOMPARE(batchSpy.count(), beforeTimeoutLateResponse);
+    QCOMPARE(provider.axisParameterEvidenceBatch(), timeoutBatch);
+
+    const int beforeCanceledScan = batchSpy.count();
+    controller.holdNextAxisParameterEvidence();
+    executeAndWait(control);
+    QTRY_VERIFY_WITH_TIMEOUT(controller.hasHeldAxisParameterEvidence(), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!provider.axisParameterEvidenceBatch(), 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(batchSpy.count(), beforeCanceledScan + 1, 1000);
+    const int afterCanceledBatchClear = batchSpy.count();
+    executeAndWait(control);
+    QTRY_COMPARE_WITH_TIMEOUT(batchSpy.count(), afterCanceledBatchClear + 1, 1000);
+    const auto replacementBatch = provider.axisParameterEvidenceBatch();
+    QVERIFY(replacementBatch);
+    {
+        const QList<QByteArray> payloads = controller.axisParameterQueryPayloads();
+        const quint32 prior = timeoutBatch->targets.constLast().evidence->evidenceSequence;
+        QCOMPARE(readU32(payloads.at(10), 12), prior);
+        QCOMPARE(readU32(payloads.at(11), 12), prior);
+        QCOMPARE(
+            readU32(payloads.at(12), 12),
+            replacementBatch->targets.constFirst().evidence->evidenceSequence);
+    }
+    const int beforeCanceledLateResponse = batchSpy.count();
+    controller.releaseHeldAxisParameterEvidence(false);
+    QTest::qWait(50);
+    QCOMPARE(batchSpy.count(), beforeCanceledLateResponse);
+    QCOMPARE(provider.axisParameterEvidenceBatch(), replacementBatch);
+
+    QCOMPARE(controller.requestCount(Protocol::MessageType::QueryResourceTable), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::GetResourceSnapshot), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::QueryOutputGroupPolicy), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::GetOutputTransactionState), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ApplyOutputTransaction), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkBegin), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkChunk), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::BulkCommit), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ValidatePackage), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::ActivatePackage), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::RollbackPackage), 0);
+    QCOMPARE(controller.requestCount(Protocol::MessageType::RestoreActivePackage), 0);
+    const QList<quint64> axisRequestIds = controller.axisParameterRequestIds();
+    for (qsizetype index = 1; index < axisRequestIds.size(); ++index)
+        QVERIFY(axisRequestIds.at(index - 1) < axisRequestIds.at(index));
+
+    control = {};
+    control.command = Data::ControllerControlCommand::ReleaseControl;
+    const int beforeReleaseSignals = batchSpy.count();
+    const auto beforeReleaseBatch = provider.axisParameterEvidenceBatch();
+    executeAndWait(control);
+    QCOMPARE(batchSpy.count(), beforeReleaseSignals);
+    QCOMPARE(provider.axisParameterEvidenceBatch(), beforeReleaseBatch);
     QVERIFY(provider.disconnectFromController());
     QTRY_COMPARE_WITH_TIMEOUT(
         provider.connectionSnapshot().state,
         Data::ControllerConnectionState::Disconnected,
         1000);
+    QTRY_VERIFY_WITH_TIMEOUT(!provider.axisParameterEvidenceBatch(), 1000);
+
+    const int queryCountBeforeGenerationReconnect = controller.requestCount(
+        Protocol::MessageType::QueryAxisParameterEvidence);
+    const quint64 disconnectedGeneration = provider.connectionSnapshot().sessionGeneration;
+    controller.resetAxisParameterSequenceExpectation();
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.connectionSnapshot().sessionGeneration > disconnectedGeneration);
+    QVERIFY(!provider.axisParameterEvidenceBatch());
+    control = {};
+    control.command = Data::ControllerControlCommand::AcquireControl;
+    executeAndWait(control);
+    control.command = Data::ControllerControlCommand::EnterConfigurationMode;
+    executeAndWait(control);
+    control.command = Data::ControllerControlCommand::DiscoverTopology;
+    control.firstStationAddress = 0x1002;
+    control.topologyCapacity = 64;
+    executeAndWait(control);
+    QTRY_VERIFY_WITH_TIMEOUT(provider.axisParameterEvidenceBatch().has_value(), 1000);
+    const auto generationReconnectedBatch = provider.axisParameterEvidenceBatch();
+    QVERIFY(generationReconnectedBatch);
+    QCOMPARE(generationReconnectedBatch->bootId, TestBootId);
+    QCOMPARE(
+        readU32(controller.axisParameterQueryPayloads().at(queryCountBeforeGenerationReconnect), 12),
+        quint32(0));
+    control = {};
+    control.command = Data::ControllerControlCommand::ReleaseControl;
+    executeAndWait(control);
+    QVERIFY(provider.disconnectFromController());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected, 1000);
+
+    const int queryCountBeforeBootReconnect = controller.requestCount(
+        Protocol::MessageType::QueryAxisParameterEvidence);
+    const quint64 generationBeforeBootReconnect = provider.connectionSnapshot().sessionGeneration;
+    controller.setBootId(TestBootId + 1);
+    controller.resetAxisParameterSequenceExpectation();
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+    QVERIFY(provider.connectionSnapshot().sessionGeneration > generationBeforeBootReconnect);
+    QVERIFY(!provider.axisParameterEvidenceBatch());
+    control = {};
+    control.command = Data::ControllerControlCommand::AcquireControl;
+    executeAndWait(control);
+    control.command = Data::ControllerControlCommand::EnterConfigurationMode;
+    executeAndWait(control);
+    control.command = Data::ControllerControlCommand::DiscoverTopology;
+    control.firstStationAddress = 0x1002;
+    control.topologyCapacity = 64;
+    executeAndWait(control);
+    QTRY_VERIFY_WITH_TIMEOUT(provider.axisParameterEvidenceBatch().has_value(), 1000);
+    const auto bootReconnectedBatch = provider.axisParameterEvidenceBatch();
+    QVERIFY(bootReconnectedBatch);
+    QCOMPARE(bootReconnectedBatch->bootId, TestBootId + 1);
+    QCOMPARE(
+        readU32(controller.axisParameterQueryPayloads().at(queryCountBeforeBootReconnect), 12),
+        quint32(0));
+    control = {};
+    control.command = Data::ControllerControlCommand::ReleaseControl;
+    executeAndWait(control);
+    QVERIFY(provider.disconnectFromController());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected, 1000);
+    QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testAxisParameterEvidenceTerminalCapacity()
+{
+    constexpr int CanceledRequestCount = 63;
+    constexpr int TotalRequestCount = CanceledRequestCount + 1;
+    LoopbackController controller(LoopbackController::Behavior::AxisParameterEvidence);
+    controller.setProtocolMinor(Protocol::AxisParameterEvidenceMinor);
+    controller.setFeatureBits(0x0003ffff);
+    controller.setAxisParameterTargetCount(1);
+    QVERIFY(controller.start());
+
+    ProductApiSession::Options options = testOptions();
+    options.reconnectAttempts = 0;
+    ProductApiConnectionProvider provider(controller.endpoints(), options);
+    QSignalSpy
+        batchSpy(&provider, &Core::ControllerConnectionProvider::axisParameterEvidenceBatchChanged);
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+    const auto executeAndWait = [&provider](Data::ControllerControlRequest request) {
+        QVERIFY(provider.executeControlCommand(request));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+    };
+    Data::ControllerControlRequest control;
+    control.command = Data::ControllerControlCommand::AcquireControl;
+    executeAndWait(control);
+    control.command = Data::ControllerControlCommand::EnterConfigurationMode;
+    executeAndWait(control);
+    control.command = Data::ControllerControlCommand::DiscoverTopology;
+    control.firstStationAddress = 0x1002;
+    control.topologyCapacity = 64;
+
+    for (int scan = 0; scan < TotalRequestCount; ++scan) {
+        controller.holdNextAxisParameterEvidence();
+        executeAndWait(control);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            controller.requestCount(Protocol::MessageType::QueryAxisParameterEvidence),
+            scan + 1,
+            1000);
+        QVERIFY(controller.hasHeldAxisParameterEvidence());
+        QVERIFY(!provider.axisParameterEvidenceBatch());
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.sessionForTests()->pendingRequestCountForTests(), qsizetype(1), 1000);
+        QCOMPARE(batchSpy.count(), 0);
+    }
+
+    QVERIFY(provider.connectionSnapshot().topology);
+    QCOMPARE(provider.connectionSnapshot().topology->slaves.size(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(batchSpy.count(), 1, 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(provider.axisParameterEvidenceBatch().has_value(), 2000);
+    const auto batch = provider.axisParameterEvidenceBatch();
+    QVERIFY(batch);
+    QVERIFY(batch->isValid());
+    QCOMPARE(batch->targets.size(), 1);
+    QCOMPARE(provider.sessionForTests()->pendingRequestCountForTests(), qsizetype(0));
+
+    const QList<QByteArray> queryPayloads = controller.axisParameterQueryPayloads();
+    const QList<quint64> requestIds = controller.axisParameterRequestIds();
+    QCOMPARE(queryPayloads.size(), TotalRequestCount);
+    QCOMPARE(requestIds.size(), TotalRequestCount);
+    for (int request = 0; request < TotalRequestCount; ++request) {
+        QCOMPARE(readU32(queryPayloads.at(request), 12), quint32(0));
+        QCOMPARE(readU16(queryPayloads.at(request), 16), quint16(0));
+        QCOMPARE(readU16(queryPayloads.at(request), 18), quint16(0x1002));
+        if (request)
+            QVERIFY(requestIds.at(request - 1) < requestIds.at(request));
+    }
+
+    const Data::AxisParameterEvidenceTargetResult &target = batch->targets.constFirst();
+    QCOMPARE(target.position, quint16(0));
+    QCOMPARE(target.stationAddress, quint16(0x1002));
+    QCOMPARE(target.serial, quint32(0x22));
+    QCOMPARE(target.requestId, requestIds.constLast());
+    QCOMPARE(target.outcome, Data::AxisParameterEvidenceTargetOutcome::TimedOut);
+    QVERIFY(!target.status);
+    QVERIFY(!target.operationResult);
+    QVERIFY(!target.detail);
+    QVERIFY(!target.evidence);
+
+    QTest::qWait(100);
+    QCOMPARE(
+        controller.requestCount(Protocol::MessageType::QueryAxisParameterEvidence),
+        TotalRequestCount);
+    QCOMPARE(batchSpy.count(), 1);
+
+    control = {};
+    control.command = Data::ControllerControlCommand::ReleaseControl;
+    executeAndWait(control);
+    QVERIFY(provider.disconnectFromController());
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected, 1000);
+    QVERIFY(controller.violations().isEmpty());
+}
+
+void EtherCATProductApiTests::testAxisParameterEvidenceFailuresAndInvalidation_data()
+{
+    QTest::addColumn<int>("mutation");
+    QTest::newRow("session") << 0;
+    QTest::newRow("boot") << 1;
+    QTest::newRow("topology-capture") << 2;
+    QTest::newRow("identity") << 3;
+    QTest::newRow("profile") << 4;
+    QTest::newRow("request-id") << 5;
+    QTest::newRow("sequence") << 6;
+    QTest::newRow("wrong-type") << 7;
+    QTest::newRow("canceled-late-session") << 8;
+    QTest::newRow("canceled-late-boot") << 9;
+    QTest::newRow("canceled-late-role") << 10;
+    QTest::newRow("incomplete-topology-evidence") << 11;
+}
+
+void EtherCATProductApiTests::testAxisParameterEvidenceFailuresAndInvalidation()
+{
+    QFETCH(int, mutation);
+    LoopbackController controller(LoopbackController::Behavior::AxisParameterEvidence);
+    controller.setProtocolMinor(Protocol::AxisParameterEvidenceMinor);
+    controller.setFeatureBits(0x0003ffff);
+    QVERIFY(controller.start());
+    ProductApiSession::Options options = testOptions();
+    options.reconnectAttempts = 0;
+    ProductApiConnectionProvider provider(controller.endpoints(), options);
+    QSignalSpy
+        batchSpy(&provider, &Core::ControllerConnectionProvider::axisParameterEvidenceBatchChanged);
+    QVERIFY(provider.connectToController(requestFor(provider)));
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
+
+    const auto executeAndWait = [&provider](Data::ControllerControlRequest request) {
+        QVERIFY(provider.executeControlCommand(request));
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().controlProgress.state,
+            Data::ControllerControlState::Succeeded,
+            1000);
+    };
+    Data::ControllerControlRequest control;
+    control.command = Data::ControllerControlCommand::AcquireControl;
+    executeAndWait(control);
+    control.command = Data::ControllerControlCommand::EnterConfigurationMode;
+    executeAndWait(control);
+    if (mutation >= 8 && mutation <= 10) {
+        control.command = Data::ControllerControlCommand::DiscoverTopology;
+        control.firstStationAddress = 0x1002;
+        control.topologyCapacity = 64;
+        controller.holdNextAxisParameterEvidence();
+        executeAndWait(control);
+        QTRY_VERIFY_WITH_TIMEOUT(controller.hasHeldAxisParameterEvidence(), 1000);
+        QVERIFY(!provider.axisParameterEvidenceBatch());
+        executeAndWait(control);
+        QTRY_VERIFY_WITH_TIMEOUT(provider.axisParameterEvidenceBatch().has_value(), 1000);
+        if (mutation == 8) {
+            controller.corruptNextAxisParameterSessionId();
+            controller.releaseHeldAxisParameterEvidence(false);
+        } else if (mutation == 9) {
+            controller.corruptNextAxisParameterBootId();
+            controller.releaseHeldAxisParameterEvidence(false);
+        } else {
+            controller.releaseHeldAxisParameterEvidenceOnRole(Protocol::Role::Push);
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(
+            provider.connectionSnapshot().state,
+            Data::ControllerConnectionState::Disconnected,
+            1000);
+        QVERIFY(!provider.axisParameterEvidenceBatch());
+        QVERIFY(provider.connectionSnapshot().lastError);
+        QVERIFY(controller.violations().isEmpty());
+        return;
+    }
+    switch (mutation) {
+    case 0:
+        controller.corruptNextAxisParameterSessionId();
+        break;
+    case 1:
+        controller.corruptNextAxisParameterBootId();
+        break;
+    case 2:
+        controller.corruptNextAxisParameterCapture();
+        break;
+    case 3:
+        controller.corruptNextAxisParameterIdentity();
+        break;
+    case 4:
+        controller.corruptNextAxisParameterProfile();
+        break;
+    case 5:
+        controller.corruptNextAxisParameterRequestId();
+        break;
+    case 6:
+        controller.corruptNextAxisParameterSequence();
+        break;
+    case 7:
+        controller.sendNextAxisParameterWrongType();
+        break;
+    case 11:
+        controller.corruptNextTopologyResult();
+        break;
+    }
+    control.command = Data::ControllerControlCommand::DiscoverTopology;
+    control.firstStationAddress = 0x1002;
+    control.topologyCapacity = 64;
+    if (mutation == 11)
+        QVERIFY(provider.executeControlCommand(control));
+    else
+        executeAndWait(control);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        provider.connectionSnapshot().state, Data::ControllerConnectionState::Disconnected, 1000);
+    QVERIFY(!provider.axisParameterEvidenceBatch());
+    QCOMPARE(batchSpy.count(), 0);
+    if (mutation == 11) {
+        QCOMPARE(controller.requestCount(Protocol::MessageType::QueryAxisParameterEvidence), 0);
+    }
+    QVERIFY(provider.connectionSnapshot().lastError);
+    QCOMPARE(provider.connectionSnapshot().lastError->source, Data::ControllerErrorSource::Protocol);
+    const Data::ControllerOperation expectedOperation
+        = mutation == 5    ? Data::ControllerOperation::None
+          : mutation == 6  ? Data::ControllerOperation::Handshake
+          : mutation == 11 ? Data::ControllerOperation::DiscoverTopology
+                           : Data::ControllerOperation::QueryAxisParameterEvidence;
+    QCOMPARE(provider.connectionSnapshot().lastError->operation, expectedOperation);
     QVERIFY(controller.violations().isEmpty());
 }
 
@@ -12454,16 +14278,15 @@ void EtherCATProductApiTests::testRuntimeResourceBounds()
         ProductApiConnectionProvider provider(controller.endpoints(), options);
         QVERIFY(provider.connectToController(requestFor(provider)));
         QTRY_COMPARE_WITH_TIMEOUT(
-            provider.connectionSnapshot().state,
-            Data::ControllerConnectionState::Connected,
-            2000);
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
         QVERIFY(provider.refreshRuntimeResources());
-        QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().lastError.has_value(), 2000);
-        QTRY_COMPARE_WITH_TIMEOUT(
-            provider.sessionForTests()->pendingRequestCountForTests(), 0, 1000);
-        QCOMPARE(
-            provider.connectionSnapshot().state,
-            Data::ControllerConnectionState::Connected);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            provider.connectionSnapshot().lastError
+                && provider.connectionSnapshot().lastError->operation
+                       == Data::ControllerOperation::QueryRuntimeResourceCatalog,
+            2000);
+        QTRY_COMPARE_WITH_TIMEOUT(provider.sessionForTests()->pendingRequestCountForTests(), 0, 1000);
+        QCOMPARE(provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected);
         QCOMPARE(
             provider.connectionSnapshot().lastError->operation,
             Data::ControllerOperation::QueryRuntimeResourceCatalog);
@@ -12486,16 +14309,15 @@ void EtherCATProductApiTests::testRuntimeResourceBounds()
         ProductApiConnectionProvider provider(controller.endpoints(), options);
         QVERIFY(provider.connectToController(requestFor(provider)));
         QTRY_COMPARE_WITH_TIMEOUT(
-            provider.connectionSnapshot().state,
-            Data::ControllerConnectionState::Connected,
-            2000);
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
         QVERIFY(provider.refreshRuntimeResources());
-        QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().lastError.has_value(), 2000);
-        QTRY_COMPARE_WITH_TIMEOUT(
-            provider.sessionForTests()->pendingRequestCountForTests(), 0, 1000);
-        QCOMPARE(
-            provider.connectionSnapshot().state,
-            Data::ControllerConnectionState::Connected);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            provider.connectionSnapshot().lastError
+                && provider.connectionSnapshot().lastError->operation
+                       == Data::ControllerOperation::QueryRuntimeResourceSnapshot,
+            2000);
+        QTRY_COMPARE_WITH_TIMEOUT(provider.sessionForTests()->pendingRequestCountForTests(), 0, 1000);
+        QCOMPARE(provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected);
         QCOMPARE(
             provider.connectionSnapshot().lastError->operation,
             Data::ControllerOperation::QueryRuntimeResourceSnapshot);
@@ -12519,20 +14341,19 @@ void EtherCATProductApiTests::testRuntimeResourceBounds()
         ProductApiConnectionProvider provider(controller.endpoints(), options);
         QVERIFY(provider.connectToController(requestFor(provider)));
         QTRY_COMPARE_WITH_TIMEOUT(
-            provider.connectionSnapshot().state,
-            Data::ControllerConnectionState::Connected,
-            2000);
+            provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected, 2000);
 
         QElapsedTimer elapsed;
         elapsed.start();
         QVERIFY(provider.refreshRuntimeResources());
-        QTRY_VERIFY_WITH_TIMEOUT(provider.connectionSnapshot().lastError.has_value(), 400);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            provider.connectionSnapshot().lastError
+                && provider.connectionSnapshot().lastError->operation
+                       == Data::ControllerOperation::QueryRuntimeResourceSnapshot,
+            400);
         QVERIFY(elapsed.elapsed() < options.requestTimeoutMs);
-        QTRY_COMPARE_WITH_TIMEOUT(
-            provider.sessionForTests()->pendingRequestCountForTests(), 0, 1000);
-        QCOMPARE(
-            provider.connectionSnapshot().state,
-            Data::ControllerConnectionState::Connected);
+        QTRY_COMPARE_WITH_TIMEOUT(provider.sessionForTests()->pendingRequestCountForTests(), 0, 1000);
+        QCOMPARE(provider.connectionSnapshot().state, Data::ControllerConnectionState::Connected);
         QCOMPARE(
             provider.connectionSnapshot().lastError->operation,
             Data::ControllerOperation::QueryRuntimeResourceSnapshot);

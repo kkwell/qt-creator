@@ -19,6 +19,9 @@ private slots:
     void testSemanticPerformanceSnapshot();
     void testSemanticAuxiliaryRecords();
     void testTopologyEvidenceCodec();
+    void testAxisParameterEvidenceCodec();
+    void testAxisParameterEvidenceCodecRejectsMalformed_data();
+    void testAxisParameterEvidenceCodecRejectsMalformed();
     void testRuntimeResourceGoldenFrames();
     void testRuntimeResourceCodecRejectsMalformed_data();
     void testRuntimeResourceCodecRejectsMalformed();
@@ -45,6 +48,12 @@ private slots:
     void testControlLifecycle();
     void testTopologyProvenanceLifecycle();
     void testTopologyEvidenceLifecycle();
+    void testAxisParameterEvidenceCapabilityGuards_data();
+    void testAxisParameterEvidenceCapabilityGuards();
+    void testAxisParameterEvidenceLifecycle();
+    void testAxisParameterEvidenceTerminalCapacity();
+    void testAxisParameterEvidenceFailuresAndInvalidation_data();
+    void testAxisParameterEvidenceFailuresAndInvalidation();
     void testFaultResetLifecycle();
     void testPackageDeploymentLifecycle();
     void testPackageDeploymentMaximumAudit();

@@ -25,6 +25,7 @@ private slots:
     void testMockUiVisibility();
     void testNodeIdRoundTrip();
     void testProjectSnapshotValueSemantics();
+    void testAxisParameterEvidenceContract();
     void testRuntimeResourceValueSemantics();
     void testRuntimeResourceSnapshotRequestContract();
     void testRuntimeSemanticMappingAttestationContract();

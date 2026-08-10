@@ -155,6 +155,7 @@ enum class ControllerOperation {
     ValidatePackage,
     ActivatePackage,
     RollbackPackage,
+    QueryAxisParameterEvidence,
 };
 
 enum class ControllerControlCommand {
@@ -399,15 +400,22 @@ struct ETHERCATDATA_EXPORT ControllerTopologySnapshot
     quint64 cpu1CompletedTimeNs = 0;
     // Product API v1.15 topology-evidence completion time.
     quint64 topologyCompletedTimeNs = 0;
+    // SHA-256 of the exact Product API topology response payload.
+    QByteArray topologyPayloadSha256;
     QDateTime receivedAt;
 
     bool hasCompleteProvenance() const
     {
+        const bool legacy = cpu1RequestSequence && cpu1CompletedTimeNs
+                            && !topologyCaptureSequence && !topologyCompletedTimeNs
+                            && topologyPayloadSha256.isEmpty();
+        const bool evidence = !cpu1RequestSequence && !cpu1CompletedTimeNs
+                              && topologyCaptureSequence && topologyCompletedTimeNs
+                              && topologyPayloadSha256.size() == 32
+                              && topologyPayloadSha256 != QByteArray(32, '\0');
         return !scope.projectId.isNull() && !scope.masterId.isNull() && sessionGeneration
                && sessionId && bootId && requestId && responseSequence
-               && ((cpu1RequestSequence && cpu1CompletedTimeNs)
-                   || (topologyCaptureSequence && topologyCompletedTimeNs))
-               && receivedAt.isValid();
+               && (legacy != evidence) && receivedAt.isValid();
     }
 
     friend bool operator==(const ControllerTopologySnapshot &,
@@ -594,6 +602,7 @@ struct ETHERCATDATA_EXPORT ControllerCapabilitySummary
     bool semanticMappingAttestation = false;
     bool runtimeOutputTransactions = false;
     bool topologyEvidence = false;
+    bool axisParameterEvidence = false;
     bool coe = false;
     bool distributedClocks = false;
     bool multiSlaveDistributedClocks = false;

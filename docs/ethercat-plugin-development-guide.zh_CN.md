@@ -125,7 +125,7 @@ Qt Creator Core / ExtensionSystem / ProjectExplorer / Utils
 | `EtherCATProject` | `src/plugins/ethercatproject` | `.ecatproject` 生命周期、唯一工程快照、Undo/Redo 和校验 | ESI 解析、网络、运行时控制 |
 | `EtherCATDevices` | `src/plugins/ethercatdevices` | 原始 ESI XML 导入、解析、索引和精确身份查询 | 厂家控制逻辑、控制器连接 |
 | `EtherCATDeviceAdapters` | `src/plugins/ethercatdeviceadapters` | 厂家设备到通用信号、动作、PDO/DC profile 的数据驱动适配 | Socket、运行时 PDO 写入、UI |
-| `EtherCATProductApi` | `src/plugins/ethercatproductapi` | Embed Labs Product API v1.15、三通道、会话、租约、扫描、部署和原子输出事务 | 其他厂家协议、ESI 语义、页面 |
+| `EtherCATProductApi` | `src/plugins/ethercatproductapi` | Embed Labs Product API v1.16、三通道、会话、租约、扫描、固定只读参数证据、部署和原子输出事务 | 其他厂家协议、ESI 语义、页面 |
 | `EtherCATProjectCompiler` | `src/plugins/ethercatprojectcompiler` | 外部受信编译器、持久操作账本、detached signing 准备和恢复 | 私钥、控制器、实时任务 |
 | `EtherCATSemanticRuntime` | `src/plugins/ethercatsemanticruntime` | ECPKG/签名/映射验证、运行上下文、审批、语义动作和激活事务 | 厂家对象分支、界面布局 |
 | `EtherCATWorkbench` | `src/plugins/ethercatworkbench` | 设备树、属性页、统一命令、连接、扫描应用、运行和手动控制界面 | ECAP 编解码、ESI XML 解析 |
@@ -202,10 +202,12 @@ Adapter、Profile、Module 或 Provider authority 改变后，现有草稿变为
 该页面的 Observed/Source/Verification Status 当前只显示签名来源以及 `Not captured` 或
 `Unavailable`，不会发起 scan、SDO upload/download、控制器命令、部署、网络或硬件访问。当前树仍
 没有生产 v4 Adapter/Authorization 资产，已安装的 SV630N Adapter 仍为 v3 且动作保持 disabled；
-compiler projection、Product API 在线实测参数证据和设备参数动作也尚未完成，因此任一非空设备参数
-仍会在调用外部编译器前 fail closed。后续真实实测值必须绑定 Session/Boot/拓扑/设备身份，只用于
-比较工程设定与实测证据，不得写回 `ProjectSnapshot`。本地编辑成功不代表驱动器已经接收参数，也不
-授权部署、SDO 下载或电机运动。
+Product API v1.16 已在每次完整真实拓扑扫描后，以固定八对象只读 profile、Session/Boot/拓扑 capture
+和精确从站身份采集会话级批次，但页面尚未消费该批次。compiler projection、Workbench
+configured/observed 对比和设备参数动作也尚未完成，因此任一非空设备参数仍会在调用外部编译器前
+fail closed。该会话证据只用于后续比较工程设定与实测值，不得写回 `ProjectSnapshot`；其中
+`0x2000` 原始身份值不能自动解释为编码器分辨率，软件停止阈值也不是驱动器实测对象。本地编辑成功
+不代表驱动器已经接收参数，也不授权部署、SDO 下载或电机运动。
 
 ### 4.2 设备目录状态
 
@@ -634,7 +636,7 @@ Product API 连接。对输出的 API/过程映像证据不能宣称为物理端
 - 用户明确触发的真实扫描和设备树展示。
 - 固定 ESI 库、用户 XML 导入、XB6/SV630N 精确识别。
 - 将当前总线应用到工程，并保存 PDO、Startup、DC 和 Adapter 选择。
-- Product API v1.15 拓扑证据、v1.14 输出事务和旧版本有界兼容。
+- Product API v1.16 固定只读轴参数证据、v1.15 拓扑证据、v1.14 输出事务和旧版本有界兼容。
 - 受信 ECPKG、语义绑定、动作定义、控制器 Attestation 和激活服务。
 - 选中设备、模块或通道后的语义 Control 页面。
 - XB6 完整 16 通道 ConsistencyGroup 的原子手动输出链路。
@@ -667,9 +669,9 @@ SV630N 速度动作仍因实际编码器分辨率、0x6091 电子齿轮换算、
 3. 用当前真实 ProjectSnapshot 和新鲜扫描证据重新编译、部署并完成 DC/XB6 输出验收。
 4. Startup SDO 目前可编辑，但当前 compiler request builder 对非空 Startup SDO 仍会
    fail closed；需由编译器合同和 IDE 同步支持后再开放。
-5. 完成签名 Adapter 设备参数定义、ProjectSnapshot 到编译请求的精确 projection，以及
-   Product API 扫描实测参数证据；在三者闭合前，v8 中任一非空设备参数继续 fail closed，
-   不进入部署或运动路径。
+5. 将 Product API v1.16 会话级固定只读参数证据接入 Workbench，以签名 Adapter 定义完成
+   configured/observed 对比，再实现 ProjectSnapshot 到编译请求的精确 projection；在这些
+   门禁闭合前，v8 中任一非空设备参数继续 fail closed，不进入部署或运动路径。
 
 ### P1：统一业务协调层
 

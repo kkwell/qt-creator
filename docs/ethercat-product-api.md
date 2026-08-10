@@ -5,11 +5,13 @@
 `EtherCATProductApi` is the first concrete controller-adapter plugin for the
 product-owned, multi-vendor `ControllerConnectionProvider` contract. It owns
 only the Embed Labs Product API v1 transport. The current client contract is
-v1.12, with bounded v1.11, v1.10, and v1.9 compatibility for older controller
-runtimes. Product API v1.11 adds capability-gated, compare-and-clear fault
-confirmation; v1.12 adds an optional, read-only Runtime Resource catalog and
-snapshot. Neither addition turns fault reset into an unconditional controller
-reset or adds output writes. The 2026-07-24 hardware record observed a RAM-only
+v1.16, with bounded compatibility for older controller runtimes. Product API
+v1.11 adds capability-gated, compare-and-clear fault confirmation; v1.12 adds
+an optional, read-only Runtime Resource catalog and snapshot; v1.13 through
+v1.15 add semantic attestation, output transactions, and captured topology
+evidence; v1.16 adds optional fixed-profile axis-parameter evidence. None of
+these additions turns fault reset into an unconditional controller reset or
+exposes arbitrary SDO access. The 2026-07-24 hardware record observed a RAM-only
 v1.10 CPU0 service and a reboot return to release24/v1.9; this documentation
 update does not rewrite or refresh that historical observation. A future
 controller family uses a separate plugin and Provider instead of adding vendor
@@ -169,6 +171,45 @@ bit 13 remains usable through its older capabilities, while a Runtime Resource
 refresh is rejected locally and sends neither `0x040b` nor `0x040c`. The
 historical v1.10 and v1.9 feature-mask observations above remain dated evidence
 and are not upgraded by this contract.
+
+Product API v1.16 adds optional `AXIS_PARAMETER_EVIDENCE` feature bit 17
+(`0x00020000`), making the full v1.16 release mask `0x0003ffff`. Missing the
+optional bit does not fail the connection or change v1.15 topology scanning;
+it only suppresses the v1.16 query. After a complete real v1.15 topology scan,
+the session sends one Control-channel `QueryAxisParameterEvidence (0x0411)` per
+slave, in bus-position order, and accepts only the typed
+`AxisParameterEvidence (0x048d)` response. The request is lease-free and
+read-only. It carries one pinned profile identity, the current topology capture,
+and the exact scanned slave identity; it contains no caller-selected object
+index, subindex, object list, mailbox length, or download value.
+
+The fixed profile contains exactly these eight CoE uploads, in this order:
+`0x2000:01`, `0x2000:05`, `0x2000:06`, `0x6091:01`, `0x6091:02`,
+`0x2006:09`, `0x2006:0a`, and `0x607f:00`. A successful response preserves all
+eight records, including per-record SDO abort, size-mismatch, and read-failure
+states; top-level success means that the fixed collection completed, not that
+all values are usable. The session publishes no partial list. It stages every
+topology target and atomically publishes one batch containing an evidence,
+typed controller-error, or local-timeout result for every scanned slave. New
+scan, SessionId, BootId, topology capture, identity, or capability drift clears
+the batch. An ordinary refresh with the same binding preserves it.
+
+The pinned profile identity is `profileId=1`, `profileVersion=1`, with canonical
+profile SHA-256
+`7e73372de645920ef2da33454e1b7195476f8760a2a44f612803e67a21c7f77e`.
+This digest identifies the compile-time read set; it is not an independently
+signed qualification. A successful response must carry the exact flag mask
+`0x0000001f`. Typed failures are header-only and preserve the closed
+status/operation/detail relation; failed records preserve their SDO abort,
+size-mismatch, or read-failure relation without substituting a default value.
+
+This evidence is session-only and never enters `ProjectSnapshot`. The three
+`0x2000` values remain raw motor/encoder identity evidence and are not an
+encoder-counts-per-revolution derivation. The two `0x6091` values and the
+drive speed-limit objects are observed raw values. The manual-control stop
+threshold remains signed software policy and is not a drive object. The UI and
+compiler must therefore apply independently signed Adapter definitions before
+they can compare engineering values or qualify motion.
 
 Control creates the session. Push and Bulk join its nonzero SessionId. All
 three handshakes must agree on SessionId, BootId, negotiated minor, role, and

@@ -35,6 +35,8 @@ public:
     Utils::Result<> connectToController(const Data::ControllerConnectionRequest &request) override;
     Utils::Result<> disconnectFromController() override;
     Utils::Result<> refreshController() override;
+    bool supportsAxisParameterEvidence() const override;
+    std::optional<Data::AxisParameterEvidenceBatch> axisParameterEvidenceBatch() const override;
     bool supportsRuntimeResources() const override;
     std::optional<Data::RuntimeResourceCatalog> runtimeResourceCatalog() const override;
     std::optional<Data::RuntimeResourceSnapshot> runtimeResourceSnapshot() const override;

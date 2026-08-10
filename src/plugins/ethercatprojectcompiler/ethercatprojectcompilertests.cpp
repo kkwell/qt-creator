@@ -996,6 +996,7 @@ public:
         observed.responseSequence = 42;
         observed.topologyCaptureSequence = quint32(topology.captureSequence);
         observed.topologyCompletedTimeNs = 43;
+        observed.topologyPayloadSha256 = QByteArray(32, char(0x33));
         observed.receivedAt = observed.discoveredAt;
         for (const Data::RuntimePackageCompilerTopologySlaveEvidence &slave : topology.slaves) {
             Data::ControllerTopologySlave wire;

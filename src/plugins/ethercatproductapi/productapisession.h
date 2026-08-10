@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <ethercatdata/axisparameterevidence.h>
 #include <ethercatdata/controllerconnection.h>
 #include <ethercatdata/runtimeoutputtransaction.h>
 #include <ethercatdata/runtimeresource.h>
@@ -65,6 +66,8 @@ public:
     Utils::Result<> connectToController(const Data::ControllerConnectionRequest &request);
     Utils::Result<> disconnectFromController();
     Utils::Result<> refreshController();
+    bool supportsAxisParameterEvidence() const;
+    std::optional<Data::AxisParameterEvidenceBatch> axisParameterEvidenceBatch() const;
     bool supportsRuntimeResources() const;
     std::optional<Data::RuntimeResourceCatalog> runtimeResourceCatalog() const;
     std::optional<Data::RuntimeResourceSnapshot> runtimeResourceSnapshot() const;
@@ -106,6 +109,7 @@ public:
 
 signals:
     void snapshotChanged();
+    void axisParameterEvidenceBatchChanged();
     void runtimeResourceCatalogChanged();
     void runtimeResourceSnapshotChanged();
     void runtimeResourceSnapshotRequestFinished(

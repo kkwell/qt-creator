@@ -98,6 +98,11 @@ ProductApiConnectionProvider::ProductApiConnectionProvider(
     });
     connect(
         m_session,
+        &ProductApiSession::axisParameterEvidenceBatchChanged,
+        this,
+        &ProductApiConnectionProvider::axisParameterEvidenceBatchChanged);
+    connect(
+        m_session,
         &ProductApiSession::runtimeResourceCatalogChanged,
         this,
         &ProductApiConnectionProvider::runtimeResourceCatalogChanged);
@@ -254,6 +259,17 @@ Utils::Result<> ProductApiConnectionProvider::refreshController()
     if (!isAvailable())
         return Utils::ResultError(Tr::tr("The Embed Labs controller provider is unavailable."));
     return m_session->refreshController();
+}
+
+bool ProductApiConnectionProvider::supportsAxisParameterEvidence() const
+{
+    return isAvailable() && m_session->supportsAxisParameterEvidence();
+}
+
+std::optional<Data::AxisParameterEvidenceBatch>
+ProductApiConnectionProvider::axisParameterEvidenceBatch() const
+{
+    return isAvailable() ? m_session->axisParameterEvidenceBatch() : std::nullopt;
 }
 
 bool ProductApiConnectionProvider::supportsRuntimeResources() const

@@ -24,11 +24,13 @@ inline constexpr quint16 RuntimeResourceMinor = 12;
 inline constexpr quint16 SemanticBindingAttestationMinor = 13;
 inline constexpr quint16 OutputTransactionMinor = 14;
 inline constexpr quint16 TopologyEvidenceMinor = 15;
-inline constexpr quint16 CurrentMinor = TopologyEvidenceMinor;
+inline constexpr quint16 AxisParameterEvidenceMinor = 16;
+inline constexpr quint16 CurrentMinor = AxisParameterEvidenceMinor;
 inline constexpr quint32 RuntimeResourceFeature = 1U << 13;
 inline constexpr quint32 SemanticBindingAttestationFeature = 1U << 14;
 inline constexpr quint32 OutputTransactionFeature = 1U << 15;
 inline constexpr quint32 TopologyEvidenceFeature = 1U << 16;
+inline constexpr quint32 AxisParameterEvidenceFeature = 1U << 17;
 inline constexpr quint32 OutputTransactionMaximumTtlCycles = 65535;
 inline constexpr quint32 ControlMaximumPayloadBytes = 4096;
 inline constexpr quint32 PushMaximumPayloadBytes = 65536;
@@ -90,6 +92,7 @@ enum class MessageType : quint16 {
     QueryOutputGroupPolicy = 0x040e,
     GetOutputTransactionState = 0x040f,
     DiscoverTopologyEvidence = 0x0410,
+    QueryAxisParameterEvidence = 0x0411,
     Capability = 0x0480,
     TopologyResult = 0x0481,
     PackageState = 0x0483,
@@ -99,6 +102,7 @@ enum class MessageType : quint16 {
     OutputGroupPolicy = 0x048a,
     OutputTransactionState = 0x048b,
     TopologyEvidence = 0x048c,
+    AxisParameterEvidence = 0x048d,
     GetFirmwareState = 0x0504,
     FirmwareStatus = 0x0580,
     FirmwareState = 0x0581,
@@ -376,6 +380,84 @@ struct TopologyEvidenceResult
     quint64 bootId = 0;
     QList<TopologyEvidenceSlave> slaves;
     QList<TopologyEvidenceModule> modules;
+};
+
+enum class AxisParameterEvidenceRecordState : quint8 {
+    Valid = 1,
+    SdoAbort = 2,
+    SizeMismatch = 3,
+    ReadFailed = 4,
+};
+
+enum class AxisParameterEvidenceEncoding : quint8 {
+    None = 0,
+    RawLittleEndian = 1,
+};
+
+enum class AxisParameterEvidenceFlag : quint32 {
+    Complete = 1U << 0,
+    CaptureBound = 1U << 1,
+    IdentityBound = 1U << 2,
+    ProfileBound = 1U << 3,
+    ReadAttempted = 1U << 4,
+};
+
+quint32 fixedAxisParameterEvidenceProfileId();
+quint16 fixedAxisParameterEvidenceProfileVersion();
+QByteArray fixedAxisParameterEvidenceProfileSha256();
+quint32 axisParameterEvidenceRequiredFlags();
+
+struct AxisParameterEvidenceQuery
+{
+    quint32 profileId = 0;
+    quint16 profileVersion = 0;
+    quint32 topologyCaptureSequence = 0;
+    quint32 afterEvidenceSequence = 0;
+    quint16 position = 0;
+    quint16 stationAddress = 0;
+    quint32 vendorId = 0;
+    quint32 productCode = 0;
+    quint32 revision = 0;
+    quint32 serial = 0;
+    quint64 topologyCompletedTimeNs = 0;
+    QByteArray profileSha256;
+};
+
+struct AxisParameterEvidenceRecord
+{
+    quint16 ordinal = 0;
+    quint16 index = 0;
+    quint8 subIndex = 0;
+    AxisParameterEvidenceRecordState state = AxisParameterEvidenceRecordState::ReadFailed;
+    quint8 valueBytes = 0;
+    AxisParameterEvidenceEncoding encoding = AxisParameterEvidenceEncoding::None;
+    quint32 abortCode = 0;
+    qint32 operationResult = 0;
+    QByteArray rawValue;
+    quint64 detail = 0;
+};
+
+struct AxisParameterEvidenceResult
+{
+    qint32 status = 0;
+    qint32 operationResult = 0;
+    quint32 flags = 0;
+    quint32 evidenceSequence = 0;
+    quint32 topologyCaptureSequence = 0;
+    quint32 profileId = 0;
+    quint16 profileVersion = 0;
+    quint16 position = 0;
+    quint16 stationAddress = 0;
+    quint32 vendorId = 0;
+    quint32 productCode = 0;
+    quint32 revision = 0;
+    quint32 serial = 0;
+    quint64 completedTimeNs = 0;
+    quint64 topologyCompletedTimeNs = 0;
+    quint64 bootId = 0;
+    QByteArray profileSha256;
+    quint64 detail = 0;
+    QList<AxisParameterEvidenceRecord> records;
 };
 
 enum class RuntimeResourcePrimitive : quint8 {
@@ -678,6 +760,14 @@ QByteArray encodeDiscoverTopologyEvidence(
     quint64 bootId,
     quint16 protocolMinor = CurrentMinor,
     Error *error = nullptr);
+QByteArray encodeQueryAxisParameterEvidence(
+    const AxisParameterEvidenceQuery &query,
+    quint64 sessionId,
+    quint64 requestId,
+    quint64 sequence,
+    quint64 bootId,
+    quint16 protocolMinor = CurrentMinor,
+    Error *error = nullptr);
 QByteArray encodeQueryResourceTable(
     const RuntimeResourceTableQuery &query,
     quint64 sessionId,
@@ -749,6 +839,10 @@ std::optional<TopologyEvidenceResult> decodeTopologyEvidence(
     const Frame &frame,
     const TopologyEvidenceQuery &query,
     quint32 afterCaptureSequence = 0,
+    Error *error = nullptr);
+std::optional<AxisParameterEvidenceResult> decodeAxisParameterEvidence(
+    const Frame &frame,
+    const AxisParameterEvidenceQuery &query,
     Error *error = nullptr);
 std::optional<RuntimeResourceTablePage> decodeResourceTablePage(
     const Frame &frame, const RuntimeResourceTableQuery &query, Error *error = nullptr);

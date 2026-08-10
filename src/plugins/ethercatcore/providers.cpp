@@ -146,6 +146,17 @@ ControllerConnectionProvider::ControllerConnectionProvider(
     : Provider(ProviderKind::ControllerConnection, id, displayName, parent)
 {}
 
+bool ControllerConnectionProvider::supportsAxisParameterEvidence() const
+{
+    return false;
+}
+
+std::optional<Data::AxisParameterEvidenceBatch>
+ControllerConnectionProvider::axisParameterEvidenceBatch() const
+{
+    return std::nullopt;
+}
+
 std::optional<Data::ControllerConnectionProfileConfiguration>
 ControllerConnectionProvider::connectionProfileConfiguration(
     const Data::ControllerConnectionScope &, const Data::NodeId &) const

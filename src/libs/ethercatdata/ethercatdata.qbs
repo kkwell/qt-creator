@@ -8,6 +8,7 @@ QtcLibrary {
     cpp.defines: base.concat("ETHERCATDATA_LIBRARY")
 
     files: [
+        "axisparameterevidence.h",
         "controllerconnection.h",
         "deviceadapter.h",
         "deviceadapterselection.h",

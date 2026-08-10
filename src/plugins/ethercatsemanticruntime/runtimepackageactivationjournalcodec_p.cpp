@@ -1551,6 +1551,8 @@ StrictJson controllerOperationJson(Data::ControllerOperation value)
         return "query-runtime-resource-catalog";
     case Operation::QueryRuntimeResourceSnapshot:
         return "query-runtime-resource-snapshot";
+    case Operation::QueryAxisParameterEvidence:
+        return "query-axis-parameter-evidence";
     case Operation::QueryRuntimeSemanticMappingAttestation:
         return "query-runtime-semantic-mapping-attestation";
     case Operation::QueryRuntimeOutputGroupPolicy:
@@ -1622,6 +1624,7 @@ bool readControllerOperation(
         std::pair{"query-firmware-state", Operation::QueryFirmwareState},
         std::pair{"query-runtime-resource-catalog", Operation::QueryRuntimeResourceCatalog},
         std::pair{"query-runtime-resource-snapshot", Operation::QueryRuntimeResourceSnapshot},
+        std::pair{"query-axis-parameter-evidence", Operation::QueryAxisParameterEvidence},
         std::pair{
             "query-runtime-semantic-mapping-attestation",
             Operation::QueryRuntimeSemanticMappingAttestation},

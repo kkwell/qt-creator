@@ -26,6 +26,7 @@
 #include <extensionsystem/pluginmanager.h>
 #include <extensionsystem/pluginspec.h>
 
+#include <ethercatdata/axisparameterevidence.h>
 #include <ethercatdata/controllerconnection.h>
 #include <ethercatdata/deviceadapter.h>
 #include <ethercatdata/engineeringvalue.h>
@@ -33,9 +34,9 @@
 #include <ethercatdata/nodeid.h>
 #include <ethercatdata/offlineconfiguration.h>
 #include <ethercatdata/projectsnapshot.h>
+#include <ethercatdata/runtimeoutputtransaction.h>
 #include <ethercatdata/runtimepackageactivation.h>
 #include <ethercatdata/runtimepackagecompiler.h>
-#include <ethercatdata/runtimeoutputtransaction.h>
 #include <ethercatdata/runtimeresource.h>
 #include <ethercatdata/semanticmappingattestation.h>
 #include <ethercatdata/semanticruntime.h>
@@ -3055,6 +3056,7 @@ public:
             topology.responseSequence = 29;
             topology.topologyCaptureSequence = 31;
             topology.topologyCompletedTimeNs = 37;
+            topology.topologyPayloadSha256 = QByteArray(32, char(0x6b));
             topology.receivedAt = QDateTime::currentDateTimeUtc();
         }
         m_snapshot.topology = topology;
@@ -3641,6 +3643,476 @@ void EtherCATCoreTests::testProjectSnapshotValueSemantics()
     snapshot.slaves.append(slave);
     QVERIFY(copy != snapshot);
     QCOMPARE(copy.masterBindingArtifact.artifactId, QString("binding/test"));
+}
+
+void EtherCATCoreTests::testAxisParameterEvidenceContract()
+{
+    static constexpr std::array<quint16, 8>
+        Indexes{0x2000, 0x2000, 0x2000, 0x6091, 0x6091, 0x2006, 0x2006, 0x607f};
+    static constexpr std::array<quint8, 8> SubIndexes{0x01, 0x05, 0x06, 0x01, 0x02, 0x09, 0x0a, 0x00};
+    static constexpr std::array<quint8, 8> ValueBytes{2, 2, 2, 4, 4, 2, 2, 4};
+    static constexpr quint32 ProfileId = 1;
+    static constexpr quint16 ProfileVersion = 1;
+    static constexpr quint32 CompleteFlags = 0x0000001f;
+    const QByteArray profileSha256 = QByteArray::fromHex(
+        "7e73372de645920ef2da33454e1b7195476f8760a2a44f612803e67a21c7f77e");
+    struct ErrorTuple
+    {
+        qint32 status;
+        qint32 operationResult;
+        quint64 detail;
+    };
+    static constexpr std::array<ErrorTuple, 9> ErrorTuples{{
+        {-6, -1, 1},
+        {-6, -2, 2},
+        {-6, -3, 3},
+        {-6, -4, 4},
+        {-14, -5, 5},
+        {-15, -6, 6},
+        {-15, -7, 7},
+        {-15, -8, 8},
+        {-16, -9, 9},
+    }};
+    QCOMPARE(Data::FixedAxisParameterEvidenceProfileId, ProfileId);
+    QCOMPARE(Data::FixedAxisParameterEvidenceProfileVersion, ProfileVersion);
+    QCOMPARE(Data::AxisParameterEvidenceRequiredFlags, CompleteFlags);
+    QCOMPARE(Data::fixedAxisParameterEvidenceProfileSha256(), profileSha256);
+
+    Data::AxisParameterEvidence evidence;
+    evidence.scope = {Data::NodeId::create(), Data::NodeId::create()};
+    evidence.sessionGeneration = 7;
+    evidence.sessionId = 11;
+    evidence.bootId = 13;
+    evidence.requestId = 17;
+    evidence.responseSequence = 19;
+    evidence.controllerTimestampNs = 23;
+    evidence.topologyRequestId = 25;
+    evidence.topologyResponseSequence = 27;
+    evidence.topologyCaptureSequence = 29;
+    evidence.topologyCompletedTimeNs = 31;
+    evidence.topologyPayloadSha256 = QByteArray(32, char(0x4a));
+    evidence.evidenceSequence = 37;
+    evidence.completedTimeNs = 41;
+    evidence.position = 1;
+    evidence.stationAddress = 0x1002;
+    evidence.vendorId = 0x00100000;
+    evidence.productCode = 0x000c0112;
+    evidence.revision = 0x00010000;
+    evidence.serial = 0x22;
+    evidence.profileId = ProfileId;
+    evidence.profileVersion = ProfileVersion;
+    evidence.profileSha256 = profileSha256;
+    evidence.flags = CompleteFlags;
+    evidence.receivedAt = QDateTime::currentDateTimeUtc();
+    for (qsizetype ordinal = 0; ordinal < qsizetype(Indexes.size()); ++ordinal) {
+        Data::AxisParameterEvidenceRecord record;
+        record.ordinal = quint16(ordinal);
+        record.index = Indexes.at(size_t(ordinal));
+        record.subIndex = SubIndexes.at(size_t(ordinal));
+        record.state = Data::AxisParameterEvidenceRecordState::Valid;
+        record.valueBytes = ValueBytes.at(size_t(ordinal));
+        record.encoding = Data::AxisParameterEvidenceEncoding::RawLittleEndian;
+        record.rawValue = QByteArray::fromHex("01020304").first(record.valueBytes);
+        evidence.records.append(record);
+    }
+    QVERIFY(evidence.isValid());
+    QCOMPARE(Data::AxisParameterEvidence(evidence), evidence);
+    QVERIFY(QMetaType::fromType<Data::AxisParameterEvidence>().isValid());
+    QVERIFY(QMetaType::fromType<Data::AxisParameterEvidenceRecord>().isValid());
+
+    Data::AxisParameterEvidence partial = evidence;
+    Data::AxisParameterEvidenceRecord &aborted = partial.records[3];
+    aborted.state = Data::AxisParameterEvidenceRecordState::SdoAbort;
+    aborted.valueBytes = 0;
+    aborted.encoding = Data::AxisParameterEvidenceEncoding::None;
+    aborted.abortCode = 0x06020000;
+    aborted.operationResult = -7;
+    aborted.rawValue.clear();
+    aborted.detail = 0;
+    QVERIFY(aborted.isValid());
+    QVERIFY(partial.isValid());
+    QCOMPARE(partial.records.size(), 8);
+
+    const auto failedRecord = [&evidence](
+                                  qsizetype ordinal,
+                                  Data::AxisParameterEvidenceRecordState state,
+                                  quint32 abortCode,
+                                  qint32 operationResult,
+                                  quint64 detail) {
+        Data::AxisParameterEvidenceRecord record = evidence.records.at(ordinal);
+        record.state = state;
+        record.valueBytes = 0;
+        record.encoding = Data::AxisParameterEvidenceEncoding::None;
+        record.abortCode = abortCode;
+        record.operationResult = operationResult;
+        record.rawValue.clear();
+        record.detail = detail;
+        return record;
+    };
+    struct FailedRecordCase
+    {
+        qsizetype ordinal;
+        Data::AxisParameterEvidenceRecordState state;
+        quint32 abortCode;
+        qint32 operationResult;
+        quint64 detail;
+    };
+    const std::array<FailedRecordCase, 6> failedRecordCases{{
+        {0, Data::AxisParameterEvidenceRecordState::SdoAbort, 0x06020000, -7, 0},
+        {1, Data::AxisParameterEvidenceRecordState::SdoAbort, 0x05040005, -23, 0},
+        {2,
+         Data::AxisParameterEvidenceRecordState::SizeMismatch,
+         0,
+         -15,
+         quint64(ValueBytes.at(2)) << 32 | 4},
+        {3,
+         Data::AxisParameterEvidenceRecordState::SizeMismatch,
+         0,
+         -23,
+         quint64(ValueBytes.at(3)) << 32 | 2},
+        {4, Data::AxisParameterEvidenceRecordState::ReadFailed, 0, -15, 0x52414e4700001234ULL},
+        {5, Data::AxisParameterEvidenceRecordState::ReadFailed, 0, -23, quint64(quint32(-23))},
+    }};
+    for (const FailedRecordCase &failedCase : failedRecordCases) {
+        Data::AxisParameterEvidence candidate = evidence;
+        candidate.records[failedCase.ordinal] = failedRecord(
+            failedCase.ordinal,
+            failedCase.state,
+            failedCase.abortCode,
+            failedCase.operationResult,
+            failedCase.detail);
+        QVERIFY(candidate.records.at(failedCase.ordinal).isValid());
+        QVERIFY(candidate.isValid());
+    }
+
+    const auto rejectsRecord = [](const Data::AxisParameterEvidenceRecord &record) {
+        QVERIFY(!record.isValid());
+    };
+    Data::AxisParameterEvidenceRecord invalidRecord
+        = failedRecord(0, Data::AxisParameterEvidenceRecordState::SdoAbort, 0, -23, 0);
+    rejectsRecord(invalidRecord);
+    invalidRecord
+        = failedRecord(0, Data::AxisParameterEvidenceRecordState::SdoAbort, 0x06020000, 0, 0);
+    rejectsRecord(invalidRecord);
+    invalidRecord
+        = failedRecord(0, Data::AxisParameterEvidenceRecordState::SdoAbort, 0x06020000, 1, 0);
+    rejectsRecord(invalidRecord);
+    invalidRecord
+        = failedRecord(0, Data::AxisParameterEvidenceRecordState::SdoAbort, 0x06020000, -23, 1);
+    rejectsRecord(invalidRecord);
+    invalidRecord = failedRecord(0, Data::AxisParameterEvidenceRecordState::SizeMismatch, 0, 0, 1);
+    rejectsRecord(invalidRecord);
+    invalidRecord = failedRecord(0, Data::AxisParameterEvidenceRecordState::SizeMismatch, 0, 1, 1);
+    rejectsRecord(invalidRecord);
+    invalidRecord = failedRecord(0, Data::AxisParameterEvidenceRecordState::SizeMismatch, 0, -23, 0);
+    rejectsRecord(invalidRecord);
+    invalidRecord = failedRecord(0, Data::AxisParameterEvidenceRecordState::ReadFailed, 0, 0, 1);
+    rejectsRecord(invalidRecord);
+    invalidRecord = failedRecord(0, Data::AxisParameterEvidenceRecordState::ReadFailed, 0, 1, 1);
+    rejectsRecord(invalidRecord);
+    invalidRecord = failedRecord(0, Data::AxisParameterEvidenceRecordState::ReadFailed, 0, -23, 0);
+    rejectsRecord(invalidRecord);
+
+    Data::AxisParameterEvidenceTargetResult target;
+    target.position = evidence.position;
+    target.stationAddress = evidence.stationAddress;
+    target.vendorId = evidence.vendorId;
+    target.productCode = evidence.productCode;
+    target.revision = evidence.revision;
+    target.serial = evidence.serial;
+    target.requestId = evidence.requestId;
+    target.outcome = Data::AxisParameterEvidenceTargetOutcome::Evidence;
+    target.status = 0;
+    target.operationResult = 0;
+    target.detail = 0;
+    target.evidence = evidence;
+    QVERIFY(target.isValid());
+
+    Data::AxisParameterEvidenceBatch batch;
+    batch.scope = evidence.scope;
+    batch.sessionGeneration = evidence.sessionGeneration;
+    batch.sessionId = evidence.sessionId;
+    batch.bootId = evidence.bootId;
+    batch.topologyRequestId = evidence.topologyRequestId;
+    batch.topologyResponseSequence = evidence.topologyResponseSequence;
+    batch.topologyCaptureSequence = evidence.topologyCaptureSequence;
+    batch.topologyCompletedTimeNs = evidence.topologyCompletedTimeNs;
+    batch.topologyPayloadSha256 = evidence.topologyPayloadSha256;
+    batch.profileId = evidence.profileId;
+    batch.profileVersion = evidence.profileVersion;
+    batch.profileSha256 = evidence.profileSha256;
+    batch.targets = {target};
+    batch.completedAt = evidence.receivedAt;
+    QVERIFY(batch.isValid());
+    QCOMPARE(Data::AxisParameterEvidenceBatch(batch), batch);
+    QVERIFY(QMetaType::fromType<Data::AxisParameterEvidenceBatch>().isValid());
+
+    Data::AxisParameterEvidenceTargetResult secondTarget = target;
+    secondTarget.position = 2;
+    secondTarget.stationAddress = 0x1003;
+    secondTarget.serial = 0x23;
+    secondTarget.requestId = target.requestId + 1;
+    secondTarget.evidence->position = secondTarget.position;
+    secondTarget.evidence->stationAddress = secondTarget.stationAddress;
+    secondTarget.evidence->serial = secondTarget.serial;
+    secondTarget.evidence->requestId = secondTarget.requestId;
+    secondTarget.evidence->evidenceSequence = evidence.evidenceSequence + 1;
+    QVERIFY(secondTarget.isValid());
+    batch.targets = {target, secondTarget};
+    QVERIFY(batch.isValid());
+    Data::AxisParameterEvidenceBatch invalidBatch = batch;
+    invalidBatch.targets[1].requestId = invalidBatch.targets[0].requestId;
+    invalidBatch.targets[1].evidence->requestId = invalidBatch.targets[1].requestId;
+    QVERIFY(!invalidBatch.isValid());
+    invalidBatch = batch;
+    invalidBatch.targets[1].evidence->evidenceSequence
+        = invalidBatch.targets[0].evidence->evidenceSequence;
+    QVERIFY(!invalidBatch.isValid());
+
+    Data::AxisParameterEvidenceTargetResult controllerError = target;
+    controllerError.outcome = Data::AxisParameterEvidenceTargetOutcome::ControllerError;
+    controllerError.status = -14;
+    controllerError.operationResult = -5;
+    controllerError.detail = 5;
+    controllerError.evidence.reset();
+    QVERIFY(controllerError.isValid());
+    for (const ErrorTuple &tuple : ErrorTuples) {
+        Data::AxisParameterEvidenceTargetResult exactError = controllerError;
+        exactError.status = tuple.status;
+        exactError.operationResult = tuple.operationResult;
+        exactError.detail = tuple.detail;
+        QVERIFY(exactError.isValid());
+    }
+    Data::AxisParameterEvidenceTargetResult timedOut = controllerError;
+    timedOut.outcome = Data::AxisParameterEvidenceTargetOutcome::TimedOut;
+    timedOut.status.reset();
+    timedOut.operationResult.reset();
+    timedOut.detail.reset();
+    QVERIFY(timedOut.isValid());
+    batch.targets = {controllerError};
+    QVERIFY(batch.isValid());
+    batch.targets = {timedOut};
+    QVERIFY(batch.isValid());
+    batch.targets = {target, target};
+    QVERIFY(!batch.isValid());
+
+    Data::AxisParameterEvidence invalid = evidence;
+    invalid.records[1].ordinal = 0;
+    QVERIFY(!invalid.isValid());
+    invalid = evidence;
+    invalid.records[4].index = 0x607f;
+    QVERIFY(!invalid.isValid());
+    invalid = evidence;
+    invalid.records[5].rawValue.append('\0');
+    QVERIFY(!invalid.isValid());
+    invalid = evidence;
+    invalid.records[0].valueBytes = 4;
+    invalid.records[0].rawValue = QByteArray::fromHex("01020304");
+    QVERIFY(!invalid.isValid());
+    invalid = evidence;
+    invalid.profileSha256.clear();
+    QVERIFY(!invalid.isValid());
+    invalid = evidence;
+    invalid.completedTimeNs = invalid.topologyCompletedTimeNs;
+    QVERIFY(!invalid.isValid());
+    invalid = evidence;
+    invalid.topologyPayloadSha256 = QByteArray(32, '\0');
+    QVERIFY(!invalid.isValid());
+    const auto rejectsEvidence = [](const Data::AxisParameterEvidence &candidate) {
+        QVERIFY(!candidate.isValid());
+    };
+    invalid = evidence;
+    invalid.scope = {};
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.sessionGeneration = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.sessionId = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.bootId = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.requestId = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.responseSequence = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.topologyRequestId = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.topologyResponseSequence = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.topologyCaptureSequence = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.topologyCompletedTimeNs = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.topologyPayloadSha256.chop(1);
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.evidenceSequence = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.stationAddress = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.vendorId = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.productCode = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.profileId = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.profileId++;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.profileVersion = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.profileVersion++;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.profileSha256.chop(1);
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.profileSha256 = QByteArray(32, '\0');
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.profileSha256[0] = char(quint8(invalid.profileSha256.at(0)) ^ 1U);
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.flags = 0;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.flags ^= 1U;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.flags |= 0x20U;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.detail = 1;
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.records.removeLast();
+    rejectsEvidence(invalid);
+    invalid = evidence;
+    invalid.receivedAt = {};
+    rejectsEvidence(invalid);
+
+    Data::AxisParameterEvidenceTargetResult invalidTarget = target;
+    invalidTarget.evidence.reset();
+    QVERIFY(!invalidTarget.isValid());
+    invalidTarget = target;
+    invalidTarget.stationAddress++;
+    QVERIFY(!invalidTarget.isValid());
+    invalidTarget = controllerError;
+    invalidTarget.status = -17;
+    QVERIFY(!invalidTarget.isValid());
+    for (const ErrorTuple &tuple : ErrorTuples) {
+        invalidTarget = controllerError;
+        invalidTarget.status = tuple.status;
+        invalidTarget.operationResult = tuple.operationResult - 100;
+        invalidTarget.detail = tuple.detail;
+        QVERIFY(!invalidTarget.isValid());
+        invalidTarget.operationResult = tuple.operationResult;
+        invalidTarget.detail = tuple.detail + 100;
+        QVERIFY(!invalidTarget.isValid());
+    }
+    invalidTarget = controllerError;
+    invalidTarget.operationResult.reset();
+    QVERIFY(!invalidTarget.isValid());
+    invalidTarget = timedOut;
+    invalidTarget.status = -14;
+    QVERIFY(!invalidTarget.isValid());
+
+    const auto rejectsBatch = [](const Data::AxisParameterEvidenceBatch &candidate) {
+        QVERIFY(!candidate.isValid());
+    };
+    batch.targets = {target, secondTarget};
+    invalidBatch = batch;
+    std::swap(invalidBatch.targets[0], invalidBatch.targets[1]);
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.targets[1].requestId = invalidBatch.targets[0].requestId - 1;
+    invalidBatch.targets[1].evidence->requestId = invalidBatch.targets[1].requestId;
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.targets[1].evidence->evidenceSequence
+        = invalidBatch.targets[0].evidence->evidenceSequence - 1;
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.scope = {};
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.sessionGeneration = 0;
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.sessionId = 0;
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.bootId = 0;
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.topologyRequestId = 0;
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.topologyResponseSequence = 0;
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.topologyCaptureSequence = 0;
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.topologyCompletedTimeNs = 0;
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.topologyPayloadSha256 = QByteArray(32, '\0');
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.profileId = 0;
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.profileVersion = 0;
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.profileSha256.chop(1);
+    rejectsBatch(invalidBatch);
+    invalidBatch = batch;
+    invalidBatch.completedAt = {};
+    rejectsBatch(invalidBatch);
+
+    Data::ControllerTopologySnapshot topology;
+    topology.scope = evidence.scope;
+    topology.sessionGeneration = evidence.sessionGeneration;
+    topology.sessionId = evidence.sessionId;
+    topology.bootId = evidence.bootId;
+    topology.requestId = evidence.topologyRequestId;
+    topology.responseSequence = evidence.topologyResponseSequence;
+    topology.receivedAt = evidence.receivedAt;
+    topology.cpu1RequestSequence = 1;
+    topology.cpu1CompletedTimeNs = 2;
+    QVERIFY(topology.hasCompleteProvenance());
+    topology.cpu1RequestSequence = 0;
+    topology.cpu1CompletedTimeNs = 0;
+    topology.topologyCaptureSequence = evidence.topologyCaptureSequence;
+    topology.topologyCompletedTimeNs = evidence.topologyCompletedTimeNs;
+    topology.topologyPayloadSha256 = evidence.topologyPayloadSha256;
+    QVERIFY(topology.hasCompleteProvenance());
+    topology.cpu1RequestSequence = 1;
+    topology.cpu1CompletedTimeNs = 2;
+    QVERIFY(!topology.hasCompleteProvenance());
+    topology.cpu1RequestSequence = 0;
+    topology.cpu1CompletedTimeNs = 0;
+    topology.topologyPayloadSha256.clear();
+    QVERIFY(!topology.hasCompleteProvenance());
+    topology.topologyPayloadSha256 = QByteArray(32, '\0');
+    QVERIFY(!topology.hasCompleteProvenance());
 }
 
 void EtherCATCoreTests::testRuntimeResourceValueSemantics()
@@ -10783,6 +11255,11 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
     QCOMPARE(
         unsupportedCancel.error(),
         Tr::tr("This controller provider does not support canceling package deployment."));
+    QSignalSpy
+        axisEvidenceSpy(&provider, &ControllerConnectionProvider::axisParameterEvidenceBatchChanged);
+    QVERIFY(!provider.supportsAxisParameterEvidence());
+    QVERIFY(!provider.axisParameterEvidenceBatch());
+    QCOMPARE(axisEvidenceSpy.count(), 0);
     QVERIFY(!provider.supportsRuntimeResources());
     QVERIFY(!provider.runtimeResourceCatalog());
     QVERIFY(!provider.runtimeResourceSnapshot());
@@ -10977,6 +11454,7 @@ void EtherCATCoreTests::testControllerConnectionProviderContract()
     QVERIFY(connected.capability->resumablePush);
     QVERIFY(connected.capability->transactionalBulk);
     QVERIFY(!connected.capability->runtimeOutputTransactions);
+    QVERIFY(!connected.capability->axisParameterEvidence);
     QVERIFY(connected.capability->firmwareUpdate);
     QVERIFY(connected.capability->coe);
     QVERIFY(connected.capability->distributedClocks);

@@ -4,6 +4,7 @@
 
 #include "ethercatcore_global.h"
 
+#include <ethercatdata/axisparameterevidence.h>
 #include <ethercatdata/controllerconnection.h>
 #include <ethercatdata/deviceadapter.h>
 #include <ethercatdata/devicedescription.h>
@@ -309,6 +310,9 @@ public:
     virtual Utils::Result<> disconnectFromController() = 0;
     virtual Utils::Result<> refreshController() = 0;
 
+    virtual bool supportsAxisParameterEvidence() const;
+    virtual std::optional<Data::AxisParameterEvidenceBatch> axisParameterEvidenceBatch() const;
+
     virtual bool supportsControlCommand(
         Data::ControllerControlCommand command) const;
     virtual Utils::Result<> executeControlCommand(
@@ -338,6 +342,7 @@ public:
 signals:
     void connectionProfilesChanged();
     void connectionSnapshotChanged();
+    void axisParameterEvidenceBatchChanged();
     void runtimeResourceCatalogChanged();
     void runtimeResourceSnapshotChanged();
     void runtimeResourceSnapshotRequestFinished(

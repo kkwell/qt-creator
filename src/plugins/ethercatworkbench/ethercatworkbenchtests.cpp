@@ -1943,11 +1943,13 @@ static void completeRealTopologyProvenance(
         topology.cpu1CompletedTimeNs = 0;
         topology.topologyCaptureSequence = quint32(requestId + 2);
         topology.topologyCompletedTimeNs = requestId + 3;
+        topology.topologyPayloadSha256 = QByteArray(32, char(0x31));
     } else {
         topology.cpu1RequestSequence = quint32(requestId + 2);
         topology.cpu1CompletedTimeNs = requestId + 3;
         topology.topologyCaptureSequence = 0;
         topology.topologyCompletedTimeNs = 0;
+        topology.topologyPayloadSha256.clear();
     }
     topology.receivedAt = QDateTime::currentDateTimeUtc();
 }
@@ -10580,6 +10582,7 @@ void EtherCATWorkbenchTests::testWorkbenchUsesExactRealTopologySelection()
         topology.responseSequence = requestId + 1;
         topology.topologyCaptureSequence = quint32(requestId + 2);
         topology.topologyCompletedTimeNs = requestId + 3;
+        topology.topologyPayloadSha256 = QByteArray(32, char(0x32));
         topology.receivedAt = QDateTime::currentDateTimeUtc();
 
         Data::ControllerConnectionSnapshot snapshot;
