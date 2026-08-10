@@ -2,9 +2,10 @@
 
 #include "runtimepackageactivationservice_p.h"
 
+#include "runtimepackageactivationjournalcodec_p.h"
 #include "runtimepackageevidence_p.h"
 #include "runtimepackageevidencerepository_p.h"
-#include "runtimepackageactivationjournalcodec_p.h"
+#include "semanticactionruntimefactory_p.h"
 #include "semanticbindingartifact_p.h"
 
 #include <utils/qtcassert.h>
@@ -19,6 +20,7 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QSet>
 #include <QTimer>
 #include <QtEndian>
@@ -608,25 +610,38 @@ bool exactTopologyMatches(
     return true;
 }
 
-QList<Data::DeviceAdapterManifest> availableAdapterManifests(
-    const Core::ProviderRegistry *providerRegistry)
+AvailableDeviceAdapterProviderList availableAdapterProviderList(
+    const QPointer<Core::ProviderRegistry> &providerRegistry)
 {
-    QList<Data::DeviceAdapterManifest> manifests;
-    if (!providerRegistry)
-        return manifests;
-
-    for (Core::Provider *candidate :
-         providerRegistry->providers(Core::ProviderKind::DeviceAdapter)) {
-        auto *provider = qobject_cast<Core::DeviceAdapterProvider *>(candidate);
-        if (!provider || !provider->isAvailable())
-            continue;
-        for (const Data::DeviceAdapterManifest &manifest :
-             provider->adapterManifests()) {
-            if (!manifests.contains(manifest))
-                manifests.append(manifest);
+    return [providerRegistry] {
+        QList<Core::DeviceAdapterProvider *> result;
+        if (!providerRegistry)
+            return result;
+        const QList<Core::Provider *> providers = providerRegistry->providers(
+            Core::ProviderKind::DeviceAdapter);
+        if (!providerRegistry)
+            return QList<Core::DeviceAdapterProvider *>{};
+        QList<QPointer<Core::DeviceAdapterProvider>> guardedProviders;
+        guardedProviders.reserve(providers.size());
+        for (Core::Provider *candidate : providers) {
+            auto *provider = qobject_cast<Core::DeviceAdapterProvider *>(candidate);
+            QPointer<Core::DeviceAdapterProvider> guardedProvider(provider);
+            if (!guardedProvider)
+                return QList<Core::DeviceAdapterProvider *>{};
+            guardedProviders.append(guardedProvider);
         }
-    }
-    return manifests;
+        for (const QPointer<Core::DeviceAdapterProvider> &guardedProvider :
+             std::as_const(guardedProviders)) {
+            if (!guardedProvider)
+                return QList<Core::DeviceAdapterProvider *>{};
+            const bool available = guardedProvider->isAvailable();
+            if (!guardedProvider)
+                return QList<Core::DeviceAdapterProvider *>{};
+            if (available)
+                result.append(guardedProvider.data());
+        }
+        return result;
+    };
 }
 
 bool upperAdapterMapsToSignedDevice(
@@ -693,11 +708,11 @@ Utils::Result<Data::SemanticBindingArtifactReference> targetReference(
     const QString &bindingArtifactId,
     const Data::RuntimePackageActivationProjectCapture &capture,
     const VerifiedRuntimePackageEvidence &evidence,
-    const QList<Data::DeviceAdapterManifest> &adapterManifests)
+    const AvailableDeviceAdapterProviders &adapterProviders,
+    QList<SemanticActionAdapterAuthorizationAdmission> *adapterAuthorizations)
 {
-    const Data::ProjectSnapshot &project = capture.snapshot();
-    const VerifiedSemanticBindingArtifact &artifact
-        = evidence.semanticBindingArtifact();
+    const Data::ProjectSnapshot project = capture.snapshot();
+    const VerifiedSemanticBindingArtifact artifact = evidence.semanticBindingArtifact();
 
     const auto master = std::find_if(
         project.nodes.cbegin(),
@@ -728,6 +743,8 @@ Utils::Result<Data::SemanticBindingArtifactReference> targetReference(
     reference.artifactSha256 = evidence.semanticMappingProof().mappingSha256;
     reference.projectConfigurationSha256
         = evidence.projectConfigurationSha256();
+    QList<SemanticActionAdapterAuthorizationAdmission> authorizations;
+    QList<Data::OfflineSlaveConfiguration> admittedSlaves;
     for (const VerifiedSemanticDevice &device : artifact.devices) {
         const auto signedTopology = std::find_if(
             artifact.topologyInstances.cbegin(),
@@ -743,38 +760,61 @@ Utils::Result<Data::SemanticBindingArtifactReference> targetReference(
                 return candidate->position == int(device.position)
                        && candidate->stationAddress == device.stationAddress;
             });
-        QList<const Data::DeviceAdapterManifest *> mappedAdapters;
+        Utils::Result<SemanticActionAdapterResolution> adapterResolution = Utils::ResultError(
+            QStringLiteral("The signed project slave is unavailable."));
+        bool mappedAdapter = false;
         if (signedTopology != artifact.topologyInstances.cend()
             && slave != projectSlaves.cend()) {
-            for (const Data::DeviceAdapterManifest &manifest :
-                 adapterManifests) {
-                if (upperAdapterMapsToSignedDevice(
-                        manifest, **slave, device, *signedTopology)) {
-                    mappedAdapters.append(&manifest);
-                }
-            }
+            adapterResolution = resolveSemanticActionAdapter(**slave, adapterProviders);
+            mappedAdapter = adapterResolution && adapterResolution->authorization
+                            && upperAdapterMapsToSignedDevice(
+                                adapterResolution->manifest, **slave, device, *signedTopology);
         }
-        if (signedTopology == artifact.topologyInstances.cend()
-            || slave == projectSlaves.cend()
+        if (signedTopology == artifact.topologyInstances.cend() || slave == projectSlaves.cend()
             || (*slave)->identity.vendorId != signedTopology->vendorId
             || (*slave)->identity.productCode != signedTopology->productCode
             || (signedTopology->revision
                 && (*slave)->identity.revisionNumber != *signedTopology->revision)
-            || (signedTopology->serial
-                && (*slave)->serialNumber != *signedTopology->serial)
-            || (*slave)->esiSha256 != device.esiSha256
-            || mappedAdapters.size() != 1) {
+            || (signedTopology->serial && (*slave)->serialNumber != *signedTopology->serial)
+            || (*slave)->esiSha256 != device.esiSha256 || !mappedAdapter) {
             return Utils::ResultError(
-                QStringLiteral(
-                    "The current project slave at signed position %1/station 0x%2 has no unique "
-                    "verified upper adapter mapping to the package controller target. Apply the "
-                    "current bus and select the exact adapter/PDO/DC profile.")
-                    .arg(device.position)
-                    .arg(device.stationAddress, 4, 16, QLatin1Char('0')));
+                adapterResolution
+                    ? QStringLiteral(
+                          "The current project slave at signed position %1/station 0x%2 has no "
+                          "unique authorized upper adapter mapping to the package controller "
+                          "target. Apply the current bus and select the exact adapter/PDO/DC "
+                          "profile.")
+                          .arg(device.position)
+                          .arg(device.stationAddress, 4, 16, QLatin1Char('0'))
+                    : adapterResolution.error());
+        }
+        authorizations.append(*adapterResolution->authorization);
+        admittedSlaves.append(**slave);
+        if (authorizations.size() > 1
+            && (authorizations.constLast().catalogOwner != authorizations.constFirst().catalogOwner
+                || authorizations.constLast().catalogSignalGeneration
+                       != authorizations.constFirst().catalogSignalGeneration
+                || authorizations.constLast().catalog != authorizations.constFirst().catalog
+                || authorizations.constLast().provider != authorizations.constFirst().provider
+                || authorizations.constLast().snapshot != authorizations.constFirst().snapshot)) {
+            return Utils::ResultError(QStringLiteral(
+                "The adapter authorization changed while the complete activation topology "
+                "was being admitted."));
         }
         reference.projectDeviceBindings.append(
             {(*slave)->id, device.projectDeviceId});
     }
+    for (qsizetype index = 0; index < admittedSlaves.size(); ++index) {
+        const Utils::Result<SemanticActionAdapterResolution> current
+            = resolveSemanticActionAdapter(admittedSlaves.at(index), adapterProviders);
+        if (!current || current->authorization != authorizations.at(index)) {
+            return Utils::ResultError(QStringLiteral(
+                "The adapter provider catalog or authorization changed while the complete "
+                "activation topology was being admitted."));
+        }
+    }
+    if (adapterAuthorizations)
+        *adapterAuthorizations = std::move(authorizations);
     return reference;
 }
 
@@ -835,6 +875,7 @@ struct TrustedRuntimePackageActivationService::Operation
     std::optional<VerifiedRuntimePackageEvidence> evidence;
     std::optional<Data::RuntimePackageActivationProjectCapture> capture;
     std::optional<Data::SemanticBindingArtifactReference> targetReference;
+    QList<SemanticActionAdapterAuthorizationAdmission> adapterAuthorizations;
     std::optional<Data::RuntimePackageActivationDocumentRevisionToken>
         persistedDocumentRevision;
     QPointer<Core::ControllerConnectionProvider> provider;
@@ -968,22 +1009,102 @@ TrustedRuntimePackageActivationService::TrustedRuntimePackageActivationService(
     int providerDeadlineMs,
     int deploymentProgressDeadlineMs,
     std::function<bool()> journalCommitShouldFail,
-    ExactCompileTimeProjectProofVerifier projectProofVerifier)
+    ExactCompileTimeProjectProofVerifier projectProofVerifier,
+    AvailableDeviceAdapterProviderList availableAdapterProvidersOverride)
     : Core::RuntimePackageActivationService(parent)
     , m_projectService(projectService)
     , m_providerRegistry(providerRegistry)
     , m_evidenceRepository(std::move(evidenceRepository))
     , m_journalRoot(QDir::cleanPath(std::move(journalRoot)))
     , m_providerDeadlineMs(std::max(providerDeadlineMs, 1))
-    , m_deploymentProgressDeadlineMs(
-          std::max(deploymentProgressDeadlineMs, 1))
+    , m_deploymentProgressDeadlineMs(std::max(deploymentProgressDeadlineMs, 1))
     , m_journalCommitShouldFail(std::move(journalCommitShouldFail))
     , m_projectProofVerifier(std::move(projectProofVerifier))
+    , m_availableAdapterProvidersOverride(std::move(availableAdapterProvidersOverride))
 {
+    if (m_providerRegistry) {
+        connect(
+            m_providerRegistry,
+            &Core::ProviderRegistry::providerAdded,
+            this,
+            [this](Core::Provider *provider) {
+                if (qobject_cast<Core::DeviceAdapterProvider *>(provider))
+                    ++m_adapterProviderSignalGeneration;
+                trackAdapterProvider(provider);
+            });
+        connect(
+            m_providerRegistry,
+            &Core::ProviderRegistry::providerAboutToBeRemoved,
+            this,
+            [this](Core::Provider *provider) {
+                if (qobject_cast<Core::DeviceAdapterProvider *>(provider))
+                    ++m_adapterProviderSignalGeneration;
+                untrackAdapterProvider(provider);
+            });
+        connect(m_providerRegistry, &QObject::destroyed, this, [this] {
+            ++m_adapterProviderSignalGeneration;
+            m_providerRegistry = nullptr;
+            m_adapterProviderConnections.clear();
+        });
+        for (Core::Provider *provider : m_providerRegistry->providers())
+            trackAdapterProvider(provider);
+    }
+    if (m_availableAdapterProvidersOverride) {
+        const QList<Core::DeviceAdapterProvider *> providers = m_availableAdapterProvidersOverride();
+        for (Core::DeviceAdapterProvider *provider : providers)
+            trackAdapterProvider(provider);
+    }
     discoverRecoveryBarriers();
 }
 
 TrustedRuntimePackageActivationService::~TrustedRuntimePackageActivationService() = default;
+
+void TrustedRuntimePackageActivationService::trackAdapterProvider(Core::Provider *provider)
+{
+    auto *adapterProvider = qobject_cast<Core::DeviceAdapterProvider *>(provider);
+    if (!adapterProvider || m_adapterProviderConnections.contains(adapterProvider))
+        return;
+    QList<QMetaObject::Connection> connections;
+    connections.append(connect(adapterProvider, &Core::Provider::availabilityChanged, this, [this] {
+        ++m_adapterProviderSignalGeneration;
+    }));
+    connections.append(
+        connect(adapterProvider, &Core::DeviceAdapterProvider::adapterManifestsChanged, this, [this] {
+            ++m_adapterProviderSignalGeneration;
+        }));
+    connections.append(connect(adapterProvider, &QObject::destroyed, this, [this, adapterProvider] {
+        ++m_adapterProviderSignalGeneration;
+        m_adapterProviderConnections.remove(adapterProvider);
+    }));
+    m_adapterProviderConnections.insert(adapterProvider, connections);
+}
+
+void TrustedRuntimePackageActivationService::untrackAdapterProvider(Core::Provider *provider)
+{
+    auto *adapterProvider = qobject_cast<Core::DeviceAdapterProvider *>(provider);
+    if (!adapterProvider)
+        return;
+    const QList<QMetaObject::Connection> connections = m_adapterProviderConnections.take(
+        adapterProvider);
+    for (const QMetaObject::Connection &connection : connections)
+        disconnect(connection);
+}
+
+AvailableDeviceAdapterProviders
+TrustedRuntimePackageActivationService::currentAvailableAdapterProviders() const
+{
+    QPointer<TrustedRuntimePackageActivationService> guardedService(
+        const_cast<TrustedRuntimePackageActivationService *>(this));
+    return {
+        m_availableAdapterProvidersOverride ? m_availableAdapterProvidersOverride
+                                            : availableAdapterProviderList(m_providerRegistry),
+        guardedService,
+        [guardedService] {
+            return guardedService ? guardedService->m_adapterProviderSignalGeneration
+                                  : std::numeric_limits<quint64>::max();
+        },
+    };
+}
 
 Core::RuntimePackageActivationPreparationResult
 TrustedRuntimePackageActivationService::prepare(
@@ -1078,13 +1199,17 @@ TrustedRuntimePackageActivationService::prepare(
 
     const QString bindingArtifactId
         = contentAddressedBindingArtifactId(*imported);
-    const Utils::Result<Data::SemanticBindingArtifactReference> reference
-        = targetReference(
-            request.scope,
-            bindingArtifactId,
-            *capture,
-            *imported,
-            availableAdapterManifests(m_providerRegistry));
+    QPointer<TrustedRuntimePackageActivationService> guardedService(this);
+    QList<SemanticActionAdapterAuthorizationAdmission> preparedAdapterAuthorizations;
+    const Utils::Result<Data::SemanticBindingArtifactReference> reference = targetReference(
+        request.scope,
+        bindingArtifactId,
+        *capture,
+        *imported,
+        currentAvailableAdapterProviders(),
+        &preparedAdapterAuthorizations);
+    if (!guardedService)
+        return {};
     if (!reference)
         return failed(reference.error());
 
@@ -1124,11 +1249,11 @@ TrustedRuntimePackageActivationService::prepare(
     const QString operationId = request.operationId.value();
     const auto existingOperation = m_operations.constFind(operationId);
     if (existingOperation != m_operations.cend()) {
-        if ((*existingOperation)->request.fingerprint()
-            != prepared.fingerprint()) {
-            return failed(
-                QStringLiteral(
-                    "OperationId was already used for a different activation request."));
+        if ((*existingOperation)->request.fingerprint() != prepared.fingerprint()
+            || (*existingOperation)->adapterAuthorizations != preparedAdapterAuthorizations) {
+            return failed(QStringLiteral(
+                "OperationId was already used under a different activation request or "
+                "adapter authorization."));
         }
         return {std::move(prepared), {}};
     }
@@ -1140,6 +1265,13 @@ TrustedRuntimePackageActivationService::prepare(
             QStringLiteral(
                 "OperationId was already prepared for a different activation request."));
     }
+    const auto existingAuthorizations = m_preparedAdapterAuthorizations.constFind(operationId);
+    if (existingPreparation != m_preparedFingerprints.cend()
+        && (existingAuthorizations == m_preparedAdapterAuthorizations.cend()
+            || *existingAuthorizations != preparedAdapterAuthorizations)) {
+        return failed(QStringLiteral(
+            "The adapter authorization changed after this activation was prepared."));
+    }
     if (existingPreparation == m_preparedFingerprints.cend()
         && m_preparedFingerprints.size() >= maximumPreparedRequests) {
         return failed(
@@ -1147,6 +1279,7 @@ TrustedRuntimePackageActivationService::prepare(
                 "The prepared activation request capacity is exhausted."));
     }
     m_preparedFingerprints.insert(operationId, prepared.fingerprint());
+    m_preparedAdapterAuthorizations.insert(operationId, std::move(preparedAdapterAuthorizations));
     return {std::move(prepared), {}};
 }
 
@@ -1325,11 +1458,78 @@ TrustedRuntimePackageActivationService::start(
         }
     }
 
+    const Data::RuntimePackageActivationSha256 preparedFingerprint = *prepared;
+    const auto preparedAuthorizations = m_preparedAdapterAuthorizations.constFind(operationId);
+    if (preparedAuthorizations == m_preparedAdapterAuthorizations.cend()
+        || !m_startsInProgress.isEmpty()) {
+        return {
+            Disposition::InvalidRequest,
+            {},
+            QStringLiteral(
+                "The activation request is already starting or its authorization is missing."),
+        };
+    }
+    const QList<SemanticActionAdapterAuthorizationAdmission> preparedAuthorizationToken
+        = *preparedAuthorizations;
+    m_startsInProgress.insert(operationId);
+    QPointer<TrustedRuntimePackageActivationService> guardedService(this);
+    const auto startClaim = qScopeGuard([guardedService, operationId] {
+        if (guardedService)
+            guardedService->m_startsInProgress.remove(operationId);
+    });
+    Utils::Result<VerifiedRuntimePackageEvidence> startEvidence
+        = m_evidenceRepository->import(request.packageBytes(), request.compiledProjectSource());
+    if (!guardedService)
+        return {};
+    if (!m_projectService || !m_projectService->isAvailable()) {
+        return {
+            Disposition::InvalidRequest,
+            {},
+            QStringLiteral("The activation project service became unavailable."),
+        };
+    }
+    const Utils::Result<Data::RuntimePackageActivationProjectCapture> startCapture
+        = m_projectService->captureRuntimePackageActivationProject(
+            request.identity().scope().projectId);
+    if (!guardedService)
+        return {};
+    QList<SemanticActionAdapterAuthorizationAdmission> startAuthorizations;
+    const Utils::Result<Data::SemanticBindingArtifactReference> startReference
+        = startEvidence && startCapture && startCapture->isValid()
+              ? targetReference(
+                    request.identity().scope(),
+                    request.identity().bindingArtifactId(),
+                    *startCapture,
+                    *startEvidence,
+                    currentAvailableAdapterProviders(),
+                    &startAuthorizations)
+              : Utils::ResultError(
+                    QStringLiteral("The prepared activation project is unavailable."));
+    if (!guardedService)
+        return {};
+    QString startEvidenceError;
+    if (!startEvidence || !identityMatchesEvidence(request, *startEvidence, &startEvidenceError)
+        || !startCapture || !startCapture->isValid() || !startReference
+        || Data::runtimePackageActivationBindingToken(*startReference)
+               != request.identity().targetBindingToken()
+        || startAuthorizations != preparedAuthorizationToken
+        || m_preparedFingerprints.value(operationId) != preparedFingerprint
+        || m_preparedAdapterAuthorizations.value(operationId) != preparedAuthorizationToken
+        || !m_startsInProgress.contains(operationId)) {
+        return {
+            Disposition::InvalidRequest,
+            {},
+            QStringLiteral(
+                "The project or adapter authorization changed after activation preparation."),
+        };
+    }
+
     auto operation = std::make_shared<Operation>();
     operation->request = request;
     operation->startedAt = QDateTime::currentDateTimeUtc();
     operation->updatedAt = operation->startedAt;
     operation->detail = QStringLiteral("Activation intent persisted.");
+    operation->adapterAuthorizations = preparedAuthorizationToken;
     operation->audit.append(localEvent(
         *operation,
         AuditKind::IntentPersisted,
@@ -1354,9 +1554,13 @@ TrustedRuntimePackageActivationService::start(
     QTC_CHECK(operation->record.isValid());
     m_operations.insert(operationId, operation);
     m_preparedFingerprints.remove(operationId);
+    m_preparedAdapterAuthorizations.remove(operationId);
+    const Data::RuntimePackageActivationRecord acceptedRecord = operation->record;
     publish(*operation);
+    if (!guardedService)
+        return {Disposition::Accepted, acceptedRecord, {}};
     QTimer::singleShot(0, this, [this, operationId] { process(operationId); });
-    return {Disposition::Accepted, operation->record, {}};
+    return {Disposition::Accepted, acceptedRecord, {}};
 }
 
 Core::RuntimePackageActivationCommandResult
@@ -1364,6 +1568,7 @@ TrustedRuntimePackageActivationService::reconcile(
     const Data::RuntimePackageActivationOperationId &operationId)
 {
     using Disposition = Core::RuntimePackageActivationCommandDisposition;
+    QPointer<TrustedRuntimePackageActivationService> guardedService(this);
     if (!operationId.isValid()) {
         return {
             Disposition::InvalidRequest,
@@ -1381,7 +1586,8 @@ TrustedRuntimePackageActivationService::reconcile(
                 : QStringLiteral("The activation operation was not found."),
         };
     }
-    Operation &operation = **found;
+    const std::shared_ptr<Operation> ownedOperation = *found;
+    Operation &operation = *ownedOperation;
     if (operation.reconciliationInProgress
         || (operation.phase == Phase::Reconciling
             && outstandingProviderAction(operation.audit) != Action::None)) {
@@ -1434,16 +1640,26 @@ TrustedRuntimePackageActivationService::reconcile(
                                  operation.request.identity().scope().projectId);
     if (projectCapture && projectCapture->isValid()) {
         operation.capture = *projectCapture;
-        const Utils::Result<Data::SemanticBindingArtifactReference> reference
-            = targetReference(
-                operation.request.identity().scope(),
-                operation.request.identity().bindingArtifactId(),
-                *projectCapture,
-                *operation.evidence,
-                availableAdapterManifests(m_providerRegistry));
+        QList<SemanticActionAdapterAuthorizationAdmission> recoveryAuthorizations;
+        const Utils::Result<Data::SemanticBindingArtifactReference> reference = targetReference(
+            operation.request.identity().scope(),
+            operation.request.identity().bindingArtifactId(),
+            *projectCapture,
+            *operation.evidence,
+            currentAvailableAdapterProviders(),
+            &recoveryAuthorizations);
+        if (!guardedService) {
+            return {
+                Disposition::ReconciliationRequired,
+                ownedOperation->record,
+                QStringLiteral("The activation service was removed during reconciliation."),
+            };
+        }
         if (reference
             && Data::runtimePackageActivationBindingToken(*reference)
-                   == operation.request.identity().targetBindingToken()) {
+                   == operation.request.identity().targetBindingToken()
+            && (operation.adapterAuthorizations.isEmpty()
+                || recoveryAuthorizations == operation.adapterAuthorizations)) {
             operation.targetReference = *reference;
         }
     }
@@ -1584,12 +1800,21 @@ TrustedRuntimePackageActivationService::reconcile(
     }
     if (!reconciledAction) {
         operation.reconciliationInProgress = false;
+        const Data::RuntimePackageActivationRecord fallbackRecord = operation.record;
+        const QString fallbackDetail = operation.detail;
         freezeUnknown(
             operation,
             QStringLiteral("activation-reconciliation-incomplete"),
             QStringLiteral(
                 "The current controller state cannot yet prove whether the pending action "
                 "was applied."));
+        if (!guardedService) {
+            return {
+                Disposition::ReconciliationRequired,
+                fallbackRecord,
+                fallbackDetail,
+            };
+        }
         return {
             Disposition::ReconciliationRequired,
             operation.record,
@@ -1689,12 +1914,21 @@ TrustedRuntimePackageActivationService::reconcile(
             || !current->ownsControlLease() || snapshot.readOnly
             || snapshot.mock) {
             operation.reconciliationInProgress = false;
+            const Data::RuntimePackageActivationRecord fallbackRecord = operation.record;
+            const QString fallbackDetail = operation.detail;
             freezeUnknown(
                 operation,
                 QStringLiteral("recovery-lease-owner-mismatch"),
                 QStringLiteral(
                     "A controller lease is owned by a session that this activation cannot "
                     "safely release."));
+            if (!guardedService) {
+                return {
+                    Disposition::ReconciliationRequired,
+                    fallbackRecord,
+                    fallbackDetail,
+                };
+            }
             return {
                 Disposition::ReconciliationRequired,
                 operation.record,
@@ -1715,11 +1949,20 @@ TrustedRuntimePackageActivationService::reconcile(
         }
         if (releaseOutcome == Outcome::SucceededWithExistingPackage) {
             operation.reconciliationInProgress = false;
+            const Data::RuntimePackageActivationRecord fallbackRecord = operation.record;
+            const QString fallbackDetail = operation.detail;
             freezeUnknown(
                 operation,
                 QStringLiteral("recovery-existing-package-lease"),
                 QStringLiteral(
                     "An existing-package activation never releases a borrowed lease."));
+            if (!guardedService) {
+                return {
+                    Disposition::ReconciliationRequired,
+                    fallbackRecord,
+                    fallbackDetail,
+                };
+            }
             return {
                 Disposition::ReconciliationRequired,
                 operation.record,
@@ -1732,7 +1975,10 @@ TrustedRuntimePackageActivationService::reconcile(
             = QStringLiteral(
                 "The lease will be released, but the final project/controller identity "
                 "remains unresolved.");
+        const Data::RuntimePackageActivationRecord fallbackRecord = operation.record;
         beginRecoveryRelease(operation, releaseOutcome);
+        if (!guardedService)
+            return {Disposition::Accepted, fallbackRecord, {}};
         return {Disposition::Accepted, operation.record, {}};
     }
 
@@ -1765,12 +2011,21 @@ TrustedRuntimePackageActivationService::reconcile(
             && (!operation.afterController
                 || !operation.afterController->ownsControlLease())) {
             operation.reconciliationInProgress = false;
+            const Data::RuntimePackageActivationRecord fallbackRecord = operation.record;
+            const QString fallbackDetail = operation.detail;
             freezeUnknown(
                 operation,
                 QStringLiteral("activation-reconciliation-incomplete"),
                 QStringLiteral(
                     "The durable record does not contain the held-lease evidence required "
                     "to prove activated-package success."));
+            if (!guardedService) {
+                return {
+                    Disposition::ReconciliationRequired,
+                    fallbackRecord,
+                    fallbackDetail,
+                };
+            }
             return {
                 Disposition::ReconciliationRequired,
                 operation.record,
@@ -1786,6 +2041,7 @@ TrustedRuntimePackageActivationService::reconcile(
             }
             operation.afterController = *current;
         }
+        const Data::RuntimePackageActivationRecord fallbackRecord = operation.record;
         finish(
             operation,
             operation.existingPackage
@@ -1796,9 +2052,12 @@ TrustedRuntimePackageActivationService::reconcile(
                 "Authoritative controller and project evidence completed activation "
                 "recovery."),
             operation.projectCommit->evidenceSha256());
+        if (!guardedService)
+            return {Disposition::Accepted, fallbackRecord, {}};
         return {Disposition::Accepted, operation.record, {}};
     }
     if (!operation.projectCommit) {
+        const Data::RuntimePackageActivationRecord fallbackRecord = operation.record;
         if (!providerMutationRequestWasSent(operation.audit)) {
             operation.afterController.reset();
             finish(
@@ -1826,11 +2085,15 @@ TrustedRuntimePackageActivationService::reconcile(
                           "binding."),
                 current->evidenceSha256());
         }
+        if (!guardedService)
+            return {Disposition::Accepted, fallbackRecord, {}};
         return {Disposition::Accepted, operation.record, {}};
     }
 
     operation.afterController = *current;
     operation.reconciliationInProgress = false;
+    const Data::RuntimePackageActivationRecord fallbackRecord = operation.record;
+    const QString fallbackDetail = operation.detail;
     freezeUnknown(
         operation,
         targetAttestationExact
@@ -1838,6 +2101,13 @@ TrustedRuntimePackageActivationService::reconcile(
             : QStringLiteral("controller-target-drifted"),
         QStringLiteral(
             "The controller and project do not yet agree on the durable activated binding."));
+    if (!guardedService) {
+        return {
+            Disposition::ReconciliationRequired,
+            fallbackRecord,
+            fallbackDetail,
+        };
+    }
     return {
         Disposition::ReconciliationRequired,
         operation.record,
@@ -1850,6 +2120,7 @@ TrustedRuntimePackageActivationService::cancel(
     const Data::RuntimePackageActivationCancelRequest &request)
 {
     using Disposition = Core::RuntimePackageActivationCommandDisposition;
+    QPointer<TrustedRuntimePackageActivationService> guardedService(this);
     if (!request.isValid()) {
         return {
             Disposition::InvalidRequest,
@@ -1865,7 +2136,8 @@ TrustedRuntimePackageActivationService::cancel(
             QStringLiteral("The activation operation was not found."),
         };
     }
-    Operation &operation = **found;
+    const std::shared_ptr<Operation> ownedOperation = *found;
+    Operation &operation = *ownedOperation;
     if (operation.outcome == Outcome::Canceled && operation.cancellation
         && operation.cancellation->requestFingerprint()
                == request.fingerprint()) {
@@ -1919,12 +2191,15 @@ TrustedRuntimePackageActivationService::cancel(
         operation.detail,
         request.fingerprint(),
         requestedAt));
+    const Data::RuntimePackageActivationRecord fallbackRecord = operation.record;
     finish(
         operation,
         Outcome::Canceled,
         QStringLiteral("activation-canceled"),
         operation.detail,
         request.fingerprint());
+    if (!guardedService)
+        return {Disposition::Accepted, fallbackRecord, {}};
     return {Disposition::Accepted, operation.record, {}};
 }
 
@@ -1973,6 +2248,7 @@ QString TrustedRuntimePackageActivationService::recoveryBarrierDetail() const
 
 void TrustedRuntimePackageActivationService::process(const QString &operationId)
 {
+    QPointer<TrustedRuntimePackageActivationService> guardedProcess(this);
     const auto found = m_operations.find(operationId);
     if (found == m_operations.end())
         return;
@@ -1990,8 +2266,8 @@ void TrustedRuntimePackageActivationService::process(const QString &operationId)
         QStringLiteral("verifying-inputs"),
         operation.detail));
     publish(operation);
-    if (operation.phase != Phase::VerifyingInputs
-        || operation.outcome != Outcome::Pending) {
+    if (!guardedProcess || !ownsCurrentOperation(operation)
+        || operation.phase != Phase::VerifyingInputs || operation.outcome != Outcome::Pending) {
         return;
     }
 
@@ -2020,8 +2296,8 @@ void TrustedRuntimePackageActivationService::process(const QString &operationId)
         QStringLiteral("capturing-project"),
         operation.detail));
     publish(operation);
-    if (operation.phase != Phase::CapturingProject
-        || operation.outcome != Outcome::Pending) {
+    if (!guardedProcess || !ownsCurrentOperation(operation)
+        || operation.phase != Phase::CapturingProject || operation.outcome != Outcome::Pending) {
         return;
     }
 
@@ -2044,16 +2320,21 @@ void TrustedRuntimePackageActivationService::process(const QString &operationId)
         return;
     }
     operation.capture = *capture;
-    Utils::Result<Data::SemanticBindingArtifactReference> reference
-        = targetReference(
-            operation.request.identity().scope(),
-            operation.request.identity().bindingArtifactId(),
-            *capture,
-            *operation.evidence,
-            availableAdapterManifests(m_providerRegistry));
+    QPointer<TrustedRuntimePackageActivationService> guardedService(this);
+    QList<SemanticActionAdapterAuthorizationAdmission> currentAdapterAuthorizations;
+    Utils::Result<Data::SemanticBindingArtifactReference> reference = targetReference(
+        operation.request.identity().scope(),
+        operation.request.identity().bindingArtifactId(),
+        *capture,
+        *operation.evidence,
+        currentAvailableAdapterProviders(),
+        &currentAdapterAuthorizations);
+    if (!guardedService)
+        return;
     if (!reference
         || Data::runtimePackageActivationBindingToken(*reference)
-               != operation.request.identity().targetBindingToken()) {
+               != operation.request.identity().targetBindingToken()
+        || currentAdapterAuthorizations != operation.adapterAuthorizations) {
         failBeforeControllerMutation(
             operation,
             QStringLiteral("project-topology-mismatch"),
@@ -2076,7 +2357,8 @@ void TrustedRuntimePackageActivationService::process(const QString &operationId)
         QStringLiteral("probing-controller"),
         operation.detail));
     publish(operation);
-    if (operation.phase != Phase::ProbingExistingPackage
+    if (!guardedProcess || !ownsCurrentOperation(operation)
+        || operation.phase != Phase::ProbingExistingPackage
         || operation.outcome != Outcome::Pending) {
         return;
     }
@@ -2142,7 +2424,8 @@ void TrustedRuntimePackageActivationService::process(const QString &operationId)
         QStringLiteral("Captured the pre-activation controller identity."),
         before->evidenceSha256()));
     publish(operation);
-    if (operation.phase != Phase::ProbingExistingPackage
+    if (!guardedProcess || !ownsCurrentOperation(operation)
+        || operation.phase != Phase::ProbingExistingPackage
         || operation.outcome != Outcome::Pending) {
         return;
     }
@@ -2192,8 +2475,91 @@ void TrustedRuntimePackageActivationService::process(const QString &operationId)
     beginAcquire(operation);
 }
 
+Utils::Result<> TrustedRuntimePackageActivationService::validateAdapterAuthorizationsCurrent(
+    const Operation &operation) const
+{
+    if (!operation.capture || !operation.evidence || !operation.targetReference
+        || operation.adapterAuthorizations.isEmpty() || !m_providerRegistry) {
+        return Utils::ResultError("The activation adapter authorization token is unavailable.");
+    }
+    const Data::RuntimePackageActivationRequest request = operation.request;
+    const Data::RuntimePackageActivationProjectCapture capture = *operation.capture;
+    const VerifiedRuntimePackageEvidence evidence = *operation.evidence;
+    const Data::SemanticBindingArtifactReference target = *operation.targetReference;
+    const QList<SemanticActionAdapterAuthorizationAdmission> expectedAuthorizations
+        = operation.adapterAuthorizations;
+    const AvailableDeviceAdapterProviders adapterProviders = currentAvailableAdapterProviders();
+    QPointer<TrustedRuntimePackageActivationService> guardedService(
+        const_cast<TrustedRuntimePackageActivationService *>(this));
+    QList<SemanticActionAdapterAuthorizationAdmission> currentAuthorizations;
+    const Utils::Result<Data::SemanticBindingArtifactReference> currentReference = targetReference(
+        request.identity().scope(),
+        request.identity().bindingArtifactId(),
+        capture,
+        evidence,
+        adapterProviders,
+        &currentAuthorizations);
+    if (!guardedService)
+        return Utils::ResultError("The activation service was removed during authorization.");
+    if (!currentReference || *currentReference != target
+        || currentAuthorizations != expectedAuthorizations) {
+        return Utils::ResultError("The adapter authorization changed during package activation.");
+    }
+    return Utils::ResultOk;
+}
+
+bool TrustedRuntimePackageActivationService::ownsCurrentOperation(const Operation &operation) const
+{
+    const auto found = m_operations.constFind(operation.request.identity().operationId().value());
+    return found != m_operations.cend() && found->get() == &operation;
+}
+
+QPointer<Core::ControllerConnectionProvider>
+TrustedRuntimePackageActivationService::currentControllerProviderForDispatch(
+    const Operation &operation, Phase expectedPhase) const
+{
+    QPointer<TrustedRuntimePackageActivationService> guardedService(
+        const_cast<TrustedRuntimePackageActivationService *>(this));
+    QPointer<Core::ControllerConnectionProvider> provider = operation.provider;
+    if (!ownsCurrentOperation(operation) || operation.phase != expectedPhase
+        || operation.outcome != Outcome::Pending || !provider || !m_providerRegistry) {
+        return {};
+    }
+    const QList<Core::Provider *> providers = m_providerRegistry->providers(
+        Core::ProviderKind::ControllerConnection);
+    if (!guardedService || !provider || !m_providerRegistry
+        || !providers.contains(provider.data())) {
+        return {};
+    }
+    const bool available = provider->isAvailable();
+    if (!guardedService || !provider || !available || !ownsCurrentOperation(operation)
+        || operation.phase != expectedPhase || operation.outcome != Outcome::Pending) {
+        return {};
+    }
+    return provider;
+}
+
 void TrustedRuntimePackageActivationService::beginAcquire(Operation &operation)
 {
+    const Phase incomingPhase = operation.phase;
+    const QPointer<Core::ControllerConnectionProvider> incomingProvider = operation.provider;
+    QPointer<TrustedRuntimePackageActivationService> guardedService(this);
+    const Utils::Result<> adapterAuthorization = validateAdapterAuthorizationsCurrent(operation);
+    if (!guardedService || !ownsCurrentOperation(operation))
+        return;
+    const QPointer<Core::ControllerConnectionProvider> currentProvider
+        = currentControllerProviderForDispatch(operation, incomingPhase);
+    if (!guardedService || operation.phase != incomingPhase || operation.outcome != Outcome::Pending
+        || !incomingProvider || !currentProvider || currentProvider != incomingProvider) {
+        return;
+    }
+    if (!adapterAuthorization) {
+        failBeforeControllerMutation(
+            operation,
+            QStringLiteral("adapter-authorization-changed"),
+            adapterAuthorization.error());
+        return;
+    }
     operation.phase = Phase::AcquiringControl;
     operation.detail = QStringLiteral("Acquiring the exclusive controller lease.");
     operation.audit.append(localEvent(
@@ -2204,8 +2570,8 @@ void TrustedRuntimePackageActivationService::beginAcquire(Operation &operation)
         QStringLiteral("acquiring-control"),
         operation.detail));
     publish(operation);
-    if (operation.phase != Phase::AcquiringControl
-        || operation.outcome != Outcome::Pending) {
+    if (!guardedService || !ownsCurrentOperation(operation)
+        || operation.phase != Phase::AcquiringControl || operation.outcome != Outcome::Pending) {
         return;
     }
 
@@ -2253,6 +2619,23 @@ void TrustedRuntimePackageActivationService::beginAcquire(Operation &operation)
                 : preflightError);
         return;
     }
+    QPointer<TrustedRuntimePackageActivationService> acquireGuardedService(this);
+    const Utils::Result<> acquireAuthorization = validateAdapterAuthorizationsCurrent(operation);
+    if (!acquireGuardedService || !ownsCurrentOperation(operation))
+        return;
+    const QPointer<Core::ControllerConnectionProvider> acquireProvider
+        = currentControllerProviderForDispatch(operation, Phase::AcquiringControl);
+    if (!acquireGuardedService || !incomingProvider || !acquireProvider
+        || acquireProvider != incomingProvider) {
+        return;
+    }
+    if (!acquireAuthorization) {
+        failBeforeControllerMutation(
+            operation,
+            QStringLiteral("adapter-authorization-changed"),
+            acquireAuthorization.error());
+        return;
+    }
     operation.acquireProgressBaseline
         = acquireSnapshot.controlProgress;
     operation.audit.append(providerEvent(
@@ -2278,6 +2661,34 @@ void TrustedRuntimePackageActivationService::beginAcquire(Operation &operation)
         return;
     }
 
+    QPointer<TrustedRuntimePackageActivationService> finalAcquireGuardedService(this);
+    const Utils::Result<> finalAcquireAuthorization = validateAdapterAuthorizationsCurrent(
+        operation);
+    if (!finalAcquireGuardedService || !ownsCurrentOperation(operation))
+        return;
+    const QPointer<Core::ControllerConnectionProvider> finalAcquireProvider
+        = currentControllerProviderForDispatch(operation, Phase::AcquiringControl);
+    if (!finalAcquireGuardedService || !incomingProvider || !finalAcquireProvider
+        || finalAcquireProvider != incomingProvider) {
+        return;
+    }
+    if (!finalAcquireAuthorization) {
+        operation.audit.removeLast();
+        operation.acquireRequestSentAt = {};
+        operation.acquireProgressBaseline = {};
+        const Utils::Result<> correctedGuard = persistGuard(operation);
+        if (!correctedGuard) {
+            freezeUnknown(
+                operation, QStringLiteral("activation-journal-failed"), correctedGuard.error());
+            return;
+        }
+        failBeforeControllerMutation(
+            operation,
+            QStringLiteral("adapter-authorization-changed"),
+            finalAcquireAuthorization.error());
+        return;
+    }
+
     Data::ControllerControlRequest request;
     request.command = Data::ControllerControlCommand::AcquireControl;
     request.leaseDurationMs = 30000;
@@ -2288,16 +2699,53 @@ void TrustedRuntimePackageActivationService::beginAcquire(Operation &operation)
         QStringLiteral("acquire-timeout"),
         QStringLiteral(
             "Timed out while waiting for the terminal control-lease response."));
-    const Utils::Result<> result
-        = operation.provider->executeControlCommand(request);
-    if (operation.phase != Phase::AcquiringControl
+    QPointer<TrustedRuntimePackageActivationService> dispatchGuardedService(this);
+    const Utils::Result<> dispatchAuthorization = validateAdapterAuthorizationsCurrent(operation);
+    if (!dispatchGuardedService || !ownsCurrentOperation(operation))
+        return;
+    const QPointer<Core::ControllerConnectionProvider> currentDispatchProvider
+        = currentControllerProviderForDispatch(operation, Phase::AcquiringControl);
+    if (!dispatchGuardedService || !incomingProvider || !currentDispatchProvider
+        || currentDispatchProvider != incomingProvider) {
+        return;
+    }
+    const QPointer<Core::ControllerConnectionProvider> dispatchProvider
+        = dispatchAuthorization ? currentDispatchProvider
+                                : QPointer<Core::ControllerConnectionProvider>{};
+    if (!dispatchGuardedService)
+        return;
+    if (!dispatchAuthorization || !dispatchProvider) {
+        operation.audit.removeLast();
+        operation.acquireRequestSentAt = {};
+        operation.acquireProgressBaseline = {};
+        const Utils::Result<> correctedGuard = persistGuard(operation);
+        if (!correctedGuard) {
+            freezeUnknown(
+                operation, QStringLiteral("activation-journal-failed"), correctedGuard.error());
+            return;
+        }
+        failBeforeControllerMutation(
+            operation,
+            QStringLiteral("adapter-authorization-changed"),
+            dispatchAuthorization
+                ? QStringLiteral("The controller provider changed before acquire dispatch.")
+                : dispatchAuthorization.error());
+        return;
+    }
+    const Utils::Result<> result = dispatchProvider->executeControlCommand(request);
+    if (!dispatchGuardedService || !dispatchProvider)
+        return;
+    if (!ownsCurrentOperation(operation) || operation.phase != Phase::AcquiringControl
         || operation.outcome != Outcome::Pending) {
         return;
     }
     if (!result) {
         QString error;
-        const auto after = controllerEvidence(
-            operation.provider, operation.provider->connectionSnapshot(), &error);
+        const Data::ControllerConnectionSnapshot afterSnapshot
+            = dispatchProvider->connectionSnapshot();
+        if (!dispatchGuardedService || !dispatchProvider)
+            return;
+        const auto after = controllerEvidence(dispatchProvider, afterSnapshot, &error);
         if (!after) {
             freezeUnknown(
                 operation,
@@ -2338,7 +2786,8 @@ void TrustedRuntimePackageActivationService::beginAcquire(Operation &operation)
                 "provider call error.")));
         operation.afterController = *after;
         publish(operation);
-        if (operation.phase != Phase::AcquiringControl
+        if (!dispatchGuardedService || !ownsCurrentOperation(operation)
+            || operation.phase != Phase::AcquiringControl
             || operation.outcome != Outcome::Pending) {
             return;
         }
@@ -2351,6 +2800,7 @@ void TrustedRuntimePackageActivationService::beginAcquire(Operation &operation)
 void TrustedRuntimePackageActivationService::handleProviderSnapshot(
     const QString &operationId)
 {
+    QPointer<TrustedRuntimePackageActivationService> guardedService(this);
     const auto found = m_operations.find(operationId);
     if (found == m_operations.end())
         return;
@@ -2364,8 +2814,11 @@ void TrustedRuntimePackageActivationService::handleProviderSnapshot(
         || (operation.outcome != Outcome::Pending && !recoveryRelease)) {
         return;
     }
-    const Data::ControllerConnectionSnapshot snapshot
-        = operation.provider->connectionSnapshot();
+    const QPointer<Core::ControllerConnectionProvider> snapshotProvider = operation.provider;
+    const Data::ControllerConnectionSnapshot snapshot = snapshotProvider->connectionSnapshot();
+    if (!guardedService || !snapshotProvider || !ownsCurrentOperation(operation)) {
+        return;
+    }
     const Data::RuntimePackageActivationAuditEvent *recoveryRequest
         = recoveryRelease
               ? outstandingProviderRequest(
@@ -2498,7 +2951,8 @@ void TrustedRuntimePackageActivationService::handleProviderSnapshot(
                        : QStringLiteral("Exclusive controller lease request failed."))
                 : progress.detail));
         publish(operation);
-        if (operation.phase != Phase::AcquiringControl
+        if (!guardedService || !ownsCurrentOperation(operation)
+            || operation.phase != Phase::AcquiringControl
             || operation.outcome != Outcome::Pending) {
             return;
         }
@@ -2662,7 +3116,8 @@ void TrustedRuntimePackageActivationService::handleProviderSnapshot(
                 ? QStringLiteral("Package deployment reached a terminal state.")
                 : progress.detail));
         publish(operation);
-        if (operation.phase != Phase::DeployingPackage
+        if (!guardedService || !ownsCurrentOperation(operation)
+            || operation.phase != Phase::DeployingPackage
             || operation.outcome != Outcome::Pending) {
             return;
         }
@@ -2767,10 +3222,10 @@ void TrustedRuntimePackageActivationService::handleProviderSnapshot(
         }
         if (recoveryRelease) {
             publish(operation);
-            if (operation.phase != Phase::Reconciling
+            if (!guardedService || !ownsCurrentOperation(operation)
+                || operation.phase != Phase::Reconciling
                 || operation.outcome != Outcome::OutcomeUnknown
-                || !operation.reconciliationInProgress
-                || !operation.recoveryReleaseInProgress) {
+                || !operation.reconciliationInProgress || !operation.recoveryReleaseInProgress) {
                 return;
             }
             completeRecoveryAfterRelease(operation, *released);
@@ -2914,6 +3369,23 @@ void TrustedRuntimePackageActivationService::handleProviderSnapshot(
 
 void TrustedRuntimePackageActivationService::beginDeploy(Operation &operation)
 {
+    const Phase incomingPhase = operation.phase;
+    const QPointer<Core::ControllerConnectionProvider> incomingProvider = operation.provider;
+    QPointer<TrustedRuntimePackageActivationService> guardedService(this);
+    const Utils::Result<> adapterAuthorization = validateAdapterAuthorizationsCurrent(operation);
+    if (!guardedService || !ownsCurrentOperation(operation))
+        return;
+    const QPointer<Core::ControllerConnectionProvider> currentProvider
+        = currentControllerProviderForDispatch(operation, incomingPhase);
+    if (!guardedService || operation.phase != incomingPhase || operation.outcome != Outcome::Pending
+        || !incomingProvider || !currentProvider || currentProvider != incomingProvider) {
+        return;
+    }
+    if (!adapterAuthorization) {
+        operation.detail = adapterAuthorization.error();
+        beginRelease(operation, Outcome::FailedWithoutControllerChange);
+        return;
+    }
     operation.phase = Phase::DeployingPackage;
     operation.detail = QStringLiteral("Uploading, validating, and activating the signed package.");
     operation.audit.append(localEvent(
@@ -2924,8 +3396,8 @@ void TrustedRuntimePackageActivationService::beginDeploy(Operation &operation)
         QStringLiteral("deploying-package"),
         operation.detail));
     publish(operation);
-    if (operation.phase != Phase::DeployingPackage
-        || operation.outcome != Outcome::Pending) {
+    if (!guardedService || !ownsCurrentOperation(operation)
+        || operation.phase != Phase::DeployingPackage || operation.outcome != Outcome::Pending) {
         return;
     }
     QString deployPreflightError;
@@ -3016,6 +3488,21 @@ void TrustedRuntimePackageActivationService::beginDeploy(Operation &operation)
         beginRelease(operation, Outcome::FailedWithoutControllerChange);
         return;
     }
+    QPointer<TrustedRuntimePackageActivationService> deployGuardedService(this);
+    const Utils::Result<> deployAuthorization = validateAdapterAuthorizationsCurrent(operation);
+    if (!deployGuardedService || !ownsCurrentOperation(operation))
+        return;
+    const QPointer<Core::ControllerConnectionProvider> deployProvider
+        = currentControllerProviderForDispatch(operation, Phase::DeployingPackage);
+    if (!deployGuardedService || !incomingProvider || !deployProvider
+        || deployProvider != incomingProvider) {
+        return;
+    }
+    if (!deployAuthorization) {
+        operation.detail = deployAuthorization.error();
+        beginRelease(operation, Outcome::FailedWithoutControllerChange);
+        return;
+    }
     operation.audit.append(providerEvent(
         operation,
         AuditKind::ProviderRequestSent,
@@ -3064,6 +3551,31 @@ void TrustedRuntimePackageActivationService::beginDeploy(Operation &operation)
         return;
     }
 
+    QPointer<TrustedRuntimePackageActivationService> finalDeployGuardedService(this);
+    const Utils::Result<> finalDeployAuthorization = validateAdapterAuthorizationsCurrent(operation);
+    if (!finalDeployGuardedService || !ownsCurrentOperation(operation))
+        return;
+    const QPointer<Core::ControllerConnectionProvider> finalDeployProvider
+        = currentControllerProviderForDispatch(operation, Phase::DeployingPackage);
+    if (!finalDeployGuardedService || !incomingProvider || !finalDeployProvider
+        || finalDeployProvider != incomingProvider) {
+        return;
+    }
+    if (!finalDeployAuthorization) {
+        operation.audit.removeLast();
+        operation.deploymentProgressBaseline = {};
+        operation.deploymentRequestSentAt = {};
+        const Utils::Result<> correctedGuard = persistGuard(operation);
+        if (!correctedGuard) {
+            freezeUnknown(
+                operation, QStringLiteral("activation-journal-failed"), correctedGuard.error());
+            return;
+        }
+        operation.detail = finalDeployAuthorization.error();
+        beginRelease(operation, Outcome::FailedWithoutControllerChange);
+        return;
+    }
+
     Data::ControllerPackageDeploymentRequest request;
     request.operationId = operation.request.identity().operationId().value();
     request.artifact = operation.request.packageBytes();
@@ -3080,8 +3592,42 @@ void TrustedRuntimePackageActivationService::beginDeploy(Operation &operation)
         QStringLiteral("deployment-timeout"),
         QStringLiteral(
             "Timed out while waiting for terminal package deployment evidence."));
-    const Utils::Result<> result = operation.provider->deployPackage(request);
-    if (operation.phase != Phase::DeployingPackage
+    QPointer<TrustedRuntimePackageActivationService> dispatchGuardedService(this);
+    const Utils::Result<> dispatchAuthorization = validateAdapterAuthorizationsCurrent(operation);
+    if (!dispatchGuardedService || !ownsCurrentOperation(operation))
+        return;
+    const QPointer<Core::ControllerConnectionProvider> currentDispatchProvider
+        = currentControllerProviderForDispatch(operation, Phase::DeployingPackage);
+    if (!dispatchGuardedService || !incomingProvider || !currentDispatchProvider
+        || currentDispatchProvider != incomingProvider) {
+        return;
+    }
+    const QPointer<Core::ControllerConnectionProvider> dispatchProvider
+        = dispatchAuthorization ? currentDispatchProvider
+                                : QPointer<Core::ControllerConnectionProvider>{};
+    if (!dispatchGuardedService)
+        return;
+    if (!dispatchAuthorization || !dispatchProvider) {
+        operation.audit.removeLast();
+        operation.deploymentProgressBaseline = {};
+        operation.deploymentRequestSentAt = {};
+        const Utils::Result<> correctedGuard = persistGuard(operation);
+        if (!correctedGuard) {
+            freezeUnknown(
+                operation, QStringLiteral("activation-journal-failed"), correctedGuard.error());
+            return;
+        }
+        operation.detail = dispatchAuthorization
+                               ? QStringLiteral(
+                                     "The controller provider changed before deploy dispatch.")
+                               : dispatchAuthorization.error();
+        beginRelease(operation, Outcome::FailedWithoutControllerChange);
+        return;
+    }
+    const Utils::Result<> result = dispatchProvider->deployPackage(request);
+    if (!dispatchGuardedService || !dispatchProvider)
+        return;
+    if (!ownsCurrentOperation(operation) || operation.phase != Phase::DeployingPackage
         || operation.outcome != Outcome::Pending) {
         return;
     }
@@ -3098,6 +3644,18 @@ void TrustedRuntimePackageActivationService::beginDeploy(Operation &operation)
 void TrustedRuntimePackageActivationService::beginRuntimeVerification(
     Operation &operation)
 {
+    const Phase incomingPhase = operation.phase;
+    const QPointer<Core::ControllerConnectionProvider> incomingProvider = operation.provider;
+    QPointer<TrustedRuntimePackageActivationService> guardedService(this);
+    const Utils::Result<> adapterAuthorization = validateAdapterAuthorizationsCurrent(operation);
+    if (!guardedService || !ownsCurrentOperation(operation))
+        return;
+    const QPointer<Core::ControllerConnectionProvider> currentProvider
+        = currentControllerProviderForDispatch(operation, incomingPhase);
+    if (!guardedService || operation.phase != incomingPhase || operation.outcome != Outcome::Pending
+        || !incomingProvider || !currentProvider || currentProvider != incomingProvider) {
+        return;
+    }
     if (operation.phase != Phase::VerifyingRuntimeIdentity) {
         operation.phase = Phase::VerifyingRuntimeIdentity;
         operation.detail
@@ -3111,8 +3669,16 @@ void TrustedRuntimePackageActivationService::beginRuntimeVerification(
             operation.detail));
         publish(operation);
     }
-    if (operation.phase != Phase::VerifyingRuntimeIdentity
+    if (!guardedService || !ownsCurrentOperation(operation)
+        || operation.phase != Phase::VerifyingRuntimeIdentity
         || operation.outcome != Outcome::Pending) {
+        return;
+    }
+    if (!adapterAuthorization) {
+        failRuntimeVerification(
+            operation,
+            QStringLiteral("adapter-authorization-changed"),
+            adapterAuthorization.error());
         return;
     }
     if (!operation.provider || !operation.provider->isAvailable()
@@ -3174,7 +3740,8 @@ void TrustedRuntimePackageActivationService::beginRuntimeVerification(
                 attestation.error(),
                 after->evidenceSha256()));
             publish(operation);
-            if (operation.phase != Phase::VerifyingRuntimeIdentity
+            if (!guardedService || !ownsCurrentOperation(operation)
+                || operation.phase != Phase::VerifyingRuntimeIdentity
                 || operation.outcome != Outcome::Pending) {
                 return;
             }
@@ -3193,7 +3760,8 @@ void TrustedRuntimePackageActivationService::beginRuntimeVerification(
             QStringLiteral("The controller package epoch and mapping proof match."),
             after->evidenceSha256()));
         publish(operation);
-        if (operation.phase != Phase::VerifyingRuntimeIdentity
+        if (!guardedService || !ownsCurrentOperation(operation)
+            || operation.phase != Phase::VerifyingRuntimeIdentity
             || operation.outcome != Outcome::Pending) {
             return;
         }
@@ -3207,7 +3775,8 @@ void TrustedRuntimePackageActivationService::beginRuntimeVerification(
             QStringLiteral("evidence-persisted"),
             operation.detail));
         publish(operation);
-        if (operation.phase != Phase::PersistingEvidence
+        if (!guardedService || !ownsCurrentOperation(operation)
+            || operation.phase != Phase::PersistingEvidence
             || operation.outcome != Outcome::Pending) {
             return;
         }
@@ -3235,7 +3804,8 @@ void TrustedRuntimePackageActivationService::beginRuntimeVerification(
             QStringLiteral("Captured controller state after failed deployment."),
             after->evidenceSha256()));
         publish(operation);
-        if (operation.phase != Phase::VerifyingRuntimeIdentity
+        if (!guardedService || !ownsCurrentOperation(operation)
+            || operation.phase != Phase::VerifyingRuntimeIdentity
             || operation.outcome != Outcome::Pending) {
             return;
         }
@@ -3274,6 +3844,23 @@ void TrustedRuntimePackageActivationService::beginRuntimeVerification(
     }
     if (operation.attestationRequested)
         return;
+    QPointer<TrustedRuntimePackageActivationService> attestationGuardedService(this);
+    const Utils::Result<> attestationAuthorization = validateAdapterAuthorizationsCurrent(operation);
+    if (!attestationGuardedService || !ownsCurrentOperation(operation))
+        return;
+    const QPointer<Core::ControllerConnectionProvider> currentAttestationProvider
+        = currentControllerProviderForDispatch(operation, Phase::VerifyingRuntimeIdentity);
+    if (!attestationGuardedService || !incomingProvider || !currentAttestationProvider
+        || currentAttestationProvider != incomingProvider) {
+        return;
+    }
+    if (!attestationAuthorization) {
+        failRuntimeVerification(
+            operation,
+            QStringLiteral("adapter-authorization-changed"),
+            attestationAuthorization.error());
+        return;
+    }
     Data::RuntimeSemanticMappingAttestationRequest request{
         operation.request.identity().operationId().value(),
         operation.request.identity().scope(),
@@ -3289,12 +3876,24 @@ void TrustedRuntimePackageActivationService::beginRuntimeVerification(
                 "The active package epoch could not be bound to a valid attestation request."));
         return;
     }
+    const QPointer<Core::ControllerConnectionProvider> attestationProvider
+        = currentAttestationProvider;
+    if (!attestationGuardedService)
+        return;
+    if (!attestationProvider) {
+        failRuntimeVerification(
+            operation,
+            QStringLiteral("controller-provider-changed"),
+            QStringLiteral("The controller provider changed before attestation dispatch."));
+        return;
+    }
     operation.attestationRequested = true;
-    const Utils::Result<> result
-        = operation.provider->requestRuntimeSemanticMappingAttestation(request);
-    if (operation.phase != Phase::VerifyingRuntimeIdentity
-        || operation.outcome != Outcome::Pending
-        || !operation.attestationRequested) {
+    const Utils::Result<> result = attestationProvider->requestRuntimeSemanticMappingAttestation(
+        request);
+    if (!attestationGuardedService || !attestationProvider)
+        return;
+    if (!ownsCurrentOperation(operation) || operation.phase != Phase::VerifyingRuntimeIdentity
+        || operation.outcome != Outcome::Pending || !operation.attestationRequested) {
         return;
     }
     if (!result) {
@@ -3335,19 +3934,30 @@ void TrustedRuntimePackageActivationService::handleAttestationResult(
 void TrustedRuntimePackageActivationService::failRuntimeVerification(
     Operation &operation, const QString &code, const QString &detail)
 {
+    QPointer<TrustedRuntimePackageActivationService> guardedService(this);
     if (operation.phase != Phase::VerifyingRuntimeIdentity
         || operation.outcome != Outcome::Pending) {
         return;
     }
 
     QString evidenceError;
-    const auto after
-        = operation.provider
-              ? controllerEvidence(
-                    operation.provider,
-                    operation.provider->connectionSnapshot(),
-                    &evidenceError)
-              : std::optional<Data::RuntimePackageActivationControllerEvidence>();
+    const QPointer<Core::ControllerConnectionProvider> verificationProvider = operation.provider;
+    std::optional<Data::RuntimePackageActivationControllerEvidence> after;
+    if (verificationProvider) {
+        const Data::ControllerConnectionSnapshot verificationSnapshot
+            = verificationProvider->connectionSnapshot();
+        if (!guardedService || !verificationProvider || !ownsCurrentOperation(operation)
+            || operation.phase != Phase::VerifyingRuntimeIdentity
+            || operation.outcome != Outcome::Pending) {
+            return;
+        }
+        after = controllerEvidence(verificationProvider, verificationSnapshot, &evidenceError);
+        if (!guardedService || !verificationProvider || !ownsCurrentOperation(operation)
+            || operation.phase != Phase::VerifyingRuntimeIdentity
+            || operation.outcome != Outcome::Pending) {
+            return;
+        }
+    }
     if (after) {
         if (operation.afterController
             && operation.afterController->evidenceSha256()
@@ -3366,7 +3976,8 @@ void TrustedRuntimePackageActivationService::failRuntimeVerification(
                 "Captured controller state after runtime verification failed."),
             after->evidenceSha256()));
         publish(operation);
-        if (operation.phase != Phase::VerifyingRuntimeIdentity
+        if (!guardedService || !ownsCurrentOperation(operation)
+            || operation.phase != Phase::VerifyingRuntimeIdentity
             || operation.outcome != Outcome::Pending) {
             return;
         }
@@ -3480,6 +4091,33 @@ void TrustedRuntimePackageActivationService::handleProviderUnavailable(
 void TrustedRuntimePackageActivationService::commitProjectBinding(
     Operation &operation)
 {
+    const Phase incomingPhase = operation.phase;
+    const QPointer<Core::ControllerConnectionProvider> incomingProvider = operation.provider;
+    QPointer<TrustedRuntimePackageActivationService> guardedService(this);
+    const Utils::Result<> adapterAuthorization = validateAdapterAuthorizationsCurrent(operation);
+    if (!guardedService || !ownsCurrentOperation(operation))
+        return;
+    const QPointer<Core::ControllerConnectionProvider> currentProvider
+        = currentControllerProviderForDispatch(operation, incomingPhase);
+    if (!guardedService || operation.phase != incomingPhase || operation.outcome != Outcome::Pending
+        || !incomingProvider || !currentProvider || currentProvider != incomingProvider) {
+        return;
+    }
+    if (!adapterAuthorization) {
+        operation.detail = adapterAuthorization.error();
+        if (operation.existingPackage) {
+            finish(
+                operation,
+                Outcome::FailedWithoutControllerChange,
+                QStringLiteral("adapter-authorization-changed"),
+                operation.detail,
+                operation.afterController ? operation.afterController->evidenceSha256()
+                                          : operation.request.fingerprint());
+        } else {
+            beginRelease(operation, Outcome::FailedControllerChangedWithoutBinding);
+        }
+        return;
+    }
     operation.phase = Phase::CommittingProjectBinding;
     operation.detail = QStringLiteral("Attaching the exact verified binding to the project.");
     operation.audit.append(localEvent(
@@ -3490,7 +4128,8 @@ void TrustedRuntimePackageActivationService::commitProjectBinding(
         QStringLiteral("committing-project-binding"),
         operation.detail));
     publish(operation);
-    if (operation.phase != Phase::CommittingProjectBinding
+    if (!guardedService || !ownsCurrentOperation(operation)
+        || operation.phase != Phase::CommittingProjectBinding
         || operation.outcome != Outcome::Pending) {
         return;
     }
@@ -3585,6 +4224,31 @@ void TrustedRuntimePackageActivationService::commitProjectBinding(
             "Revalidated the active package immediately before project commit."),
         commitEvidence->evidenceSha256()));
 
+    QPointer<TrustedRuntimePackageActivationService> commitGuardedService(this);
+    const Utils::Result<> commitAuthorization = validateAdapterAuthorizationsCurrent(operation);
+    if (!commitGuardedService || !ownsCurrentOperation(operation))
+        return;
+    const QPointer<Core::ControllerConnectionProvider> currentCommitProvider
+        = currentControllerProviderForDispatch(operation, Phase::CommittingProjectBinding);
+    if (!commitGuardedService || !incomingProvider || !currentCommitProvider
+        || currentCommitProvider != incomingProvider) {
+        return;
+    }
+    if (!commitAuthorization) {
+        operation.detail = commitAuthorization.error();
+        if (operation.existingPackage) {
+            finish(
+                operation,
+                Outcome::FailedWithoutControllerChange,
+                QStringLiteral("adapter-authorization-changed"),
+                operation.detail,
+                operation.afterController ? operation.afterController->evidenceSha256()
+                                          : operation.request.fingerprint());
+        } else {
+            beginRelease(operation, Outcome::FailedControllerChangedWithoutBinding);
+        }
+        return;
+    }
     const Utils::Result<> projectGuard = persistGuard(operation);
     if (!projectGuard) {
         if (operation.existingPackage) {
@@ -3601,12 +4265,65 @@ void TrustedRuntimePackageActivationService::commitProjectBinding(
         return;
     }
 
+    QPointer<TrustedRuntimePackageActivationService> finalCommitGuardedService(this);
+    const Utils::Result<> finalCommitAuthorization = validateAdapterAuthorizationsCurrent(operation);
+    if (!finalCommitGuardedService || !ownsCurrentOperation(operation))
+        return;
+    const QPointer<Core::ControllerConnectionProvider> finalCurrentCommitProvider
+        = currentControllerProviderForDispatch(operation, Phase::CommittingProjectBinding);
+    if (!finalCommitGuardedService || !incomingProvider || !finalCurrentCommitProvider
+        || finalCurrentCommitProvider != incomingProvider) {
+        return;
+    }
+    if (!finalCommitAuthorization) {
+        operation.detail = finalCommitAuthorization.error();
+        if (operation.existingPackage) {
+            finish(
+                operation,
+                Outcome::FailedWithoutControllerChange,
+                QStringLiteral("adapter-authorization-changed"),
+                operation.detail,
+                operation.afterController ? operation.afterController->evidenceSha256()
+                                          : operation.request.fingerprint());
+        } else {
+            beginRelease(operation, Outcome::FailedControllerChangedWithoutBinding);
+        }
+        return;
+    }
+
+    const QPointer<Core::ControllerConnectionProvider> commitProvider
+        = currentControllerProviderForDispatch(operation, Phase::CommittingProjectBinding);
+    QPointer<Core::ProjectService> commitProjectService = m_projectService;
+    if (!finalCommitGuardedService)
+        return;
+    if (!commitProvider || !commitProjectService || !commitProjectService->isAvailable()) {
+        operation.detail = QStringLiteral(
+            "The controller or project provider changed before project commit.");
+        if (operation.existingPackage) {
+            finish(
+                operation,
+                Outcome::FailedWithoutControllerChange,
+                QStringLiteral("project-commit-provider-changed"),
+                operation.detail,
+                operation.afterController ? operation.afterController->evidenceSha256()
+                                          : operation.request.fingerprint());
+        } else {
+            beginRelease(operation, Outcome::FailedControllerChangedWithoutBinding);
+        }
+        return;
+    }
+    if (!finalCommitGuardedService || !commitProjectService)
+        return;
+
     Utils::Result<Data::RuntimePackageActivationProjectCompareAndSetResult> result
-        = m_projectService->compareAndSetMasterBindingArtifact(
+        = commitProjectService->compareAndSetMasterBindingArtifact(
             operation.request.identity().scope().projectId,
             operation.request.identity().documentRevisionToken(),
             operation.request.identity().originalBindingToken(),
             *operation.targetReference);
+    if (!finalCommitGuardedService || !commitProjectService || !ownsCurrentOperation(operation)) {
+        return;
+    }
     if (!result || !result->isValid()
         || result->disposition()
                == Data::RuntimePackageActivationProjectCompareAndSetDisposition::Stale
@@ -3639,14 +4356,18 @@ void TrustedRuntimePackageActivationService::commitProjectBinding(
         operation.projectCommit->evidenceSha256(),
         operation.projectCommit->committedAt()));
     publish(operation);
-    if (operation.phase != Phase::CommittingProjectBinding
+    if (!finalCommitGuardedService || !ownsCurrentOperation(operation)
+        || operation.phase != Phase::CommittingProjectBinding
         || operation.outcome != Outcome::Pending) {
         return;
     }
 
     const Utils::Result<Data::RuntimePackageActivationProjectCapture> beforeSave
-        = m_projectService->captureRuntimePackageActivationProject(
+        = commitProjectService->captureRuntimePackageActivationProject(
             operation.request.identity().scope().projectId);
+    if (!finalCommitGuardedService || !commitProjectService || !ownsCurrentOperation(operation)) {
+        return;
+    }
     const bool alreadyExact
         = operation.projectCommit->disposition()
           == Data::RuntimePackageActivationProjectCommitDisposition::
@@ -3673,6 +4394,29 @@ void TrustedRuntimePackageActivationService::commitProjectBinding(
                 operation,
                 operation.releaseUnknownCode,
                 operation.releaseUnknownDetail);
+        } else {
+            beginRelease(operation, Outcome::OutcomeUnknown);
+        }
+        return;
+    }
+    QPointer<TrustedRuntimePackageActivationService> saveGuardedService(this);
+    const Utils::Result<> saveAuthorization = validateAdapterAuthorizationsCurrent(operation);
+    if (!saveGuardedService || !commitProjectService || !ownsCurrentOperation(operation)) {
+        return;
+    }
+    const QPointer<Core::ControllerConnectionProvider> saveControllerProvider
+        = currentControllerProviderForDispatch(operation, Phase::CommittingProjectBinding);
+    const bool projectServiceAvailable = commitProjectService->isAvailable();
+    if (!saveGuardedService || !commitProjectService || !incomingProvider || !saveControllerProvider
+        || saveControllerProvider != incomingProvider || !projectServiceAvailable) {
+        return;
+    }
+    if (!saveAuthorization) {
+        operation.releaseUnknownCode = QStringLiteral(
+            "adapter-authorization-changed-after-project-cas");
+        operation.releaseUnknownDetail = saveAuthorization.error();
+        if (operation.existingPackage) {
+            freezeUnknown(operation, operation.releaseUnknownCode, operation.releaseUnknownDetail);
         } else {
             beginRelease(operation, Outcome::OutcomeUnknown);
         }
@@ -3707,8 +4451,11 @@ void TrustedRuntimePackageActivationService::commitProjectBinding(
         return;
     }
 
-    const Utils::Result<> saved = m_projectService->saveProject(
+    const Utils::Result<> saved = commitProjectService->saveProject(
         operation.request.identity().scope().projectId);
+    if (!saveGuardedService || !commitProjectService || !ownsCurrentOperation(operation)) {
+        return;
+    }
     if (!saved) {
         operation.releaseUnknownCode
             = QStringLiteral("project-save-outcome-unknown");
@@ -3724,8 +4471,11 @@ void TrustedRuntimePackageActivationService::commitProjectBinding(
         return;
     }
     const Utils::Result<Data::RuntimePackageActivationProjectCapture> persisted
-        = m_projectService->captureRuntimePackageActivationProject(
+        = commitProjectService->captureRuntimePackageActivationProject(
             operation.request.identity().scope().projectId);
+    if (!saveGuardedService || !commitProjectService || !ownsCurrentOperation(operation)) {
+        return;
+    }
     if (!persisted || !persisted->isValid()
         || persisted->snapshot().modified
         || persisted->documentRevisionNumber()
@@ -3914,6 +4664,7 @@ void TrustedRuntimePackageActivationService::completeExistingPackage(
 void TrustedRuntimePackageActivationService::beginRecoveryRelease(
     Operation &operation, Outcome terminalOutcome)
 {
+    QPointer<TrustedRuntimePackageActivationService> guardedService(this);
     if (operation.phase != Phase::Reconciling
         || operation.outcome != Outcome::OutcomeUnknown
         || !operation.reconciliationInProgress
@@ -4059,8 +4810,13 @@ void TrustedRuntimePackageActivationService::beginRecoveryRelease(
             "Timed out while waiting for authoritative recovery lease release."));
     Data::ControllerControlRequest request;
     request.command = Data::ControllerControlCommand::ReleaseControl;
-    const Utils::Result<> result
-        = operation.provider->executeControlCommand(request);
+    const QPointer<Core::ControllerConnectionProvider> releaseProvider = operation.provider;
+    if (!releaseProvider)
+        return;
+    const Utils::Result<> result = releaseProvider->executeControlCommand(request);
+    if (!guardedService || !releaseProvider || !ownsCurrentOperation(operation)) {
+        return;
+    }
     if (!operation.recoveryReleaseInProgress
         || operation.phase != Phase::Reconciling
         || operation.outcome != Outcome::OutcomeUnknown) {
@@ -4235,6 +4991,73 @@ void TrustedRuntimePackageActivationService::completeRecoveryAfterRelease(
 void TrustedRuntimePackageActivationService::beginRelease(
     Operation &operation, Outcome terminalOutcome)
 {
+    QPointer<TrustedRuntimePackageActivationService> guardedService(this);
+    const Phase incomingPhase = operation.phase;
+    const QPointer<Core::ControllerConnectionProvider> incomingProvider = operation.provider;
+    const QPointer<Core::ControllerConnectionProvider> releaseProvider
+        = currentControllerProviderForDispatch(operation, incomingPhase);
+    if (!guardedService || !ownsCurrentOperation(operation) || operation.phase != incomingPhase
+        || operation.outcome != Outcome::Pending) {
+        return;
+    }
+    if (!incomingProvider || !releaseProvider || releaseProvider != incomingProvider) {
+        freezeUnknown(
+            operation,
+            QStringLiteral("release-preflight-failed"),
+            QStringLiteral(
+                "The controller provider changed before the held lease could be proved for "
+                "release."));
+        return;
+    }
+
+    const Data::ControllerConnectionSnapshot releaseSnapshot = releaseProvider->connectionSnapshot();
+    if (!guardedService || !releaseProvider || !ownsCurrentOperation(operation)
+        || operation.phase != incomingPhase || operation.outcome != Outcome::Pending) {
+        return;
+    }
+    QString releaseEvidenceError;
+    const auto releaseEvidence
+        = controllerEvidence(releaseProvider, releaseSnapshot, &releaseEvidenceError);
+    if (!guardedService || !releaseProvider || !ownsCurrentOperation(operation)
+        || operation.phase != incomingPhase || operation.outcome != Outcome::Pending) {
+        return;
+    }
+    const QPointer<Core::ControllerConnectionProvider> currentReleaseProvider
+        = currentControllerProviderForDispatch(operation, incomingPhase);
+    if (!guardedService || !ownsCurrentOperation(operation) || operation.phase != incomingPhase
+        || operation.outcome != Outcome::Pending) {
+        return;
+    }
+    if (!releaseProvider || !currentReleaseProvider || currentReleaseProvider != releaseProvider
+        || !releaseEvidence || !releaseEvidence->ownsControlLease() || releaseSnapshot.readOnly
+        || releaseSnapshot.mock || releaseSnapshot.scope != operation.request.identity().scope()
+        || !operation.beforeController
+        || releaseEvidence->sessionGeneration() != operation.beforeController->sessionGeneration()
+        || releaseEvidence->observationSessionId()
+               != operation.beforeController->observationSessionId()
+        || releaseEvidence->bootId() != operation.beforeController->bootId()) {
+        freezeUnknown(
+            operation,
+            QStringLiteral("release-preflight-failed"),
+            releaseEvidenceError.isEmpty()
+                ? QStringLiteral("The held lease could not be proved immediately before release.")
+                : releaseEvidenceError);
+        return;
+    }
+    if (operation.afterController
+        && operation.afterController->evidenceSha256() != releaseEvidence->evidenceSha256()) {
+        operation.controllerEvidenceHistory.append(*operation.afterController);
+    }
+    operation.afterController = *releaseEvidence;
+    operation.audit.append(localEvent(
+        operation,
+        AuditKind::ControllerEvidenceCaptured,
+        operation.phase,
+        operation.outcome,
+        QStringLiteral("release-preflight-state"),
+        QStringLiteral("Captured authoritative controller state immediately before lease release."),
+        releaseEvidence->evidenceSha256()));
+
     if (operation.phase == Phase::AcquiringControl
         || operation.phase == Phase::DeployingPackage) {
         operation.phase = Phase::VerifyingRuntimeIdentity;
@@ -4279,44 +5102,10 @@ void TrustedRuntimePackageActivationService::beginRelease(
         QStringLiteral("releasing-control"),
         operation.detail));
     publish(operation);
-    if (operation.phase != Phase::ReleasingControl
-        || operation.outcome != Outcome::Pending) {
+    if (!guardedService || !ownsCurrentOperation(operation)
+        || operation.phase != Phase::ReleasingControl || operation.outcome != Outcome::Pending) {
         return;
     }
-    if (!operation.provider || !operation.provider->isAvailable()
-        || !m_providerRegistry
-        || !m_providerRegistry
-                ->providers(Core::ProviderKind::ControllerConnection)
-                .contains(operation.provider.data())) {
-        handleProviderUnavailable(
-            operation.request.identity().operationId().value());
-        return;
-    }
-
-    const Data::ControllerConnectionSnapshot releaseSnapshot
-        = operation.provider->connectionSnapshot();
-    QString releaseEvidenceError;
-    const auto releaseEvidence
-        = controllerEvidence(
-            operation.provider, releaseSnapshot, &releaseEvidenceError);
-    if (!releaseEvidence || !releaseEvidence->ownsControlLease()
-        || releaseSnapshot.readOnly || releaseSnapshot.mock
-        || !operation.beforeController
-        || releaseEvidence->sessionGeneration()
-               != operation.beforeController->sessionGeneration()
-        || releaseEvidence->observationSessionId()
-               != operation.beforeController->observationSessionId()
-        || releaseEvidence->bootId() != operation.beforeController->bootId()) {
-        freezeUnknown(
-            operation,
-            QStringLiteral("release-preflight-failed"),
-            releaseEvidenceError.isEmpty()
-                ? QStringLiteral(
-                      "The held lease could not be proved immediately before release.")
-                : releaseEvidenceError);
-        return;
-    }
-
     const bool releaseEvidenceMatchesTarget
         = releaseEvidence->matchesActivatedIdentity(
             operation.request.identity());
@@ -4364,28 +5153,6 @@ void TrustedRuntimePackageActivationService::beginRelease(
         }
     }
 
-    if (operation.afterController
-        && operation.afterController->evidenceSha256()
-               != releaseEvidence->evidenceSha256()) {
-        operation.controllerEvidenceHistory.append(*releaseEvidence);
-    } else {
-        operation.afterController = *releaseEvidence;
-    }
-    operation.audit.append(localEvent(
-        operation,
-        AuditKind::ControllerEvidenceCaptured,
-        operation.phase,
-        operation.outcome,
-        QStringLiteral("release-preflight-state"),
-        QStringLiteral(
-            "Captured authoritative controller state immediately before lease release."),
-        releaseEvidence->evidenceSha256()));
-    publish(operation);
-    if (operation.phase != Phase::ReleasingControl
-        || operation.outcome != Outcome::Pending) {
-        return;
-    }
-
     operation.releaseProgressBaseline = releaseSnapshot.controlProgress;
     operation.audit.append(providerEvent(
         operation,
@@ -4419,9 +5186,27 @@ void TrustedRuntimePackageActivationService::beginRelease(
         QStringLiteral("release-timeout"),
         QStringLiteral(
             "Timed out while waiting for the terminal control-lease release response."));
-    const Utils::Result<> result
-        = operation.provider->executeControlCommand(request);
-    if (operation.phase != Phase::ReleasingControl
+    const QPointer<Core::ControllerConnectionProvider> dispatchReleaseProvider
+        = currentControllerProviderForDispatch(operation, Phase::ReleasingControl);
+    if (!guardedService)
+        return;
+    if (!dispatchReleaseProvider) {
+        operation.audit.removeLast();
+        operation.releaseRequestSentAt = {};
+        operation.releaseProgressBaseline = {};
+        const Utils::Result<> correctedGuard = persistGuard(operation);
+        if (!correctedGuard) {
+            freezeUnknown(
+                operation, QStringLiteral("activation-journal-failed"), correctedGuard.error());
+            return;
+        }
+        handleProviderUnavailable(operation.request.identity().operationId().value());
+        return;
+    }
+    const Utils::Result<> result = dispatchReleaseProvider->executeControlCommand(request);
+    if (!guardedService || !dispatchReleaseProvider)
+        return;
+    if (!ownsCurrentOperation(operation) || operation.phase != Phase::ReleasingControl
         || operation.outcome != Outcome::Pending) {
         return;
     }
@@ -4607,12 +5392,20 @@ void TrustedRuntimePackageActivationService::publish(Operation &operation)
         }
     }
     ++m_snapshotSequence;
-    emit recordChanged(operation.record);
-    emit statusChanged(
-        operation.request.identity().operationId(),
-        operation.phase,
-        operation.outcome);
-    emit snapshotChanged(snapshot());
+    const Data::RuntimePackageActivationRecord record = operation.record;
+    const Data::RuntimePackageActivationOperationId operationId
+        = operation.request.identity().operationId();
+    const Phase phase = operation.phase;
+    const Outcome outcome = operation.outcome;
+    const Data::RuntimePackageActivationSnapshot currentSnapshot = snapshot();
+    QPointer<TrustedRuntimePackageActivationService> guardedService(this);
+    emit recordChanged(record);
+    if (!guardedService)
+        return;
+    emit statusChanged(operationId, phase, outcome);
+    if (!guardedService)
+        return;
+    emit snapshotChanged(currentSnapshot);
 }
 
 void TrustedRuntimePackageActivationService::discoverRecoveryBarriers()

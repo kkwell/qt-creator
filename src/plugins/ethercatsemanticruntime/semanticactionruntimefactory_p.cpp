@@ -478,6 +478,241 @@ struct ManualActionAuthorization
     quint32 maximumTtlCycles = 0;
 };
 
+struct AdapterProviderCapture
+{
+    QPointer<QObject> owner;
+    quint64 signalGeneration = 0;
+    QList<SemanticActionAdapterAuthorizationCatalogMember> members;
+
+    friend bool operator==(const AdapterProviderCapture &, const AdapterProviderCapture &) = default;
+};
+
+bool adapterProviderCaptureIsCurrent(
+    const AvailableDeviceAdapterProviders &availableProviders,
+    const QPointer<QObject> &owner,
+    quint64 signalGeneration)
+{
+    return owner && availableProviders.owner == owner && availableProviders.signalGeneration
+           && availableProviders.signalGeneration() == signalGeneration;
+}
+
+Utils::Result<AdapterProviderCapture> captureAdapterProviders(
+    const AvailableDeviceAdapterProviders &availableProviders, bool captureAuthorizationSnapshots)
+{
+    if (!availableProviders)
+        return Utils::ResultError(QStringLiteral("manual_adapter_not_authorized"));
+
+    const QPointer<QObject> owner = availableProviders.owner;
+    const quint64 signalGeneration = availableProviders.signalGeneration();
+    const QList<Core::DeviceAdapterProvider *> providers = availableProviders.providers();
+    if (!adapterProviderCaptureIsCurrent(availableProviders, owner, signalGeneration)) {
+        return Utils::ResultError(
+            QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+    }
+    AdapterProviderCapture result;
+    result.owner = owner;
+    result.signalGeneration = signalGeneration;
+    result.members.reserve(providers.size());
+    QList<QPointer<Core::DeviceAdapterProvider>> guardedProviders;
+    guardedProviders.reserve(providers.size());
+    for (Core::DeviceAdapterProvider *provider : providers) {
+        QPointer<Core::DeviceAdapterProvider> guardedProvider(provider);
+        if (!guardedProvider) {
+            return Utils::ResultError(
+                QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+        }
+        guardedProviders.append(guardedProvider);
+    }
+    QSet<Core::DeviceAdapterProvider *> seen;
+    for (const QPointer<Core::DeviceAdapterProvider> &guardedProvider :
+         std::as_const(guardedProviders)) {
+        Core::DeviceAdapterProvider *provider = guardedProvider.data();
+        if (!guardedProvider || seen.contains(provider)) {
+            return Utils::ResultError(
+                QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+        }
+        const bool available = provider->isAvailable();
+        if (!guardedProvider
+            || !adapterProviderCaptureIsCurrent(availableProviders, owner, signalGeneration)
+            || !available) {
+            return Utils::ResultError(
+                QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+        }
+        seen.insert(provider);
+
+        SemanticActionAdapterAuthorizationCatalogMember member;
+        member.provider = guardedProvider;
+        member.manifests = provider->adapterManifests();
+        if (!guardedProvider
+            || !adapterProviderCaptureIsCurrent(availableProviders, owner, signalGeneration)) {
+            return Utils::ResultError(
+                QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+        }
+        auto *source = qobject_cast<Core::DeviceAdapterAuthorizationProvenanceSource *>(provider);
+        member.authorizationSource = source;
+        if (source && captureAuthorizationSnapshots) {
+            member.snapshot = source->authorizationProvenanceSnapshot();
+            if (!guardedProvider
+                || !adapterProviderCaptureIsCurrent(availableProviders, owner, signalGeneration)) {
+                return Utils::ResultError(
+                    QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+            }
+        }
+        result.members.append(std::move(member));
+    }
+    return result;
+}
+
+bool sameAdapterProviderCatalog(
+    const AdapterProviderCapture &left, const AdapterProviderCapture &right)
+{
+    if (left.owner != right.owner || left.signalGeneration != right.signalGeneration
+        || left.members.size() != right.members.size()) {
+        return false;
+    }
+    for (qsizetype index = 0; index < left.members.size(); ++index) {
+        const SemanticActionAdapterAuthorizationCatalogMember &leftMember = left.members.at(index);
+        const SemanticActionAdapterAuthorizationCatalogMember &rightMember = right.members.at(index);
+        if (leftMember.provider != rightMember.provider
+            || leftMember.manifests != rightMember.manifests
+            || leftMember.authorizationSource != rightMember.authorizationSource) {
+            return false;
+        }
+    }
+    return true;
+}
+
+struct ExactAdapterManifestMatch
+{
+    qsizetype providerIndex = -1;
+    Data::DeviceAdapterManifest manifest;
+};
+
+QList<ExactAdapterManifestMatch> exactAdapterManifestMatches(
+    const AdapterProviderCapture &capture, const Data::OfflineSlaveConfiguration &slave)
+{
+    QList<ExactAdapterManifestMatch> result;
+    for (qsizetype providerIndex = 0; providerIndex < capture.members.size(); ++providerIndex) {
+        for (const Data::DeviceAdapterManifest &manifest :
+             capture.members.at(providerIndex).manifests) {
+            if (manifest.id == slave.adapterSelection.adapterId
+                && manifest.version == slave.adapterSelection.adapterVersion
+                && manifest.contentSha256 == slave.adapterSelection.adapterContentSha256) {
+                result.append({providerIndex, manifest});
+            }
+        }
+    }
+    return result;
+}
+
+Utils::Result<SemanticActionAdapterResolution> resolveSemanticActionAdapterImpl(
+    const Data::OfflineSlaveConfiguration &slave,
+    const AvailableDeviceAdapterProviders &availableProviders)
+{
+    const Utils::Result<AdapterProviderCapture> initial
+        = captureAdapterProviders(availableProviders, false);
+    if (!initial)
+        return Utils::ResultError(initial.error());
+    const QList<ExactAdapterManifestMatch> initialMatches
+        = exactAdapterManifestMatches(*initial, slave);
+    if (initialMatches.size() != 1)
+        return Utils::ResultError(QStringLiteral("manual_adapter_not_authorized"));
+
+    const Data::DeviceAdapterManifest initialManifest = initialMatches.constFirst().manifest;
+    if (initialManifest.contractVersion != Data::DeviceAdapterContractVersion::V3
+        || !initialManifest.parameterDefinitions.isEmpty()) {
+        return Utils::ResultError(QStringLiteral("manual_adapter_contract_version_unsupported"));
+    }
+
+    const Utils::Result<AdapterProviderCapture> before
+        = captureAdapterProviders(availableProviders, true);
+    if (!before || !sameAdapterProviderCatalog(*initial, *before)) {
+        return Utils::ResultError(
+            QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+    }
+    const QList<ExactAdapterManifestMatch> beforeMatches
+        = exactAdapterManifestMatches(*before, slave);
+    if (beforeMatches.size() != 1 || beforeMatches.constFirst().manifest != initialManifest) {
+        return Utils::ResultError(
+            QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+    }
+
+    qsizetype sourceCount = 0;
+    qsizetype sourceProviderIndex = -1;
+    for (qsizetype index = 0; index < before->members.size(); ++index) {
+        if (before->members.at(index).authorizationSource) {
+            ++sourceCount;
+            sourceProviderIndex = index;
+        }
+    }
+    if (sourceCount != 1 || sourceProviderIndex != beforeMatches.constFirst().providerIndex) {
+        return Utils::ResultError(
+            QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+    }
+
+    const SemanticActionAdapterAuthorizationCatalogMember &sourceMember = before->members.at(
+        sourceProviderIndex);
+    if (!sourceMember.provider || !sourceMember.snapshot || !sourceMember.snapshot->isValid()
+        || sourceMember.snapshot->state
+               != Data::DeviceAdapterAuthorizationProvenanceState::Authorized) {
+        return Utils::ResultError(
+            QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+    }
+    const std::optional<Data::CanonicalDeviceAdapterAuthorizationBinding> binding
+        = Data::canonicalDeviceAdapterAuthorizationBinding(
+            initialManifest, Data::DeviceAdapterAuthorizationVersion::V1);
+    if (!binding) {
+        return Utils::ResultError(
+            QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+    }
+
+    QList<const Data::DeviceAdapterAuthorizationProvenance *> records;
+    for (const Data::DeviceAdapterAuthorizationProvenance &record : sourceMember.snapshot->records) {
+        if (record.adapterContractVersion == Data::DeviceAdapterContractVersion::V3
+            && record.authorizationVersion == Data::DeviceAdapterAuthorizationVersion::V1
+            && record.decision == Data::DeviceAdapterAuthorizationDecision::Allow
+            && record.adapterId == initialManifest.id
+            && record.adapterVersion == initialManifest.version
+            && record.adapterContentSha256 == initialManifest.contentSha256
+            && record.adapterBindingSha256 == binding->sha256) {
+            records.append(&record);
+        }
+    }
+    if (records.size() != 1) {
+        return Utils::ResultError(
+            QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+    }
+
+    QPointer<Core::DeviceAdapterProvider> guardedSourceProvider = sourceMember.provider;
+    auto *source = guardedSourceProvider
+                       ? qobject_cast<Core::DeviceAdapterAuthorizationProvenanceSource *>(
+                             guardedSourceProvider.data())
+                       : nullptr;
+    const bool current = source && source->validateCurrent(*sourceMember.snapshot, initialManifest);
+    if (!current || !guardedSourceProvider
+        || !adapterProviderCaptureIsCurrent(
+            availableProviders, before->owner, before->signalGeneration)) {
+        return Utils::ResultError(
+            QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+    }
+
+    const Utils::Result<AdapterProviderCapture> after
+        = captureAdapterProviders(availableProviders, true);
+    if (!after || *after != *before) {
+        return Utils::ResultError(
+            QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+    }
+
+    SemanticActionAdapterAuthorizationAdmission authorization;
+    authorization.catalogOwner = before->owner;
+    authorization.catalogSignalGeneration = before->signalGeneration;
+    authorization.catalog = before->members;
+    authorization.provider = guardedSourceProvider;
+    authorization.manifest = initialManifest;
+    authorization.snapshot = *sourceMember.snapshot;
+    return SemanticActionAdapterResolution{initialManifest, authorization};
+}
+
 std::optional<Data::EngineeringValueKind> rawEngineeringKind(EcfgResourcePrimitive primitive)
 {
     using Kind = Data::EngineeringValueKind;
@@ -1177,6 +1412,7 @@ ManualActionAuthorization authorizeManualAction(
     const VerifiedSemanticAction &action,
     const VerifiedSemanticBindingArtifact &artifact,
     const QList<Data::DeviceAdapterManifest> &adapterManifests,
+    const AvailableDeviceAdapterProviders *availableProviders,
     quint32 cyclePeriodNs,
     quint32 signedMaximumTtlCycles)
 {
@@ -1198,6 +1434,18 @@ ManualActionAuthorization authorizeManualAction(
     if (manifest.contractVersion != Data::DeviceAdapterContractVersion::V3) {
         result.rejection = QStringLiteral("manual_adapter_contract_version_unsupported");
         return result;
+    }
+    // The manifest-only overload is retained for narrow deterministic factory
+    // tests. Every production consumer supplies the live provider source.
+    if (availableProviders) {
+        const Utils::Result<SemanticActionAdapterResolution> resolution
+            = resolveSemanticActionAdapterImpl(slave, *availableProviders);
+        if (!resolution || resolution->manifest != manifest || !resolution->authorization) {
+            result.rejection = resolution ? QStringLiteral(
+                                                "manual_adapter_authorization_provenance_unproven")
+                                          : resolution.error();
+            return result;
+        }
     }
     if (!manifest.signatureVerified || !manifest.realHardwareAllowed)
         return result;
@@ -1434,12 +1682,13 @@ bool processDataProfileMatchesSignedTopology(
            && (!actionRequiresDc || !signedTopologyDcProfile.isEmpty());
 }
 
-Utils::Result<QList<Data::SemanticActionRuntimeState>> buildSemanticActionRuntimeStates(
+static Utils::Result<QList<Data::SemanticActionRuntimeState>> buildSemanticActionRuntimeStatesImpl(
     QStringView controllerId,
     const Data::ProjectSnapshot &project,
     const VerifiedRuntimePackageEvidence &evidence,
     const ReadOnlySemanticBindingCandidates &candidates,
     const QList<Data::DeviceAdapterManifest> &adapterManifests,
+    const AvailableDeviceAdapterProviders *availableProviders,
     const SemanticActionRuntimeGates &gates)
 {
     if (!validControllerId(controllerId))
@@ -1611,6 +1860,7 @@ Utils::Result<QList<Data::SemanticActionRuntimeState>> buildSemanticActionRuntim
                 action,
                 artifact,
                 adapterManifests,
+                availableProviders,
                 evidence.cyclePeriodNs(),
                 *maximumTtlCycles);
             if (authorization.policyProjected) {
@@ -1662,6 +1912,54 @@ Utils::Result<QList<Data::SemanticActionRuntimeState>> buildSemanticActionRuntim
         result.append(std::move(state));
     }
     return result;
+}
+
+Utils::Result<SemanticActionAdapterResolution> resolveSemanticActionAdapter(
+    const Data::OfflineSlaveConfiguration &slave,
+    const AvailableDeviceAdapterProviders &availableProviders)
+{
+    return resolveSemanticActionAdapterImpl(slave, availableProviders);
+}
+
+Utils::Result<QList<Data::SemanticActionRuntimeState>> buildSemanticActionRuntimeStates(
+    QStringView controllerId,
+    const Data::ProjectSnapshot &project,
+    const VerifiedRuntimePackageEvidence &evidence,
+    const ReadOnlySemanticBindingCandidates &candidates,
+    const QList<Data::DeviceAdapterManifest> &adapterManifests,
+    const SemanticActionRuntimeGates &gates)
+{
+    return buildSemanticActionRuntimeStatesImpl(
+        controllerId, project, evidence, candidates, adapterManifests, nullptr, gates);
+}
+
+Utils::Result<QList<Data::SemanticActionRuntimeState>> buildSemanticActionRuntimeStates(
+    QStringView controllerId,
+    const Data::ProjectSnapshot &project,
+    const VerifiedRuntimePackageEvidence &evidence,
+    const ReadOnlySemanticBindingCandidates &candidates,
+    const AvailableDeviceAdapterProviders &availableProviders,
+    const SemanticActionRuntimeGates &gates)
+{
+    const Utils::Result<AdapterProviderCapture> capture
+        = captureAdapterProviders(availableProviders, true);
+    if (!capture)
+        return projectionError(capture.error());
+    QList<Data::DeviceAdapterManifest> manifests;
+    for (const SemanticActionAdapterAuthorizationCatalogMember &member : capture->members)
+        manifests.append(member.manifests);
+    const Utils::Result<QList<Data::SemanticActionRuntimeState>> states
+        = buildSemanticActionRuntimeStatesImpl(
+            controllerId, project, evidence, candidates, manifests, &availableProviders, gates);
+    const Utils::Result<AdapterProviderCapture> after
+        = captureAdapterProviders(availableProviders, true);
+    if (!states)
+        return states;
+    if (!after || *after != *capture) {
+        return projectionError(
+            QStringLiteral("adapter authorization changed during action projection"));
+    }
+    return states;
 }
 
 } // namespace EtherCAT::SemanticRuntime::Internal

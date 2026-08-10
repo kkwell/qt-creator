@@ -58,7 +58,8 @@ public:
         std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository = {},
         int liveRefreshTimeoutMs = 5000,
         int liveSampleFreshnessMs = 5000,
-        std::function<QDateTime()> utcNow = {});
+        std::function<QDateTime()> utcNow = {},
+        std::function<QList<Core::DeviceAdapterProvider *>()> availableAdapterProviders = {});
     ~SemanticRuntimeExecutor() final;
 
     QList<Data::SemanticRuntimeContext> contexts() const final;
@@ -143,6 +144,10 @@ private:
     int m_liveRefreshTimeoutMs = 5000;
     int m_liveSampleFreshnessMs = 5000;
     std::function<QDateTime()> m_utcNow;
+    std::function<QList<Core::DeviceAdapterProvider *>()> m_availableAdapterProvidersOverride;
+    quint64 m_adapterProviderSignalGeneration = 0;
+    bool m_publishingContexts = false;
+    bool m_publishContextsPending = false;
     bool m_runtimeBootstrapScheduled = false;
     QList<Data::SemanticRuntimeContext> m_contexts;
     std::unique_ptr<SemanticRuntimeExecutorExecution> m_execution;

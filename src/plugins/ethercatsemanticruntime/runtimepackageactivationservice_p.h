@@ -2,11 +2,14 @@
 
 #pragma once
 
+#include "semanticactionruntimefactory_p.h"
+
 #include <ethercatcore/providerregistry.h>
 #include <ethercatcore/runtimepackageactivationservice.h>
 
 #include <QHash>
 #include <QPointer>
+#include <QSet>
 
 #include <functional>
 #include <memory>
@@ -47,7 +50,8 @@ public:
         int providerDeadlineMs = 15000,
         int deploymentProgressDeadlineMs = 45000,
         std::function<bool()> journalCommitShouldFail = {},
-        ExactCompileTimeProjectProofVerifier projectProofVerifier = {});
+        ExactCompileTimeProjectProofVerifier projectProofVerifier = {},
+        AvailableDeviceAdapterProviderList availableAdapterProviders = {});
     ~TrustedRuntimePackageActivationService() final;
 
     Core::RuntimePackageActivationPreparationResult prepare(
@@ -66,6 +70,9 @@ public:
     QString recoveryBarrierDetail() const;
 
 private:
+    AvailableDeviceAdapterProviders currentAvailableAdapterProviders() const;
+    void trackAdapterProvider(Core::Provider *provider);
+    void untrackAdapterProvider(Core::Provider *provider);
     void process(const QString &operationId);
     void handleProviderSnapshot(const QString &operationId);
     void handleAttestationResult(
@@ -74,6 +81,10 @@ private:
     void handleProviderUnavailable(const QString &operationId);
     void failRuntimeVerification(
         Operation &operation, const QString &code, const QString &detail);
+    Utils::Result<> validateAdapterAuthorizationsCurrent(const Operation &operation) const;
+    bool ownsCurrentOperation(const Operation &operation) const;
+    QPointer<Core::ControllerConnectionProvider> currentControllerProviderForDispatch(
+        const Operation &operation, Data::RuntimePackageActivationPhase expectedPhase) const;
     void beginAcquire(Operation &operation);
     void beginDeploy(Operation &operation);
     void beginRuntimeVerification(Operation &operation);
@@ -120,12 +131,18 @@ private:
     QHash<QString, std::shared_ptr<Operation>> m_operations;
     QHash<QString, Data::RuntimePackageActivationSha256>
         m_preparedFingerprints;
+    QHash<QString, QList<SemanticActionAdapterAuthorizationAdmission>>
+        m_preparedAdapterAuthorizations;
+    QSet<QString> m_startsInProgress;
+    QHash<Core::DeviceAdapterProvider *, QList<QMetaObject::Connection>> m_adapterProviderConnections;
     QStringList m_recoveryBarriers;
     quint64 m_snapshotSequence = 0;
     int m_providerDeadlineMs = 15000;
     int m_deploymentProgressDeadlineMs = 45000;
     std::function<bool()> m_journalCommitShouldFail;
     ExactCompileTimeProjectProofVerifier m_projectProofVerifier;
+    AvailableDeviceAdapterProviderList m_availableAdapterProvidersOverride;
+    quint64 m_adapterProviderSignalGeneration = 0;
 };
 
 } // namespace EtherCAT::SemanticRuntime::Internal

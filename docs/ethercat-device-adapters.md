@@ -103,16 +103,27 @@ any other field changed while cached digest fields remained unchanged. The
 validation call does not mutate repository state, accepted policy state,
 generation, or signals.
 
-This interface establishes provenance and freshness infrastructure only. The
-current Semantic Runtime does not yet consume it, production v4 assets remain
-absent, and no v4 action or real-hardware motion path is enabled by this change.
-A future consumer must enumerate the available Device Adapter providers,
-`qobject_cast` the IID on those same provider QObjects, and require exactly one
-source. That source must be the same provider object that supplied the manifest;
-the provider and provenance source must never be selected independently. This
-does not defend against an arbitrary malicious in-process plugin; installed
-in-process plugins remain inside the existing trust boundary. The snapshot is
-current-process provenance, not independently portable cryptographic evidence.
+The Semantic Runtime consumes this interface for production v3/Authorization
+v1 manual-action admission and trusted runtime-package activation. It enumerates
+the available Device Adapter providers, `qobject_cast`s the IID on those same
+provider QObjects, and requires exactly one source. That source must be the same
+provider object that supplied the exact manifest; the provider and provenance
+source are never selected independently. Admission captures the complete
+provider/manifest catalog and its signal generation. Manual execution binds that
+token across submit, approval, plan creation, and every forward-execution
+request. Activation binds the equivalent token across prepare, start, and every
+forward activation controller or project mutation. Catalog, generation,
+manifest, authorization, or provider drift fails closed before the next mutation.
+Read-only SafeHold recovery proof, activation release, and reconciliation remain
+available for cleanup.
+
+Adapter v4 remains unsupported until the signed compiler contract carries and
+binds the complete device-parameter projection. Production v4 assets remain
+absent, and this gate does not enable a v4 action or prove real-hardware motion.
+It also does not defend against an arbitrary malicious in-process plugin;
+installed in-process plugins remain inside the existing trust boundary. The
+snapshot is current-process provenance, not independently portable
+cryptographic evidence.
 
 ## Device parameter definitions
 

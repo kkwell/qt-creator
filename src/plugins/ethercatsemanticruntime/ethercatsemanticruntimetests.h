@@ -50,6 +50,10 @@ private slots:
     void testReadOnlySemanticBindingFactoryRejectsMismatches();
     void testSemanticActionRuntimeFactory();
     void testSemanticActionRuntimeFactoryFailsClosed();
+    void testAdapterAuthorizationFactoryAdmission();
+    void testAdapterAuthorizationExecutorAdmission();
+    void testAdapterAuthorizationActivationAdmission();
+    void testAdapterAuthorizationLifetimeGuards();
     void testSemanticOperationJournal();
     void testSemanticActionPlan();
     void testSemanticActionPlanFailsClosed();

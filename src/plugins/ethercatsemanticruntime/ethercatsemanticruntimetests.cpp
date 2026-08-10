@@ -495,6 +495,12 @@ private:
     }
 };
 
+struct ActivationControllerCallCounts
+{
+    int control = 0;
+    int deployment = 0;
+};
+
 class ActivationControllerProvider final : public Core::ControllerConnectionProvider
 {
 public:
@@ -556,6 +562,10 @@ public:
         const Data::ControllerControlRequest &request) final
     {
         controlRequests.append(request);
+        ++callCounts->control;
+        const std::function<void()> started = std::exchange(nextControlRequestStarted, {});
+        if (started)
+            started();
         if (!snapshot.session)
             return Utils::ResultError("The activation test session is missing");
         if (request.command == Data::ControllerControlCommand::AcquireControl) {
@@ -594,6 +604,10 @@ public:
         const Data::ControllerPackageDeploymentRequest &request) final
     {
         deploymentRequests.append(request);
+        ++callCounts->deployment;
+        const std::function<void()> started = std::exchange(nextDeploymentRequestStarted, {});
+        if (started)
+            started();
         if (deploymentMode == DeploymentMode::RejectImmediately)
             return Utils::ResultError("The provider rejected package deployment");
         if (deploymentMode == DeploymentMode::Stall)
@@ -868,6 +882,10 @@ public:
     std::optional<Data::RuntimeSemanticMappingAttestation> attestation;
     QList<Data::ControllerControlRequest> controlRequests;
     QList<Data::ControllerPackageDeploymentRequest> deploymentRequests;
+    std::function<void()> nextControlRequestStarted;
+    std::function<void()> nextDeploymentRequestStarted;
+    std::shared_ptr<ActivationControllerCallCounts> callCounts
+        = std::make_shared<ActivationControllerCallCounts>();
 };
 
 class DeterministicOutputControllerProvider final : public Core::ControllerConnectionProvider
@@ -926,6 +944,9 @@ public:
                        : QStringLiteral("snapshot-before")));
         if (snapshotRequestStarted)
             snapshotRequestStarted(request);
+        const std::function<void()> requestStarted = std::exchange(nextProviderRequestStarted, {});
+        if (requestStarted)
+            requestStarted();
         if (failSnapshotStartAfterCallback)
             return Utils::ResultError(snapshotStartError);
         return Utils::ResultOk;
@@ -955,6 +976,9 @@ public:
         pendingPolicyRequest = request;
         policyRequests.append(request);
         requestTrace.append(QStringLiteral("policy"));
+        const std::function<void()> requestStarted = std::exchange(nextProviderRequestStarted, {});
+        if (requestStarted)
+            requestStarted();
         return Utils::ResultOk;
     }
 
@@ -972,6 +996,9 @@ public:
             request.correlationId.endsWith(QStringLiteral("-post-state"))
                 ? QStringLiteral("state-post")
                 : QStringLiteral("state-pre"));
+        const std::function<void()> requestStarted = std::exchange(nextProviderRequestStarted, {});
+        if (requestStarted)
+            requestStarted();
         return Utils::ResultOk;
     }
 
@@ -986,6 +1013,9 @@ public:
         pendingApplyRequest = request;
         applyRequests.append(request);
         requestTrace.append(QStringLiteral("apply"));
+        const std::function<void()> requestStarted = std::exchange(nextProviderRequestStarted, {});
+        if (requestStarted)
+            requestStarted();
         return Utils::ResultOk;
     }
 
@@ -1066,6 +1096,7 @@ public:
     int maximumConcurrentRequests = 0;
     bool allowReadsWhileApplyPending = false;
     std::function<void(const Data::RuntimeResourceSnapshotRequest &)> snapshotRequestStarted;
+    std::function<void()> nextProviderRequestStarted;
     bool failSnapshotStartAfterCallback = false;
     QString snapshotStartError = QStringLiteral(
         "The deterministic snapshot start failed after callback");
@@ -1126,8 +1157,12 @@ static Utils::Id nextActivationAdapterProviderId()
             .arg(++sequence));
 }
 
-class ActivationAdapterProvider final : public Core::DeviceAdapterProvider
+class ActivationAdapterProvider final : public Core::DeviceAdapterProvider,
+                                        public Core::DeviceAdapterAuthorizationProvenanceSource
 {
+    Q_OBJECT
+    Q_INTERFACES(EtherCAT::Core::DeviceAdapterAuthorizationProvenanceSource)
+
 public:
     explicit ActivationAdapterProvider(
         QList<Data::DeviceAdapterManifest> manifests)
@@ -1136,12 +1171,17 @@ public:
               "Trusted activation test adapters")
         , manifests(std::move(manifests))
     {
+        rebuildAuthorizationSnapshot();
         setAvailable(true);
     }
 
     QList<Data::DeviceAdapterManifest> adapterManifests() const final
     {
-        return manifests;
+        const QList<Data::DeviceAdapterManifest> result = manifests;
+        const std::function<void()> read = std::exchange(nextManifestsRead, {});
+        if (read)
+            read();
+        return result;
     }
 
     std::optional<Data::DeviceAdapterManifest> adapterManifest(
@@ -1174,11 +1214,159 @@ public:
     void replaceManifests(QList<Data::DeviceAdapterManifest> replacement)
     {
         manifests = std::move(replacement);
+        rebuildAuthorizationSnapshot();
         emit adapterManifestsChanged();
+    }
+
+    Data::DeviceAdapterAuthorizationProvenanceSnapshot authorizationProvenanceSnapshot() const final
+    {
+        const Data::DeviceAdapterAuthorizationProvenanceSnapshot result = authorizationSnapshot;
+        const std::function<void()> read = std::exchange(nextSnapshotRead, {});
+        if (read)
+            read();
+        return result;
+    }
+
+    bool validateCurrent(
+        const Data::DeviceAdapterAuthorizationProvenanceSnapshot &snapshot) const final
+    {
+        const bool result = validateSnapshotAccepted && snapshot == authorizationSnapshot;
+        const std::function<void()> validated = std::exchange(nextValidateCurrent, {});
+        if (validated)
+            validated();
+        return result;
+    }
+
+    bool validateCurrent(
+        const Data::DeviceAdapterAuthorizationProvenanceSnapshot &snapshot,
+        const Data::DeviceAdapterManifest &manifest) const final
+    {
+        const bool result = validateManifestAccepted && snapshot == authorizationSnapshot
+                            && manifests.count(manifest) == 1;
+        const std::function<void()> validated = std::exchange(nextValidateManifest, {});
+        if (validated)
+            validated();
+        return result;
+    }
+
+    void rotateAuthorization()
+    {
+        rebuildAuthorizationSnapshot();
+        emit adapterManifestsChanged();
+    }
+
+    void publishSameAuthorizationChanged() { emit adapterManifestsChanged(); }
+
+    void rebuildAuthorizationSnapshot()
+    {
+        authorizationSnapshot = {};
+        authorizationSnapshot.formatVersion = 1;
+        authorizationSnapshot.generation = ++authorizationGeneration;
+        authorizationSnapshot.state = Data::DeviceAdapterAuthorizationProvenanceState::Authorized;
+        const QByteArray authorizationSetIdentity = QByteArray(
+                                                        "semantic-runtime-test-authorization/")
+                                                    + QByteArray::number(authorizationGeneration);
+        authorizationSnapshot.authorizationSetSha256
+            = QCryptographicHash::hash(authorizationSetIdentity, QCryptographicHash::Sha256);
+        for (const Data::DeviceAdapterManifest &manifest : std::as_const(manifests)) {
+            if (manifest.contractVersion != Data::DeviceAdapterContractVersion::V3)
+                continue;
+            const auto binding = Data::canonicalDeviceAdapterAuthorizationBinding(
+                manifest, Data::DeviceAdapterAuthorizationVersion::V1);
+            if (!binding)
+                continue;
+            Data::DeviceAdapterAuthorizationProvenance record;
+            record.adapterContractVersion = Data::DeviceAdapterContractVersion::V3;
+            record.authorizationVersion = Data::DeviceAdapterAuthorizationVersion::V1;
+            record.decision = Data::DeviceAdapterAuthorizationDecision::Allow;
+            record.adapterId = manifest.id;
+            record.adapterVersion = manifest.version;
+            record.adapterContentSha256 = manifest.contentSha256;
+            record.adapterBindingSha256 = binding->sha256;
+            record.authorizationId = QStringLiteral("test.authorization.v1");
+            record.policyId = QStringLiteral("test.policy.v1");
+            record.policyRevision = 1;
+            const QByteArray digest(32, '\x41');
+            record.authorizationDocumentSha256 = digest;
+            record.authorizationSignatureSha256 = QByteArray(32, '\x42');
+            record.policyDocumentSha256 = QByteArray(32, '\x43');
+            record.policySignatureSha256 = QByteArray(32, '\x44');
+            record.rootKeyId = QByteArray(32, '\x45');
+            record.signerKeyId = QByteArray(32, '\x46');
+            authorizationSnapshot.records.append(std::move(record));
+        }
+        std::sort(
+            authorizationSnapshot.records.begin(),
+            authorizationSnapshot.records.end(),
+            [](const auto &left, const auto &right) {
+                return std::tie(left.adapterId.value, left.adapterVersion, left.adapterContentSha256)
+                       < std::tie(
+                           right.adapterId.value, right.adapterVersion, right.adapterContentSha256);
+            });
+        if (authorizationSnapshot.records.isEmpty()) {
+            authorizationSnapshot.state = Data::DeviceAdapterAuthorizationProvenanceState::Denied;
+        }
+    }
+
+    QList<Data::DeviceAdapterManifest> manifests;
+    Data::DeviceAdapterAuthorizationProvenanceSnapshot authorizationSnapshot;
+    quint64 authorizationGeneration = 0;
+    bool validateSnapshotAccepted = true;
+    bool validateManifestAccepted = true;
+    mutable std::function<void()> nextManifestsRead;
+    mutable std::function<void()> nextSnapshotRead;
+    mutable std::function<void()> nextValidateCurrent;
+    mutable std::function<void()> nextValidateManifest;
+};
+
+class ManifestOnlyActivationAdapterProvider final : public Core::DeviceAdapterProvider
+{
+public:
+    explicit ManifestOnlyActivationAdapterProvider(QList<Data::DeviceAdapterManifest> manifests)
+        : DeviceAdapterProvider(
+              nextActivationAdapterProviderId(), "Manifest-only activation test adapters")
+        , manifests(std::move(manifests))
+    {
+        setAvailable(true);
+    }
+
+    QList<Data::DeviceAdapterManifest> adapterManifests() const final { return manifests; }
+
+    std::optional<Data::DeviceAdapterManifest> adapterManifest(
+        const Data::DeviceAdapterId &adapterId, const QString &version) const final
+    {
+        const auto found = std::find_if(
+            manifests.cbegin(),
+            manifests.cend(),
+            [&adapterId, &version](const Data::DeviceAdapterManifest &manifest) {
+                return manifest.id == adapterId && manifest.version == version;
+            });
+        return found == manifests.cend() ? std::nullopt
+                                         : std::optional<Data::DeviceAdapterManifest>(*found);
+    }
+
+    Data::DeviceAdapterResolutionResult resolveDevice(
+        const Data::DeviceAdapterResolutionRequest &) const final
+    {
+        return {
+            false,
+            {},
+            QStringLiteral("The manifest-only test provider does not resolve devices."),
+        };
     }
 
     QList<Data::DeviceAdapterManifest> manifests;
 };
+
+static AvailableDeviceAdapterProviders testAdapterProviders(
+    QObject *owner, quint64 *generation, QList<Core::DeviceAdapterProvider *> *providers)
+{
+    return {
+        [providers] { return *providers; },
+        owner,
+        [generation] { return *generation; },
+    };
+}
 
 static Data::ControllerConnectionScope projectScope(const Data::ProjectSnapshot &project)
 {
@@ -3430,6 +3618,7 @@ public:
         ownedAdapterProvider
             = std::make_unique<ActivationAdapterProvider>(
                 std::move(activationManifests));
+        adapterProvidersOverride = {ownedAdapterProvider.get()};
         adapterRegistration
             = std::make_unique<RegisteredObject>(
                 ownedAdapterProvider.get());
@@ -3445,7 +3634,8 @@ public:
             15000,
             45000,
             std::function<bool()>{},
-            exactProjectProofVerifier());
+            exactProjectProofVerifier(),
+            adapterProviderSource());
         if (prepareForStart)
             return prepareCurrentRequest();
         return Utils::ResultOk;
@@ -3455,17 +3645,8 @@ public:
     {
         if (!service)
             return Utils::ResultError("The activation service is unavailable");
-        const Core::RuntimePackageActivationPreparationResult prepared
-            = service->prepare({
-                identity.operationId(),
-                projectScope(project),
-                packageBytes,
-                projectBytes,
-                effectiveProjectCompanion,
-                compilerVerification(),
-                request.rollbackOnActivationFailure(),
-                compilerActivationProof(),
-            });
+        const Core::RuntimePackageActivationPreparationResult prepared = prepareOperation(
+            identity.operationId());
         if (!prepared.isValid() || !prepared.request) {
             return Utils::ResultError(
                 prepared.detail.isEmpty()
@@ -3477,6 +3658,25 @@ public:
         identity = request.identity();
         targetBinding = identity.targetBindingToken();
         return Utils::ResultOk;
+    }
+
+    Core::RuntimePackageActivationPreparationResult prepareOperation(
+        const Data::RuntimePackageActivationOperationId &operationId)
+    {
+        if (!service)
+            return {};
+        preparationOperationIdOverride = operationId;
+        const auto clearOverride = qScopeGuard([this] { preparationOperationIdOverride.reset(); });
+        return service->prepare({
+            operationId,
+            projectScope(project),
+            packageBytes,
+            projectBytes,
+            effectiveProjectCompanion,
+            compilerVerification(),
+            request.rollbackOnActivationFailure(),
+            compilerActivationProof(),
+        });
     }
 
     void setAdapterAuthorization(
@@ -3601,28 +3801,22 @@ public:
         return [this](
                    const Core::RuntimePackageActivationPreparationRequest &candidate,
                    const Data::RuntimePackageActivationProjectCapture &capture,
-                   const VerifiedRuntimePackageEvidence &verified)
-                   -> Utils::Result<> {
-            if (!projects.activationCapture
-                || capture != *projects.activationCapture
-                || capture.snapshot() != project
-                || capture.documentRevisionNumber() != 1
+                   const VerifiedRuntimePackageEvidence &verified) -> Utils::Result<> {
+            if (!projects.activationCapture || capture != *projects.activationCapture
+                || capture.snapshot() != project || capture.documentRevisionNumber() != 1
                 || capture.documentRevision() != documentRevision
                 || capture.originalBinding() != originalBinding
-                || candidate.operationId != identity.operationId()
+                || candidate.operationId
+                       != preparationOperationIdOverride.value_or(identity.operationId())
                 || candidate.scope != projectScope(project)
                 || candidate.packageBytes != packageBytes
                 || candidate.compiledProjectSource != projectBytes
-                || candidate.effectiveProjectCompanion
-                       != effectiveProjectCompanion
-                || candidate.compilerVerification
-                       != compilerVerification()
+                || candidate.effectiveProjectCompanion != effectiveProjectCompanion
+                || candidate.compilerVerification != compilerVerification()
                 || !candidate.compilerActivationProof
                 || !candidate.compilerActivationProof->isValid()
-                || verified.semanticMappingProof()
-                       != evidence->semanticMappingProof()
-                || verified.projectConfigurationSha256()
-                       != evidence->projectConfigurationSha256()) {
+                || verified.semanticMappingProof() != evidence->semanticMappingProof()
+                || verified.projectConfigurationSha256() != evidence->projectConfigurationSha256()) {
                 return Utils::ResultError(
                     "The deterministic compile-time project proof does not match");
             }
@@ -3648,8 +3842,29 @@ public:
             deadlineMs,
             deadlineMs,
             std::function<bool()>{},
+            exactProjectProofVerifier(),
+            adapterProviderSource());
+        return prepareCurrentRequest();
+    }
+
+    Utils::Result<> resetServiceWithoutAdapterOverride()
+    {
+        service = std::make_unique<TrustedRuntimePackageActivationService>(
+            &projects,
+            registry.get(),
+            repository,
+            journalRoot,
+            nullptr,
+            15000,
+            45000,
+            std::function<bool()>{},
             exactProjectProofVerifier());
         return prepareCurrentRequest();
+    }
+
+    AvailableDeviceAdapterProviderList adapterProviderSource() const
+    {
+        return [this] { return adapterProvidersOverride; };
     }
 
     QTemporaryDir temporary;
@@ -3673,10 +3888,12 @@ public:
     std::shared_ptr<const VerifiedRuntimePackageEvidence> evidence;
     QList<Data::DeviceAdapterManifest> adapterManifests;
     std::unique_ptr<ActivationAdapterProvider> ownedAdapterProvider;
+    QList<Core::DeviceAdapterProvider *> adapterProvidersOverride;
     std::unique_ptr<Core::ProviderRegistry> registry;
     std::unique_ptr<RegisteredObject> adapterRegistration;
     std::unique_ptr<RegisteredObject> registration;
     std::unique_ptr<TrustedRuntimePackageActivationService> service;
+    std::optional<Data::RuntimePackageActivationOperationId> preparationOperationIdOverride;
 };
 
 static Data::RuntimeResourceSnapshot factorySnapshot(
@@ -4834,7 +5051,10 @@ public:
             repository,
             liveRefreshTimeoutMs,
             liveSampleFreshnessMs,
-            std::move(utcNow));
+            std::move(utcNow),
+            [provider = ownedAdapterProvider.get()] {
+                return QList<Core::DeviceAdapterProvider *>{provider};
+            });
         if (executor->contexts().size() != 1 || !executor->contexts().constFirst().complete)
             return Utils::ResultError("The API-038 semantic execution context is incomplete");
         const Data::SemanticRuntimeContext &context = executor->contexts().constFirst();
@@ -8842,7 +9062,9 @@ void EtherCATSemanticRuntimeTests::testTrustedRuntimePackageActivation()
         Data::RuntimePackageActivationOutcome::SucceededWithActivatedPackage);
     QVERIFY(record.projectCommit());
     QCOMPARE(record.projectCommit()->resultingBinding(), fixture.targetBinding);
-    QCOMPARE(fixture.projects.activationCaptureCalls, 6);
+    // Preparation and start each bind authorization to an exact project
+    // capture, followed by the activation lifecycle fences.
+    QCOMPARE(fixture.projects.activationCaptureCalls, 7);
     QCOMPARE(fixture.projects.activationCompareAndSetCalls, 1);
     QCOMPARE(fixture.provider.deploymentRequests.size(), qsizetype(1));
     QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(2));
@@ -8984,12 +9206,17 @@ void EtherCATSemanticRuntimeTests::testTrustedRuntimePackageActivation()
     QTRY_VERIFY_WITH_TIMEOUT(!recoveredExisting.service, 5000);
     QCOMPARE(recoveredExisting.pendingGuardCount(), 1);
 
-    auto restartedExisting
-        = std::make_unique<TrustedRuntimePackageActivationService>(
-            &recoveredExisting.projects,
-            recoveredExisting.registry.get(),
-            recoveredExisting.repository,
-            recoveredExisting.journalRoot);
+    auto restartedExisting = std::make_unique<TrustedRuntimePackageActivationService>(
+        &recoveredExisting.projects,
+        recoveredExisting.registry.get(),
+        recoveredExisting.repository,
+        recoveredExisting.journalRoot,
+        nullptr,
+        15000,
+        45000,
+        std::function<bool()>{},
+        recoveredExisting.exactProjectProofVerifier(),
+        recoveredExisting.adapterProviderSource());
     QVERIFY(restartedExisting->hasUnresolvedRecoveryBarrier());
     const Core::RuntimePackageActivationCommandResult recoveredResult
         = restartedExisting->reconcile(
@@ -9027,12 +9254,17 @@ void EtherCATSemanticRuntimeTests::
             QStringLiteral("operation/runtime-activation/no-project-proof"),
             false);
         QVERIFY_RESULT(initialized);
-        fixture.service
-            = std::make_unique<TrustedRuntimePackageActivationService>(
-                &fixture.projects,
-                fixture.registry.get(),
-                fixture.repository,
-                fixture.journalRoot);
+        fixture.service = std::make_unique<TrustedRuntimePackageActivationService>(
+            &fixture.projects,
+            fixture.registry.get(),
+            fixture.repository,
+            fixture.journalRoot,
+            nullptr,
+            15000,
+            45000,
+            std::function<bool()>{},
+            TrustedRuntimePackageActivationService::ExactCompileTimeProjectProofVerifier{},
+            fixture.adapterProviderSource());
         const Core::RuntimePackageActivationPreparationResult prepared
             = fixture.service->prepare({
                 fixture.identity.operationId(),
@@ -9062,24 +9294,21 @@ void EtherCATSemanticRuntimeTests::
             QStringLiteral("operation/runtime-activation/project-proof-rejected"),
             false);
         QVERIFY_RESULT(initialized);
-        fixture.service
-            = std::make_unique<TrustedRuntimePackageActivationService>(
-                &fixture.projects,
-                fixture.registry.get(),
-                fixture.repository,
-                fixture.journalRoot,
-                nullptr,
-                15000,
-                45000,
-                std::function<bool()>{},
-                [](
-                    const Core::RuntimePackageActivationPreparationRequest &,
-                    const Data::RuntimePackageActivationProjectCapture &,
-                    const VerifiedRuntimePackageEvidence &)
-                    -> Utils::Result<> {
-                    return Utils::ResultError(
-                        "The signed project projection receipt differs");
-                });
+        fixture.service = std::make_unique<TrustedRuntimePackageActivationService>(
+            &fixture.projects,
+            fixture.registry.get(),
+            fixture.repository,
+            fixture.journalRoot,
+            nullptr,
+            15000,
+            45000,
+            std::function<bool()>{},
+            [](const Core::RuntimePackageActivationPreparationRequest &,
+               const Data::RuntimePackageActivationProjectCapture &,
+               const VerifiedRuntimePackageEvidence &) -> Utils::Result<> {
+                return Utils::ResultError("The signed project projection receipt differs");
+            },
+            fixture.adapterProviderSource());
         const Core::RuntimePackageActivationPreparationResult prepared
             = fixture.service->prepare({
                 fixture.identity.operationId(),
@@ -9110,17 +9339,17 @@ void EtherCATSemanticRuntimeTests::
             QStringLiteral("operation/runtime-activation/journal-update"));
         QVERIFY_RESULT(initialized);
         int journalCommits = 0;
-        fixture.service
-            = std::make_unique<TrustedRuntimePackageActivationService>(
-                &fixture.projects,
-                fixture.registry.get(),
-                fixture.repository,
-                fixture.journalRoot,
-                nullptr,
-                15000,
-                45000,
-                [&journalCommits] { return ++journalCommits == 3; },
-                fixture.exactProjectProofVerifier());
+        fixture.service = std::make_unique<TrustedRuntimePackageActivationService>(
+            &fixture.projects,
+            fixture.registry.get(),
+            fixture.repository,
+            fixture.journalRoot,
+            nullptr,
+            15000,
+            45000,
+            [&journalCommits] { return ++journalCommits == 3; },
+            fixture.exactProjectProofVerifier(),
+            fixture.adapterProviderSource());
         QVERIFY_RESULT(fixture.prepareCurrentRequest());
         QVERIFY(fixture.service->start(fixture.request).accepted());
         QTRY_VERIFY_WITH_TIMEOUT(
@@ -9146,19 +9375,17 @@ void EtherCATSemanticRuntimeTests::
             ActivationControllerProvider::DeploymentMode::Succeed,
             QStringLiteral("operation/runtime-activation/project-journal"));
         QVERIFY_RESULT(initialized);
-        fixture.service
-            = std::make_unique<TrustedRuntimePackageActivationService>(
-                &fixture.projects,
-                fixture.registry.get(),
-                fixture.repository,
-                fixture.journalRoot,
-                nullptr,
-                15000,
-                45000,
-                [&fixture] {
-                    return fixture.projects.activationSaveCalls > 0;
-                },
-                fixture.exactProjectProofVerifier());
+        fixture.service = std::make_unique<TrustedRuntimePackageActivationService>(
+            &fixture.projects,
+            fixture.registry.get(),
+            fixture.repository,
+            fixture.journalRoot,
+            nullptr,
+            15000,
+            45000,
+            [&fixture] { return fixture.projects.activationSaveCalls > 0; },
+            fixture.exactProjectProofVerifier(),
+            fixture.adapterProviderSource());
         QVERIFY_RESULT(fixture.prepareCurrentRequest());
         QVERIFY(fixture.service->start(fixture.request).accepted());
         QTRY_VERIFY_WITH_TIMEOUT(
@@ -9183,12 +9410,17 @@ void EtherCATSemanticRuntimeTests::
         QCOMPARE(fixture.pendingGuardCount(), 1);
 
         fixture.service.reset();
-        auto restarted
-            = std::make_unique<TrustedRuntimePackageActivationService>(
-                &fixture.projects,
-                fixture.registry.get(),
-                fixture.repository,
-                fixture.journalRoot);
+        auto restarted = std::make_unique<TrustedRuntimePackageActivationService>(
+            &fixture.projects,
+            fixture.registry.get(),
+            fixture.repository,
+            fixture.journalRoot,
+            nullptr,
+            15000,
+            45000,
+            std::function<bool()>{},
+            fixture.exactProjectProofVerifier(),
+            fixture.adapterProviderSource());
         QVERIFY(restarted->hasUnresolvedRecoveryBarrier());
         const auto reconciliation
             = restarted->reconcile(fixture.identity.operationId());
@@ -9230,19 +9462,17 @@ void EtherCATSemanticRuntimeTests::
             = Data::ControllerPackageState::Active;
         fixture.provider.snapshot.controllerState->serviceState
             = Data::ControllerServiceState::OperationalSafe;
-        fixture.service
-            = std::make_unique<TrustedRuntimePackageActivationService>(
-                &fixture.projects,
-                fixture.registry.get(),
-                fixture.repository,
-                fixture.journalRoot,
-                nullptr,
-                15000,
-                45000,
-                [&fixture] {
-                    return fixture.projects.activationSaveCalls > 0;
-                },
-                fixture.exactProjectProofVerifier());
+        fixture.service = std::make_unique<TrustedRuntimePackageActivationService>(
+            &fixture.projects,
+            fixture.registry.get(),
+            fixture.repository,
+            fixture.journalRoot,
+            nullptr,
+            15000,
+            45000,
+            [&fixture] { return fixture.projects.activationSaveCalls > 0; },
+            fixture.exactProjectProofVerifier(),
+            fixture.adapterProviderSource());
         QVERIFY_RESULT(fixture.prepareCurrentRequest());
         QVERIFY(fixture.service->start(fixture.request).accepted());
         QTRY_VERIFY_WITH_TIMEOUT(
@@ -9261,12 +9491,17 @@ void EtherCATSemanticRuntimeTests::
         QCOMPARE(fixture.pendingGuardCount(), 1);
 
         fixture.service.reset();
-        auto restarted
-            = std::make_unique<TrustedRuntimePackageActivationService>(
-                &fixture.projects,
-                fixture.registry.get(),
-                fixture.repository,
-                fixture.journalRoot);
+        auto restarted = std::make_unique<TrustedRuntimePackageActivationService>(
+            &fixture.projects,
+            fixture.registry.get(),
+            fixture.repository,
+            fixture.journalRoot,
+            nullptr,
+            15000,
+            45000,
+            std::function<bool()>{},
+            fixture.exactProjectProofVerifier(),
+            fixture.adapterProviderSource());
         QVERIFY(restarted->hasUnresolvedRecoveryBarrier());
         const auto reconciliation
             = restarted->reconcile(fixture.identity.operationId());
@@ -9791,12 +10026,17 @@ void EtherCATSemanticRuntimeTests::
         QCOMPARE(fixture.pendingGuardCount(), 1);
 
         fixture.service.reset();
-        auto restarted
-            = std::make_unique<TrustedRuntimePackageActivationService>(
-                &fixture.projects,
-                fixture.registry.get(),
-                fixture.repository,
-                fixture.journalRoot);
+        auto restarted = std::make_unique<TrustedRuntimePackageActivationService>(
+            &fixture.projects,
+            fixture.registry.get(),
+            fixture.repository,
+            fixture.journalRoot,
+            nullptr,
+            15000,
+            45000,
+            std::function<bool()>{},
+            fixture.exactProjectProofVerifier(),
+            fixture.adapterProviderSource());
         QVERIFY(restarted->hasUnresolvedRecoveryBarrier());
         const auto blocked = restarted->start(fixture.request);
         QVERIFY(blocked.isValid());
@@ -9867,12 +10107,17 @@ void EtherCATSemanticRuntimeTests::
         fixture.provider.snapshot.controllerState->serviceState
             = Data::ControllerServiceState::OperationalSafe;
 
-        auto restarted
-            = std::make_unique<TrustedRuntimePackageActivationService>(
-                &fixture.projects,
-                fixture.registry.get(),
-                fixture.repository,
-                fixture.journalRoot);
+        auto restarted = std::make_unique<TrustedRuntimePackageActivationService>(
+            &fixture.projects,
+            fixture.registry.get(),
+            fixture.repository,
+            fixture.journalRoot,
+            nullptr,
+            15000,
+            45000,
+            std::function<bool()>{},
+            fixture.exactProjectProofVerifier(),
+            fixture.adapterProviderSource());
         const auto reconciliation
             = restarted->reconcile(fixture.identity.operationId());
         QVERIFY(reconciliation.isValid());
@@ -11087,6 +11332,819 @@ void EtherCATSemanticRuntimeTests::testSemanticActionRuntimeFactoryFailsClosed()
     QCOMPARE(setOutputs->detail, QStringLiteral("manual_action_fallback_unsupported"));
 }
 
+void EtherCATSemanticRuntimeTests::testAdapterAuthorizationFactoryAdmission()
+{
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidenceResult = api038ActionEvidence();
+    QVERIFY_RESULT(evidenceResult);
+    const VerifiedRuntimePackageEvidence evidence = *evidenceResult;
+    const Utils::Result<QList<Data::DeviceAdapterManifest>> manifestsResult
+        = api038HistoricalTestAdapters(evidence);
+    QVERIFY_RESULT(manifestsResult);
+    const QList<Data::DeviceAdapterManifest> manifests = *manifestsResult;
+
+    Data::ProjectSnapshot project = factoryProject(evidence);
+    configureApi038V3ManualProject(project, manifests);
+    Data::OfflineSlaveConfiguration *slave = factoryManualSlave(project);
+    QVERIFY(slave);
+
+    QObject owner;
+    quint64 generation = 1;
+    ActivationAdapterProvider authorizedProvider(manifests);
+    QList<Core::DeviceAdapterProvider *> providers{&authorizedProvider};
+    AvailableDeviceAdapterProviders available
+        = testAdapterProviders(&owner, &generation, &providers);
+
+    const Utils::Result<SemanticActionAdapterResolution> resolved
+        = resolveSemanticActionAdapter(*slave, available);
+    QVERIFY_RESULT(resolved);
+    QVERIFY(resolved->authorization);
+    QCOMPARE(resolved->manifest.id, slave->adapterSelection.adapterId);
+    QCOMPARE(
+        resolved->authorization->snapshot.generation,
+        authorizedProvider.authorizationSnapshot.generation);
+
+    const Data::RuntimeResourceCatalog catalog = factoryCatalog(project, evidence);
+    const Data::RuntimeSemanticMappingAttestation attestation
+        = factoryAttestation(catalog, evidence);
+    const Utils::Result<ReadOnlySemanticBindingCandidates> candidates
+        = buildReadOnlySemanticBindingCandidates(
+            u"embed-labs.product-api", project, evidence, catalog, attestation);
+    QVERIFY_RESULT(candidates);
+    const Utils::Result<QList<Data::SemanticActionRuntimeState>> states
+        = buildSemanticActionRuntimeStates(
+            u"embed-labs.product-api",
+            project,
+            evidence,
+            *candidates,
+            available,
+            {
+                true,
+                true,
+                Data::ControllerServiceState::OperationalSafe,
+                true,
+            });
+    QVERIFY_RESULT(states);
+    QCOMPARE(
+        std::count_if(
+            states->cbegin(),
+            states->cend(),
+            [](const Data::SemanticActionRuntimeState &state) {
+                return state.availability == Data::SemanticActionAvailability::Ready;
+            }),
+        qsizetype(2));
+
+    const Data::DeviceAdapterManifest selected = resolved->manifest;
+    for (const bool nonemptyParameters : {false, true}) {
+        Data::DeviceAdapterManifest v4 = selected;
+        v4.contractVersion = Data::DeviceAdapterContractVersion::V4;
+        if (nonemptyParameters) {
+            Data::DeviceParameterDefinition parameter;
+            parameter.id = QStringLiteral("test_parameter");
+            v4.parameterDefinitions.append(parameter);
+        } else {
+            v4.parameterDefinitions.clear();
+        }
+        Data::OfflineSlaveConfiguration v4Slave = *slave;
+        v4Slave.adapterSelection.adapterId = v4.id;
+        v4Slave.adapterSelection.adapterVersion = v4.version;
+        v4Slave.adapterSelection.adapterContentSha256 = v4.contentSha256;
+        ActivationAdapterProvider v4Provider({v4});
+        QList<Core::DeviceAdapterProvider *> v4Providers{&v4Provider};
+        quint64 v4Generation = 1;
+        const Utils::Result<SemanticActionAdapterResolution> unsupported
+            = resolveSemanticActionAdapter(
+                v4Slave, testAdapterProviders(&owner, &v4Generation, &v4Providers));
+        QVERIFY(!unsupported);
+        QCOMPARE(unsupported.error(), QStringLiteral("manual_adapter_contract_version_unsupported"));
+    }
+
+    Data::DeviceAdapterManifest parameterizedV3 = selected;
+    Data::DeviceParameterDefinition parameter;
+    parameter.id = QStringLiteral("test_parameter");
+    parameterizedV3.parameterDefinitions.append(parameter);
+    ActivationAdapterProvider parameterizedV3Provider({parameterizedV3});
+    QList<Core::DeviceAdapterProvider *> parameterizedV3Providers{&parameterizedV3Provider};
+    quint64 parameterizedV3Generation = 1;
+    const Utils::Result<SemanticActionAdapterResolution> parameterizedV3Rejected
+        = resolveSemanticActionAdapter(
+            *slave,
+            testAdapterProviders(&owner, &parameterizedV3Generation, &parameterizedV3Providers));
+    QVERIFY(!parameterizedV3Rejected);
+    QCOMPARE(
+        parameterizedV3Rejected.error(),
+        QStringLiteral("manual_adapter_contract_version_unsupported"));
+
+    ManifestOnlyActivationAdapterProvider manifestOnly(manifests);
+    providers = {&manifestOnly};
+    ++generation;
+    const Utils::Result<SemanticActionAdapterResolution> noSource
+        = resolveSemanticActionAdapter(*slave, available);
+    QVERIFY(!noSource);
+    QCOMPARE(noSource.error(), QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+
+    const auto otherManifest = std::find_if(
+        manifests.cbegin(),
+        manifests.cend(),
+        [&selected](const Data::DeviceAdapterManifest &manifest) {
+            return manifest.id != selected.id;
+        });
+    QVERIFY(otherManifest != manifests.cend());
+    ActivationAdapterProvider otherSource({*otherManifest});
+    providers = {&authorizedProvider, &otherSource};
+    ++generation;
+    const Utils::Result<SemanticActionAdapterResolution> multipleSources
+        = resolveSemanticActionAdapter(*slave, available);
+    QVERIFY(!multipleSources);
+    QCOMPARE(
+        multipleSources.error(), QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+
+    ActivationAdapterProvider duplicateSource({selected});
+    providers = {&authorizedProvider, &duplicateSource};
+    ++generation;
+    const Utils::Result<SemanticActionAdapterResolution> duplicateManifest
+        = resolveSemanticActionAdapter(*slave, available);
+    QVERIFY(!duplicateManifest);
+    QCOMPARE(duplicateManifest.error(), QStringLiteral("manual_adapter_not_authorized"));
+
+    providers = {&authorizedProvider};
+    ++generation;
+    const auto selectedRecord = std::find_if(
+        authorizedProvider.authorizationSnapshot.records.begin(),
+        authorizedProvider.authorizationSnapshot.records.end(),
+        [&selected](const Data::DeviceAdapterAuthorizationProvenance &record) {
+            return record.adapterId == selected.id && record.adapterVersion == selected.version
+                   && record.adapterContentSha256 == selected.contentSha256;
+        });
+    QVERIFY(selectedRecord != authorizedProvider.authorizationSnapshot.records.end());
+    selectedRecord->adapterBindingSha256[0] ^= '\x01';
+    const Utils::Result<SemanticActionAdapterResolution> forgedRecord
+        = resolveSemanticActionAdapter(*slave, available);
+    QVERIFY(!forgedRecord);
+    QCOMPARE(forgedRecord.error(), QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+
+    authorizedProvider.rebuildAuthorizationSnapshot();
+    ++generation;
+    authorizedProvider.validateManifestAccepted = false;
+    const Utils::Result<SemanticActionAdapterResolution> validateRejected
+        = resolveSemanticActionAdapter(*slave, available);
+    QVERIFY(!validateRejected);
+    QCOMPARE(
+        validateRejected.error(),
+        QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+
+    authorizedProvider.validateManifestAccepted = true;
+    authorizedProvider.nextValidateManifest = [&authorizedProvider, &generation] {
+        ++generation;
+        authorizedProvider.rotateAuthorization();
+    };
+    const Utils::Result<SemanticActionAdapterResolution> changedDuringValidation
+        = resolveSemanticActionAdapter(*slave, available);
+    QVERIFY(!changedDuringValidation);
+    QCOMPARE(
+        changedDuringValidation.error(),
+        QStringLiteral("manual_adapter_authorization_provenance_unproven"));
+}
+
+void EtherCATSemanticRuntimeTests::testAdapterAuthorizationExecutorAdmission()
+{
+    const auto requestFor = [](const Data::SemanticRuntimeContext &context,
+                               QStringView operationId) {
+        Data::SemanticOperationRequest request
+            = api038ActionRequest(context, u"embedlabs:project:action:xb6:set-outputs", operationId);
+        setApi038DigitalOutputParameters(request);
+        return request;
+    };
+    const auto approvalFor = [](const Data::SemanticOperationRecord &submitted,
+                                const Data::SemanticRuntimeContext &context) {
+        Data::SemanticOperationApprovalRequest approval;
+        approval.operationId = submitted.request.operationId;
+        approval.decision = Data::SemanticApprovalDecision::Approved;
+        approval.challenge = submitted.approvalChallenge;
+        approval.expectedRequestDigest = submitted.canonicalRequestDigest;
+        approval.expectedContextHash = context.contextHash;
+        approval.detail = QStringLiteral("Adapter authorization provenance regression approval.");
+        return approval;
+    };
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request
+            = requestFor(context, u"operation/adapter-auth/submit-replay-rotation");
+        const Data::SemanticOperationRecord submitted
+            = fixture.executor->submit(request, api038Submitter());
+        QCOMPARE(submitted.state, Data::SemanticOperationState::ApprovalRequired);
+
+        fixture.ownedAdapterProvider->rotateAuthorization();
+        const Data::SemanticOperationRecord replayed
+            = fixture.executor->submit(request, api038Submitter());
+        QCOMPARE(replayed.request.operationId, submitted.request.operationId);
+        QCOMPARE(replayed.canonicalRequestDigest, submitted.canonicalRequestDigest);
+        QCOMPARE(replayed.state, Data::SemanticOperationState::ApprovalRequired);
+
+        const Data::SemanticOperationRecord rejected
+            = fixture.executor->approve(approvalFor(submitted, context), api038Approver());
+        QVERIFY(rejected.state != Data::SemanticOperationState::Approved);
+        QVERIFY(!rejected.executionAttempted);
+        QVERIFY(fixture.provider.snapshotRequests.isEmpty());
+        QVERIFY(fixture.provider.policyRequests.isEmpty());
+        QVERIFY(fixture.provider.stateRequests.isEmpty());
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request
+            = requestFor(context, u"operation/adapter-auth/start-rotation");
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        fixture.ownedAdapterProvider->rotateAuthorization();
+        QTRY_VERIFY(fixture.executor->operation(request.operationId).has_value());
+        QTRY_COMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::Failed);
+        QVERIFY(fixture.provider.snapshotRequests.isEmpty());
+        QVERIFY(fixture.provider.policyRequests.isEmpty());
+        QVERIFY(fixture.provider.stateRequests.isEmpty());
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request
+            = requestFor(context, u"operation/adapter-auth/provider-step-rotation");
+        fixture.provider.nextProviderRequestStarted = [&fixture] {
+            fixture.ownedAdapterProvider->rotateAuthorization();
+        };
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest.has_value());
+        const Data::RuntimeResourceSnapshotRequest beforeRequest
+            = *fixture.provider.pendingSnapshotRequest;
+        fixture.provider.sendSnapshotResult({
+            beforeRequest,
+            targetedSnapshot(
+                fixture.snapshot,
+                beforeRequest,
+                {},
+                fixture.snapshot.snapshotSequence + 1,
+                fixture.snapshot.captureCycle + 1,
+                fixture.snapshot.controllerTimestampNs + 1),
+            {},
+        });
+        QTRY_COMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::Failed);
+        QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(1));
+        QVERIFY(fixture.provider.policyRequests.isEmpty());
+        QVERIFY(fixture.provider.stateRequests.isEmpty());
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest activeRequest
+            = requestFor(context, u"operation/adapter-auth/queued-active");
+        const Data::SemanticOperationRequest queuedRequest
+            = requestFor(context, u"operation/adapter-auth/queued-pending");
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, activeRequest).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest.has_value());
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, queuedRequest).state,
+            Data::SemanticOperationState::Approved);
+
+        fixture.ownedAdapterProvider->rotateAuthorization();
+        const Data::RuntimeResourceSnapshotRequest beforeRequest
+            = *fixture.provider.pendingSnapshotRequest;
+        fixture.provider.sendSnapshotResult({
+            beforeRequest,
+            targetedSnapshot(
+                fixture.snapshot,
+                beforeRequest,
+                {},
+                fixture.snapshot.snapshotSequence + 2,
+                fixture.snapshot.captureCycle + 2,
+                fixture.snapshot.controllerTimestampNs + 2),
+            {},
+        });
+        QTRY_COMPARE(
+            fixture.executor->operation(activeRequest.operationId)->state,
+            Data::SemanticOperationState::Failed);
+        QTRY_COMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Failed);
+        QCOMPARE(fixture.provider.snapshotRequests.size(), qsizetype(1));
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+        QCOMPARE(fixture.provider.pendingRequestCount(), 0);
+    }
+}
+
+void EtherCATSemanticRuntimeTests::testAdapterAuthorizationActivationAdmission()
+{
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/adapter-auth/activation-rotation"));
+        QVERIFY_RESULT(initialized);
+        fixture.ownedAdapterProvider->rotateAuthorization();
+        const Core::RuntimePackageActivationCommandResult rejected = fixture.service->start(
+            fixture.request);
+        QCOMPARE(
+            rejected.disposition, Core::RuntimePackageActivationCommandDisposition::InvalidRequest);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/adapter-auth/catalog-drift"));
+        QVERIFY_RESULT(initialized);
+        QList<Data::DeviceAdapterManifest> changed = fixture.ownedAdapterProvider->manifests;
+        Data::DeviceAdapterManifest extra = changed.constFirst();
+        extra.id.value.append(QStringLiteral(".catalog-drift"));
+        extra.version = QStringLiteral("9.9.9");
+        extra.contentSha256
+            = QCryptographicHash::hash(QByteArray("catalog-drift"), QCryptographicHash::Sha256);
+        changed.append(std::move(extra));
+        fixture.ownedAdapterProvider->replaceManifests(std::move(changed));
+        const Core::RuntimePackageActivationCommandResult rejected = fixture.service->start(
+            fixture.request);
+        QCOMPARE(
+            rejected.disposition, Core::RuntimePackageActivationCommandDisposition::InvalidRequest);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/adapter-auth/sibling-catalog-drift"));
+        QVERIFY_RESULT(initialized);
+        Data::DeviceAdapterManifest siblingManifest
+            = fixture.ownedAdapterProvider->manifests.constFirst();
+        siblingManifest.id.value.append(QStringLiteral(".sibling"));
+        siblingManifest.version = QStringLiteral("8.8.8");
+        siblingManifest.contentSha256 = QCryptographicHash::hash(
+            QByteArray("sibling-catalog-drift"), QCryptographicHash::Sha256);
+        ManifestOnlyActivationAdapterProvider sibling({siblingManifest});
+        fixture.adapterProvidersOverride.append(&sibling);
+        const Core::RuntimePackageActivationCommandResult rejected = fixture.service->start(
+            fixture.request);
+        QCOMPARE(
+            rejected.disposition, Core::RuntimePackageActivationCommandDisposition::InvalidRequest);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/adapter-auth/registry-positive"),
+            false);
+        QVERIFY_RESULT(initialized);
+
+        QList<QObject *> displacedAdapterProviders;
+        for (Core::Provider *provider :
+             fixture.registry->providers(Core::ProviderKind::DeviceAdapter)) {
+            if (provider == fixture.ownedAdapterProvider.get())
+                continue;
+            displacedAdapterProviders.append(provider);
+            ExtensionSystem::PluginManager::removeObject(provider);
+        }
+        fixture.adapterRegistration->remove();
+        fixture.adapterRegistration.reset();
+        fixture.adapterRegistration = std::make_unique<RegisteredObject>(
+            fixture.ownedAdapterProvider.get());
+        const auto restoreProviders = qScopeGuard([&fixture, displacedAdapterProviders] {
+            fixture.adapterRegistration.reset();
+            for (QObject *provider : displacedAdapterProviders)
+                ExtensionSystem::PluginManager::addObject(provider);
+        });
+
+        const Utils::Result<> reset = fixture.resetServiceWithoutAdapterOverride();
+        QVERIFY_RESULT(reset);
+        const Core::RuntimePackageActivationCommandResult accepted = fixture.service->start(
+            fixture.request);
+        QCOMPARE(accepted.disposition, Core::RuntimePackageActivationCommandDisposition::Accepted);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(fixture.identity.operationId())->outcome()),
+            5000);
+        QCOMPARE(fixture.provider.deploymentRequests.size(), qsizetype(1));
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/adapter-auth/reentrant-a"));
+        QVERIFY_RESULT(initialized);
+        const Data::RuntimePackageActivationRequest requestA = fixture.request;
+        const Core::RuntimePackageActivationPreparationResult preparedB = fixture.prepareOperation(
+            Data::RuntimePackageActivationOperationId{
+                QStringLiteral("operation/adapter-auth/reentrant-b")});
+        QVERIFY(preparedB.succeeded());
+        QVERIFY(preparedB.request);
+        const Data::RuntimePackageActivationRequest requestB = *preparedB.request;
+        std::optional<Core::RuntimePackageActivationCommandResult> nested;
+        fixture.ownedAdapterProvider->nextSnapshotRead = [&fixture, &nested, requestB] {
+            nested = fixture.service->start(requestB);
+        };
+        const Core::RuntimePackageActivationCommandResult outer = fixture.service->start(requestA);
+        QCOMPARE(outer.disposition, Core::RuntimePackageActivationCommandDisposition::Accepted);
+        QVERIFY(nested);
+        QCOMPARE(
+            nested->disposition, Core::RuntimePackageActivationCommandDisposition::InvalidRequest);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(requestA.identity().operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(requestA.identity().operationId())->outcome()),
+            5000);
+        QCOMPARE(fixture.provider.deploymentRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(2));
+        QVERIFY(!fixture.service->record(preparedB.request->identity().operationId()));
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/adapter-auth/drift-before-deploy"));
+        QVERIFY_RESULT(initialized);
+        const auto rotateAtDeploy = std::make_shared<std::function<void()>>();
+        const std::weak_ptr<std::function<void()>> weakRotateAtDeploy = rotateAtDeploy;
+        *rotateAtDeploy = [&fixture, weakRotateAtDeploy] {
+            const std::optional<Data::RuntimePackageActivationRecord> record
+                = fixture.service ? fixture.service->record(fixture.identity.operationId())
+                                  : std::nullopt;
+            if (record && record->phase() == Data::RuntimePackageActivationPhase::DeployingPackage) {
+                fixture.ownedAdapterProvider->rotateAuthorization();
+                return;
+            }
+            if (const auto current = weakRotateAtDeploy.lock()) {
+                fixture.ownedAdapterProvider->nextValidateManifest = *current;
+            }
+        };
+        fixture.ownedAdapterProvider->nextValidateManifest = *rotateAtDeploy;
+        QCOMPARE(
+            fixture.service->start(fixture.request).disposition,
+            Core::RuntimePackageActivationCommandDisposition::Accepted);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(fixture.identity.operationId())->outcome()),
+            5000);
+        QCOMPARE(
+            fixture.service->record(fixture.identity.operationId())->outcome(),
+            Data::RuntimePackageActivationOutcome::FailedWithoutControllerChange);
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(2));
+        QCOMPARE(
+            fixture.provider.controlRequests.constFirst().command,
+            Data::ControllerControlCommand::AcquireControl);
+        QCOMPARE(
+            fixture.provider.controlRequests.constLast().command,
+            Data::ControllerControlCommand::ReleaseControl);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/adapter-auth/existing-drift-no-lease"));
+        QVERIFY_RESULT(initialized);
+        fixture.provider.snapshot.package->activeSlot = fixture.provider.candidate.slot;
+        fixture.provider.snapshot.package->activeGeneration = fixture.provider.candidate.generation;
+        fixture.provider.snapshot.package->activeConfigurationId
+            = fixture.provider.candidate.configurationId;
+        fixture.provider.snapshot.package->controllerState = Data::ControllerPackageState::Active;
+        fixture.provider.snapshot.controllerState->serviceState
+            = Data::ControllerServiceState::OperationalSafe;
+        const auto rotateAtExistingProbe = std::make_shared<std::function<void()>>();
+        const std::weak_ptr<std::function<void()>> weakRotateAtExistingProbe = rotateAtExistingProbe;
+        *rotateAtExistingProbe = [&fixture, weakRotateAtExistingProbe] {
+            const std::optional<Data::RuntimePackageActivationRecord> record
+                = fixture.service ? fixture.service->record(fixture.identity.operationId())
+                                  : std::nullopt;
+            if (record
+                && record->phase() == Data::RuntimePackageActivationPhase::ProbingExistingPackage) {
+                fixture.ownedAdapterProvider->rotateAuthorization();
+                return;
+            }
+            if (const auto current = weakRotateAtExistingProbe.lock()) {
+                fixture.ownedAdapterProvider->nextValidateManifest = *current;
+            }
+        };
+        fixture.ownedAdapterProvider->nextValidateManifest = *rotateAtExistingProbe;
+        QCOMPARE(
+            fixture.service->start(fixture.request).disposition,
+            Core::RuntimePackageActivationCommandDisposition::Accepted);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(fixture.identity.operationId())->outcome()),
+            5000);
+        QCOMPARE(
+            fixture.service->record(fixture.identity.operationId())->outcome(),
+            Data::RuntimePackageActivationOutcome::FailedWithoutControllerChange);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::FailTerminal,
+            QStringLiteral("operation/adapter-auth/release-after-revocation"));
+        QVERIFY_RESULT(initialized);
+        fixture.provider.nextDeploymentRequestStarted = [&fixture] {
+            fixture.ownedAdapterProvider->rotateAuthorization();
+        };
+        QVERIFY(fixture.service->start(fixture.request).accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(fixture.identity.operationId())->outcome()),
+            5000);
+        QCOMPARE(fixture.provider.deploymentRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.controlRequests.size(), qsizetype(2));
+        QCOMPARE(
+            fixture.provider.controlRequests.constLast().command,
+            Data::ControllerControlCommand::ReleaseControl);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::OutcomeUnknown,
+            QStringLiteral("operation/adapter-auth/reconcile-after-revocation"));
+        QVERIFY_RESULT(initialized);
+        fixture.provider.nextDeploymentRequestStarted = [&fixture] {
+            fixture.ownedAdapterProvider->rotateAuthorization();
+        };
+        QVERIFY(fixture.service->start(fixture.request).accepted());
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && fixture.service->record(fixture.identity.operationId())->needsReconciliation(),
+            5000);
+        const Core::RuntimePackageActivationCommandResult reconciled = fixture.service->reconcile(
+            fixture.identity.operationId());
+        QCOMPARE(reconciled.disposition, Core::RuntimePackageActivationCommandDisposition::Accepted);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(fixture.identity.operationId())->outcome()),
+            5000);
+        QCOMPARE(
+            fixture.provider.controlRequests.constLast().command,
+            Data::ControllerControlCommand::ReleaseControl);
+    }
+}
+
+void EtherCATSemanticRuntimeTests::testAdapterAuthorizationLifetimeGuards()
+{
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/adapter-auth/delete-executor");
+        setApi038DigitalOutputParameters(request);
+        QPointer<SemanticRuntimeExecutor> guardedExecutor(fixture.executor.get());
+        fixture.ownedAdapterProvider->nextSnapshotRead = [&fixture] { fixture.executor.reset(); };
+        guardedExecutor->submit(request, api038Submitter());
+        QVERIFY(!guardedExecutor);
+        QVERIFY(fixture.provider.snapshotRequests.isEmpty());
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/adapter-auth/same-value-signal");
+        setApi038DigitalOutputParameters(request);
+        const Data::SemanticOperationRecord submitted
+            = fixture.executor->submit(request, api038Submitter());
+        QCOMPARE(submitted.state, Data::SemanticOperationState::ApprovalRequired);
+        QSignalSpy
+            contextsChanged(fixture.executor.get(), &Core::SemanticRuntimeService::contextsChanged);
+        QVERIFY(contextsChanged.isValid());
+        bool observedReadyCleared = false;
+        QObject::connect(
+            fixture.executor.get(),
+            &Core::SemanticRuntimeService::contextsChanged,
+            fixture.executor.get(),
+            [&fixture, &observedReadyCleared] {
+                const QList<Data::SemanticRuntimeContext> currentContexts
+                    = fixture.executor->contexts();
+                observedReadyCleared
+                    = observedReadyCleared
+                      || std::none_of(
+                          currentContexts.cbegin(),
+                          currentContexts.cend(),
+                          [](const Data::SemanticRuntimeContext &current) {
+                              return std::any_of(
+                                  current.actionStates.cbegin(),
+                                  current.actionStates.cend(),
+                                  [](const Data::SemanticActionRuntimeState &action) {
+                                      return action.availability
+                                             == Data::SemanticActionAvailability::Ready;
+                                  });
+                          });
+            },
+            Qt::DirectConnection);
+        fixture.ownedAdapterProvider->nextSnapshotRead = [&fixture] {
+            fixture.ownedAdapterProvider->publishSameAuthorizationChanged();
+        };
+        fixture.projects.changeProject(fixture.project);
+        QTRY_VERIFY_WITH_TIMEOUT(observedReadyCleared, 1000);
+        Data::SemanticOperationApprovalRequest approval;
+        approval.operationId = request.operationId;
+        approval.decision = Data::SemanticApprovalDecision::Approved;
+        approval.challenge = submitted.approvalChallenge;
+        approval.expectedRequestDigest = submitted.canonicalRequestDigest;
+        approval.expectedContextHash = context.contextHash;
+        const Data::SemanticOperationRecord rejected
+            = fixture.executor->approve(approval, api038Approver());
+        QVERIFY(rejected.state != Data::SemanticOperationState::Approved);
+        QTRY_VERIFY_WITH_TIMEOUT(contextsChanged.count() >= 1, 1000);
+        QVERIFY(fixture.provider.snapshotRequests.isEmpty());
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/adapter-auth/delete-service-source"),
+            false);
+        QVERIFY_RESULT(initialized);
+        QPointer<TrustedRuntimePackageActivationService> guardedService(fixture.service.get());
+        fixture.ownedAdapterProvider->nextValidateManifest = [&fixture] { fixture.service.reset(); };
+        fixture.prepareCurrentRequest();
+        QVERIFY(!guardedService);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/adapter-auth/delete-controller"));
+        QVERIFY_RESULT(initialized);
+        QPointer<ActivationControllerProvider> guardedController(fixture.ownedProvider.get());
+        const std::shared_ptr<ActivationControllerCallCounts> callCounts
+            = fixture.provider.callCounts;
+        fixture.ownedAdapterProvider->nextSnapshotRead = [&fixture] {
+            fixture.registration->remove();
+            fixture.ownedProvider.reset();
+        };
+        const Core::RuntimePackageActivationCommandResult accepted = fixture.service->start(
+            fixture.request);
+        QCOMPARE(accepted.disposition, Core::RuntimePackageActivationCommandDisposition::Accepted);
+        QVERIFY(!guardedController);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(fixture.identity.operationId())->outcome()),
+            5000);
+        QCOMPARE(
+            fixture.service->record(fixture.identity.operationId())->outcome(),
+            Data::RuntimePackageActivationOutcome::FailedWithoutControllerChange);
+        QCOMPARE(callCounts->control, 0);
+        QCOMPARE(callCounts->deployment, 0);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/adapter-auth/delete-controller-validate"));
+        QVERIFY_RESULT(initialized);
+        const std::shared_ptr<ActivationControllerCallCounts> callCounts
+            = fixture.provider.callCounts;
+        QPointer<ActivationControllerProvider> guardedController(fixture.ownedProvider.get());
+        const Core::RuntimePackageActivationCommandResult accepted = fixture.service->start(
+            fixture.request);
+        QCOMPARE(accepted.disposition, Core::RuntimePackageActivationCommandDisposition::Accepted);
+        const auto deleteAtAcquire = std::make_shared<std::function<void()>>();
+        const std::weak_ptr<std::function<void()>> weakDeleteAtAcquire = deleteAtAcquire;
+        *deleteAtAcquire = [&fixture, weakDeleteAtAcquire] {
+            const std::optional<Data::RuntimePackageActivationRecord> record
+                = fixture.service ? fixture.service->record(fixture.identity.operationId())
+                                  : std::nullopt;
+            if (record && record->phase() == Data::RuntimePackageActivationPhase::AcquiringControl) {
+                fixture.registration->remove();
+                fixture.ownedProvider.reset();
+                return;
+            }
+            if (const auto current = weakDeleteAtAcquire.lock()) {
+                fixture.ownedAdapterProvider->nextValidateManifest = *current;
+            }
+        };
+        fixture.ownedAdapterProvider->nextValidateManifest = *deleteAtAcquire;
+        QTRY_VERIFY_WITH_TIMEOUT(!guardedController, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            fixture.service->record(fixture.identity.operationId())
+                && Data::runtimePackageActivationOutcomeIsTerminal(
+                    fixture.service->record(fixture.identity.operationId())->outcome()),
+            5000);
+        QCOMPARE(
+            fixture.service->record(fixture.identity.operationId())->outcome(),
+            Data::RuntimePackageActivationOutcome::FailedWithoutControllerChange);
+        QCOMPARE(callCounts->control, 0);
+        QCOMPARE(callCounts->deployment, 0);
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/adapter-auth/delete-service-publish"));
+        QVERIFY_RESULT(initialized);
+        QObject receiver;
+        QPointer<TrustedRuntimePackageActivationService> guardedService(fixture.service.get());
+        QObject::connect(
+            fixture.service.get(),
+            &Core::RuntimePackageActivationService::recordChanged,
+            &receiver,
+            [&fixture](const Data::RuntimePackageActivationRecord &) { fixture.service.reset(); },
+            Qt::DirectConnection);
+        const Core::RuntimePackageActivationCommandResult accepted = guardedService->start(
+            fixture.request);
+        QCOMPARE(accepted.disposition, Core::RuntimePackageActivationCommandDisposition::Accepted);
+        QVERIFY(!guardedService);
+        QVERIFY(fixture.provider.controlRequests.isEmpty());
+        QVERIFY(fixture.provider.deploymentRequests.isEmpty());
+    }
+
+    {
+        ActivationFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(
+            ActivationControllerProvider::DeploymentMode::Succeed,
+            QStringLiteral("operation/adapter-auth/delete-service-acquire-publish"));
+        QVERIFY_RESULT(initialized);
+        const std::shared_ptr<ActivationControllerCallCounts> callCounts
+            = fixture.provider.callCounts;
+        QObject receiver;
+        QPointer<TrustedRuntimePackageActivationService> guardedService(fixture.service.get());
+        QObject::connect(
+            fixture.service.get(),
+            &Core::RuntimePackageActivationService::recordChanged,
+            &receiver,
+            [&fixture](const Data::RuntimePackageActivationRecord &record) {
+                const bool acquireCompleted = std::any_of(
+                    record.audit().cbegin(),
+                    record.audit().cend(),
+                    [](const Data::RuntimePackageActivationAuditEvent &event) {
+                        return event.kind()
+                                   == Data::RuntimePackageActivationAuditKind::ProviderTerminalResponse
+                               && event.providerAction()
+                                      == Data::RuntimePackageActivationProviderAction::AcquireControl;
+                    });
+                if (acquireCompleted)
+                    fixture.service.reset();
+            },
+            Qt::DirectConnection);
+        QCOMPARE(
+            guardedService->start(fixture.request).disposition,
+            Core::RuntimePackageActivationCommandDisposition::Accepted);
+        QTRY_VERIFY_WITH_TIMEOUT(!guardedService, 5000);
+        QCOMPARE(callCounts->control, 1);
+        QCOMPARE(callCounts->deployment, 0);
+    }
+}
+
 void EtherCATSemanticRuntimeTests::testSemanticOperationJournal()
 {
     const Utils::Result<VerifiedRuntimePackageEvidence> evidence = api038ActionEvidence();
@@ -11109,8 +12167,8 @@ void EtherCATSemanticRuntimeTests::testSemanticOperationJournal()
     submitter.authenticationDigest = QByteArray(32, '\x24');
 
     SemanticOperationJournal journal;
-    const QDateTime submittedAt = QDateTime::fromString(
-        QStringLiteral("2026-07-30T01:02:03.000Z"), Qt::ISODateWithMs);
+    const QDateTime submittedAt
+        = QDateTime::fromString(QStringLiteral("2026-07-30T01:02:03.000Z"), Qt::ISODateWithMs);
     const SemanticOperationJournalResult submitted
         = journal.submit(request, submitter, context, submittedAt);
     QCOMPARE(submitted.disposition, SemanticOperationJournalDisposition::Created);
@@ -11129,9 +12187,7 @@ void EtherCATSemanticRuntimeTests::testSemanticOperationJournal()
     const SemanticOperationJournalResult conflict
         = journal.submit(conflictingRequest, submitter, context, submittedAt.addSecs(2));
     QCOMPARE(conflict.disposition, SemanticOperationJournalDisposition::Conflict);
-    QCOMPARE(
-        conflict.validation.error,
-        Core::SemanticRuntimeValidationError::InvalidRequest);
+    QCOMPARE(conflict.validation.error, Core::SemanticRuntimeValidationError::InvalidRequest);
     QVERIFY(conflict.record);
     QCOMPARE(conflict.record->request, request);
 
@@ -15247,3 +16303,5 @@ void EtherCATSemanticRuntimeTests::testMissingCatalogAndProofFailClosed()
 }
 
 } // namespace EtherCAT::SemanticRuntime::Internal
+
+#include "ethercatsemanticruntimetests.moc"

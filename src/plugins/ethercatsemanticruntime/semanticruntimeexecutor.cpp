@@ -555,6 +555,40 @@ static bool snapshotHasExactBindingSet(
 
 namespace {
 
+AvailableDeviceAdapterProviderList availableDeviceAdapterProviderList(
+    const QPointer<Core::ProviderRegistry> &registry)
+{
+    return [registry] {
+        QList<Core::DeviceAdapterProvider *> result;
+        if (!registry)
+            return result;
+        const QList<Core::Provider *> providers = registry->providers(
+            Core::ProviderKind::DeviceAdapter);
+        if (!registry)
+            return QList<Core::DeviceAdapterProvider *>{};
+        QList<QPointer<Core::DeviceAdapterProvider>> guardedProviders;
+        guardedProviders.reserve(providers.size());
+        for (Core::Provider *provider : providers) {
+            auto *adapterProvider = qobject_cast<Core::DeviceAdapterProvider *>(provider);
+            QPointer<Core::DeviceAdapterProvider> guardedProvider(adapterProvider);
+            if (!guardedProvider)
+                return QList<Core::DeviceAdapterProvider *>{};
+            guardedProviders.append(guardedProvider);
+        }
+        for (const QPointer<Core::DeviceAdapterProvider> &guardedProvider :
+             std::as_const(guardedProviders)) {
+            if (!guardedProvider)
+                return QList<Core::DeviceAdapterProvider *>{};
+            const bool available = guardedProvider->isAvailable();
+            if (!guardedProvider)
+                return QList<Core::DeviceAdapterProvider *>{};
+            if (available)
+                result.append(guardedProvider.data());
+        }
+        return result;
+    };
+}
+
 enum class SemanticExecutionPhase {
     BeforeSnapshot,
     Policy,
@@ -831,12 +865,14 @@ private:
             const Data::SemanticOperationId &id,
             const Data::SemanticRuntimeActor &requestActor,
             SemanticActionPlan actionPlan,
-            Core::ControllerConnectionProvider *connectionProvider)
+            Core::ControllerConnectionProvider *connectionProvider,
+            std::optional<SemanticActionAdapterAuthorizationAdmission> adapterAdmission)
             : operationId(id)
             , actor(requestActor)
             , plan(std::move(actionPlan))
             , provider(connectionProvider)
             , providerId(connectionProvider ? connectionProvider->id() : Utils::Id())
+            , adapterAuthorization(std::move(adapterAdmission))
         {}
 
         Data::SemanticOperationId operationId;
@@ -844,6 +880,7 @@ private:
         SemanticActionPlan plan;
         QPointer<Core::ControllerConnectionProvider> provider;
         Utils::Id providerId;
+        std::optional<SemanticActionAdapterAuthorizationAdmission> adapterAuthorization;
         SemanticExecutionPhase phase = SemanticExecutionPhase::BeforeSnapshot;
         QList<Data::RuntimeResourceId> resourceIds;
         qsizetype policyIndex = 0;
@@ -903,6 +940,8 @@ private:
         const Data::ControllerConnectionScope &scope, QString *error) const;
     std::shared_ptr<const VerifiedRuntimePackageEvidence> currentEvidence(
         const Data::SemanticOperationRequest &request, QString *error) const;
+    Utils::Result<SemanticActionAdapterResolution> currentAdapterResolution(
+        const Data::SemanticOperationRequest &request) const;
     std::optional<CurrentExecution> validateCurrentExecution(
         const ActiveExecution &active, QString *error) const;
 
@@ -979,12 +1018,14 @@ private:
     SemanticRuntimeExecutor *q = nullptr;
     SemanticOperationJournal m_journal;
     QHash<QString, ControllerQueue> m_queues;
+    QHash<QString, SemanticActionAdapterAuthorizationAdmission> m_adapterAuthorizations;
     quint64 m_nextLiveRefreshAttemptNonce = 0;
 };
 
 std::optional<Data::SemanticRuntimeContext> SemanticRuntimeExecutorExecution::currentContext(
     const Data::SemanticOperationRequest &request, QString *error) const
 {
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     if (!q->m_projectService || !q->m_projectService->isAvailable()) {
         if (error)
             *error = QStringLiteral("The project service is unavailable.");
@@ -992,6 +1033,8 @@ std::optional<Data::SemanticRuntimeContext> SemanticRuntimeExecutorExecution::cu
     }
     const std::optional<Data::ProjectSnapshot> project
         = q->m_projectService->project(request.target.scope.projectId);
+    if (!guardedExecutor)
+        return std::nullopt;
     if (!project || !project->valid) {
         if (error)
             *error = QStringLiteral("The operation project is unavailable.");
@@ -1011,6 +1054,8 @@ std::optional<Data::SemanticRuntimeContext> SemanticRuntimeExecutorExecution::cu
     }
     Data::SemanticRuntimeContext context
         = q->buildContext(*project, request.target.scope.masterId);
+    if (!guardedExecutor)
+        return std::nullopt;
     if (context.controllerId != request.target.controllerId
         || context.scope != request.target.scope) {
         if (error)
@@ -1066,21 +1111,62 @@ SemanticRuntimeExecutorExecution::currentEvidence(
     return q->cachedEvidence(project->masterBindingArtifact, error);
 }
 
+Utils::Result<SemanticActionAdapterResolution>
+SemanticRuntimeExecutorExecution::currentAdapterResolution(
+    const Data::SemanticOperationRequest &request) const
+{
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    if (!q->m_projectService || !q->m_providerRegistry)
+        return Utils::ResultError("The adapter authorization provider is unavailable.");
+    const std::optional<Data::ProjectSnapshot> project = q->m_projectService->project(
+        request.target.scope.projectId);
+    if (!guardedExecutor)
+        return Utils::ResultError("The adapter authorization owner was removed.");
+    if (!project || !project->valid)
+        return Utils::ResultError("The operation project is unavailable.");
+
+    QList<const Data::OfflineSlaveConfiguration *> slaves;
+    for (const Data::OfflineSlaveConfiguration &slave : project->slaves) {
+        if (slave.id == request.target.deviceId && slave.masterId == request.target.scope.masterId) {
+            slaves.append(&slave);
+        }
+    }
+    if (slaves.size() != 1)
+        return Utils::ResultError("The operation adapter selection is ambiguous.");
+    const AvailableDeviceAdapterProviders adapterProviders{
+        q->m_availableAdapterProvidersOverride
+            ? q->m_availableAdapterProvidersOverride
+            : availableDeviceAdapterProviderList(q->m_providerRegistry),
+        guardedExecutor,
+        [guardedExecutor] {
+            return guardedExecutor ? guardedExecutor->m_adapterProviderSignalGeneration
+                                   : std::numeric_limits<quint64>::max();
+        },
+    };
+    return resolveSemanticActionAdapter(*slaves.constFirst(), adapterProviders);
+}
+
 std::optional<SemanticRuntimeExecutorExecution::CurrentExecution>
 SemanticRuntimeExecutorExecution::validateCurrentExecution(
     const ActiveExecution &active, QString *error) const
 {
-    const Data::SemanticOperationRequest &request = active.plan.request();
+    const SemanticActionPlan plan = active.plan;
+    const std::optional<SemanticActionAdapterAuthorizationAdmission> adapterAuthorization
+        = active.adapterAuthorization;
+    const QPointer<Core::ControllerConnectionProvider> expectedProvider = active.provider;
+    const Data::SemanticOperationRequest request = plan.request();
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     const std::optional<Data::SemanticRuntimeContext> context = currentContext(request, error);
+    if (!guardedExecutor)
+        return std::nullopt;
     if (!context)
         return std::nullopt;
-    if (!context->complete || context->contextHash != active.plan.contextHash()
-        || semanticRuntimeContextHash(*context) != active.plan.contextHash()
-        || context->sessionGeneration != active.plan.sessionGeneration()
-        || context->epoch != active.plan.epoch()
-        || context->mappingDigest.value != active.plan.mappingDigest()
-        || context->controllerMappingDigest.value != active.plan.mappingDigest()
-        || context->actionDefinitionsDigest.value != active.plan.actionDefinitionsDigest()
+    if (!context->complete || context->contextHash != plan.contextHash()
+        || semanticRuntimeContextHash(*context) != plan.contextHash()
+        || context->sessionGeneration != plan.sessionGeneration() || context->epoch != plan.epoch()
+        || context->mappingDigest.value != plan.mappingDigest()
+        || context->controllerMappingDigest.value != plan.mappingDigest()
+        || context->actionDefinitionsDigest.value != plan.actionDefinitionsDigest()
         || !Core::validateSemanticOperationRequest(request, *context).accepted()) {
         if (error)
             *error = QStringLiteral("The verified action context changed.");
@@ -1094,34 +1180,43 @@ SemanticRuntimeExecutorExecution::validateCurrentExecution(
     }
     if (actions.size() != 1
         || actions.constFirst().availability != Data::SemanticActionAvailability::Ready
-        || actions.constFirst().actionBindingId != active.plan.actionBindingId()
-        || actions.constFirst().actionDefinitionId != active.plan.actionDefinitionId()
-        || actions.constFirst().actionDefinitionDigest.value
-               != active.plan.actionDefinitionDigest()) {
+        || actions.constFirst().actionBindingId != plan.actionBindingId()
+        || actions.constFirst().actionDefinitionId != plan.actionDefinitionId()
+        || actions.constFirst().actionDefinitionDigest.value != plan.actionDefinitionDigest()) {
         if (error)
             *error = QStringLiteral("The signed action is no longer executable.");
         return std::nullopt;
     }
 
-    Core::ControllerConnectionProvider *provider = currentProvider(active.plan.scope(), error);
+    const Utils::Result<SemanticActionAdapterResolution> adapterResolution
+        = currentAdapterResolution(request);
+    if (!guardedExecutor)
+        return std::nullopt;
+    if (!adapterResolution || adapterResolution->authorization != adapterAuthorization) {
+        if (error)
+            *error = QStringLiteral("The adapter authorization changed during execution.");
+        return std::nullopt;
+    }
+
+    Core::ControllerConnectionProvider *provider = currentProvider(plan.scope(), error);
+    if (!guardedExecutor)
+        return std::nullopt;
     if (!provider)
         return std::nullopt;
-    if (provider != active.provider) {
+    if (provider != expectedProvider) {
         if (error)
             *error = QStringLiteral("The controller provider changed during execution.");
         return std::nullopt;
     }
     const Data::ControllerConnectionSnapshot connection = provider->connectionSnapshot();
-    if (!isConnected(connection.state)
-        || connection.scope != active.plan.scope()
-        || connection.sessionGeneration != active.plan.sessionGeneration()
-        || connection.readOnly || !connection.session || !connection.session->sessionId
+    if (!isConnected(connection.state) || connection.scope != plan.scope()
+        || connection.sessionGeneration != plan.sessionGeneration() || connection.readOnly
+        || !connection.session || !connection.session->sessionId
         || !connection.session->ownsControlLease
         || connection.session->controlLeaseOwnerSessionId != connection.session->sessionId
         || !connection.controllerState
         || !allowedExecutionState(connection.controllerState->serviceState)
-        || !provider->supportsRuntimeResources()
-        || !provider->supportsRuntimeOutputTransactions()
+        || !provider->supportsRuntimeResources() || !provider->supportsRuntimeOutputTransactions()
         || !connection.capability || !connection.capability->runtimeResources
         || !connection.capability->runtimeOutputTransactions) {
         if (error)
@@ -1156,6 +1251,7 @@ void SemanticRuntimeExecutorExecution::publishJournalResult(
 Data::SemanticOperationRecord SemanticRuntimeExecutorExecution::submit(
     const Data::SemanticOperationRequest &request, const Data::SemanticRuntimeActor &actor)
 {
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     QString error;
     Data::SemanticRuntimeContext context;
     if (const auto current = currentContext(request, &error)) {
@@ -1165,11 +1261,31 @@ Data::SemanticOperationRecord SemanticRuntimeExecutorExecution::submit(
         context.scope = request.target.scope;
         context.detail = error;
     }
+    if (!guardedExecutor)
+        return {};
+    const Utils::Result<SemanticActionAdapterResolution> adapterResolution
+        = context.complete
+              ? currentAdapterResolution(request)
+              : Utils::ResultError(QStringLiteral("The semantic context is incomplete."));
+    if (!guardedExecutor)
+        return {};
+    if (!adapterResolution || !adapterResolution->authorization) {
+        context.complete = false;
+        context.contextHash.clear();
+        if (context.detail.isEmpty()) {
+            context.detail = adapterResolution
+                                 ? QStringLiteral("Adapter authorization is unavailable.")
+                                 : adapterResolution.error();
+        }
+    }
     const SemanticOperationJournalResult result = m_journal.submit(request, actor, context);
+    if (result.record && result.disposition == SemanticOperationJournalDisposition::Created
+        && adapterResolution && adapterResolution->authorization) {
+        m_adapterAuthorizations.insert(request.operationId.value, *adapterResolution->authorization);
+    }
     const Data::SemanticOperationRecord returned
         = result.record ? *result.record
                         : q->Core::SemanticRuntimeService::submit(request, actor);
-    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     publishJournalResult(result, request.target.controllerId);
     if (!guardedExecutor)
         return returned;
@@ -1180,6 +1296,7 @@ Data::SemanticOperationRecord SemanticRuntimeExecutorExecution::approve(
     const Data::SemanticOperationApprovalRequest &approval,
     const Data::SemanticRuntimeActor &actor)
 {
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     const std::optional<Data::SemanticOperationRecord> existing = m_journal.operation(
         approval.operationId);
     if (!existing)
@@ -1194,9 +1311,26 @@ Data::SemanticOperationRecord SemanticRuntimeExecutorExecution::approve(
         context.scope = existing->request.target.scope;
         context.detail = error;
     }
+    if (!guardedExecutor)
+        return *existing;
+    const Utils::Result<SemanticActionAdapterResolution> adapterResolution
+        = context.complete
+              ? currentAdapterResolution(existing->request)
+              : Utils::ResultError(QStringLiteral("The semantic context is incomplete."));
+    if (!guardedExecutor)
+        return *existing;
+    const auto submittedAuthorization = m_adapterAuthorizations.constFind(
+        approval.operationId.value);
+    if (!adapterResolution || !adapterResolution->authorization
+        || submittedAuthorization == m_adapterAuthorizations.cend()
+        || *adapterResolution->authorization != *submittedAuthorization) {
+        context.complete = false;
+        context.contextHash.clear();
+        context.detail = QStringLiteral(
+            "The adapter authorization changed after the operation was submitted.");
+    }
     const SemanticOperationJournalResult result = m_journal.approve(approval, actor, context);
     const Data::SemanticOperationRecord returned = result.record.value_or(*existing);
-    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     publishJournalResult(result, existing->request.target.controllerId);
     if (!guardedExecutor)
         return returned;
@@ -1204,6 +1338,15 @@ Data::SemanticOperationRecord SemanticRuntimeExecutorExecution::approve(
         && result.record->state == Data::SemanticOperationState::Approved
         && result.accepted()) {
         enqueue(*result.record);
+    } else if (
+        result.record
+        && (result.record->state == Data::SemanticOperationState::Rejected
+            || result.record->state == Data::SemanticOperationState::Succeeded
+            || result.record->state == Data::SemanticOperationState::Failed
+            || result.record->state == Data::SemanticOperationState::TimedOut
+            || result.record->state == Data::SemanticOperationState::Canceled
+            || result.record->state == Data::SemanticOperationState::Expired)) {
+        m_adapterAuthorizations.remove(approval.operationId.value);
     }
     return returned;
 }
@@ -1517,6 +1660,7 @@ void SemanticRuntimeExecutorExecution::enqueue(const Data::SemanticOperationReco
 
 void SemanticRuntimeExecutorExecution::startNext(const QString &controllerId)
 {
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || queue->active || queue->liveRefresh || queue->pending.isEmpty())
         return;
@@ -1524,18 +1668,53 @@ void SemanticRuntimeExecutorExecution::startNext(const QString &controllerId)
     const Data::SemanticOperationId operationId = queue->pending.takeFirst();
     const std::optional<Data::SemanticOperationRecord> record = m_journal.operation(operationId);
     if (!record || record->state != Data::SemanticOperationState::Approved) {
+        m_adapterAuthorizations.remove(operationId.value);
         QTimer::singleShot(0, q, [this, controllerId] { startNext(controllerId); });
         return;
     }
 
     QString error;
     const std::optional<Data::SemanticRuntimeContext> context = currentContext(record->request, &error);
+    if (!guardedExecutor)
+        return;
     const std::shared_ptr<const VerifiedRuntimePackageEvidence> evidence
         = context ? currentEvidence(record->request, &error) : nullptr;
-    Core::ControllerConnectionProvider *provider
+    if (!guardedExecutor)
+        return;
+    QPointer<Core::ControllerConnectionProvider> provider
         = context ? currentProvider(record->request.target.scope, &error) : nullptr;
+    if (!guardedExecutor)
+        return;
+    const Utils::Result<SemanticActionAdapterResolution> adapterResolution
+        = context && evidence ? currentAdapterResolution(record->request)
+                              : Utils::ResultError(conciseExecutionText(error));
+    if (!guardedExecutor)
+        return;
+    Core::ControllerConnectionProvider *currentControllerProvider
+        = currentProvider(record->request.target.scope, &error);
+    if (!guardedExecutor)
+        return;
+    const bool providerAvailable = provider && provider->isAvailable();
+    if (!guardedExecutor)
+        return;
+    const bool controllerProviderCurrent = providerAvailable
+                                           && currentControllerProvider == provider;
+    const auto submittedAuthorization = m_adapterAuthorizations.constFind(operationId.value);
+    const std::optional<SemanticActionAdapterAuthorizationAdmission> submittedToken
+        = submittedAuthorization != m_adapterAuthorizations.cend()
+              ? std::optional<SemanticActionAdapterAuthorizationAdmission>(*submittedAuthorization)
+              : std::nullopt;
+    const bool adapterAuthorizationCurrent = adapterResolution && adapterResolution->authorization
+                                             && submittedToken
+                                             && *adapterResolution->authorization
+                                                    == *submittedToken;
     const Utils::Result<SemanticActionPlan> plan = [&]() -> Utils::Result<SemanticActionPlan> {
-        if (!context || !evidence)
+        if (!context || !evidence || !adapterAuthorizationCurrent)
+            return Utils::ResultError(
+                adapterResolution
+                    ? QStringLiteral("The adapter authorization changed after approval.")
+                    : conciseExecutionText(adapterResolution.error()));
+        if (!controllerProviderCurrent)
             return Utils::ResultError(conciseExecutionText(error));
         return buildSemanticActionPlan(*evidence, record->request, *context);
     }();
@@ -1556,6 +1735,7 @@ void SemanticRuntimeExecutorExecution::startNext(const QString &controllerId)
         publishJournalResult(failed, controllerId);
         if (!guardedExecutor)
             return;
+        m_adapterAuthorizations.remove(operationId.value);
         QTimer::singleShot(0, q, [this, controllerId] { startNext(controllerId); });
         return;
     }
@@ -1665,11 +1845,12 @@ void SemanticRuntimeExecutorExecution::startNext(const QString &controllerId)
         publishJournalResult(failed, controllerId);
         if (!guardedExecutor)
             return;
+        m_adapterAuthorizations.remove(operationId.value);
         QTimer::singleShot(0, q, [this, controllerId] { startNext(controllerId); });
         return;
     }
 
-    ActiveExecution active(operationId, record->actor, *plan, provider);
+    ActiveExecution active(operationId, record->actor, *plan, provider.data(), *submittedToken);
     QList<QByteArray> sortedResourceIds = uniqueResources.values();
     std::sort(sortedResourceIds.begin(), sortedResourceIds.end());
     for (const QByteArray &resourceId : std::as_const(sortedResourceIds))
@@ -1687,7 +1868,6 @@ void SemanticRuntimeExecutorExecution::startNext(const QString &controllerId)
             0,
             0,
         });
-    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     publishJournalResult(executing, controllerId);
     if (!guardedExecutor)
         return;
@@ -1704,8 +1884,21 @@ void SemanticRuntimeExecutorExecution::beginBeforeSnapshot(const QString &contro
     if (queue == m_queues.end() || !queue->active)
         return;
     ActiveExecution &active = *queue->active;
+    ActiveExecution *const activeIdentity = &active;
+    const Data::SemanticOperationId operationId = active.operationId;
+    const SemanticExecutionPhase phase = active.phase;
+    QPointer<SemanticRuntimeExecutor> validationGuard(q);
     QString error;
     const auto current = validateCurrentExecution(active, &error);
+    if (!validationGuard)
+        return;
+    const auto currentQueue = m_queues.constFind(controllerId);
+    if (currentQueue == m_queues.cend() || !currentQueue->active
+        || &*currentQueue->active != activeIdentity
+        || currentQueue->active->operationId != operationId
+        || currentQueue->active->phase != phase) {
+        return;
+    }
     if (!current) {
         failActive(
             controllerId,
@@ -1758,8 +1951,21 @@ void SemanticRuntimeExecutorExecution::beginNextPolicy(const QString &controller
         return;
     }
 
+    ActiveExecution *const activeIdentity = &active;
+    const Data::SemanticOperationId operationId = active.operationId;
+    const SemanticExecutionPhase phase = active.phase;
+    QPointer<SemanticRuntimeExecutor> validationGuard(q);
     QString error;
     const auto current = validateCurrentExecution(active, &error);
+    if (!validationGuard)
+        return;
+    const auto currentQueue = m_queues.constFind(controllerId);
+    if (currentQueue == m_queues.cend() || !currentQueue->active
+        || &*currentQueue->active != activeIdentity
+        || currentQueue->active->operationId != operationId
+        || currentQueue->active->phase != phase) {
+        return;
+    }
     if (!current) {
         failActive(
             controllerId,
@@ -1809,8 +2015,21 @@ void SemanticRuntimeExecutorExecution::beginState(const QString &controllerId)
     if (queue == m_queues.end() || !queue->active)
         return;
     ActiveExecution &active = *queue->active;
+    ActiveExecution *const activeIdentity = &active;
+    const Data::SemanticOperationId operationId = active.operationId;
+    const SemanticExecutionPhase phase = active.phase;
+    QPointer<SemanticRuntimeExecutor> validationGuard(q);
     QString error;
     const auto current = validateCurrentExecution(active, &error);
+    if (!validationGuard)
+        return;
+    const auto currentQueue = m_queues.constFind(controllerId);
+    if (currentQueue == m_queues.cend() || !currentQueue->active
+        || &*currentQueue->active != activeIdentity
+        || currentQueue->active->operationId != operationId
+        || currentQueue->active->phase != phase) {
+        return;
+    }
     if (!current) {
         failActive(
             controllerId,
@@ -1860,8 +2079,22 @@ void SemanticRuntimeExecutorExecution::beginCurrentStep(const QString &controlle
         return;
     }
 
+    ActiveExecution *const activeIdentity = &active;
+    const Data::SemanticOperationId operationId = active.operationId;
+    const SemanticExecutionPhase phase = active.phase;
+    QPointer<SemanticRuntimeExecutor> validationGuard(q);
     QString error;
-    if (!validateCurrentExecution(active, &error)) {
+    const auto current = validateCurrentExecution(active, &error);
+    if (!validationGuard)
+        return;
+    const auto currentQueue = m_queues.constFind(controllerId);
+    if (currentQueue == m_queues.cend() || !currentQueue->active
+        || &*currentQueue->active != activeIdentity
+        || currentQueue->active->operationId != operationId
+        || currentQueue->active->phase != phase) {
+        return;
+    }
+    if (!current) {
         failActive(
             controllerId,
             QStringLiteral("execution-precondition-changed"),
@@ -1908,8 +2141,21 @@ void SemanticRuntimeExecutorExecution::beginApply(const QString &controllerId)
     if (queue == m_queues.end() || !queue->active)
         return;
     ActiveExecution &active = *queue->active;
+    ActiveExecution *const activeIdentity = &active;
+    const Data::SemanticOperationId operationId = active.operationId;
+    const SemanticExecutionPhase phase = active.phase;
+    QPointer<SemanticRuntimeExecutor> validationGuard(q);
     QString error;
     const auto current = validateCurrentExecution(active, &error);
+    if (!validationGuard)
+        return;
+    const auto currentQueue = m_queues.constFind(controllerId);
+    if (currentQueue == m_queues.cend() || !currentQueue->active
+        || &*currentQueue->active != activeIdentity
+        || currentQueue->active->operationId != operationId
+        || currentQueue->active->phase != phase) {
+        return;
+    }
     if (!current) {
         failActive(
             controllerId,
@@ -2035,8 +2281,21 @@ void SemanticRuntimeExecutorExecution::beginWaitSnapshot(const QString &controll
         return;
     }
 
+    ActiveExecution *const activeIdentity = &active;
+    const Data::SemanticOperationId operationId = active.operationId;
+    const SemanticExecutionPhase phase = active.phase;
+    QPointer<SemanticRuntimeExecutor> validationGuard(q);
     QString error;
     const auto current = validateCurrentExecution(active, &error);
+    if (!validationGuard)
+        return;
+    const auto currentQueue = m_queues.constFind(controllerId);
+    if (currentQueue == m_queues.cend() || !currentQueue->active
+        || &*currentQueue->active != activeIdentity
+        || currentQueue->active->operationId != operationId
+        || currentQueue->active->phase != phase) {
+        return;
+    }
     if (!current) {
         failActive(
             controllerId,
@@ -2105,8 +2364,21 @@ void SemanticRuntimeExecutorExecution::beginAfterSnapshot(const QString &control
     if (queue == m_queues.end() || !queue->active)
         return;
     ActiveExecution &active = *queue->active;
+    ActiveExecution *const activeIdentity = &active;
+    const Data::SemanticOperationId operationId = active.operationId;
+    const SemanticExecutionPhase phase = active.phase;
+    QPointer<SemanticRuntimeExecutor> validationGuard(q);
     QString error;
     const auto current = validateCurrentExecution(active, &error);
+    if (!validationGuard)
+        return;
+    const auto currentQueue = m_queues.constFind(controllerId);
+    if (currentQueue == m_queues.cend() || !currentQueue->active
+        || &*currentQueue->active != activeIdentity
+        || currentQueue->active->operationId != operationId
+        || currentQueue->active->phase != phase) {
+        return;
+    }
     if (!current) {
         failActive(
             controllerId,
@@ -2164,8 +2436,21 @@ void SemanticRuntimeExecutorExecution::beginAfterState(const QString &controller
     if (queue == m_queues.end() || !queue->active)
         return;
     ActiveExecution &active = *queue->active;
+    ActiveExecution *const activeIdentity = &active;
+    const Data::SemanticOperationId operationId = active.operationId;
+    const SemanticExecutionPhase phase = active.phase;
+    QPointer<SemanticRuntimeExecutor> validationGuard(q);
     QString error;
     const auto current = validateCurrentExecution(active, &error);
+    if (!validationGuard)
+        return;
+    const auto currentQueue = m_queues.constFind(controllerId);
+    if (currentQueue == m_queues.cend() || !currentQueue->active
+        || &*currentQueue->active != activeIdentity
+        || currentQueue->active->operationId != operationId
+        || currentQueue->active->phase != phase) {
+        return;
+    }
     if (!current) {
         failActive(
             controllerId,
@@ -2674,8 +2959,21 @@ void SemanticRuntimeExecutorExecution::handleSnapshot(
         return;
     }
 
+    ActiveExecution *const validationIdentity = &active;
+    const Data::SemanticOperationId validationOperationId = active.operationId;
+    const SemanticExecutionPhase validationPhase = active.phase;
+    QPointer<SemanticRuntimeExecutor> validationGuard(q);
     QString error;
     const auto current = validateCurrentExecution(active, &error);
+    if (!validationGuard)
+        return;
+    const auto validatedQueue = m_queues.constFind(controllerId);
+    if (validatedQueue == m_queues.cend() || !validatedQueue->active
+        || &*validatedQueue->active != validationIdentity
+        || validatedQueue->active->operationId != validationOperationId
+        || validatedQueue->active->phase != validationPhase) {
+        return;
+    }
     if (!current || !result.snapshot) {
         failActive(
             controllerId,
@@ -2900,9 +3198,22 @@ void SemanticRuntimeExecutorExecution::handlePolicy(
         return;
     }
 
+    ActiveExecution *const validationIdentity = &active;
+    const Data::SemanticOperationId validationOperationId = active.operationId;
+    const SemanticExecutionPhase validationPhase = active.phase;
+    QPointer<SemanticRuntimeExecutor> validationGuard(q);
     QString error;
-    if (!validateCurrentExecution(active, &error) || !result.policy
-        || active.policyIndex >= active.plan.groups().size()) {
+    const auto current = validateCurrentExecution(active, &error);
+    if (!validationGuard)
+        return;
+    const auto validatedQueue = m_queues.constFind(controllerId);
+    if (validatedQueue == m_queues.cend() || !validatedQueue->active
+        || &*validatedQueue->active != validationIdentity
+        || validatedQueue->active->operationId != validationOperationId
+        || validatedQueue->active->phase != validationPhase) {
+        return;
+    }
+    if (!current || !result.policy || active.policyIndex >= active.plan.groups().size()) {
         failActive(
             controllerId,
             QStringLiteral("policy-context-changed"),
@@ -3048,8 +3359,22 @@ void SemanticRuntimeExecutorExecution::handleState(
     }
 
     if (active.phase == SemanticExecutionPhase::AfterState) {
+        ActiveExecution *const validationIdentity = &active;
+        const Data::SemanticOperationId validationOperationId = active.operationId;
+        const SemanticExecutionPhase validationPhase = active.phase;
+        QPointer<SemanticRuntimeExecutor> validationGuard(q);
         QString executionError;
-        if (!validateCurrentExecution(active, &executionError)) {
+        const auto current = validateCurrentExecution(active, &executionError);
+        if (!validationGuard)
+            return;
+        const auto validatedQueue = m_queues.constFind(controllerId);
+        if (validatedQueue == m_queues.cend() || !validatedQueue->active
+            || &*validatedQueue->active != validationIdentity
+            || validatedQueue->active->operationId != validationOperationId
+            || validatedQueue->active->phase != validationPhase) {
+            return;
+        }
+        if (!current) {
             failActive(
                 controllerId,
                 QStringLiteral("post-state-precondition-changed"),
@@ -3145,9 +3470,22 @@ void SemanticRuntimeExecutorExecution::handleState(
         return;
     }
 
+    ActiveExecution *const validationIdentity = &active;
+    const Data::SemanticOperationId validationOperationId = active.operationId;
+    const SemanticExecutionPhase validationPhase = active.phase;
+    QPointer<SemanticRuntimeExecutor> validationGuard(q);
     QString error;
-    if (!validateCurrentExecution(active, &error) || !result.state
-        || result.state->outputGeneration != active.outputGeneration) {
+    const auto current = validateCurrentExecution(active, &error);
+    if (!validationGuard)
+        return;
+    const auto validatedQueue = m_queues.constFind(controllerId);
+    if (validatedQueue == m_queues.cend() || !validatedQueue->active
+        || &*validatedQueue->active != validationIdentity
+        || validatedQueue->active->operationId != validationOperationId
+        || validatedQueue->active->phase != validationPhase) {
+        return;
+    }
+    if (!current || !result.state || result.state->outputGeneration != active.outputGeneration) {
         failActive(
             controllerId,
             QStringLiteral("output-generation-changed"),
@@ -3663,6 +4001,8 @@ void SemanticRuntimeExecutorExecution::finishActive(const QString &controllerId)
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end())
         return;
+    if (queue->active)
+        m_adapterAuthorizations.remove(queue->active->operationId.value);
     queue->active.reset();
     QTimer::singleShot(0, q, [this, controllerId] { startNext(controllerId); });
 }
@@ -3816,7 +4156,8 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
     std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository,
     int liveRefreshTimeoutMs,
     int liveSampleFreshnessMs,
-    std::function<QDateTime()> utcNow)
+    std::function<QDateTime()> utcNow,
+    std::function<QList<Core::DeviceAdapterProvider *>()> availableAdapterProvidersOverride)
     : SemanticRuntimeService(parent)
     , m_projectService(projectService)
     , m_providerRegistry(providerRegistry)
@@ -3824,6 +4165,7 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
     , m_liveRefreshTimeoutMs(qMax(1, liveRefreshTimeoutMs))
     , m_liveSampleFreshnessMs(qMax(1, liveSampleFreshnessMs))
     , m_utcNow(utcNow ? std::move(utcNow) : [] { return QDateTime::currentDateTimeUtc(); })
+    , m_availableAdapterProvidersOverride(std::move(availableAdapterProvidersOverride))
 {
     m_execution = std::make_unique<SemanticRuntimeExecutorExecution>(this);
 
@@ -3882,6 +4224,8 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
             &Core::ProviderRegistry::providerAdded,
             this,
             [this](Core::Provider *provider) {
+                if (qobject_cast<Core::DeviceAdapterProvider *>(provider))
+                    ++m_adapterProviderSignalGeneration;
                 if (auto *connectionProvider = qobject_cast<Core::ControllerConnectionProvider *>(
                         provider)) {
                     m_providersBeingRemoved.remove(connectionProvider);
@@ -3895,6 +4239,8 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
             this,
             [this](Core::Provider *provider) {
                 QPointer<SemanticRuntimeExecutor> guardedExecutor(this);
+                if (qobject_cast<Core::DeviceAdapterProvider *>(provider))
+                    ++m_adapterProviderSignalGeneration;
                 if (auto *connectionProvider = qobject_cast<Core::ControllerConnectionProvider *>(
                         provider)) {
                     m_providersBeingRemoved.insert(connectionProvider);
@@ -3911,6 +4257,7 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
             if (!guardedExecutor)
                 return;
             m_providerRegistry = nullptr;
+            ++m_adapterProviderSignalGeneration;
             for (const QList<QMetaObject::Connection> &connections :
                  std::as_const(m_providerConnections)) {
                 for (const QMetaObject::Connection &connection : connections)
@@ -4031,6 +4378,7 @@ void SemanticRuntimeExecutor::clearEvidenceCache()
 
 QList<Data::SemanticRuntimeContext> SemanticRuntimeExecutor::buildContexts() const
 {
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(const_cast<SemanticRuntimeExecutor *>(this));
     if (!m_projectService || !m_projectService->isAvailable())
         return {};
 
@@ -4060,8 +4408,12 @@ QList<Data::SemanticRuntimeContext> SemanticRuntimeExecutor::buildContexts() con
             [](const Data::NodeId &left, const Data::NodeId &right) {
                 return left.toString() < right.toString();
             });
-        for (const Data::NodeId &masterId : std::as_const(masterIds))
-            contexts.append(buildContext(project, masterId));
+        for (const Data::NodeId &masterId : std::as_const(masterIds)) {
+            const Data::SemanticRuntimeContext context = buildContext(project, masterId);
+            if (!guardedExecutor)
+                return {};
+            contexts.append(context);
+        }
     }
     return contexts;
 }
@@ -4075,7 +4427,7 @@ Data::SemanticRuntimeContext SemanticRuntimeExecutor::buildContext(
 
     struct Candidate
     {
-        Core::ControllerConnectionProvider *provider = nullptr;
+        QPointer<Core::ControllerConnectionProvider> provider;
         Data::ControllerConnectionSnapshot snapshot;
     };
     QList<Candidate> candidates;
@@ -4229,23 +4581,70 @@ Data::SemanticRuntimeContext SemanticRuntimeExecutor::buildContext(
                 = candidate.snapshot.controllerState->busOperational
                   && candidate.snapshot.controllerState->distributedClocksLocked;
         }
-        QList<Data::DeviceAdapterManifest> adapterManifests;
-        if (m_providerRegistry) {
-            for (Core::Provider *provider :
-                 m_providerRegistry->providers(Core::ProviderKind::DeviceAdapter)) {
-                auto *adapterProvider = qobject_cast<Core::DeviceAdapterProvider *>(provider);
-                if (adapterProvider && adapterProvider->isAvailable())
-                    adapterManifests.append(adapterProvider->adapterManifests());
-            }
-        }
+        QPointer<SemanticRuntimeExecutor> guardedExecutor(
+            const_cast<SemanticRuntimeExecutor *>(this));
+        const AvailableDeviceAdapterProviders adapterProviders{
+            m_availableAdapterProvidersOverride
+                ? m_availableAdapterProvidersOverride
+                : availableDeviceAdapterProviderList(m_providerRegistry),
+            guardedExecutor,
+            [guardedExecutor] {
+                return guardedExecutor ? guardedExecutor->m_adapterProviderSignalGeneration
+                                       : std::numeric_limits<quint64>::max();
+            },
+        };
         const Utils::Result<QList<Data::SemanticActionRuntimeState>> actions
             = buildSemanticActionRuntimeStates(
                 context.controllerId,
                 project,
                 *evidence,
                 *bindingCandidates,
-                adapterManifests,
+                adapterProviders,
                 gates);
+        if (!guardedExecutor || !candidate.provider)
+            return context;
+        QList<QPointer<Core::ControllerConnectionProvider>> currentProviders;
+        if (m_providerRegistry) {
+            const QList<Core::Provider *> registered = m_providerRegistry->providers(
+                Core::ProviderKind::ControllerConnection);
+            if (!guardedExecutor || !m_providerRegistry)
+                return context;
+            for (Core::Provider *provider : registered) {
+                QPointer<Core::ControllerConnectionProvider> connectionProvider
+                    = qobject_cast<Core::ControllerConnectionProvider *>(provider);
+                if (!connectionProvider)
+                    return context;
+                currentProviders.append(connectionProvider);
+            }
+        }
+        QList<QPointer<Core::ControllerConnectionProvider>> exactProviders;
+        for (const QPointer<Core::ControllerConnectionProvider> &provider :
+             std::as_const(currentProviders)) {
+            if (!provider || m_providersBeingRemoved.contains(provider.data()))
+                return context;
+            const bool available = provider->isAvailable();
+            if (!guardedExecutor || !provider)
+                return context;
+            const Data::ControllerConnectionSnapshot snapshot = provider->connectionSnapshot();
+            if (!guardedExecutor || !provider)
+                return context;
+            if (available && snapshot.scope == context.scope)
+                exactProviders.append(provider);
+        }
+        if (exactProviders.size() != 1 || exactProviders.constFirst() != candidate.provider) {
+            rejectContext(context, ContextIssue::ControllerProviderAmbiguous);
+            return context;
+        }
+        const Data::ControllerConnectionSnapshot currentControllerSnapshot
+            = candidate.provider->connectionSnapshot();
+        if (!guardedExecutor || !candidate.provider)
+            return context;
+        if (currentControllerSnapshot != candidate.snapshot) {
+            rejectContext(context, ContextIssue::ControllerSessionUnavailable);
+            return context;
+        }
+        if (!guardedExecutor || !candidate.provider)
+            return context;
         if (!actions) {
             rejectContext(
                 context, ContextIssue::SemanticBindingResolutionFailed, actions.error());
@@ -4259,8 +4658,12 @@ Data::SemanticRuntimeContext SemanticRuntimeExecutor::buildContext(
     context.complete = true;
     context.contextHash = semanticRuntimeContextHash(context);
 
+    if (!candidate.provider)
+        return context;
     const std::optional<Data::RuntimeResourceSnapshot> snapshot
         = candidate.provider->runtimeResourceSnapshot();
+    if (!candidate.provider)
+        return context;
     ContextIssue snapshotIssue = ContextIssue::RuntimeResourceSnapshotUnavailable;
     const bool snapshotIdentityMatches = snapshot && snapshot->scope == context.scope
                                          && snapshot->sessionGeneration == context.sessionGeneration
@@ -4272,7 +4675,7 @@ Data::SemanticRuntimeContext SemanticRuntimeExecutor::buildContext(
     else if (snapshotIdentityMatches && !completeSnapshot)
         snapshotIssue = ContextIssue::RuntimeResourceSnapshotIncomplete;
 
-    const auto liveCache = m_liveRuntimeCaches.constFind(candidate.provider);
+    const auto liveCache = m_liveRuntimeCaches.constFind(candidate.provider.data());
     const bool liveCacheMatches = liveCache != m_liveRuntimeCaches.cend()
                                   && liveCache->controllerId == context.controllerId
                                   && liveCache->scope == context.scope
@@ -4389,12 +4792,43 @@ Data::SemanticRuntimeContext SemanticRuntimeExecutor::buildContext(
 
 void SemanticRuntimeExecutor::publishContexts()
 {
+    if (m_publishingContexts) {
+        m_publishContextsPending = true;
+        return;
+    }
+    m_publishingContexts = true;
+    m_publishContextsPending = false;
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(this);
+    const quint64 adapterGeneration = m_adapterProviderSignalGeneration;
     scheduleRuntimeBootstrap();
     const QList<Data::SemanticRuntimeContext> next = buildContexts();
-    if (next == m_contexts)
+    if (!guardedExecutor)
         return;
-    m_contexts = next;
-    emit contextsChanged();
+    const bool stale = m_publishContextsPending
+                       || adapterGeneration != m_adapterProviderSignalGeneration;
+    if (stale) {
+        if (!m_contexts.isEmpty()) {
+            m_contexts.clear();
+            emit contextsChanged();
+            if (!guardedExecutor)
+                return;
+        }
+        m_publishingContexts = false;
+        m_publishContextsPending = false;
+        QTimer::singleShot(0, this, [this] { publishContexts(); });
+        return;
+    }
+    if (next != m_contexts) {
+        m_contexts = next;
+        emit contextsChanged();
+        if (!guardedExecutor)
+            return;
+    }
+    m_publishingContexts = false;
+    if (m_publishContextsPending) {
+        m_publishContextsPending = false;
+        QTimer::singleShot(0, this, [this] { publishContexts(); });
+    }
 }
 
 void SemanticRuntimeExecutor::scheduleRuntimeBootstrap()
@@ -4615,15 +5049,17 @@ void SemanticRuntimeExecutor::trackProvider(Core::Provider *provider)
         QList<QMetaObject::Connection> connections;
         connections.append(
             connect(adapterProvider, &Core::Provider::availabilityChanged, this, [this] {
+                ++m_adapterProviderSignalGeneration;
                 publishContexts();
             }));
         connections.append(connect(
-            adapterProvider,
-            &Core::DeviceAdapterProvider::adapterManifestsChanged,
-            this,
-            [this] { publishContexts(); }));
+            adapterProvider, &Core::DeviceAdapterProvider::adapterManifestsChanged, this, [this] {
+                ++m_adapterProviderSignalGeneration;
+                publishContexts();
+            }));
         connections.append(
             connect(adapterProvider, &QObject::destroyed, this, [this, adapterProvider] {
+                ++m_adapterProviderSignalGeneration;
                 m_adapterProviderConnections.remove(adapterProvider);
                 publishContexts();
             }));
@@ -4743,6 +5179,7 @@ void SemanticRuntimeExecutor::trackProvider(Core::Provider *provider)
 void SemanticRuntimeExecutor::untrackProvider(Core::Provider *provider)
 {
     if (auto *adapterProvider = qobject_cast<Core::DeviceAdapterProvider *>(provider)) {
+        ++m_adapterProviderSignalGeneration;
         const QList<QMetaObject::Connection> connections
             = m_adapterProviderConnections.take(adapterProvider);
         for (const QMetaObject::Connection &connection : connections)

@@ -253,12 +253,19 @@ package/authorization 材料并确认 snapshot 仍为当前值。
 snapshot 未漂移，按已授权 exact triple 唯一定位 fresh package，再对完整 fresh manifest 执行
 相等比较。这样即使调用者复制 manifest 后改了 CoE index、工程 scale 或其他字段且保留旧摘要，
 也会 fail closed。该调用不得改变 repository cache、accepted policy、generation 或发信号。
-当前 SemanticRuntime 尚未消费此接口，本 ISSUE 不启用 v4 动作、不安装生产 v4 资产，也不证明
-真实硬件运动能力。后续消费者必须在 available `DeviceAdapterProvider` 集合中的同一批 Provider
-QObject 上执行 `qobject_cast`，并要求恰好一个 IID source；该 source 必须就是提供待验 manifest
-的同一 Provider 对象，禁止分别选择独立 provider 和 source。该合同不防御任意恶意的进程内插件；
-已安装的进程内插件仍位于现有信任边界之内。snapshot 是当前进程内的 provenance，不是可独立
-移植的密码学证据。
+SemanticRuntime 现已在生产 v3/Authorization v1 的手工动作准入和可信运行时包激活中消费该
+接口。它只在 available `DeviceAdapterProvider` 集合中的同一批 Provider QObject 上执行
+`qobject_cast`，要求恰好一个 IID source，且该 source 必须就是提供 exact manifest 的同一
+Provider 对象，禁止分别选择独立 provider 和 source。准入同时捕获完整 provider/manifest 目录
+及其信号代际；手工动作把该 token 绑定到 submit、approve、plan 构建和每次前向执行请求，激活
+服务则绑定到 prepare、start 以及每次前向激活控制器或工程变更。目录、代际、manifest、授权或
+Provider 任一漂移，都会在下一次变更前 fail closed；只读 SafeHold 恢复判定及 activation
+release/reconcile 仍可用于安全清理。
+
+v4 在签名编译器合同能够携带并闭合完整设备参数投影前仍保持 unsupported；当前不安装生产 v4
+资产、不启用 v4 动作，也不证明真实硬件运动能力。该合同不防御任意恶意的进程内插件；已安装
+的进程内插件仍位于现有信任边界之内。snapshot 是当前进程内的 provenance，不是可独立移植的
+密码学证据。
 
 ### 4.3 在线控制器状态
 
