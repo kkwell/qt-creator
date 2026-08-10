@@ -27,6 +27,7 @@ enum class AdapterAuthorizationFailure {
     Revoked,
     PolicyConflict,
     BindingMismatch,
+    InvalidAdapterPackage,
     InvalidSignerScope,
     InvalidFile,
     Unknown,
@@ -42,9 +43,12 @@ struct AdapterAuthorizationStatus
 
 QString adapterAuthorizationStartupMessage(const AdapterAuthorizationStatus &status);
 
-class AdapterPackageRepository final : public Core::DeviceAdapterProvider
+class AdapterPackageRepository final
+    : public Core::DeviceAdapterProvider
+    , public Core::DeviceAdapterAuthorizationProvenanceSource
 {
     Q_OBJECT
+    Q_INTERFACES(EtherCAT::Core::DeviceAdapterAuthorizationProvenanceSource)
 
 public:
     explicit AdapterPackageRepository(const Utils::FilePath &packageRoot, QObject *parent = nullptr);
@@ -61,6 +65,13 @@ public:
     Data::DeviceAdapterResolutionResult resolveDevice(
         const Data::DeviceAdapterResolutionRequest &request) const final;
     QList<Core::ProviderStartupDiagnostic> startupDiagnostics() const final;
+    Data::DeviceAdapterAuthorizationProvenanceSnapshot authorizationProvenanceSnapshot()
+        const final;
+    bool validateCurrent(
+        const Data::DeviceAdapterAuthorizationProvenanceSnapshot &snapshot) const final;
+    bool validateCurrent(
+        const Data::DeviceAdapterAuthorizationProvenanceSnapshot &snapshot,
+        const Data::DeviceAdapterManifest &manifest) const final;
 
     Utils::FilePath packageRoot() const;
     QStringList loadErrors() const;
@@ -70,6 +81,10 @@ public:
     void reload();
 
 private:
+    bool validateCurrentImpl(
+        const Data::DeviceAdapterAuthorizationProvenanceSnapshot &snapshot,
+        const Data::DeviceAdapterManifest *manifest) const;
+
     class Private;
     const std::unique_ptr<Private> d;
 };

@@ -64,6 +64,56 @@ covered by accepted policy may receive verified, real-hardware-qualified state;
 an incomplete, invalid, revoked, conflicting, or rolled-back authorization
 fails closed and disables manual control.
 
+## Typed authorization provenance
+
+The official `AdapterPackageRepository` also implements the optional pure IID
+`DeviceAdapterAuthorizationProvenanceSource`. This keeps typed authorization
+provenance out of `DeviceAdapterManifest`: Adapter JSON cannot inject a
+provenance record, and an
+ordinary `DeviceAdapterProvider` does not acquire authorization authority merely
+by setting the legacy Boolean projection fields.
+
+Each atomic snapshot has a non-zero monotonic generation, a closed state, the
+domain-separated authorization-set SHA-256 when the material identity is
+complete, and strictly ordered allow records for exact Adapter
+`{id, version, contentSha256}` triples. A record binds Authorization v1 or v2,
+the canonical Adapter authorization-binding digest, authorization and policy
+document/signature identities, root key identity, signer identity, and policy
+revision. The set identity covers every discovered root key and the ordered
+document/signature identities of every policy and authorization, including deny
+or unmatched material. Missing pairs, orphan files, invalid packages, any
+global diagnostic, or any nested symbolic link in either material root clears
+all allow records and trust flags. An incomplete material path closure never
+publishes a set identity.
+
+`canonicalDeviceAdapterAuthorizationBinding()` only reproduces the signed
+Adapter object from the manifest's *declared* identity and digest fields. It
+does not reopen the package or independently recompute `contentSha256` or each
+`definitionSha256`, so it is not a complete manifest-integrity check. Likewise,
+`validateCurrent(snapshot)` only re-reads the package and authorization trees to
+prove that the typed material snapshot is still current.
+
+Any action or deployment consumer must instead call
+`validateCurrent(snapshot, manifest)` immediately around its manifest lookup.
+That overload performs the same read-only reload, requires the snapshot to
+remain current, locates exactly one freshly authorized package with the same
+exact triple, and compares the complete fresh manifest with the caller's copy.
+It therefore rejects a copied manifest whose CoE index, engineering scale, or
+any other field changed while cached digest fields remained unchanged. The
+validation call does not mutate repository state, accepted policy state,
+generation, or signals.
+
+This interface establishes provenance and freshness infrastructure only. The
+current Semantic Runtime does not yet consume it, production v4 assets remain
+absent, and no v4 action or real-hardware motion path is enabled by this change.
+A future consumer must enumerate the available Device Adapter providers,
+`qobject_cast` the IID on those same provider QObjects, and require exactly one
+source. That source must be the same provider object that supplied the manifest;
+the provider and provenance source must never be selected independently. This
+does not defend against an arbitrary malicious in-process plugin; installed
+in-process plugins remain inside the existing trust boundary. The snapshot is
+current-process provenance, not independently portable cryptographic evidence.
+
 ## Device parameter definitions
 
 Adapter v4 inherits the complete v3 contract and requires a

@@ -1068,6 +1068,18 @@ void EtherCATDeviceAdaptersTests::testInstalledProductionAuthorizations()
     QVERIFY(xb6->realHardwareAllowed);
     QVERIFY(sv630n->signatureVerified);
     QVERIFY(sv630n->realHardwareAllowed);
+    auto *source
+        = qobject_cast<Core::DeviceAdapterAuthorizationProvenanceSource *>(&repository);
+    QVERIFY(source);
+    const Data::DeviceAdapterAuthorizationProvenanceSnapshot snapshot
+        = source->authorizationProvenanceSnapshot();
+    QVERIFY(snapshot.isValid());
+    QCOMPARE(
+        snapshot.state, Data::DeviceAdapterAuthorizationProvenanceState::Authorized);
+    QCOMPARE(snapshot.records.size(), 2);
+    QVERIFY(source->validateCurrent(snapshot));
+    QVERIFY(source->validateCurrent(snapshot, *xb6));
+    QVERIFY(source->validateCurrent(snapshot, *sv630n));
 }
 
 void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
@@ -1182,8 +1194,11 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     struct Evaluation
     {
         bool available = false;
+        bool implementsProvenanceSource = false;
+        bool validatesCurrent = false;
         Data::DeviceAdapterManifest xb6;
         Data::DeviceAdapterManifest sv;
+        Data::DeviceAdapterAuthorizationProvenanceSnapshot provenance;
         QStringList diagnostics;
         AdapterAuthorizationStatus authorizationStatus;
         QList<Core::ProviderStartupDiagnostic> startupDiagnostics;
@@ -1197,6 +1212,13 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
         result.startupDiagnostics = repository.startupDiagnostics();
         result.xb6 = *repository.adapterManifest(unsignedXb6->id, unsignedXb6->version);
         result.sv = *repository.adapterManifest(unsignedSv->id, unsignedSv->version);
+        auto *source
+            = qobject_cast<Core::DeviceAdapterAuthorizationProvenanceSource *>(&repository);
+        result.implementsProvenanceSource = source;
+        if (source) {
+            result.provenance = source->authorizationProvenanceSnapshot();
+            result.validatesCurrent = source->validateCurrent(result.provenance);
+        }
         return result;
     };
 
@@ -1213,6 +1235,39 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     QCOMPARE(result.xb6.contentSha256, immutableContentSha256);
     QVERIFY(!result.sv.signatureVerified);
     QVERIFY(!result.sv.realHardwareAllowed);
+    QVERIFY(result.implementsProvenanceSource);
+    QVERIFY(result.validatesCurrent);
+    QVERIFY(result.provenance.isValid());
+    QCOMPARE(
+        result.provenance.state,
+        Data::DeviceAdapterAuthorizationProvenanceState::Authorized);
+    QCOMPARE(result.provenance.records.size(), 1);
+    const QByteArray authorizedSetSha256 = result.provenance.authorizationSetSha256;
+    const Data::DeviceAdapterAuthorizationProvenance v1Provenance
+        = result.provenance.records.constFirst();
+    QVERIFY(v1Provenance.isValid());
+    QCOMPARE(
+        v1Provenance.authorizationVersion, Data::DeviceAdapterAuthorizationVersion::V1);
+    QCOMPARE(v1Provenance.adapterContractVersion, Data::DeviceAdapterContractVersion::V3);
+    QCOMPARE(v1Provenance.adapterId, result.xb6.id);
+    QCOMPARE(v1Provenance.adapterVersion, result.xb6.version);
+    QCOMPARE(v1Provenance.adapterContentSha256, result.xb6.contentSha256);
+    const auto v1Binding = Data::canonicalDeviceAdapterAuthorizationBinding(
+        result.xb6, Data::DeviceAdapterAuthorizationVersion::V1);
+    QVERIFY(v1Binding);
+    QVERIFY(v1Binding->isValid());
+    QCOMPARE(
+        v1Binding->exactBytes,
+        QJsonDocument(authorizationBinding(result.xb6)).toJson(QJsonDocument::Compact));
+    QCOMPARE(v1Provenance.adapterBindingSha256, v1Binding->sha256);
+    QVERIFY(!Data::canonicalDeviceAdapterAuthorizationBinding(
+        result.xb6, Data::DeviceAdapterAuthorizationVersion::V2));
+    Data::DeviceAdapterAuthorizationProvenanceSnapshot forged = result.provenance;
+    forged.records[0].authorizationId.append(".forged");
+    QVERIFY(forged.isValid());
+    AdapterPackageRepository forgedCheckRepository(
+        packageRoot, authorizationRootPath, trustRootPath);
+    QVERIFY(!forgedCheckRepository.validateCurrent(forged));
 
     install(policy(1), authorization(1));
     QString authorizationSignaturePath = authorizationPath;
@@ -1227,6 +1282,12 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     QCOMPARE(result.authorizationStatus.firstFailure, AdapterAuthorizationFailure::InvalidSignature);
     QCOMPARE(result.authorizationStatus.authorizedAdapterCount, 0);
     QCOMPARE(result.authorizationStatus.validationFailureCount, 1);
+    QVERIFY(result.provenance.isValid());
+    QCOMPARE(
+        result.provenance.state,
+        Data::DeviceAdapterAuthorizationProvenanceState::ValidationFailed);
+    QVERIFY(result.provenance.records.isEmpty());
+    QVERIFY(!result.provenance.authorizationSetSha256.isEmpty());
     const QString invalidSignatureMessage = adapterAuthorizationStartupMessage(
         result.authorizationStatus);
     QVERIFY(invalidSignatureMessage.contains("signature check failed"));
@@ -1269,6 +1330,24 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
         AdapterAuthorizationFailure::IncompleteBundle);
     QCOMPARE(result.authorizationStatus.authorizedAdapterCount, 0);
     QVERIFY(adapterAuthorizationStartupMessage(result.authorizationStatus).contains("incomplete"));
+    QCOMPARE(
+        result.provenance.state,
+        Data::DeviceAdapterAuthorizationProvenanceState::ValidationFailed);
+    QVERIFY(result.provenance.authorizationSetSha256.isEmpty());
+    QVERIFY(result.provenance.records.isEmpty());
+    QVERIFY(QFile::remove(orphanAuthorizationSignaturePath));
+
+    install(policy(1), authorization(1));
+    QVERIFY(QFile::rename(authorizationSignaturePath, orphanAuthorizationSignaturePath));
+    result = evaluate();
+    QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::ValidationFailed);
+    QCOMPARE(
+        result.authorizationStatus.firstFailure, AdapterAuthorizationFailure::InvalidDocument);
+    QCOMPARE(
+        result.provenance.state,
+        Data::DeviceAdapterAuthorizationProvenanceState::ValidationFailed);
+    QVERIFY(result.provenance.authorizationSetSha256.isEmpty());
+    QVERIFY(result.provenance.records.isEmpty());
     QVERIFY(QFile::remove(orphanAuthorizationSignaturePath));
 
     install(policy(1), authorization(1), policyDomain);
@@ -1312,6 +1391,9 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     result = evaluate();
     QVERIFY(!result.xb6.realHardwareAllowed);
     QVERIFY(result.diagnostics.join('\n').contains("does not exactly match"));
+    QVERIFY(result.provenance.records.isEmpty());
+    QVERIFY(!result.provenance.authorizationSetSha256.isEmpty());
+    QVERIFY(result.provenance.authorizationSetSha256 != authorizedSetSha256);
 
     install(policy(1, {}, {"embed-labs.production.xb6.0-3-1"}), authorization(1));
     result = evaluate();
@@ -1335,6 +1417,12 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     QVERIFY(!result.xb6.signatureVerified);
     QVERIFY(!result.xb6.realHardwareAllowed);
     QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::Denied);
+    QVERIFY(result.provenance.isValid());
+    QCOMPARE(
+        result.provenance.state, Data::DeviceAdapterAuthorizationProvenanceState::Denied);
+    QVERIFY(result.provenance.records.isEmpty());
+    QVERIFY(!result.provenance.authorizationSetSha256.isEmpty());
+    QVERIFY(result.provenance.authorizationSetSha256 != authorizedSetSha256);
     QVERIFY(adapterAuthorizationStartupMessage(result.authorizationStatus)
                 .contains("installed adapters are not authorized"));
     QCOMPARE(result.startupDiagnostics.size(), 1);
@@ -1361,6 +1449,60 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     QVERIFY(result.diagnostics.join('\n').contains("root policy signature is invalid"));
 
     install(policy(1), authorization(1));
+    const QString linkedNeighborTarget
+        = temporaryDirectory.path() + "/linked-neighbor.authorization.json";
+    const QString linkedNeighborPath
+        = authorizationRoot + "/authorizations/zz-linked-neighbor.authorization.json";
+    QVERIFY(QFile::copy(authorizationPath, linkedNeighborTarget));
+    QVERIFY(QFile::link(linkedNeighborTarget, linkedNeighborPath));
+    QVERIFY(QFileInfo(linkedNeighborPath).isSymLink());
+    result = evaluate();
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("symbolic-link authorization-root entries"));
+    QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::ValidationFailed);
+    QVERIFY(result.provenance.authorizationSetSha256.isEmpty());
+    QVERIFY(result.provenance.records.isEmpty());
+    QVERIFY(QFile::remove(linkedNeighborPath));
+    QVERIFY(QFile::remove(linkedNeighborTarget));
+
+    install(policy(1), authorization(1));
+    const QString linkedDirectoryTarget = temporaryDirectory.path() + "/linked-material-tree";
+    const QString linkedDirectoryPath = authorizationRoot + "/ordinary-neighbor";
+    QVERIFY(QDir().mkpath(linkedDirectoryTarget));
+    QVERIFY(QFile::copy(
+        authorizationPath, linkedDirectoryTarget + "/hidden.authorization.json"));
+    QVERIFY(QFile::link(linkedDirectoryTarget, linkedDirectoryPath));
+    QVERIFY(QFileInfo(linkedDirectoryPath).isSymLink());
+    result = evaluate();
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("symbolic-link authorization-root entries"));
+    QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::ValidationFailed);
+    QVERIFY(result.provenance.authorizationSetSha256.isEmpty());
+    QVERIFY(result.provenance.records.isEmpty());
+    QVERIFY(result.validatesCurrent);
+    QVERIFY(QFile::remove(linkedDirectoryPath));
+    QVERIFY(QDir(linkedDirectoryTarget).removeRecursively());
+
+    install(policy(1), authorization(1));
+    const QString hiddenLinkedDirectoryTarget
+        = temporaryDirectory.path() + "/hidden-linked-material-tree";
+    const QString hiddenLinkedDirectoryPath = authorizationRoot + "/.hidden-neighbor";
+    QVERIFY(QDir().mkpath(hiddenLinkedDirectoryTarget));
+    QVERIFY(QFile::copy(
+        authorizationPath, hiddenLinkedDirectoryTarget + "/hidden.authorization.json"));
+    QVERIFY(QFile::link(hiddenLinkedDirectoryTarget, hiddenLinkedDirectoryPath));
+    QVERIFY(QFileInfo(hiddenLinkedDirectoryPath).isSymLink());
+    result = evaluate();
+    QVERIFY(!result.xb6.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("symbolic-link authorization-root entries"));
+    QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::ValidationFailed);
+    QVERIFY(result.provenance.authorizationSetSha256.isEmpty());
+    QVERIFY(result.provenance.records.isEmpty());
+    QVERIFY(result.validatesCurrent);
+    QVERIFY(QFile::remove(hiddenLinkedDirectoryPath));
+    QVERIFY(QDir(hiddenLinkedDirectoryTarget).removeRecursively());
+
+    install(policy(1), authorization(1));
     const QString linkedTarget = temporaryDirectory.path() + "/linked.authorization.json";
     QVERIFY(QFile::rename(authorizationPath, linkedTarget));
     QVERIFY(QFile::link(linkedTarget, authorizationPath));
@@ -1370,7 +1512,7 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     QVERIFY(!result.xb6.realHardwareAllowed);
     QVERIFY(!result.sv.signatureVerified);
     QVERIFY(!result.sv.realHardwareAllowed);
-    QVERIFY(result.diagnostics.join('\n').contains("symbolic-link authorizations"));
+    QVERIFY(result.diagnostics.join('\n').contains("symbolic-link authorization-root entries"));
     QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::ValidationFailed);
     QCOMPARE(result.authorizationStatus.authorizedAdapterCount, 0);
     QVERIFY(QFile::remove(authorizationPath));
@@ -1387,12 +1529,65 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
     QVERIFY(QFile::remove(authorizationSignaturePath));
 
     install(policy(1), authorization(1));
+    AdapterPackageRepository hiddenMaterialRepository(
+        packageRoot, authorizationRootPath, trustRootPath);
+    const Data::DeviceAdapterAuthorizationProvenanceSnapshot beforeHiddenMaterial
+        = hiddenMaterialRepository.authorizationProvenanceSnapshot();
+    QVERIFY(beforeHiddenMaterial.isValid());
+    QCOMPARE(
+        beforeHiddenMaterial.state,
+        Data::DeviceAdapterAuthorizationProvenanceState::Authorized);
+    const QString hiddenMaterialRoot = authorizationRoot + "/.hidden-material";
+    QVERIFY(QDir().mkpath(hiddenMaterialRoot));
+    QVERIFY(QFile::copy(
+        authorizationPath, hiddenMaterialRoot + "/copy.authorization.json"));
+    QVERIFY(QFile::copy(
+        authorizationSignaturePath, hiddenMaterialRoot + "/copy.authorization.sig"));
+    QVERIFY(!hiddenMaterialRepository.validateCurrent(beforeHiddenMaterial));
+    AdapterPackageRepository hiddenMaterialObservedRepository(
+        packageRoot, authorizationRootPath, trustRootPath);
+    const Data::DeviceAdapterAuthorizationProvenanceSnapshot hiddenMaterialSnapshot
+        = hiddenMaterialObservedRepository.authorizationProvenanceSnapshot();
+    QVERIFY(hiddenMaterialSnapshot.isValid());
+    QCOMPARE(
+        hiddenMaterialSnapshot.state,
+        Data::DeviceAdapterAuthorizationProvenanceState::ValidationFailed);
+    QCOMPARE(hiddenMaterialSnapshot.authorizationSetSha256.size(), 32);
+    QVERIFY(
+        hiddenMaterialSnapshot.authorizationSetSha256
+        != beforeHiddenMaterial.authorizationSetSha256);
+    QVERIFY(hiddenMaterialSnapshot.records.isEmpty());
+    QVERIFY(hiddenMaterialObservedRepository.validateCurrent(hiddenMaterialSnapshot));
+    QVERIFY(QDir(hiddenMaterialRoot).removeRecursively());
+    QVERIFY(hiddenMaterialRepository.validateCurrent(beforeHiddenMaterial));
+
+    install(policy(1), authorization(1));
     AdapterPackageRepository
         equivocationRepository(packageRoot, authorizationRootPath, trustRootPath);
     QVERIFY(equivocationRepository.adapterManifest(unsignedXb6->id, unsignedXb6->version)
                 ->realHardwareAllowed);
+    auto *equivocationSource
+        = qobject_cast<Core::DeviceAdapterAuthorizationProvenanceSource *>(
+            &equivocationRepository);
+    QVERIFY(equivocationSource);
+    const Data::DeviceAdapterAuthorizationProvenanceSnapshot beforeEquivocation
+        = equivocationSource->authorizationProvenanceSnapshot();
+    QVERIFY(equivocationSource->validateCurrent(beforeEquivocation));
+    QVERIFY(writeBytes(orphanAuthorizationSignaturePath, QByteArray(64, '\0')));
+    QVERIFY(!equivocationSource->validateCurrent(beforeEquivocation));
+    QVERIFY(QFile::remove(orphanAuthorizationSignaturePath));
+    QVERIFY(equivocationSource->validateCurrent(beforeEquivocation));
     install(policy(1, {QString::fromLatin1(signerKey.keyId.toHex())}), authorization(1));
+    QVERIFY(!equivocationSource->validateCurrent(beforeEquivocation));
     equivocationRepository.reload();
+    const Data::DeviceAdapterAuthorizationProvenanceSnapshot afterEquivocation
+        = equivocationSource->authorizationProvenanceSnapshot();
+    QVERIFY(afterEquivocation.generation > beforeEquivocation.generation);
+    QCOMPARE(
+        afterEquivocation.state,
+        Data::DeviceAdapterAuthorizationProvenanceState::ValidationFailed);
+    QVERIFY(afterEquivocation.records.isEmpty());
+    QVERIFY(!equivocationSource->validateCurrent(beforeEquivocation));
     QVERIFY(!equivocationRepository.adapterManifest(unsignedXb6->id, unsignedXb6->version)
                  ->realHardwareAllowed);
     QVERIFY(
@@ -2267,19 +2462,34 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationV2ParameterClosu
     };
     struct Evaluation
     {
+        bool available = false;
+        bool validatesCurrent = false;
         Data::DeviceAdapterManifest v4;
         Data::DeviceAdapterManifest v3;
+        Data::DeviceAdapterAuthorizationProvenanceSnapshot provenance;
+        QStringList loadErrors;
         QStringList diagnostics;
         AdapterAuthorizationStatus authorizationStatus;
+        QList<Core::ProviderStartupDiagnostic> startupDiagnostics;
     };
     const auto evaluate = [&] {
         AdapterPackageRepository
             resultRepository(packageRootPath, authorizationRootPath, trustRootPath);
         Evaluation result;
+        result.available = resultRepository.isAvailable();
         result.v4 = *resultRepository.adapterManifest(unsignedV4->id, unsignedV4->version);
         result.v3 = *resultRepository.adapterManifest(unsignedV3->id, unsignedV3->version);
+        result.loadErrors = resultRepository.loadErrors();
         result.diagnostics = resultRepository.authorizationDiagnostics();
         result.authorizationStatus = resultRepository.authorizationStatus();
+        result.startupDiagnostics = resultRepository.startupDiagnostics();
+        auto *source
+            = qobject_cast<Core::DeviceAdapterAuthorizationProvenanceSource *>(
+                &resultRepository);
+        if (source) {
+            result.provenance = source->authorizationProvenanceSnapshot();
+            result.validatesCurrent = source->validateCurrent(result.provenance);
+        }
         return result;
     };
 
@@ -2296,6 +2506,45 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationV2ParameterClosu
     QVERIFY(result.v4.signatureVerified);
     QVERIFY(result.v4.realHardwareAllowed);
     QVERIFY(!result.v3.signatureVerified);
+    QVERIFY(result.validatesCurrent);
+    QVERIFY(result.provenance.isValid());
+    QCOMPARE(
+        result.provenance.state,
+        Data::DeviceAdapterAuthorizationProvenanceState::Authorized);
+    QCOMPARE(result.provenance.records.size(), 1);
+    const Data::DeviceAdapterAuthorizationProvenance v2Provenance
+        = result.provenance.records.constFirst();
+    QVERIFY(v2Provenance.isValid());
+    QCOMPARE(
+        v2Provenance.authorizationVersion, Data::DeviceAdapterAuthorizationVersion::V2);
+    QCOMPARE(v2Provenance.adapterContractVersion, Data::DeviceAdapterContractVersion::V4);
+    const auto canonicalV2Binding = Data::canonicalDeviceAdapterAuthorizationBinding(
+        result.v4, Data::DeviceAdapterAuthorizationVersion::V2);
+    QVERIFY(canonicalV2Binding);
+    QVERIFY(canonicalV2Binding->isValid());
+    QCOMPARE(
+        canonicalV2Binding->exactBytes,
+        QJsonDocument(v4Binding).toJson(QJsonDocument::Compact));
+    QCOMPARE(v2Provenance.adapterBindingSha256, canonicalV2Binding->sha256);
+    QVERIFY(!Data::canonicalDeviceAdapterAuthorizationBinding(
+        result.v4, Data::DeviceAdapterAuthorizationVersion::V1));
+
+    Data::DeviceAdapterManifest canonicalEdgeManifest = result.v4;
+    QString canonicalEdgeText;
+    canonicalEdgeText.append(QChar(0x007f));
+    canonicalEdgeText.append(QChar(0x4e2d));
+    canonicalEdgeText.append(QChar(0xd83d));
+    canonicalEdgeText.append(QChar(0xde00));
+    canonicalEdgeText.append(QChar(0xd800));
+    canonicalEdgeText.append(QLatin1Char('x'));
+    canonicalEdgeText.append(QChar(0xdc00));
+    canonicalEdgeManifest.controlActions[0].disabledReason = canonicalEdgeText;
+    const auto canonicalEdgeBinding = Data::canonicalDeviceAdapterAuthorizationBinding(
+        canonicalEdgeManifest, Data::DeviceAdapterAuthorizationVersion::V2);
+    QVERIFY(canonicalEdgeBinding);
+    QVERIFY(canonicalEdgeBinding->isValid());
+    QVERIFY(canonicalEdgeBinding->exactBytes.contains(
+        QByteArrayLiteral("\\u007f\\u4e2d\\ud83d\\ude00\\ud800x\\udc00")));
 
     install(
         authorization(
@@ -2359,6 +2608,32 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationV2ParameterClosu
     QVERIFY(!result.v4.realHardwareAllowed);
     QCOMPARE(result.authorizationStatus.firstFailure, AdapterAuthorizationFailure::InvalidDocument);
     QVERIFY(result.diagnostics.join('\n').contains("formatVersion must equal 1"));
+
+    QJsonObject staleContentBinding = v4Binding;
+    staleContentBinding.insert("contentSha256", QString(64, QLatin1Char('1')));
+    install(
+        authorization(
+            "embed-labs.ethercat-device-adapter-authorization-v2",
+            2,
+            staleContentBinding,
+            "embed-labs.test.v4.stale-content"),
+        authorizationDomainV2);
+    result = evaluate();
+    QVERIFY(!result.v4.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("does not match"));
+
+    QJsonObject staleVersionBinding = v4Binding;
+    staleVersionBinding.insert("version", "0.4.0-stale");
+    install(
+        authorization(
+            "embed-labs.ethercat-device-adapter-authorization-v2",
+            2,
+            staleVersionBinding,
+            "embed-labs.test.v4.stale-version"),
+        authorizationDomainV2);
+    result = evaluate();
+    QVERIFY(!result.v4.realHardwareAllowed);
+    QVERIFY(result.diagnostics.join('\n').contains("does not match"));
 
     QJsonObject missingClosureBinding = v4Binding;
     QJsonArray closure = missingClosureBinding.value("parameterDefinitions").toArray();
@@ -2522,6 +2797,184 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationV2ParameterClosu
     QCOMPARE(result.authorizationStatus.authorizedAdapterCount, 0);
     QCOMPARE(result.authorizationStatus.firstFailure, AdapterAuthorizationFailure::InvalidDocument);
     QVERIFY(result.diagnostics.join('\n').contains("invalid field set"));
+
+    QString invalidNeighborSignaturePath = invalidNeighborPath;
+    invalidNeighborSignaturePath.chop(5);
+    invalidNeighborSignaturePath.append(".sig");
+    QVERIFY(QFile::remove(invalidNeighborPath));
+    QVERIFY(QFile::remove(invalidNeighborSignaturePath));
+
+    QJsonObject injectedProvenancePackage = sv630nV4Fixture();
+    injectedProvenancePackage.insert(
+        "authorizationProvenance",
+        QJsonObject{{"authorizationVersion", 2}, {"authorizationId", "forged"}});
+    const QString malformedNeighborPath = packageRoot + "/zz-malformed.adapter.json";
+    QVERIFY(writePackage(malformedNeighborPath, injectedProvenancePackage));
+    install(
+        authorization(
+            "embed-labs.ethercat-device-adapter-authorization-v2",
+            2,
+            v4Binding,
+            "embed-labs.test.v4.allow-with-malformed-adapter-neighbor"),
+        authorizationDomainV2);
+    result = evaluate();
+    QVERIFY(!result.available);
+    QVERIFY(result.loadErrors.join('\n').contains("authorizationProvenance"));
+    QVERIFY(!result.v4.signatureVerified);
+    QVERIFY(!result.v4.realHardwareAllowed);
+    QVERIFY(!result.v3.signatureVerified);
+    QVERIFY(!result.v3.realHardwareAllowed);
+    QCOMPARE(result.authorizationStatus.state, AdapterAuthorizationState::ValidationFailed);
+    QCOMPARE(
+        result.authorizationStatus.firstFailure,
+        AdapterAuthorizationFailure::InvalidAdapterPackage);
+    QVERIFY(result.authorizationStatus.validationFailureCount > 0);
+    QCOMPARE(
+        result.provenance.state,
+        Data::DeviceAdapterAuthorizationProvenanceState::ValidationFailed);
+    QVERIFY(result.provenance.records.isEmpty());
+    QCOMPARE(result.startupDiagnostics.size(), 1);
+    QVERIFY(result.startupDiagnostics.constFirst().message.contains("invalid or unreadable"));
+    QVERIFY(QFile::remove(malformedNeighborPath));
+
+    install(
+        authorization(
+            "embed-labs.ethercat-device-adapter-authorization-v2",
+            2,
+            v4Binding,
+            "embed-labs.test.v4.validate-current-package-tree"),
+        authorizationDomainV2);
+    AdapterPackageRepository stableRepository(
+        packageRootPath, authorizationRootPath, trustRootPath);
+    const Data::DeviceAdapterAuthorizationProvenanceSnapshot stableSnapshot
+        = stableRepository.authorizationProvenanceSnapshot();
+    const QList<Data::DeviceAdapterManifest> stableManifests
+        = stableRepository.adapterManifests();
+    const AdapterAuthorizationStatus stableStatus = stableRepository.authorizationStatus();
+    QVERIFY(stableSnapshot.isValid());
+    QVERIFY(stableRepository.validateCurrent(stableSnapshot));
+    const auto stableV4
+        = stableRepository.adapterManifest(unsignedV4->id, unsignedV4->version);
+    QVERIFY(stableV4);
+    QVERIFY(stableRepository.validateCurrent(stableSnapshot, *stableV4));
+    const auto stableBinding = Data::canonicalDeviceAdapterAuthorizationBinding(
+        *stableV4, Data::DeviceAdapterAuthorizationVersion::V2);
+    QVERIFY(stableBinding);
+
+    Data::DeviceAdapterManifest changedIndex = *stableV4;
+    QVERIFY(changedIndex.parameterDefinitions.constFirst().configuredProjection.object);
+    QVERIFY(changedIndex.parameterDefinitions.constFirst().observedSource.object);
+    changedIndex.parameterDefinitions[0].configuredProjection.object->index = 0x6092;
+    changedIndex.parameterDefinitions[0].observedSource.object->index = 0x6092;
+    const auto changedIndexBinding = Data::canonicalDeviceAdapterAuthorizationBinding(
+        changedIndex, Data::DeviceAdapterAuthorizationVersion::V2);
+    QVERIFY(changedIndexBinding);
+    QCOMPARE(changedIndexBinding->sha256, stableBinding->sha256);
+    QVERIFY(!stableRepository.validateCurrent(stableSnapshot, changedIndex));
+
+    Data::DeviceAdapterManifest changedScale = *stableV4;
+    QVERIFY(changedScale.parameterDefinitions.at(3).configuredProjection.object);
+    QVERIFY(changedScale.parameterDefinitions.at(3).observedSource.object);
+    changedScale.parameterDefinitions[3]
+        .configuredProjection.object->engineeringTransform.scale = {2, 1};
+    changedScale.parameterDefinitions[3]
+        .observedSource.object->engineeringTransform.scale = {2, 1};
+    const auto changedScaleBinding = Data::canonicalDeviceAdapterAuthorizationBinding(
+        changedScale, Data::DeviceAdapterAuthorizationVersion::V2);
+    QVERIFY(changedScaleBinding);
+    QCOMPARE(changedScaleBinding->sha256, stableBinding->sha256);
+    QVERIFY(!stableRepository.validateCurrent(stableSnapshot, changedScale));
+    QCOMPARE(stableRepository.authorizationProvenanceSnapshot(), stableSnapshot);
+    QCOMPARE(stableRepository.adapterManifests(), stableManifests);
+    QCOMPARE(stableRepository.authorizationStatus().state, stableStatus.state);
+
+    const QString emptyPackageRoot = temporaryDirectory.path() + "/empty-packages";
+    QVERIFY(QDir().mkpath(emptyPackageRoot));
+    AdapterPackageRepository emptyRepository(
+        Utils::FilePath::fromString(emptyPackageRoot), authorizationRootPath, trustRootPath);
+    const Data::DeviceAdapterAuthorizationProvenanceSnapshot emptySnapshot
+        = emptyRepository.authorizationProvenanceSnapshot();
+    QVERIFY(emptySnapshot.isValid());
+    QCOMPARE(
+        emptySnapshot.state,
+        Data::DeviceAdapterAuthorizationProvenanceState::ValidationFailed);
+    QCOMPARE(emptySnapshot.authorizationSetSha256.size(), 32);
+    QVERIFY(emptySnapshot.records.isEmpty());
+    QVERIFY(emptyRepository.validateCurrent(emptySnapshot));
+    QVERIFY(!emptyRepository.validateCurrent(emptySnapshot, *stableV4));
+
+    const QString invalidPackageRoot = temporaryDirectory.path() + "/invalid-packages";
+    QVERIFY(QDir().mkpath(invalidPackageRoot));
+    QVERIFY(writeBytes(
+        invalidPackageRoot + "/broken.adapter.json", QByteArrayLiteral("not-json\n")));
+    AdapterPackageRepository invalidRepository(
+        Utils::FilePath::fromString(invalidPackageRoot), authorizationRootPath, trustRootPath);
+    const Data::DeviceAdapterAuthorizationProvenanceSnapshot invalidSnapshot
+        = invalidRepository.authorizationProvenanceSnapshot();
+    QVERIFY(invalidSnapshot.isValid());
+    QCOMPARE(
+        invalidSnapshot.state,
+        Data::DeviceAdapterAuthorizationProvenanceState::ValidationFailed);
+    QCOMPARE(invalidSnapshot.authorizationSetSha256.size(), 32);
+    QVERIFY(invalidSnapshot.records.isEmpty());
+    QVERIFY(invalidRepository.validateCurrent(invalidSnapshot));
+
+    const QString v4PackagePath = packageRoot + "/sv630n-v4.adapter.json";
+    const Utils::Result<QByteArray> originalV4Package
+        = Utils::FilePath::fromString(v4PackagePath).fileContents();
+    QVERIFY_RESULT(originalV4Package);
+    QVERIFY(writeBytes(v4PackagePath, QByteArrayLiteral("not-json\n")));
+    QVERIFY(!stableRepository.validateCurrent(stableSnapshot));
+    QCOMPARE(stableRepository.authorizationProvenanceSnapshot(), stableSnapshot);
+    QCOMPARE(stableRepository.adapterManifests(), stableManifests);
+    QCOMPARE(stableRepository.authorizationStatus().state, stableStatus.state);
+    QCOMPARE(
+        stableRepository.authorizationStatus().authorizedAdapterCount,
+        stableStatus.authorizedAdapterCount);
+    QVERIFY(writeBytes(v4PackagePath, *originalV4Package));
+    QVERIFY(stableRepository.validateCurrent(stableSnapshot));
+    QVERIFY(QFile::remove(v4PackagePath));
+    QVERIFY(!stableRepository.validateCurrent(stableSnapshot));
+    QCOMPARE(stableRepository.authorizationProvenanceSnapshot().generation, stableSnapshot.generation);
+    QCOMPARE(stableRepository.adapterManifests(), stableManifests);
+    QVERIFY(writeBytes(v4PackagePath, *originalV4Package));
+    QVERIFY(stableRepository.validateCurrent(stableSnapshot));
+
+    QString unusualVersion(300, QLatin1Char('v'));
+    unusualVersion.prepend(QChar(0x0001));
+    unusualVersion.prepend(QLatin1Char(' '));
+    QJsonObject unusualVersionFixture = sv630nV4Fixture();
+    unusualVersionFixture.insert("version", unusualVersion);
+    QVERIFY(writePackage(packageRoot + "/sv630n-v4.adapter.json", unusualVersionFixture));
+    AdapterPackageRepository unusualUnsignedRepository(
+        packageRootPath, authorizationRootPath, trustRootPath);
+    const auto unusualUnsigned = unusualUnsignedRepository.adapterManifest(
+        unsignedV4->id, unusualVersion);
+    QVERIFY(unusualUnsigned);
+    const QJsonObject unusualBinding = authorizationBinding(*unusualUnsigned);
+    install(
+        authorization(
+            "embed-labs.ethercat-device-adapter-authorization-v2",
+            2,
+            unusualBinding,
+            "embed-labs.test.v4.unusual-version"),
+        authorizationDomainV2);
+    AdapterPackageRepository unusualAuthorizedRepository(
+        packageRootPath, authorizationRootPath, trustRootPath);
+    const auto unusualAuthorized = unusualAuthorizedRepository.adapterManifest(
+        unsignedV4->id, unusualVersion);
+    QVERIFY(unusualAuthorized);
+    QVERIFY(unusualAuthorized->signatureVerified);
+    QVERIFY(unusualAuthorized->realHardwareAllowed);
+    const Data::DeviceAdapterAuthorizationProvenanceSnapshot unusualSnapshot
+        = unusualAuthorizedRepository.authorizationProvenanceSnapshot();
+    QVERIFY(unusualSnapshot.isValid());
+    QCOMPARE(
+        unusualSnapshot.state,
+        Data::DeviceAdapterAuthorizationProvenanceState::Authorized);
+    QCOMPARE(unusualSnapshot.records.size(), 1);
+    QCOMPARE(unusualSnapshot.records.constFirst().adapterVersion, unusualVersion);
+    QVERIFY(unusualAuthorizedRepository.validateCurrent(unusualSnapshot));
 }
 
 void EtherCATDeviceAdaptersTests::testV1RemainsFailClosed()

@@ -7,6 +7,7 @@
 #include <ethercatdata/axisparameterevidence.h>
 #include <ethercatdata/controllerconnection.h>
 #include <ethercatdata/deviceadapter.h>
+#include <ethercatdata/deviceadapterauthorizationprovenance.h>
 #include <ethercatdata/devicedescription.h>
 #include <ethercatdata/diagnosticssnapshot.h>
 #include <ethercatdata/projectsnapshot.h>
@@ -21,6 +22,7 @@
 #include <utils/result.h>
 
 #include <QObject>
+#include <QtPlugin>
 
 #include <optional>
 
@@ -224,6 +226,23 @@ signals:
     void indexingChanged(bool indexing);
 };
 
+class DeviceAdapterAuthorizationProvenanceSource
+{
+public:
+    virtual ~DeviceAdapterAuthorizationProvenanceSource() = default;
+
+    virtual Data::DeviceAdapterAuthorizationProvenanceSnapshot authorizationProvenanceSnapshot()
+        const = 0;
+    // Revalidates only the snapshot and its current on-disk authorization material.
+    virtual bool validateCurrent(
+        const Data::DeviceAdapterAuthorizationProvenanceSnapshot &snapshot) const = 0;
+    // Action or deployment consumers must use this overload. It also requires the complete
+    // manifest to equal the fresh package-tree manifest for the authorized exact triple.
+    virtual bool validateCurrent(
+        const Data::DeviceAdapterAuthorizationProvenanceSnapshot &snapshot,
+        const Data::DeviceAdapterManifest &manifest) const = 0;
+};
+
 class ETHERCATCORE_EXPORT DeviceAdapterProvider : public Provider
 {
     Q_OBJECT
@@ -414,6 +433,12 @@ signals:
 };
 
 } // namespace EtherCAT::Core
+
+#define EtherCATDeviceAdapterAuthorizationProvenanceSource_iid \
+    "org.embedlabs.EtherCAT.DeviceAdapterAuthorizationProvenanceSource/1.0"
+Q_DECLARE_INTERFACE(
+    EtherCAT::Core::DeviceAdapterAuthorizationProvenanceSource,
+    EtherCATDeviceAdapterAuthorizationProvenanceSource_iid)
 
 Q_DECLARE_METATYPE(EtherCAT::Core::ProviderKind)
 Q_DECLARE_METATYPE(EtherCAT::Core::DeviceImportState)

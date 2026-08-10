@@ -11,6 +11,8 @@ QtcLibrary {
         "axisparameterevidence.h",
         "controllerconnection.h",
         "deviceadapter.h",
+        "deviceadapterauthorizationprovenance.cpp",
+        "deviceadapterauthorizationprovenance.h",
         "deviceadapterselection.h",
         "deviceparameters.h",
         "diagnosticssnapshot.h",

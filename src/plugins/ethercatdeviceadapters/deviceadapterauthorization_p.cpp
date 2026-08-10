@@ -20,6 +20,7 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <tuple>
 
 namespace EtherCAT::DeviceAdapters::Internal {
 
@@ -38,6 +39,8 @@ constexpr char authorizationSignatureDomainV1[]
     = "embed-labs.ethercat-device-adapter-authorization/v1";
 constexpr char authorizationSignatureDomainV2[]
     = "embed-labs.ethercat-device-adapter-authorization/v2";
+constexpr char authorizationProvenanceSetDomain[]
+    = "embed-labs.ethercat-device-adapter-authorization-provenance-set/v1";
 constexpr qsizetype ed25519PublicKeyBytes = 32;
 constexpr qsizetype ed25519SignatureBytes = 64;
 constexpr qsizetype maximumDocumentBytes = 1024 * 1024;
@@ -61,6 +64,8 @@ struct Policy
     QHash<QByteArray, Signer> signers;
     QSet<QByteArray> revokedSignerKeyIds;
     QSet<QString> revokedAuthorizationIds;
+    QByteArray canonicalBytes;
+    QByteArray signature;
     QByteArray canonicalSha256;
     QString sourcePath;
 };
@@ -78,6 +83,18 @@ struct Authorization
     QByteArray signature;
     QString targetKey;
     QString sourcePath;
+};
+
+struct RootKeyMaterialIdentity
+{
+    QByteArray keyId;
+    QByteArray publicKey;
+};
+
+struct SignedDocumentMaterialIdentity
+{
+    QByteArray documentSha256;
+    QByteArray signatureSha256;
 };
 
 static bool fail(QString *error, const QString &message)
@@ -294,6 +311,59 @@ static QByteArray signedMessage(const char *domain, const QByteArray &canonicalB
     return message;
 }
 
+static void appendUint32(QByteArray *bytes, quint32 value)
+{
+    bytes->append(char((value >> 24) & 0xff));
+    bytes->append(char((value >> 16) & 0xff));
+    bytes->append(char((value >> 8) & 0xff));
+    bytes->append(char(value & 0xff));
+}
+
+static QByteArray canonicalAuthorizationSetSha256(
+    const QHash<QByteArray, QByteArray> &rootKeys,
+    QList<SignedDocumentMaterialIdentity> policyIdentities,
+    QList<SignedDocumentMaterialIdentity> authorizationIdentities)
+{
+    QList<RootKeyMaterialIdentity> roots;
+    roots.reserve(rootKeys.size());
+    for (auto iterator = rootKeys.cbegin(); iterator != rootKeys.cend(); ++iterator)
+        roots.append({iterator.key(), iterator.value()});
+    std::sort(roots.begin(), roots.end(), [](const auto &left, const auto &right) {
+        return std::tie(left.keyId, left.publicKey) < std::tie(right.keyId, right.publicKey);
+    });
+    const auto documentLess = [](const auto &left, const auto &right) {
+        return std::tie(left.documentSha256, left.signatureSha256)
+               < std::tie(right.documentSha256, right.signatureSha256);
+    };
+    std::sort(policyIdentities.begin(), policyIdentities.end(), documentLess);
+    std::sort(authorizationIdentities.begin(), authorizationIdentities.end(), documentLess);
+
+    QByteArray input(authorizationProvenanceSetDomain);
+    input.append('\0');
+    appendUint32(&input, quint32(roots.size()));
+    for (const RootKeyMaterialIdentity &root : std::as_const(roots)) {
+        input.append(root.keyId);
+        input.append(root.publicKey);
+    }
+    appendUint32(&input, quint32(policyIdentities.size()));
+    for (const SignedDocumentMaterialIdentity &identity : std::as_const(policyIdentities)) {
+        input.append(identity.documentSha256);
+        input.append(identity.signatureSha256);
+    }
+    appendUint32(&input, quint32(authorizationIdentities.size()));
+    for (const SignedDocumentMaterialIdentity &identity : std::as_const(authorizationIdentities)) {
+        input.append(identity.documentSha256);
+        input.append(identity.signatureSha256);
+    }
+    return QCryptographicHash::hash(input, QCryptographicHash::Sha256);
+}
+
+static DeviceAdapterAuthorizationVersion dataAuthorizationVersion(AuthorizationVersion version)
+{
+    return version == AuthorizationVersion::V1 ? DeviceAdapterAuthorizationVersion::V1
+                                               : DeviceAdapterAuthorizationVersion::V2;
+}
+
 static bool verifySignature(
     const QByteArray &signature, const QByteArray &publicKey, const QByteArray &message)
 {
@@ -306,28 +376,31 @@ static bool verifySignature(
                   == 0;
 }
 
-static void appendSymbolicLinkDiagnostics(
-    const Utils::FilePath &root,
-    const QStringList &nameFilters,
-    const QString &kind,
-    QStringList *diagnostics)
+static bool appendNestedSymbolicLinkDiagnostics(
+    const Utils::FilePath &root, const QString &kind, QStringList *diagnostics)
 {
     if (root.isEmpty() || !root.exists() || !root.isDir())
-        return;
+        return false;
+    bool found = false;
     QDirIterator iterator(
         root.toFSPathString(),
-        QDir::AllEntries | QDir::System | QDir::NoDotAndDotDot,
+        QDir::AllEntries | QDir::System | QDir::Hidden | QDir::NoDotAndDotDot,
         QDirIterator::Subdirectories);
     while (iterator.hasNext()) {
         const QString path = iterator.next();
         const QFileInfo info(path);
-        if (info.isSymLink() && QDir::match(nameFilters, info.fileName()))
+        if (info.isSymLink()) {
+            found = true;
             diagnostics->append(QString("%1: symbolic-link %2 are forbidden").arg(path, kind));
+        }
     }
+    return found;
 }
 
 static QHash<QByteArray, QByteArray> loadRootKeys(
-    const Utils::FilePath &trustRoot, QStringList *diagnostics)
+    const Utils::FilePath &trustRoot,
+    bool *materialPathClosureComplete,
+    QStringList *diagnostics)
 {
     QHash<QByteArray, QByteArray> result;
     QSet<QByteArray> conflicts;
@@ -335,17 +408,19 @@ static QHash<QByteArray, QByteArray> loadRootKeys(
         return result;
     const QFileInfo trustRootInfo(trustRoot.toFSPathString());
     if (trustRootInfo.isSymLink() || trustRootInfo.canonicalFilePath().isEmpty()) {
+        *materialPathClosureComplete = false;
         diagnostics->append(
             QString("%1: authorization trust root must not be a symbolic link")
                 .arg(trustRoot.toUserOutput()));
         return result;
     }
-    appendSymbolicLinkDiagnostics(trustRoot, {"*.pub"}, "trust keys", diagnostics);
+    if (appendNestedSymbolicLinkDiagnostics(trustRoot, "trust-root entries", diagnostics))
+        *materialPathClosureComplete = false;
     const QString canonicalTrustRoot = trustRootInfo.canonicalFilePath();
     QDirIterator iterator(
         trustRoot.toFSPathString(),
         {"*.pub"},
-        QDir::Files | QDir::NoSymLinks,
+        QDir::Files | QDir::NoSymLinks | QDir::Hidden,
         QDirIterator::Subdirectories);
     while (iterator.hasNext()) {
         const QString path = iterator.next();
@@ -420,6 +495,8 @@ static std::optional<Policy> parsePolicy(
 
     Policy policy;
     policy.sourcePath = path;
+    policy.canonicalBytes = canonical->first;
+    policy.signature = *signature;
     policy.canonicalSha256 = QCryptographicHash::hash(canonical->first, QCryptographicHash::Sha256);
     if (!parseUnsigned(object, "formatVersion", 1, context, &policy.revision, error)
         || policy.revision != 1 || !parseString(object, "policyId", context, &policy.id, error)
@@ -770,122 +847,6 @@ static std::optional<Authorization> parseAuthorization(
     return authorization;
 }
 
-static QString qualificationString(DeviceAdapterQualification qualification)
-{
-    switch (qualification) {
-    case DeviceAdapterQualification::Unqualified:
-        return "unqualified";
-    case DeviceAdapterQualification::Candidate:
-        return "candidate";
-    case DeviceAdapterQualification::Qualified:
-        return "qualified";
-    case DeviceAdapterQualification::MockOnly:
-        return "mock-only";
-    case DeviceAdapterQualification::Revoked:
-        return "revoked";
-    }
-    return {};
-}
-
-static QString actionQualificationString(DeviceControlActionQualification qualification)
-{
-    return QString::fromLatin1(
-        qualification == DeviceControlActionQualification::Qualified ? "qualified" : "unqualified");
-}
-
-static QJsonArray stringArray(const QStringList &values)
-{
-    QJsonArray result;
-    for (const QString &value : values)
-        result.append(value);
-    return result;
-}
-
-static QJsonObject adapterBinding(const DeviceAdapterManifest &manifest)
-{
-    QJsonObject match;
-    match.insert("vendorId", qint64(manifest.match.vendorId));
-    match.insert("productCode", qint64(manifest.match.productCode));
-    match.insert("minimumRevision", qint64(manifest.match.minimumRevision));
-    match.insert("maximumRevision", qint64(manifest.match.maximumRevision));
-    match.insert("exactEsiSha256", QString::fromLatin1(manifest.match.exactEsiSha256.toHex()));
-
-    QJsonObject target;
-    target.insert("adapterId", manifest.controllerAdapterTarget.adapterId);
-    target.insert("adapterVersion", manifest.controllerAdapterTarget.adapterVersion);
-    target.insert(
-        "adapterSha256",
-        QString::fromLatin1(manifest.controllerAdapterTarget.adapterSha256.toHex()));
-    target
-        .insert("esiSha256", QString::fromLatin1(manifest.controllerAdapterTarget.esiSha256.toHex()));
-
-    QJsonArray profiles;
-    for (const ProcessDataProfile &profile : manifest.processDataProfiles) {
-        QJsonObject item;
-        item.insert("id", profile.id);
-        item.insert("signedPdoProfileId", profile.signedPdoProfileId);
-        item.insert(
-            "signedDcProfileId",
-            profile.signedDcProfileId.isEmpty() ? QJsonValue(QJsonValue::Null)
-                                                : QJsonValue(profile.signedDcProfileId));
-        QJsonArray rx;
-        for (quint16 index : profile.rxPdoIndices)
-            rx.append(index);
-        QJsonArray tx;
-        for (quint16 index : profile.txPdoIndices)
-            tx.append(index);
-        QStringList required;
-        for (const SemanticSignalId &id : profile.requiredSignals)
-            required.append(id.value);
-        item.insert("rxPdoIndices", rx);
-        item.insert("txPdoIndices", tx);
-        item.insert("requiredSignals", stringArray(required));
-        profiles.append(item);
-    }
-
-    QJsonArray actions;
-    for (const DeviceControlAction &action : manifest.controlActions) {
-        QJsonObject item;
-        item.insert("id", action.id.value);
-        item.insert("enabled", action.enabled);
-        item.insert("qualification", actionQualificationString(action.signedQualification));
-        item.insert(
-            "disabledReason",
-            action.disabledReason.isEmpty() ? QJsonValue(QJsonValue::Null)
-                                            : QJsonValue(action.disabledReason));
-        item.insert("requiresDc", action.requiresDc);
-        item.insert(
-            "expectedSignedDefinitionSha256",
-            QString::fromLatin1(action.expectedSignedDefinitionSha256.toHex()));
-        item.insert("signedPdoProfileIds", stringArray(action.signedPdoProfileIds));
-        actions.append(item);
-    }
-
-    QJsonObject result;
-    result.insert("id", manifest.id.value);
-    result.insert("version", manifest.version);
-    result.insert("contentSha256", QString::fromLatin1(manifest.contentSha256.toHex()));
-    result.insert("qualification", qualificationString(manifest.qualification));
-    result.insert("match", match);
-    result.insert("controllerAdapterTarget", target);
-    result.insert("processDataProfiles", profiles);
-    result.insert("actions", actions);
-    result.insert("evidenceSha256", QString::fromLatin1(manifest.evidenceSha256.toHex()));
-    if (manifest.contractVersion == DeviceAdapterContractVersion::V4) {
-        QJsonArray definitions;
-        for (const DeviceParameterDefinition &definition : manifest.parameterDefinitions) {
-            QJsonObject item;
-            item.insert("id", definition.id);
-            item.insert(
-                "definitionSha256", QString::fromLatin1(definition.definitionSha256.toHex()));
-            definitions.append(item);
-        }
-        result.insert("schemaVersion", adapterSchemaVersionV4);
-        result.insert("parameterDefinitions", definitions);
-    }
-    return result;
-}
-
 static QString manifestTargetKey(const DeviceAdapterManifest &manifest)
 {
     return manifest.id.value + '\n' + manifest.version + '\n'
@@ -898,9 +859,11 @@ void applyDeviceAdapterAuthorizations(
     const DeviceAdapterAuthorizationRoots &roots,
     QList<DeviceAdapterManifest> *manifests,
     QHash<QString, AcceptedDeviceAdapterPolicy> *acceptedPolicies,
-    QStringList *diagnostics)
+    QStringList *diagnostics,
+    DeviceAdapterAuthorizationEvaluation *evaluation)
 {
     diagnostics->clear();
+    *evaluation = {};
     for (DeviceAdapterManifest &manifest : *manifests) {
         manifest.signatureVerified = false;
         manifest.realHardwareAllowed = false;
@@ -919,21 +882,47 @@ void applyDeviceAdapterAuthorizations(
         return;
     }
     const QString canonicalAuthorizationRoot = authorizationRootInfo.canonicalFilePath();
-    const QHash<QByteArray, QByteArray> rootKeys = loadRootKeys(roots.trustRoot, diagnostics);
-    appendSymbolicLinkDiagnostics(roots.authorizationRoot, {"*.policy.json"}, "policies", diagnostics);
-    appendSymbolicLinkDiagnostics(
-        roots.authorizationRoot, {"*.authorization.json"}, "authorizations", diagnostics);
+    bool materialPathClosureComplete = true;
+    const QHash<QByteArray, QByteArray> rootKeys
+        = loadRootKeys(roots.trustRoot, &materialPathClosureComplete, diagnostics);
+    int rootKeyPathCount = 0;
+    if (!roots.trustRoot.isEmpty() && roots.trustRoot.exists() && roots.trustRoot.isDir()) {
+        QDirIterator rootKeyIterator(
+            roots.trustRoot.toFSPathString(),
+            {"*.pub"},
+            QDir::Files | QDir::NoSymLinks | QDir::Hidden,
+            QDirIterator::Subdirectories);
+        while (rootKeyIterator.hasNext()) {
+            rootKeyIterator.next();
+            ++rootKeyPathCount;
+        }
+    }
+    materialPathClosureComplete
+        = !appendNestedSymbolicLinkDiagnostics(
+              roots.authorizationRoot, "authorization-root entries", diagnostics)
+          && materialPathClosureComplete;
     QList<QString> policyPaths;
     QDirIterator policyIterator(
         roots.authorizationRoot.toFSPathString(),
         {"*.policy.json"},
-        QDir::Files | QDir::NoSymLinks,
+        QDir::Files | QDir::NoSymLinks | QDir::Hidden,
         QDirIterator::Subdirectories);
     while (policyIterator.hasNext())
         policyPaths.append(policyIterator.next());
     policyPaths.sort();
+    int policySignaturePathCount = 0;
+    QDirIterator policySignatureIterator(
+        roots.authorizationRoot.toFSPathString(),
+        {"*.policy.sig"},
+        QDir::Files | QDir::NoSymLinks | QDir::Hidden,
+        QDirIterator::Subdirectories);
+    while (policySignatureIterator.hasNext()) {
+        policySignatureIterator.next();
+        ++policySignaturePathCount;
+    }
 
     QHash<QString, QList<Policy>> policiesById;
+    QList<SignedDocumentMaterialIdentity> policyIdentities;
     for (const QString &path : std::as_const(policyPaths)) {
         QString error;
         const std::optional<Policy> policy
@@ -942,6 +931,9 @@ void applyDeviceAdapterAuthorizations(
             diagnostics->append(error);
             continue;
         }
+        policyIdentities.append(
+            {policy->canonicalSha256,
+             QCryptographicHash::hash(policy->signature, QCryptographicHash::Sha256)});
         policiesById[policy->id].append(*policy);
     }
 
@@ -985,14 +977,25 @@ void applyDeviceAdapterAuthorizations(
     QDirIterator authorizationIterator(
         roots.authorizationRoot.toFSPathString(),
         {"*.authorization.json"},
-        QDir::Files | QDir::NoSymLinks,
+        QDir::Files | QDir::NoSymLinks | QDir::Hidden,
         QDirIterator::Subdirectories);
     while (authorizationIterator.hasNext())
         authorizationPaths.append(authorizationIterator.next());
     authorizationPaths.sort();
+    int authorizationSignaturePathCount = 0;
+    QDirIterator authorizationSignatureIterator(
+        roots.authorizationRoot.toFSPathString(),
+        {"*.authorization.sig"},
+        QDir::Files | QDir::NoSymLinks | QDir::Hidden,
+        QDirIterator::Subdirectories);
+    while (authorizationSignatureIterator.hasNext()) {
+        authorizationSignatureIterator.next();
+        ++authorizationSignaturePathCount;
+    }
 
     QHash<QString, QList<Authorization>> authorizationsByTarget;
     QHash<QString, int> authorizationIdCounts;
+    QList<SignedDocumentMaterialIdentity> authorizationIdentities;
     for (const QString &path : std::as_const(authorizationPaths)) {
         QString error;
         const std::optional<Authorization> authorization
@@ -1001,6 +1004,11 @@ void applyDeviceAdapterAuthorizations(
             diagnostics->append(error);
             continue;
         }
+        authorizationIdentities.append(
+            {QCryptographicHash::hash(
+                 authorization->canonicalBytes, QCryptographicHash::Sha256),
+             QCryptographicHash::hash(
+                 authorization->signature, QCryptographicHash::Sha256)});
         authorizationIdCounts[authorization->id] += 1;
         const auto policy = policies.constFind(authorization->policyId);
         if (policy == policies.cend() || policy->revision != authorization->policyRevision) {
@@ -1038,6 +1046,17 @@ void applyDeviceAdapterAuthorizations(
         authorizationsByTarget[authorization->targetKey].append(*authorization);
     }
 
+    evaluation->materialIdentityComplete
+        = materialPathClosureComplete && rootKeys.size() == rootKeyPathCount
+          && policyIdentities.size() == policyPaths.size()
+          && policySignaturePathCount == policyPaths.size()
+          && authorizationIdentities.size() == authorizationPaths.size()
+          && authorizationSignaturePathCount == authorizationPaths.size();
+    if (evaluation->materialIdentityComplete) {
+        evaluation->authorizationSetSha256 = canonicalAuthorizationSetSha256(
+            rootKeys, policyIdentities, authorizationIdentities);
+    }
+
     for (auto iterator = authorizationsByTarget.cbegin(); iterator != authorizationsByTarget.cend();
          ++iterator) {
         const QList<Authorization> candidates = iterator.value();
@@ -1059,12 +1078,14 @@ void applyDeviceAdapterAuthorizations(
                                     .arg(authorization.sourcePath));
             continue;
         }
-        const bool versionMatches
-            = (authorization.version == AuthorizationVersion::V1
-               && manifest->contractVersion == DeviceAdapterContractVersion::V3)
-              || (authorization.version == AuthorizationVersion::V2
-                  && manifest->contractVersion == DeviceAdapterContractVersion::V4);
-        if (!versionMatches || authorization.adapter != adapterBinding(*manifest)) {
+        const DeviceAdapterAuthorizationVersion authorizationVersion
+            = dataAuthorizationVersion(authorization.version);
+        const std::optional<CanonicalDeviceAdapterAuthorizationBinding> binding
+            = canonicalDeviceAdapterAuthorizationBinding(*manifest, authorizationVersion);
+        const QJsonDocument bindingDocument
+            = binding ? QJsonDocument::fromJson(binding->exactBytes) : QJsonDocument{};
+        if (!binding || !binding->isValid() || !bindingDocument.isObject()
+            || authorization.adapter != bindingDocument.object()) {
             diagnostics->append(
                 QString("%1: authorization binding does not exactly match its Adapter version")
                     .arg(authorization.sourcePath));
@@ -1073,10 +1094,45 @@ void applyDeviceAdapterAuthorizations(
         if (authorization.decision == "allow") {
             manifest->signatureVerified = true;
             manifest->realHardwareAllowed = true;
+            const Policy &policy = policies.value(authorization.policyId);
+            DeviceAdapterAuthorizationProvenance provenance;
+            provenance.adapterContractVersion = manifest->contractVersion;
+            provenance.authorizationVersion = authorizationVersion;
+            provenance.decision = DeviceAdapterAuthorizationDecision::Allow;
+            provenance.adapterId = manifest->id;
+            provenance.adapterVersion = manifest->version;
+            provenance.adapterContentSha256 = manifest->contentSha256;
+            provenance.adapterBindingSha256 = binding->sha256;
+            provenance.authorizationId = authorization.id;
+            provenance.authorizationDocumentSha256 = QCryptographicHash::hash(
+                authorization.canonicalBytes, QCryptographicHash::Sha256);
+            provenance.authorizationSignatureSha256 = QCryptographicHash::hash(
+                authorization.signature, QCryptographicHash::Sha256);
+            provenance.policyId = policy.id;
+            provenance.policyRevision = policy.revision;
+            provenance.policyDocumentSha256 = policy.canonicalSha256;
+            provenance.policySignatureSha256
+                = QCryptographicHash::hash(policy.signature, QCryptographicHash::Sha256);
+            provenance.rootKeyId = policy.rootKeyId;
+            provenance.signerKeyId = authorization.signerKeyId;
+            evaluation->provenances.append(provenance);
         }
     }
 
+    std::sort(
+        evaluation->provenances.begin(),
+        evaluation->provenances.end(),
+        [](const DeviceAdapterAuthorizationProvenance &left,
+           const DeviceAdapterAuthorizationProvenance &right) {
+            return std::tie(left.adapterId.value, left.adapterVersion, left.adapterContentSha256)
+                   < std::tie(
+                       right.adapterId.value,
+                       right.adapterVersion,
+                       right.adapterContentSha256);
+        });
+
     if (!diagnostics->isEmpty()) {
+        evaluation->provenances.clear();
         for (DeviceAdapterManifest &manifest : *manifests) {
             manifest.signatureVerified = false;
             manifest.realHardwareAllowed = false;

@@ -230,6 +230,36 @@ Adapter v4 参数定义属于签名设备目录事实，不属于工程或在线
 v4，并精确覆盖每项定义的 domain-separated digest；Authorization v1 仍只授权 v3，不能跨版本
 复用。
 
+#### 4.2.1 Adapter 授权来源与完整 manifest 新鲜度
+
+官方 `AdapterPackageRepository` 额外实现可选的纯 IID
+`DeviceAdapterAuthorizationProvenanceSource`。授权来源记录不写入
+`DeviceAdapterManifest`，Adapter JSON 因此不能注入 typed provenance；普通
+`DeviceAdapterProvider` 仅设置 `signatureVerified`/`realHardwareAllowed` 也不会自动获得该
+来源能力。原子 snapshot 带非零单调 generation、闭集 state、材料完整时的 authorization-set
+SHA-256，以及按 Adapter `{id, version, contentSha256}` 严格排序的 allow records。每条记录绑定
+Authorization 版本、canonical Adapter binding、authorization/policy 文档与签名、root/signer key
+和 policy revision。set identity 覆盖全部 root key 以及所有 policy/authorization 文档和签名的
+有序身份，包括 deny 和未匹配材料；缺失配对、orphan、无效 Adapter、任一全局诊断或材料根内
+任一嵌套符号链接都会清除 provenance records 和旧 trust flags，路径闭集不完整时不得发布
+set SHA。
+
+公共 `canonicalDeviceAdapterAuthorizationBinding()` 只复现 signed Adapter object 中声明的
+identity/digest 字段，不会重新打开 package，也不会独立重算 `contentSha256` 或
+`definitionSha256`，不能把它当作完整 manifest 重验。单参 `validateCurrent(snapshot)` 也只重读
+package/authorization 材料并确认 snapshot 仍为当前值。
+
+动作或部署消费者必须使用 `validateCurrent(snapshot, manifest)`：它现场只读重载两棵目录，要求
+snapshot 未漂移，按已授权 exact triple 唯一定位 fresh package，再对完整 fresh manifest 执行
+相等比较。这样即使调用者复制 manifest 后改了 CoE index、工程 scale 或其他字段且保留旧摘要，
+也会 fail closed。该调用不得改变 repository cache、accepted policy、generation 或发信号。
+当前 SemanticRuntime 尚未消费此接口，本 ISSUE 不启用 v4 动作、不安装生产 v4 资产，也不证明
+真实硬件运动能力。后续消费者必须在 available `DeviceAdapterProvider` 集合中的同一批 Provider
+QObject 上执行 `qobject_cast`，并要求恰好一个 IID source；该 source 必须就是提供待验 manifest
+的同一 Provider 对象，禁止分别选择独立 provider 和 source。该合同不防御任意恶意的进程内插件；
+已安装的进程内插件仍位于现有信任边界之内。snapshot 是当前进程内的 provenance，不是可独立
+移植的密码学证据。
+
 ### 4.3 在线控制器状态
 
 唯一权威是选定 `ControllerConnectionProvider` 发布的完整

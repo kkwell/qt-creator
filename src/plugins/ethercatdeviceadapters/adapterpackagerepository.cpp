@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <tuple>
 
@@ -77,7 +78,7 @@ static int matchingAuthorizationFiles(const Utils::FilePath &root, const QString
     QDirIterator iterator(
         root.toFSPathString(),
         nameFilters,
-        QDir::Files | QDir::NoSymLinks,
+        QDir::Files | QDir::NoSymLinks | QDir::Hidden,
         QDirIterator::Subdirectories);
     while (iterator.hasNext()) {
         iterator.next();
@@ -154,6 +155,8 @@ static QString authorizationFailureName(AdapterAuthorizationFailure failure)
         return translate("the authorization policy conflicts with an accepted revision");
     case AdapterAuthorizationFailure::BindingMismatch:
         return translate("an authorization does not match the installed adapter");
+    case AdapterAuthorizationFailure::InvalidAdapterPackage:
+        return translate("an adapter package is invalid or unreadable");
     case AdapterAuthorizationFailure::InvalidSignerScope:
         return translate("the authorization policy or signer scope is invalid");
     case AdapterAuthorizationFailure::InvalidFile:
@@ -194,6 +197,49 @@ static AdapterAuthorizationStatus makeAuthorizationStatus(
     status.state = status.authorizedAdapterCount == 0 ? AdapterAuthorizationState::Denied
                                                       : AdapterAuthorizationState::Authorized;
     return status;
+}
+
+static DeviceAdapterAuthorizationProvenanceSnapshot makeAuthorizationProvenanceSnapshot(
+    quint64 generation,
+    const AdapterAuthorizationStatus &status,
+    const DeviceAdapterAuthorizationEvaluation &evaluation,
+    bool repositoryValidationSucceeded)
+{
+    DeviceAdapterAuthorizationProvenanceSnapshot snapshot;
+    snapshot.formatVersion = 1;
+    snapshot.generation = generation;
+    if (!repositoryValidationSucceeded) {
+        snapshot.state = DeviceAdapterAuthorizationProvenanceState::ValidationFailed;
+    } else {
+        switch (status.state) {
+        case AdapterAuthorizationState::NotInstalled:
+            snapshot.state = DeviceAdapterAuthorizationProvenanceState::NotInstalled;
+            break;
+        case AdapterAuthorizationState::Authorized:
+            snapshot.state = DeviceAdapterAuthorizationProvenanceState::Authorized;
+            break;
+        case AdapterAuthorizationState::Denied:
+            snapshot.state = DeviceAdapterAuthorizationProvenanceState::Denied;
+            break;
+        case AdapterAuthorizationState::ValidationFailed:
+            snapshot.state = DeviceAdapterAuthorizationProvenanceState::ValidationFailed;
+            break;
+        }
+    }
+    if (snapshot.state != DeviceAdapterAuthorizationProvenanceState::NotInstalled
+        && evaluation.materialIdentityComplete) {
+        snapshot.authorizationSetSha256 = evaluation.authorizationSetSha256;
+    }
+    if (snapshot.state == DeviceAdapterAuthorizationProvenanceState::Authorized)
+        snapshot.records = evaluation.provenances;
+    if (snapshot.isValid())
+        return snapshot;
+
+    snapshot.state = DeviceAdapterAuthorizationProvenanceState::ValidationFailed;
+    snapshot.records.clear();
+    if (snapshot.authorizationSetSha256.size() != 32)
+        snapshot.authorizationSetSha256.clear();
+    return snapshot;
 }
 
 static bool fail(QString *error, const QString &message)
@@ -3900,6 +3946,71 @@ static bool packageLess(const Package &left, const Package &right)
     return left.manifest.version < right.manifest.version;
 }
 
+static void loadAdapterPackages(
+    const Utils::FilePath &packageRoot,
+    QList<Package> *packages,
+    QStringList *loadErrors)
+{
+    packages->clear();
+    loadErrors->clear();
+    const auto translate = [](const char *text) {
+        return QCoreApplication::translate("EtherCATDeviceAdapters", text);
+    };
+    if (!packageRoot.exists() || !packageRoot.isDir()) {
+        loadErrors->append(
+            translate("Adapter package directory does not exist: %1")
+                .arg(packageRoot.toUserOutput()));
+        return;
+    }
+
+    QStringList paths;
+    QDirIterator iterator(
+        packageRoot.toFSPathString(),
+        {"*.adapter.json"},
+        QDir::Files,
+        QDirIterator::Subdirectories);
+    while (iterator.hasNext())
+        paths.append(iterator.next());
+    paths.sort();
+    if (paths.isEmpty()) {
+        loadErrors->append(
+            translate("No adapter packages were found in %1").arg(packageRoot.toUserOutput()));
+    }
+
+    QSet<QString> packageKeys;
+    for (const QString &path : std::as_const(paths)) {
+        const Utils::FilePath sourcePath = Utils::FilePath::fromString(path);
+        const Utils::Result<QByteArray> contents = sourcePath.fileContents();
+        if (!contents) {
+            loadErrors->append(
+                translate("%1: %2").arg(sourcePath.toUserOutput(), contents.error()));
+            continue;
+        }
+        QString error;
+        const std::optional<Package> package = parsePackage(sourcePath, *contents, &error);
+        if (!package) {
+            loadErrors->append(
+                error.startsWith(sourcePath.fileName())
+                    ? error
+                    : QString("%1: %2").arg(sourcePath.toUserOutput(), error));
+            continue;
+        }
+        const QString key = package->manifest.id.value + '\n' + package->manifest.version;
+        if (packageKeys.contains(key)) {
+            loadErrors->append(
+                translate("%1: duplicate adapter id and version %2 %3")
+                    .arg(
+                        sourcePath.toUserOutput(),
+                        package->manifest.id.value,
+                        package->manifest.version));
+            continue;
+        }
+        packageKeys.insert(key);
+        packages->append(*package);
+    }
+    std::sort(packages->begin(), packages->end(), packageLess);
+}
+
 static bool identityMatches(const DeviceAdapterManifest &manifest, const DeviceDescription &device)
 {
     const DeviceIdentity &identity = device.summary.identity;
@@ -4310,6 +4421,8 @@ public:
     QStringList loadErrors;
     QStringList authorizationDiagnostics;
     AdapterAuthorizationStatus authorizationStatus;
+    DeviceAdapterAuthorizationProvenanceSnapshot authorizationProvenanceSnapshot;
+    quint64 authorizationGeneration = 0;
     QHash<QString, AcceptedDeviceAdapterPolicy> acceptedPolicies;
 };
 
@@ -4460,6 +4573,80 @@ QList<Core::ProviderStartupDiagnostic> AdapterPackageRepository::startupDiagnost
     return diagnostic.isValid() ? QList{diagnostic} : QList<Core::ProviderStartupDiagnostic>{};
 }
 
+DeviceAdapterAuthorizationProvenanceSnapshot
+AdapterPackageRepository::authorizationProvenanceSnapshot() const
+{
+    return d->authorizationProvenanceSnapshot;
+}
+
+bool AdapterPackageRepository::validateCurrent(
+    const DeviceAdapterAuthorizationProvenanceSnapshot &snapshot) const
+{
+    return validateCurrentImpl(snapshot, nullptr);
+}
+
+bool AdapterPackageRepository::validateCurrent(
+    const DeviceAdapterAuthorizationProvenanceSnapshot &snapshot,
+    const DeviceAdapterManifest &manifest) const
+{
+    return validateCurrentImpl(snapshot, &manifest);
+}
+
+bool AdapterPackageRepository::validateCurrentImpl(
+    const DeviceAdapterAuthorizationProvenanceSnapshot &snapshot,
+    const DeviceAdapterManifest *manifest) const
+{
+    if (!snapshot.isValid() || snapshot != d->authorizationProvenanceSnapshot)
+        return false;
+
+    QList<Package> packages;
+    QStringList loadErrors;
+    loadAdapterPackages(d->packageRoot, &packages, &loadErrors);
+    QList<DeviceAdapterManifest> manifests;
+    manifests.reserve(packages.size());
+    for (const Package &package : std::as_const(packages))
+        manifests.append(package.manifest);
+    QHash<QString, AcceptedDeviceAdapterPolicy> acceptedPolicies = d->acceptedPolicies;
+    QStringList diagnostics;
+    DeviceAdapterAuthorizationEvaluation evaluation;
+    applyDeviceAdapterAuthorizations(
+        d->authorizationRoots,
+        &manifests,
+        &acceptedPolicies,
+        &diagnostics,
+        &evaluation);
+    for (qsizetype index = 0; index < packages.size(); ++index)
+        packages[index].manifest = manifests.at(index);
+    const AdapterAuthorizationStatus status
+        = makeAuthorizationStatus(d->authorizationRoots, packages, diagnostics);
+    const DeviceAdapterAuthorizationProvenanceSnapshot current
+        = makeAuthorizationProvenanceSnapshot(
+            snapshot.generation, status, evaluation, loadErrors.isEmpty());
+    if (!current.isValid() || current != snapshot)
+        return false;
+    if (!manifest)
+        return true;
+    if (snapshot.state != DeviceAdapterAuthorizationProvenanceState::Authorized)
+        return false;
+
+    const auto sameTriple = [manifest](const auto &candidate) {
+        return candidate.adapterId.value == manifest->id.value
+               && candidate.adapterVersion == manifest->version
+               && candidate.adapterContentSha256 == manifest->contentSha256;
+    };
+    if (std::count_if(snapshot.records.cbegin(), snapshot.records.cend(), sameTriple) != 1)
+        return false;
+    const auto samePackageTriple = [manifest](const Package &candidate) {
+        return candidate.manifest.id == manifest->id
+               && candidate.manifest.version == manifest->version
+               && candidate.manifest.contentSha256 == manifest->contentSha256;
+    };
+    const auto found = std::find_if(packages.cbegin(), packages.cend(), samePackageTriple);
+    return found != packages.cend()
+           && std::find_if(std::next(found), packages.cend(), samePackageTriple) == packages.cend()
+           && found->manifest == *manifest;
+}
+
 Utils::FilePath AdapterPackageRepository::packageRoot() const
 {
     return d->packageRoot;
@@ -4488,80 +4675,69 @@ int AdapterPackageRepository::loadedPackageCount() const
 void AdapterPackageRepository::reload()
 {
     const QList<DeviceAdapterManifest> oldManifests = adapterManifests();
+    const DeviceAdapterAuthorizationProvenanceSnapshot oldAuthorizationProvenance
+        = d->authorizationProvenanceSnapshot;
+    if (d->authorizationGeneration < std::numeric_limits<quint64>::max())
+        ++d->authorizationGeneration;
     d->packages.clear();
     d->loadErrors.clear();
     d->authorizationDiagnostics.clear();
 
-    if (!d->packageRoot.exists() || !d->packageRoot.isDir()) {
-        d->loadErrors.append(
-            tr("Adapter package directory does not exist: %1").arg(d->packageRoot.toUserOutput()));
-    } else {
-        QStringList paths;
-        QDirIterator iterator(
-            d->packageRoot.toFSPathString(),
-            {"*.adapter.json"},
-            QDir::Files,
-            QDirIterator::Subdirectories);
-        while (iterator.hasNext())
-            paths.append(iterator.next());
-        paths.sort();
-        if (paths.isEmpty()) {
-            d->loadErrors.append(
-                tr("No adapter packages were found in %1").arg(d->packageRoot.toUserOutput()));
-        }
-        QSet<QString> packageKeys;
-        for (const QString &path : std::as_const(paths)) {
-            const Utils::FilePath sourcePath = Utils::FilePath::fromString(path);
-            const Utils::Result<QByteArray> contents = sourcePath.fileContents();
-            if (!contents) {
-                d->loadErrors.append(tr("%1: %2").arg(sourcePath.toUserOutput(), contents.error()));
-                continue;
-            }
-            QString error;
-            const std::optional<Package> package = parsePackage(sourcePath, *contents, &error);
-            if (!package) {
-                d->loadErrors.append(
-                    error.startsWith(sourcePath.fileName())
-                        ? error
-                        : QString("%1: %2").arg(sourcePath.toUserOutput(), error));
-                continue;
-            }
-            const QString key = package->manifest.id.value + '\n' + package->manifest.version;
-            if (packageKeys.contains(key)) {
-                d->loadErrors.append(tr("%1: duplicate adapter id and version %2 %3")
-                                         .arg(
-                                             sourcePath.toUserOutput(),
-                                             package->manifest.id.value,
-                                             package->manifest.version));
-                continue;
-            }
-            packageKeys.insert(key);
-            d->packages.append(*package);
-        }
-        std::sort(d->packages.begin(), d->packages.end(), packageLess);
-        QList<DeviceAdapterManifest> manifests;
-        manifests.reserve(d->packages.size());
-        for (const Package &package : std::as_const(d->packages))
-            manifests.append(package.manifest);
-        applyDeviceAdapterAuthorizations(
-            d->authorizationRoots, &manifests, &d->acceptedPolicies, &d->authorizationDiagnostics);
-        for (qsizetype index = 0; index < d->packages.size(); ++index)
-            d->packages[index].manifest = manifests.at(index);
-    }
+    loadAdapterPackages(d->packageRoot, &d->packages, &d->loadErrors);
+    QList<DeviceAdapterManifest> manifests;
+    manifests.reserve(d->packages.size());
+    for (const Package &package : std::as_const(d->packages))
+        manifests.append(package.manifest);
+    DeviceAdapterAuthorizationEvaluation evaluation;
+    applyDeviceAdapterAuthorizations(
+        d->authorizationRoots,
+        &manifests,
+        &d->acceptedPolicies,
+        &d->authorizationDiagnostics,
+        &evaluation);
+    for (qsizetype index = 0; index < d->packages.size(); ++index)
+        d->packages[index].manifest = manifests.at(index);
+    d->authorizationProvenanceSnapshot = makeAuthorizationProvenanceSnapshot(
+        d->authorizationGeneration,
+        makeAuthorizationStatus(
+            d->authorizationRoots, d->packages, d->authorizationDiagnostics),
+        evaluation,
+        d->loadErrors.isEmpty());
 
     d->authorizationStatus
         = makeAuthorizationStatus(d->authorizationRoots, d->packages, d->authorizationDiagnostics);
-    if (d->authorizationStatus.state == AdapterAuthorizationState::ValidationFailed) {
+    if (!d->loadErrors.isEmpty()) {
+        d->authorizationStatus.state = AdapterAuthorizationState::ValidationFailed;
+        d->authorizationStatus.firstFailure = AdapterAuthorizationFailure::InvalidAdapterPackage;
+        d->authorizationStatus.validationFailureCount = d->loadErrors.size();
+        d->authorizationStatus.authorizedAdapterCount = 0;
+    } else if (d->authorizationProvenanceSnapshot.state
+                   == DeviceAdapterAuthorizationProvenanceState::ValidationFailed
+               && d->authorizationStatus.state != AdapterAuthorizationState::ValidationFailed) {
+        d->authorizationStatus.state = AdapterAuthorizationState::ValidationFailed;
+        d->authorizationStatus.firstFailure = AdapterAuthorizationFailure::BindingMismatch;
+        d->authorizationStatus.validationFailureCount = 1;
+        d->authorizationStatus.authorizedAdapterCount = 0;
+    }
+    if (!d->loadErrors.isEmpty()
+        || d->authorizationStatus.state == AdapterAuthorizationState::ValidationFailed
+        || d->authorizationProvenanceSnapshot.state
+               == DeviceAdapterAuthorizationProvenanceState::ValidationFailed) {
         for (Package &package : d->packages) {
             package.manifest.signatureVerified = false;
             package.manifest.realHardwareAllowed = false;
         }
         d->authorizationStatus.authorizedAdapterCount = 0;
+        d->authorizationProvenanceSnapshot.records.clear();
+        d->authorizationProvenanceSnapshot.state
+            = DeviceAdapterAuthorizationProvenanceState::ValidationFailed;
     }
 
     setAvailable(d->loadErrors.isEmpty() && !d->packages.isEmpty());
-    if (oldManifests != adapterManifests())
+    if (oldManifests != adapterManifests()
+        || oldAuthorizationProvenance != d->authorizationProvenanceSnapshot) {
         emit adapterManifestsChanged();
+    }
 }
 
 } // namespace EtherCAT::DeviceAdapters::Internal
