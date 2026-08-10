@@ -1058,6 +1058,82 @@ static Data::DeviceAdapterManifest deviceParametersManifest()
     return result;
 }
 
+static Data::DeviceAdapterManifest axisEvidenceDeviceParametersManifest()
+{
+    Data::DeviceAdapterManifest result = deviceParametersManifest();
+    const auto observedDefinition = [](const QString &id,
+                                       const QString &displayName,
+                                       Data::EngineeringValueKind valueKind,
+                                       Data::EtherCATDataType physicalType,
+                                       quint16 ordinal,
+                                       qint64 minimum,
+                                       qint64 maximum,
+                                       bool required) {
+        Data::DeviceParameterDefinition definition = deviceParameterDefinition(
+            id,
+            displayName,
+            valueKind,
+            "axis_unit",
+            deviceParameterIntegerConstraint(minimum, maximum),
+            required);
+        const Data::FixedAxisParameterEvidenceRecord &fixed
+            = Data::FixedAxisParameterEvidenceRecords.at(ordinal);
+        Data::DeviceParameterObjectBinding object;
+        object.index = fixed.index;
+        object.subIndex = fixed.subIndex;
+        object.physicalType = physicalType;
+        object.byteOrder = Data::DeviceByteOrder::LittleEndian;
+        object.engineeringTransform.scale = {1, 1};
+        object.engineeringTransform.offset = {0, 1};
+        object.engineeringTransform.unit = definition.unit;
+        object.engineeringTransform.constraint = definition.engineeringConstraint;
+        object.engineeringTransform.rounding = Data::EngineeringRounding::RejectInexact;
+        definition.observedSource = {};
+        definition.observedSource.kind = Data::DeviceParameterObservedSourceKind::CoeSdoUpload;
+        definition.observedSource.object = object;
+        return definition;
+    };
+
+    Data::DeviceParameterDefinition unavailable = deviceParameterDefinition(
+        "d.signed.unavailable",
+        "Signed unavailable",
+        Data::EngineeringValueKind::SignedInteger,
+        "axis_unit",
+        deviceParameterIntegerConstraint(-100, 100),
+        false);
+    result.parameterDefinitions = {
+        observedDefinition(
+            "a.signed.match",
+            "Signed match",
+            Data::EngineeringValueKind::SignedInteger,
+            Data::EtherCATDataType::Integer16,
+            0,
+            -100,
+            100,
+            true),
+        observedDefinition(
+            "b.unsigned.mismatch",
+            "Unsigned mismatch",
+            Data::EngineeringValueKind::UnsignedInteger,
+            Data::EtherCATDataType::UnsignedInteger16,
+            1,
+            0,
+            100,
+            true),
+        observedDefinition(
+            "c.unsigned.not-configured",
+            "Unsigned not configured",
+            Data::EngineeringValueKind::UnsignedInteger,
+            Data::EtherCATDataType::UnsignedInteger32,
+            3,
+            0,
+            1000000000,
+            false),
+        unavailable,
+    };
+    return result;
+}
+
 static Data::DeviceAdapterProjectSelection deviceParametersSelection(
     const Data::DeviceAdapterManifest &manifest)
 {
@@ -1731,6 +1807,23 @@ public:
 
     Data::ControllerConnectionSnapshot connectionSnapshot() const final { return m_snapshot; }
 
+    bool supportsAxisParameterEvidence() const final
+    {
+        return m_supportsAxisParameterEvidence;
+    }
+
+    std::optional<Data::AxisParameterEvidenceBatch> axisParameterEvidenceBatch() const final
+    {
+        ++axisParameterEvidenceReads;
+        const std::optional<Data::AxisParameterEvidenceBatch> result
+            = m_axisParameterEvidenceBatch;
+        if (onAxisParameterEvidenceRead) {
+            std::function<void()> callback = std::exchange(onAxisParameterEvidenceRead, {});
+            callback();
+        }
+        return result;
+    }
+
     Utils::Result<> connectToController(const Data::ControllerConnectionRequest &request) final
     {
         ++connectCalls;
@@ -1867,6 +1960,23 @@ public:
         emit connectionSnapshotChanged();
     }
 
+    void setSupportsAxisParameterEvidence(bool supported)
+    {
+        m_supportsAxisParameterEvidence = supported;
+    }
+
+    void publishAxisParameterEvidenceBatch(
+        const std::optional<Data::AxisParameterEvidenceBatch> &batch)
+    {
+        m_axisParameterEvidenceBatch = batch;
+        emit axisParameterEvidenceBatchChanged();
+    }
+
+    void notifyAxisParameterEvidenceBatchChanged()
+    {
+        emit axisParameterEvidenceBatchChanged();
+    }
+
     void publishState(
         Data::ControllerConnectionState state, const Data::ControllerConnectionScope &scope)
     {
@@ -1906,14 +2016,18 @@ public:
     QString cancelDeploymentError;
     int deploymentCalls = 0;
     int cancelDeploymentCalls = 0;
+    mutable int axisParameterEvidenceReads = 0;
+    mutable std::function<void()> onAxisParameterEvidenceRead;
 
 private:
     Data::ControllerConnectionProfile m_primaryProfile;
     Data::ControllerConnectionProfile m_alternateProfile;
     bool m_includeAlternateProfile = true;
     bool m_packageDeploymentSupported = false;
+    bool m_supportsAxisParameterEvidence = false;
     QList<Data::ControllerControlCommand> m_supportedControlCommands;
     Data::ControllerConnectionSnapshot m_snapshot;
+    std::optional<Data::AxisParameterEvidenceBatch> m_axisParameterEvidenceBatch;
 };
 
 static void completeRealTopologyProvenance(
@@ -1952,6 +2066,201 @@ static void completeRealTopologyProvenance(
         topology.topologyPayloadSha256.clear();
     }
     topology.receivedAt = QDateTime::currentDateTimeUtc();
+}
+
+struct AxisParameterEvidencePageFixture
+{
+    Data::ControllerConnectionSnapshot snapshot;
+    Data::AxisParameterEvidenceBatch batch;
+};
+
+static AxisParameterEvidencePageFixture axisParameterEvidencePageFixture(
+    const Data::ControllerConnectionScope &scope,
+    const Data::NodeId &profileId,
+    const Data::OfflineSlaveConfiguration &slave,
+    quint64 bootId = 2002,
+    quint32 captureSequence = 17,
+    const QByteArray &signedRaw = QByteArray::fromHex("feff"))
+{
+    AxisParameterEvidencePageFixture result;
+    result.snapshot.scope = scope;
+    result.snapshot.profileId = profileId;
+    result.snapshot.state = Data::ControllerConnectionState::Connected;
+    result.snapshot.protocolVersion = {1, 16};
+    result.snapshot.sessionGeneration = 7;
+    result.snapshot.readOnly = true;
+    result.snapshot.mock = false;
+    result.snapshot.session = Data::ControllerSessionSummary();
+    result.snapshot.session->sessionId = 1001;
+    result.snapshot.session->bootId = bootId;
+    result.snapshot.capability = Data::ControllerCapabilitySummary();
+    result.snapshot.capability->topologyEvidence = true;
+    result.snapshot.capability->axisParameterEvidence = true;
+
+    Data::ControllerTopologySnapshot topology;
+    topology.firstStationAddress = slave.stationAddress;
+    topology.respondingCount = 2;
+    topology.result = 0;
+    topology.discoveredAt = QDateTime::currentDateTimeUtc();
+    topology.scope = scope;
+    topology.sessionGeneration = result.snapshot.sessionGeneration;
+    topology.sessionId = result.snapshot.session->sessionId;
+    topology.bootId = bootId;
+    topology.requestId = 500 + captureSequence;
+    topology.responseSequence = 600 + captureSequence;
+    topology.topologyCaptureSequence = captureSequence;
+    topology.topologyCompletedTimeNs = 100000 + captureSequence;
+    topology.topologyPayloadSha256 = QByteArray(32, char(0x31 + captureSequence % 16));
+    topology.receivedAt = QDateTime::currentDateTimeUtc();
+
+    Data::ControllerTopologySlave selected;
+    selected.position = quint32(slave.position);
+    selected.stationAddress = slave.stationAddress;
+    selected.alState = 8;
+    selected.vendorId = slave.identity.vendorId;
+    selected.productCode = slave.identity.productCode;
+    selected.revision = slave.identity.revisionNumber;
+    selected.serial = slave.serialNumber;
+    selected.alias = slave.alias;
+    selected.aliasValidity = Data::ControllerTopologyEvidenceValidity::Valid;
+    selected.aliasProvenance = Data::ControllerTopologyEvidenceProvenance::Observed;
+    selected.aliasSource = Data::ControllerTopologyEvidenceSource::EscStationAlias;
+    selected.moduleValidity = slave.adapterSelection.moduleAssignments.isEmpty()
+                                  ? Data::ControllerTopologyEvidenceValidity::Unavailable
+                                  : Data::ControllerTopologyEvidenceValidity::Valid;
+    selected.moduleProvenance = Data::ControllerTopologyEvidenceProvenance::DeviceReported;
+    selected.moduleSource = slave.adapterSelection.moduleAssignments.isEmpty()
+                                ? Data::ControllerTopologyEvidenceSource::SiiMailbox
+                                : Data::ControllerTopologyEvidenceSource::CoeDetectedModules;
+    for (const Data::DeviceModuleAssignment &assignment :
+         slave.adapterSelection.moduleAssignments) {
+        selected.modules.append(
+            {quint16(assignment.slot),
+             assignment.moduleIdent,
+             Data::ControllerTopologyEvidenceValidity::Valid,
+             Data::ControllerTopologyEvidenceProvenance::DeviceReported,
+             Data::ControllerTopologyEvidenceSource::CoeDetectedModules});
+    }
+
+    Data::ControllerTopologySlave second;
+    second.position = quint32(slave.position + 1);
+    second.stationAddress = slave.stationAddress + 1;
+    second.alState = 8;
+    second.vendorId = slave.identity.vendorId + 1;
+    second.productCode = slave.identity.productCode + 1;
+    second.revision = slave.identity.revisionNumber + 1;
+    second.serial = slave.serialNumber + 1;
+    second.alias = slave.alias + 1;
+    second.aliasValidity = Data::ControllerTopologyEvidenceValidity::Valid;
+    second.aliasProvenance = Data::ControllerTopologyEvidenceProvenance::Observed;
+    second.aliasSource = Data::ControllerTopologyEvidenceSource::EscStationAlias;
+    second.moduleValidity = Data::ControllerTopologyEvidenceValidity::Unavailable;
+    second.moduleProvenance = Data::ControllerTopologyEvidenceProvenance::DeviceReported;
+    second.moduleSource = Data::ControllerTopologyEvidenceSource::SiiMailbox;
+    topology.slaves = {selected, second};
+    result.snapshot.topology = topology;
+
+    result.batch.scope = scope;
+    result.batch.sessionGeneration = topology.sessionGeneration;
+    result.batch.sessionId = topology.sessionId;
+    result.batch.bootId = topology.bootId;
+    result.batch.topologyRequestId = topology.requestId;
+    result.batch.topologyResponseSequence = topology.responseSequence;
+    result.batch.topologyCaptureSequence = topology.topologyCaptureSequence;
+    result.batch.topologyCompletedTimeNs = topology.topologyCompletedTimeNs;
+    result.batch.topologyPayloadSha256 = topology.topologyPayloadSha256;
+    result.batch.profileId = Data::FixedAxisParameterEvidenceProfileId;
+    result.batch.profileVersion = Data::FixedAxisParameterEvidenceProfileVersion;
+    result.batch.profileSha256 = Data::fixedAxisParameterEvidenceProfileSha256();
+    result.batch.completedAt = QDateTime::currentDateTimeUtc();
+
+    const QList<QByteArray> rawValues{
+        signedRaw,
+        QByteArray::fromHex("0b00"),
+        QByteArray::fromHex("0300"),
+        QByteArray::fromHex("04000000"),
+        QByteArray::fromHex("05000000"),
+        QByteArray::fromHex("0600"),
+        QByteArray::fromHex("0700"),
+        QByteArray::fromHex("08000000"),
+    };
+    const auto evidenceFor = [&](const Data::ControllerTopologySlave &topologySlave,
+                                 quint64 requestId,
+                                 quint32 evidenceSequence) {
+        Data::AxisParameterEvidence evidence;
+        evidence.scope = scope;
+        evidence.sessionGeneration = topology.sessionGeneration;
+        evidence.sessionId = topology.sessionId;
+        evidence.bootId = topology.bootId;
+        evidence.requestId = requestId;
+        evidence.responseSequence = requestId + 100;
+        evidence.controllerTimestampNs = topology.topologyCompletedTimeNs + evidenceSequence;
+        evidence.topologyRequestId = topology.requestId;
+        evidence.topologyResponseSequence = topology.responseSequence;
+        evidence.topologyCaptureSequence = topology.topologyCaptureSequence;
+        evidence.topologyCompletedTimeNs = topology.topologyCompletedTimeNs;
+        evidence.topologyPayloadSha256 = topology.topologyPayloadSha256;
+        evidence.evidenceSequence = evidenceSequence;
+        evidence.completedTimeNs = topology.topologyCompletedTimeNs + 100 + evidenceSequence;
+        evidence.position = quint16(topologySlave.position);
+        evidence.stationAddress = topologySlave.stationAddress;
+        evidence.vendorId = topologySlave.vendorId;
+        evidence.productCode = topologySlave.productCode;
+        evidence.revision = topologySlave.revision;
+        evidence.serial = topologySlave.serial;
+        evidence.profileId = result.batch.profileId;
+        evidence.profileVersion = result.batch.profileVersion;
+        evidence.profileSha256 = result.batch.profileSha256;
+        evidence.flags = Data::AxisParameterEvidenceRequiredFlags;
+        evidence.receivedAt = QDateTime::currentDateTimeUtc();
+        for (quint16 ordinal = 0; ordinal < Data::FixedAxisParameterEvidenceRecords.size();
+             ++ordinal) {
+            const Data::FixedAxisParameterEvidenceRecord &fixed
+                = Data::FixedAxisParameterEvidenceRecords.at(ordinal);
+            Data::AxisParameterEvidenceRecord record;
+            record.ordinal = ordinal;
+            record.index = fixed.index;
+            record.subIndex = fixed.subIndex;
+            record.state = Data::AxisParameterEvidenceRecordState::Valid;
+            record.valueBytes = fixed.valueBytes;
+            record.encoding = Data::AxisParameterEvidenceEncoding::RawLittleEndian;
+            record.rawValue = rawValues.at(ordinal);
+            evidence.records.append(record);
+        }
+        return evidence;
+    };
+    const quint32 firstEvidenceSequence = captureSequence * 2 + 1;
+    Data::AxisParameterEvidenceTargetResult selectedTarget;
+    selectedTarget.position = quint16(selected.position);
+    selectedTarget.stationAddress = selected.stationAddress;
+    selectedTarget.vendorId = selected.vendorId;
+    selectedTarget.productCode = selected.productCode;
+    selectedTarget.revision = selected.revision;
+    selectedTarget.serial = selected.serial;
+    selectedTarget.requestId = 1000 + captureSequence * 2;
+    selectedTarget.outcome = Data::AxisParameterEvidenceTargetOutcome::Evidence;
+    selectedTarget.status = 0;
+    selectedTarget.operationResult = 0;
+    selectedTarget.detail = 0;
+    selectedTarget.evidence = evidenceFor(
+        selected, selectedTarget.requestId, firstEvidenceSequence);
+
+    Data::AxisParameterEvidenceTargetResult secondTarget;
+    secondTarget.position = quint16(second.position);
+    secondTarget.stationAddress = second.stationAddress;
+    secondTarget.vendorId = second.vendorId;
+    secondTarget.productCode = second.productCode;
+    secondTarget.revision = second.revision;
+    secondTarget.serial = second.serial;
+    secondTarget.requestId = selectedTarget.requestId + 1;
+    secondTarget.outcome = Data::AxisParameterEvidenceTargetOutcome::Evidence;
+    secondTarget.status = 0;
+    secondTarget.operationResult = 0;
+    secondTarget.detail = 0;
+    secondTarget.evidence = evidenceFor(
+        second, secondTarget.requestId, firstEvidenceSequence + 1);
+    result.batch.targets = {selectedTarget, secondTarget};
+    return result;
 }
 
 class AvailableScanProvider final : public Core::ScanProvider
@@ -15213,6 +15522,375 @@ void EtherCATWorkbenchTests::testDeviceParametersPageEditingAndSafety()
     QCOMPARE(runtime.submitCalls, submitBefore);
     QCOMPARE(runtime.approveCalls, approveBefore);
     QCOMPARE(runtime.liveRefreshRequests.size(), liveRefreshBefore);
+}
+
+void EtherCATWorkbenchTests::testDeviceParametersPageAxisEvidence()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("device-parameters-axis-evidence.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(deviceEsi()));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto summary = std::find_if(devices.cbegin(), devices.cend(), [](const auto &device) {
+        return device.identity.productCode == 0x5678 && device.identity.revisionNumber == 0x11;
+    });
+    QVERIFY(summary != devices.cend());
+    const std::optional<Data::DeviceDescription> device = repository->device(summary->id);
+    QVERIFY(device);
+
+    DeviceParametersTestAdapterProvider adapter;
+    adapter.setManifest(axisEvidenceDeviceParametersManifest());
+    adapter.bindManifestToDevice(*device);
+    DeviceParametersTestAdapterProvider ambiguousAdapter(
+        Utils::Id("EtherCAT.Workbench.AxisEvidence.AmbiguousAdapter"));
+    Data::DeviceAdapterManifest nonMatchingManifest = adapter.manifest();
+    nonMatchingManifest.version += ".non-matching";
+    ambiguousAdapter.setManifest(nonMatchingManifest);
+    AvailableScanProvider scan(Utils::Id("EtherCAT.Workbench.AxisEvidence.Scan"));
+    ControlledControllerConnectionProvider selectedProvider(
+        Utils::Id("EtherCAT.Workbench.AxisEvidence.Selected"), "Selected Axis provider");
+    ControlledControllerConnectionProvider otherProvider(
+        Utils::Id("EtherCAT.Workbench.AxisEvidence.Other"), "Other Axis provider");
+    scan.setAvailable(true);
+    selectedProvider.setAvailable(true);
+    otherProvider.setAvailable(true);
+    selectedProvider.setSupportsAxisParameterEvidence(true);
+    otherProvider.setSupportsAxisParameterEvidence(true);
+    ExtensionSystem::PluginManager::addObject(&adapter);
+    ExtensionSystem::PluginManager::addObject(&ambiguousAdapter);
+    ExtensionSystem::PluginManager::addObject(&scan);
+    ExtensionSystem::PluginManager::addObject(&selectedProvider);
+    ExtensionSystem::PluginManager::addObject(&otherProvider);
+    bool selectedProviderRegistered = true;
+    const QScopeGuard providersCleanup([&] {
+        if (selectedProviderRegistered)
+            ExtensionSystem::PluginManager::removeObject(&selectedProvider);
+        ExtensionSystem::PluginManager::removeObject(&otherProvider);
+        ExtensionSystem::PluginManager::removeObject(&scan);
+        ExtensionSystem::PluginManager::removeObject(&ambiguousAdapter);
+        ExtensionSystem::PluginManager::removeObject(&adapter);
+    });
+    BuiltinPropertyPageProvider pages(&controller);
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        *summary,
+        "device-parameters-axis-evidence.ecatproject",
+        "Device Parameters Axis Evidence");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const QScopeGuard projectCleanup([&] {
+        controller.selectionService()->clear();
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    QList<Data::OfflineSlaveConfiguration> slaves
+        = projectService->project(file.projectId)->slaves;
+    QCOMPARE(slaves.size(), 1);
+    slaves[0].stationAddress = 0x1001;
+    QVERIFY_RESULT(projectService->replaceOfflineSlaves(file.projectId, file.masterId, slaves));
+    const Data::DeviceAdapterManifest manifest = adapter.manifest();
+    const Data::DeviceAdapterProjectSelection selection = deviceParametersSelection(manifest);
+    QVERIFY_RESULT(projectService->setDeviceAdapterSelection(
+        file.projectId, file.slaveId, device->sourceSha256, selection));
+    const Data::DeviceParameterConfiguration configured{{
+        {"a.signed.match", Data::EngineeringValue::fromSignedInteger(-2)},
+        {"b.unsigned.mismatch", Data::EngineeringValue::fromUnsignedInteger(10)},
+    }};
+    QVERIFY_RESULT(projectService->setDeviceParameterConfiguration(
+        file.projectId, file.slaveId, device->sourceSha256, selection, configured));
+    const Data::ProjectSnapshot projectBeforeEvidence = *projectService->project(file.projectId);
+    const Data::OfflineSlaveConfiguration configuredSlave
+        = projectBeforeEvidence.slaves.constFirst();
+    const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
+    AxisParameterEvidencePageFixture selectedEvidence = axisParameterEvidencePageFixture(
+        scope, selectedProvider.primaryProfileId(), configuredSlave);
+    AxisParameterEvidencePageFixture otherEvidence = axisParameterEvidencePageFixture(
+        scope, otherProvider.primaryProfileId(), configuredSlave);
+    QVERIFY(selectedEvidence.snapshot.topology->hasCompleteProvenance());
+    QVERIFY(selectedEvidence.batch.isValid());
+    otherProvider.publishSnapshot(otherEvidence.snapshot);
+    otherProvider.publishAxisParameterEvidenceBatch(otherEvidence.batch);
+
+    const Core::PropertyPageContext context
+        = controller.treeModel()->contextForNodeId(file.slaveId);
+    std::unique_ptr<QWidget> page(
+        pages.createPage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), nullptr));
+    QVERIFY(page);
+    pages.updatePage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), page.get(), context);
+    page->show();
+    QTreeWidget *table = page->findChild<QTreeWidget *>("EtherCATDeviceParametersTable");
+    QVERIFY(table);
+    QCOMPARE(table->topLevelItemCount(), 4);
+    const auto rowFor = [table](const QString &id) {
+        for (int row = 0; row < table->topLevelItemCount(); ++row) {
+            if (table->topLevelItem(row)->data(0, Qt::UserRole).toString() == id)
+                return table->topLevelItem(row);
+        }
+        return static_cast<QTreeWidgetItem *>(nullptr);
+    };
+    QTreeWidgetItem *signedRow = rowFor("a.signed.match");
+    QTreeWidgetItem *mismatchRow = rowFor("b.unsigned.mismatch");
+    QTreeWidgetItem *notConfiguredRow = rowFor("c.unsigned.not-configured");
+    QTreeWidgetItem *unavailableRow = rowFor("d.signed.unavailable");
+    QVERIFY(signedRow);
+    QVERIFY(mismatchRow);
+    QVERIFY(notConfiguredRow);
+    QVERIFY(unavailableRow);
+    QCOMPARE(signedRow->text(2), QString("Not captured"));
+    QCOMPARE(selectedProvider.axisParameterEvidenceReads, 0);
+    QCOMPARE(otherProvider.axisParameterEvidenceReads, 0);
+
+    QSignalSpy projectChanged(projectService, &Core::ProjectService::projectChanged);
+    const int scanStarts = scan.startCalls;
+    const int scanCancels = scan.cancelCalls;
+    QVERIFY_RESULT(controller.selectControllerConnectionProvider(scope, selectedProvider.id()));
+    QVERIFY_RESULT(controller.selectControllerConnectionProfile(
+        scope, selectedProvider.primaryProfileId()));
+    selectedProvider.publishSnapshot(selectedEvidence.snapshot);
+    selectedProvider.publishAxisParameterEvidenceBatch(selectedEvidence.batch);
+    QTRY_COMPARE(signedRow->text(4), QString("Match"));
+    QCOMPARE(signedRow->text(2), QString("-2"));
+    QCOMPARE(mismatchRow->text(2), QString("11"));
+    QCOMPARE(mismatchRow->text(4), QString("Mismatch"));
+    QCOMPARE(notConfiguredRow->text(2), QString("4"));
+    QCOMPARE(notConfiguredRow->text(4), QString("Not configured"));
+    QCOMPARE(unavailableRow->text(2), QString("Unavailable"));
+    QCOMPARE(unavailableRow->text(4), QString("Unavailable"));
+    QVERIFY(signedRow->text(3).contains("Real controller evidence"));
+    QVERIFY(signedRow->toolTip(3).contains("profile 1/1"));
+    QVERIFY(selectedProvider.axisParameterEvidenceReads >= 2);
+    QCOMPARE(otherProvider.axisParameterEvidenceReads, 0);
+
+    const auto publishBatch = [&](const Data::AxisParameterEvidenceBatch &batch) {
+        selectedProvider.publishAxisParameterEvidenceBatch(batch);
+    };
+    Data::AxisParameterEvidenceBatch controllerError = selectedEvidence.batch;
+    controllerError.targets[0].outcome
+        = Data::AxisParameterEvidenceTargetOutcome::ControllerError;
+    controllerError.targets[0].status = -14;
+    controllerError.targets[0].operationResult = -5;
+    controllerError.targets[0].detail = 5;
+    controllerError.targets[0].evidence.reset();
+    QVERIFY(controllerError.isValid());
+    publishBatch(controllerError);
+    QTRY_COMPARE(signedRow->text(4), QString("Unavailable"));
+    QCOMPARE(signedRow->text(2), QString("Unavailable"));
+    QCOMPARE(signedRow->text(3), QString("Real controller typed error"));
+    QVERIFY(signedRow->toolTip(2).contains("status -14"));
+    QVERIFY(signedRow->toolTip(2).contains("operation -5"));
+    QVERIFY(!signedRow->text(3).contains("no read", Qt::CaseInsensitive));
+
+    Data::AxisParameterEvidenceBatch timedOut = selectedEvidence.batch;
+    timedOut.targets[0].outcome = Data::AxisParameterEvidenceTargetOutcome::TimedOut;
+    timedOut.targets[0].status.reset();
+    timedOut.targets[0].operationResult.reset();
+    timedOut.targets[0].detail.reset();
+    timedOut.targets[0].evidence.reset();
+    QVERIFY(timedOut.isValid());
+    publishBatch(timedOut);
+    QTRY_VERIFY(signedRow->text(3).contains("timed out", Qt::CaseInsensitive));
+    QCOMPARE(signedRow->text(4), QString("Unavailable"));
+    QVERIFY(signedRow->toolTip(2).contains("timed out", Qt::CaseInsensitive));
+    QVERIFY(!signedRow->text(3).contains("no read", Qt::CaseInsensitive));
+
+    const QList<QPair<Data::AxisParameterEvidenceRecordState, QString>> recordFailures{
+        {Data::AxisParameterEvidenceRecordState::SdoAbort, "SDO_ABORT"},
+        {Data::AxisParameterEvidenceRecordState::SizeMismatch, "SIZE_MISMATCH"},
+        {Data::AxisParameterEvidenceRecordState::ReadFailed, "READ_FAILED"},
+    };
+    for (const auto &[state, stateText] : recordFailures) {
+        Data::AxisParameterEvidenceBatch failed = selectedEvidence.batch;
+        Data::AxisParameterEvidenceRecord &record = failed.targets[0].evidence->records[0];
+        record.state = state;
+        record.valueBytes = 0;
+        record.encoding = Data::AxisParameterEvidenceEncoding::None;
+        record.rawValue.clear();
+        record.operationResult
+            = state == Data::AxisParameterEvidenceRecordState::SdoAbort ? -7 : -15;
+        if (state == Data::AxisParameterEvidenceRecordState::SdoAbort) {
+            record.abortCode = 0x06020000;
+        } else {
+            record.detail = state == Data::AxisParameterEvidenceRecordState::SizeMismatch
+                                ? (quint64(2) << 32) | 4
+                                : 0x52414e4700000001ULL;
+        }
+        QVERIFY(failed.isValid());
+        publishBatch(failed);
+        QTRY_VERIFY(signedRow->toolTip(2).contains(stateText));
+        QCOMPARE(signedRow->text(2), QString("Unavailable"));
+        QCOMPARE(signedRow->text(4), QString("Unavailable"));
+        QVERIFY(signedRow->text(3).contains("Real controller evidence"));
+        QVERIFY(!signedRow->text(3).contains("no read", Qt::CaseInsensitive));
+    }
+
+    publishBatch(selectedEvidence.batch);
+    QTRY_COMPARE(signedRow->text(4), QString("Match"));
+    QLineEdit *signedEditor = page->findChild<QLineEdit *>(
+        "EtherCATDeviceParameterConfigured_a.signed.match");
+    QVERIFY(signedEditor);
+    page->raise();
+    QApplication::setActiveWindow(page.get());
+    page->activateWindow();
+    signedEditor->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), signedEditor);
+    signedEditor->setText("-3");
+    QCOMPARE(signedRow->text(4), QString("Unverified"));
+    Data::AxisParameterEvidenceBatch refreshed = selectedEvidence.batch;
+    refreshed.targets[0].evidence->records[0].rawValue = QByteArray::fromHex("fdff");
+    refreshed.targets[0].evidence->evidenceSequence += 10;
+    refreshed.targets[0].evidence->completedTimeNs += 10;
+    refreshed.targets[1].evidence->evidenceSequence += 10;
+    refreshed.targets[1].evidence->completedTimeNs += 10;
+    refreshed.completedAt = QDateTime::currentDateTimeUtc();
+    QVERIFY(refreshed.isValid());
+    publishBatch(refreshed);
+    QTRY_COMPARE(signedRow->text(2), QString("-3"));
+    QCOMPARE(signedRow->text(4), QString("Unverified"));
+    QCOMPARE(signedEditor->text(), QString("-3"));
+    QCOMPARE(QApplication::focusWidget(), signedEditor);
+
+    signedEditor->setText("-2");
+    publishBatch(selectedEvidence.batch);
+    QTRY_COMPARE(signedRow->text(4), QString("Match"));
+
+    QList<Data::ControllerConnectionSnapshot> rejectedSnapshots;
+    Data::ControllerConnectionSnapshot mockSnapshot = selectedEvidence.snapshot;
+    mockSnapshot.mock = true;
+    rejectedSnapshots.append(mockSnapshot);
+
+    Data::ControllerConnectionSnapshot aliasMismatch = selectedEvidence.snapshot;
+    ++aliasMismatch.topology->slaves[0].alias;
+    rejectedSnapshots.append(aliasMismatch);
+
+    Data::ControllerConnectionSnapshot moduleMismatch = selectedEvidence.snapshot;
+    Data::ControllerTopologySlave &moduleSlave = moduleMismatch.topology->slaves[0];
+    if (moduleSlave.modules.isEmpty()) {
+        moduleSlave.moduleValidity = Data::ControllerTopologyEvidenceValidity::Valid;
+        moduleSlave.moduleProvenance
+            = Data::ControllerTopologyEvidenceProvenance::DeviceReported;
+        moduleSlave.moduleSource = Data::ControllerTopologyEvidenceSource::CoeDetectedModules;
+        moduleSlave.modules.append(
+            {1,
+             0x12345678,
+             Data::ControllerTopologyEvidenceValidity::Valid,
+             Data::ControllerTopologyEvidenceProvenance::DeviceReported,
+             Data::ControllerTopologyEvidenceSource::CoeDetectedModules});
+    } else {
+        ++moduleSlave.modules[0].moduleIdent;
+    }
+    rejectedSnapshots.append(moduleMismatch);
+
+    for (const Data::ControllerConnectionSnapshot &snapshot : rejectedSnapshots) {
+        selectedProvider.publishSnapshot(selectedEvidence.snapshot);
+        publishBatch(selectedEvidence.batch);
+        QTRY_COMPARE(signedRow->text(4), QString("Match"));
+        selectedProvider.publishSnapshot(snapshot);
+        QVERIFY(signedRow->text(4) != QString("Match"));
+        QTRY_COMPARE(signedRow->text(4), QString("Unavailable"));
+    }
+
+    QList<Data::AxisParameterEvidenceBatch> rejectedBatches;
+    Data::AxisParameterEvidenceBatch partialBatch = selectedEvidence.batch;
+    partialBatch.targets.removeLast();
+    QVERIFY(partialBatch.isValid());
+    rejectedBatches.append(partialBatch);
+
+    Data::AxisParameterEvidenceBatch wrongBoot = selectedEvidence.batch;
+    ++wrongBoot.bootId;
+    for (Data::AxisParameterEvidenceTargetResult &target : wrongBoot.targets)
+        ++target.evidence->bootId;
+    QVERIFY(wrongBoot.isValid());
+    rejectedBatches.append(wrongBoot);
+
+    Data::AxisParameterEvidenceBatch wrongPayload = selectedEvidence.batch;
+    wrongPayload.topologyPayloadSha256[0]
+        = char(quint8(wrongPayload.topologyPayloadSha256.at(0)) ^ 0xff);
+    for (Data::AxisParameterEvidenceTargetResult &target : wrongPayload.targets)
+        target.evidence->topologyPayloadSha256 = wrongPayload.topologyPayloadSha256;
+    QVERIFY(wrongPayload.isValid());
+    rejectedBatches.append(wrongPayload);
+
+    selectedProvider.publishSnapshot(selectedEvidence.snapshot);
+    for (const Data::AxisParameterEvidenceBatch &batch : rejectedBatches) {
+        publishBatch(selectedEvidence.batch);
+        QTRY_COMPARE(signedRow->text(4), QString("Match"));
+        publishBatch(batch);
+        QVERIFY(signedRow->text(4) != QString("Match"));
+        QTRY_COMPARE(signedRow->text(4), QString("Unavailable"));
+    }
+
+    publishBatch(selectedEvidence.batch);
+    QTRY_COMPARE(signedRow->text(4), QString("Match"));
+    publishBatch(controllerError);
+    QVERIFY(signedRow->text(4) != QString("Match"));
+    selectedProvider.publishState(Data::ControllerConnectionState::Disconnected, scope);
+    otherProvider.publishState(Data::ControllerConnectionState::Disconnected, scope);
+    QVERIFY_RESULT(controller.selectControllerConnectionProvider(scope, otherProvider.id()));
+    QVERIFY_RESULT(controller.selectControllerConnectionProfile(
+        scope, otherProvider.primaryProfileId()));
+    otherProvider.publishSnapshot(otherEvidence.snapshot);
+    otherProvider.publishAxisParameterEvidenceBatch(otherEvidence.batch);
+    QTRY_COMPARE(signedRow->text(4), QString("Match"));
+    selectedProvider.publishAxisParameterEvidenceBatch(controllerError);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCOMPARE(signedRow->text(4), QString("Match"));
+
+    adapter.setAvailable(false);
+    QTreeWidgetItem *invalidatedRow = rowFor("a.signed.match");
+    QVERIFY(!invalidatedRow || invalidatedRow->text(4) != QString("Match"));
+    QTRY_VERIFY(!table->isEnabled());
+    QVERIFY(!rowFor("a.signed.match")
+            || rowFor("a.signed.match")->text(4) != QString("Match"));
+    adapter.setAvailable(true);
+    otherProvider.publishSnapshot(otherEvidence.snapshot);
+    otherProvider.publishAxisParameterEvidenceBatch(otherEvidence.batch);
+    QTRY_VERIFY(table->isEnabled());
+    QTRY_COMPARE(rowFor("a.signed.match")->text(4), QString("Match"));
+
+    ambiguousAdapter.setManifest(adapter.manifest());
+    invalidatedRow = rowFor("a.signed.match");
+    QVERIFY(!invalidatedRow || invalidatedRow->text(4) != QString("Match"));
+    QTRY_VERIFY(!table->isEnabled());
+    ambiguousAdapter.setManifest(nonMatchingManifest);
+    otherProvider.publishSnapshot(otherEvidence.snapshot);
+    otherProvider.publishAxisParameterEvidenceBatch(otherEvidence.batch);
+    QTRY_VERIFY(table->isEnabled());
+    QTRY_COMPARE(rowFor("a.signed.match")->text(4), QString("Match"));
+
+    QCOMPARE(projectChanged.count(), 0);
+    QCOMPARE(*projectService->project(file.projectId), projectBeforeEvidence);
+    QCOMPARE(scan.startCalls, scanStarts);
+    QCOMPARE(scan.cancelCalls, scanCancels);
+    QCOMPARE(selectedProvider.connectCalls, 0);
+    QCOMPARE(selectedProvider.disconnectCalls, 0);
+    QCOMPARE(selectedProvider.refreshCalls, 0);
+    QCOMPARE(selectedProvider.controlCalls, 0);
+    QCOMPARE(selectedProvider.deploymentCalls, 0);
+    QCOMPARE(selectedProvider.cancelDeploymentCalls, 0);
+    QCOMPARE(otherProvider.connectCalls, 0);
+    QCOMPARE(otherProvider.disconnectCalls, 0);
+    QCOMPARE(otherProvider.refreshCalls, 0);
+    QCOMPARE(otherProvider.controlCalls, 0);
+    QCOMPARE(otherProvider.deploymentCalls, 0);
+    QCOMPARE(otherProvider.cancelDeploymentCalls, 0);
 }
 
 void EtherCATWorkbenchTests::testDeviceParametersPageRejectsStaleBaselines()

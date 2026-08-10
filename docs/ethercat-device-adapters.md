@@ -119,15 +119,27 @@ change enters Undo/Redo. A changed Project, ESI, Adapter, profile, modules, or
 Provider authority makes the local draft stale and disables editing until the
 user explicitly reloads it.
 
-This page is not an online parameter service. Its Observed and Verification
-Status columns show only the signed source plus `Not captured` or `Unavailable`;
-the page performs no scan, SDO upload/download, controller command, deployment,
-network, or hardware access. No production v4 Adapter is currently installed,
-Product API observed evidence and device-parameter actions are not implemented,
-and non-empty project parameters continue to fail closed before compiler
-invocation. The installed SV630N Adapter remains v3 and its motion actions
-remain disabled; editing Project intent is not evidence of an applied drive
-parameter or motor movement.
+This page is not an online parameter service. For the explicitly selected Real
+controller only, it can consume the atomic Product API v1.16 fixed-profile
+evidence batch produced by the most recent complete topology scan. Before
+showing an Observed value it revalidates the Session, Boot, topology capture and
+payload digest, complete target closure, exact slave identity, alias and module
+evidence, and the unique live Adapter authority. Raw little-endian values are
+decoded only through the signed definition's exact physical type, engineering
+transform, and constraint. Verification is `Match`, `Mismatch`, or
+`Not configured` against the current Project-owned value; an unapplied editor
+draft is always `Unverified` and is never compared as Project intent.
+
+Opening, reloading, applying, or refreshing this page performs no scan, SDO
+upload/download, controller command, deployment, network, or hardware access.
+It only consumes evidence already captured by the Product API session, never
+persists that evidence, and clears the presentation when any authority or
+provenance binding changes. `Match` means only that a current read-only value
+equals current Project intent under the signed transform; it does not prove a
+Startup SDO was applied, a package was deployed, or an axis is ready to move.
+No production v4 Adapter is currently installed, and non-empty project
+parameters continue to fail closed before compiler invocation. The installed
+SV630N Adapter remains v3 and its motion actions remain disabled.
 
 ## Modular devices
 

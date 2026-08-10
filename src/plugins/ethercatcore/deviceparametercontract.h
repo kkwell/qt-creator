@@ -4,11 +4,14 @@
 
 #include "ethercatcore_global.h"
 
+#include <ethercatdata/axisparameterevidence.h>
 #include <ethercatdata/deviceadapterselection.h>
 #include <ethercatdata/deviceparameters.h>
 
 #include <QMetaType>
 #include <QString>
+
+#include <optional>
 
 namespace EtherCAT::Core {
 
@@ -68,9 +71,39 @@ ETHERCATCORE_EXPORT ConfiguredDeviceParameterValidation validateConfiguredDevice
     const Data::DeviceAdapterProjectSelection &expectedAdapterSelection,
     const Data::DeviceParameterConfiguration &configuration);
 
+enum class DeviceParameterObservationState {
+    Match,
+    Mismatch,
+    NotConfigured,
+    Unavailable,
+};
+
+struct ETHERCATCORE_EXPORT DeviceParameterObservationResult
+{
+    DeviceParameterObservationState state = DeviceParameterObservationState::Unavailable;
+    std::optional<Data::EngineeringValue> observedValue;
+    QString detail;
+
+    bool isAvailable() const
+    {
+        return state != DeviceParameterObservationState::Unavailable && observedValue.has_value();
+    }
+
+    friend bool operator==(
+        const DeviceParameterObservationResult &, const DeviceParameterObservationResult &)
+        = default;
+};
+
+ETHERCATCORE_EXPORT DeviceParameterObservationResult evaluateDeviceParameterObservation(
+    const Data::DeviceParameterDefinition &definition,
+    const std::optional<Data::EngineeringValue> &configuredValue,
+    const Data::AxisParameterEvidenceRecord &record);
+
 } // namespace EtherCAT::Core
 
 Q_DECLARE_METATYPE(EtherCAT::Core::DeviceParameterContractError)
 Q_DECLARE_METATYPE(EtherCAT::Core::DeviceParameterContractValidation)
 Q_DECLARE_METATYPE(EtherCAT::Core::ConfiguredDeviceParameterError)
 Q_DECLARE_METATYPE(EtherCAT::Core::ConfiguredDeviceParameterValidation)
+Q_DECLARE_METATYPE(EtherCAT::Core::DeviceParameterObservationState)
+Q_DECLARE_METATYPE(EtherCAT::Core::DeviceParameterObservationResult)

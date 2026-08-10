@@ -6,8 +6,10 @@
 
 #include <QHash>
 #include <QSet>
+#include <QtEndian>
 
 #include <algorithm>
+#include <limits>
 
 namespace EtherCAT::Core {
 namespace {
@@ -127,6 +129,116 @@ bool validParameterDefinition(const Data::DeviceParameterDefinition &definition)
     if (observed.object && !validParameterObjectBinding(definition, *observed.object))
         return false;
     return !projection.object || !observed.object || *projection.object == *observed.object;
+}
+
+std::optional<quint32> physicalBitWidth(Data::EtherCATDataType physicalType)
+{
+    switch (physicalType) {
+    case Data::EtherCATDataType::Boolean:
+        return 1;
+    case Data::EtherCATDataType::Integer8:
+    case Data::EtherCATDataType::UnsignedInteger8:
+        return 8;
+    case Data::EtherCATDataType::Integer16:
+    case Data::EtherCATDataType::UnsignedInteger16:
+        return 16;
+    case Data::EtherCATDataType::Integer32:
+    case Data::EtherCATDataType::UnsignedInteger32:
+        return 32;
+    case Data::EtherCATDataType::Integer64:
+    case Data::EtherCATDataType::UnsignedInteger64:
+        return 64;
+    case Data::EtherCATDataType::Unknown:
+    case Data::EtherCATDataType::Real32:
+    case Data::EtherCATDataType::Real64:
+    case Data::EtherCATDataType::VisibleString:
+    case Data::EtherCATDataType::OctetString:
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+std::optional<Data::EngineeringValue> decodeRawParameterValue(
+    Data::EtherCATDataType physicalType, const QByteArray &rawValue)
+{
+    switch (physicalType) {
+    case Data::EtherCATDataType::Boolean:
+        if (rawValue.size() == 1 && (rawValue.at(0) == 0 || rawValue.at(0) == 1))
+            return Data::EngineeringValue::fromBoolean(rawValue.at(0) != 0);
+        break;
+    case Data::EtherCATDataType::Integer8:
+        if (rawValue.size() == 1)
+            return Data::EngineeringValue::fromSignedInteger(qint8(rawValue.at(0)));
+        break;
+    case Data::EtherCATDataType::UnsignedInteger8:
+        if (rawValue.size() == 1)
+            return Data::EngineeringValue::fromUnsignedInteger(quint8(rawValue.at(0)));
+        break;
+    case Data::EtherCATDataType::Integer16:
+        if (rawValue.size() == 2) {
+            return Data::EngineeringValue::fromSignedInteger(
+                qint16(qFromLittleEndian<quint16>(rawValue.constData())));
+        }
+        break;
+    case Data::EtherCATDataType::UnsignedInteger16:
+        if (rawValue.size() == 2) {
+            return Data::EngineeringValue::fromUnsignedInteger(
+                qFromLittleEndian<quint16>(rawValue.constData()));
+        }
+        break;
+    case Data::EtherCATDataType::Integer32:
+        if (rawValue.size() == 4) {
+            return Data::EngineeringValue::fromSignedInteger(
+                qint32(qFromLittleEndian<quint32>(rawValue.constData())));
+        }
+        break;
+    case Data::EtherCATDataType::UnsignedInteger32:
+        if (rawValue.size() == 4) {
+            return Data::EngineeringValue::fromUnsignedInteger(
+                qFromLittleEndian<quint32>(rawValue.constData()));
+        }
+        break;
+    case Data::EtherCATDataType::Integer64:
+        if (rawValue.size() == 8) {
+            return Data::EngineeringValue::fromSignedInteger(
+                qint64(qFromLittleEndian<quint64>(rawValue.constData())));
+        }
+        break;
+    case Data::EtherCATDataType::UnsignedInteger64:
+        if (rawValue.size() == 8) {
+            return Data::EngineeringValue::fromUnsignedInteger(
+                qFromLittleEndian<quint64>(rawValue.constData()));
+        }
+        break;
+    case Data::EtherCATDataType::Unknown:
+    case Data::EtherCATDataType::Real32:
+    case Data::EtherCATDataType::Real64:
+    case Data::EtherCATDataType::VisibleString:
+    case Data::EtherCATDataType::OctetString:
+        break;
+    }
+    return std::nullopt;
+}
+
+std::optional<Data::EngineeringValue> normalizeObservedValue(
+    const Data::EngineeringValue &value, Data::EngineeringValueKind kind)
+{
+    if (value.kind == kind)
+        return value;
+    if (value.kind != Data::EngineeringValueKind::ExactRational)
+        return std::nullopt;
+    if (kind == Data::EngineeringValueKind::SignedInteger && value.rational.denominator == 1)
+        return Data::EngineeringValue::fromSignedInteger(value.rational.numerator);
+    if (kind == Data::EngineeringValueKind::UnsignedInteger && value.rational.denominator == 1
+        && value.rational.numerator >= 0) {
+        return Data::EngineeringValue::fromUnsignedInteger(quint64(value.rational.numerator));
+    }
+    return std::nullopt;
+}
+
+DeviceParameterObservationResult unavailableObservation(const QString &detail)
+{
+    return {DeviceParameterObservationState::Unavailable, std::nullopt, detail};
 }
 
 } // namespace
@@ -271,6 +383,105 @@ ConfiguredDeviceParameterValidation validateConfiguredDeviceParameters(
         }
     }
     return {};
+}
+
+DeviceParameterObservationResult evaluateDeviceParameterObservation(
+    const Data::DeviceParameterDefinition &definition,
+    const std::optional<Data::EngineeringValue> &configuredValue,
+    const Data::AxisParameterEvidenceRecord &record)
+{
+    if (!validParameterDefinition(definition)
+        || definition.observedSource.kind != Data::DeviceParameterObservedSourceKind::CoeSdoUpload
+        || !definition.observedSource.object) {
+        return unavailableObservation(
+            QStringLiteral("The signed parameter definition has no observable CoE object."));
+    }
+    const Data::DeviceParameterObjectBinding &binding = *definition.observedSource.object;
+    const std::optional<Data::EngineeringValueKind> rawKind = parameterObjectValueKind(
+        binding.physicalType);
+    if (!rawKind || *rawKind != definition.valueKind
+        || binding.byteOrder != Data::DeviceByteOrder::LittleEndian
+        || binding.engineeringTransform.unit != definition.unit
+        || binding.engineeringTransform.constraint != definition.engineeringConstraint
+        || binding.engineeringTransform.rounding != Data::EngineeringRounding::RejectInexact
+        || !validateEngineeringTransform(binding.engineeringTransform).accepted()
+        || !validateEngineeringConstraint(definition.engineeringConstraint).accepted()) {
+        return unavailableObservation(
+            QStringLiteral("The signed observed-value binding is invalid."));
+    }
+
+    const auto profileRecord = std::find_if(
+        Data::FixedAxisParameterEvidenceRecords.cbegin(),
+        Data::FixedAxisParameterEvidenceRecords.cend(),
+        [&binding](const Data::FixedAxisParameterEvidenceRecord &candidate) {
+            return candidate.index == binding.index && candidate.subIndex == binding.subIndex;
+        });
+    if (profileRecord == Data::FixedAxisParameterEvidenceRecords.cend()) {
+        return unavailableObservation(
+            QStringLiteral("The signed observed object is outside the fixed evidence profile."));
+    }
+    const qsizetype ordinal = profileRecord - Data::FixedAxisParameterEvidenceRecords.cbegin();
+    const std::optional<quint32> bitWidth = physicalBitWidth(binding.physicalType);
+    if (!bitWidth || *bitWidth != quint32(profileRecord->valueBytes) * 8
+        || record.ordinal != ordinal || record.index != binding.index
+        || record.subIndex != binding.subIndex || !record.isValid()) {
+        return unavailableObservation(
+            QStringLiteral("The observed record does not match the signed fixed-width binding."));
+    }
+    if (record.state != Data::AxisParameterEvidenceRecordState::Valid) {
+        return unavailableObservation(
+            QStringLiteral("The controller could not read the observed CoE object."));
+    }
+
+    const std::optional<Data::EngineeringValue> raw
+        = decodeRawParameterValue(binding.physicalType, record.rawValue);
+    if (!raw) {
+        return unavailableObservation(
+            QStringLiteral("The observed little-endian value could not be decoded."));
+    }
+    const EngineeringConversionResult converted
+        = convertRawToEngineering(*raw, *bitWidth, binding.engineeringTransform);
+    if (!converted.validation.accepted() || !converted.value) {
+        return unavailableObservation(
+            QStringLiteral("The observed value violates the signed engineering transform."));
+    }
+    const std::optional<Data::EngineeringValue> normalized
+        = normalizeObservedValue(*converted.value, definition.valueKind);
+    if (!normalized
+        || !validateEngineeringValueAgainstConstraint(
+                *normalized, definition.engineeringConstraint)
+                .accepted()) {
+        return unavailableObservation(
+            QStringLiteral("The observed value cannot be represented by the signed definition."));
+    }
+    if (configuredValue
+        && (configuredValue->kind != definition.valueKind
+            || !validateEngineeringValueAgainstConstraint(
+                    *configuredValue, definition.engineeringConstraint)
+                    .accepted())) {
+        return unavailableObservation(
+            QStringLiteral("The Project configured value does not match the signed definition."));
+    }
+
+    if (!configuredValue) {
+        return {
+            DeviceParameterObservationState::NotConfigured,
+            normalized,
+            QStringLiteral("No Project-owned configured value is available for comparison."),
+        };
+    }
+    if (*configuredValue == *normalized) {
+        return {
+            DeviceParameterObservationState::Match,
+            normalized,
+            QStringLiteral("The observed value matches the Project-owned configured value."),
+        };
+    }
+    return {
+        DeviceParameterObservationState::Mismatch,
+        normalized,
+        QStringLiteral("The observed value differs from the Project-owned configured value."),
+    };
 }
 
 } // namespace EtherCAT::Core

@@ -199,15 +199,19 @@ Workbench 已为 ConfiguredSlave 提供 Project-only 的 Device Parameters 页�
 Adapter、Profile、Module 或 Provider authority 改变后，现有草稿变为 stale，必须由用户明确 Reload
 后才能继续编辑或 Apply。
 
-该页面的 Observed/Source/Verification Status 当前只显示签名来源以及 `Not captured` 或
-`Unavailable`，不会发起 scan、SDO upload/download、控制器命令、部署、网络或硬件访问。当前树仍
-没有生产 v4 Adapter/Authorization 资产，已安装的 SV630N Adapter 仍为 v3 且动作保持 disabled；
-Product API v1.16 已在每次完整真实拓扑扫描后，以固定八对象只读 profile、Session/Boot/拓扑 capture
-和精确从站身份采集会话级批次，但页面尚未消费该批次。compiler projection、Workbench
-configured/observed 对比和设备参数动作也尚未完成，因此任一非空设备参数仍会在调用外部编译器前
-fail closed。该会话证据只用于后续比较工程设定与实测值，不得写回 `ProjectSnapshot`；其中
-`0x2000` 原始身份值不能自动解释为编码器分辨率，软件停止阈值也不是驱动器实测对象。本地编辑成功
-不代表驱动器已经接收参数，也不授权部署、SDO 下载或电机运动。
+该页面不会发起 scan、SDO upload/download、控制器命令、部署、网络或硬件访问。对于显式选择的
+Real controller，它会只读消费 Product API v1.16 在最近一次完整真实拓扑扫描后形成的原子批次，并在
+显示前重新校验 Session、Boot、拓扑 capture、payload SHA、完整 target 闭包、从站身份、alias/module
+证据和唯一 live Adapter authority。只有固定 profile 中的 Valid record，且地址、物理位宽、小端编码、
+签名工程换算和约束全部精确匹配时，才生成 Observed；再与当前 Project-owned 值比较为 `Match`、
+`Mismatch` 或 `Not configured`。未 Apply 的 editor draft 一律显示 `Unverified`，不会冒充工程值。
+
+该会话证据不会写回 `ProjectSnapshot`，任何 authority/provenance 漂移都会先清除旧展示。`Match` 只
+表示同一会话、Boot 和拓扑证据中的只读值按签名换算后等于当前工程意图，不证明 Startup SDO 已应用、
+包已部署或轴可运行。当前树仍没有生产 v4 Adapter/Authorization 资产，已安装的 SV630N Adapter 仍为
+v3 且动作保持 disabled；compiler projection 和设备参数动作也尚未完成，因此任一非空设备参数仍会在
+调用外部编译器前 fail closed。`0x2000` 原始身份值不能自动解释为编码器分辨率，软件停止阈值也不是
+驱动器实测对象。
 
 ### 4.2 设备目录状态
 
@@ -400,10 +404,11 @@ ShutdownFlag Plugin::aboutToShutdown()
 ```
 
 连接不是扫描。物理总线未变化时，用户不需要每次运行都重新扫描。
-Device Parameters 页当前只展示 signed observed source 以及 `Not captured`/`Unavailable`，不会因
-页面打开、Reload 或 Apply 而扫描、读取 SDO、控制或部署。扫描实测设备参数的 Product API 读取、
-Session/Boot/拓扑/设备身份证据绑定和 configured/observed match 判定仍未实现；扫描拓扑成功不能
-伪造这些值，也不能把上一次会话的观察值保存进工程。
+Device Parameters 页不会因页面打开、Reload 或 Apply 而扫描、读取 SDO、控制或部署。Product API
+v1.16 在完整真实拓扑扫描后按固定八对象 profile 自动采集只读批次；页面只消费显式选择的 Real
+provider，并以当前 Session/Boot/拓扑 capture/payload SHA、完整从站 target 闭包、精确身份以及签名
+Adapter definition 生成 Observed 和 configured/observed 比较。新扫描、重连、Boot、身份、provider 或
+Adapter authority 变化会使旧展示失效；观察值不会保存进工程，也不会自动覆盖用户配置。
 
 ### 6.2 编译、签名和激活
 
@@ -669,9 +674,10 @@ SV630N 速度动作仍因实际编码器分辨率、0x6091 电子齿轮换算、
 3. 用当前真实 ProjectSnapshot 和新鲜扫描证据重新编译、部署并完成 DC/XB6 输出验收。
 4. Startup SDO 目前可编辑，但当前 compiler request builder 对非空 Startup SDO 仍会
    fail closed；需由编译器合同和 IDE 同步支持后再开放。
-5. 将 Product API v1.16 会话级固定只读参数证据接入 Workbench，以签名 Adapter 定义完成
-   configured/observed 对比，再实现 ProjectSnapshot 到编译请求的精确 projection；在这些
-   门禁闭合前，v8 中任一非空设备参数继续 fail closed，不进入部署或运动路径。
+5. Workbench 已能以签名 Adapter 定义消费 Product API v1.16 会话级固定只读参数证据并完成
+   configured/observed 对比；下一步是提供生产 v4 Adapter/Authorization，并实现 ProjectSnapshot
+   到编译请求、Startup SDO、换算与动作资格证据的精确 projection。在这些门禁闭合前，v8 中任一
+   非空设备参数继续 fail closed，不进入部署或运动路径。
 
 ### P1：统一业务协调层
 

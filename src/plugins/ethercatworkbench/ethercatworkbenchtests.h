@@ -84,6 +84,7 @@ private slots:
     void testConfiguredSlaveTreeAndPages();
     void testDeviceParametersPageVisibilityAndQualification();
     void testDeviceParametersPageEditingAndSafety();
+    void testDeviceParametersPageAxisEvidence();
     void testDeviceParametersPageRejectsStaleBaselines();
     void testTwinCatProcessDataTree();
     void testProcessDataTableAccessibility();
