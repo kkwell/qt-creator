@@ -206,16 +206,23 @@ the ESI or Adapter clears the device parameters. Parameter edits clear the
 master semantic-binding artifact in the same undo command, and Undo restores
 both values atomically.
 
-These values are engineering intent only. Version 8 does not yet provide the
-signed Adapter parameter definitions that qualify IDs, kinds, units, ranges,
-and device-object projection; it also does not yet project parameters into the
-compiler request or capture scanned parameter observations. Consequently every
-compile request containing a non-empty device-parameter configuration fails
-closed before compilation. A later observed value must remain separately
-bound, session-scoped controller evidence for configured/observed comparison;
-it must never be persisted into `ProjectSnapshot` as engineering intent. No
-device-parameter value in this format authorizes deployment, SDO download, or
-motor motion.
+These values are engineering intent only. Adapter v4 now defines a signed,
+bounded parameter-definition closure, and Core can validate project values
+against its exact ESI, complete Adapter/Profile selection, Qualified state,
+independent signature/hardware authorization results, required IDs, kinds, and
+engineering constraints. The version 8 persistence path itself still performs
+only the generic structural validation above; it does not turn saved values
+into qualified device operations.
+
+No production v4 Adapter is installed in this tree, and parameters are not yet
+projected into the compiler request or captured as scanned observations.
+Consequently every compile request containing a non-empty device-parameter
+configuration still fails closed before compilation. A later observed value
+must remain separately bound, session-scoped controller evidence for
+configured/observed comparison; it must never be persisted into
+`ProjectSnapshot` as engineering intent. No device-parameter value in this
+format, nor the presence of the v4 contract, authorizes deployment, SDO
+download, or motor motion.
 
 `semanticBindingArtifact` is optional and appears only once at master level.
 It is an immutable reference containing a non-empty trimmed artifact ID, the

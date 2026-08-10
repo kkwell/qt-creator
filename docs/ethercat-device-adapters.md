@@ -36,9 +36,12 @@ writable semantic signal or control action is inferred.
 
 `EtherCATDeviceAdapters` recursively loads packages below `ethercat/adapters`.
 The current parser accepts the explicit schemas `embed-labs.device-adapter/v1`,
-`v2`, and `v3`; the bundled forms are separated under `adapters/v1`, `v2`, and
-`v3`. New production work targets v3, while v1/v2 remain compatibility inputs.
-A package is selected only when all of the following match:
+`v2`, `v3`, and `v4`. The bundled production forms remain separated under
+`adapters/v1`, `v2`, and `v3`; this tree does not install a production v4
+manifest or v2 authorization. Existing production work therefore remains v3,
+while v1/v2 are compatibility inputs and v4 is currently exercised with
+dynamically signed test artifacts. A package is selected only when all of the
+following match:
 
 - VendorId and ProductCode;
 - the complete revision interval;
@@ -60,6 +63,51 @@ keys in `ethercat/adapter-authorization-trust`. Only an exact Qualified adapter
 covered by accepted policy may receive verified, real-hardware-qualified state;
 an incomplete, invalid, revoked, conflicting, or rolled-back authorization
 fails closed and disables manual control.
+
+## Device parameter definitions
+
+Adapter v4 inherits the complete v3 contract and requires a
+`parameterDefinitions` array. The array is bounded to 256 entries, strictly
+ordered by unique canonical parameter ID, and every entry declares its display
+metadata, engineering value kind and unit, exact constraint, required/default
+policy, configured projection, and observed source. A configured projection is
+either explicitly `project-only` or a fixed `coe-startup-sdo` at transition
+`PS`. An observed source is either explicitly `unavailable` or a fixed
+`coe-sdo-upload`. CoE bindings are typed, little-endian, reject inexact
+engineering conversion, and the configured and observed bindings must be
+identical when both exist.
+
+The v4 manifest content digest and every parameter-definition digest use
+separate SHA-256 domains over canonical JSON:
+
+```text
+SHA256("embed-labs.device-adapter/v4" || 0x00 || canonical manifest)
+SHA256("embed-labs.device-parameter-definition/v1" || 0x00 || canonical definition)
+```
+
+Authorization v1 remains valid only for Adapter v3. Authorization v2 is valid
+only for Adapter v4, uses the signature domain
+`embed-labs.ethercat-device-adapter-authorization/v2`, and closes over the
+exact v4 Adapter binding plus a strictly sorted list of
+`{id, definitionSha256}` records. A changed, missing, reordered, or substituted
+definition therefore invalidates the authorization even if the rest of the
+Adapter identity is unchanged.
+
+Core's `validateConfiguredDeviceParameters()` is the reusable qualification
+gate for project values. It requires the exact ESI digest and complete Adapter
+selection, including an existing process-data profile; Adapter v4;
+`Qualified`; and both independently projected trust results,
+`signatureVerified` and `realHardwareAllowed`. It then rejects malformed
+definition closures, unknown or missing required IDs, kind mismatches, and
+values outside the signed engineering constraints.
+
+This contract is not an online parameter service. No production v4 Adapter is
+currently installed, Product API does not yet provide observed parameter
+evidence, and configured/observed/match UI and compiler projection are not yet
+implemented. Non-empty project parameters therefore continue to fail closed
+before compiler invocation. The installed SV630N Adapter remains v3 and its
+motion actions remain disabled; v4 parsing or validation is not evidence of an
+applied drive parameter or motor movement.
 
 ## Modular devices
 

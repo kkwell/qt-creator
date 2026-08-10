@@ -9532,6 +9532,239 @@ void EtherCATCoreTests::testDeviceParameterConfigurationContract()
         DeviceParameterContractError::TooManyParameters);
 }
 
+void EtherCATCoreTests::testConfiguredDeviceParameterQualification()
+{
+    const auto integerConstraint = [](qint64 minimum, qint64 maximum) {
+        Data::EngineeringConstraint result;
+        result.minimum = {minimum, 1};
+        result.maximum = {maximum, 1};
+        result.step = {1, 1};
+        result.stepOrigin = {0, 1};
+        return result;
+    };
+    const auto projectOnlyDefinition = [&](const QString &id,
+                                           Data::EngineeringValueKind kind,
+                                           const QString &unit,
+                                           const Data::EngineeringConstraint &constraint,
+                                           bool required) {
+        Data::DeviceParameterDefinition result;
+        result.id = id;
+        result.displayName = id;
+        result.valueKind = kind;
+        result.unit = unit;
+        result.engineeringConstraint = constraint;
+        result.required = required;
+        result.configuredProjection.kind = Data::DeviceParameterProjectionKind::ProjectOnly;
+        result.configuredProjection.reason = "test_project_only";
+        result.observedSource.kind = Data::DeviceParameterObservedSourceKind::Unavailable;
+        result.observedSource.reason = "test_observed_unavailable";
+        result.definitionSha256 = QByteArray(32, char(id.size()));
+        return result;
+    };
+
+    const Data::EngineeringConstraint gearConstraint = integerConstraint(1, 1000);
+    Data::DeviceParameterDefinition gear = projectOnlyDefinition(
+        "cia402.gear_ratio.motor_revolutions",
+        Data::EngineeringValueKind::UnsignedInteger,
+        "revolution",
+        gearConstraint,
+        true);
+    Data::DeviceParameterObjectBinding gearObject;
+    gearObject.index = 0x6091;
+    gearObject.subIndex = 1;
+    gearObject.physicalType = Data::EtherCATDataType::UnsignedInteger32;
+    gearObject.byteOrder = Data::DeviceByteOrder::LittleEndian;
+    gearObject.engineeringTransform.scale = {1, 1};
+    gearObject.engineeringTransform.offset = {0, 1};
+    gearObject.engineeringTransform.unit = gear.unit;
+    gearObject.engineeringTransform.constraint = gearConstraint;
+    gearObject.engineeringTransform.rounding = Data::EngineeringRounding::RejectInexact;
+    gear.configuredProjection = {};
+    gear.configuredProjection.kind = Data::DeviceParameterProjectionKind::CoeStartupSdo;
+    gear.configuredProjection.transition = "PS";
+    gear.configuredProjection.object = gearObject;
+    gear.observedSource = {};
+    gear.observedSource.kind = Data::DeviceParameterObservedSourceKind::CoeSdoUpload;
+    gear.observedSource.object = gearObject;
+
+    const Data::DeviceParameterDefinition stop = projectOnlyDefinition(
+        "motion.csv.stop_velocity_threshold.reference_units_per_second",
+        Data::EngineeringValueKind::SignedInteger,
+        "reference_unit_per_second",
+        integerConstraint(0, 100),
+        false);
+    const Data::DeviceParameterDefinition encoder = projectOnlyDefinition(
+        "motor.encoder_resolution_counts_per_revolution",
+        Data::EngineeringValueKind::UnsignedInteger,
+        "count_per_revolution",
+        integerConstraint(1, 100000000),
+        true);
+
+    Data::DeviceAdapterManifest manifest;
+    manifest.contractVersion = Data::DeviceAdapterContractVersion::V4;
+    manifest.id = {"org.embedlabs.adapter.test.parameterized-drive"};
+    manifest.version = "4.0.0-test";
+    manifest.qualification = Data::DeviceAdapterQualification::Qualified;
+    manifest.match.vendorId = 1;
+    manifest.match.productCode = 2;
+    manifest.match.minimumRevision = 3;
+    manifest.match.maximumRevision = 3;
+    manifest.match.exactEsiSha256 = QByteArray(32, '\x11');
+    manifest.contentSha256 = QByteArray(32, '\x22');
+    manifest.signatureVerified = true;
+    manifest.realHardwareAllowed = true;
+    Data::ProcessDataProfile profile;
+    profile.id = "profile.test";
+    manifest.processDataProfiles = {profile};
+    manifest.parameterDefinitions = {gear, stop, encoder};
+
+    Data::DeviceAdapterProjectSelection selection;
+    selection.adapterId = manifest.id;
+    selection.adapterVersion = manifest.version;
+    selection.adapterContentSha256 = manifest.contentSha256;
+    selection.processDataProfileId = profile.id;
+    Data::DeviceParameterConfiguration configuration{{
+        {gear.id, Data::EngineeringValue::fromUnsignedInteger(1)},
+        {stop.id, Data::EngineeringValue::fromSignedInteger(10)},
+        {encoder.id, Data::EngineeringValue::fromUnsignedInteger(8388608)},
+    }};
+
+    QVERIFY(validateConfiguredDeviceParameters(
+                manifest, manifest.match.exactEsiSha256, selection, configuration)
+                .accepted());
+    Data::DeviceParameterConfiguration withoutOptional = configuration;
+    withoutOptional.values.removeAt(1);
+    QVERIFY(validateConfiguredDeviceParameters(
+                manifest, manifest.match.exactEsiSha256, selection, withoutOptional)
+                .accepted());
+
+    ConfiguredDeviceParameterValidation validation
+        = validateConfiguredDeviceParameters(manifest, manifest.match.exactEsiSha256, selection, {});
+    QCOMPARE(validation.error, ConfiguredDeviceParameterError::MissingRequiredParameter);
+    QCOMPARE(validation.parameterId, gear.id);
+
+    Data::DeviceParameterConfiguration unordered = configuration;
+    std::reverse(unordered.values.begin(), unordered.values.end());
+    QCOMPARE(
+        validateConfiguredDeviceParameters(
+            manifest, manifest.match.exactEsiSha256, selection, unordered)
+            .error,
+        ConfiguredDeviceParameterError::InvalidConfiguration);
+
+    Data::DeviceAdapterManifest v3 = manifest;
+    v3.contractVersion = Data::DeviceAdapterContractVersion::V3;
+    QCOMPARE(
+        validateConfiguredDeviceParameters(v3, manifest.match.exactEsiSha256, selection, configuration)
+            .error,
+        ConfiguredDeviceParameterError::UnsupportedAdapterContract);
+
+    QByteArray staleEsi = manifest.match.exactEsiSha256;
+    staleEsi[0] ^= 1;
+    QCOMPARE(
+        validateConfiguredDeviceParameters(manifest, staleEsi, selection, configuration).error,
+        ConfiguredDeviceParameterError::AdapterIdentityMismatch);
+    Data::DeviceAdapterProjectSelection staleSelection = selection;
+    staleSelection.adapterContentSha256[0] ^= 1;
+    QCOMPARE(
+        validateConfiguredDeviceParameters(
+            manifest, manifest.match.exactEsiSha256, staleSelection, configuration)
+            .error,
+        ConfiguredDeviceParameterError::AdapterIdentityMismatch);
+    staleSelection = selection;
+    staleSelection.processDataProfileId = "profile.unknown";
+    QCOMPARE(
+        validateConfiguredDeviceParameters(
+            manifest, manifest.match.exactEsiSha256, staleSelection, configuration)
+            .error,
+        ConfiguredDeviceParameterError::AdapterIdentityMismatch);
+
+    Data::DeviceAdapterManifest untrusted = manifest;
+    untrusted.signatureVerified = false;
+    QCOMPARE(
+        validateConfiguredDeviceParameters(
+            untrusted, manifest.match.exactEsiSha256, selection, configuration)
+            .error,
+        ConfiguredDeviceParameterError::AdapterNotAuthorized);
+    untrusted = manifest;
+    untrusted.realHardwareAllowed = false;
+    QCOMPARE(
+        validateConfiguredDeviceParameters(
+            untrusted, manifest.match.exactEsiSha256, selection, configuration)
+            .error,
+        ConfiguredDeviceParameterError::AdapterNotAuthorized);
+    untrusted = manifest;
+    untrusted.qualification = Data::DeviceAdapterQualification::Candidate;
+    QCOMPARE(
+        validateConfiguredDeviceParameters(
+            untrusted, manifest.match.exactEsiSha256, selection, configuration)
+            .error,
+        ConfiguredDeviceParameterError::AdapterNotAuthorized);
+
+    Data::DeviceAdapterManifest invalidDefinition = manifest;
+    invalidDefinition.parameterDefinitions[0].configuredProjection.object->index = 0;
+    invalidDefinition.parameterDefinitions[0].observedSource.object->index = 0;
+    QCOMPARE(
+        validateConfiguredDeviceParameters(
+            invalidDefinition, manifest.match.exactEsiSha256, selection, configuration)
+            .error,
+        ConfiguredDeviceParameterError::InvalidAdapterDefinition);
+    invalidDefinition = manifest;
+    invalidDefinition.parameterDefinitions[0].configuredProjection.object->physicalType
+        = Data::EtherCATDataType::Unknown;
+    invalidDefinition.parameterDefinitions[0].observedSource.object->physicalType
+        = Data::EtherCATDataType::Unknown;
+    QCOMPARE(
+        validateConfiguredDeviceParameters(
+            invalidDefinition, manifest.match.exactEsiSha256, selection, configuration)
+            .error,
+        ConfiguredDeviceParameterError::InvalidAdapterDefinition);
+    invalidDefinition = manifest;
+    invalidDefinition.parameterDefinitions[0].configuredProjection.object->engineeringTransform.scale
+        = {0, 1};
+    invalidDefinition.parameterDefinitions[0].observedSource.object->engineeringTransform.scale
+        = {0, 1};
+    QCOMPARE(
+        validateConfiguredDeviceParameters(
+            invalidDefinition, manifest.match.exactEsiSha256, selection, configuration)
+            .error,
+        ConfiguredDeviceParameterError::InvalidAdapterDefinition);
+    invalidDefinition = manifest;
+    invalidDefinition.parameterDefinitions[0].valueKind = Data::EngineeringValueKind::SignedInteger;
+    QCOMPARE(
+        validateConfiguredDeviceParameters(
+            invalidDefinition, manifest.match.exactEsiSha256, selection, configuration)
+            .error,
+        ConfiguredDeviceParameterError::InvalidAdapterDefinition);
+
+    Data::DeviceParameterConfiguration unknown = configuration;
+    unknown.values[0].parameterId = "a.unknown";
+    validation = validateConfiguredDeviceParameters(
+        manifest, manifest.match.exactEsiSha256, selection, unknown);
+    QCOMPARE(validation.error, ConfiguredDeviceParameterError::UnknownParameter);
+    QCOMPARE(validation.parameterId, QString("a.unknown"));
+
+    Data::DeviceParameterConfiguration missing = configuration;
+    missing.values.removeFirst();
+    validation = validateConfiguredDeviceParameters(
+        manifest, manifest.match.exactEsiSha256, selection, missing);
+    QCOMPARE(validation.error, ConfiguredDeviceParameterError::MissingRequiredParameter);
+    QCOMPARE(validation.parameterId, gear.id);
+
+    Data::DeviceParameterConfiguration wrongKind = configuration;
+    wrongKind.values[0].value = Data::EngineeringValue::fromSignedInteger(1);
+    validation = validateConfiguredDeviceParameters(
+        manifest, manifest.match.exactEsiSha256, selection, wrongKind);
+    QCOMPARE(validation.error, ConfiguredDeviceParameterError::ValueKindMismatch);
+    QCOMPARE(validation.parameterId, gear.id);
+
+    Data::DeviceParameterConfiguration outside = configuration;
+    outside.values[0].value = Data::EngineeringValue::fromUnsignedInteger(1001);
+    validation = validateConfiguredDeviceParameters(
+        manifest, manifest.match.exactEsiSha256, selection, outside);
+    QCOMPARE(validation.error, ConfiguredDeviceParameterError::ValueOutsideConstraint);
+    QCOMPARE(validation.parameterId, gear.id);
+}
+
 void EtherCATCoreTests::testManualControlEnvelopeContract()
 {
     Data::EngineeringTransform signalTransform;

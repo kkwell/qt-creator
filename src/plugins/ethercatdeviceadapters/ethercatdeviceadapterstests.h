@@ -21,6 +21,8 @@ private slots:
     void testV2StrictParserAndCanonicalDigest();
     void testV3SignedActionContract();
     void testV3RejectsUnsafeContracts();
+    void testV4ParameterDefinitionContract();
+    void testSignedAdapterAuthorizationV2ParameterClosure();
     void testV1RemainsFailClosed();
     void testV1AndV2ExactSelection();
     void testExactIdentityAndEsiMatching();

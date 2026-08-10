@@ -31,13 +31,15 @@ enum class DeviceAdapterContractVersion {
     V1,
     V2,
     V3,
+    V4,
 };
 
 constexpr bool isValidDeviceAdapterContractVersion(DeviceAdapterContractVersion version)
 {
     return version == DeviceAdapterContractVersion::V1
            || version == DeviceAdapterContractVersion::V2
-           || version == DeviceAdapterContractVersion::V3;
+           || version == DeviceAdapterContractVersion::V3
+           || version == DeviceAdapterContractVersion::V4;
 }
 
 struct ETHERCATDATA_EXPORT DeviceAdapterMatch
@@ -56,6 +58,73 @@ enum class SemanticSignalAccess { ReadOnly, WriteOnly, ReadWrite };
 enum class SemanticSignalExposure { Public, ActionOnly, Internal };
 enum class DeviceByteOrder { LittleEndian, BigEndian };
 enum class DeviceSignalBindingKind { ProcessDataObject, ObjectDictionary };
+
+inline constexpr qsizetype maximumDeviceParameterDefinitionsPerAdapter = 256;
+
+enum class DeviceParameterProjectionKind {
+    Invalid,
+    ProjectOnly,
+    CoeStartupSdo,
+};
+
+enum class DeviceParameterObservedSourceKind {
+    Invalid,
+    Unavailable,
+    CoeSdoUpload,
+};
+
+struct ETHERCATDATA_EXPORT DeviceParameterObjectBinding
+{
+    quint16 index = 0;
+    quint8 subIndex = 0;
+    EtherCATDataType physicalType = EtherCATDataType::Unknown;
+    DeviceByteOrder byteOrder = DeviceByteOrder::LittleEndian;
+    EngineeringTransform engineeringTransform;
+
+    friend bool operator==(const DeviceParameterObjectBinding &, const DeviceParameterObjectBinding &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT DeviceParameterConfiguredProjection
+{
+    DeviceParameterProjectionKind kind = DeviceParameterProjectionKind::Invalid;
+    QString reason;
+    QString transition;
+    std::optional<DeviceParameterObjectBinding> object;
+
+    friend bool operator==(
+        const DeviceParameterConfiguredProjection &, const DeviceParameterConfiguredProjection &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT DeviceParameterObservedSource
+{
+    DeviceParameterObservedSourceKind kind = DeviceParameterObservedSourceKind::Invalid;
+    QString reason;
+    std::optional<DeviceParameterObjectBinding> object;
+
+    friend bool operator==(
+        const DeviceParameterObservedSource &, const DeviceParameterObservedSource &)
+        = default;
+};
+
+struct ETHERCATDATA_EXPORT DeviceParameterDefinition
+{
+    QString id;
+    QString displayName;
+    QString description;
+    EngineeringValueKind valueKind = EngineeringValueKind::Invalid;
+    QString unit;
+    EngineeringConstraint engineeringConstraint;
+    bool required = true;
+    std::optional<EngineeringValue> engineeringDefaultValue;
+    DeviceParameterConfiguredProjection configuredProjection;
+    DeviceParameterObservedSource observedSource;
+    QByteArray definitionSha256;
+
+    friend bool operator==(const DeviceParameterDefinition &, const DeviceParameterDefinition &)
+        = default;
+};
 
 struct ETHERCATDATA_EXPORT DeviceSignalBinding
 {
@@ -331,6 +400,7 @@ struct ETHERCATDATA_EXPORT DeviceAdapterManifest
     QList<ProcessDataProfile> processDataProfiles;
     QList<DeviceModuleProfile> moduleProfiles;
     QList<DeviceControlAction> controlActions;
+    QList<DeviceParameterDefinition> parameterDefinitions;
     DeviceAdapterProvenance provenance;
     DeviceAdapterControllerTarget controllerAdapterTarget;
     QByteArray contentSha256;
@@ -428,6 +498,12 @@ Q_DECLARE_METATYPE(EtherCAT::Data::SemanticSignalAccess)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticSignalExposure)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceByteOrder)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceSignalBindingKind)
+Q_DECLARE_METATYPE(EtherCAT::Data::DeviceParameterProjectionKind)
+Q_DECLARE_METATYPE(EtherCAT::Data::DeviceParameterObservedSourceKind)
+Q_DECLARE_METATYPE(EtherCAT::Data::DeviceParameterObjectBinding)
+Q_DECLARE_METATYPE(EtherCAT::Data::DeviceParameterConfiguredProjection)
+Q_DECLARE_METATYPE(EtherCAT::Data::DeviceParameterObservedSource)
+Q_DECLARE_METATYPE(EtherCAT::Data::DeviceParameterDefinition)
 Q_DECLARE_METATYPE(EtherCAT::Data::DeviceSignalBinding)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticEnumValue)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticValueMetadata)

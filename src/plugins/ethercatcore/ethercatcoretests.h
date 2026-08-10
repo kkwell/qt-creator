@@ -46,6 +46,7 @@ private slots:
     void testExactEngineeringConversionContract();
     void testExactEngineeringConstraintContract();
     void testDeviceParameterConfigurationContract();
+    void testConfiguredDeviceParameterQualification();
     void testManualControlEnvelopeContract();
     void testProcessDataConfigurationPreview();
     void testProcessDataConfigurationValidation();

@@ -28,16 +28,22 @@ using namespace Data;
 namespace {
 
 constexpr char policyFormat[] = "embed-labs.ethercat-device-adapter-authorization-policy-v1";
-constexpr char authorizationFormat[] = "embed-labs.ethercat-device-adapter-authorization-v1";
+constexpr char authorizationFormatV1[] = "embed-labs.ethercat-device-adapter-authorization-v1";
+constexpr char authorizationFormatV2[] = "embed-labs.ethercat-device-adapter-authorization-v2";
 constexpr char canonicalization[] = "kvell-json-ascii-sorted-compact-lf-v1";
+constexpr char adapterSchemaVersionV4[] = "embed-labs.device-adapter/v4";
 constexpr char policySignatureDomain[]
     = "embed-labs.ethercat-device-adapter-authorization-policy/v1";
-constexpr char authorizationSignatureDomain[]
+constexpr char authorizationSignatureDomainV1[]
     = "embed-labs.ethercat-device-adapter-authorization/v1";
+constexpr char authorizationSignatureDomainV2[]
+    = "embed-labs.ethercat-device-adapter-authorization/v2";
 constexpr qsizetype ed25519PublicKeyBytes = 32;
 constexpr qsizetype ed25519SignatureBytes = 64;
 constexpr qsizetype maximumDocumentBytes = 1024 * 1024;
 constexpr quint32 minimumPolicyRevision = 1;
+
+enum class AuthorizationVersion { V1, V2 };
 
 struct Signer
 {
@@ -61,6 +67,7 @@ struct Policy
 
 struct Authorization
 {
+    AuthorizationVersion version = AuthorizationVersion::V1;
     QString id;
     QString policyId;
     quint32 policyRevision = 0;
@@ -95,6 +102,13 @@ static bool stableIdentifier(const QString &value)
 {
     static const QRegularExpression pattern(
         QString::fromLatin1("^[A-Za-z0-9][A-Za-z0-9._:/{}-]{0,255}$"));
+    return pattern.match(value).hasMatch();
+}
+
+static bool parameterIdentifier(const QString &value)
+{
+    static const QRegularExpression pattern(
+        QString::fromLatin1("^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$"));
     return pattern.match(value).hasMatch();
 }
 
@@ -511,21 +525,27 @@ static QString authorizationTargetKey(const QJsonObject &adapter)
 }
 
 static bool validateAdapterBindingShape(
-    const QJsonObject &adapter, const QString &context, QString *error)
+    const QJsonObject &adapter,
+    AuthorizationVersion authorizationVersion,
+    const QString &context,
+    QString *error)
 {
-    if (!exactKeys(
-            adapter,
-            {"id",
-             "version",
-             "contentSha256",
-             "qualification",
-             "match",
-             "controllerAdapterTarget",
-             "processDataProfiles",
-             "actions",
-             "evidenceSha256"},
-            context,
-            error)) {
+    QStringList keys{
+        "id",
+        "version",
+        "contentSha256",
+        "qualification",
+        "match",
+        "controllerAdapterTarget",
+        "processDataProfiles",
+        "actions",
+        "evidenceSha256",
+    };
+    if (authorizationVersion == AuthorizationVersion::V2) {
+        keys.append("schemaVersion");
+        keys.append("parameterDefinitions");
+    }
+    if (!exactKeys(adapter, keys, context, error)) {
         return false;
     }
     QString id;
@@ -609,6 +629,55 @@ static bool validateAdapterBindingShape(
             return fail(error, QString("%1 actions are not a strict closure").arg(context));
         previous = current;
     }
+    if (authorizationVersion == AuthorizationVersion::V2) {
+        if (!parseConstantString(
+                adapter, "schemaVersion", adapterSchemaVersionV4, context, error)) {
+            return false;
+        }
+        const QJsonValue definitions = adapter.value("parameterDefinitions");
+        if (!definitions.isArray()
+            || definitions.toArray().size() > maximumDeviceParameterDefinitionsPerAdapter) {
+            return fail(
+                error,
+                QString("%1.parameterDefinitions must be a bounded array").arg(context));
+        }
+        previous.clear();
+        for (qsizetype index = 0; index < definitions.toArray().size(); ++index) {
+            const QJsonValue value = definitions.toArray().at(index);
+            const QString itemContext = QString("%1.parameterDefinitions[%2]")
+                                            .arg(context)
+                                            .arg(index);
+            if (!value.isObject()
+                || !exactKeys(
+                    value.toObject(), {"id", "definitionSha256"}, itemContext, error)) {
+                return false;
+            }
+            QString id;
+            QByteArray definitionSha256;
+            if (!parseString(value.toObject(), "id", itemContext, &id, error)
+                || !parameterIdentifier(id)
+                || !parseHex(
+                    value.toObject(),
+                    "definitionSha256",
+                    32,
+                    itemContext,
+                    &definitionSha256,
+                    error)
+                || std::all_of(
+                    definitionSha256.cbegin(),
+                    definitionSha256.cend(),
+                    [](char byte) { return byte == 0; })
+                || (!previous.isEmpty() && id <= previous)) {
+                if (error->isEmpty()) {
+                    fail(
+                        error,
+                        QString("%1.parameterDefinitions is not a strict closure").arg(context));
+                }
+                return false;
+            }
+            previous = id;
+        }
+    }
     return true;
 }
 
@@ -633,6 +702,7 @@ static std::optional<Authorization> parseAuthorization(
     }
     const QJsonObject object = canonical->second;
     const QString context = QFileInfo(path).fileName();
+    QString format;
     if (!exactKeys(
             object,
             {"format",
@@ -646,18 +716,37 @@ static std::optional<Authorization> parseAuthorization(
              "adapter"},
             context,
             error)
-        || !parseConstantString(object, "format", authorizationFormat, context, error)
+        || !parseString(object, "format", context, &format, error)
         || !parseConstantString(object, "canonicalization", canonicalization, context, error)) {
         return std::nullopt;
     }
     Authorization authorization;
+    quint32 expectedFormatVersion = 0;
+    if (format == authorizationFormatV1) {
+        authorization.version = AuthorizationVersion::V1;
+        expectedFormatVersion = 1;
+    } else if (format == authorizationFormatV2) {
+        authorization.version = AuthorizationVersion::V2;
+        expectedFormatVersion = 2;
+    } else {
+        fail(error, QString("%1.format is unsupported").arg(context));
+        return std::nullopt;
+    }
     authorization.sourcePath = path;
     authorization.canonicalBytes = canonical->first;
     authorization.signature = *signature;
     quint32 formatVersion = 0;
-    if (!parseUnsigned(object, "formatVersion", 1, context, &formatVersion, error)
-        || formatVersion != 1
-        || !parseString(object, "authorizationId", context, &authorization.id, error)
+    if (!parseUnsigned(object, "formatVersion", 1, context, &formatVersion, error))
+        return std::nullopt;
+    if (formatVersion != expectedFormatVersion) {
+        fail(
+            error,
+            QString("%1.formatVersion must equal %2 for its format")
+                .arg(context)
+                .arg(expectedFormatVersion));
+        return std::nullopt;
+    }
+    if (!parseString(object, "authorizationId", context, &authorization.id, error)
         || !stableIdentifier(authorization.id)
         || !parseString(object, "policyId", context, &authorization.policyId, error)
         || !stableIdentifier(authorization.policyId)
@@ -672,7 +761,8 @@ static std::optional<Authorization> parseAuthorization(
     }
     const QJsonValue adapter = object.value("adapter");
     if (!adapter.isObject()
-        || !validateAdapterBindingShape(adapter.toObject(), context + ".adapter", error)) {
+        || !validateAdapterBindingShape(
+            adapter.toObject(), authorization.version, context + ".adapter", error)) {
         return std::nullopt;
     }
     authorization.adapter = adapter.toObject();
@@ -781,6 +871,18 @@ static QJsonObject adapterBinding(const DeviceAdapterManifest &manifest)
     result.insert("processDataProfiles", profiles);
     result.insert("actions", actions);
     result.insert("evidenceSha256", QString::fromLatin1(manifest.evidenceSha256.toHex()));
+    if (manifest.contractVersion == DeviceAdapterContractVersion::V4) {
+        QJsonArray definitions;
+        for (const DeviceParameterDefinition &definition : manifest.parameterDefinitions) {
+            QJsonObject item;
+            item.insert("id", definition.id);
+            item.insert(
+                "definitionSha256", QString::fromLatin1(definition.definitionSha256.toHex()));
+            definitions.append(item);
+        }
+        result.insert("schemaVersion", adapterSchemaVersionV4);
+        result.insert("parameterDefinitions", definitions);
+    }
     return result;
 }
 
@@ -925,7 +1027,11 @@ void applyDeviceAdapterAuthorizations(
         if (!verifySignature(
                 authorization->signature,
                 signer->publicKey,
-                signedMessage(authorizationSignatureDomain, authorization->canonicalBytes))) {
+                signedMessage(
+                    authorization->version == AuthorizationVersion::V1
+                        ? authorizationSignatureDomainV1
+                        : authorizationSignatureDomainV2,
+                    authorization->canonicalBytes))) {
             diagnostics->append(QString("%1: authorization signature is invalid").arg(path));
             continue;
         }
@@ -953,10 +1059,14 @@ void applyDeviceAdapterAuthorizations(
                                     .arg(authorization.sourcePath));
             continue;
         }
-        if (manifest->contractVersion != DeviceAdapterContractVersion::V3
-            || authorization.adapter != adapterBinding(*manifest)) {
+        const bool versionMatches
+            = (authorization.version == AuthorizationVersion::V1
+               && manifest->contractVersion == DeviceAdapterContractVersion::V3)
+              || (authorization.version == AuthorizationVersion::V2
+                  && manifest->contractVersion == DeviceAdapterContractVersion::V4);
+        if (!versionMatches || authorization.adapter != adapterBinding(*manifest)) {
             diagnostics->append(
-                QString("%1: authorization binding does not exactly match the V3 adapter")
+                QString("%1: authorization binding does not exactly match its Adapter version")
                     .arg(authorization.sourcePath));
             continue;
         }

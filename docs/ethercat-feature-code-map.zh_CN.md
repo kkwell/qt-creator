@@ -179,21 +179,22 @@ python3 scripts/ethercat_feature_locator.py check
 
 #### `ethercat.core.device-parameter-contract` — 设备参数工程意图合同
 
-为工程拥有的设备参数提供有界 ASCII 标识、canonical EngineeringValue 和严格顺序校验，不定义厂家对象或在线读写。
+校验有界设备参数工程意图，并针对精确授权的 Adapter v4 定义复核 ESI、Adapter/Profile、required、类型和工程范围；不执行在线读写。
 
 - Owner：`EtherCATCore`（[`src/plugins/ethercatcore`](../src/plugins/ethercatcore)）
 - 运行边界：`contract-only`
 - 证据边界：`unit`
 - 修改入口：
-  - [`src/plugins/ethercatcore/deviceparametercontract.cpp`](../src/plugins/ethercatcore/deviceparametercontract.cpp)：数量、ASCII 标识、唯一顺序和工程值校验；`validateDeviceParameterConfiguration`
+  - [`src/plugins/ethercatcore/deviceparametercontract.cpp`](../src/plugins/ethercatcore/deviceparametercontract.cpp)：通用结构校验与精确 Adapter v4 参数资格校验；`validateDeviceParameterConfiguration`、`validateConfiguredDeviceParameters`
 - 公共合同：
   - [`src/libs/ethercatdata/deviceparameters.h`](../src/libs/ethercatdata/deviceparameters.h)：有界工程参数值类型和数量上限；`DeviceParameterValue`、`DeviceParameterConfiguration`、`maximumDeviceParametersPerProject`
-  - [`src/plugins/ethercatcore/deviceparametercontract.h`](../src/plugins/ethercatcore/deviceparametercontract.h)：跨插件设备参数校验合同；`DeviceParameterContractValidation`、`validateDeviceParameterConfiguration`
+  - [`src/plugins/ethercatcore/deviceparametercontract.h`](../src/plugins/ethercatcore/deviceparametercontract.h)：跨插件设备参数结构与资格校验合同；`DeviceParameterContractValidation`、`validateDeviceParameterConfiguration`、`ConfiguredDeviceParameterValidation`、`validateConfiguredDeviceParameters`
 - 定向测试：
-  - [`src/plugins/ethercatcore/ethercatcoretests.cpp`](../src/plugins/ethercatcore/ethercatcoretests.cpp)（`unit`）：`testDeviceParameterConfigurationContract`
-- 相关文档：[`docs/ethercat-project-format.md`](../docs/ethercat-project-format.md)、[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
+  - [`src/plugins/ethercatcore/ethercatcoretests.cpp`](../src/plugins/ethercatcore/ethercatcoretests.cpp)（`unit`）：`testDeviceParameterConfigurationContract`、`testConfiguredDeviceParameterQualification`
+- 相关文档：[`docs/ethercat-device-adapters.md`](../docs/ethercat-device-adapters.md)、[`docs/ethercat-project-format.md`](../docs/ethercat-project-format.md)、[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
 - 前置功能：`ethercat.data.domain-contracts`
-- 边界提醒：该合同只验证可持久化的工程意图；签名 Adapter 参数定义仍须资格化 ID、类型、单位、范围和投影。
+- 边界提醒：工程持久化仍只验证通用语法；资格校验必须显式传入精确 ESI、完整 Adapter/Profile 选择、Qualified 以及 signatureVerified/realHardwareAllowed 双重信任结果。
+- 边界提醒：当前没有生产 v4 Adapter，非空参数 compiler 仍 fail closed。
 - 边界提醒：在线扫描实测值属于独立会话证据，不得写入 DeviceParameterConfiguration 或 ProjectSnapshot。
 
 ### 4.2 工程模型
@@ -257,20 +258,22 @@ python3 scripts/ethercat_feature_locator.py check
 
 #### `ethercat.adapters.catalog-authorization` — Adapter 目录、型号适配与授权
 
-加载 v1/v2/v3 Adapter，按精确设备身份选择，并验证独立授权和生产信任链。
+加载 v1/v2/v3/v4 Adapter，按精确设备身份选择，并验证版本隔离的独立授权、参数定义摘要闭包和生产信任链。
 
 - Owner：`EtherCATDeviceAdapters`（[`src/plugins/ethercatdeviceadapters`](../src/plugins/ethercatdeviceadapters)）
 - 运行边界：`engineering-only`
 - 证据边界：`unit`、`artifact`
 - 修改入口：
-  - [`src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp`](../src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp)：目录加载、精确匹配和授权投影；`AdapterPackageRepository::resolveDevice`、`AdapterPackageRepository::authorizationStatus`
+  - [`src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp`](../src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp)：v4 定义解析、domain-separated 摘要、精确匹配和授权投影；`parseParameterDefinitions`、`AdapterPackageRepository::resolveDevice`、`AdapterPackageRepository::authorizationStatus`
   - [`src/plugins/ethercatdeviceadapters/deviceadapterauthorization_p.cpp`](../src/plugins/ethercatdeviceadapters/deviceadapterauthorization_p.cpp)：授权签名与信任校验；`applyDeviceAdapterAuthorizations`
 - 公共合同：
-  - [`src/libs/ethercatdata/deviceadapter.h`](../src/libs/ethercatdata/deviceadapter.h)：厂家无关 Adapter 和动作合同；`DeviceAdapterManifest`、`DeviceControlAction`
+  - [`src/libs/ethercatdata/deviceadapter.h`](../src/libs/ethercatdata/deviceadapter.h)：厂家无关 Adapter、参数定义和动作合同；`DeviceAdapterManifest`、`DeviceParameterDefinition`、`DeviceControlAction`
 - 定向测试：
-  - [`src/plugins/ethercatdeviceadapters/ethercatdeviceadapterstests.cpp`](../src/plugins/ethercatdeviceadapters/ethercatdeviceadapterstests.cpp)（`artifact`）：`testV3SignedActionContract`、`testExactIdentityAndEsiMatching`、`testInstalledProductionAuthorizations`
+  - [`src/plugins/ethercatdeviceadapters/ethercatdeviceadapterstests.cpp`](../src/plugins/ethercatdeviceadapters/ethercatdeviceadapterstests.cpp)（`artifact`）：`testV3SignedActionContract`、`testV4ParameterDefinitionContract`、`testSignedAdapterAuthorizationV2ParameterClosure`、`testExactIdentityAndEsiMatching`、`testInstalledProductionAuthorizations`、`testSv630nManualActionsRemainDisabled`
 - 相关文档：[`docs/ethercat-device-adapters.md`](../docs/ethercat-device-adapters.md)
 - 前置功能：`ethercat.data.domain-contracts`
+- 边界提醒：Authorization v1 只允许 v3；v2 只允许 v4，并精确闭包 schemaVersion 与严格排序的参数 ID/definitionSha256。
+- 边界提醒：当前树没有生产 v4 资产，已安装 SV630N 仍为 v3 且动作 disabled。
 - 边界提醒：新增厂家或型号优先只增加 ESI、Adapter、授权和测试，不向 Product API 或 Workbench 添加厂家分支。
 
 ### 4.4 真实控制器在线功能

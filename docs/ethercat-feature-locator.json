@@ -251,24 +251,24 @@
       "id": "ethercat.core.device-parameter-contract",
       "area": "architecture",
       "titleZh": "设备参数工程意图合同",
-      "summaryZh": "为工程拥有的设备参数提供有界 ASCII 标识、canonical EngineeringValue 和严格顺序校验，不定义厂家对象或在线读写。",
+      "summaryZh": "校验有界设备参数工程意图，并针对精确授权的 Adapter v4 定义复核 ESI、Adapter/Profile、required、类型和工程范围；不执行在线读写。",
       "owner": "ethercat-core",
       "runtimeBoundary": "contract-only",
       "evidenceBoundary": ["unit"],
-      "keywords": ["设备参数", "deviceParameters", "EngineeringValue", "ASCII", "工程意图"],
+      "keywords": ["设备参数", "deviceParameters", "parameterDefinitions", "EngineeringValue", "ASCII", "工程意图", "资格化"],
       "implementation": [
-        {"path": "src/plugins/ethercatcore/deviceparametercontract.cpp", "symbols": ["validateDeviceParameterConfiguration"], "roleZh": "数量、ASCII 标识、唯一顺序和工程值校验"}
+        {"path": "src/plugins/ethercatcore/deviceparametercontract.cpp", "symbols": ["validateDeviceParameterConfiguration", "validateConfiguredDeviceParameters"], "roleZh": "通用结构校验与精确 Adapter v4 参数资格校验"}
       ],
       "contracts": [
         {"path": "src/libs/ethercatdata/deviceparameters.h", "symbols": ["DeviceParameterValue", "DeviceParameterConfiguration", "maximumDeviceParametersPerProject"], "roleZh": "有界工程参数值类型和数量上限"},
-        {"path": "src/plugins/ethercatcore/deviceparametercontract.h", "symbols": ["DeviceParameterContractValidation", "validateDeviceParameterConfiguration"], "roleZh": "跨插件设备参数校验合同"}
+        {"path": "src/plugins/ethercatcore/deviceparametercontract.h", "symbols": ["DeviceParameterContractValidation", "validateDeviceParameterConfiguration", "ConfiguredDeviceParameterValidation", "validateConfiguredDeviceParameters"], "roleZh": "跨插件设备参数结构与资格校验合同"}
       ],
       "tests": [
-        {"path": "src/plugins/ethercatcore/ethercatcoretests.cpp", "cases": ["testDeviceParameterConfigurationContract"], "kind": "unit"}
+        {"path": "src/plugins/ethercatcore/ethercatcoretests.cpp", "cases": ["testDeviceParameterConfigurationContract", "testConfiguredDeviceParameterQualification"], "kind": "unit"}
       ],
-      "docs": ["docs/ethercat-project-format.md", "docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "docs": ["docs/ethercat-device-adapters.md", "docs/ethercat-project-format.md", "docs/ethercat-plugin-development-guide.zh_CN.md"],
       "dependsOn": ["ethercat.data.domain-contracts"],
-      "notesZh": ["该合同只验证可持久化的工程意图；签名 Adapter 参数定义仍须资格化 ID、类型、单位、范围和投影。", "在线扫描实测值属于独立会话证据，不得写入 DeviceParameterConfiguration 或 ProjectSnapshot。"]
+      "notesZh": ["工程持久化仍只验证通用语法；资格校验必须显式传入精确 ESI、完整 Adapter/Profile 选择、Qualified 以及 signatureVerified/realHardwareAllowed 双重信任结果。", "当前没有生产 v4 Adapter，非空参数 compiler 仍 fail closed。", "在线扫描实测值属于独立会话证据，不得写入 DeviceParameterConfiguration 或 ProjectSnapshot。"]
     },
     {
       "id": "ethercat.project.model-format",
@@ -342,24 +342,24 @@
       "id": "ethercat.adapters.catalog-authorization",
       "area": "devices",
       "titleZh": "Adapter 目录、型号适配与授权",
-      "summaryZh": "加载 v1/v2/v3 Adapter，按精确设备身份选择，并验证独立授权和生产信任链。",
+      "summaryZh": "加载 v1/v2/v3/v4 Adapter，按精确设备身份选择，并验证版本隔离的独立授权、参数定义摘要闭包和生产信任链。",
       "owner": "ethercat-device-adapters",
       "runtimeBoundary": "engineering-only",
       "evidenceBoundary": ["unit", "artifact"],
-      "keywords": ["Adapter", "厂家", "型号", "XB6", "SV630N", "授权", "签名"],
+      "keywords": ["Adapter", "v4", "parameterDefinitions", "definitionSha256", "厂家", "型号", "XB6", "SV630N", "授权", "签名"],
       "implementation": [
-        {"path": "src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp", "symbols": ["AdapterPackageRepository::resolveDevice", "AdapterPackageRepository::authorizationStatus"], "roleZh": "目录加载、精确匹配和授权投影"},
+        {"path": "src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp", "symbols": ["parseParameterDefinitions", "AdapterPackageRepository::resolveDevice", "AdapterPackageRepository::authorizationStatus"], "roleZh": "v4 定义解析、domain-separated 摘要、精确匹配和授权投影"},
         {"path": "src/plugins/ethercatdeviceadapters/deviceadapterauthorization_p.cpp", "symbols": ["applyDeviceAdapterAuthorizations"], "roleZh": "授权签名与信任校验"}
       ],
       "contracts": [
-        {"path": "src/libs/ethercatdata/deviceadapter.h", "symbols": ["DeviceAdapterManifest", "DeviceControlAction"], "roleZh": "厂家无关 Adapter 和动作合同"}
+        {"path": "src/libs/ethercatdata/deviceadapter.h", "symbols": ["DeviceAdapterManifest", "DeviceParameterDefinition", "DeviceControlAction"], "roleZh": "厂家无关 Adapter、参数定义和动作合同"}
       ],
       "tests": [
-        {"path": "src/plugins/ethercatdeviceadapters/ethercatdeviceadapterstests.cpp", "cases": ["testV3SignedActionContract", "testExactIdentityAndEsiMatching", "testInstalledProductionAuthorizations"], "kind": "artifact"}
+        {"path": "src/plugins/ethercatdeviceadapters/ethercatdeviceadapterstests.cpp", "cases": ["testV3SignedActionContract", "testV4ParameterDefinitionContract", "testSignedAdapterAuthorizationV2ParameterClosure", "testExactIdentityAndEsiMatching", "testInstalledProductionAuthorizations", "testSv630nManualActionsRemainDisabled"], "kind": "artifact"}
       ],
       "docs": ["docs/ethercat-device-adapters.md"],
       "dependsOn": ["ethercat.data.domain-contracts"],
-      "notesZh": ["新增厂家或型号优先只增加 ESI、Adapter、授权和测试，不向 Product API 或 Workbench 添加厂家分支。"]
+      "notesZh": ["Authorization v1 只允许 v3；v2 只允许 v4，并精确闭包 schemaVersion 与严格排序的参数 ID/definitionSha256。", "当前树没有生产 v4 资产，已安装 SV630N 仍为 v3 且动作 disabled。", "新增厂家或型号优先只增加 ESI、Adapter、授权和测试，不向 Product API 或 Workbench 添加厂家分支。"]
     },
     {
       "id": "ethercat.product-api.transport-session",
@@ -1240,10 +1240,10 @@
       "status": "open",
       "severity": "p0",
       "affectedFeatures": ["ethercat.core.device-parameter-contract", "ethercat.project.model-format", "ethercat.project.mutation", "ethercat.adapters.catalog-authorization", "ethercat.product-api.topology-evidence", "ethercat.compiler.project-projection", "ethercat.workbench.configuration-pages", "ethercat.scan.mock-workflow"],
-      "problemZh": "工程 v8 已能保存设备参数意图，但尚无签名 Adapter 参数定义、真实 Product API 扫描实测证据、configured/observed/match 界面和完整 compiler projection，因此不能把用户配置或扫描拓扑解释为已应用的控制器参数。",
-      "currentBoundaryZh": "v8 仅提供有界 ASCII/canonical EngineeringValue 持久化、精确 ESI+Adapter 绑定和 expected value token；参数或 Adapter 变化会使旧 binding 失效。编译请求值合同和 Project request builder 对任意非空参数 fail closed。compile-recovery payload v2 保留设备参数字段并兼容 v1 空值；Mock 扫描只在精确设备身份不变时保留已有工程意图，绝不产生或持久化 observed 值。",
-      "nextActionZh": "先冻结并实现签名 Adapter parameter definitions，再增加绑定 Session/Boot/拓扑/从站身份的 Product API 只读扫描实测证据和 configured/observed/match UI，最后把已资格化值完整投影进 compiler request、签名包和恢复证据。",
-      "evidencePaths": ["docs/ethercat-project-format.md", "docs/ethercat-plugin-development-guide.zh_CN.md", "src/libs/ethercatdata/deviceparameters.h", "src/plugins/ethercatcore/deviceparametercontract.h", "src/plugins/ethercatcore/deviceparametercontract.cpp", "src/plugins/ethercatproject/ethercatprojectformat.cpp", "src/plugins/ethercatproject/ethercatprojectdocument.cpp", "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp", "src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "src/plugins/ethercatscan/topologycomparison.cpp"],
+      "problemZh": "Adapter v4 参数定义与资格校验底座已实现，但没有生产 v4 资产、真实 Product API 扫描实测证据、configured/observed/match 界面和完整 compiler projection，因此仍不能把用户配置或扫描拓扑解释为已应用的控制器参数。",
+      "currentBoundaryZh": "v4 强制 parameterDefinitions，manifest 与逐项定义使用独立 domain hash；Authorization v2 只授权精确 v4 与排序的 ID/digest 闭包。Core 可校验精确 ESI、完整 Adapter/Profile、Qualified、signatureVerified/realHardwareAllowed、required、类型和范围。工程 v8 持久化仍只做通用语法校验；当前无生产 v4 资产，SV630N v3 动作 disabled，编译请求对任意非空参数 fail closed，Product API/界面也没有 observed 证据。compile-recovery payload v2 保留设备参数字段并兼容 v1 空值；Mock 扫描只在精确设备身份不变时保留已有工程意图，绝不产生或持久化 observed 值。",
+      "nextActionZh": "先提供受治理、可独立验签的生产 v4 SV630N Adapter/Authorization，再增加绑定 Session/Boot/拓扑/从站身份的 Product API 只读扫描实测证据和 configured/observed/match UI，最后把已资格化值完整投影进 compiler request、签名包和恢复证据。",
+      "evidencePaths": ["docs/ethercat-device-adapters.md", "docs/ethercat-project-format.md", "docs/ethercat-plugin-development-guide.zh_CN.md", "src/libs/ethercatdata/deviceadapter.h", "src/libs/ethercatdata/deviceparameters.h", "src/plugins/ethercatcore/deviceparametercontract.h", "src/plugins/ethercatcore/deviceparametercontract.cpp", "src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp", "src/plugins/ethercatdeviceadapters/deviceadapterauthorization_p.cpp", "src/plugins/ethercatdeviceadapters/ethercatdeviceadapterstests.cpp", "src/plugins/ethercatproject/ethercatprojectformat.cpp", "src/plugins/ethercatproject/ethercatprojectdocument.cpp", "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp", "src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "src/plugins/ethercatscan/topologycomparison.cpp"],
       "resolutionCriteriaZh": ["签名 Adapter 定义闭合集合化声明参数 ID、类型、单位、范围、工程到设备投影和允许的实测来源。", "真实扫描证据绑定当前 Session、BootId、拓扑 capture 和精确从站身份；界面明确显示设定值、实测值、一致/不一致/不可用/陈旧状态。", "observed 证据保持会话级并与 ProjectSnapshot 分离；保存、重开、Undo/Redo 和 Mock 扫描均不能把实测值改写成工程意图。", "已资格化非空参数可确定性进入 compiler request、签名包和 recovery；缺失、越界、陈旧或不一致证据继续 fail closed。"],
       "notesZh": ["当前 v8 参数字段不授权部署、SDO 下载或电机运动。", "在完整资格和真机安全门禁通过前，不得用用户手填值、Mock 结果或拓扑扫描结果宣称正反转能力。"]
     },

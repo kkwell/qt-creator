@@ -4,6 +4,7 @@
 
 #include "deviceadapterauthorization_p.h"
 
+#include <ethercatcore/deviceparametercontract.h>
 #include <ethercatcore/manualcontrolcontract.h>
 
 #include <utils/id.h>
@@ -32,10 +33,13 @@ namespace {
 constexpr char schemaVersionV1[] = "embed-labs.device-adapter/v1";
 constexpr char schemaVersionV2[] = "embed-labs.device-adapter/v2";
 constexpr char schemaVersionV3[] = "embed-labs.device-adapter/v3";
+constexpr char schemaVersionV4[] = "embed-labs.device-adapter/v4";
 constexpr char canonicalJsonDomainV2[] = "embed-labs.device-adapter/v2";
 constexpr char canonicalJsonDomainV3[] = "embed-labs.device-adapter/v3";
+constexpr char canonicalJsonDomainV4[] = "embed-labs.device-adapter/v4";
+constexpr char parameterDefinitionDomainV1[] = "embed-labs.device-parameter-definition/v1";
 
-enum class PackageSchema { V1, V2, V3 };
+enum class PackageSchema { V1, V2, V3, V4 };
 
 struct Package
 {
@@ -223,7 +227,13 @@ static bool simpleV3Identifier(const QString &value)
 
 static bool exactSchema(PackageSchema schema)
 {
-    return schema == PackageSchema::V2 || schema == PackageSchema::V3;
+    return schema == PackageSchema::V2 || schema == PackageSchema::V3
+           || schema == PackageSchema::V4;
+}
+
+static bool v3FamilySchema(PackageSchema schema)
+{
+    return schema == PackageSchema::V3 || schema == PackageSchema::V4;
 }
 
 static DeviceAdapterContractVersion contractVersion(PackageSchema schema)
@@ -235,6 +245,8 @@ static DeviceAdapterContractVersion contractVersion(PackageSchema schema)
         return DeviceAdapterContractVersion::V2;
     case PackageSchema::V3:
         return DeviceAdapterContractVersion::V3;
+    case PackageSchema::V4:
+        return DeviceAdapterContractVersion::V4;
     }
     return DeviceAdapterContractVersion::Unknown;
 }
@@ -419,6 +431,30 @@ static QByteArray canonicalContentSha256V3(
     digestInput.append('\0');
     digestInput.append(canonical);
     return QCryptographicHash::hash(digestInput, QCryptographicHash::Sha256);
+}
+
+static QByteArray canonicalJsonSha256(
+    const QJsonObject &object, const QByteArray &domain, const QString &context, QString *error)
+{
+    QByteArray canonical;
+    if (!appendCanonicalJson(object, context, &canonical, error))
+        return {};
+    QByteArray digestInput(domain);
+    digestInput.append('\0');
+    digestInput.append(canonical);
+    return QCryptographicHash::hash(digestInput, QCryptographicHash::Sha256);
+}
+
+static QByteArray canonicalContentSha256V4(
+    const QJsonObject &object, const QString &context, QString *error)
+{
+    return canonicalJsonSha256(object, canonicalJsonDomainV4, context, error);
+}
+
+static QByteArray parameterDefinitionSha256(
+    const QJsonObject &object, const QString &context, QString *error)
+{
+    return canonicalJsonSha256(object, parameterDefinitionDomainV1, context, error);
 }
 
 static bool checkKeys(
@@ -927,6 +963,274 @@ static bool parseOptionalEngineeringValue(
     return true;
 }
 
+static std::optional<EngineeringValueKind> engineeringValueKindFromString(const QString &value)
+{
+    if (value == "boolean")
+        return EngineeringValueKind::Boolean;
+    if (value == "signed-integer")
+        return EngineeringValueKind::SignedInteger;
+    if (value == "unsigned-integer")
+        return EngineeringValueKind::UnsignedInteger;
+    if (value == "exact-rational")
+        return EngineeringValueKind::ExactRational;
+    if (value == "enumeration")
+        return EngineeringValueKind::Enumeration;
+    return std::nullopt;
+}
+
+static bool parseParameterObjectBinding(
+    const QJsonValue &value,
+    const QString &context,
+    DeviceParameterObjectBinding *result,
+    QString *error)
+{
+    if (!value.isObject())
+        return fail(error, QString("%1 must be a CoE object contract").arg(context));
+    const QJsonObject object = value.toObject();
+    if (!checkKeys(
+            object,
+            {"protocol", "index", "subIndex", "physicalType", "byteOrder", "engineeringTransform"},
+            context,
+            error)) {
+        return false;
+    }
+    QString protocol;
+    QString physicalType;
+    QString byteOrder;
+    quint64 index = 0;
+    quint64 subIndex = 0;
+    if (!parseString(object, "protocol", context, &protocol, error)
+        || !parseUnsigned(object, "index", std::numeric_limits<quint16>::max(), context, &index, error)
+        || !parseUnsigned(
+            object, "subIndex", std::numeric_limits<quint8>::max(), context, &subIndex, error)
+        || !parseString(object, "physicalType", context, &physicalType, error)
+        || !parseString(object, "byteOrder", context, &byteOrder, error)
+        || !parseEngineeringTransform(
+            object.value("engineeringTransform"),
+            context + ".engineeringTransform",
+            &result->engineeringTransform,
+            error)) {
+        return false;
+    }
+    if (protocol != "coe")
+        return fail(error, QString("%1.protocol must equal coe").arg(context));
+    if (index == 0)
+        return fail(error, QString("%1.index must be non-zero").arg(context));
+    const std::optional<EtherCATDataType> parsedType = dataTypeFromString(physicalType);
+    if (!parsedType || *parsedType == EtherCATDataType::Unknown
+        || *parsedType == EtherCATDataType::Real32 || *parsedType == EtherCATDataType::Real64
+        || *parsedType == EtherCATDataType::VisibleString
+        || *parsedType == EtherCATDataType::OctetString) {
+        return fail(error, QString("%1.physicalType must be a fixed integer type").arg(context));
+    }
+    if (byteOrder != "little-endian")
+        return fail(error, QString("%1.byteOrder must equal little-endian").arg(context));
+    if (result->engineeringTransform.rounding != EngineeringRounding::RejectInexact) {
+        return fail(error, QString("%1 requires reject-inexact rounding").arg(context));
+    }
+    result->index = quint16(index);
+    result->subIndex = quint8(subIndex);
+    result->physicalType = *parsedType;
+    result->byteOrder = DeviceByteOrder::LittleEndian;
+    return true;
+}
+
+static bool parseConfiguredParameterProjection(
+    const QJsonValue &value,
+    const QString &context,
+    DeviceParameterConfiguredProjection *result,
+    QString *error)
+{
+    if (!value.isObject())
+        return fail(error, QString("%1 must be an object").arg(context));
+    const QJsonObject object = value.toObject();
+    QString kind;
+    if (!parseString(object, "kind", context, &kind, error))
+        return false;
+    if (kind == "project-only") {
+        if (!checkKeys(object, {"kind", "reason"}, context, error)
+            || !parseString(object, "reason", context, &result->reason, error)
+            || !simpleV3Identifier(result->reason)) {
+            if (error->isEmpty())
+                fail(error, QString("%1.reason must be canonical").arg(context));
+            return false;
+        }
+        result->kind = DeviceParameterProjectionKind::ProjectOnly;
+        return true;
+    }
+    if (kind == "coe-startup-sdo") {
+        if (!checkKeys(object, {"kind", "transition", "object"}, context, error)
+            || !parseString(object, "transition", context, &result->transition, error)
+            || result->transition != "PS") {
+            if (error->isEmpty())
+                fail(error, QString("%1.transition must equal PS").arg(context));
+            return false;
+        }
+        DeviceParameterObjectBinding binding;
+        if (!parseParameterObjectBinding(
+                object.value("object"), context + ".object", &binding, error)) {
+            return false;
+        }
+        result->kind = DeviceParameterProjectionKind::CoeStartupSdo;
+        result->object = binding;
+        return true;
+    }
+    return fail(error, QString("%1.kind is not supported").arg(context));
+}
+
+static bool parseParameterObservedSource(
+    const QJsonValue &value,
+    const QString &context,
+    DeviceParameterObservedSource *result,
+    QString *error)
+{
+    if (!value.isObject())
+        return fail(error, QString("%1 must be an object").arg(context));
+    const QJsonObject object = value.toObject();
+    QString kind;
+    if (!parseString(object, "kind", context, &kind, error))
+        return false;
+    if (kind == "unavailable") {
+        if (!checkKeys(object, {"kind", "reason"}, context, error)
+            || !parseString(object, "reason", context, &result->reason, error)
+            || !simpleV3Identifier(result->reason)) {
+            if (error->isEmpty())
+                fail(error, QString("%1.reason must be canonical").arg(context));
+            return false;
+        }
+        result->kind = DeviceParameterObservedSourceKind::Unavailable;
+        return true;
+    }
+    if (kind == "coe-sdo-upload") {
+        if (!checkKeys(object, {"kind", "object"}, context, error))
+            return false;
+        DeviceParameterObjectBinding binding;
+        if (!parseParameterObjectBinding(
+                object.value("object"), context + ".object", &binding, error)) {
+            return false;
+        }
+        result->kind = DeviceParameterObservedSourceKind::CoeSdoUpload;
+        result->object = binding;
+        return true;
+    }
+    return fail(error, QString("%1.kind is not supported").arg(context));
+}
+
+static bool parseParameterDefinitions(
+    const QJsonValue &value,
+    const QString &context,
+    QList<DeviceParameterDefinition> *result,
+    QString *error)
+{
+    if (!value.isArray())
+        return fail(error, QString("%1 must be an array").arg(context));
+    const QJsonArray definitions = value.toArray();
+    if (definitions.size() > maximumDeviceParameterDefinitionsPerAdapter) {
+        return fail(error, QString("%1 exceeds the supported definition limit").arg(context));
+    }
+    result->clear();
+    for (qsizetype index = 0; index < definitions.size(); ++index) {
+        const QString itemContext = QString("%1[%2]").arg(context).arg(index);
+        if (!definitions.at(index).isObject())
+            return fail(error, QString("%1 must be an object").arg(itemContext));
+        const QJsonObject object = definitions.at(index).toObject();
+        if (!checkKeys(
+                object,
+                {"id",
+                 "displayName",
+                 "description",
+                 "valueKind",
+                 "unit",
+                 "engineeringConstraint",
+                 "required",
+                 "engineeringDefaultValue",
+                 "configuredProjection",
+                 "observedSource"},
+                itemContext,
+                error)) {
+            return false;
+        }
+        DeviceParameterDefinition definition;
+        QString valueKind;
+        if (!parseString(object, "id", itemContext, &definition.id, error)
+            || !parseString(object, "displayName", itemContext, &definition.displayName, error)
+            || !parseString(object, "description", itemContext, &definition.description, error, true)
+            || !parseString(object, "valueKind", itemContext, &valueKind, error)
+            || !parseString(object, "unit", itemContext, &definition.unit, error)
+            || !parseEngineeringConstraint(
+                object.value("engineeringConstraint"),
+                itemContext + ".engineeringConstraint",
+                &definition.engineeringConstraint,
+                error)
+            || !parseBool(object, "required", itemContext, &definition.required, error)
+            || !parseOptionalEngineeringValue(
+                object.value("engineeringDefaultValue"),
+                itemContext + ".engineeringDefaultValue",
+                &definition.engineeringDefaultValue,
+                error)
+            || !parseConfiguredParameterProjection(
+                object.value("configuredProjection"),
+                itemContext + ".configuredProjection",
+                &definition.configuredProjection,
+                error)
+            || !parseParameterObservedSource(
+                object.value("observedSource"),
+                itemContext + ".observedSource",
+                &definition.observedSource,
+                error)) {
+            return false;
+        }
+        const std::optional<EngineeringValueKind> parsedKind = engineeringValueKindFromString(
+            valueKind);
+        if (!simpleV3Identifier(definition.id))
+            return fail(error, QString("%1.id must be canonical").arg(itemContext));
+        if (!simpleV3Identifier(definition.unit))
+            return fail(error, QString("%1.unit must be canonical").arg(itemContext));
+        if (!parsedKind)
+            return fail(error, QString("%1.valueKind is not supported").arg(itemContext));
+        definition.valueKind = *parsedKind;
+        if (definition.engineeringDefaultValue
+            && (definition.engineeringDefaultValue->kind != definition.valueKind
+                || !Core::validateEngineeringValueAgainstConstraint(
+                        *definition.engineeringDefaultValue, definition.engineeringConstraint)
+                        .accepted())) {
+            return fail(
+                error,
+                QString("%1.engineeringDefaultValue does not match its signed contract")
+                    .arg(itemContext));
+        }
+        const auto matchesDefinition = [&definition](const DeviceParameterObjectBinding &binding) {
+            return binding.engineeringTransform.unit == definition.unit
+                   && binding.engineeringTransform.constraint == definition.engineeringConstraint;
+        };
+        if ((definition.configuredProjection.object
+             && !matchesDefinition(*definition.configuredProjection.object))
+            || (definition.observedSource.object
+                && !matchesDefinition(*definition.observedSource.object))) {
+            return fail(
+                error,
+                QString("%1 object transform does not match the parameter contract")
+                    .arg(itemContext));
+        }
+        if (definition.configuredProjection.object && definition.observedSource.object
+            && *definition.configuredProjection.object != *definition.observedSource.object) {
+            return fail(
+                error,
+                QString("%1 configured and observed CoE objects must be identical").arg(itemContext));
+        }
+        if (!result->isEmpty() && definition.id <= result->constLast().id) {
+            return fail(
+                error,
+                QString("%1 must use unique definitions in strict parameter ID order").arg(context));
+        }
+        definition.definitionSha256 = parameterDefinitionSha256(object, itemContext, error);
+        if (definition.definitionSha256.isEmpty())
+            return false;
+        result->append(definition);
+    }
+    return true;
+}
+
 static double rationalAsDisplayDouble(const ExactRational &value)
 {
     return double(value.numerator) / double(value.denominator);
@@ -1237,7 +1541,7 @@ static bool parseSignal(
     }
     if (exactSchema(schema) && !canonicalIdentifier(result->id.value))
         return fail(error, QString("%1.id must be a canonical identifier").arg(context));
-    if (schema == PackageSchema::V3 && !stableV3Identifier(result->id.value))
+    if (v3FamilySchema(schema) && !stableV3Identifier(result->id.value))
         return fail(error, QString("%1.id must be a stable v3 identifier").arg(context));
     QString direction;
     QString access;
@@ -1309,7 +1613,7 @@ static bool parseSignal(
         }
         result->engineeringTransform = transform;
         deriveLegacyValueMetadata(transform, &result->valueMetadata);
-        if (schema == PackageSchema::V3
+        if (v3FamilySchema(schema)
             && !parseOptionalEngineeringValue(
                 object.value("engineeringSafeValue"),
                 context + ".engineeringSafeValue",
@@ -1421,7 +1725,7 @@ static bool parseProfiles(
         if (!itemValue.isObject())
             return fail(error, QString("%1 must be an object").arg(itemContext));
         const QJsonObject object = itemValue.toObject();
-        const QStringList keys = schema == PackageSchema::V3
+        const QStringList keys = v3FamilySchema(schema)
                                      ? QStringList{
                                            "id",
                                            "signedPdoProfileId",
@@ -1437,10 +1741,10 @@ static bool parseProfiles(
         ProcessDataProfile profile;
         QStringList requiredSignals;
         if (!parseString(object, "id", itemContext, &profile.id, error)
-            || (schema == PackageSchema::V3
+            || (v3FamilySchema(schema)
                 && !parseString(
                     object, "signedPdoProfileId", itemContext, &profile.signedPdoProfileId, error))
-            || (schema == PackageSchema::V3
+            || (v3FamilySchema(schema)
                 && !parseNullableString(
                     object, "signedDcProfileId", itemContext, &profile.signedDcProfileId, error))
             || !parseIndexList(
@@ -1458,15 +1762,15 @@ static bool parseProfiles(
         }
         if (exactSchema(schema) && !canonicalIdentifier(profile.id))
             return fail(error, QString("%1.id must be canonical").arg(itemContext));
-        if (schema == PackageSchema::V3 && !simpleV3Identifier(profile.signedPdoProfileId)) {
+        if (v3FamilySchema(schema) && !simpleV3Identifier(profile.signedPdoProfileId)) {
             return fail(error, QString("%1.signedPdoProfileId must be canonical").arg(itemContext));
         }
-        if (schema == PackageSchema::V3 && !object.value("signedDcProfileId").isNull()
+        if (v3FamilySchema(schema) && !object.value("signedDcProfileId").isNull()
             && !simpleV3Identifier(profile.signedDcProfileId)) {
             return fail(
                 error, QString("%1.signedDcProfileId must be null or canonical").arg(itemContext));
         }
-        if (schema == PackageSchema::V3
+        if (v3FamilySchema(schema)
             && (!stableV3Identifier(profile.id) || !simpleV3Identifier(profile.signedPdoProfileId)
                 || (!profile.signedDcProfileId.isEmpty()
                     && !simpleV3Identifier(profile.signedDcProfileId))
@@ -1542,7 +1846,7 @@ static bool parseModules(
         }
         if (exactSchema(schema) && !canonicalIdentifier(profile.id))
             return fail(error, QString("%1.id must be canonical").arg(itemContext));
-        if (schema == PackageSchema::V3 && !stableV3Identifier(profile.id))
+        if (v3FamilySchema(schema) && !stableV3Identifier(profile.id))
             return fail(error, QString("%1.id must be a stable v3 identifier").arg(itemContext));
         if (moduleIdent == 0)
             return fail(error, QString("%1.moduleIdent must be non-zero").arg(itemContext));
@@ -2249,7 +2553,7 @@ static bool parseActions(
     QList<DeviceControlAction> *result,
     QString *error)
 {
-    if (schema == PackageSchema::V3)
+    if (v3FamilySchema(schema))
         return parseV3Actions(value, context, result, error);
     if (!value.isArray())
         return fail(error, QString("%1 must be an array").arg(context));
@@ -2465,6 +2769,155 @@ static std::optional<EngineeringValueKind> rawKind(EtherCATDataType dataType)
         return std::nullopt;
     }
     return std::nullopt;
+}
+
+static std::optional<quint32> rawBitWidth(EtherCATDataType dataType)
+{
+    switch (dataType) {
+    case EtherCATDataType::Boolean:
+        return 1;
+    case EtherCATDataType::Integer8:
+    case EtherCATDataType::UnsignedInteger8:
+        return 8;
+    case EtherCATDataType::Integer16:
+    case EtherCATDataType::UnsignedInteger16:
+        return 16;
+    case EtherCATDataType::Integer32:
+    case EtherCATDataType::UnsignedInteger32:
+        return 32;
+    case EtherCATDataType::Integer64:
+    case EtherCATDataType::UnsignedInteger64:
+        return 64;
+    case EtherCATDataType::Unknown:
+    case EtherCATDataType::Real32:
+    case EtherCATDataType::Real64:
+    case EtherCATDataType::VisibleString:
+    case EtherCATDataType::OctetString:
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+static bool parameterValueConverts(
+    const EngineeringValue &value,
+    const DeviceParameterObjectBinding &binding,
+    const QString &context,
+    QString *error)
+{
+    const std::optional<EngineeringValueKind> kind = rawKind(binding.physicalType);
+    const std::optional<quint32> width = rawBitWidth(binding.physicalType);
+    if (!kind || !width)
+        return fail(error, QString("%1 uses an unsupported raw type").arg(context));
+    const Core::EngineeringConversionResult converted
+        = Core::convertEngineeringToRaw(value, *kind, *width, binding.engineeringTransform);
+    if (!converted.validation.accepted()) {
+        return fail(
+            error,
+            QString("%1 is not exactly representable: %2").arg(context, converted.validation.detail));
+    }
+    return true;
+}
+
+static bool parameterDomainConverts(
+    const DeviceParameterDefinition &definition,
+    const DeviceParameterObjectBinding &binding,
+    const QString &context,
+    QString *error)
+{
+    const std::optional<EngineeringValueKind> kind = rawKind(binding.physicalType);
+    if (!kind || *kind != definition.valueKind) {
+        return fail(error, QString("%1 value kind does not match its raw type").arg(context));
+    }
+    const EngineeringConstraint &constraint = definition.engineeringConstraint;
+    if (!constraint.minimum || !constraint.maximum || !constraint.step || !constraint.stepOrigin) {
+        return fail(
+            error, QString("%1 requires finite boundaries, a step, and a step origin").arg(context));
+    }
+    if (binding.engineeringTransform.scale.numerator <= 0) {
+        return fail(error, QString("%1 requires a positive engineering scale").arg(context));
+    }
+    const EngineeringValue minimum = EngineeringValue::fromExactRational(*constraint.minimum);
+    const EngineeringValue maximum = EngineeringValue::fromExactRational(*constraint.maximum);
+    if (!parameterValueConverts(minimum, binding, context + ".minimum", error)
+        || !parameterValueConverts(maximum, binding, context + ".maximum", error)) {
+        return false;
+    }
+    if (definition.engineeringDefaultValue
+        && !parameterValueConverts(
+            *definition.engineeringDefaultValue, binding, context + ".default", error)) {
+        return false;
+    }
+
+    EngineeringTransform latticeTransform = binding.engineeringTransform;
+    latticeTransform.constraint = {};
+    const EngineeringValue stepOrigin = EngineeringValue::fromExactRational(*constraint.stepOrigin);
+    const Core::EngineeringConversionResult origin = Core::convertEngineeringToRaw(
+        stepOrigin, *kind, *rawBitWidth(binding.physicalType), latticeTransform);
+    if (!origin.validation.accepted()) {
+        return fail(
+            error,
+            QString("%1 step origin is not exactly representable: %2")
+                .arg(context, origin.validation.detail));
+    }
+    latticeTransform.offset = {0, 1};
+    const EngineeringValue step = EngineeringValue::fromExactRational(*constraint.step);
+    const Core::EngineeringConversionResult delta = Core::convertEngineeringToRaw(
+        step, EngineeringValueKind::UnsignedInteger, 64, latticeTransform);
+    if (!delta.validation.accepted()) {
+        return fail(
+            error,
+            QString("%1 step is not exactly representable: %2")
+                .arg(context, delta.validation.detail));
+    }
+    return true;
+}
+
+static bool validateV4Manifest(const DeviceAdapterManifest &manifest, QString *error)
+{
+    if (manifest.parameterDefinitions.size() > maximumDeviceParameterDefinitionsPerAdapter)
+        return fail(error, "v4 adapter has too many parameter definitions");
+    QHash<QPair<quint16, quint8>, QString> objectOwners;
+    QString previousId;
+    for (const DeviceParameterDefinition &definition : manifest.parameterDefinitions) {
+        const QString context = QString("parameter definition \"%1\"").arg(definition.id);
+        if (!simpleV3Identifier(definition.id)
+            || (!previousId.isEmpty() && definition.id <= previousId)
+            || definition.definitionSha256.size() != 32
+            || std::all_of(
+                definition.definitionSha256.cbegin(),
+                definition.definitionSha256.cend(),
+                [](char byte) { return byte == 0; })) {
+            return fail(error, "v4 parameter definition closure is not canonical");
+        }
+        previousId = definition.id;
+        if (definition.engineeringDefaultValue
+            && definition.engineeringDefaultValue->kind != definition.valueKind) {
+            return fail(error, QString("%1 default kind does not match").arg(context));
+        }
+        if (definition.configuredProjection.object) {
+            const DeviceParameterObjectBinding &binding = *definition.configuredProjection.object;
+            if (!parameterDomainConverts(definition, binding, context + ".configured", error))
+                return false;
+            const QPair<quint16, quint8> endpoint{binding.index, binding.subIndex};
+            const QString owner = objectOwners.value(endpoint);
+            if (!owner.isEmpty() && owner != definition.id) {
+                return fail(error, "v4 parameter definitions assign one CoE object to multiple IDs");
+            }
+            objectOwners.insert(endpoint, definition.id);
+        }
+        if (definition.observedSource.object) {
+            const DeviceParameterObjectBinding &binding = *definition.observedSource.object;
+            if (!parameterDomainConverts(definition, binding, context + ".observed", error))
+                return false;
+            const QPair<quint16, quint8> endpoint{binding.index, binding.subIndex};
+            const QString owner = objectOwners.value(endpoint);
+            if (!owner.isEmpty() && owner != definition.id) {
+                return fail(error, "v4 parameter definitions assign one CoE object to multiple IDs");
+            }
+            objectOwners.insert(endpoint, definition.id);
+        }
+    }
+    return true;
 }
 
 static const SemanticSignalDefinition *signalForId(
@@ -3049,7 +3502,7 @@ static bool validateManifest(DeviceAdapterManifest *manifest, PackageSchema sche
         }
     }
     for (const DeviceControlAction &action : std::as_const(manifest->controlActions)) {
-        if (schema != PackageSchema::V3 && action.enabled && action.commandTtlMs == 0) {
+        if (!v3FamilySchema(schema) && action.enabled && action.commandTtlMs == 0) {
             return fail(
                 error,
                 QString("enabled action \"%1\" must declare a non-zero command TTL")
@@ -3147,7 +3600,9 @@ static bool validateManifest(DeviceAdapterManifest *manifest, PackageSchema sche
             }
         }
     }
-    if (schema == PackageSchema::V3 && !validateV3Manifest(*manifest, error))
+    if (v3FamilySchema(schema) && !validateV3Manifest(*manifest, error))
+        return false;
+    if (schema == PackageSchema::V4 && !validateV4Manifest(*manifest, error))
         return false;
     return true;
 }
@@ -3176,15 +3631,18 @@ static std::optional<Package> parsePackage(
         schema = PackageSchema::V2;
     else if (parsedSchema == schemaVersionV3)
         schema = PackageSchema::V3;
+    else if (parsedSchema == schemaVersionV4)
+        schema = PackageSchema::V4;
     else {
         fail(
             error,
-            QString("%1.schemaVersion must equal \"%2\", \"%3\", or \"%4\"")
+            QString("%1.schemaVersion must equal \"%2\", \"%3\", \"%4\", or \"%5\"")
                 .arg(
                     context,
                     QString::fromLatin1(schemaVersionV1),
                     QString::fromLatin1(schemaVersionV2),
-                    QString::fromLatin1(schemaVersionV3)));
+                    QString::fromLatin1(schemaVersionV3),
+                    QString::fromLatin1(schemaVersionV4)));
         return std::nullopt;
     }
     QStringList rootKeys{
@@ -3205,8 +3663,10 @@ static std::optional<Package> parsePackage(
         "processDataProfiles",
         "moduleProfiles",
         "controlActions"};
-    if (schema == PackageSchema::V3)
+    if (v3FamilySchema(schema))
         rootKeys.append("controllerAdapterTarget");
+    if (schema == PackageSchema::V4)
+        rootKeys.append("parameterDefinitions");
     if (!checkKeys(object, rootKeys, context, error)) {
         return std::nullopt;
     }
@@ -3296,7 +3756,7 @@ static std::optional<Package> parsePackage(
     manifest.match.minimumRevision = quint32(minimumRevision);
     manifest.match.maximumRevision = quint32(maximumRevision);
 
-    if (schema == PackageSchema::V3) {
+    if (v3FamilySchema(schema)) {
         const QString targetContext = context + ".controllerAdapterTarget";
         const QJsonValue targetValue = object.value("controllerAdapterTarget");
         if (!targetValue.isObject()) {
@@ -3394,7 +3854,15 @@ static std::optional<Package> parsePackage(
             error)) {
         return std::nullopt;
     }
-    if (schema == PackageSchema::V3
+    if (schema == PackageSchema::V4
+        && !parseParameterDefinitions(
+            object.value("parameterDefinitions"),
+            context + ".parameterDefinitions",
+            &manifest.parameterDefinitions,
+            error)) {
+        return std::nullopt;
+    }
+    if (v3FamilySchema(schema)
         && manifest.controllerAdapterTarget.esiSha256 != manifest.provenance.sourceSha256) {
         fail(
             error,
@@ -3408,8 +3876,12 @@ static std::optional<Package> parsePackage(
         manifest.contentSha256 = canonicalContentSha256V2(object, context, error);
         if (manifest.contentSha256.isEmpty())
             return std::nullopt;
-    } else {
+    } else if (schema == PackageSchema::V3) {
         manifest.contentSha256 = canonicalContentSha256V3(object, context, error);
+        if (manifest.contentSha256.isEmpty())
+            return std::nullopt;
+    } else {
+        manifest.contentSha256 = canonicalContentSha256V4(object, context, error);
         if (manifest.contentSha256.isEmpty())
             return std::nullopt;
     }

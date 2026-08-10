@@ -183,11 +183,18 @@ ExtensionSystem、McpServerLib 和 qtcMonocypher 等库依赖。
 value token 传给 `setDeviceParameterConfiguration()`；当前值已变化时必须拒绝，不能把草稿
 重绑到另一个设备定义。
 
-这只是持久化底座。签名 Adapter 参数定义、compiler projection 和扫描实测参数证据尚未
-完成，因此任一非空设备参数都会在调用外部编译器前 fail closed。后续扫描得到的实测值
-属于带 Session/Boot/拓扑/设备身份的在线证据，只用于界面显示“工程设定值 / 扫描实测值 /
-是否一致”，不得写回 `ProjectSnapshot` 冒充工程意图。当前字段本身不授权部署、SDO 下载或
-电机运动。
+Adapter v4 已提供必需的 `parameterDefinitions` 闭集、独立的 manifest/definition domain
+hash 和 Authorization v2 精确摘要闭包；Core 的 `validateConfiguredDeviceParameters()` 可在调用者
+提供精确 ESI、完整 Adapter/Profile 选择、`Qualified` 状态以及 `signatureVerified`、
+`realHardwareAllowed` 双重信任结果时，继续校验 required、ID、类型和工程范围。工程 v8 的
+持久化入口本身仍只验证通用语法，不会凭保存值自动完成资格化。
+
+当前树没有生产 v4 Adapter/Authorization 资产，已安装的 SV630N Adapter 仍为 v3 且动作保持
+disabled；compiler projection、Product API 在线实测参数证据和 configured/observed/match 界面也
+尚未完成，因此任一非空设备参数仍会在调用外部编译器前 fail closed。后续扫描得到的实测值属于
+带 Session/Boot/拓扑/设备身份的在线证据，只用于界面显示“工程设定值 / 扫描实测值 / 是否一致”，
+不得写回 `ProjectSnapshot` 冒充工程意图。当前字段或 v4 合同本身都不授权部署、SDO 下载或电机
+运动。
 
 ### 4.2 设备目录状态
 
@@ -198,6 +205,13 @@ value token 传给 `setDeviceParameterConfiguration()`；当前值已变化时�
 用户导入的原始 XML 存入应用资源目录下的 `ethercat/esi/library`。匹配必须同时使用
 VendorId、ProductCode、Revision 和原始 XML SHA-256。显示名称、树序号和站地址都不是
 设备型号身份。
+
+Adapter v4 参数定义属于签名设备目录事实，不属于工程或在线会话事实。每项定义包含 ID、类型、
+单位、完整工程约束、required/default 规则、配置投影和允许的实测来源；最多 256 项并按 ID 严格
+升序。`project-only`/`unavailable` 必须明确原因，CoE 配置只允许固定 `PS` Startup SDO，CoE 实测
+只允许固定 SDO upload，二者同时存在时必须指向同一个严格类型对象。Authorization v2 仅授权
+v4，并精确覆盖每项定义的 domain-separated digest；Authorization v1 仍只授权 v3，不能跨版本
+复用。
 
 ### 4.3 在线控制器状态
 
