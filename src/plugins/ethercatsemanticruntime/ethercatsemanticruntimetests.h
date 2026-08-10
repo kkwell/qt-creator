@@ -55,6 +55,7 @@ private slots:
     void testAdapterAuthorizationActivationAdmission();
     void testAdapterAuthorizationLifetimeGuards();
     void testSemanticOperationJournal();
+    void testSemanticOperationCancellationJournal();
     void testSemanticActionPlan();
     void testSemanticActionPlanFailsClosed();
     void testExecutorRejectsUnauthorizedManualActionBeforeApply();
@@ -72,6 +73,10 @@ private slots:
     void testExecutorExpiresAndSeparatesLiveCaptureCohorts();
     void testExecutorExecutesApi038Xb6Action();
     void testExecutorExecutesQualifiedMultiStepAction();
+    void testExecutorCancelsBeforeMutation();
+    void testExecutorCancelsPendingApply();
+    void testExecutorCancelsAfterMutation();
+    void testExecutorCancelLifetimeGuards();
     void testExecutorBoundsMultiStepWaitFailures();
     void testExecutorFailsClosedOnMultiStepDrift();
     void testExecutorFailsClosedBeforeApply_data();

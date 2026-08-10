@@ -1449,6 +1449,7 @@ public:
         record.request = request;
         record.actor = actor;
         record.state = Data::SemanticOperationState::ApprovalRequired;
+        record.revision = 1;
         record.canonicalRequestDigest = QCryptographicHash::hash(
             Core::canonicalSemanticOperationRequest(request),
             QCryptographicHash::Sha256);
@@ -1473,10 +1474,67 @@ public:
         Data::SemanticOperationRecord record = m_operations.value(approval.operationId);
         record.approvals.append({approval, actor, QDateTime::currentDateTimeUtc()});
         record.state = Data::SemanticOperationState::Approved;
+        ++record.revision;
         record.updatedAt = QDateTime::currentDateTimeUtc();
         record.resultCode = "queued";
         m_operations.insert(approval.operationId, record);
         return record;
+    }
+
+    Data::SemanticOperationCancelResult cancel(
+        const Data::SemanticOperationCancelRequest &request,
+        const Data::SemanticRuntimeActor &actor) final
+    {
+        ++cancelCalls;
+        lastCancelRequest = request;
+        lastCancelActor = actor;
+
+        Data::SemanticOperationCancelResult result;
+        const auto resultFactory = std::exchange(nextCancelResultFactory, {});
+        if (resultFactory) {
+            result = resultFactory(request, actor);
+        } else if (nextCancelResult) {
+            result = std::exchange(nextCancelResult, std::nullopt).value();
+        } else {
+            const auto found = m_operations.constFind(request.operationId);
+            if (found == m_operations.cend()) {
+                result.disposition = Data::SemanticOperationCancelDisposition::NotFound;
+                result.detail = QStringLiteral("Test operation was not found.");
+            } else {
+                Data::SemanticOperationRecord record = *found;
+                Data::SemanticOperationCancellation cancellation;
+                cancellation.request = request;
+                cancellation.actor = actor;
+                cancellation.canonicalCancelDigest = QCryptographicHash::hash(
+                    Core::canonicalSemanticOperationCancelRequest(request),
+                    QCryptographicHash::Sha256);
+                cancellation.requestedAt = QDateTime::currentDateTimeUtc();
+                cancellation.phase = Data::SemanticOperationCancellationPhase::Completed;
+                record.cancellation = cancellation;
+                record.state = Data::SemanticOperationState::Canceled;
+                ++record.revision;
+                record.updatedAt = cancellation.requestedAt;
+                record.resultCode = QStringLiteral(
+                    "semantic-operation-canceled-before-provider-mutation");
+                record.detail = QStringLiteral(
+                    "The test operation was canceled before provider mutation.");
+                result.request = request;
+                result.disposition = Data::SemanticOperationCancelDisposition::Accepted;
+                result.record = record;
+            }
+        }
+
+        if (result.record)
+            m_operations.insert(result.record->request.operationId, *result.record);
+        const QPointer<TestSemanticRuntimeService> guardedService(this);
+        const std::function<void()> started = std::exchange(nextCancelStarted, {});
+        if (started)
+            started();
+        if (!guardedService)
+            return result;
+        if (result.accepted() && result.record)
+            emit operationChanged(result.record->request.operationId);
+        return result;
     }
 
     std::optional<Data::SemanticOperationRecord> operation(
@@ -1496,7 +1554,16 @@ public:
 
     void publishOperation(Data::SemanticOperationRecord record)
     {
+        const auto existing = m_operations.constFind(record.request.operationId);
+        if (existing != m_operations.cend() && record.revision <= existing->revision)
+            record.revision = existing->revision + 1;
         record.updatedAt = QDateTime::currentDateTimeUtc();
+        m_operations.insert(record.request.operationId, record);
+        emit operationChanged(record.request.operationId);
+    }
+
+    void publishOperationExact(const Data::SemanticOperationRecord &record)
+    {
         m_operations.insert(record.request.operationId, record);
         emit operationChanged(record.request.operationId);
     }
@@ -1527,6 +1594,7 @@ public:
 
     int submitCalls = 0;
     int approveCalls = 0;
+    int cancelCalls = 0;
     quint64 liveRefreshCaptureCycle = 100;
     QList<Data::SemanticLiveRefreshOutcome> liveRefreshOutcomes;
     QList<Data::SemanticLiveRefreshRequest> liveRefreshRequests;
@@ -1536,6 +1604,13 @@ public:
     Data::SemanticRuntimeActor lastSubmitActor;
     Data::SemanticOperationApprovalRequest lastApproval;
     Data::SemanticRuntimeActor lastApprovalActor;
+    Data::SemanticOperationCancelRequest lastCancelRequest;
+    Data::SemanticRuntimeActor lastCancelActor;
+    std::optional<Data::SemanticOperationCancelResult> nextCancelResult;
+    std::function<Data::SemanticOperationCancelResult(
+        const Data::SemanticOperationCancelRequest &, const Data::SemanticRuntimeActor &)>
+        nextCancelResultFactory;
+    std::function<void()> nextCancelStarted;
 
 private:
     QList<Data::SemanticRuntimeContext> m_contexts;
@@ -1643,6 +1718,200 @@ static AdapterTreeFixture adapterTreeFixture(const TestDeviceAdapterProvider &pr
     result.project.slaves = {slave};
     result.project.nodes.append(
         {slave.id, slave.masterId, Data::ProjectNodeKind::Slave, slave.name});
+    return result;
+}
+
+static Data::SemanticRuntimeContext cancellableActionContext(
+    const SemanticControlSelection &selection, const Data::SemanticSignalId &signalId)
+{
+    const Data::SemanticRuntimeDigest mappingDigest{"sha256", QByteArray(32, '\x61')};
+
+    Data::RuntimeResourceCatalogEpoch epoch;
+    epoch.controllerBootId = 41;
+    epoch.activePackageSlot = Data::ControllerSlot::A;
+    epoch.activePackageGeneration = 42;
+    epoch.configurationId = 43;
+    epoch.topologyGeneration = 44;
+    epoch.runtimeGeneration = 45;
+    epoch.catalogRevision = 46;
+    epoch.topologyIdentity = QByteArrayLiteral("cancel-ui-topology");
+
+    Data::SemanticBindingVerification verification;
+    verification.state = Data::SemanticBindingVerificationState::Verified;
+    verification.verifierId = "cancel-ui-verifier";
+    verification.signedManifestDigest = {"sha256", QByteArray(32, '\x62')};
+    verification.verifiedAt = QDateTime::fromString("2026-08-10T01:02:03Z", Qt::ISODate);
+
+    Data::SemanticRuntimeTarget signalTarget;
+    signalTarget.controllerId = "cancel-ui-controller";
+    signalTarget.scope = selection.scope;
+    signalTarget.deviceId = selection.deviceId;
+    signalTarget.kind = Data::SemanticRuntimeTargetKind::Signal;
+    signalTarget.signalId = signalId;
+
+    Data::SemanticRuntimeBinding binding;
+    binding.target = signalTarget;
+    binding.semanticBindingId = "cancel-ui-binding";
+    binding.componentBindingId = "cancel-ui-component";
+    binding.adapterId = {"test.cancel-ui.adapter"};
+    binding.adapterVersion = "1.0";
+    binding.adapterContentSha256 = QByteArray(32, '\x63');
+    binding.esiSha256 = QByteArray(32, '\x64');
+    binding.bindingArtifactSha256 = QByteArray(32, '\x65');
+    binding.sessionGeneration = 47;
+    binding.epoch = epoch;
+    binding.mappingDigest = mappingDigest;
+    binding.controllerMappingDigest = mappingDigest;
+    binding.verification = verification;
+    binding.resourceId = {QByteArrayLiteral("cancel-ui-resource")};
+    binding.componentInstanceId = {QByteArrayLiteral("cancel-ui-instance")};
+    binding.consistencyGroupId = {QByteArrayLiteral("cancel-ui-group")};
+    binding.primitiveType = Data::RuntimeResourcePrimitiveType::Boolean;
+    binding.valueTypeIdentity = QByteArrayLiteral("BOOL");
+    binding.bitWidth = 1;
+    binding.direction = Data::RuntimeResourceDirection::Output;
+    binding.access = Data::RuntimeResourceAccess::ReadWrite;
+
+    Data::SemanticSignalRuntimeState signalState;
+    signalState.target = signalTarget;
+    signalState.definition.id = signalId;
+    signalState.definition.displayName = "Cancel UI output";
+    signalState.availability = Data::SemanticSignalAvailability::Ready;
+    signalState.binding = binding;
+    signalState.value = Data::RuntimeResourceTypedValue{
+        Data::RuntimeResourcePrimitiveType::Boolean,
+        true,
+        QByteArrayLiteral("BOOL"),
+        {},
+    };
+    signalState.quality.state = Data::RuntimeResourceQualityState::Good;
+    signalState.snapshotComplete = true;
+    signalState.captureCycle = 4100;
+    signalState.controllerTimestampNs = 4200;
+    signalState.observedAt = QDateTime::fromString("2026-08-10T01:02:04Z", Qt::ISODate);
+
+    Data::SemanticActionRuntimeState action;
+    action.target.controllerId = signalTarget.controllerId;
+    action.target.scope = selection.scope;
+    action.target.deviceId = selection.deviceId;
+    action.target.kind = Data::SemanticRuntimeTargetKind::Action;
+    action.target.actionId = {"org.embedlabs.action.cancel-ui"};
+    action.definition.id = action.target.actionId;
+    action.definition.displayName = "Move safely";
+    action.definition.enabled = true;
+    action.definition.holdToRun = false;
+    action.actionBindingId = action.target.actionId.value;
+    action.actionDefinitionId = "org.embedlabs.definition.cancel-ui";
+    action.actionDefinitionDigest = {"sha256", QByteArray(32, '\x66')};
+    action.qualification = Data::SemanticActionQualification::Qualified;
+    action.availability = Data::SemanticActionAvailability::Ready;
+    action.bindings = {binding};
+    action.requiresApproval = true;
+    action.requiresExclusiveControl = true;
+    action.maximumTtlCycles = 1000;
+
+    Data::SemanticRuntimeContext context;
+    context.controllerId = signalTarget.controllerId;
+    context.scope = selection.scope;
+    context.sessionGeneration = binding.sessionGeneration;
+    context.epoch = epoch;
+    context.mappingDigest = mappingDigest;
+    context.controllerMappingDigest = mappingDigest;
+    context.actionDefinitionsDigest = {"sha256", QByteArray(32, '\x67')};
+    context.cyclePeriodNs = 125000;
+    context.bindingVerification = verification;
+    context.contextHash = QByteArray(32, '\x68');
+    context.signalStates = {signalState};
+    context.actionStates = {action};
+    context.complete = true;
+    return context;
+}
+
+static Data::RuntimeOutputTransactionRequest cancellablePendingApplyRequest(
+    const Data::SemanticRuntimeContext &context)
+{
+    const Data::SemanticRuntimeBinding &binding
+        = context.actionStates.constFirst().bindings.constFirst();
+    if (binding.bitWidth > std::numeric_limits<quint16>::max())
+        return {};
+    Data::RuntimeOutputTransactionRequest request;
+    request.operationId.value = QByteArray(16, '\x71');
+    request.scope = context.scope;
+    request.sessionGeneration = context.sessionGeneration;
+    request.expectedEpoch = context.epoch;
+    request.expectedMappingDigest = context.mappingDigest.value;
+    request.expectedCompleteGroupRecordDigest = QByteArray(32, '\x72');
+    request.expectedCompleteResourceCount = 1;
+    request.expectedRecoveryPolicy = Data::RuntimeOutputRecoveryPolicy::HoldSafe;
+    request.expectedMaximumTtlCycles = 1000;
+    request.expectedOutputGeneration = 51;
+    request.ttlCycles = 100;
+    request.consistencyGroupId = binding.consistencyGroupId;
+    request.completeGroupWrites = {{
+        binding.resourceId,
+        static_cast<quint16>(binding.bitWidth),
+        {
+            Data::RuntimeResourcePrimitiveType::Boolean,
+            false,
+            binding.valueTypeIdentity,
+            {},
+        },
+    }};
+    return request;
+}
+
+static Data::SemanticOperationCancelResult pendingCancellationResult(
+    const Data::SemanticOperationRecord &record,
+    const Data::RuntimeOutputTransactionRequest &pendingApplyRequest,
+    const Data::SemanticOperationCancelRequest &request,
+    const Data::SemanticRuntimeActor &actor)
+{
+    Data::SemanticOperationRecord pending = record;
+    ++pending.revision;
+    pending.state = Data::SemanticOperationState::Executing;
+    Data::SemanticOperationCancellation cancellation;
+    cancellation.request = request;
+    cancellation.actor = actor;
+    cancellation.canonicalCancelDigest = QCryptographicHash::hash(
+        Core::canonicalSemanticOperationCancelRequest(request), QCryptographicHash::Sha256);
+    cancellation.requestedAt = QDateTime::currentDateTimeUtc();
+    cancellation.phase = Data::SemanticOperationCancellationPhase::WaitingForApplyResult;
+    cancellation.pendingApplyRequest = pendingApplyRequest;
+    pending.cancellation = cancellation;
+    pending.updatedAt = cancellation.requestedAt;
+    pending.resultCode = QStringLiteral("semantic-operation-cancel-waiting");
+
+    Data::SemanticOperationCancelResult result;
+    result.request = request;
+    result.disposition = Data::SemanticOperationCancelDisposition::Accepted;
+    result.record = pending;
+    return result;
+}
+
+static Data::SemanticOperationCancelResult completedPreDispatchCancellationResult(
+    const Data::SemanticOperationRecord &record,
+    const Data::SemanticOperationCancelRequest &request,
+    const Data::SemanticRuntimeActor &actor)
+{
+    Data::SemanticOperationRecord canceled = record;
+    ++canceled.revision;
+    canceled.state = Data::SemanticOperationState::Canceled;
+    Data::SemanticOperationCancellation cancellation;
+    cancellation.request = request;
+    cancellation.actor = actor;
+    cancellation.canonicalCancelDigest = QCryptographicHash::hash(
+        Core::canonicalSemanticOperationCancelRequest(request), QCryptographicHash::Sha256);
+    cancellation.requestedAt = QDateTime::currentDateTimeUtc();
+    cancellation.phase = Data::SemanticOperationCancellationPhase::Completed;
+    canceled.cancellation = cancellation;
+    canceled.updatedAt = cancellation.requestedAt;
+    canceled.resultCode = QStringLiteral("semantic-operation-canceled-before-provider-mutation");
+    canceled.detail = QStringLiteral("The operation was canceled before provider mutation.");
+
+    Data::SemanticOperationCancelResult result;
+    result.request = request;
+    result.disposition = Data::SemanticOperationCancelDisposition::Accepted;
+    result.record = canceled;
     return result;
 }
 
@@ -5879,6 +6148,346 @@ void EtherCATWorkbenchTests::testSemanticControlPageSignedActions()
     }
 }
 
+void EtherCATWorkbenchTests::testSemanticControlPageCancelsActiveAction()
+{
+    TestDeviceAdapterProvider adapterProvider;
+    const AdapterTreeFixture fixture = adapterTreeFixture(adapterProvider);
+    WorkbenchController controller;
+    controller.treeModel()->setDeviceAdapterProviders({&adapterProvider});
+    controller.treeModel()->setProjects({fixture.project});
+
+    const QModelIndex configuredSlave = controller.treeModel()->indexForNodeId(fixture.slaveId);
+    QVERIFY(configuredSlave.isValid());
+    const QModelIndex modules = directChildByKind(
+        controller.treeModel(), Core::WorkbenchNodeKind::Modules, configuredSlave);
+    const QModelIndex outputModule = controller.treeModel()->index(0, 0, modules);
+    const QModelIndex outputChannel
+        = findByDisplayText(controller.treeModel(), "Digital output 1", outputModule);
+    QVERIFY(outputModule.isValid());
+    QVERIFY(outputChannel.isValid());
+
+    const Core::PropertyPageContext slaveContext = controller.treeModel()->contextForIndex(
+        configuredSlave);
+    const std::optional<SemanticControlSelection> selection
+        = controller.treeModel()->semanticControlSelection(fixture.slaveId);
+    const std::optional<SemanticControlSelection> channelSelection
+        = controller.treeModel()->semanticControlSelection(
+            outputChannel.data(WorkbenchTreeModel::NodeIdRole).value<Data::NodeId>());
+    QVERIFY(selection);
+    QVERIFY(channelSelection);
+    QCOMPARE(channelSelection->signalIds.size(), 1);
+
+    const Data::SemanticRuntimeContext originalContext
+        = cancellableActionContext(*selection, channelSelection->signalIds.constFirst());
+    const Data::RuntimeOutputTransactionRequest pendingApplyRequest
+        = cancellablePendingApplyRequest(originalContext);
+    QVERIFY(pendingApplyRequest.isValid());
+    TestSemanticRuntimeService runtime;
+    QSignalSpy controllerOutput(&controller, &WorkbenchController::controllerOutputRequested);
+    auto page = std::make_unique<SemanticControlPage>(&controller, &runtime);
+    page->setContext(slaveContext);
+    runtime.publish({originalContext});
+
+    struct CancellationPageWidgets
+    {
+        QLabel *status = nullptr;
+        QPushButton *apply = nullptr;
+        QPushButton *stop = nullptr;
+    };
+    const auto cancellationPageWidgets = [](SemanticControlPage *controlPage) {
+        return CancellationPageWidgets{
+            controlPage->findChild<QLabel *>("EtherCATSemanticActionOperationStatus"),
+            controlPage->findChild<QPushButton *>("EtherCATSemanticControlApply"),
+            controlPage->findChild<QPushButton *>("EtherCATSemanticControlStop"),
+        };
+    };
+
+    QTreeWidget *actions = page->findChild<QTreeWidget *>("EtherCATSemanticControlActions");
+    const CancellationPageWidgets controls = cancellationPageWidgets(page.get());
+    QLabel *operationStatus = controls.status;
+    QPushButton *apply = controls.apply;
+    QPushButton *stop = controls.stop;
+    QVERIFY(actions);
+    QVERIFY(operationStatus);
+    QVERIFY(apply);
+    QVERIFY(stop);
+    QCOMPARE(stop->text(), Tr::tr("Stop"));
+    QVERIFY(!stop->isEnabled());
+    QTRY_COMPARE(actions->topLevelItemCount(), 1);
+    QTRY_VERIFY(apply->isEnabled());
+
+    apply->click();
+    QPointer<QMessageBox> confirmation;
+    QTRY_VERIFY((confirmation = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())));
+    QAbstractButton *yes = confirmation->button(QMessageBox::Yes);
+    QVERIFY(yes);
+    yes->click();
+    QTRY_COMPARE(runtime.submitCalls, 1);
+    QTRY_COMPARE(runtime.approveCalls, 1);
+    QTRY_VERIFY(stop->isEnabled());
+    const std::optional<Data::SemanticOperationRecord> approved = runtime.operation(
+        runtime.lastRequest.operationId);
+    QVERIFY(approved);
+
+    Data::SemanticRuntimeContext rotatedContext = originalContext;
+    rotatedContext.contextHash = QByteArray(32, '\x69');
+    runtime.publish({rotatedContext});
+    QTRY_VERIFY(stop->isEnabled());
+
+    runtime.nextCancelResultFactory = [approved = *approved, pendingApplyRequest](
+                                          const Data::SemanticOperationCancelRequest &request,
+                                          const Data::SemanticRuntimeActor &actor) {
+        return pendingCancellationResult(approved, pendingApplyRequest, request, actor);
+    };
+    QVERIFY(!QApplication::activeModalWidget());
+    stop->click();
+    stop->click();
+    QCOMPARE(runtime.cancelCalls, 1);
+    QVERIFY(!QApplication::activeModalWidget());
+    QVERIFY(Core::isCanonicalSemanticOperationCancelId(runtime.lastCancelRequest.cancelId));
+    QVERIFY(runtime.lastCancelRequest.cancelId.value.startsWith("workbench-cancel-"));
+    QCOMPARE(runtime.lastCancelRequest.operationId, approved->request.operationId);
+    QCOMPARE(runtime.lastCancelRequest.expectedRevision, approved->revision);
+    QCOMPARE(runtime.lastCancelRequest.expectedRequestDigest, approved->canonicalRequestDigest);
+    QCOMPARE(runtime.lastCancelRequest.expectedContextHash, originalContext.contextHash);
+    QVERIFY(runtime.lastCancelRequest.expectedContextHash != rotatedContext.contextHash);
+    QCOMPARE(runtime.lastCancelRequest.reason, QString("EtherCAT Workbench immediate safe stop"));
+    QCOMPARE(runtime.lastCancelActor, runtime.lastSubmitActor);
+    QTRY_COMPARE(operationStatus->text(), Tr::tr("Stop request recorded; waiting for safety proof."));
+    QVERIFY(operationStatus->text() != Tr::tr("Stopped safely."));
+    QVERIFY(!stop->isEnabled());
+    QCOMPARE(runtime.submitCalls, 1);
+    QCOMPARE(runtime.approveCalls, 1);
+
+    const std::optional<Data::SemanticOperationRecord> pending = runtime.operation(
+        approved->request.operationId);
+    QVERIFY(pending);
+    QVERIFY(pending->cancellation);
+
+    runtime.publishOperationExact(*pending);
+    QTRY_COMPARE(operationStatus->text(), Tr::tr("Stop request recorded; waiting for safety proof."));
+    QCOMPARE(runtime.cancelCalls, 1);
+
+    Data::SemanticOperationRecord lowerRevision = *pending;
+    QVERIFY(lowerRevision.revision > 1);
+    --lowerRevision.revision;
+    runtime.publishOperationExact(lowerRevision);
+    QTRY_COMPARE(operationStatus->text(), Tr::tr("Operation evidence is invalid."));
+    QVERIFY(!apply->isEnabled());
+    QVERIFY(!stop->isEnabled());
+
+    Data::SemanticOperationRecord downgraded = *pending;
+    ++downgraded.revision;
+    downgraded.state = Data::SemanticOperationState::Canceled;
+    downgraded.cancellation->phase = Data::SemanticOperationCancellationPhase::Completed;
+    downgraded.cancellation->pendingApplyRequest.reset();
+    downgraded.resultCode = QStringLiteral("semantic-operation-canceled-before-provider-mutation");
+    downgraded.detail = QStringLiteral("The operation was canceled before provider mutation.");
+    QVERIFY(Core::validateSemanticOperationCancellationEvidence(
+                downgraded.cancellation->request, runtime.lastCancelActor, downgraded)
+                .accepted());
+    runtime.publishOperationExact(downgraded);
+    QTRY_COMPARE(operationStatus->text(), Tr::tr("Operation evidence is invalid."));
+    QVERIFY(operationStatus->text() != Tr::tr("Stopped safely."));
+    QVERIFY(!apply->isEnabled());
+    QVERIFY(!stop->isEnabled());
+
+    Data::SemanticOperationRecord sameRevisionDifferent = *pending;
+    sameRevisionDifferent.detail = QStringLiteral("Forged same-revision record");
+    runtime.publishOperationExact(sameRevisionDifferent);
+    QTRY_COMPARE(operationStatus->text(), Tr::tr("Operation evidence is invalid."));
+    QVERIFY(!apply->isEnabled());
+    QVERIFY(!stop->isEnabled());
+
+    runtime.publishOperationExact(*pending);
+    QTRY_COMPARE(operationStatus->text(), Tr::tr("Stop request recorded; waiting for safety proof."));
+
+    Data::SemanticOperationRecord canceled = *pending;
+    ++canceled.revision;
+    canceled.state = Data::SemanticOperationState::Canceled;
+    canceled.cancellation->phase = Data::SemanticOperationCancellationPhase::Completed;
+    Data::ControllerOperationError providerRejected;
+    providerRejected.operation = Data::ControllerOperation::ApplyRuntimeOutputTransaction;
+    providerRejected.codeName = QStringLiteral("REJECTED");
+    providerRejected.summary = QStringLiteral("The output transaction was rejected.");
+    providerRejected.detail = QStringLiteral("No output mutation was accepted.");
+    const Data::RuntimeOutputTransactionResult terminalRejected{
+        pendingApplyRequest,
+        Data::RuntimeOutputTransactionOutcome::Rejected,
+        true,
+        std::nullopt,
+        providerRejected,
+    };
+    QVERIFY(terminalRejected.isValid());
+    canceled.cancellation->terminalApplyResult = terminalRejected;
+    canceled.resultCode = QStringLiteral("semantic-operation-canceled-after-provider-rejection");
+    canceled.detail = QStringLiteral(
+        "The pending output transaction was rejected by the provider.");
+    QVERIFY(Core::validateSemanticOperationCancellationEvidence(
+                canceled.cancellation->request, runtime.lastCancelActor, canceled)
+                .accepted());
+    runtime.publishOperationExact(canceled);
+    QTRY_COMPARE(operationStatus->text(), Tr::tr("Stopped safely."));
+    QTRY_VERIFY(apply->isEnabled());
+    QVERIFY(!stop->isEnabled());
+    QVERIFY(!controllerOutput.isEmpty());
+    QCOMPARE(
+        controllerOutput.constLast().at(0).toString(), Tr::tr("Action stopped safely: Move safely"));
+    QCOMPARE(
+        controllerOutput.constLast().at(1).value<ControllerOutputLevel>(),
+        ControllerOutputLevel::Information);
+
+    apply->click();
+    QPointer<QMessageBox> secondConfirmation;
+    QTRY_VERIFY(
+        (secondConfirmation = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())));
+    yes = secondConfirmation->button(QMessageBox::Yes);
+    QVERIFY(yes);
+    yes->click();
+    QTRY_COMPARE(runtime.submitCalls, 2);
+    QTRY_COMPARE(runtime.approveCalls, 2);
+    QTRY_VERIFY(stop->isEnabled());
+    runtime.nextCancelResultFactory = [](const Data::SemanticOperationCancelRequest &request,
+                                         const Data::SemanticRuntimeActor &) {
+        Data::SemanticOperationCancelResult result;
+        result.request = request;
+        result.disposition = Data::SemanticOperationCancelDisposition::Stale;
+        result.code = QStringLiteral("semantic-operation-cancel-stale");
+        result.detail = QStringLiteral("Operation changed before stop.");
+        return result;
+    };
+    stop->click();
+    QCOMPARE(runtime.cancelCalls, 2);
+    QTRY_COMPARE(operationStatus->text(), QString("Operation changed before stop."));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    QCOMPARE(runtime.cancelCalls, 2);
+    QCOMPARE(runtime.submitCalls, 2);
+    QCOMPARE(runtime.approveCalls, 2);
+    QVERIFY(stop->isEnabled());
+
+    using MalformedCancelFactory = std::function<Data::SemanticOperationCancelResult(
+        const Data::SemanticOperationRecord &,
+        const Data::SemanticOperationCancelRequest &,
+        const Data::SemanticRuntimeActor &)>;
+    const QList<MalformedCancelFactory> malformedCancelFactories = {
+        [pendingApplyRequest](
+            const Data::SemanticOperationRecord &record,
+            const Data::SemanticOperationCancelRequest &request,
+            const Data::SemanticRuntimeActor &actor) {
+            Data::SemanticOperationCancelResult result
+                = pendingCancellationResult(record, pendingApplyRequest, request, actor);
+            result.record.reset();
+            return result;
+        },
+        [pendingApplyRequest](
+            const Data::SemanticOperationRecord &record,
+            const Data::SemanticOperationCancelRequest &request,
+            const Data::SemanticRuntimeActor &actor) {
+            Data::SemanticOperationCancelResult result
+                = pendingCancellationResult(record, pendingApplyRequest, request, actor);
+            result.disposition = Data::SemanticOperationCancelDisposition::Replayed;
+            result.request.cancelId.value.append(QStringLiteral("/wrong-result"));
+            return result;
+        },
+        [](const Data::SemanticOperationRecord &record,
+           const Data::SemanticOperationCancelRequest &request,
+           const Data::SemanticRuntimeActor &actor) {
+            Data::SemanticOperationCancelResult result
+                = completedPreDispatchCancellationResult(record, request, actor);
+            result.record->cancellation->canonicalCancelDigest[0] ^= '\x01';
+            return result;
+        },
+        [](const Data::SemanticOperationRecord &record,
+           const Data::SemanticOperationCancelRequest &request,
+           const Data::SemanticRuntimeActor &actor) {
+            Data::SemanticOperationCancelResult result
+                = completedPreDispatchCancellationResult(record, request, actor);
+            result.record->cancellation->actor.id.append(QStringLiteral("/foreign"));
+            return result;
+        },
+        [pendingApplyRequest](
+            const Data::SemanticOperationRecord &record,
+            const Data::SemanticOperationCancelRequest &request,
+            const Data::SemanticRuntimeActor &actor) {
+            Data::SemanticOperationCancelResult result
+                = pendingCancellationResult(record, pendingApplyRequest, request, actor);
+            result.record->state = Data::SemanticOperationState::Canceled;
+            return result;
+        },
+        [](const Data::SemanticOperationRecord &record,
+           const Data::SemanticOperationCancelRequest &request,
+           const Data::SemanticRuntimeActor &actor) {
+            Data::SemanticOperationCancelResult result
+                = completedPreDispatchCancellationResult(record, request, actor);
+            result.record->state = Data::SemanticOperationState::Executing;
+            return result;
+        },
+    };
+    for (const MalformedCancelFactory &malformedFactory : malformedCancelFactories) {
+        TestSemanticRuntimeService malformedRuntime;
+        auto malformedPage = std::make_unique<SemanticControlPage>(&controller, &malformedRuntime);
+        malformedPage->setContext(slaveContext);
+        malformedRuntime.publish({originalContext});
+        const CancellationPageWidgets malformedControls = cancellationPageWidgets(
+            malformedPage.get());
+        QVERIFY(malformedControls.apply);
+        QVERIFY(malformedControls.stop);
+        QVERIFY(malformedControls.status);
+        QTRY_VERIFY(malformedControls.apply->isEnabled());
+        malformedControls.apply->click();
+        QPointer<QMessageBox> malformedConfirmation;
+        QTRY_VERIFY((
+            malformedConfirmation = qobject_cast<QMessageBox *>(QApplication::activeModalWidget())));
+        QAbstractButton *malformedYes = malformedConfirmation->button(QMessageBox::Yes);
+        QVERIFY(malformedYes);
+        malformedYes->click();
+        QTRY_COMPARE(malformedRuntime.submitCalls, 1);
+        QTRY_COMPARE(malformedRuntime.approveCalls, 1);
+        QTRY_VERIFY(malformedControls.stop->isEnabled());
+
+        const std::optional<Data::SemanticOperationRecord> liveRecord = malformedRuntime.operation(
+            malformedRuntime.lastRequest.operationId);
+        QVERIFY(liveRecord);
+        malformedRuntime.nextCancelResultFactory =
+            [record = *liveRecord, malformedFactory](
+                const Data::SemanticOperationCancelRequest &request,
+                const Data::SemanticRuntimeActor &actor) {
+                return malformedFactory(record, request, actor);
+            };
+        malformedControls.stop->click();
+        QCOMPARE(malformedRuntime.cancelCalls, 1);
+        QTRY_COMPARE(malformedControls.status->text(), Tr::tr("Operation evidence is invalid."));
+        QVERIFY(
+            malformedControls.status->text()
+            != Tr::tr("Stop request recorded; waiting for safety proof."));
+        QVERIFY(malformedControls.status->text() != Tr::tr("Stopped safely."));
+        QCOMPARE(malformedRuntime.submitCalls, 1);
+        QCOMPARE(malformedRuntime.approveCalls, 1);
+    }
+
+    const std::optional<Data::SemanticOperationRecord> secondApproved = runtime.operation(
+        runtime.lastRequest.operationId);
+    QVERIFY(secondApproved);
+    runtime.nextCancelResultFactory = [record = *secondApproved, pendingApplyRequest](
+                                          const Data::SemanticOperationCancelRequest &request,
+                                          const Data::SemanticRuntimeActor &actor) {
+        return pendingCancellationResult(record, pendingApplyRequest, request, actor);
+    };
+    QPointer<SemanticControlPage> guardedPage = page.get();
+    const QMetaObject::Connection deletePage = QObject::connect(
+        &runtime,
+        &Core::SemanticRuntimeService::operationChanged,
+        &runtime,
+        [&page](const Data::SemanticOperationId &) { page.reset(); },
+        Qt::DirectConnection);
+    const int cancelCallsBeforeDelete = runtime.cancelCalls;
+    stop->click();
+    QVERIFY(!guardedPage);
+    QCOMPARE(runtime.cancelCalls, cancelCallsBeforeDelete + 1);
+    QObject::disconnect(deletePage);
+}
+
 void EtherCATWorkbenchTests::testSemanticControlPagePreservesEditorDuringLiveRefresh()
 {
     TestDeviceAdapterProvider adapterProvider;
@@ -5990,6 +6599,7 @@ void EtherCATWorkbenchTests::testSemanticControlPagePreservesEditorDuringLiveRef
     action.definition.id = action.target.actionId;
     action.definition.displayName = "Set output";
     action.definition.enabled = true;
+    action.definition.holdToRun = false;
     action.actionBindingId = action.target.actionId.value;
     action.actionDefinitionId = "org.embedlabs.definition.live-refresh";
     action.actionDefinitionDigest = {"sha256", QByteArray(32, '\x46')};
@@ -5998,6 +6608,7 @@ void EtherCATWorkbenchTests::testSemanticControlPagePreservesEditorDuringLiveRef
     action.bindings = {binding};
     action.requiresApproval = true;
     action.requiresExclusiveControl = true;
+    action.holdToRun = false;
     action.maximumTtlCycles = 1000;
 
     Data::SemanticActionParameterRuntimeDefinition parameter;
@@ -6038,14 +6649,13 @@ void EtherCATWorkbenchTests::testSemanticControlPagePreservesEditorDuringLiveRef
     QTreeWidget *signalTree = page.findChild<QTreeWidget *>("EtherCATSemanticControlSignals");
     QTreeWidget *actionTree = page.findChild<QTreeWidget *>("EtherCATSemanticControlActions");
     QSpinBox *ttlCycles = page.findChild<QSpinBox *>("EtherCATSemanticActionTtlCycles");
-    QPointer<QLineEdit> editor = page.findChild<QLineEdit *>(
-        "EtherCATSemanticActionSignedParameter");
     QVERIFY(signalTree);
     QVERIFY(actionTree);
     QVERIFY(ttlCycles);
-    QVERIFY(editor);
     QTRY_COMPARE(signalTree->topLevelItemCount(), 1);
     QTRY_COMPARE(actionTree->topLevelItemCount(), 1);
+    QPointer<QLineEdit> editor;
+    QTRY_VERIFY((editor = page.findChild<QLineEdit *>("EtherCATSemanticActionSignedParameter")));
 
     QTreeWidgetItem *selectedActionItem = actionTree->currentItem();
     QVERIFY(selectedActionItem);
@@ -6214,6 +6824,7 @@ void EtherCATWorkbenchTests::testSemanticControlPageSchedulesBoundedLiveRefresh(
     action.definition.id = action.target.actionId;
     action.definition.displayName = "Set output";
     action.definition.enabled = true;
+    action.definition.holdToRun = false;
     action.actionBindingId = action.target.actionId.value;
     action.actionDefinitionId = "org.embedlabs.definition.scheduler";
     action.actionDefinitionDigest = {"sha256", QByteArray(32, '\x56')};
@@ -6222,6 +6833,7 @@ void EtherCATWorkbenchTests::testSemanticControlPageSchedulesBoundedLiveRefresh(
     action.bindings = {binding};
     action.requiresApproval = true;
     action.requiresExclusiveControl = true;
+    action.holdToRun = false;
     action.maximumTtlCycles = 1000;
 
     Data::SemanticRuntimeContext runtimeContext;

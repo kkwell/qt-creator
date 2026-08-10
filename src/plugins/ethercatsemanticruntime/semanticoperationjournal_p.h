@@ -19,6 +19,8 @@ enum class SemanticOperationJournalDisposition {
     Rejected,
     Conflict,
     NotFound,
+    Unsupported,
+    Stale,
 };
 
 struct SemanticOperationJournalResult
@@ -64,6 +66,25 @@ struct SemanticOperationJournalStepUpdate
     std::optional<Data::ControllerOperationError> controllerError;
 };
 
+struct SemanticOperationJournalCancellationUpdate
+{
+    Data::SemanticOperationState expectedState = Data::SemanticOperationState::Rejected;
+    Data::SemanticOperationCancellationPhase expectedPhase
+        = Data::SemanticOperationCancellationPhase::Requested;
+    Data::SemanticOperationCancellationPhase phase
+        = Data::SemanticOperationCancellationPhase::Requested;
+    Data::SemanticRuntimeActor actor;
+    QString resultCode;
+    QString detail;
+    std::optional<Data::RuntimeOutputTransactionState> safeHoldState;
+    std::optional<Data::RuntimeOutputTransactionRequest> pendingApplyRequest;
+    std::optional<Data::RuntimeOutputTransactionRequest> priorAppliedRequest;
+    std::optional<Data::RuntimeOutputTransactionRequest> safeHoldRequest;
+    std::optional<Data::RuntimeOutputTransactionResult> terminalApplyResult;
+    quint64 appliedCycle = 0;
+    quint64 appliedRuntimeGeneration = 0;
+};
+
 // This private journal is intentionally process-local and assumes every call is
 // made on the Qt main thread. It records intent and execution evidence only; it
 // never schedules work or calls a ControllerProvider.
@@ -79,6 +100,14 @@ public:
         const Data::SemanticOperationApprovalRequest &approval,
         const Data::SemanticRuntimeActor &actor,
         const Data::SemanticRuntimeContext &context,
+        const QDateTime &occurredAt = {});
+    SemanticOperationJournalResult cancel(
+        const Data::SemanticOperationCancelRequest &request,
+        const Data::SemanticRuntimeActor &actor,
+        const QDateTime &occurredAt = {});
+    SemanticOperationJournalResult updateCancellation(
+        const Data::SemanticOperationId &operationId,
+        const SemanticOperationJournalCancellationUpdate &update,
         const QDateTime &occurredAt = {});
 
     SemanticOperationJournalResult transition(
@@ -119,9 +148,13 @@ private:
         const QString &code,
         const QString &detail,
         const QDateTime &occurredAt,
-        quint32 stepIndex = 0);
+        quint32 stepIndex = 0,
+        const std::optional<Data::SemanticOperationCancelId> &attemptedCancelId = {},
+        const QByteArray &attemptedCancelDigest = {},
+        const QString &attemptedCancellationReason = {});
 
     QHash<Data::SemanticOperationId, Data::SemanticOperationRecord> m_operations;
+    QHash<Data::SemanticOperationCancelId, Data::SemanticOperationId> m_cancellationsById;
     QHash<QString, QList<Data::SemanticRuntimeAuditEvent>> m_auditEvents;
     QHash<QString, quint64> m_lastAuditSequence;
 };

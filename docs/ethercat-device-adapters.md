@@ -251,8 +251,26 @@ mutations only after the controller exactly proves `SafeHold` for the last
 signed transaction. `OutcomeUnknown` retains that same apply request and
 output OperationId and blocks later mutations until authoritative
 reconciliation. The public semantic runtime API currently has no explicit
-action cancel or output-TTL refresh/hold-to-run execution command; input live
-refresh is not an output renewal.
+output-TTL refresh or hold-to-run execution command; input live refresh is not
+an output renewal. It does expose an explicit cancel for an existing signed
+`InvokeAction` whose runtime state and definition both have `holdToRun=false`.
+The request uses its own idempotency ID and CAS revision and binds the original
+operation ID, canonical request digest, original expected-context hash,
+authenticated local user, and bounded reason. A stale CAS revision is rejected.
+Cancellation completes with zero writes only before the executor enters the
+provider mutation virtual call. Once that call is entered, including when it
+returns an error, the write may have applied and the operation remains blocking.
+An exact terminal rejection is sufficient only when no earlier transaction had
+applied. If a prior transaction exists, that rejection must be retained and the
+controller must also prove `SafeHold` for the prior exact `HoldSafe`
+transaction; if the pending request applied, its own exact `SafeHold` proof is
+required. An unknown apply result retains the same request for reconciliation.
+Cleanup uses the accepted operation evidence and is not blocked by later
+adapter-authorization or runtime-context drift. `ReleaseHold` remains rejected,
+and a post-write `ReturnTask` action cannot be reported as canceled because an
+idle/returned-task state is not a `SafeHold` proof. Workbench submits Stop
+without another confirmation dialog, but reports only a pending request until
+the operation record contains the required terminal proof.
 
 Raw drive Controlword and mode-command signals are internal action resources.
 They must not become generic editable UI fields. Candidate actions remain

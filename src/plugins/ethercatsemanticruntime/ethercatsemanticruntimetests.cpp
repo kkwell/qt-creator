@@ -1016,6 +1016,9 @@ public:
         const std::function<void()> requestStarted = std::exchange(nextProviderRequestStarted, {});
         if (requestStarted)
             requestStarted();
+        const std::optional<QString> startError = std::exchange(nextApplyStartError, std::nullopt);
+        if (startError)
+            return Utils::ResultError(*startError);
         return Utils::ResultOk;
     }
 
@@ -1097,6 +1100,7 @@ public:
     bool allowReadsWhileApplyPending = false;
     std::function<void(const Data::RuntimeResourceSnapshotRequest &)> snapshotRequestStarted;
     std::function<void()> nextProviderRequestStarted;
+    std::optional<QString> nextApplyStartError;
     bool failSnapshotStartAfterCallback = false;
     QString snapshotStartError = QStringLiteral(
         "The deterministic snapshot start failed after callback");
@@ -4560,6 +4564,19 @@ static Data::SemanticOperationRecord submitAndApprove(
     return executor.approve(approval, api038Approver());
 }
 
+static Data::SemanticOperationCancelRequest cancelRequestFor(
+    const Data::SemanticOperationRecord &record, QStringView cancelId)
+{
+    Data::SemanticOperationCancelRequest request;
+    request.cancelId.value = cancelId.toString();
+    request.operationId = record.request.operationId;
+    request.expectedRevision = record.revision;
+    request.expectedRequestDigest = record.canonicalRequestDigest;
+    request.expectedContextHash = record.request.expectedContextHash;
+    request.reason = QStringLiteral("Stopped by the deterministic QtTest user.");
+    return request;
+}
+
 struct QualifiedMultiStepPackage
 {
     QByteArray packageBytes;
@@ -4567,8 +4584,12 @@ struct QualifiedMultiStepPackage
     QByteArray publicKey;
 };
 
+static void refreshEcfgEnvelope(QByteArray &configuration);
+static void refreshOutputPolicySection(
+    QByteArray &configuration, const EcfgSectionDescriptor &section);
+
 static Utils::Result<QualifiedMultiStepPackage> qualifiedMultiStepPackage(
-    bool waitBeforeFirstWrite = false)
+    bool waitBeforeFirstWrite = false, bool returnTaskSingleStep = false)
 {
     const QByteArray originalPackage = readTestData(
         "testdata/api038/three-slave-manual-control-cfg3701.ecpkg");
@@ -4598,6 +4619,76 @@ static Utils::Result<QualifiedMultiStepPackage> qualifiedMultiStepPackage(
     if (!report || !definitions || !manifest) {
         return Utils::ResultError(
             "The API-038 multi-step fixture JSON could not be parsed");
+    }
+
+    QByteArray configurationBytes = source->container.configurationEcfg;
+    if (returnTaskSingleStep) {
+        const Utils::Result<EcfgConfiguration> configuration = parseStrictEcfgConfiguration(
+            configurationBytes);
+        if (!configuration || configuration->outputPolicies.size() != 3
+            || configuration->sections.isEmpty()) {
+            return Utils::ResultError("The API-038 output policy fixture is incomplete");
+        }
+        constexpr quint32 xb6GroupId = 0xf0286f69U;
+        const auto policy = std::find_if(
+            configuration->outputPolicies.cbegin(),
+            configuration->outputPolicies.cend(),
+            [](const EcfgOutputGroupPolicy &candidate) {
+                return candidate.consistencyGroupId == xb6GroupId;
+            });
+        if (policy == configuration->outputPolicies.cend())
+            return Utils::ResultError("The API-038 XB6 output policy is unavailable");
+        const qsizetype policyIndex = std::distance(configuration->outputPolicies.cbegin(), policy);
+        const EcfgSectionDescriptor &policySection = configuration->sections.constLast();
+        constexpr qsizetype policyHeaderBytes = 64;
+        constexpr qsizetype policyRecordBytes = 64;
+        configurationBytes
+            [policySection.offset + policyHeaderBytes + policyIndex * policyRecordBytes + 8]
+            = char(EcfgOutputRecoveryPolicy::ReturnTask);
+        refreshOutputPolicySection(configurationBytes, policySection);
+        refreshEcfgEnvelope(configurationBytes);
+        const Utils::Result<EcfgConfiguration> changed = parseStrictEcfgConfiguration(
+            configurationBytes);
+        if (!changed
+            || changed->outputPolicies.at(policyIndex).recoveryPolicy
+                   != EcfgOutputRecoveryPolicy::ReturnTask) {
+            return Utils::ResultError(
+                "The test-only ReturnTask output policy could not be rebuilt");
+        }
+        const QByteArray configurationSha256
+            = QCryptographicHash::hash(configurationBytes, QCryptographicHash::Sha256);
+        (*report)["package"]["configuration_sha256"] = configurationSha256.toHex().toStdString();
+        (*report)["semantic_binding_manifest"]["package"]["configuration_sha256"]
+            = configurationSha256.toHex().toStdString();
+
+        qsizetype changedPolicies = 0;
+        for (StrictJson &outputPolicy : report->at("output_transaction_policies")) {
+            if (outputPolicy.at("consistency_group_id").get<quint32>() != xb6GroupId)
+                continue;
+            outputPolicy["recovery_policy"] = "return_task";
+            ++changedPolicies;
+        }
+        const auto changeXb6ActionGroups = [](StrictJson &actions) {
+            qsizetype changedActions = 0;
+            for (StrictJson &action : actions) {
+                const std::string bindingId = action.at("action_binding_id").get<std::string>();
+                if (bindingId != "embedlabs:project:action:xb6:set-outputs"
+                    && bindingId != "embedlabs:project:action:xb6:clear-outputs") {
+                    continue;
+                }
+                StrictJson &groups = action.at("consistency_groups");
+                if (!groups.is_array() || groups.size() != 1)
+                    return false;
+                groups[0]["recovery_policy"] = "task_output";
+                ++changedActions;
+            }
+            return changedActions == 2;
+        };
+        if (changedPolicies != 1 || !changeXb6ActionGroups(report->at("semantic_action_plans"))
+            || !changeXb6ActionGroups(report->at("semantic_binding_manifest").at("actions"))) {
+            return Utils::ResultError(
+                "The test-only ReturnTask semantic policy could not be projected");
+        }
     }
 
     constexpr auto stopDefinitionId
@@ -4704,6 +4795,12 @@ static Utils::Result<QualifiedMultiStepPackage> qualifiedMultiStepPackage(
         } else if (name == "semantic-action-definitions-v1.json") {
             payload["bytes"] = quint64(canonicalDefinitions->size());
             payload["sha256"] = definitionsSha256.toHex().toStdString();
+        } else if (name == "configuration.ecfg" && returnTaskSingleStep) {
+            payload["bytes"] = quint64(configurationBytes.size());
+            payload["sha256"]
+                = QCryptographicHash::hash(configurationBytes, QCryptographicHash::Sha256)
+                      .toHex()
+                      .toStdString();
         }
     }
     (*manifest)["semantic_binding"]["artifact_sha256"]
@@ -4743,7 +4840,7 @@ static Utils::Result<QualifiedMultiStepPackage> qualifiedMultiStepPackage(
     const QByteArray packageBytes = buildCanonicalTestEcpkg({
         {QByteArray("manifest.json"), *canonicalManifest},
         {QByteArray("capability.bin"), source->container.capabilityBin},
-        {QByteArray("configuration.ecfg"), source->container.configurationEcfg},
+        {QByteArray("configuration.ecfg"), configurationBytes},
         {QByteArray("runtime.erun"), source->container.runtimeErun},
         {QByteArray("compile_report.json"), reportBytes},
         {QByteArray("semantic-action-definitions-v1.json"), *canonicalDefinitions},
@@ -4768,7 +4865,8 @@ static Utils::Result<QualifiedMultiStepPackage> qualifiedMultiStepPackage(
 
 static Utils::Result<QList<Data::DeviceAdapterManifest>> qualifiedMultiStepAdapters(
     const VerifiedRuntimePackageEvidence &evidence,
-    bool waitBeforeFirstWrite = false)
+    bool waitBeforeFirstWrite = false,
+    bool returnTaskSingleStep = false)
 {
     Utils::Result<QList<Data::DeviceAdapterManifest>> result
         = api038HistoricalTestAdapters(evidence);
@@ -4916,6 +5014,31 @@ static Utils::Result<QList<Data::DeviceAdapterManifest>> qualifiedMultiStepAdapt
                 *existing = std::move(signal);
         }
     }
+    if (returnTaskSingleStep) {
+        const auto xb6 = std::find_if(
+            adapters.begin(), adapters.end(), [](const Data::DeviceAdapterManifest &manifest) {
+                return manifest.controllerAdapterTarget.adapterId
+                       == QStringLiteral("solidot.xb6_ec0002_rev1_do16");
+            });
+        if (xb6 == adapters.end())
+            return Utils::ResultError("The test XB6 adapter is unavailable");
+        qsizetype changedActions = 0;
+        for (Data::DeviceControlAction &action : xb6->controlActions) {
+            if (action.id.value
+                    != QStringLiteral("org.embedlabs.solidot.xb6.action.set-digital-outputs")
+                && action.id.value
+                       != QStringLiteral(
+                           "org.embedlabs.solidot.xb6.action.clear-digital-outputs")) {
+                continue;
+            }
+            if (action.consistencyGroups.size() != 1)
+                return Utils::ResultError("The test XB6 output group shape differs");
+            action.consistencyGroups[0].recovery = Data::DeviceControlGroupRecovery::ReturnTask;
+            ++changedActions;
+        }
+        if (changedActions != 2)
+            return Utils::ResultError("The test XB6 output actions are unavailable");
+    }
     return adapters;
 }
 
@@ -4964,7 +5087,8 @@ public:
         int liveSampleFreshnessMs = 5000,
         std::function<QDateTime()> utcNow = {},
         bool qualifiedMultiStep = false,
-        bool waitBeforeFirstWrite = false)
+        bool waitBeforeFirstWrite = false,
+        bool returnTaskSingleStep = false)
     {
         if (!temporary.isValid())
             return Utils::ResultError("The semantic executor temporary directory is invalid");
@@ -4974,7 +5098,7 @@ public:
         QByteArray publicKey;
         if (qualifiedMultiStep) {
             const Utils::Result<QualifiedMultiStepPackage> package
-                = qualifiedMultiStepPackage(waitBeforeFirstWrite);
+                = qualifiedMultiStepPackage(waitBeforeFirstWrite, returnTaskSingleStep);
             if (!package)
                 return Utils::ResultError(package.error());
             packageBytes = package->packageBytes;
@@ -5012,8 +5136,8 @@ public:
         project = factoryProject(*evidence);
         const Utils::Result<QList<Data::DeviceAdapterManifest>> historicalAdapters
             = qualifiedMultiStep
-                  ? qualifiedMultiStepAdapters(*evidence, waitBeforeFirstWrite)
-                                 : api038HistoricalTestAdapters(*evidence);
+                  ? qualifiedMultiStepAdapters(*evidence, waitBeforeFirstWrite, returnTaskSingleStep)
+                  : api038HistoricalTestAdapters(*evidence);
         if (!historicalAdapters)
             return Utils::ResultError(historicalAdapters.error());
         adapterManifests = *historicalAdapters;
@@ -5221,6 +5345,45 @@ static Utils::Result<QualifiedFirstWaitProgress> advanceQualifiedMultiStepToFirs
     if (!fixture.provider.pendingSnapshotRequest)
         return Utils::ResultError("The first multi-step wait snapshot was not requested");
     return QualifiedFirstWaitProgress{applyRequest, appliedState};
+}
+
+static Utils::Result<Data::RuntimeOutputTransactionRequest> advanceQualifiedFirstWaitToSecondApply(
+    SemanticExecutorFixture &fixture,
+    const SemanticActionPlan &plan,
+    const QualifiedFirstWaitProgress &progress,
+    quint64 sequence = 4,
+    quint64 captureCycle = 122)
+{
+    if (!fixture.provider.pendingSnapshotRequest || plan.steps().size() < 3
+        || !plan.steps().at(1).waitBinding()) {
+        return Utils::ResultError("The first qualified wait is unavailable");
+    }
+    const Data::RuntimeResourceSnapshotRequest waitRequest
+        = *fixture.provider.pendingSnapshotRequest;
+    Data::RuntimeResourceSnapshot waitSnapshot = targetedSnapshot(
+        fixture.snapshot,
+        waitRequest,
+        progress.applyRequest.completeGroupWrites,
+        sequence,
+        captureCycle,
+        captureCycle * 10);
+    Data::RuntimeResourceSample *waitSample
+        = snapshotSample(waitSnapshot, plan.steps().at(1).waitBinding()->resourceId);
+    if (!waitSample)
+        return Utils::ResultError("The first qualified wait sample is unavailable");
+    waitSample->value.value = QVariant::fromValue<qulonglong>(64);
+    const Data::RuntimeResourceSnapshotResult waitResult{waitRequest, waitSnapshot, {}};
+    if (!waitResult.isValid())
+        return Utils::ResultError("The first qualified wait result is invalid");
+    fixture.provider.sendSnapshotResult(waitResult);
+    for (int attempt = 0; attempt < 50 && !fixture.provider.pendingApplyRequest; ++attempt)
+        QTest::qWait(1);
+    if (!fixture.provider.pendingApplyRequest)
+        return Utils::ResultError("The second qualified write was not dispatched");
+    const Data::RuntimeOutputTransactionRequest second = *fixture.provider.pendingApplyRequest;
+    if (second.operationId != plan.steps().at(2).outputOperationId())
+        return Utils::ResultError("The second qualified write identifier differs");
+    return second;
 }
 
 static quint32 testReadLe32(QByteArrayView bytes, qsizetype offset)
@@ -12410,6 +12573,627 @@ void EtherCATSemanticRuntimeTests::testSemanticOperationJournal()
         Data::SemanticOperationState::TimedOut);
 }
 
+void EtherCATSemanticRuntimeTests::testSemanticOperationCancellationJournal()
+{
+    const Utils::Result<VerifiedRuntimePackageEvidence> evidence = api038ActionEvidence();
+    QVERIFY_RESULT(evidence);
+    const Utils::Result<Data::SemanticRuntimeContext> contextResult = api038ActionContext(*evidence);
+    QVERIFY_RESULT(contextResult);
+    const Data::SemanticRuntimeContext context = *contextResult;
+    const Data::SemanticRuntimeActor submitter = api038Submitter();
+    const Data::SemanticRuntimeActor approver = api038Approver();
+    const QDateTime now
+        = QDateTime::fromString(QStringLiteral("2026-08-10T01:02:03.000Z"), Qt::ISODateWithMs);
+
+    const auto submitAndApproveJournal = [&](SemanticOperationJournal &journal,
+                                             QStringView operationId) {
+        Data::SemanticOperationRequest request
+            = api038ActionRequest(context, u"embedlabs:project:action:xb6:set-outputs", operationId);
+        setApi038DigitalOutputParameters(request);
+        const SemanticOperationJournalResult submitted
+            = journal.submit(request, submitter, context, now);
+        if (!submitted.record)
+            return submitted;
+        Data::SemanticOperationApprovalRequest approval;
+        approval.operationId = request.operationId;
+        approval.decision = Data::SemanticApprovalDecision::Approved;
+        approval.challenge = submitted.record->approvalChallenge;
+        approval.expectedRequestDigest = submitted.record->canonicalRequestDigest;
+        approval.expectedContextHash = context.contextHash;
+        approval.detail = QStringLiteral("Approved for cancellation journal testing");
+        return journal.approve(approval, approver, context, now.addSecs(1));
+    };
+
+    SemanticOperationJournal journal;
+    const SemanticOperationJournalResult approved
+        = submitAndApproveJournal(journal, u"operation/api038/journal/cancel/approved");
+    QCOMPARE(approved.disposition, SemanticOperationJournalDisposition::Updated);
+    QVERIFY(approved.record);
+    QCOMPARE(approved.record->state, Data::SemanticOperationState::Approved);
+    QVERIFY(approved.record->revision >= 2);
+    const quint64 approvedRevision = approved.record->revision;
+
+    const Data::SemanticOperationCancelRequest request
+        = cancelRequestFor(*approved.record, u"cancel/api038/journal/approved");
+    const SemanticOperationJournalResult canceledRequested
+        = journal.cancel(request, approver, now.addSecs(2));
+    QCOMPARE(canceledRequested.disposition, SemanticOperationJournalDisposition::Updated);
+    QVERIFY(canceledRequested.record);
+    QCOMPARE(canceledRequested.record->state, Data::SemanticOperationState::Approved);
+    QCOMPARE(canceledRequested.record->revision, approvedRevision + 1);
+    QVERIFY(canceledRequested.record->cancellation);
+    QCOMPARE(canceledRequested.record->cancellation->request, request);
+    QCOMPARE(canceledRequested.record->cancellation->actor, approver);
+    QCOMPARE(
+        canceledRequested.record->cancellation->phase,
+        Data::SemanticOperationCancellationPhase::Requested);
+    QVERIFY(!canceledRequested.record->cancellation->safeHoldState);
+    QCOMPARE(canceledRequested.record->cancellation->canonicalCancelDigest.size(), qsizetype(32));
+
+    const SemanticOperationJournalResult replay = journal.cancel(request, approver, now.addSecs(3));
+    QCOMPARE(replay.disposition, SemanticOperationJournalDisposition::Replayed);
+    QCOMPARE(replay.record, canceledRequested.record);
+
+    const qsizetype auditBeforeRejectedAttempts = journal.audit(context.controllerId).size();
+    const quint64 revisionBeforeRejectedAttempts = replay.record->revision;
+    const Data::SemanticOperationState stateBeforeRejectedAttempts = replay.record->state;
+    Data::SemanticOperationCancelRequest changedReason = request;
+    changedReason.reason.append(QStringLiteral(" changed"));
+    const SemanticOperationJournalResult reasonConflict
+        = journal.cancel(changedReason, approver, now.addSecs(4));
+    QCOMPARE(reasonConflict.disposition, SemanticOperationJournalDisposition::Conflict);
+    QVERIFY(reasonConflict.record);
+    QCOMPARE(reasonConflict.record->revision, revisionBeforeRejectedAttempts);
+    QCOMPARE(reasonConflict.record->state, stateBeforeRejectedAttempts);
+    QCOMPARE(reasonConflict.record->cancellation, replay.record->cancellation);
+    Data::SemanticRuntimeActor changedActor = approver;
+    changedActor.authenticationDigest[0] ^= '\x01';
+    const SemanticOperationJournalResult actorConflict
+        = journal.cancel(request, changedActor, now.addSecs(5));
+    QCOMPARE(actorConflict.disposition, SemanticOperationJournalDisposition::Conflict);
+    QVERIFY(actorConflict.record);
+    QCOMPARE(actorConflict.record->revision, revisionBeforeRejectedAttempts);
+    QCOMPARE(actorConflict.record->state, stateBeforeRejectedAttempts);
+
+    Data::SemanticOperationCancelRequest second = request;
+    second.cancelId.value.append(QStringLiteral("/second"));
+    const SemanticOperationJournalResult stale = journal.cancel(second, approver, now.addSecs(6));
+    QCOMPARE(stale.disposition, SemanticOperationJournalDisposition::Stale);
+    QVERIFY(stale.record);
+    QCOMPARE(stale.record->revision, revisionBeforeRejectedAttempts);
+    QCOMPARE(stale.record->state, stateBeforeRejectedAttempts);
+    second.expectedRevision = canceledRequested.record->revision;
+    const SemanticOperationJournalResult secondConflict
+        = journal.cancel(second, approver, now.addSecs(7));
+    QCOMPARE(secondConflict.disposition, SemanticOperationJournalDisposition::Conflict);
+    QVERIFY(secondConflict.record);
+    QCOMPARE(secondConflict.record->revision, revisionBeforeRejectedAttempts);
+    QCOMPARE(secondConflict.record->state, stateBeforeRejectedAttempts);
+
+    const QList<Data::SemanticRuntimeAuditEvent> rejectedAudit = journal.audit(context.controllerId);
+    QCOMPARE(rejectedAudit.size(), auditBeforeRejectedAttempts + 4);
+    for (const Data::SemanticRuntimeAuditEvent &event :
+         rejectedAudit.sliced(auditBeforeRejectedAttempts)) {
+        QCOMPARE(event.kind, Data::SemanticAuditEventKind::Rejected);
+        QCOMPARE(event.previousState, stateBeforeRejectedAttempts);
+        QCOMPARE(event.state, stateBeforeRejectedAttempts);
+        QVERIFY(event.cancelId);
+        QVERIFY(!event.canonicalCancelDigest.isEmpty());
+        QVERIFY(!event.cancellationReason.isEmpty());
+    }
+
+    SemanticOperationJournalCancellationUpdate completeWithoutMutation;
+    completeWithoutMutation.expectedState = Data::SemanticOperationState::Approved;
+    completeWithoutMutation.expectedPhase = Data::SemanticOperationCancellationPhase::Requested;
+    completeWithoutMutation.phase = Data::SemanticOperationCancellationPhase::Completed;
+    completeWithoutMutation.actor = approver;
+    completeWithoutMutation.resultCode = QStringLiteral(
+        "semantic-operation-canceled-before-provider-mutation");
+    completeWithoutMutation.detail = QStringLiteral(
+        "The operation was canceled before a provider mutation was sent.");
+    const SemanticOperationJournalResult completed
+        = journal.updateCancellation(request.operationId, completeWithoutMutation, now.addSecs(8));
+    QCOMPARE(completed.disposition, SemanticOperationJournalDisposition::Updated);
+    QVERIFY(completed.record);
+    QCOMPARE(completed.record->state, Data::SemanticOperationState::Canceled);
+    QCOMPARE(
+        completed.record->cancellation->phase, Data::SemanticOperationCancellationPhase::Completed);
+    QVERIFY(!completed.record->cancellation->safeHoldState);
+    QCOMPARE(completed.record->revision, canceledRequested.record->revision + 1);
+    QCOMPARE(
+        journal.updateCancellation(request.operationId, completeWithoutMutation, now.addSecs(9))
+            .disposition,
+        SemanticOperationJournalDisposition::Replayed);
+
+    const QList<Data::SemanticRuntimeAuditEvent> audit = journal.audit(context.controllerId);
+    const auto cancellationRequested = std::count_if(
+        audit.cbegin(), audit.cend(), [](const Data::SemanticRuntimeAuditEvent &event) {
+            return event.kind == Data::SemanticAuditEventKind::CancellationRequested;
+        });
+    const auto cancellationProgressed = std::count_if(
+        audit.cbegin(), audit.cend(), [](const Data::SemanticRuntimeAuditEvent &event) {
+            return event.kind == Data::SemanticAuditEventKind::CancellationProgressed;
+        });
+    QCOMPARE(cancellationRequested, 1);
+    QCOMPARE(cancellationProgressed, 1);
+
+    SemanticOperationJournal actorJournal;
+    const SemanticOperationJournalResult actorApproved
+        = submitAndApproveJournal(actorJournal, u"operation/api038/journal/cancel/actor");
+    QVERIFY(actorApproved.record);
+    const quint64 actorRevision = actorApproved.record->revision;
+    const qsizetype actorAuditBefore = actorJournal.audit(context.controllerId).size();
+    Data::SemanticOperationCancelRequest actorRequest
+        = cancelRequestFor(*actorApproved.record, u"cancel/api038/journal/actor");
+    Data::SemanticOperationCancelRequest malformedReason = actorRequest;
+    malformedReason.reason = QString(241, 'x');
+    malformedReason.reason[120] = QLatin1Char('\n');
+    const SemanticOperationJournalResult malformedRejected
+        = actorJournal.cancel(malformedReason, approver, now.addSecs(2));
+    QCOMPARE(malformedRejected.disposition, SemanticOperationJournalDisposition::Rejected);
+    QVERIFY(malformedRejected.record);
+    QCOMPARE(malformedRejected.record->revision, actorRevision);
+    QCOMPARE(malformedRejected.record->state, Data::SemanticOperationState::Approved);
+    QVERIFY(!malformedRejected.record->cancellation);
+    const Data::SemanticRuntimeAuditEvent malformedAudit
+        = actorJournal.audit(context.controllerId).constLast();
+    QCOMPARE(malformedAudit.kind, Data::SemanticAuditEventKind::Rejected);
+    QCOMPARE(malformedAudit.actor, approver);
+    QCOMPARE(malformedAudit.cancelId, std::optional(malformedReason.cancelId));
+    QVERIFY(malformedAudit.canonicalCancelDigest.isEmpty());
+    QVERIFY(malformedAudit.cancellationReason.isEmpty());
+
+    Data::SemanticRuntimeActor unsafeAuditActor = approver;
+    unsafeAuditActor.displayName = QString(129, 'x');
+    const SemanticOperationJournalResult unsafeActorRejected
+        = actorJournal.cancel(actorRequest, unsafeAuditActor, now.addSecs(3));
+    QCOMPARE(unsafeActorRejected.disposition, SemanticOperationJournalDisposition::Rejected);
+    QVERIFY(unsafeActorRejected.record);
+    QCOMPARE(unsafeActorRejected.record->revision, actorRevision);
+    QCOMPARE(unsafeActorRejected.record->state, Data::SemanticOperationState::Approved);
+    QVERIFY(!unsafeActorRejected.record->cancellation);
+    const Data::SemanticRuntimeAuditEvent unsafeActorAudit
+        = actorJournal.audit(context.controllerId).constLast();
+    QCOMPARE(unsafeActorAudit.kind, Data::SemanticAuditEventKind::Rejected);
+    QCOMPARE(unsafeActorAudit.actor.id, QString("invalid-cancel-actor"));
+    QCOMPARE(unsafeActorAudit.actor.displayName, QString("Rejected cancellation actor"));
+    QCOMPARE(unsafeActorAudit.actor.kind, Data::SemanticRuntimeActorKind::System);
+    QCOMPARE(unsafeActorAudit.actor.origin, QString("semantic-operation-journal"));
+    QCOMPARE(
+        unsafeActorAudit.actor.authenticationDigest,
+        QCryptographicHash::hash(
+            QByteArrayLiteral("embed-labs.semantic-operation.invalid-cancel-actor.v1"),
+            QCryptographicHash::Sha256));
+
+    Data::SemanticRuntimeActor foreignUser = approver;
+    foreignUser.id = QStringLiteral("user/api038-foreign-cancel-test");
+    foreignUser.authenticationDigest = QByteArray(32, '\x53');
+    const SemanticOperationJournalResult actorRejected
+        = actorJournal.cancel(actorRequest, foreignUser, now.addSecs(4));
+    QCOMPARE(actorRejected.disposition, SemanticOperationJournalDisposition::Rejected);
+    QVERIFY(actorRejected.record);
+    QCOMPARE(actorRejected.record->revision, actorRevision);
+    QCOMPARE(actorRejected.record->state, Data::SemanticOperationState::Approved);
+    QVERIFY(!actorRejected.record->cancellation);
+    actorRequest.expectedRequestDigest[0] ^= '\x01';
+    const SemanticOperationJournalResult bindingConflict
+        = actorJournal.cancel(actorRequest, approver, now.addSecs(5));
+    QCOMPARE(bindingConflict.disposition, SemanticOperationJournalDisposition::Conflict);
+    QVERIFY(bindingConflict.record);
+    QCOMPARE(bindingConflict.record->revision, actorRevision);
+    QCOMPARE(bindingConflict.record->state, Data::SemanticOperationState::Approved);
+    QVERIFY(!bindingConflict.record->cancellation);
+    const QList<Data::SemanticRuntimeAuditEvent> actorAudit = actorJournal.audit(
+        context.controllerId);
+    QCOMPARE(actorAudit.size(), actorAuditBefore + 4);
+    QCOMPARE(actorAudit.at(actorAuditBefore).kind, Data::SemanticAuditEventKind::Rejected);
+    QCOMPARE(actorAudit.at(actorAuditBefore + 1).kind, Data::SemanticAuditEventKind::Rejected);
+    QCOMPARE(actorAudit.at(actorAuditBefore + 2).kind, Data::SemanticAuditEventKind::Rejected);
+    QCOMPARE(actorAudit.at(actorAuditBefore + 3).kind, Data::SemanticAuditEventKind::Rejected);
+
+    SemanticOperationJournal userSubmitterJournal;
+    Data::SemanticOperationRequest userSubmittedRequest = api038ActionRequest(
+        context,
+        u"embedlabs:project:action:xb6:set-outputs",
+        u"operation/api038/journal/cancel/user-submitter");
+    setApi038DigitalOutputParameters(userSubmittedRequest);
+    const SemanticOperationJournalResult userSubmitted
+        = userSubmitterJournal.submit(userSubmittedRequest, approver, context, now);
+    QCOMPARE(userSubmitted.disposition, SemanticOperationJournalDisposition::Created);
+    QVERIFY(userSubmitted.record);
+    QCOMPARE(userSubmitted.record->state, Data::SemanticOperationState::ApprovalRequired);
+    const Data::SemanticOperationCancelRequest userSubmitterCancel
+        = cancelRequestFor(*userSubmitted.record, u"cancel/api038/journal/user-submitter");
+    QCOMPARE(
+        userSubmitterJournal.cancel(userSubmitterCancel, approver, now.addSecs(1)).disposition,
+        SemanticOperationJournalDisposition::Updated);
+
+    Data::SemanticOperationCancelRequest missing = request;
+    missing.cancelId.value.append(QStringLiteral("/missing"));
+    missing.operationId.value.append(QStringLiteral("/missing"));
+    QCOMPARE(
+        actorJournal.cancel(missing, approver, now.addSecs(6)).disposition,
+        SemanticOperationJournalDisposition::NotFound);
+
+    SemanticOperationJournal unknownJournal;
+    const SemanticOperationJournalResult unknownApproved
+        = submitAndApproveJournal(unknownJournal, u"operation/api038/journal/cancel/unknown");
+    QVERIFY(unknownApproved.record);
+    SemanticOperationJournalStateUpdate executing;
+    executing.expectedState = Data::SemanticOperationState::Approved;
+    executing.state = Data::SemanticOperationState::Executing;
+    executing.actor = submitter;
+    executing.resultCode = QStringLiteral("executing");
+    const SemanticOperationJournalResult executingResult
+        = unknownJournal
+              .transition(unknownApproved.record->request.operationId, executing, now.addSecs(2));
+    QCOMPARE(executingResult.disposition, SemanticOperationJournalDisposition::Updated);
+    SemanticOperationJournalStateUpdate unknown;
+    unknown.expectedState = Data::SemanticOperationState::Executing;
+    unknown.state = Data::SemanticOperationState::OutcomeUnknown;
+    unknown.actor = submitter;
+    unknown.resultCode = QStringLiteral("output-outcome-unknown");
+    const SemanticOperationJournalResult unknownResult
+        = unknownJournal
+              .transition(unknownApproved.record->request.operationId, unknown, now.addSecs(3));
+    QCOMPARE(unknownResult.disposition, SemanticOperationJournalDisposition::Updated);
+    QVERIFY(unknownResult.record);
+    const Data::SemanticOperationCancelRequest unknownCancel
+        = cancelRequestFor(*unknownResult.record, u"cancel/api038/journal/unknown");
+    const SemanticOperationJournalResult unknownRequested
+        = unknownJournal.cancel(unknownCancel, approver, now.addSecs(4));
+    QCOMPARE(unknownRequested.disposition, SemanticOperationJournalDisposition::Updated);
+    QVERIFY(unknownRequested.record);
+    QCOMPARE(unknownRequested.record->state, Data::SemanticOperationState::OutcomeUnknown);
+
+    SemanticOperationJournalCancellationUpdate unsafeCompletion;
+    unsafeCompletion.expectedState = Data::SemanticOperationState::OutcomeUnknown;
+    unsafeCompletion.expectedPhase = Data::SemanticOperationCancellationPhase::Requested;
+    unsafeCompletion.phase = Data::SemanticOperationCancellationPhase::Completed;
+    unsafeCompletion.actor = approver;
+    unsafeCompletion.resultCode = QStringLiteral("unsafe-cancel");
+    unsafeCompletion.detail = QStringLiteral("No SafeHold proof was supplied.");
+    QCOMPARE(
+        unknownJournal
+            .updateCancellation(unknownCancel.operationId, unsafeCompletion, now.addSecs(5))
+            .disposition,
+        SemanticOperationJournalDisposition::Rejected);
+    QCOMPARE(
+        unknownJournal.operation(unknownCancel.operationId)->state,
+        Data::SemanticOperationState::OutcomeUnknown);
+
+    Data::RuntimeOutputTransactionRequest pendingApplyRequest;
+    pendingApplyRequest.operationId = {QByteArray::fromHex("00112233445566778899aabbccddeeff")};
+    pendingApplyRequest.scope = context.scope;
+    pendingApplyRequest.sessionGeneration = context.sessionGeneration;
+    pendingApplyRequest.expectedEpoch = context.epoch;
+    pendingApplyRequest.expectedMappingDigest = context.mappingDigest.value;
+    pendingApplyRequest.expectedCompleteGroupRecordDigest = QByteArray(32, '\x61');
+    pendingApplyRequest.expectedCompleteResourceCount = 1;
+    pendingApplyRequest.expectedRecoveryPolicy = Data::RuntimeOutputRecoveryPolicy::HoldSafe;
+    pendingApplyRequest.expectedMaximumTtlCycles = 10;
+    pendingApplyRequest.expectedOutputGeneration = 40;
+    pendingApplyRequest.ttlCycles = 10;
+    pendingApplyRequest.consistencyGroupId = {QByteArray::fromHex("3000000000000001")};
+    Data::RuntimeOutputValueWrite write;
+    write.resourceId = {QByteArray::fromHex("1000000000000001")};
+    write.bitWidth = 1;
+    write.value.primitiveType = Data::RuntimeResourcePrimitiveType::Boolean;
+    write.value.value = true;
+    pendingApplyRequest.completeGroupWrites.append(write);
+    QVERIFY(pendingApplyRequest.isValid());
+    Data::RuntimeOutputTransactionRequest priorAppliedRequest = pendingApplyRequest;
+    priorAppliedRequest.operationId = {QByteArray::fromHex("10112233445566778899aabbccddeeff")};
+    QVERIFY(priorAppliedRequest.isValid());
+    Data::ControllerOperationError pendingRejectedError = uncertainOutputError();
+    pendingRejectedError.codeName = QStringLiteral("REJECTED");
+    pendingRejectedError.summary = QStringLiteral("The pending transaction was rejected.");
+    pendingRejectedError.detail = QStringLiteral("The prior write remains authoritative.");
+    const Data::RuntimeOutputTransactionResult pendingRejectedResult{
+        pendingApplyRequest,
+        Data::RuntimeOutputTransactionOutcome::Rejected,
+        true,
+        std::nullopt,
+        pendingRejectedError,
+    };
+    QVERIFY(pendingRejectedResult.isValid());
+
+    SemanticOperationJournalCancellationUpdate waiting;
+    waiting.expectedState = Data::SemanticOperationState::OutcomeUnknown;
+    waiting.expectedPhase = Data::SemanticOperationCancellationPhase::Requested;
+    waiting.phase = Data::SemanticOperationCancellationPhase::WaitingForApplyResult;
+    waiting.actor = approver;
+    waiting.pendingApplyRequest = pendingApplyRequest;
+    waiting.priorAppliedRequest = priorAppliedRequest;
+    QCOMPARE(
+        unknownJournal.updateCancellation(unknownCancel.operationId, waiting, now.addSecs(6))
+            .disposition,
+        SemanticOperationJournalDisposition::Updated);
+    const Data::SemanticOperationRecord waitingRecord = *unknownJournal.operation(
+        unknownCancel.operationId);
+    Data::RuntimeOutputTransactionRequest replacementPending = pendingApplyRequest;
+    replacementPending.operationId = {QByteArray::fromHex("20112233445566778899aabbccddeeff")};
+    QVERIFY(replacementPending.isValid());
+    SemanticOperationJournalCancellationUpdate replacementProving;
+    replacementProving.expectedState = Data::SemanticOperationState::OutcomeUnknown;
+    replacementProving.expectedPhase
+        = Data::SemanticOperationCancellationPhase::WaitingForApplyResult;
+    replacementProving.phase = Data::SemanticOperationCancellationPhase::ProvingSafeHold;
+    replacementProving.actor = approver;
+    replacementProving.pendingApplyRequest = replacementPending;
+    replacementProving.safeHoldRequest = replacementPending;
+    QCOMPARE(
+        unknownJournal
+            .updateCancellation(unknownCancel.operationId, replacementProving, now.addMSecs(6500))
+            .disposition,
+        SemanticOperationJournalDisposition::Conflict);
+    QCOMPARE(unknownJournal.operation(unknownCancel.operationId), std::optional(waitingRecord));
+    SemanticOperationJournalCancellationUpdate proving;
+    proving.expectedState = Data::SemanticOperationState::OutcomeUnknown;
+    proving.expectedPhase = Data::SemanticOperationCancellationPhase::WaitingForApplyResult;
+    proving.phase = Data::SemanticOperationCancellationPhase::ProvingSafeHold;
+    proving.actor = approver;
+    QCOMPARE(
+        unknownJournal.updateCancellation(unknownCancel.operationId, proving, now.addSecs(7))
+            .disposition,
+        SemanticOperationJournalDisposition::Rejected);
+
+    proving.safeHoldRequest = priorAppliedRequest;
+    proving.terminalApplyResult = pendingRejectedResult;
+    QCOMPARE(
+        unknownJournal.updateCancellation(unknownCancel.operationId, proving, now.addSecs(8))
+            .disposition,
+        SemanticOperationJournalDisposition::Updated);
+
+    Data::RuntimeOutputTransactionState safeHold = completedOutputState(
+        priorAppliedRequest, Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered, 100);
+    QVERIFY(safeHold.isValid());
+
+    SemanticOperationJournalCancellationUpdate safeCompletion;
+    safeCompletion.expectedState = Data::SemanticOperationState::OutcomeUnknown;
+    safeCompletion.expectedPhase = Data::SemanticOperationCancellationPhase::ProvingSafeHold;
+    safeCompletion.phase = Data::SemanticOperationCancellationPhase::Completed;
+    safeCompletion.actor = approver;
+    safeCompletion.resultCode = QStringLiteral("semantic-operation-canceled-safe-hold");
+    safeCompletion.detail = QStringLiteral("The last output transaction reached SafeHold.");
+    safeCompletion.safeHoldState = safeHold;
+    safeCompletion.safeHoldRequest = priorAppliedRequest;
+    safeCompletion.terminalApplyResult = pendingRejectedResult;
+    safeCompletion.appliedCycle = safeHold.appliedCycle;
+    safeCompletion.appliedRuntimeGeneration = context.epoch.runtimeGeneration;
+    const Data::SemanticOperationRecord provingRecord = *unknownJournal.operation(
+        unknownCancel.operationId);
+    Data::RuntimeOutputTransactionRequest replacementPrior = priorAppliedRequest;
+    replacementPrior.operationId = {QByteArray::fromHex("30112233445566778899aabbccddeeff")};
+    QVERIFY(replacementPrior.isValid());
+    const Data::RuntimeOutputTransactionState replacementSafeHold = completedOutputState(
+        replacementPrior, Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered, 100);
+    QVERIFY(replacementSafeHold.isValid());
+    SemanticOperationJournalCancellationUpdate replacementCompletion = safeCompletion;
+    replacementCompletion.priorAppliedRequest = replacementPrior;
+    replacementCompletion.safeHoldRequest = replacementPrior;
+    replacementCompletion.safeHoldState = replacementSafeHold;
+    replacementCompletion.appliedCycle = replacementSafeHold.appliedCycle;
+    QCOMPARE(
+        unknownJournal
+            .updateCancellation(unknownCancel.operationId, replacementCompletion, now.addMSecs(8500))
+            .disposition,
+        SemanticOperationJournalDisposition::Conflict);
+    QCOMPARE(unknownJournal.operation(unknownCancel.operationId), std::optional(provingRecord));
+    Data::RuntimeOutputTransactionState wrongSafeHold = safeHold;
+    wrongSafeHold.operationId = Data::RuntimeOutputOperationId{
+        QByteArray::fromHex("40112233445566778899aabbccddeeff")};
+    SemanticOperationJournalCancellationUpdate wrongCompletion = safeCompletion;
+    wrongCompletion.safeHoldState = wrongSafeHold;
+    const quint64 provingRevision = unknownJournal.operation(unknownCancel.operationId)->revision;
+    QCOMPARE(
+        unknownJournal
+            .updateCancellation(unknownCancel.operationId, wrongCompletion, now.addSecs(9))
+            .disposition,
+        SemanticOperationJournalDisposition::Rejected);
+    QCOMPARE(unknownJournal.operation(unknownCancel.operationId)->revision, provingRevision);
+    QCOMPARE(
+        unknownJournal.operation(unknownCancel.operationId)->state,
+        Data::SemanticOperationState::OutcomeUnknown);
+
+    const SemanticOperationJournalResult safelyCanceled
+        = unknownJournal
+              .updateCancellation(unknownCancel.operationId, safeCompletion, now.addSecs(10));
+    QCOMPARE(safelyCanceled.disposition, SemanticOperationJournalDisposition::Updated);
+    QVERIFY(safelyCanceled.record);
+    QCOMPARE(safelyCanceled.record->state, Data::SemanticOperationState::Canceled);
+    QCOMPARE(safelyCanceled.record->cancellation->safeHoldState, std::optional(safeHold));
+    QCOMPARE(
+        safelyCanceled.record->cancellation->pendingApplyRequest,
+        std::optional(pendingApplyRequest));
+    QCOMPARE(safelyCanceled.record->cancellation->safeHoldRequest, std::optional(priorAppliedRequest));
+    QCOMPARE(
+        safelyCanceled.record->cancellation->priorAppliedRequest,
+        std::optional(priorAppliedRequest));
+    QCOMPARE(
+        safelyCanceled.record->cancellation->terminalApplyResult,
+        std::optional(pendingRejectedResult));
+    QCOMPARE(
+        unknownJournal
+            .updateCancellation(unknownCancel.operationId, safeCompletion, now.addSecs(11))
+            .disposition,
+        SemanticOperationJournalDisposition::Replayed);
+    SemanticOperationJournalCancellationUpdate omittedSafeReplay = safeCompletion;
+    omittedSafeReplay.priorAppliedRequest.reset();
+    omittedSafeReplay.safeHoldRequest.reset();
+    omittedSafeReplay.terminalApplyResult.reset();
+    omittedSafeReplay.safeHoldState.reset();
+    QCOMPARE(
+        unknownJournal
+            .updateCancellation(unknownCancel.operationId, omittedSafeReplay, now.addSecs(12))
+            .disposition,
+        SemanticOperationJournalDisposition::Replayed);
+    QCOMPARE(
+        unknownJournal
+            .updateCancellation(unknownCancel.operationId, replacementCompletion, now.addSecs(13))
+            .disposition,
+        SemanticOperationJournalDisposition::Conflict);
+    QCOMPARE(unknownJournal.operation(unknownCancel.operationId), safelyCanceled.record);
+
+    SemanticOperationJournal rejectedApplyJournal;
+    const SemanticOperationJournalResult rejectedApplyApproved = submitAndApproveJournal(
+        rejectedApplyJournal, u"operation/api038/journal/cancel/rejected-apply");
+    QVERIFY(rejectedApplyApproved.record);
+    QCOMPARE(
+        rejectedApplyJournal
+            .transition(rejectedApplyApproved.record->request.operationId, executing, now.addSecs(2))
+            .disposition,
+        SemanticOperationJournalDisposition::Updated);
+    const Data::SemanticOperationRecord rejectedApplyExecuting = *rejectedApplyJournal.operation(
+        rejectedApplyApproved.record->request.operationId);
+    const Data::SemanticOperationCancelRequest rejectedApplyCancel
+        = cancelRequestFor(rejectedApplyExecuting, u"cancel/api038/journal/rejected-apply");
+    QCOMPARE(
+        rejectedApplyJournal.cancel(rejectedApplyCancel, approver, now.addSecs(3)).disposition,
+        SemanticOperationJournalDisposition::Updated);
+    SemanticOperationJournalCancellationUpdate rejectedApplyWaiting;
+    rejectedApplyWaiting.expectedState = Data::SemanticOperationState::Executing;
+    rejectedApplyWaiting.expectedPhase = Data::SemanticOperationCancellationPhase::Requested;
+    rejectedApplyWaiting.phase = Data::SemanticOperationCancellationPhase::WaitingForApplyResult;
+    rejectedApplyWaiting.actor = approver;
+    rejectedApplyWaiting.pendingApplyRequest = pendingApplyRequest;
+    QCOMPARE(
+        rejectedApplyJournal
+            .updateCancellation(rejectedApplyCancel.operationId, rejectedApplyWaiting, now.addSecs(4))
+            .disposition,
+        SemanticOperationJournalDisposition::Updated);
+
+    Data::ControllerOperationError providerRejected = uncertainOutputError();
+    providerRejected.codeName = QStringLiteral("REJECTED");
+    providerRejected.summary = QStringLiteral("The provider rejected the output transaction.");
+    providerRejected.detail = QStringLiteral("No output mutation was accepted.");
+    const Data::RuntimeOutputTransactionResult exactRejected{
+        pendingApplyRequest,
+        Data::RuntimeOutputTransactionOutcome::Rejected,
+        true,
+        std::nullopt,
+        providerRejected,
+    };
+    QVERIFY(exactRejected.isValid());
+    Data::RuntimeOutputTransactionRequest wrongPendingApplyRequest = pendingApplyRequest;
+    wrongPendingApplyRequest.operationId = {
+        QByteArray::fromHex("30112233445566778899aabbccddeeff")};
+    const Data::RuntimeOutputTransactionResult wrongRejected{
+        wrongPendingApplyRequest,
+        Data::RuntimeOutputTransactionOutcome::Rejected,
+        true,
+        std::nullopt,
+        providerRejected,
+    };
+    QVERIFY(wrongRejected.isValid());
+    SemanticOperationJournalCancellationUpdate rejectedApplyCompletion;
+    rejectedApplyCompletion.expectedState = Data::SemanticOperationState::Executing;
+    rejectedApplyCompletion.expectedPhase
+        = Data::SemanticOperationCancellationPhase::WaitingForApplyResult;
+    rejectedApplyCompletion.phase = Data::SemanticOperationCancellationPhase::Completed;
+    rejectedApplyCompletion.actor = approver;
+    rejectedApplyCompletion.resultCode = QStringLiteral(
+        "semantic-operation-canceled-after-provider-rejection");
+    rejectedApplyCompletion.detail = QStringLiteral(
+        "The exact pending output transaction was rejected.");
+    rejectedApplyCompletion.terminalApplyResult = wrongRejected;
+    const quint64 waitingRevision
+        = rejectedApplyJournal.operation(rejectedApplyCancel.operationId)->revision;
+    QCOMPARE(
+        rejectedApplyJournal
+            .updateCancellation(
+                rejectedApplyCancel.operationId, rejectedApplyCompletion, now.addSecs(5))
+            .disposition,
+        SemanticOperationJournalDisposition::Rejected);
+    QCOMPARE(
+        rejectedApplyJournal.operation(rejectedApplyCancel.operationId)->revision, waitingRevision);
+    QCOMPARE(
+        rejectedApplyJournal.operation(rejectedApplyCancel.operationId)->state,
+        Data::SemanticOperationState::Executing);
+    rejectedApplyCompletion.terminalApplyResult = exactRejected;
+    const SemanticOperationJournalResult rejectedApplyCanceled
+        = rejectedApplyJournal.updateCancellation(
+            rejectedApplyCancel.operationId, rejectedApplyCompletion, now.addSecs(6));
+    QCOMPARE(rejectedApplyCanceled.disposition, SemanticOperationJournalDisposition::Updated);
+    QVERIFY(rejectedApplyCanceled.record);
+    QCOMPARE(rejectedApplyCanceled.record->state, Data::SemanticOperationState::Canceled);
+    QCOMPARE(
+        rejectedApplyCanceled.record->cancellation->terminalApplyResult,
+        std::optional(exactRejected));
+    QVERIFY(!rejectedApplyCanceled.record->cancellation->safeHoldState);
+    QCOMPARE(
+        rejectedApplyJournal
+            .updateCancellation(
+                rejectedApplyCancel.operationId, rejectedApplyCompletion, now.addSecs(7))
+            .disposition,
+        SemanticOperationJournalDisposition::Replayed);
+    SemanticOperationJournalCancellationUpdate omittedTerminalReplay = rejectedApplyCompletion;
+    omittedTerminalReplay.terminalApplyResult.reset();
+    QCOMPARE(
+        rejectedApplyJournal
+            .updateCancellation(rejectedApplyCancel.operationId, omittedTerminalReplay, now.addSecs(8))
+            .disposition,
+        SemanticOperationJournalDisposition::Replayed);
+    SemanticOperationJournalCancellationUpdate replacementTerminalReplay = rejectedApplyCompletion;
+    replacementTerminalReplay.terminalApplyResult = wrongRejected;
+    QCOMPARE(
+        rejectedApplyJournal
+            .updateCancellation(
+                rejectedApplyCancel.operationId, replacementTerminalReplay, now.addSecs(9))
+            .disposition,
+        SemanticOperationJournalDisposition::Conflict);
+    QCOMPARE(
+        rejectedApplyJournal.operation(rejectedApplyCancel.operationId),
+        rejectedApplyCanceled.record);
+
+    SemanticOperationJournal returnTaskJournal;
+    const SemanticOperationJournalResult returnTaskApproved
+        = submitAndApproveJournal(returnTaskJournal, u"operation/api038/journal/cancel/return-task");
+    QVERIFY(returnTaskApproved.record);
+    SemanticOperationJournalStateUpdate returnTaskExecuting = executing;
+    QCOMPARE(
+        returnTaskJournal
+            .transition(
+                returnTaskApproved.record->request.operationId, returnTaskExecuting, now.addSecs(2))
+            .disposition,
+        SemanticOperationJournalDisposition::Updated);
+    SemanticOperationJournalStateUpdate returnTaskUnknown = unknown;
+    QCOMPARE(
+        returnTaskJournal
+            .transition(
+                returnTaskApproved.record->request.operationId, returnTaskUnknown, now.addSecs(3))
+            .disposition,
+        SemanticOperationJournalDisposition::Updated);
+    const Data::SemanticOperationRecord returnTaskRecord = *returnTaskJournal.operation(
+        returnTaskApproved.record->request.operationId);
+    const Data::SemanticOperationCancelRequest returnTaskCancel
+        = cancelRequestFor(returnTaskRecord, u"cancel/api038/journal/return-task");
+    QCOMPARE(
+        returnTaskJournal.cancel(returnTaskCancel, approver, now.addSecs(4)).disposition,
+        SemanticOperationJournalDisposition::Updated);
+    Data::RuntimeOutputTransactionRequest returnTaskRequest = pendingApplyRequest;
+    returnTaskRequest.operationId = {QByteArray::fromHex("20112233445566778899aabbccddeeff")};
+    returnTaskRequest.expectedRecoveryPolicy = Data::RuntimeOutputRecoveryPolicy::ReturnTask;
+    QVERIFY(returnTaskRequest.isValid());
+    Data::RuntimeOutputTransactionState returnedTask = completedOutputState(
+        returnTaskRequest, Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered, 100);
+    QVERIFY(returnedTask.isValid());
+    SemanticOperationJournalCancellationUpdate returnTaskProving;
+    returnTaskProving.expectedState = Data::SemanticOperationState::OutcomeUnknown;
+    returnTaskProving.expectedPhase = Data::SemanticOperationCancellationPhase::Requested;
+    returnTaskProving.phase = Data::SemanticOperationCancellationPhase::ProvingSafeHold;
+    returnTaskProving.actor = approver;
+    returnTaskProving.safeHoldRequest = returnTaskRequest;
+    QCOMPARE(
+        returnTaskJournal
+            .updateCancellation(returnTaskCancel.operationId, returnTaskProving, now.addSecs(5))
+            .disposition,
+        SemanticOperationJournalDisposition::Rejected);
+    QCOMPARE(
+        returnTaskJournal.operation(returnTaskCancel.operationId)->state,
+        Data::SemanticOperationState::OutcomeUnknown);
+}
+
 void EtherCATSemanticRuntimeTests::testSemanticActionPlan()
 {
     const Utils::Result<VerifiedRuntimePackageEvidence> evidence = api038ActionEvidence();
@@ -14389,6 +15173,1322 @@ void EtherCATSemanticRuntimeTests::testExecutorExecutesQualifiedMultiStepAction(
         }
     }
     QCOMPARE(stepAudit, QList<quint32>({1, 2, 3, 4}));
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorCancelsBeforeMutation()
+{
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/api038/executor/cancel/approval-required");
+        setApi038DigitalOutputParameters(request);
+        const Data::SemanticOperationRecord submitted
+            = fixture.executor->submit(request, api038Approver());
+        QCOMPARE(submitted.state, Data::SemanticOperationState::ApprovalRequired);
+        QVERIFY(submitted.revision);
+
+        const Data::SemanticOperationCancelRequest cancelRequest
+            = cancelRequestFor(submitted, u"cancel/api038/executor/approval-required");
+        Data::SemanticOperationApprovalRequest deniedApproval;
+        deniedApproval.operationId = request.operationId;
+        deniedApproval.decision = Data::SemanticApprovalDecision::Denied;
+        deniedApproval.challenge = submitted.approvalChallenge;
+        deniedApproval.expectedRequestDigest = submitted.canonicalRequestDigest;
+        deniedApproval.expectedContextHash = context.contextHash;
+        deniedApproval.detail = QStringLiteral(
+            "This synchronous denial must not overtake cancellation.");
+        bool reentrantApprovalAttempted = false;
+        std::optional<Data::SemanticOperationRecord> recordBeforeReentrantApproval;
+        std::optional<Data::SemanticOperationRecord> reentrantApprovalResult;
+        QObject::connect(
+            fixture.executor.get(),
+            &Core::SemanticRuntimeService::operationChanged,
+            fixture.executor.get(),
+            [&fixture,
+             &request,
+             &deniedApproval,
+             &reentrantApprovalAttempted,
+             &recordBeforeReentrantApproval,
+             &reentrantApprovalResult](const Data::SemanticOperationId &operationId) {
+                if (operationId != request.operationId || reentrantApprovalAttempted)
+                    return;
+                const std::optional<Data::SemanticOperationRecord> current
+                    = fixture.executor->operation(operationId);
+                if (!current || !current->cancellation
+                    || current->cancellation->phase
+                           != Data::SemanticOperationCancellationPhase::Requested) {
+                    return;
+                }
+                reentrantApprovalAttempted = true;
+                recordBeforeReentrantApproval = *current;
+                reentrantApprovalResult
+                    = fixture.executor->approve(deniedApproval, api038Approver());
+            },
+            Qt::DirectConnection);
+        const Data::SemanticOperationCancelResult canceled
+            = fixture.executor->cancel(cancelRequest, api038Approver());
+        QVERIFY(reentrantApprovalAttempted);
+        QVERIFY(recordBeforeReentrantApproval);
+        QVERIFY(reentrantApprovalResult);
+        QCOMPARE(reentrantApprovalResult, recordBeforeReentrantApproval);
+        QCOMPARE(canceled.request, cancelRequest);
+        QCOMPARE(canceled.disposition, Data::SemanticOperationCancelDisposition::Accepted);
+        QVERIFY(canceled.accepted());
+        QVERIFY(canceled.record);
+        QCOMPARE(canceled.record->state, Data::SemanticOperationState::Canceled);
+        QVERIFY(canceled.record->cancellation);
+        QCOMPARE(
+            canceled.record->cancellation->phase,
+            Data::SemanticOperationCancellationPhase::Completed);
+        QVERIFY(!canceled.record->cancellation->safeHoldState);
+        QVERIFY(fixture.provider.snapshotRequests.isEmpty());
+        QVERIFY(fixture.provider.policyRequests.isEmpty());
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+        QVERIFY(fixture.provider.stateRequests.isEmpty());
+        qsizetype cancellationOwnedApprovalRejections = 0;
+        for (const Data::SemanticRuntimeAuditEvent &event :
+             fixture.executor->audit(context.controllerId)) {
+            if (event.operationId == request.operationId
+                && event.kind == Data::SemanticAuditEventKind::Rejected
+                && event.code == QStringLiteral("approval-cancellation-pending")) {
+                ++cancellationOwnedApprovalRejections;
+            }
+        }
+        QCOMPARE(cancellationOwnedApprovalRejections, qsizetype(1));
+
+        const Data::SemanticOperationCancelResult replay
+            = fixture.executor->cancel(cancelRequest, api038Approver());
+        QCOMPARE(replay.disposition, Data::SemanticOperationCancelDisposition::Replayed);
+        QCOMPARE(replay.record, canceled.record);
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/api038/executor/cancel/approved");
+        setApi038DigitalOutputParameters(request);
+        const Data::SemanticOperationRecord approved
+            = submitAndApprove(*fixture.executor, context, request);
+        QCOMPARE(approved.state, Data::SemanticOperationState::Approved);
+
+        const Data::SemanticOperationCancelRequest cancelRequest
+            = cancelRequestFor(approved, u"cancel/api038/executor/approved");
+        const Data::SemanticOperationCancelResult canceled
+            = fixture.executor->cancel(cancelRequest, api038Approver());
+        QCOMPARE(canceled.disposition, Data::SemanticOperationCancelDisposition::Accepted);
+        QVERIFY(canceled.record);
+        QCOMPARE(canceled.record->state, Data::SemanticOperationState::Canceled);
+        QVERIFY(fixture.provider.snapshotRequests.isEmpty());
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+
+        Data::SemanticOperationCancelRequest changed = cancelRequest;
+        changed.reason.append(QStringLiteral(" changed"));
+        QCOMPARE(
+            fixture.executor->cancel(changed, api038Approver()).disposition,
+            Data::SemanticOperationCancelDisposition::Conflict);
+        Data::SemanticOperationCancelRequest second = cancelRequest;
+        second.cancelId.value.append(QStringLiteral("/second"));
+        QCOMPARE(
+            fixture.executor->cancel(second, api038Approver()).disposition,
+            Data::SemanticOperationCancelDisposition::Stale);
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/api038/executor/cancel/before-snapshot");
+        setApi038DigitalOutputParameters(request);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        const Data::RuntimeResourceSnapshotRequest pending
+            = *fixture.provider.pendingSnapshotRequest;
+        const Data::SemanticOperationRecord executing = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(executing.state, Data::SemanticOperationState::Executing);
+
+        const Data::SemanticOperationCancelResult canceled = fixture.executor->cancel(
+            cancelRequestFor(executing, u"cancel/api038/executor/before-snapshot"),
+            api038Approver());
+        QCOMPARE(canceled.disposition, Data::SemanticOperationCancelDisposition::Accepted);
+        QVERIFY(canceled.record);
+        QCOMPARE(canceled.record->state, Data::SemanticOperationState::Canceled);
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+
+        fixture.provider.sendSnapshotResult({
+            pending,
+            targetedSnapshot(fixture.snapshot, pending, {}, 2, 110, 1100),
+            {},
+        });
+        QCoreApplication::processEvents();
+        QCOMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::Canceled);
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized
+            = fixture.initialize(false, true, 5000, 5000, {}, true, true);
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:axis0:stop-csv",
+            u"operation/api038/executor/cancel/wait-before-first-write");
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(plan->steps().constFirst().kind(), SemanticActionPlanStepKind::WaitMasked);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        const Data::RuntimeResourceSnapshotRequest before = *fixture.provider.pendingSnapshotRequest;
+        fixture.provider.sendSnapshotResult({
+            before,
+            targetedSnapshot(fixture.snapshot, before, {}, 2, 100, 1000),
+            {},
+        });
+        QVERIFY(fixture.provider.pendingPolicyRequest);
+        const Data::RuntimeOutputGroupPolicyRequest policy = *fixture.provider.pendingPolicyRequest;
+        fixture.provider.sendPolicyResult(
+            {policy, outputPolicy(policy, plan->groups().first(), 41), {}});
+        QVERIFY(fixture.provider.pendingStateRequest);
+        const Data::RuntimeOutputTransactionStateRequest state
+            = *fixture.provider.pendingStateRequest;
+        fixture.provider.sendStateResult({state, idleOutputState(state, 41), {}});
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        const Data::RuntimeResourceSnapshotRequest wait = *fixture.provider.pendingSnapshotRequest;
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+        const Data::SemanticOperationRecord executing = *fixture.executor->operation(
+            request.operationId);
+        const Data::SemanticOperationCancelResult canceled = fixture.executor->cancel(
+            cancelRequestFor(executing, u"cancel/api038/executor/wait-before-first-write"),
+            api038Approver());
+        QCOMPARE(canceled.disposition, Data::SemanticOperationCancelDisposition::Accepted);
+        QVERIFY(canceled.record);
+        QCOMPARE(canceled.record->state, Data::SemanticOperationState::Canceled);
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+
+        fixture.provider.sendSnapshotResult({
+            wait,
+            targetedSnapshot(fixture.snapshot, wait, {}, 3, 101, 1010),
+            {},
+        });
+        QCoreApplication::processEvents();
+        QCOMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::Canceled);
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+    }
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorCancelsPendingApply()
+{
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/api038/executor/cancel/pending/rejected");
+        setApi038DigitalOutputParameters(request);
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+
+        const Data::SemanticOperationRequest queuedRequest = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:clear-outputs",
+            u"operation/api038/executor/cancel/pending/rejected/queued");
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, queuedRequest).state,
+            Data::SemanticOperationState::Approved);
+
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        QVERIFY(advanceExecutorToApply(fixture, *plan));
+        const Data::RuntimeOutputTransactionRequest applyRequest
+            = *fixture.provider.pendingApplyRequest;
+        const Data::SemanticOperationRecord executing = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(executing.state, Data::SemanticOperationState::Executing);
+        const Data::SemanticOperationCancelRequest cancelRequest
+            = cancelRequestFor(executing, u"cancel/api038/executor/pending/rejected");
+        const Data::SemanticOperationCancelResult cancellation
+            = fixture.executor->cancel(cancelRequest, api038Approver());
+        QCOMPARE(cancellation.disposition, Data::SemanticOperationCancelDisposition::Accepted);
+        QVERIFY(cancellation.record);
+        QCOMPARE(cancellation.record->state, Data::SemanticOperationState::OutcomeUnknown);
+        QVERIFY(cancellation.record->cancellation);
+        QCOMPARE(
+            cancellation.record->cancellation->phase,
+            Data::SemanticOperationCancellationPhase::WaitingForApplyResult);
+        QCOMPARE(cancellation.record->cancellation->pendingApplyRequest, std::optional(applyRequest));
+        QVERIFY(!cancellation.record->cancellation->terminalApplyResult);
+        QCOMPARE(
+            fixture.provider.applyRequests,
+            QList<Data::RuntimeOutputTransactionRequest>{applyRequest});
+        QCOMPARE(*fixture.provider.pendingApplyRequest, applyRequest);
+        QCOMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Approved);
+
+        const Data::SemanticOperationCancelResult replay
+            = fixture.executor->cancel(cancelRequest, api038Approver());
+        QCOMPARE(replay.disposition, Data::SemanticOperationCancelDisposition::Replayed);
+        QCOMPARE(replay.record, cancellation.record);
+
+        Data::ControllerOperationError providerRejected = uncertainOutputError();
+        providerRejected.codeName = QStringLiteral("REJECTED");
+        providerRejected.summary = QStringLiteral("The output transaction was rejected.");
+        providerRejected.detail = QStringLiteral("No output write was accepted.");
+        const Data::RuntimeOutputTransactionResult rejected{
+            applyRequest,
+            Data::RuntimeOutputTransactionOutcome::Rejected,
+            true,
+            std::nullopt,
+            providerRejected,
+        };
+        QVERIFY(rejected.isValid());
+        fixture.provider.sendApplyResult(rejected);
+
+        QTRY_VERIFY(fixture.executor->operation(request.operationId).has_value());
+        const Data::SemanticOperationRecord terminal = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(terminal.state, Data::SemanticOperationState::Canceled);
+        QVERIFY(terminal.cancellation);
+        QCOMPARE(terminal.cancellation->phase, Data::SemanticOperationCancellationPhase::Completed);
+        QCOMPARE(terminal.cancellation->terminalApplyResult, std::optional(rejected));
+        QVERIFY(!terminal.cancellation->safeHoldState);
+        QCOMPARE(
+            fixture.provider.applyRequests,
+            QList<Data::RuntimeOutputTransactionRequest>{applyRequest});
+        QTRY_COMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Executing);
+        QVERIFY(fixture.provider.pendingSnapshotRequest);
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/api038/executor/cancel/pending/applied");
+        setApi038DigitalOutputParameters(request);
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        const Data::SemanticOperationRequest queuedRequest = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:clear-outputs",
+            u"operation/api038/executor/cancel/pending/applied/queued");
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, queuedRequest).state,
+            Data::SemanticOperationState::Approved);
+
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        QVERIFY(advanceExecutorToApply(fixture, *plan));
+        const Data::RuntimeOutputTransactionRequest applyRequest
+            = *fixture.provider.pendingApplyRequest;
+        const Data::SemanticOperationRecord executing = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(
+            fixture.executor
+                ->cancel(
+                    cancelRequestFor(executing, u"cancel/api038/executor/pending/applied"),
+                    api038Approver())
+                .disposition,
+            Data::SemanticOperationCancelDisposition::Accepted);
+        QCOMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::OutcomeUnknown);
+
+        const Data::RuntimeOutputTransactionState applied
+            = completedOutputState(applyRequest, Data::RuntimeOutputTransactionOutcome::Applied, 120);
+        const Data::RuntimeOutputTransactionResult appliedResult{
+            applyRequest,
+            Data::RuntimeOutputTransactionOutcome::Applied,
+            true,
+            applied,
+            std::nullopt,
+        };
+        QVERIFY(appliedResult.isValid());
+        fixture.provider.sendApplyResult(appliedResult);
+        QTRY_VERIFY(fixture.provider.pendingStateRequest);
+        const Data::SemanticOperationRecord proving = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(proving.state, Data::SemanticOperationState::OutcomeUnknown);
+        QVERIFY(proving.cancellation);
+        QCOMPARE(
+            proving.cancellation->phase, Data::SemanticOperationCancellationPhase::ProvingSafeHold);
+        QCOMPARE(proving.cancellation->safeHoldRequest, std::optional(applyRequest));
+        QCOMPARE(
+            fixture.provider.applyRequests,
+            QList<Data::RuntimeOutputTransactionRequest>{applyRequest});
+
+        const Data::RuntimeOutputTransactionStateRequest firstProofRequest
+            = *fixture.provider.pendingStateRequest;
+        Data::RuntimeOutputTransactionState stillApplied = applied;
+        stillApplied.controllerTimestampNs = applied.controllerTimestampNs + 1;
+        fixture.provider.sendStateResult({firstProofRequest, stillApplied, {}});
+        QTRY_VERIFY(fixture.provider.pendingStateRequest);
+        const Data::RuntimeOutputTransactionStateRequest exactProofRequest
+            = *fixture.provider.pendingStateRequest;
+        QVERIFY(exactProofRequest.correlationId != firstProofRequest.correlationId);
+        QCOMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::OutcomeUnknown);
+        QCOMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Approved);
+
+        Data::RuntimeOutputTransactionState safeHold = completedOutputState(
+            applyRequest,
+            Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered,
+            applied.appliedCycle);
+        safeHold.controllerTimestampNs = stillApplied.controllerTimestampNs + 1;
+        fixture.provider.sendStateResult({exactProofRequest, safeHold, {}});
+        QTRY_VERIFY(fixture.executor->operation(request.operationId).has_value());
+        const Data::SemanticOperationRecord terminal = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(terminal.state, Data::SemanticOperationState::Canceled);
+        QVERIFY(terminal.cancellation);
+        QCOMPARE(terminal.cancellation->phase, Data::SemanticOperationCancellationPhase::Completed);
+        QCOMPARE(terminal.cancellation->safeHoldState, std::optional(safeHold));
+        QCOMPARE(terminal.cancellation->safeHoldRequest, std::optional(applyRequest));
+        QCOMPARE(
+            fixture.provider.applyRequests,
+            QList<Data::RuntimeOutputTransactionRequest>{applyRequest});
+        QTRY_COMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Executing);
+        QVERIFY(fixture.provider.pendingSnapshotRequest);
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/api038/executor/cancel/pending/unknown");
+        setApi038DigitalOutputParameters(request);
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        const Data::SemanticOperationRequest queuedRequest = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:clear-outputs",
+            u"operation/api038/executor/cancel/pending/unknown/queued");
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, queuedRequest).state,
+            Data::SemanticOperationState::Approved);
+
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        QVERIFY(advanceExecutorToApply(fixture, *plan));
+        const Data::RuntimeOutputTransactionRequest applyRequest
+            = *fixture.provider.pendingApplyRequest;
+        const qsizetype stateRequestsBeforeCancellation = fixture.provider.stateRequests.size();
+        const Data::SemanticOperationRecord executing = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(
+            fixture.executor
+                ->cancel(
+                    cancelRequestFor(executing, u"cancel/api038/executor/pending/unknown"),
+                    api038Approver())
+                .disposition,
+            Data::SemanticOperationCancelDisposition::Accepted);
+
+        const Data::RuntimeOutputTransactionResult unknown{
+            applyRequest,
+            Data::RuntimeOutputTransactionOutcome::OutcomeUnknown,
+            false,
+            std::nullopt,
+            uncertainOutputError(),
+        };
+        QVERIFY(unknown.isValid());
+        fixture.provider.sendApplyResult(unknown, false);
+        QCoreApplication::processEvents();
+        const Data::SemanticOperationRecord unresolved = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(unresolved.state, Data::SemanticOperationState::OutcomeUnknown);
+        QVERIFY(unresolved.cancellation);
+        QCOMPARE(
+            unresolved.cancellation->phase,
+            Data::SemanticOperationCancellationPhase::WaitingForApplyResult);
+        QCOMPARE(unresolved.cancellation->pendingApplyRequest, std::optional(applyRequest));
+        QVERIFY(!unresolved.cancellation->safeHoldState);
+        QCOMPARE(
+            fixture.provider.applyRequests,
+            QList<Data::RuntimeOutputTransactionRequest>{applyRequest});
+        QVERIFY(fixture.provider.pendingApplyRequest);
+        QCOMPARE(*fixture.provider.pendingApplyRequest, applyRequest);
+        QCOMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Approved);
+        QCOMPARE(fixture.provider.stateRequests.size(), stateRequestsBeforeCancellation);
+
+        fixture.provider.sendApplyResult(unknown, false);
+        QCoreApplication::processEvents();
+        QCOMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::OutcomeUnknown);
+        QCOMPARE(
+            fixture.provider.applyRequests,
+            QList<Data::RuntimeOutputTransactionRequest>{applyRequest});
+        QCOMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Approved);
+        QCOMPARE(fixture.provider.stateRequests.size(), stateRequestsBeforeCancellation);
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/api038/executor/cancel/pending/apply-start-error");
+        setApi038DigitalOutputParameters(request);
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        const Data::SemanticOperationRequest queuedRequest = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:clear-outputs",
+            u"operation/api038/executor/cancel/pending/apply-start-error/queued");
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, queuedRequest).state,
+            Data::SemanticOperationState::Approved);
+
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        fixture.provider.nextApplyStartError = QStringLiteral(
+            "The provider returned an error after entering output dispatch");
+        QVERIFY(advanceExecutorToApply(fixture, *plan));
+        QVERIFY(fixture.provider.pendingApplyRequest);
+        const Data::RuntimeOutputTransactionRequest applyRequest
+            = *fixture.provider.pendingApplyRequest;
+        QCOMPARE(applyRequest.operationId, plan->steps().constFirst().outputOperationId());
+        QCOMPARE(
+            fixture.provider.applyRequests,
+            QList<Data::RuntimeOutputTransactionRequest>{applyRequest});
+
+        const Data::SemanticOperationRecord unresolved = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(unresolved.state, Data::SemanticOperationState::OutcomeUnknown);
+        QVERIFY(!unresolved.cancellation);
+        const Data::SemanticOperationCancelResult cancellation = fixture.executor->cancel(
+            cancelRequestFor(unresolved, u"cancel/api038/executor/pending/apply-start-error"),
+            api038Approver());
+        QCOMPARE(cancellation.disposition, Data::SemanticOperationCancelDisposition::Accepted);
+        QVERIFY(cancellation.record);
+        QCOMPARE(cancellation.record->state, Data::SemanticOperationState::OutcomeUnknown);
+        QVERIFY(cancellation.record->cancellation);
+        QCOMPARE(
+            cancellation.record->cancellation->phase,
+            Data::SemanticOperationCancellationPhase::WaitingForApplyResult);
+        QCOMPARE(cancellation.record->cancellation->pendingApplyRequest, std::optional(applyRequest));
+        QCOMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Approved);
+        QCoreApplication::processEvents();
+        QCOMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::OutcomeUnknown);
+        QCOMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Approved);
+        QCOMPARE(
+            fixture.provider.applyRequests,
+            QList<Data::RuntimeOutputTransactionRequest>{applyRequest});
+    }
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorCancelsAfterMutation()
+{
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(false, true, 5000, 5000, {}, true);
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:axis0:stop-csv",
+            u"operation/api038/executor/cancel/multi/rejected-second");
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        const Utils::Result<QualifiedFirstWaitProgress> first
+            = advanceQualifiedMultiStepToFirstWait(fixture, *plan);
+        QVERIFY_RESULT(first);
+        const Utils::Result<Data::RuntimeOutputTransactionRequest> second
+            = advanceQualifiedFirstWaitToSecondApply(fixture, *plan, *first);
+        QVERIFY_RESULT(second);
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(2));
+
+        const Data::SemanticOperationRecord executing = *fixture.executor->operation(
+            request.operationId);
+        const Data::SemanticOperationCancelResult cancellation = fixture.executor->cancel(
+            cancelRequestFor(executing, u"cancel/api038/executor/multi/rejected-second"),
+            api038Approver());
+        QCOMPARE(cancellation.disposition, Data::SemanticOperationCancelDisposition::Accepted);
+        QVERIFY(cancellation.record);
+        QCOMPARE(cancellation.record->state, Data::SemanticOperationState::OutcomeUnknown);
+        QVERIFY(cancellation.record->cancellation);
+        QCOMPARE(
+            cancellation.record->cancellation->phase,
+            Data::SemanticOperationCancellationPhase::WaitingForApplyResult);
+        QCOMPARE(cancellation.record->cancellation->pendingApplyRequest, std::optional(*second));
+        QCOMPARE(
+            cancellation.record->cancellation->priorAppliedRequest,
+            std::optional(first->applyRequest));
+        QVERIFY(!cancellation.record->cancellation->safeHoldRequest);
+
+        fixture.ownedAdapterProvider->replaceManifests({});
+        fixture.projects.removeProject(fixture.project.id);
+
+        Data::ControllerOperationError providerRejected = uncertainOutputError();
+        providerRejected.codeName = QStringLiteral("REJECTED");
+        providerRejected.summary = QStringLiteral("The second output write was rejected.");
+        providerRejected.detail = QStringLiteral("The first output write remains authoritative.");
+        const Data::RuntimeOutputTransactionResult rejected{
+            *second,
+            Data::RuntimeOutputTransactionOutcome::Rejected,
+            true,
+            std::nullopt,
+            providerRejected,
+        };
+        QVERIFY(rejected.isValid());
+        fixture.provider.sendApplyResult(rejected);
+
+        QTRY_VERIFY(fixture.provider.pendingStateRequest);
+        const Data::SemanticOperationRecord proving = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(proving.state, Data::SemanticOperationState::OutcomeUnknown);
+        QVERIFY(proving.cancellation);
+        QCOMPARE(
+            proving.cancellation->phase, Data::SemanticOperationCancellationPhase::ProvingSafeHold);
+        QCOMPARE(proving.cancellation->pendingApplyRequest, std::optional(*second));
+        QCOMPARE(proving.cancellation->safeHoldRequest, std::optional(first->applyRequest));
+        QCOMPARE(proving.cancellation->terminalApplyResult, std::optional(rejected));
+
+        const Data::RuntimeOutputTransactionStateRequest wrongProofRequest
+            = *fixture.provider.pendingStateRequest;
+        Data::RuntimeOutputTransactionState wrongSafeHold = completedOutputState(
+            *second,
+            Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered,
+            first->appliedState.appliedCycle + 10);
+        wrongSafeHold.controllerTimestampNs = first->appliedState.controllerTimestampNs + 1;
+        Data::RuntimeOutputTransactionStateRequest nonmatchingProofRequest = wrongProofRequest;
+        nonmatchingProofRequest.correlationId.append(QStringLiteral("-nonmatching"));
+        const Data::RuntimeOutputTransactionStateResult
+            nonmatchingProof{nonmatchingProofRequest, wrongSafeHold, {}};
+        QVERIFY(nonmatchingProof.isValid());
+        fixture.provider.sendStateResult(nonmatchingProof, false);
+        QVERIFY(fixture.provider.pendingStateRequest);
+        QCOMPARE(*fixture.provider.pendingStateRequest, wrongProofRequest);
+        QCOMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::OutcomeUnknown);
+
+        Data::RuntimeOutputTransactionState firstSafeHold = completedOutputState(
+            first->applyRequest,
+            Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered,
+            first->appliedState.appliedCycle);
+        firstSafeHold.controllerTimestampNs = wrongSafeHold.controllerTimestampNs + 1;
+        fixture.provider.sendStateResult({wrongProofRequest, firstSafeHold, {}});
+        QTRY_COMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::Canceled);
+        const Data::SemanticOperationRecord terminal = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(terminal.cancellation->safeHoldState, std::optional(firstSafeHold));
+        QCOMPARE(terminal.cancellation->safeHoldRequest, std::optional(first->applyRequest));
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(2));
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(false, true, 5000, 5000, {}, true);
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:axis0:stop-csv",
+            u"operation/api038/executor/cancel/multi/applied-second");
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        const Utils::Result<QualifiedFirstWaitProgress> first
+            = advanceQualifiedMultiStepToFirstWait(fixture, *plan);
+        QVERIFY_RESULT(first);
+        const Utils::Result<Data::RuntimeOutputTransactionRequest> second
+            = advanceQualifiedFirstWaitToSecondApply(fixture, *plan, *first);
+        QVERIFY_RESULT(second);
+        const Data::SemanticOperationRecord executing = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(
+            fixture.executor
+                ->cancel(
+                    cancelRequestFor(executing, u"cancel/api038/executor/multi/applied-second"),
+                    api038Approver())
+                .disposition,
+            Data::SemanticOperationCancelDisposition::Accepted);
+
+        const Data::RuntimeOutputTransactionState secondApplied = completedOutputState(
+            *second,
+            Data::RuntimeOutputTransactionOutcome::Applied,
+            first->appliedState.appliedCycle + 10);
+        const Data::RuntimeOutputTransactionResult appliedResult{
+            *second,
+            Data::RuntimeOutputTransactionOutcome::Applied,
+            true,
+            secondApplied,
+            std::nullopt,
+        };
+        QVERIFY(appliedResult.isValid());
+        fixture.provider.sendApplyResult(appliedResult);
+        QTRY_VERIFY(fixture.provider.pendingStateRequest);
+        const Data::SemanticOperationRecord proving = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(
+            proving.cancellation->phase, Data::SemanticOperationCancellationPhase::ProvingSafeHold);
+        QCOMPARE(proving.cancellation->pendingApplyRequest, std::optional(*second));
+        QCOMPARE(proving.cancellation->priorAppliedRequest, std::optional(first->applyRequest));
+        QCOMPARE(proving.cancellation->safeHoldRequest, std::optional(*second));
+
+        const Data::RuntimeOutputTransactionStateRequest secondProofRequest
+            = *fixture.provider.pendingStateRequest;
+        Data::RuntimeOutputTransactionStateRequest nonmatchingOldProofRequest = secondProofRequest;
+        nonmatchingOldProofRequest.correlationId.append(QStringLiteral("-nonmatching"));
+        Data::RuntimeOutputTransactionState oldSafeHold = completedOutputState(
+            first->applyRequest,
+            Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered,
+            first->appliedState.appliedCycle);
+        oldSafeHold.controllerTimestampNs = secondApplied.controllerTimestampNs + 1;
+        const Data::RuntimeOutputTransactionStateResult
+            nonmatchingOldProof{nonmatchingOldProofRequest, oldSafeHold, {}};
+        QVERIFY(nonmatchingOldProof.isValid());
+        fixture.provider.sendStateResult(nonmatchingOldProof, false);
+        QVERIFY(fixture.provider.pendingStateRequest);
+        QCOMPARE(*fixture.provider.pendingStateRequest, secondProofRequest);
+        QCOMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::OutcomeUnknown);
+
+        Data::RuntimeOutputTransactionState secondSafeHold = completedOutputState(
+            *second,
+            Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered,
+            secondApplied.appliedCycle);
+        secondSafeHold.controllerTimestampNs = oldSafeHold.controllerTimestampNs + 1;
+        fixture.provider.sendStateResult({secondProofRequest, secondSafeHold, {}});
+        QTRY_COMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::Canceled);
+        const Data::SemanticOperationRecord terminal = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(terminal.cancellation->safeHoldState, std::optional(secondSafeHold));
+        QCOMPARE(terminal.cancellation->priorAppliedRequest, std::optional(first->applyRequest));
+        QCOMPARE(terminal.cancellation->safeHoldRequest, std::optional(*second));
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(2));
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(false, true, 5000, 5000, {}, true);
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:axis0:stop-csv",
+            u"operation/api038/executor/cancel/multi/unknown-second");
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        const Utils::Result<QualifiedFirstWaitProgress> first
+            = advanceQualifiedMultiStepToFirstWait(fixture, *plan);
+        QVERIFY_RESULT(first);
+        const Utils::Result<Data::RuntimeOutputTransactionRequest> second
+            = advanceQualifiedFirstWaitToSecondApply(fixture, *plan, *first);
+        QVERIFY_RESULT(second);
+        const qsizetype stateRequestsBeforeCancellation = fixture.provider.stateRequests.size();
+        const Data::SemanticOperationRecord executing = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(
+            fixture.executor
+                ->cancel(
+                    cancelRequestFor(executing, u"cancel/api038/executor/multi/unknown-second"),
+                    api038Approver())
+                .disposition,
+            Data::SemanticOperationCancelDisposition::Accepted);
+        const Data::RuntimeOutputTransactionResult unknown{
+            *second,
+            Data::RuntimeOutputTransactionOutcome::OutcomeUnknown,
+            false,
+            std::nullopt,
+            uncertainOutputError(),
+        };
+        QVERIFY(unknown.isValid());
+        fixture.provider.sendApplyResult(unknown, false);
+        QCoreApplication::processEvents();
+
+        const Data::SemanticOperationRecord unresolved = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(unresolved.state, Data::SemanticOperationState::OutcomeUnknown);
+        QVERIFY(unresolved.cancellation);
+        QCOMPARE(
+            unresolved.cancellation->phase,
+            Data::SemanticOperationCancellationPhase::WaitingForApplyResult);
+        QCOMPARE(unresolved.cancellation->pendingApplyRequest, std::optional(*second));
+        QCOMPARE(unresolved.cancellation->priorAppliedRequest, std::optional(first->applyRequest));
+        QVERIFY(!unresolved.cancellation->safeHoldRequest);
+        QVERIFY(!unresolved.cancellation->terminalApplyResult);
+        QCOMPARE(fixture.provider.stateRequests.size(), stateRequestsBeforeCancellation);
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(2));
+        QVERIFY(fixture.provider.pendingApplyRequest);
+        QCOMPARE(*fixture.provider.pendingApplyRequest, *second);
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize(false, true, 5000, 5000, {}, true);
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        const Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:axis0:stop-csv",
+            u"operation/api038/executor/cancel/qualified-wait");
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        const Utils::Result<QualifiedFirstWaitProgress> progress
+            = advanceQualifiedMultiStepToFirstWait(fixture, *plan);
+        QVERIFY_RESULT(progress);
+        const Data::RuntimeResourceSnapshotRequest interruptedWait
+            = *fixture.provider.pendingSnapshotRequest;
+        const Data::SemanticOperationRecord executing = *fixture.executor->operation(
+            request.operationId);
+        const Data::SemanticOperationCancelResult cancellation = fixture.executor->cancel(
+            cancelRequestFor(executing, u"cancel/api038/executor/qualified-wait"), api038Approver());
+        QCOMPARE(cancellation.disposition, Data::SemanticOperationCancelDisposition::Accepted);
+        QVERIFY(cancellation.record);
+        QCOMPARE(
+            cancellation.record->cancellation->phase,
+            Data::SemanticOperationCancellationPhase::ProvingSafeHold);
+        QCOMPARE(
+            cancellation.record->cancellation->safeHoldRequest,
+            std::optional(progress->applyRequest));
+
+        fixture.provider.sendSnapshotResult({
+            interruptedWait,
+            targetedSnapshot(
+                fixture.snapshot,
+                interruptedWait,
+                progress->applyRequest.completeGroupWrites,
+                4,
+                progress->appliedState.appliedCycle + 2,
+                progress->appliedState.controllerTimestampNs + 2),
+            {},
+        });
+        QTRY_VERIFY(fixture.provider.pendingStateRequest);
+        const Data::RuntimeOutputTransactionStateRequest proofRequest
+            = *fixture.provider.pendingStateRequest;
+        Data::RuntimeOutputTransactionState safeHold = completedOutputState(
+            progress->applyRequest,
+            Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered,
+            progress->appliedState.appliedCycle);
+        safeHold.controllerTimestampNs = progress->appliedState.controllerTimestampNs + 10;
+        fixture.provider.sendStateResult({proofRequest, safeHold, {}});
+        QTRY_COMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::Canceled);
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(1));
+    }
+
+    for (int cancellationPhase = 0; cancellationPhase < 3; ++cancellationPhase) {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        const QString operationId
+            = QStringLiteral("operation/api038/executor/cancel/phase/%1").arg(cancellationPhase);
+        Data::SemanticOperationRequest request
+            = api038ActionRequest(context, u"embedlabs:project:action:xb6:set-outputs", operationId);
+        setApi038DigitalOutputParameters(request);
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        QVERIFY(advanceExecutorToApply(fixture, *plan));
+        const Data::RuntimeOutputTransactionRequest applyRequest
+            = *fixture.provider.pendingApplyRequest;
+        const Data::RuntimeOutputTransactionState applied
+            = completedOutputState(applyRequest, Data::RuntimeOutputTransactionOutcome::Applied, 120);
+        fixture.provider.sendApplyResult({
+            applyRequest,
+            Data::RuntimeOutputTransactionOutcome::Applied,
+            true,
+            applied,
+            {},
+        });
+        QVERIFY(fixture.provider.pendingSnapshotRequest);
+
+        std::optional<Data::RuntimeResourceSnapshotRequest> interruptedSnapshot;
+        std::optional<Data::RuntimeOutputTransactionStateRequest> interruptedState;
+        if (cancellationPhase >= 1) {
+            const Data::RuntimeResourceSnapshotRequest after
+                = *fixture.provider.pendingSnapshotRequest;
+            Data::RuntimeResourceSnapshot afterSnapshot = targetedSnapshot(
+                fixture.snapshot,
+                after,
+                applyRequest.completeGroupWrites,
+                3,
+                applied.appliedCycle + 1,
+                applied.controllerTimestampNs + 1);
+            if (cancellationPhase == 2) {
+                QVERIFY(!afterSnapshot.samples.isEmpty());
+                Data::RuntimeResourceSample &sample = afterSnapshot.samples.first();
+                sample.value.value = !sample.value.value.toBool();
+            }
+            fixture.provider.sendSnapshotResult({after, afterSnapshot, {}});
+            QTRY_VERIFY(fixture.provider.pendingStateRequest);
+            interruptedState = *fixture.provider.pendingStateRequest;
+        } else {
+            interruptedSnapshot = *fixture.provider.pendingSnapshotRequest;
+        }
+
+        const Data::SemanticOperationRecord active = *fixture.executor->operation(
+            request.operationId);
+        const QString cancelId
+            = QStringLiteral("cancel/api038/executor/phase/%1").arg(cancellationPhase);
+        QCOMPARE(
+            fixture.executor->cancel(cancelRequestFor(active, cancelId), api038Approver())
+                .disposition,
+            Data::SemanticOperationCancelDisposition::Accepted);
+
+        if (interruptedSnapshot) {
+            fixture.provider.sendSnapshotResult({
+                *interruptedSnapshot,
+                targetedSnapshot(
+                    fixture.snapshot,
+                    *interruptedSnapshot,
+                    applyRequest.completeGroupWrites,
+                    4,
+                    applied.appliedCycle + 2,
+                    applied.controllerTimestampNs + 2),
+                {},
+            });
+        } else if (interruptedState && cancellationPhase == 1) {
+            Data::RuntimeOutputTransactionState postState = applied;
+            postState.controllerTimestampNs += 2;
+            fixture.provider.sendStateResult({*interruptedState, postState, {}});
+        }
+
+        QTRY_VERIFY(fixture.provider.pendingStateRequest);
+        const Data::RuntimeOutputTransactionStateRequest proofRequest
+            = *fixture.provider.pendingStateRequest;
+        Data::RuntimeOutputTransactionState safeHold = completedOutputState(
+            applyRequest,
+            Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered,
+            applied.appliedCycle);
+        safeHold.controllerTimestampNs = applied.controllerTimestampNs + 10;
+        fixture.provider.sendStateResult({proofRequest, safeHold, {}});
+        QTRY_COMPARE(
+            fixture.executor->operation(request.operationId)->state,
+            Data::SemanticOperationState::Canceled);
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(1));
+        QCOMPARE(
+            fixture.executor->operation(request.operationId)->cancellation->safeHoldState,
+            std::optional(safeHold));
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized
+            = fixture.initialize(false, true, 5000, 5000, {}, true, false, true);
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/api038/executor/cancel/return-task");
+        setApi038DigitalOutputParameters(request);
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            plan->groups().constFirst().recoveryPolicy(),
+            Data::RuntimeOutputRecoveryPolicy::ReturnTask);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        const Data::SemanticOperationRequest queuedRequest = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:clear-outputs",
+            u"operation/api038/executor/cancel/return-task/queued");
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, queuedRequest).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        QVERIFY(advanceExecutorToApply(fixture, *plan));
+        const Data::RuntimeOutputTransactionRequest applyRequest
+            = *fixture.provider.pendingApplyRequest;
+        QCOMPARE(applyRequest.expectedRecoveryPolicy, Data::RuntimeOutputRecoveryPolicy::ReturnTask);
+        const qsizetype stateRequestsBeforeCancellation = fixture.provider.stateRequests.size();
+        const Data::SemanticOperationRecord executing = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(
+            fixture.executor
+                ->cancel(
+                    cancelRequestFor(executing, u"cancel/api038/executor/return-task"),
+                    api038Approver())
+                .disposition,
+            Data::SemanticOperationCancelDisposition::Accepted);
+
+        const Data::RuntimeOutputTransactionState applied
+            = completedOutputState(applyRequest, Data::RuntimeOutputTransactionOutcome::Applied, 120);
+        const Data::RuntimeOutputTransactionResult appliedResult{
+            applyRequest,
+            Data::RuntimeOutputTransactionOutcome::Applied,
+            true,
+            applied,
+            std::nullopt,
+        };
+        QVERIFY(appliedResult.isValid());
+        fixture.provider.sendApplyResult(appliedResult);
+        QCoreApplication::processEvents();
+
+        const Data::SemanticOperationRecord blocked = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(blocked.state, Data::SemanticOperationState::OutcomeUnknown);
+        QVERIFY(blocked.cancellation);
+        QVERIFY(blocked.cancellation->phase != Data::SemanticOperationCancellationPhase::Completed);
+        QVERIFY(!blocked.cancellation->safeHoldState);
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.stateRequests.size(), stateRequestsBeforeCancellation);
+        QCOMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Approved);
+    }
+}
+
+void EtherCATSemanticRuntimeTests::testExecutorCancelLifetimeGuards()
+{
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/api038/executor/cancel/delete-on-request-publish");
+        setApi038DigitalOutputParameters(request);
+        const Data::SemanticOperationRecord approved
+            = submitAndApprove(*fixture.executor, context, request);
+        QCOMPARE(approved.state, Data::SemanticOperationState::Approved);
+
+        bool executorDeleted = false;
+        QObject::connect(
+            fixture.executor.get(),
+            &Core::SemanticRuntimeService::operationChanged,
+            fixture.executor.get(),
+            [&fixture, &request, &executorDeleted](const Data::SemanticOperationId &operationId) {
+                if (operationId != request.operationId || executorDeleted)
+                    return;
+                executorDeleted = true;
+                fixture.executor.reset();
+            },
+            Qt::DirectConnection);
+        SemanticRuntimeExecutor *const executor = fixture.executor.get();
+        const Data::SemanticOperationCancelResult result = executor->cancel(
+            cancelRequestFor(approved, u"cancel/api038/executor/delete-on-request-publish"),
+            api038Approver());
+        QCOMPARE(result.disposition, Data::SemanticOperationCancelDisposition::Accepted);
+        QVERIFY(executorDeleted);
+        QVERIFY(!fixture.executor);
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+        QCoreApplication::processEvents();
+        QVERIFY(fixture.provider.applyRequests.isEmpty());
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/api038/executor/cancel/delete-in-provider-callback");
+        setApi038DigitalOutputParameters(request);
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        QVERIFY(advanceExecutorToApply(fixture, *plan));
+        const Data::RuntimeOutputTransactionRequest applyRequest
+            = *fixture.provider.pendingApplyRequest;
+        const Data::RuntimeOutputTransactionState applied
+            = completedOutputState(applyRequest, Data::RuntimeOutputTransactionOutcome::Applied, 120);
+        fixture.provider.sendApplyResult({
+            applyRequest,
+            Data::RuntimeOutputTransactionOutcome::Applied,
+            true,
+            applied,
+            {},
+        });
+        QVERIFY(fixture.provider.pendingSnapshotRequest);
+        const Data::RuntimeResourceSnapshotRequest interrupted
+            = *fixture.provider.pendingSnapshotRequest;
+        const Data::SemanticOperationRecord executing = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(
+            fixture.executor
+                ->cancel(
+                    cancelRequestFor(executing, u"cancel/api038/executor/delete-in-provider-callback"),
+                    api038Approver())
+                .disposition,
+            Data::SemanticOperationCancelDisposition::Accepted);
+
+        bool callbackEntered = false;
+        const qsizetype stateRequestsBeforeRecovery = fixture.provider.stateRequests.size();
+        fixture.provider.nextProviderRequestStarted = [&fixture, &callbackEntered] {
+            callbackEntered = true;
+            fixture.executor.reset();
+        };
+        fixture.provider.sendSnapshotResult({
+            interrupted,
+            targetedSnapshot(
+                fixture.snapshot,
+                interrupted,
+                applyRequest.completeGroupWrites,
+                3,
+                applied.appliedCycle + 1,
+                applied.controllerTimestampNs + 1),
+            {},
+        });
+        QTRY_VERIFY(callbackEntered);
+        QVERIFY(!fixture.executor);
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.stateRequests.size(), stateRequestsBeforeRecovery + 1);
+        QVERIFY(fixture.provider.pendingStateRequest);
+        QVERIFY(fixture.provider.pendingStateRequest->correlationId.endsWith(
+            QStringLiteral("-recovery-state")));
+        QTest::qWait(20);
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(1));
+        QCOMPARE(fixture.provider.stateRequests.size(), stateRequestsBeforeRecovery + 1);
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/api038/executor/cancel/delete-on-terminal-publish");
+        setApi038DigitalOutputParameters(request);
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        QVERIFY(advanceExecutorToApply(fixture, *plan));
+        const Data::RuntimeOutputTransactionRequest applyRequest
+            = *fixture.provider.pendingApplyRequest;
+        const Data::SemanticOperationRecord executing = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(
+            fixture.executor
+                ->cancel(
+                    cancelRequestFor(executing, u"cancel/api038/executor/delete-on-terminal-publish"),
+                    api038Approver())
+                .disposition,
+            Data::SemanticOperationCancelDisposition::Accepted);
+
+        bool executorDeleted = false;
+        QObject::connect(
+            fixture.executor.get(),
+            &Core::SemanticRuntimeService::operationChanged,
+            fixture.executor.get(),
+            [&fixture, &request, &executorDeleted](const Data::SemanticOperationId &operationId) {
+                if (operationId != request.operationId || executorDeleted)
+                    return;
+                const auto record = fixture.executor->operation(operationId);
+                if (!record || record->state != Data::SemanticOperationState::Canceled)
+                    return;
+                executorDeleted = true;
+                fixture.executor.reset();
+            },
+            Qt::DirectConnection);
+        Data::ControllerOperationError providerRejected = uncertainOutputError();
+        providerRejected.codeName = QStringLiteral("REJECTED");
+        const Data::RuntimeOutputTransactionResult rejected{
+            applyRequest,
+            Data::RuntimeOutputTransactionOutcome::Rejected,
+            true,
+            std::nullopt,
+            providerRejected,
+        };
+        QVERIFY(rejected.isValid());
+        fixture.provider.sendApplyResult(rejected);
+        QVERIFY(executorDeleted);
+        QVERIFY(!fixture.executor);
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(1));
+        QCoreApplication::processEvents();
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(1));
+    }
+
+    {
+        SemanticExecutorFixture fixture;
+        const Utils::Result<> initialized = fixture.initialize();
+        QVERIFY_RESULT(initialized);
+        const Data::SemanticRuntimeContext context = fixture.executor->contexts().constFirst();
+        Data::SemanticOperationRequest request = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:set-outputs",
+            u"operation/api038/executor/cancel/provider-removed-during-proof");
+        setApi038DigitalOutputParameters(request);
+        const Utils::Result<SemanticActionPlan> plan
+            = buildSemanticActionPlan(*fixture.evidence, request, context);
+        QVERIFY_RESULT(plan);
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, request).state,
+            Data::SemanticOperationState::Approved);
+        Data::SemanticOperationRequest queuedRequest = api038ActionRequest(
+            context,
+            u"embedlabs:project:action:xb6:clear-outputs",
+            u"operation/api038/executor/cancel/queued-after-provider-removal");
+        QCOMPARE(
+            submitAndApprove(*fixture.executor, context, queuedRequest).state,
+            Data::SemanticOperationState::Approved);
+        QTRY_VERIFY(fixture.provider.pendingSnapshotRequest);
+        QVERIFY(advanceExecutorToApply(fixture, *plan));
+        const Data::RuntimeOutputTransactionRequest applyRequest
+            = *fixture.provider.pendingApplyRequest;
+        const Data::RuntimeOutputTransactionState applied
+            = completedOutputState(applyRequest, Data::RuntimeOutputTransactionOutcome::Applied, 120);
+        fixture.provider.sendApplyResult({
+            applyRequest,
+            Data::RuntimeOutputTransactionOutcome::Applied,
+            true,
+            applied,
+            {},
+        });
+        QVERIFY(fixture.provider.pendingSnapshotRequest);
+        const Data::RuntimeResourceSnapshotRequest interrupted
+            = *fixture.provider.pendingSnapshotRequest;
+        const Data::SemanticOperationRecord executing = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(
+            fixture.executor
+                ->cancel(
+                    cancelRequestFor(
+                        executing, u"cancel/api038/executor/provider-removed-during-proof"),
+                    api038Approver())
+                .disposition,
+            Data::SemanticOperationCancelDisposition::Accepted);
+        fixture.provider.sendSnapshotResult({
+            interrupted,
+            targetedSnapshot(
+                fixture.snapshot,
+                interrupted,
+                applyRequest.completeGroupWrites,
+                3,
+                applied.appliedCycle + 1,
+                applied.controllerTimestampNs + 1),
+            {},
+        });
+        QTRY_VERIFY(fixture.provider.pendingStateRequest);
+        const Data::RuntimeOutputTransactionStateRequest recoveryStateRequest
+            = *fixture.provider.pendingStateRequest;
+        QVERIFY(recoveryStateRequest.correlationId.endsWith(QStringLiteral("-recovery-state")));
+        fixture.registration->remove();
+        QCoreApplication::processEvents();
+        QVERIFY(fixture.executor);
+        const Data::SemanticOperationRecord blocked = *fixture.executor->operation(
+            request.operationId);
+        QCOMPARE(blocked.state, Data::SemanticOperationState::OutcomeUnknown);
+        QVERIFY(blocked.cancellation);
+        QVERIFY(blocked.cancellation->phase != Data::SemanticOperationCancellationPhase::Completed);
+        QVERIFY(!blocked.cancellation->safeHoldState);
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(1));
+        QCOMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Approved);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QCOMPARE(fixture.provider.applyRequests.size(), qsizetype(1));
+        QCOMPARE(
+            fixture.executor->operation(queuedRequest.operationId)->state,
+            Data::SemanticOperationState::Approved);
+    }
 }
 
 void EtherCATSemanticRuntimeTests::testExecutorBoundsMultiStepWaitFailures()

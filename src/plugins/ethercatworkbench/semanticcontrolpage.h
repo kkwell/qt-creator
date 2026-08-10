@@ -81,8 +81,11 @@ private:
     void requestSelectedAction();
     void submitConfirmedAction(
         const Data::SemanticOperationRequest &request, const QString &actionName);
+    void requestStop();
     void presentOperation(const Data::SemanticOperationRecord &record);
+    bool recordMatchesActiveOperation(const Data::SemanticOperationRecord &record) const;
     void updateApplyEnabled();
+    void updateStopEnabled();
 
     std::optional<Data::SemanticRuntimeContext> selectedRuntimeContext() const;
     std::optional<Data::SemanticActionRuntimeState> selectedAction() const;
@@ -104,6 +107,7 @@ private:
     QLabel *m_operationStatus;
     QLineEdit *m_requestedValue;
     QPushButton *m_apply;
+    QPushButton *m_stop;
     QTimer *m_liveRefreshTimer;
     QList<Data::SemanticActionRuntimeState> m_actionStates;
     QHash<QString, QPointer<QWidget>> m_parameterEditors;
@@ -111,6 +115,9 @@ private:
     Data::SemanticActionId m_selectedActionId;
     Data::SemanticOperationId m_activeOperationId;
     std::optional<Data::SemanticOperationState> m_activeOperationState;
+    std::optional<Data::SemanticOperationRequest> m_activeOperationRequest;
+    std::optional<Data::SemanticOperationRecord> m_activeOperationRecord;
+    std::optional<Data::SemanticOperationCancelRequest> m_activeCancelRequest;
     QList<Data::SemanticLiveRefreshSignal> m_liveRefreshTargets;
     QString m_liveRefreshControllerId;
     Data::ControllerConnectionScope m_liveRefreshScope;
@@ -132,6 +139,7 @@ private:
         = Data::SemanticOperationState::Rejected;
     bool m_hasReportedOperation = false;
     bool m_confirmationOpen = false;
+    bool m_activeOperationCancelable = false;
 };
 
 } // namespace EtherCAT::Workbench::Internal

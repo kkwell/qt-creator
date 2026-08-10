@@ -4,6 +4,7 @@
 
 #include "deviceadapter.h"
 #include "ethercatdata_global.h"
+#include "runtimeoutputtransaction.h"
 #include "runtimeresource.h"
 
 #include <QByteArray>
@@ -406,6 +407,65 @@ struct ETHERCATDATA_EXPORT SemanticOperationApproval
         = default;
 };
 
+struct ETHERCATDATA_EXPORT SemanticOperationCancelId
+{
+    QString value;
+
+    friend bool operator==(const SemanticOperationCancelId &, const SemanticOperationCancelId &)
+        = default;
+};
+
+inline size_t qHash(const SemanticOperationCancelId &id, size_t seed = 0) noexcept
+{
+    return ::qHash(id.value, seed);
+}
+
+// Cancellation binds one idempotency key and CAS revision to the exact
+// original operation intent. The authenticated actor is supplied separately
+// to SemanticRuntimeService::cancel(). No current runtime context is carried:
+// later authorization or topology drift must not block safe cleanup.
+struct ETHERCATDATA_EXPORT SemanticOperationCancelRequest
+{
+    SemanticOperationCancelId cancelId;
+    SemanticOperationId operationId;
+    quint64 expectedRevision = 0;
+    QByteArray expectedRequestDigest;
+    QByteArray expectedContextHash;
+    QString reason;
+
+    friend bool operator==(
+        const SemanticOperationCancelRequest &, const SemanticOperationCancelRequest &)
+        = default;
+};
+
+enum class SemanticOperationCancellationPhase {
+    Requested,
+    WaitingForApplyResult,
+    ProvingSafeHold,
+    Completed,
+};
+
+struct ETHERCATDATA_EXPORT SemanticOperationCancellation
+{
+    SemanticOperationCancelRequest request;
+    SemanticRuntimeActor actor;
+    QByteArray canonicalCancelDigest;
+    QDateTime requestedAt;
+    SemanticOperationCancellationPhase phase = SemanticOperationCancellationPhase::Requested;
+    // Completed without this proof means the CAS-bound cancellation occurred
+    // before any provider mutation could have been sent. Once a write may have
+    // executed, Completed requires the exact same transaction's SafeHold state.
+    std::optional<RuntimeOutputTransactionState> safeHoldState;
+    std::optional<RuntimeOutputTransactionRequest> pendingApplyRequest;
+    std::optional<RuntimeOutputTransactionRequest> priorAppliedRequest;
+    std::optional<RuntimeOutputTransactionRequest> safeHoldRequest;
+    std::optional<RuntimeOutputTransactionResult> terminalApplyResult;
+
+    friend bool operator==(
+        const SemanticOperationCancellation &, const SemanticOperationCancellation &)
+        = default;
+};
+
 struct ETHERCATDATA_EXPORT SemanticOperationSignalObservation
 {
     SemanticRuntimeTarget target;
@@ -451,8 +511,39 @@ struct ETHERCATDATA_EXPORT SemanticOperationRecord
     std::optional<ControllerOperationError> controllerError;
     quint64 appliedCycle = 0;
     quint64 appliedRuntimeGeneration = 0;
+    quint64 revision = 0;
+    std::optional<SemanticOperationCancellation> cancellation;
 
     friend bool operator==(const SemanticOperationRecord &, const SemanticOperationRecord &)
+        = default;
+};
+
+enum class SemanticOperationCancelDisposition {
+    Unsupported,
+    Accepted,
+    Replayed,
+    NotFound,
+    Stale,
+    Conflict,
+    Rejected,
+};
+
+struct ETHERCATDATA_EXPORT SemanticOperationCancelResult
+{
+    SemanticOperationCancelRequest request;
+    SemanticOperationCancelDisposition disposition = SemanticOperationCancelDisposition::Rejected;
+    std::optional<SemanticOperationRecord> record;
+    QString code;
+    QString detail;
+
+    bool accepted() const
+    {
+        return disposition == SemanticOperationCancelDisposition::Accepted
+               || disposition == SemanticOperationCancelDisposition::Replayed;
+    }
+
+    friend bool operator==(
+        const SemanticOperationCancelResult &, const SemanticOperationCancelResult &)
         = default;
 };
 
@@ -464,6 +555,8 @@ enum class SemanticAuditEventKind {
     Rejected,
     ExecutionResult,
     OutcomeReconciled,
+    CancellationRequested,
+    CancellationProgressed,
 };
 
 struct ETHERCATDATA_EXPORT SemanticRuntimeAuditEvent
@@ -484,6 +577,9 @@ struct ETHERCATDATA_EXPORT SemanticRuntimeAuditEvent
     QDateTime occurredAt;
     QString code;
     QString detail;
+    std::optional<SemanticOperationCancelId> cancelId;
+    QByteArray canonicalCancelDigest;
+    QString cancellationReason;
 
     friend bool operator==(const SemanticRuntimeAuditEvent &, const SemanticRuntimeAuditEvent &)
         = default;
@@ -517,8 +613,14 @@ Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationState)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticApprovalDecision)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationApprovalRequest)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationApproval)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationCancelId)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationCancelRequest)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationCancellationPhase)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationCancellation)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationSignalObservation)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationSnapshot)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationRecord)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationCancelDisposition)
+Q_DECLARE_METATYPE(EtherCAT::Data::SemanticOperationCancelResult)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticAuditEventKind)
 Q_DECLARE_METATYPE(EtherCAT::Data::SemanticRuntimeAuditEvent)

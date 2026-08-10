@@ -42,6 +42,7 @@ private slots:
     void testSemanticRuntimeEpochValidation();
     void testSemanticRuntimeReadValidation();
     void testSemanticRuntimeOperationContract();
+    void testSemanticRuntimeCancelContract();
     void testSemanticRuntimeServiceFailsClosed();
     void testExactEngineeringRationalContract();
     void testExactEngineeringConversionContract();

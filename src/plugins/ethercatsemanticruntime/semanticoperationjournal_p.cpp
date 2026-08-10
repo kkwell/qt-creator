@@ -33,6 +33,22 @@ QByteArray requestDigest(const Data::SemanticOperationRequest &request)
     return QCryptographicHash::hash(canonical, QCryptographicHash::Sha256);
 }
 
+QByteArray cancelDigest(const Data::SemanticOperationCancelRequest &request)
+{
+    const QByteArray canonical = Core::canonicalSemanticOperationCancelRequest(request);
+    if (canonical.isEmpty())
+        return {};
+    return QCryptographicHash::hash(canonical, QCryptographicHash::Sha256);
+}
+
+bool advanceRevision(Data::SemanticOperationRecord *record)
+{
+    if (!record || record->revision == std::numeric_limits<quint64>::max())
+        return false;
+    ++record->revision;
+    return true;
+}
+
 bool requestsAreIdempotentReplays(
     const Data::SemanticOperationRequest &existing, const Data::SemanticOperationRequest &request)
 {
@@ -78,17 +94,14 @@ bool isAllowedTransition(
     switch (previousState) {
     case State::Submitted:
         return state == State::ApprovalRequired || state == State::Rejected
-               || state == State::Canceled || state == State::Expired;
+               || state == State::Expired;
     case State::ApprovalRequired:
-        return state == State::Approved || state == State::Rejected || state == State::Canceled
-               || state == State::Expired;
+        return state == State::Approved || state == State::Rejected || state == State::Expired;
     case State::Approved:
-        return state == State::Executing || state == State::Failed || state == State::Canceled
-               || state == State::Expired;
+        return state == State::Executing || state == State::Failed || state == State::Expired;
     case State::Executing:
         return state == State::Succeeded || state == State::Failed || state == State::TimedOut
-               || state == State::OutcomeUnknown || state == State::Canceled
-               || state == State::Expired;
+               || state == State::OutcomeUnknown || state == State::Expired;
     case State::OutcomeUnknown:
         return state == State::Succeeded || state == State::Failed || state == State::Expired;
     case State::Rejected:
@@ -113,13 +126,38 @@ bool actorIsValid(const Data::SemanticRuntimeActor &actor)
     const bool kindKnown = actor.kind == Data::SemanticRuntimeActorKind::User
                            || actor.kind == Data::SemanticRuntimeActorKind::Automation
                            || actor.kind == Data::SemanticRuntimeActorKind::System;
-    return kindKnown && validText(actor.id, 128) && validText(actor.origin, 256)
+    return kindKnown && validText(actor.id, 128)
+           && (actor.displayName.isEmpty() || validText(actor.displayName, 128))
+           && validText(actor.origin, 256)
            && actor.authenticationDigest.size()
                   == QCryptographicHash::hashLength(QCryptographicHash::Sha256)
            && std::any_of(
                actor.authenticationDigest.cbegin(),
                actor.authenticationDigest.cend(),
                [](char byte) { return byte != 0; });
+}
+
+Data::SemanticRuntimeActor rejectedCancellationAuditActor(const Data::SemanticRuntimeActor &actor)
+{
+    const auto textIsSafe = [](const QString &text, qsizetype maximumSize, bool allowEmpty) {
+        return (allowEmpty || !text.isEmpty()) && text == text.trimmed()
+               && text.size() <= maximumSize
+               && std::none_of(text.cbegin(), text.cend(), [](QChar character) {
+                      return character.category() == QChar::Other_Control;
+                  });
+    };
+    if (actorIsValid(actor) && textIsSafe(actor.displayName, 128, true))
+        return actor;
+
+    Data::SemanticRuntimeActor rejectedActor;
+    rejectedActor.id = QStringLiteral("invalid-cancel-actor");
+    rejectedActor.displayName = QStringLiteral("Rejected cancellation actor");
+    rejectedActor.kind = Data::SemanticRuntimeActorKind::System;
+    rejectedActor.origin = QStringLiteral("semantic-operation-journal");
+    rejectedActor.authenticationDigest = QCryptographicHash::hash(
+        QByteArrayLiteral("embed-labs.semantic-operation.invalid-cancel-actor.v1"),
+        QCryptographicHash::Sha256);
+    return rejectedActor;
 }
 
 bool snapshotIsValid(const Data::SemanticOperationSnapshot &snapshot)
@@ -148,6 +186,67 @@ bool stateUpdateMatches(
 {
     return record.state == update.state && record.resultCode == update.resultCode
            && record.detail == update.detail && record.controllerError == update.controllerError
+           && record.appliedCycle == update.appliedCycle
+           && record.appliedRuntimeGeneration == update.appliedRuntimeGeneration;
+}
+
+bool cancellationPhaseTransitionIsAllowed(
+    Data::SemanticOperationCancellationPhase from, Data::SemanticOperationCancellationPhase to)
+{
+    using Phase = Data::SemanticOperationCancellationPhase;
+    switch (from) {
+    case Phase::Requested:
+        return to == Phase::WaitingForApplyResult || to == Phase::ProvingSafeHold
+               || to == Phase::Completed;
+    case Phase::WaitingForApplyResult:
+        return to == Phase::ProvingSafeHold || to == Phase::Completed;
+    case Phase::ProvingSafeHold:
+        return to == Phase::Completed;
+    case Phase::Completed:
+        return false;
+    }
+    return false;
+}
+
+bool cancellationUpdateMatches(
+    const Data::SemanticOperationRecord &record,
+    const SemanticOperationJournalCancellationUpdate &update)
+{
+    const auto safeHoldState = update.safeHoldState
+                                   ? update.safeHoldState
+                                   : (record.cancellation ? record.cancellation->safeHoldState
+                                                          : std::nullopt);
+    const auto pendingApplyRequest = update.pendingApplyRequest
+                                         ? update.pendingApplyRequest
+                                         : (record.cancellation
+                                                ? record.cancellation->pendingApplyRequest
+                                                : std::nullopt);
+    const auto priorAppliedRequest = update.priorAppliedRequest
+                                         ? update.priorAppliedRequest
+                                         : (record.cancellation
+                                                ? record.cancellation->priorAppliedRequest
+                                                : std::nullopt);
+    const auto safeHoldRequest = update.safeHoldRequest
+                                     ? update.safeHoldRequest
+                                     : (record.cancellation ? record.cancellation->safeHoldRequest
+                                                            : std::nullopt);
+    const auto terminalApplyResult = update.terminalApplyResult
+                                         ? update.terminalApplyResult
+                                         : (record.cancellation
+                                                ? record.cancellation->terminalApplyResult
+                                                : std::nullopt);
+    if (!record.cancellation || record.cancellation->phase != update.phase
+        || record.cancellation->safeHoldState != safeHoldState
+        || record.cancellation->pendingApplyRequest != pendingApplyRequest
+        || record.cancellation->priorAppliedRequest != priorAppliedRequest
+        || record.cancellation->safeHoldRequest != safeHoldRequest
+        || record.cancellation->terminalApplyResult != terminalApplyResult) {
+        return false;
+    }
+    if (update.phase != Data::SemanticOperationCancellationPhase::Completed)
+        return record.state == update.expectedState;
+    return record.state == Data::SemanticOperationState::Canceled
+           && record.resultCode == update.resultCode && record.detail == update.detail
            && record.appliedCycle == update.appliedCycle
            && record.appliedRuntimeGeneration == update.appliedRuntimeGeneration;
 }
@@ -197,6 +296,7 @@ SemanticOperationJournalResult SemanticOperationJournal::submit(
     record.canonicalRequestDigest = requestDigest(request);
     record.createdAt = now;
     record.updatedAt = now;
+    record.revision = 1;
 
     if (!validation.accepted()) {
         record.state = Data::SemanticOperationState::Rejected;
@@ -274,6 +374,7 @@ SemanticOperationJournalResult SemanticOperationJournal::approve(
                 Core::SemanticRuntimeValidationError::ApprovalActorInvalid,
                 QStringLiteral("Semantic operation approval actor identity is invalid.")));
     }
+    const QDateTime now = operationTime(occurredAt);
 
     const auto existingApproval = std::find_if(
         found->approvals.cbegin(),
@@ -295,13 +396,26 @@ SemanticOperationJournalResult SemanticOperationJournal::approve(
                 actor,
                 QStringLiteral("approval-replay-rejected"),
                 replayValidation.detail,
-                operationTime(occurredAt));
+                now);
             return result(Disposition::Rejected, *found, replayValidation);
         }
         return result(Disposition::Replayed, *found);
     }
+    if (found->cancellation) {
+        const Core::SemanticRuntimeValidation validation = rejection(
+            Core::SemanticRuntimeValidationError::InvalidRequest,
+            QStringLiteral("Cancellation already owns the semantic operation outcome."));
+        appendAudit(
+            *found,
+            Data::SemanticAuditEventKind::Rejected,
+            found->state,
+            actor,
+            QStringLiteral("approval-cancellation-pending"),
+            validation.detail,
+            now);
+        return result(Disposition::Conflict, *found, validation);
+    }
 
-    const QDateTime now = operationTime(occurredAt);
     const Core::SemanticRuntimeValidation validation
         = Core::validateSemanticOperationApproval(approval, actor, *found, context);
     if (!validation.accepted()) {
@@ -316,6 +430,14 @@ SemanticOperationJournalResult SemanticOperationJournal::approve(
         return result(Disposition::Rejected, *found, validation);
     }
     const Data::SemanticOperationState previousState = found->state;
+    if (!advanceRevision(&*found)) {
+        return result(
+            Disposition::Rejected,
+            *found,
+            rejection(
+                Core::SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic operation revision is exhausted.")));
+    }
     found->approvals.append({approval, actor, now});
     if (approval.decision == Data::SemanticApprovalDecision::Approved) {
         found->state = Data::SemanticOperationState::Approved;
@@ -341,6 +463,414 @@ SemanticOperationJournalResult SemanticOperationJournal::approve(
     return result(Disposition::Updated, *found);
 }
 
+SemanticOperationJournalResult SemanticOperationJournal::cancel(
+    const Data::SemanticOperationCancelRequest &request,
+    const Data::SemanticRuntimeActor &actor,
+    const QDateTime &occurredAt)
+{
+    const QDateTime now = operationTime(occurredAt);
+    if (!Core::isCanonicalSemanticOperationCancelId(request.cancelId)) {
+        return result(
+            Disposition::Rejected,
+            std::nullopt,
+            rejection(
+                Core::SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic operation cancellation ID is invalid.")));
+    }
+
+    const QByteArray canonicalDigest = cancelDigest(request);
+    const Data::SemanticRuntimeActor rejectedAuditActor = rejectedCancellationAuditActor(actor);
+    const QString rejectedAuditReason = canonicalDigest.isEmpty() ? QString() : request.reason;
+    const auto rejectedAttempt =
+        [this, &request, &rejectedAuditActor, &rejectedAuditReason, &canonicalDigest, &now](
+            Disposition disposition,
+            const Data::SemanticOperationRecord &record,
+            const Core::SemanticRuntimeValidation &validation,
+            const QString &code) {
+            appendAudit(
+                record,
+                Data::SemanticAuditEventKind::Rejected,
+                record.state,
+                rejectedAuditActor,
+                code,
+                validation.detail,
+                now,
+                record.currentStep,
+                request.cancelId,
+                canonicalDigest,
+                rejectedAuditReason);
+            return result(disposition, record, validation);
+        };
+    const auto boundOperation = m_cancellationsById.constFind(request.cancelId);
+    if (boundOperation != m_cancellationsById.cend()) {
+        const auto boundRecord = m_operations.constFind(*boundOperation);
+        if (boundRecord != m_operations.cend() && boundRecord->cancellation
+            && *boundOperation == request.operationId && !canonicalDigest.isEmpty()
+            && boundRecord->cancellation->canonicalCancelDigest == canonicalDigest
+            && boundRecord->cancellation->request == request
+            && boundRecord->cancellation->actor == actor) {
+            return result(Disposition::Replayed, *boundRecord);
+        }
+        const std::optional<Data::SemanticOperationRecord> conflictRecord
+            = boundRecord != m_operations.cend()
+                  ? std::optional<Data::SemanticOperationRecord>(*boundRecord)
+                  : std::nullopt;
+        const Core::SemanticRuntimeValidation validation = rejection(
+            Core::SemanticRuntimeValidationError::InvalidRequest,
+            QStringLiteral("Cancellation ID was already used for another request or actor."));
+        if (conflictRecord) {
+            return rejectedAttempt(
+                Disposition::Conflict,
+                *conflictRecord,
+                validation,
+                QStringLiteral("semantic-operation-cancel-id-conflict"));
+        }
+        return result(Disposition::Conflict, std::nullopt, validation);
+    }
+
+    auto found = m_operations.find(request.operationId);
+    if (found == m_operations.end()) {
+        return result(
+            Disposition::NotFound,
+            std::nullopt,
+            rejection(
+                Core::SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic operation was not found.")));
+    }
+    if (found->cancellation) {
+        if (found->cancellation->request.cancelId == request.cancelId && !canonicalDigest.isEmpty()
+            && found->cancellation->canonicalCancelDigest == canonicalDigest
+            && found->cancellation->request == request && found->cancellation->actor == actor) {
+            m_cancellationsById.insert(request.cancelId, request.operationId);
+            return result(Disposition::Replayed, *found);
+        }
+        if (request.expectedRevision != found->revision) {
+            const Core::SemanticRuntimeValidation validation = rejection(
+                Core::SemanticRuntimeValidationError::CancelRevisionMismatch,
+                QStringLiteral("Semantic operation revision changed before cancellation."));
+            return rejectedAttempt(
+                Disposition::Stale,
+                *found,
+                validation,
+                QStringLiteral("semantic-operation-cancel-stale"));
+        }
+        const Core::SemanticRuntimeValidation validation = rejection(
+            Core::SemanticRuntimeValidationError::InvalidRequest,
+            QStringLiteral("Semantic operation already has another cancellation request."));
+        return rejectedAttempt(
+            Disposition::Conflict,
+            *found,
+            validation,
+            QStringLiteral("semantic-operation-cancel-conflict"));
+    }
+    if (!actorIsValid(actor) || actor.kind != Data::SemanticRuntimeActorKind::User) {
+        const Core::SemanticRuntimeValidation validation = rejection(
+            Core::SemanticRuntimeValidationError::CancelActorInvalid,
+            QStringLiteral("An authenticated local user must cancel the semantic operation."));
+        return rejectedAttempt(
+            Disposition::Rejected,
+            *found,
+            validation,
+            QStringLiteral("semantic-operation-cancel-actor-rejected"));
+    }
+    if (request.expectedRevision != found->revision) {
+        const Core::SemanticRuntimeValidation validation = rejection(
+            Core::SemanticRuntimeValidationError::CancelRevisionMismatch,
+            QStringLiteral("Semantic operation revision changed before cancellation."));
+        return rejectedAttempt(
+            Disposition::Stale,
+            *found,
+            validation,
+            QStringLiteral("semantic-operation-cancel-stale"));
+    }
+    if (found->request.kind != Data::SemanticOperationKind::InvokeAction
+        || found->request.target.kind != Data::SemanticRuntimeTargetKind::Action
+        || isTerminalState(found->state)
+        || (found->state != Data::SemanticOperationState::ApprovalRequired
+            && found->state != Data::SemanticOperationState::Approved
+            && found->state != Data::SemanticOperationState::Executing
+            && found->state != Data::SemanticOperationState::OutcomeUnknown)) {
+        const Core::SemanticRuntimeValidation validation = rejection(
+            Core::SemanticRuntimeValidationError::InvalidRequest,
+            QStringLiteral("Semantic operation cannot be canceled in its current state."));
+        return rejectedAttempt(
+            Disposition::Unsupported,
+            *found,
+            validation,
+            QStringLiteral("semantic-operation-cancel-unsupported"));
+    }
+
+    const Core::SemanticRuntimeValidation validation
+        = Core::validateSemanticOperationCancelRequest(request, actor, *found);
+    if (!validation.accepted()) {
+        const Disposition disposition
+            = validation.error == Core::SemanticRuntimeValidationError::CancelRevisionMismatch
+                  ? Disposition::Stale
+                  : (validation.error == Core::SemanticRuntimeValidationError::CancelBindingMismatch
+                         ? Disposition::Conflict
+                         : Disposition::Rejected);
+        return rejectedAttempt(
+            disposition,
+            *found,
+            validation,
+            disposition == Disposition::Conflict
+                ? QStringLiteral("semantic-operation-cancel-binding-conflict")
+                : QStringLiteral("semantic-operation-cancel-rejected"));
+    }
+    if (canonicalDigest.isEmpty() || !advanceRevision(&*found)) {
+        const Core::SemanticRuntimeValidation validation = rejection(
+            Core::SemanticRuntimeValidationError::InvalidRequest,
+            QStringLiteral("Semantic operation cancellation evidence is unavailable."));
+        return rejectedAttempt(
+            Disposition::Rejected,
+            *found,
+            validation,
+            QStringLiteral("semantic-operation-cancel-evidence-rejected"));
+    }
+
+    found->cancellation = Data::SemanticOperationCancellation{
+        request,
+        actor,
+        canonicalDigest,
+        now,
+        Data::SemanticOperationCancellationPhase::Requested,
+        std::nullopt,
+        std::nullopt,
+        std::nullopt,
+        std::nullopt,
+        std::nullopt,
+    };
+    found->updatedAt = now;
+    m_cancellationsById.insert(request.cancelId, request.operationId);
+    appendAudit(
+        *found,
+        Data::SemanticAuditEventKind::CancellationRequested,
+        found->state,
+        actor,
+        QStringLiteral("semantic-operation-cancel-requested"),
+        request.reason,
+        now,
+        found->currentStep);
+    return result(Disposition::Updated, *found);
+}
+
+SemanticOperationJournalResult SemanticOperationJournal::updateCancellation(
+    const Data::SemanticOperationId &operationId,
+    const SemanticOperationJournalCancellationUpdate &update,
+    const QDateTime &occurredAt)
+{
+    auto found = m_operations.find(operationId);
+    if (found == m_operations.end()) {
+        return result(
+            Disposition::NotFound,
+            std::nullopt,
+            rejection(
+                Core::SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic operation was not found.")));
+    }
+    if (!actorIsValid(update.actor) || !found->cancellation
+        || update.actor != found->cancellation->actor) {
+        return result(
+            Disposition::Rejected,
+            *found,
+            rejection(
+                Core::SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic operation cancellation evidence is incomplete.")));
+    }
+    const auto replacesStoredEvidence = [](const auto &stored, const auto &supplied) {
+        return stored && supplied && stored != supplied;
+    };
+    if (replacesStoredEvidence(found->cancellation->safeHoldState, update.safeHoldState)
+        || replacesStoredEvidence(found->cancellation->pendingApplyRequest, update.pendingApplyRequest)
+        || replacesStoredEvidence(found->cancellation->priorAppliedRequest, update.priorAppliedRequest)
+        || replacesStoredEvidence(found->cancellation->safeHoldRequest, update.safeHoldRequest)
+        || replacesStoredEvidence(
+            found->cancellation->terminalApplyResult, update.terminalApplyResult)) {
+        return result(
+            Disposition::Conflict,
+            *found,
+            rejection(
+                Core::SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic operation cancellation evidence changed identity.")));
+    }
+    if (cancellationUpdateMatches(*found, update))
+        return result(Disposition::Replayed, *found);
+    if (found->state != update.expectedState || found->cancellation->phase != update.expectedPhase) {
+        return result(
+            Disposition::Conflict,
+            *found,
+            rejection(
+                Core::SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic operation changed before cancellation progressed.")));
+    }
+    if (!cancellationPhaseTransitionIsAllowed(update.expectedPhase, update.phase)) {
+        return result(
+            Disposition::Rejected,
+            *found,
+            rejection(
+                Core::SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic operation cancellation phase is invalid.")));
+    }
+
+    using Phase = Data::SemanticOperationCancellationPhase;
+    const bool completed = update.phase == Phase::Completed;
+    const std::optional<Data::RuntimeOutputTransactionState> safeHoldState
+        = update.safeHoldState ? update.safeHoldState : found->cancellation->safeHoldState;
+    const std::optional<Data::RuntimeOutputTransactionRequest> pendingApplyRequest
+        = update.pendingApplyRequest ? update.pendingApplyRequest
+                                     : found->cancellation->pendingApplyRequest;
+    const std::optional<Data::RuntimeOutputTransactionRequest> priorAppliedRequest
+        = update.priorAppliedRequest ? update.priorAppliedRequest
+                                     : found->cancellation->priorAppliedRequest;
+    const std::optional<Data::RuntimeOutputTransactionRequest> safeHoldRequest
+        = update.safeHoldRequest ? update.safeHoldRequest : found->cancellation->safeHoldRequest;
+    const bool pendingApplyRequestValid = pendingApplyRequest && pendingApplyRequest->isValid();
+    const bool priorAppliedRequestValid = priorAppliedRequest && priorAppliedRequest->isValid();
+    const bool safeHoldRequestValid = safeHoldRequest && safeHoldRequest->isValid()
+                                      && safeHoldRequest->expectedRecoveryPolicy
+                                             == Data::RuntimeOutputRecoveryPolicy::HoldSafe;
+    const std::optional<Data::RuntimeOutputTransactionResult> terminalApplyResult
+        = update.terminalApplyResult ? update.terminalApplyResult
+                                     : found->cancellation->terminalApplyResult;
+    const bool safeHoldValid
+        = safeHoldState && safeHoldRequestValid && safeHoldState->isValid()
+          && safeHoldState->state == Data::RuntimeOutputState::SafeHold
+          && safeHoldState->resultFlags.testFlag(Data::RuntimeOutputTransactionResultFlag::SafeHold)
+          && safeHoldState->operationId
+          && *safeHoldState->operationId == safeHoldRequest->operationId
+          && safeHoldState->scope == safeHoldRequest->scope
+          && safeHoldState->sessionGeneration == safeHoldRequest->sessionGeneration
+          && safeHoldState->epoch == safeHoldRequest->expectedEpoch
+          && safeHoldState->mappingDigest == safeHoldRequest->expectedMappingDigest
+          && safeHoldState->consistencyGroupId == safeHoldRequest->consistencyGroupId
+          && safeHoldState->recoveryPolicy == safeHoldRequest->expectedRecoveryPolicy
+          && safeHoldState->ttlCycles == safeHoldRequest->ttlCycles
+          && safeHoldState->valueCount == quint16(safeHoldRequest->completeGroupWrites.size())
+          && safeHoldState->outputGeneration == safeHoldRequest->expectedOutputGeneration + 2
+          && safeHoldState->controllerTimestampNs;
+    const bool terminalRejectionValid = terminalApplyResult && pendingApplyRequestValid
+                                        && terminalApplyResult->isValid()
+                                        && terminalApplyResult->request == *pendingApplyRequest
+                                        && terminalApplyResult->outcome
+                                               == Data::RuntimeOutputTransactionOutcome::Rejected
+                                        && terminalApplyResult->finalResponseObserved
+                                        && !terminalApplyResult->state;
+    const bool provingFromPendingApply = !completed && update.phase == Phase::ProvingSafeHold
+                                         && update.expectedPhase == Phase::WaitingForApplyResult
+                                         && safeHoldRequestValid && pendingApplyRequestValid
+                                         && *safeHoldRequest == *pendingApplyRequest
+                                         && !terminalApplyResult;
+    const bool provingPriorAfterRejectedApply = !completed && update.phase == Phase::ProvingSafeHold
+                                                && update.expectedPhase
+                                                       == Phase::WaitingForApplyResult
+                                                && safeHoldRequestValid && priorAppliedRequestValid
+                                                && *safeHoldRequest == *priorAppliedRequest
+                                                && pendingApplyRequestValid
+                                                && terminalRejectionValid;
+    const bool provingKnownAppliedRequest = !completed && update.phase == Phase::ProvingSafeHold
+                                            && update.expectedPhase == Phase::Requested
+                                            && safeHoldRequestValid && priorAppliedRequestValid
+                                            && *safeHoldRequest == *priorAppliedRequest
+                                            && !pendingApplyRequest && !terminalApplyResult;
+    // This process-local journal is called only by the main-thread executor.
+    // Executing is accepted without controller proof only after that executor
+    // has established its private mutationMayHaveExecuted flag is still false.
+    // The flag is set before every provider mutation virtual call.
+    const bool preDispatchCompletionAllowed
+        = completed && !safeHoldState && update.expectedPhase == Phase::Requested
+          && !pendingApplyRequest && !priorAppliedRequest && !safeHoldRequest
+          && !terminalApplyResult
+          && (found->state == Data::SemanticOperationState::ApprovalRequired
+              || found->state == Data::SemanticOperationState::Approved
+              || found->state == Data::SemanticOperationState::Executing);
+    const bool rejectedApplyCompletionAllowed = completed && !safeHoldState
+                                                && terminalRejectionValid
+                                                && update.expectedPhase
+                                                       == Phase::WaitingForApplyResult
+                                                && !priorAppliedRequest && !safeHoldRequest;
+    const bool safeHoldCompletionAllowed
+        = completed && safeHoldValid && safeHoldRequest
+          && ((pendingApplyRequest && *safeHoldRequest == *pendingApplyRequest
+               && !terminalApplyResult)
+              || (priorAppliedRequest && *safeHoldRequest == *priorAppliedRequest
+                  && ((!pendingApplyRequest && !terminalApplyResult) || terminalRejectionValid)));
+    const bool completionTextValid = !update.resultCode.isEmpty()
+                                     && update.resultCode == update.resultCode.trimmed()
+                                     && update.resultCode.size() <= 128 && !update.detail.isEmpty()
+                                     && update.detail == update.detail.trimmed()
+                                     && update.detail.size() <= 240;
+    const bool completionNumbersValid
+        = !completed
+          || (safeHoldValid ? (update.appliedCycle == safeHoldState->appliedCycle
+                               && update.appliedRuntimeGeneration
+                                      == safeHoldRequest->expectedEpoch.runtimeGeneration)
+                            : (!update.appliedCycle && !update.appliedRuntimeGeneration));
+    if ((!completed && safeHoldState)
+        || (update.phase == Phase::WaitingForApplyResult && !pendingApplyRequestValid)
+        || (update.priorAppliedRequest && !priorAppliedRequestValid)
+        || (update.phase == Phase::ProvingSafeHold && !provingFromPendingApply
+            && !provingPriorAfterRejectedApply && !provingKnownAppliedRequest)
+        || (update.safeHoldRequest && !safeHoldRequestValid)
+        || (update.phase != Phase::WaitingForApplyResult && !completed && update.pendingApplyRequest)
+        || (update.phase != Phase::WaitingForApplyResult && update.phase != Phase::ProvingSafeHold
+            && !completed && update.priorAppliedRequest)
+        || (update.phase != Phase::ProvingSafeHold && update.phase != Phase::WaitingForApplyResult
+            && !completed && update.safeHoldRequest)
+        || (!completed && terminalApplyResult && !provingPriorAfterRejectedApply)
+        || (completed && safeHoldState && !safeHoldRequestValid)
+        || (completed && safeHoldState.has_value() != safeHoldValid)
+        || (completed && !preDispatchCompletionAllowed && !rejectedApplyCompletionAllowed
+            && !safeHoldCompletionAllowed)
+        || (completed && (!completionTextValid || !completionNumbersValid))
+        || (!completed && (!update.resultCode.isEmpty() || !update.detail.isEmpty()))) {
+        return result(
+            Disposition::Rejected,
+            *found,
+            rejection(
+                Core::SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic operation cancellation proof is invalid.")));
+    }
+    if (!advanceRevision(&*found)) {
+        return result(
+            Disposition::Rejected,
+            *found,
+            rejection(
+                Core::SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic operation revision is exhausted.")));
+    }
+
+    const Data::SemanticOperationState previousState = found->state;
+    found->cancellation->phase = update.phase;
+    found->cancellation->safeHoldState = safeHoldState;
+    if (update.pendingApplyRequest) {
+        found->cancellation->pendingApplyRequest = update.pendingApplyRequest;
+    }
+    if (update.priorAppliedRequest)
+        found->cancellation->priorAppliedRequest = update.priorAppliedRequest;
+    if (update.safeHoldRequest)
+        found->cancellation->safeHoldRequest = update.safeHoldRequest;
+    if (terminalApplyResult)
+        found->cancellation->terminalApplyResult = terminalApplyResult;
+    found->updatedAt = operationTime(occurredAt);
+    if (completed) {
+        found->state = Data::SemanticOperationState::Canceled;
+        found->resultCode = update.resultCode;
+        found->detail = update.detail;
+        found->appliedCycle = update.appliedCycle;
+        found->appliedRuntimeGeneration = update.appliedRuntimeGeneration;
+    }
+    appendAudit(
+        *found,
+        Data::SemanticAuditEventKind::CancellationProgressed,
+        previousState,
+        update.actor,
+        completed ? update.resultCode : QStringLiteral("semantic-operation-cancel-progressed"),
+        completed ? update.detail : found->cancellation->request.reason,
+        found->updatedAt,
+        found->currentStep);
+    return result(Disposition::Updated, *found);
+}
+
 SemanticOperationJournalResult SemanticOperationJournal::transition(
     const Data::SemanticOperationId &operationId,
     const SemanticOperationJournalStateUpdate &update,
@@ -363,10 +893,33 @@ SemanticOperationJournalResult SemanticOperationJournal::transition(
                 Core::SemanticRuntimeValidationError::InvalidRequest,
                 QStringLiteral("Semantic operation transition actor identity is invalid.")));
     }
+    if (update.state == Data::SemanticOperationState::Approved
+        || update.state == Data::SemanticOperationState::Canceled) {
+        const Core::SemanticRuntimeValidation validation = rejection(
+            Core::SemanticRuntimeValidationError::InvalidRequest,
+            QStringLiteral("Semantic operation state transition is privileged."));
+        return result(Disposition::Rejected, *found, validation);
+    }
     if (stateUpdateMatches(*found, update))
         return result(Disposition::Replayed, *found);
 
     const QDateTime now = operationTime(occurredAt);
+    if (found->cancellation
+        && found->cancellation->phase != Data::SemanticOperationCancellationPhase::Completed
+        && update.state != Data::SemanticOperationState::OutcomeUnknown) {
+        const Core::SemanticRuntimeValidation validation = rejection(
+            Core::SemanticRuntimeValidationError::InvalidRequest,
+            QStringLiteral("Cancellation owns the semantic operation terminal transition."));
+        appendAudit(
+            *found,
+            Data::SemanticAuditEventKind::Rejected,
+            found->state,
+            update.actor,
+            QStringLiteral("operation-cancellation-pending"),
+            validation.detail,
+            now);
+        return result(Disposition::Conflict, *found, validation);
+    }
     if (found->state != update.expectedState) {
         const Core::SemanticRuntimeValidation validation = rejection(
             Core::SemanticRuntimeValidationError::InvalidRequest,
@@ -384,8 +937,7 @@ SemanticOperationJournalResult SemanticOperationJournal::transition(
     // Approval is a privileged journal mutation. It can only be produced by
     // approve(), after the shared Core validator authenticates a human user and
     // revalidates the challenge against the current runtime context.
-    if (update.state == Data::SemanticOperationState::Approved
-        || !isAllowedTransition(found->state, update.state)) {
+    if (!isAllowedTransition(found->state, update.state)) {
         const Core::SemanticRuntimeValidation validation = rejection(
             Core::SemanticRuntimeValidationError::InvalidRequest,
             QStringLiteral("Semantic operation state transition is not allowed."));
@@ -421,6 +973,14 @@ SemanticOperationJournalResult SemanticOperationJournal::transition(
     }
 
     const Data::SemanticOperationState previousState = found->state;
+    if (!advanceRevision(&*found)) {
+        return result(
+            Disposition::Rejected,
+            *found,
+            rejection(
+                Core::SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic operation revision is exhausted.")));
+    }
     found->state = update.state;
     found->resultCode = update.resultCode;
     found->detail = update.detail;
@@ -500,6 +1060,14 @@ SemanticOperationJournalResult SemanticOperationJournal::recordStep(
         return result(Disposition::Rejected, *found, validation);
     }
 
+    if (!advanceRevision(&*found)) {
+        return result(
+            Disposition::Rejected,
+            *found,
+            rejection(
+                Core::SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic operation revision is exhausted.")));
+    }
     found->currentStep = update.stepIndex;
     found->totalSteps = update.totalSteps;
     found->failedStep = failedStep;
@@ -572,6 +1140,14 @@ SemanticOperationJournalResult SemanticOperationJournal::recordBeforeSnapshot(
         return result(Disposition::Rejected, *found, validation);
     }
 
+    if (!advanceRevision(&*found)) {
+        return result(
+            Disposition::Rejected,
+            *found,
+            rejection(
+                Core::SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic operation revision is exhausted.")));
+    }
     found->beforeSnapshot = snapshot;
     found->updatedAt = now;
     appendAudit(
@@ -638,6 +1214,14 @@ SemanticOperationJournalResult SemanticOperationJournal::recordAfterSnapshot(
         return result(Disposition::Rejected, *found, validation);
     }
 
+    if (!advanceRevision(&*found)) {
+        return result(
+            Disposition::Rejected,
+            *found,
+            rejection(
+                Core::SemanticRuntimeValidationError::InvalidRequest,
+                QStringLiteral("Semantic operation revision is exhausted.")));
+    }
     found->afterSnapshot = snapshot;
     found->updatedAt = now;
     appendAudit(
@@ -723,7 +1307,10 @@ void SemanticOperationJournal::appendAudit(
     const QString &code,
     const QString &detail,
     const QDateTime &occurredAt,
-    quint32 stepIndex)
+    quint32 stepIndex,
+    const std::optional<Data::SemanticOperationCancelId> &attemptedCancelId,
+    const QByteArray &attemptedCancelDigest,
+    const QString &attemptedCancellationReason)
 {
     const QString &controllerId = record.request.target.controllerId;
     if (controllerId.isEmpty())
@@ -752,6 +1339,15 @@ void SemanticOperationJournal::appendAudit(
     event.occurredAt = occurredAt;
     event.code = code;
     event.detail = detail;
+    if (attemptedCancelId) {
+        event.cancelId = attemptedCancelId;
+        event.canonicalCancelDigest = attemptedCancelDigest;
+        event.cancellationReason = attemptedCancellationReason;
+    } else if (record.cancellation) {
+        event.cancelId = record.cancellation->request.cancelId;
+        event.canonicalCancelDigest = record.cancellation->canonicalCancelDigest;
+        event.cancellationReason = record.cancellation->request.reason;
+    }
     m_auditEvents[controllerId].append(event);
 }
 

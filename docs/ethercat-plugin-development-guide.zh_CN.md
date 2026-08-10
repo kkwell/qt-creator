@@ -506,10 +506,21 @@ digest。
 结果保留同一 apply request 和步骤输出 `OperationId`，权威 reconcile 前不允许换请求或
 执行后续变更。
 
-`SemanticRuntimeService` 当前没有显式动作 cancel，也没有输出 TTL refresh/hold-to-run
-执行接口；现有 `requestLiveRefresh` 只刷新输入语义信号，不能续期输出覆盖。生产 SV630N
-动作仍是 disabled/unqualified；本轮有界多步能力只有 unit/loopback 证据，不代表已经完成
-正反转或任何真机运动。
+`SemanticRuntimeService` 现在仅为已有、已签名且 runtime state 与 definition 的
+`holdToRun` 均为 `false` 的 `InvokeAction` 提供显式 cancel；输出 TTL refresh 和
+hold-to-run 执行接口仍未开放。cancel 使用独立幂等 ID 和 CAS revision，精确绑定原请求
+的 operation ID、canonical request digest、原始 expected-context hash、已认证本机 User 与
+有界 reason；stale CAS revision 直接拒绝。只有在 executor 进入 Provider mutation virtual
+调用之前，取消才可按零写入终止；一旦进入该调用，即使调用返回错误，也必须视为写入可能已生效。
+此后只有在不存在更早已生效事务时，同一 pending request 的精确 terminal rejection 才足以
+终止为 `Canceled`。若已有 prior 事务，则必须同时保留 pending rejection，并以同一输出
+`OperationId` 精确证明 prior 的最后一笔 `HoldSafe` 事务已进入 `SafeHold`；若 pending
+request 已生效，则必须证明它自身精确进入 `SafeHold`。apply 结果未知时保留同一请求并阻塞
+队列等待 reconcile；后续 adapter authorization 或 runtime context 漂移不阻断这条既有清理
+路径。`ReleaseHold` 继续拒绝，写后 `ReturnTask`/Idle 也不是 `SafeHold` 证明。Workbench 的
+Stop 不再弹第二次确认，但在 operation record 出现所需终态证明前只显示请求已记录、等待证明。
+现有 `requestLiveRefresh` 仍只刷新输入语义信号，不能续期输出覆盖。生产 SV630N 动作仍是
+disabled/unqualified；本轮能力只有 unit/loopback 证据，不代表已经完成正反转或任何真机运动。
 
 ### 6.4 自动运行和停止
 
@@ -730,8 +741,9 @@ SV630N 速度动作仍因实际编码器分辨率、0x6091 电子齿轮换算、
    `WorkbenchController` 逐步迁移到无 UI 的 `EngineeringOperationCoordinator`。
 3. 建立 UI、Gateway、SemanticRuntime、Compiler 和 Activation 共用的持久 Operation
    journal 与审计索引。
-4. 冻结厂家无关的 hold-to-run、同一输出事务 TTL refresh 和显式 cancel 合同；写入可能
-   生效后的取消仍必须经过精确 `SafeHold` 证明，不能用输入 live refresh 冒充输出续期。
+4. 在现有显式 cancel 的 CAS、幂等、零写入和精确 `SafeHold` 证明基础上，继续冻结并实现
+   厂家无关的 hold-to-run 与同一输出事务 TTL refresh；不能用输入 live refresh 冒充输出
+   续期，也不能用 `ReturnTask`/Idle 冒充取消后的安全停止证明。
 5. 将 Scan/Diagnostics 的菜单贡献点移到 Core 公共契约，移除它们对 Workbench 的反向
    编译依赖。
 

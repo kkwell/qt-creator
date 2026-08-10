@@ -498,8 +498,7 @@ static bool actionIsOperable(
     const Data::SemanticActionRuntimeState &action,
     const Data::SemanticRuntimeContext &context)
 {
-    if (action.target.controllerId != context.controllerId
-        || action.target.scope != context.scope
+    if (action.target.controllerId != context.controllerId || action.target.scope != context.scope
         || action.target.kind != Data::SemanticRuntimeTargetKind::Action
         || action.target.deviceId.isNull() || !action.target.signalId.value.isEmpty()
         || action.target.actionId.value.isEmpty() || action.definition.id != action.target.actionId
@@ -507,12 +506,12 @@ static bool actionIsOperable(
         || action.actionDefinitionId.isEmpty()
         || !Core::isCanonicalSha256Digest(action.actionDefinitionDigest)
         || !Core::isCanonicalSha256Digest(context.actionDefinitionsDigest)
-        || context.cyclePeriodNs == 0 || !action.definition.enabled
+        || context.cyclePeriodNs == 0 || !action.definition.enabled || action.definition.holdToRun
         || action.qualification != Data::SemanticActionQualification::Qualified
         || !action.disabledReason.isEmpty()
         || action.availability != Data::SemanticActionAvailability::Ready
-        || !action.requiresApproval || action.bindings.isEmpty()
-        || action.maximumTtlCycles == 0 || action.maximumTtlCycles > 65535
+        || !action.requiresApproval || action.bindings.isEmpty() || action.maximumTtlCycles == 0
+        || action.maximumTtlCycles > 65535
         || std::any_of(
             action.parameters.cbegin(),
             action.parameters.cend(),
@@ -636,10 +635,11 @@ static QString operationStateText(Data::SemanticOperationState state)
         return Tr::tr("Completed.");
     case State::OutcomeUnknown:
         return Tr::tr("Result unknown.");
+    case State::Canceled:
+        return Tr::tr("Stopped safely.");
     case State::Rejected:
     case State::Failed:
     case State::TimedOut:
-    case State::Canceled:
     case State::Expired:
         return Tr::tr("Failed.");
     }
@@ -666,6 +666,13 @@ static QString operationResultIdentity(const Data::SemanticOperationRecord &reco
     return identities.join(QStringLiteral(", "));
 }
 
+static bool operationCanBeStopped(Data::SemanticOperationState state)
+{
+    using State = Data::SemanticOperationState;
+    return state == State::ApprovalRequired || state == State::Approved || state == State::Executing
+           || state == State::OutcomeUnknown;
+}
+
 SemanticControlPage::SemanticControlPage(
     WorkbenchController *controller, Core::SemanticRuntimeService *runtimeService, QWidget *parent)
     : QWidget(parent)
@@ -683,6 +690,7 @@ SemanticControlPage::SemanticControlPage(
     , m_operationStatus(new QLabel(m_manualControl))
     , m_requestedValue(new QLineEdit(m_manualControl))
     , m_apply(new QPushButton(Tr::tr("Run action"), m_manualControl))
+    , m_stop(new QPushButton(Tr::tr("Stop"), m_manualControl))
     , m_liveRefreshTimer(new QTimer(this))
 {
     setProperty("EtherCAT.Workbench.SemanticControlPage", true);
@@ -760,6 +768,8 @@ SemanticControlPage::SemanticControlPage(
     m_requestedValue->hide();
     m_apply->setObjectName("EtherCATSemanticControlApply");
     m_apply->setAccessibleName(Tr::tr("Run selected signed action"));
+    m_stop->setObjectName("EtherCATSemanticControlStop");
+    m_stop->setAccessibleName(Tr::tr("Stop the current signed action safely"));
     m_liveRefreshTimer->setObjectName("EtherCATSemanticLiveRefreshTimer");
     m_liveRefreshTimer->setSingleShot(true);
 
@@ -774,6 +784,7 @@ SemanticControlPage::SemanticControlPage(
     controlLayout->addWidget(m_actionDetail);
     controlLayout->addWidget(m_parameterHost);
     controlLayout->addWidget(m_apply);
+    controlLayout->addWidget(m_stop);
     controlLayout->addWidget(m_operationStatus);
 
     auto layout = new QVBoxLayout(this);
@@ -795,6 +806,7 @@ SemanticControlPage::SemanticControlPage(
     m_operationStatus->setText(Tr::tr("No manual action is active."));
     m_requestedValue->setEnabled(false);
     m_apply->setEnabled(false);
+    m_stop->setEnabled(false);
     m_ttlCycles->setEnabled(false);
 
     QByteArray localConfirmationNonce
@@ -816,6 +828,7 @@ SemanticControlPage::SemanticControlPage(
             refreshActionEditor();
         });
     connect(m_apply, &QPushButton::clicked, this, &SemanticControlPage::requestSelectedAction);
+    connect(m_stop, &QPushButton::clicked, this, &SemanticControlPage::requestStop);
     connect(m_liveRefreshTimer, &QTimer::timeout, this, &SemanticControlPage::requestLiveRefresh);
     connect(
         m_ttlCycles,
@@ -852,6 +865,7 @@ SemanticControlPage::SemanticControlPage(
             m_liveRefreshCorrelationId.clear();
             m_discardLiveRefreshCompletion = false;
             m_runtimeService = nullptr;
+            updateStopEnabled();
             refresh();
         });
     }
@@ -1090,6 +1104,17 @@ void SemanticControlPage::updateApplyEnabled()
     m_apply->setEnabled(enabled);
 }
 
+void SemanticControlPage::updateStopEnabled()
+{
+    const bool enabled = m_runtimeService && m_activeOperationCancelable && m_activeOperationRecord
+                         && recordMatchesActiveOperation(*m_activeOperationRecord)
+                         && operationCanBeStopped(m_activeOperationRecord->state)
+                         && !m_activeOperationRecord->cancellation;
+    m_stop->setEnabled(enabled);
+    if (enabled)
+        m_manualControl->setVisible(true);
+}
+
 void SemanticControlPage::requestSelectedAction()
 {
     if (m_confirmationOpen || !m_runtimeService)
@@ -1177,8 +1202,18 @@ void SemanticControlPage::submitConfirmedAction(
     const Data::SemanticRuntimeActor actor = localUserActor();
     m_activeOperationId = request.operationId;
     m_activeActionName = actionName;
-    Data::SemanticOperationRecord record = m_runtimeService->submit(request, actor);
+    m_activeOperationRequest = request;
+    m_activeOperationRecord.reset();
+    m_activeCancelRequest.reset();
+    m_activeOperationCancelable = !action->definition.holdToRun;
+    QPointer<SemanticControlPage> guardedPage(this);
+    QPointer<Core::SemanticRuntimeService> service = m_runtimeService;
+    Data::SemanticOperationRecord record = service->submit(request, actor);
+    if (!guardedPage || !service)
+        return;
     presentOperation(record);
+    if (!guardedPage || !service)
+        return;
 
     if (record.state != Data::SemanticOperationState::ApprovalRequired)
         return;
@@ -1194,10 +1229,13 @@ void SemanticControlPage::submitConfirmedAction(
         m_activeOperationState = Data::SemanticOperationState::OutcomeUnknown;
         m_operationStatus->setText(Tr::tr("Result unknown."));
         if (m_controller) {
-            m_controller->writeControllerOutput(
+            QPointer<WorkbenchController> controller = m_controller;
+            controller->writeControllerOutput(
                 Tr::tr("Action result is unknown: %1 (approval evidence invalid)")
                     .arg(m_activeActionName),
                 ControllerOutputLevel::Error);
+            if (!guardedPage || !service || !controller)
+                return;
         }
         updateApplyEnabled();
         return;
@@ -1210,17 +1248,187 @@ void SemanticControlPage::submitConfirmedAction(
     approval.expectedRequestDigest = record.canonicalRequestDigest;
     approval.expectedContextHash = request.expectedContextHash;
     approval.detail = QStringLiteral("Confirmed by the local Workbench user");
-    record = m_runtimeService->approve(approval, actor);
+    record = service->approve(approval, actor);
+    if (!guardedPage || !service)
+        return;
     presentOperation(record);
+}
+
+bool SemanticControlPage::recordMatchesActiveOperation(
+    const Data::SemanticOperationRecord &record) const
+{
+    if (!m_activeOperationRequest || !m_activeOperationCancelable || !record.revision
+        || record.request.operationId != m_activeOperationId
+        || record.request.operationId != m_activeOperationRequest->operationId
+        || record.request.kind != Data::SemanticOperationKind::InvokeAction
+        || record.request.target.kind != Data::SemanticRuntimeTargetKind::Action
+        || record.request != *m_activeOperationRequest || record.actor != localUserActor()) {
+        return false;
+    }
+    const bool cancellationCompleted = record.cancellation
+                                       && record.cancellation->phase
+                                              == Data::SemanticOperationCancellationPhase::Completed;
+    if ((record.state == Data::SemanticOperationState::Canceled) != cancellationCompleted)
+        return false;
+    if (record.cancellation) {
+        if ((m_activeCancelRequest && record.cancellation->request != *m_activeCancelRequest)
+            || !Core::validateSemanticOperationCancellationEvidence(
+                    record.cancellation->request, localUserActor(), record)
+                    .accepted()) {
+            return false;
+        }
+    }
+    if (m_activeOperationRecord
+        && m_activeOperationRecord->request.operationId == record.request.operationId) {
+        const Data::SemanticOperationRecord &previous = *m_activeOperationRecord;
+        if (record.revision < previous.revision
+            || (record.revision == previous.revision && record != previous)) {
+            return false;
+        }
+        if (previous.cancellation) {
+            if (!record.cancellation
+                || previous.cancellation->request != record.cancellation->request
+                || previous.cancellation->actor != record.cancellation->actor
+                || previous.cancellation->canonicalCancelDigest
+                       != record.cancellation->canonicalCancelDigest
+                || previous.cancellation->requestedAt != record.cancellation->requestedAt
+                || quint32(record.cancellation->phase) < quint32(previous.cancellation->phase)) {
+                return false;
+            }
+            if (record.cancellation->phase == previous.cancellation->phase
+                && *record.cancellation != *previous.cancellation) {
+                return false;
+            }
+            const auto preservesEvidence = [](const auto &observed, const auto &current) {
+                return !observed || (current && *current == *observed);
+            };
+            if (!preservesEvidence(
+                    previous.cancellation->safeHoldState, record.cancellation->safeHoldState)
+                || !preservesEvidence(
+                    previous.cancellation->pendingApplyRequest,
+                    record.cancellation->pendingApplyRequest)
+                || !preservesEvidence(
+                    previous.cancellation->priorAppliedRequest,
+                    record.cancellation->priorAppliedRequest)
+                || !preservesEvidence(
+                    previous.cancellation->safeHoldRequest, record.cancellation->safeHoldRequest)
+                || !preservesEvidence(
+                    previous.cancellation->terminalApplyResult,
+                    record.cancellation->terminalApplyResult)) {
+                return false;
+            }
+        }
+    }
+    const QByteArray canonicalRequest = Core::canonicalSemanticOperationRequest(record.request);
+    const QByteArray requestDigest
+        = canonicalRequest.isEmpty()
+              ? QByteArray()
+              : QCryptographicHash::hash(canonicalRequest, QCryptographicHash::Sha256);
+    return requestDigest.size() == 32 && record.canonicalRequestDigest == requestDigest
+           && record.request.expectedContextHash == m_activeOperationRequest->expectedContextHash;
+}
+
+void SemanticControlPage::requestStop()
+{
+    if (!m_runtimeService || !m_activeOperationCancelable || !m_activeOperationRequest)
+        return;
+    QPointer<SemanticControlPage> guardedPage(this);
+    QPointer<Core::SemanticRuntimeService> service = m_runtimeService;
+    const std::optional<Data::SemanticOperationRecord> liveRecord = service->operation(
+        m_activeOperationId);
+    if (!guardedPage || !service)
+        return;
+    if (!liveRecord || !recordMatchesActiveOperation(*liveRecord)
+        || !operationCanBeStopped(liveRecord->state)) {
+        m_operationStatus->setText(Tr::tr("Stop is unavailable for this operation."));
+        updateStopEnabled();
+        return;
+    }
+    m_activeOperationRecord = *liveRecord;
+    if (liveRecord->cancellation) {
+        m_activeCancelRequest = liveRecord->cancellation->request;
+        m_operationStatus->setText(Tr::tr("Stop request recorded; waiting for safety proof."));
+        updateStopEnabled();
+        return;
+    }
+
+    Data::SemanticOperationCancelRequest request;
+    if (m_activeCancelRequest) {
+        request = *m_activeCancelRequest;
+    } else {
+        request.cancelId.value = QStringLiteral("workbench-cancel-%1")
+                                     .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+        request.operationId = liveRecord->request.operationId;
+        request.expectedRevision = liveRecord->revision;
+        request.expectedRequestDigest = liveRecord->canonicalRequestDigest;
+        request.expectedContextHash = liveRecord->request.expectedContextHash;
+        request.reason = QStringLiteral("EtherCAT Workbench immediate safe stop");
+        m_activeCancelRequest = request;
+    }
+    if (Core::canonicalSemanticOperationCancelRequest(request).isEmpty()) {
+        m_activeCancelRequest.reset();
+        m_operationStatus->setText(Tr::tr("Stop request evidence is invalid."));
+        updateStopEnabled();
+        return;
+    }
+
+    const Data::SemanticRuntimeActor actor = localUserActor();
+    const Data::SemanticOperationCancelResult result = service->cancel(request, actor);
+    if (!guardedPage || !service)
+        return;
+    const bool resultRecordValid = !result.record || recordMatchesActiveOperation(*result.record);
+    const bool acceptedEvidenceValid
+        = !result.accepted()
+          || (result.record && result.record->cancellation
+              && result.record->cancellation->request == request
+              && result.record->cancellation->actor == actor
+              && Core::validateSemanticOperationCancellationEvidence(request, actor, *result.record)
+                     .accepted());
+    if (result.request != request || !resultRecordValid || !acceptedEvidenceValid) {
+        m_activeOperationState = Data::SemanticOperationState::OutcomeUnknown;
+        m_operationStatus->setText(Tr::tr("Operation evidence is invalid."));
+        updateApplyEnabled();
+        updateStopEnabled();
+        updateLiveRefreshScheduler();
+        return;
+    }
+    if (result.record)
+        presentOperation(*result.record);
+    if (!guardedPage || !service)
+        return;
+    if (result.accepted()) {
+        if (!result.record || result.record->state != Data::SemanticOperationState::Canceled)
+            m_operationStatus->setText(Tr::tr("Stop request recorded; waiting for safety proof."));
+    } else {
+        m_activeCancelRequest.reset();
+        const QString detail = result.detail.trimmed();
+        m_operationStatus->setText(detail.isEmpty() ? Tr::tr("Stop request was rejected.") : detail);
+    }
+    updateStopEnabled();
 }
 
 void SemanticControlPage::presentOperation(const Data::SemanticOperationRecord &record)
 {
     if (record.request.operationId != m_activeOperationId)
         return;
+    if (!recordMatchesActiveOperation(record)) {
+        m_activeOperationState = Data::SemanticOperationState::OutcomeUnknown;
+        m_operationStatus->setText(Tr::tr("Operation evidence is invalid."));
+        updateApplyEnabled();
+        updateStopEnabled();
+        return;
+    }
+    m_activeOperationRecord = record;
+    if (record.cancellation)
+        m_activeCancelRequest = record.cancellation->request;
     m_activeOperationState = record.state;
-    m_operationStatus->setText(operationStateText(record.state));
+    m_operationStatus->setText(
+        record.cancellation
+                && record.cancellation->phase != Data::SemanticOperationCancellationPhase::Completed
+            ? Tr::tr("Stop request recorded; waiting for safety proof.")
+            : operationStateText(record.state));
     updateApplyEnabled();
+    updateStopEnabled();
     updateLiveRefreshScheduler();
 
     const bool sameOperation
@@ -1251,10 +1459,12 @@ void SemanticControlPage::presentOperation(const Data::SemanticOperationRecord &
                       : Tr::tr("Action result is unknown: %1 (%2)")
                             .arg(m_activeActionName, resultIdentity);
         break;
+    case State::Canceled:
+        message = Tr::tr("Action stopped safely: %1").arg(m_activeActionName);
+        break;
     case State::Rejected:
     case State::Failed:
     case State::TimedOut:
-    case State::Canceled:
     case State::Expired:
         message = resultIdentity.isEmpty()
                       ? Tr::tr("Action failed: %1").arg(m_activeActionName)
@@ -1268,11 +1478,14 @@ void SemanticControlPage::presentOperation(const Data::SemanticOperationRecord &
     if (!message.isEmpty() && message != m_lastReportedOperationMessage && m_controller) {
         const bool failed = record.state == State::Rejected || record.state == State::Failed
                             || record.state == State::TimedOut
-                            || record.state == State::Canceled
                             || record.state == State::Expired
                             || record.state == State::OutcomeUnknown;
-        m_controller->writeControllerOutput(
+        QPointer<SemanticControlPage> guardedPage(this);
+        QPointer<WorkbenchController> controller = m_controller;
+        controller->writeControllerOutput(
             message, failed ? ControllerOutputLevel::Error : ControllerOutputLevel::Information);
+        if (!guardedPage || !controller)
+            return;
     }
     if (!message.isEmpty())
         m_lastReportedOperationMessage = message;
@@ -1282,8 +1495,12 @@ void SemanticControlPage::refreshOperation()
 {
     if (!m_runtimeService || m_activeOperationId.value.isEmpty())
         return;
-    const std::optional<Data::SemanticOperationRecord> record
-        = m_runtimeService->operation(m_activeOperationId);
+    QPointer<SemanticControlPage> guardedPage(this);
+    QPointer<Core::SemanticRuntimeService> service = m_runtimeService;
+    const std::optional<Data::SemanticOperationRecord> record = service->operation(
+        m_activeOperationId);
+    if (!guardedPage || !service)
+        return;
     if (record)
         presentOperation(*record);
 }
@@ -1689,7 +1906,11 @@ bool SemanticControlPage::refreshLiveSignalsOnly()
 
 void SemanticControlPage::refresh()
 {
-    if (refreshLiveSignalsOnly()) {
+    QPointer<SemanticControlPage> guardedPage(this);
+    const bool liveSignalsOnly = refreshLiveSignalsOnly();
+    if (!guardedPage)
+        return;
+    if (liveSignalsOnly) {
         updateLiveRefreshScheduler();
         return;
     }
@@ -1712,6 +1933,7 @@ void SemanticControlPage::refresh()
     m_requestedValue->setEnabled(false);
     m_apply->setEnabled(false);
     m_ttlCycles->setEnabled(false);
+    updateStopEnabled();
 
     const bool controllerTopologyNode
         = m_context.nodeKind == Core::WorkbenchNodeKind::Module && m_controller
@@ -1723,6 +1945,7 @@ void SemanticControlPage::refresh()
             Tr::tr(
                 "Apply the current bus to the project and save it before signed, verified "
                 "control can be enabled."));
+        updateStopEnabled();
         return;
     }
 
@@ -1895,6 +2118,8 @@ void SemanticControlPage::refresh()
     };
     refreshActionEditor();
     refreshOperation();
+    if (!guardedPage)
+        return;
     updateLiveRefreshScheduler();
 }
 

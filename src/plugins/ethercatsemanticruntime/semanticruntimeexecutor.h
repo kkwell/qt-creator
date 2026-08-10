@@ -75,6 +75,9 @@ public:
         const Data::SemanticOperationId &operationId) const final;
     QList<Data::SemanticRuntimeAuditEvent> audit(
         const QString &controllerId, quint64 afterSequence = 0) const final;
+    Data::SemanticOperationCancelResult cancel(
+        const Data::SemanticOperationCancelRequest &request,
+        const Data::SemanticRuntimeActor &actor) final;
 
 private:
     struct RuntimeBootstrapState

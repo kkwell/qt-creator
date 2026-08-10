@@ -23,6 +23,7 @@ private slots:
     void testControlPageSelectionPolicy();
     void testSemanticControlPageFailsClosed();
     void testSemanticControlPageSignedActions();
+    void testSemanticControlPageCancelsActiveAction();
     void testSemanticControlPagePreservesEditorDuringLiveRefresh();
     void testSemanticControlPageSchedulesBoundedLiveRefresh();
     void testDeviceAdapterTreeFailsClosed();

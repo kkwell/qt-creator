@@ -633,6 +633,53 @@ Data::SemanticRuntimeActor executorActor()
     return actor;
 }
 
+Data::SemanticOperationCancelDisposition cancelDisposition(
+    SemanticOperationJournalDisposition disposition)
+{
+    using JournalDisposition = SemanticOperationJournalDisposition;
+    using CancelDisposition = Data::SemanticOperationCancelDisposition;
+    switch (disposition) {
+    case JournalDisposition::Created:
+    case JournalDisposition::Updated:
+        return CancelDisposition::Accepted;
+    case JournalDisposition::Replayed:
+        return CancelDisposition::Replayed;
+    case JournalDisposition::Unsupported:
+        return CancelDisposition::Unsupported;
+    case JournalDisposition::NotFound:
+        return CancelDisposition::NotFound;
+    case JournalDisposition::Stale:
+        return CancelDisposition::Stale;
+    case JournalDisposition::Conflict:
+        return CancelDisposition::Conflict;
+    case JournalDisposition::Rejected:
+        return CancelDisposition::Rejected;
+    }
+    return CancelDisposition::Rejected;
+}
+
+QString cancelResultCode(Data::SemanticOperationCancelDisposition disposition)
+{
+    using Disposition = Data::SemanticOperationCancelDisposition;
+    switch (disposition) {
+    case Disposition::Unsupported:
+        return QStringLiteral("semantic-operation-cancel-unsupported");
+    case Disposition::Accepted:
+        return QStringLiteral("semantic-operation-cancel-accepted");
+    case Disposition::Replayed:
+        return QStringLiteral("semantic-operation-cancel-replayed");
+    case Disposition::NotFound:
+        return QStringLiteral("semantic-operation-cancel-not-found");
+    case Disposition::Stale:
+        return QStringLiteral("semantic-operation-cancel-stale");
+    case Disposition::Conflict:
+        return QStringLiteral("semantic-operation-cancel-conflict");
+    case Disposition::Rejected:
+        return QStringLiteral("semantic-operation-cancel-rejected");
+    }
+    return QStringLiteral("semantic-operation-cancel-rejected");
+}
+
 QString executionCorrelationId(
     const Data::SemanticOperationId &operationId,
     QStringView phase,
@@ -831,6 +878,9 @@ public:
     Data::SemanticOperationRecord approve(
         const Data::SemanticOperationApprovalRequest &approval,
         const Data::SemanticRuntimeActor &actor);
+    Data::SemanticOperationCancelResult cancel(
+        const Data::SemanticOperationCancelRequest &request,
+        const Data::SemanticRuntimeActor &actor);
     std::optional<Data::SemanticOperationRecord> operation(
         const Data::SemanticOperationId &operationId) const;
     QList<Data::SemanticRuntimeAuditEvent> audit(
@@ -909,6 +959,7 @@ private:
         std::optional<Data::RuntimeOutputTransactionRequest> applyRequest;
         std::optional<Data::RuntimeOutputTransactionRequest> lastAppliedRequest;
         std::optional<Data::SemanticOperationSnapshot> pendingAfterSnapshot;
+        std::optional<Data::RuntimeOutputTransactionState> recoverySafeHoldState;
     };
 
     struct ControllerQueue
@@ -956,6 +1007,8 @@ private:
         const QString &detail,
         quint64 captureCycle = 0);
     void enqueue(const Data::SemanticOperationRecord &record);
+    bool divertPendingCancellation(const QString &controllerId, bool allowRecoveryState = false);
+    void driveCancellation(const Data::SemanticOperationId &operationId);
     void startNext(const QString &controllerId);
     void beginBeforeSnapshot(const QString &controllerId);
     void beginNextPolicy(const QString &controllerId);
@@ -1026,14 +1079,23 @@ std::optional<Data::SemanticRuntimeContext> SemanticRuntimeExecutorExecution::cu
     const Data::SemanticOperationRequest &request, QString *error) const
 {
     QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
-    if (!q->m_projectService || !q->m_projectService->isAvailable()) {
+    QPointer<Core::ProjectService> projectService = q->m_projectService;
+    if (!projectService) {
         if (error)
             *error = QStringLiteral("The project service is unavailable.");
         return std::nullopt;
     }
-    const std::optional<Data::ProjectSnapshot> project
-        = q->m_projectService->project(request.target.scope.projectId);
-    if (!guardedExecutor)
+    const bool projectServiceAvailable = projectService->isAvailable();
+    if (!guardedExecutor || !projectService || q->m_projectService != projectService)
+        return std::nullopt;
+    if (!projectServiceAvailable) {
+        if (error)
+            *error = QStringLiteral("The project service is unavailable.");
+        return std::nullopt;
+    }
+    const std::optional<Data::ProjectSnapshot> project = projectService->project(
+        request.target.scope.projectId);
+    if (!guardedExecutor || !projectService || q->m_projectService != projectService)
         return std::nullopt;
     if (!project || !project->valid) {
         if (error)
@@ -1054,7 +1116,7 @@ std::optional<Data::SemanticRuntimeContext> SemanticRuntimeExecutorExecution::cu
     }
     Data::SemanticRuntimeContext context
         = q->buildContext(*project, request.target.scope.masterId);
-    if (!guardedExecutor)
+    if (!guardedExecutor || !projectService || q->m_projectService != projectService)
         return std::nullopt;
     if (context.controllerId != request.target.controllerId
         || context.scope != request.target.scope) {
@@ -1068,19 +1130,45 @@ std::optional<Data::SemanticRuntimeContext> SemanticRuntimeExecutorExecution::cu
 Core::ControllerConnectionProvider *SemanticRuntimeExecutorExecution::currentProvider(
     const Data::ControllerConnectionScope &scope, QString *error) const
 {
-    QList<Core::ControllerConnectionProvider *> matches;
-    if (q->m_providerRegistry) {
-        for (Core::Provider *provider :
-             q->m_providerRegistry->providers(Core::ProviderKind::ControllerConnection)) {
-            auto *connection = qobject_cast<Core::ControllerConnectionProvider *>(provider);
-            if (!connection || q->m_providersBeingRemoved.contains(connection)
-                || !connection->isAvailable()) {
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    QPointer<Core::ProviderRegistry> registry = q->m_providerRegistry;
+    QList<QPointer<Core::ControllerConnectionProvider>> matches;
+    if (registry) {
+        const QList<Core::Provider *> rawProviders = registry->providers(
+            Core::ProviderKind::ControllerConnection);
+        if (!guardedExecutor || !registry || q->m_providerRegistry != registry)
+            return nullptr;
+        QList<QPointer<Core::Provider>> providers;
+        providers.reserve(rawProviders.size());
+        for (Core::Provider *provider : rawProviders)
+            providers.append(provider);
+        for (const QPointer<Core::Provider> &provider : std::as_const(providers)) {
+            if (!guardedExecutor || !registry || q->m_providerRegistry != registry || !provider)
+                return nullptr;
+            QPointer<Core::ControllerConnectionProvider> connection
+                = qobject_cast<Core::ControllerConnectionProvider *>(provider.data());
+            if (!connection || q->m_providersBeingRemoved.contains(connection))
                 continue;
+            const bool available = connection->isAvailable();
+            if (!guardedExecutor || !registry || q->m_providerRegistry != registry || !provider
+                || !connection) {
+                return nullptr;
             }
-            if (connection->connectionSnapshot().scope == scope)
+            if (!available)
+                continue;
+            const Data::ControllerConnectionSnapshot snapshot = connection->connectionSnapshot();
+            if (!guardedExecutor || !registry || q->m_providerRegistry != registry || !provider
+                || !connection) {
+                return nullptr;
+            }
+            if (snapshot.scope == scope)
                 matches.append(connection);
         }
     }
+    matches.erase(
+        std::remove_if(
+            matches.begin(), matches.end(), [](const auto &provider) { return provider.isNull(); }),
+        matches.end());
     if (matches.size() != 1) {
         if (error) {
             *error = matches.isEmpty()
@@ -1089,26 +1177,44 @@ Core::ControllerConnectionProvider *SemanticRuntimeExecutorExecution::currentPro
         }
         return nullptr;
     }
-    return matches.constFirst();
+    if (!guardedExecutor || !registry || q->m_providerRegistry != registry
+        || !matches.constFirst()) {
+        return nullptr;
+    }
+    return matches.constFirst().data();
 }
 
 std::shared_ptr<const VerifiedRuntimePackageEvidence>
 SemanticRuntimeExecutorExecution::currentEvidence(
     const Data::SemanticOperationRequest &request, QString *error) const
 {
-    if (!q->m_projectService || !q->m_evidenceRepository) {
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    QPointer<Core::ProjectService> projectService = q->m_projectService;
+    const std::shared_ptr<const RuntimePackageEvidenceRepository> evidenceRepository
+        = q->m_evidenceRepository;
+    if (!projectService || !evidenceRepository) {
         if (error)
             *error = QStringLiteral("Verified runtime package evidence is unavailable.");
         return {};
     }
-    const std::optional<Data::ProjectSnapshot> project
-        = q->m_projectService->project(request.target.scope.projectId);
+    const std::optional<Data::ProjectSnapshot> project = projectService->project(
+        request.target.scope.projectId);
+    if (!guardedExecutor || !projectService || q->m_projectService != projectService
+        || q->m_evidenceRepository != evidenceRepository) {
+        return {};
+    }
     if (!project) {
         if (error)
             *error = QStringLiteral("The operation project is unavailable.");
         return {};
     }
-    return q->cachedEvidence(project->masterBindingArtifact, error);
+    const std::shared_ptr<const VerifiedRuntimePackageEvidence> evidence
+        = q->cachedEvidence(project->masterBindingArtifact, error);
+    if (!guardedExecutor || !projectService || q->m_projectService != projectService
+        || q->m_evidenceRepository != evidenceRepository) {
+        return {};
+    }
+    return evidence;
 }
 
 Utils::Result<SemanticActionAdapterResolution>
@@ -1116,12 +1222,16 @@ SemanticRuntimeExecutorExecution::currentAdapterResolution(
     const Data::SemanticOperationRequest &request) const
 {
     QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
-    if (!q->m_projectService || !q->m_providerRegistry)
+    QPointer<Core::ProjectService> projectService = q->m_projectService;
+    QPointer<Core::ProviderRegistry> providerRegistry = q->m_providerRegistry;
+    if (!projectService || !providerRegistry)
         return Utils::ResultError("The adapter authorization provider is unavailable.");
-    const std::optional<Data::ProjectSnapshot> project = q->m_projectService->project(
+    const std::optional<Data::ProjectSnapshot> project = projectService->project(
         request.target.scope.projectId);
-    if (!guardedExecutor)
+    if (!guardedExecutor || !projectService || !providerRegistry
+        || q->m_projectService != projectService || q->m_providerRegistry != providerRegistry) {
         return Utils::ResultError("The adapter authorization owner was removed.");
+    }
     if (!project || !project->valid)
         return Utils::ResultError("The operation project is unavailable.");
 
@@ -1136,14 +1246,20 @@ SemanticRuntimeExecutorExecution::currentAdapterResolution(
     const AvailableDeviceAdapterProviders adapterProviders{
         q->m_availableAdapterProvidersOverride
             ? q->m_availableAdapterProvidersOverride
-            : availableDeviceAdapterProviderList(q->m_providerRegistry),
+            : availableDeviceAdapterProviderList(providerRegistry),
         guardedExecutor,
         [guardedExecutor] {
             return guardedExecutor ? guardedExecutor->m_adapterProviderSignalGeneration
                                    : std::numeric_limits<quint64>::max();
         },
     };
-    return resolveSemanticActionAdapter(*slaves.constFirst(), adapterProviders);
+    const Utils::Result<SemanticActionAdapterResolution> resolution
+        = resolveSemanticActionAdapter(*slaves.constFirst(), adapterProviders);
+    if (!guardedExecutor || !projectService || !providerRegistry
+        || q->m_projectService != projectService || q->m_providerRegistry != providerRegistry) {
+        return Utils::ResultError("The adapter authorization owner was removed.");
+    }
+    return resolution;
 }
 
 std::optional<SemanticRuntimeExecutorExecution::CurrentExecution>
@@ -1198,7 +1314,7 @@ SemanticRuntimeExecutorExecution::validateCurrentExecution(
         return std::nullopt;
     }
 
-    Core::ControllerConnectionProvider *provider = currentProvider(plan.scope(), error);
+    QPointer<Core::ControllerConnectionProvider> provider = currentProvider(plan.scope(), error);
     if (!guardedExecutor)
         return std::nullopt;
     if (!provider)
@@ -1209,15 +1325,26 @@ SemanticRuntimeExecutorExecution::validateCurrentExecution(
         return std::nullopt;
     }
     const Data::ControllerConnectionSnapshot connection = provider->connectionSnapshot();
+    if (!guardedExecutor || !provider)
+        return std::nullopt;
+    const bool supportsResources = provider->supportsRuntimeResources();
+    if (!guardedExecutor || !provider)
+        return std::nullopt;
+    const bool supportsTransactions = provider->supportsRuntimeOutputTransactions();
+    if (!guardedExecutor || !provider)
+        return std::nullopt;
+    QPointer<Core::ControllerConnectionProvider> current = currentProvider(plan.scope(), error);
+    if (!guardedExecutor || !provider || !current || current != provider)
+        return std::nullopt;
     if (!isConnected(connection.state) || connection.scope != plan.scope()
         || connection.sessionGeneration != plan.sessionGeneration() || connection.readOnly
         || !connection.session || !connection.session->sessionId
         || !connection.session->ownsControlLease
         || connection.session->controlLeaseOwnerSessionId != connection.session->sessionId
         || !connection.controllerState
-        || !allowedExecutionState(connection.controllerState->serviceState)
-        || !provider->supportsRuntimeResources() || !provider->supportsRuntimeOutputTransactions()
-        || !connection.capability || !connection.capability->runtimeResources
+        || !allowedExecutionState(connection.controllerState->serviceState) || !supportsResources
+        || !supportsTransactions || !connection.capability
+        || !connection.capability->runtimeResources
         || !connection.capability->runtimeOutputTransactions) {
         if (error)
             *error = QStringLiteral("The controller session, lease, or service state changed.");
@@ -1230,7 +1357,7 @@ SemanticRuntimeExecutorExecution::validateCurrentExecution(
             *error = QStringLiteral("Distributed clocks are not locked for this action.");
         return std::nullopt;
     }
-    return CurrentExecution{*context, connection, provider};
+    return CurrentExecution{*context, connection, provider.data()};
 }
 
 void SemanticRuntimeExecutorExecution::publishJournalResult(
@@ -1349,6 +1476,37 @@ Data::SemanticOperationRecord SemanticRuntimeExecutorExecution::approve(
         m_adapterAuthorizations.remove(approval.operationId.value);
     }
     return returned;
+}
+
+Data::SemanticOperationCancelResult SemanticRuntimeExecutorExecution::cancel(
+    const Data::SemanticOperationCancelRequest &request, const Data::SemanticRuntimeActor &actor)
+{
+    const SemanticOperationJournalResult journalResult = m_journal.cancel(request, actor);
+    const Data::SemanticOperationCancelDisposition disposition = cancelDisposition(
+        journalResult.disposition);
+    Data::SemanticOperationCancelResult result{
+        request,
+        disposition,
+        journalResult.record,
+        cancelResultCode(disposition),
+        disposition == Data::SemanticOperationCancelDisposition::Accepted
+                || disposition == Data::SemanticOperationCancelDisposition::Replayed
+            ? QString()
+            : conciseExecutionText(journalResult.validation.detail),
+    };
+    const QString controllerId = journalResult.record
+                                     ? journalResult.record->request.target.controllerId
+                                     : QString();
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    publishJournalResult(journalResult, controllerId);
+    if (!guardedExecutor || !journalResult.accepted() || !journalResult.record)
+        return result;
+
+    driveCancellation(request.operationId);
+    if (!guardedExecutor)
+        return result;
+    result.record = m_journal.operation(request.operationId);
+    return result;
 }
 
 std::optional<Data::SemanticOperationRecord> SemanticRuntimeExecutorExecution::operation(
@@ -1645,6 +1803,223 @@ bool SemanticRuntimeExecutorExecution::finishLiveRefresh(
     return true;
 }
 
+void SemanticRuntimeExecutorExecution::driveCancellation(const Data::SemanticOperationId &operationId)
+{
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    const std::optional<Data::SemanticOperationRecord> record = m_journal.operation(operationId);
+    if (!record || !record->cancellation
+        || record->cancellation->phase == Data::SemanticOperationCancellationPhase::Completed
+        || record->state == Data::SemanticOperationState::Canceled) {
+        return;
+    }
+    const QString controllerId = record->request.target.controllerId;
+    const Data::SemanticRuntimeActor cancellationActor = record->cancellation->actor;
+    using Phase = Data::SemanticOperationCancellationPhase;
+
+    const auto publishCancellation = [this,
+                                      &controllerId](const SemanticOperationJournalResult &result) {
+        publishJournalResult(result, controllerId);
+        return result.accepted();
+    };
+    const auto completeWithoutProviderMutation =
+        [this,
+         &publishCancellation,
+         &cancellationActor,
+         &guardedExecutor,
+         &operationId](Data::SemanticOperationState expectedState, const QString &reason) {
+            // This is the sole production caller of the journal's pre-dispatch
+            // completion. Active executions reach it only while the private
+            // mutationMayHaveExecuted flag is false; beginApply sets that flag
+            // before entering the provider mutation virtual call.
+            SemanticOperationJournalCancellationUpdate update;
+            update.expectedState = expectedState;
+            update.expectedPhase = Phase::Requested;
+            update.phase = Phase::Completed;
+            update.actor = cancellationActor;
+            update.resultCode = QStringLiteral(
+                "semantic-operation-canceled-before-provider-mutation");
+            update.detail = reason;
+            const SemanticOperationJournalResult completed
+                = m_journal.updateCancellation(operationId, update);
+            const bool accepted = publishCancellation(completed);
+            if (!guardedExecutor || !accepted)
+                return false;
+            const auto current = m_journal.operation(operationId);
+            return current && current->state == Data::SemanticOperationState::Canceled;
+        };
+
+    if (record->state == Data::SemanticOperationState::ApprovalRequired
+        || record->state == Data::SemanticOperationState::Approved) {
+        const bool completed
+            = completeWithoutProviderMutation(record->state, record->cancellation->request.reason);
+        if (!guardedExecutor)
+            return;
+        if (completed) {
+            auto queue = m_queues.find(controllerId);
+            if (queue != m_queues.end()) {
+                queue->pending.removeAll(operationId);
+                if (queue->active && queue->active->operationId == operationId) {
+                    if (queue->active->mutationMayHaveExecuted)
+                        return;
+                    finishActive(controllerId);
+                    return;
+                }
+            }
+            m_adapterAuthorizations.remove(operationId.value);
+            QTimer::singleShot(0, q, [this, controllerId] { startNext(controllerId); });
+        }
+        return;
+    }
+    if (record->state != Data::SemanticOperationState::Executing
+        && record->state != Data::SemanticOperationState::OutcomeUnknown) {
+        return;
+    }
+
+    auto queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->active || queue->active->operationId != operationId) {
+        return;
+    }
+    const bool mutationMayHaveExecuted = queue->active->mutationMayHaveExecuted;
+    const bool applyOutcomePending = queue->active->applyOutcomePending;
+    const std::optional<Data::RuntimeOutputTransactionRequest> pendingApplyRequest
+        = queue->active->applyRequest;
+    const std::optional<Data::RuntimeOutputTransactionRequest> lastAppliedRequest
+        = queue->active->lastAppliedRequest;
+    if (!mutationMayHaveExecuted && record->state == Data::SemanticOperationState::Executing) {
+        const bool completed
+            = completeWithoutProviderMutation(record->state, record->cancellation->request.reason);
+        if (!guardedExecutor)
+            return;
+        if (!completed)
+            return;
+        auto currentQueue = m_queues.find(controllerId);
+        if (currentQueue != m_queues.end() && currentQueue->active
+            && currentQueue->active->operationId == operationId) {
+            finishActive(controllerId);
+        } else {
+            m_adapterAuthorizations.remove(operationId.value);
+        }
+        return;
+    }
+
+    if (applyOutcomePending) {
+        if (!pendingApplyRequest || !pendingApplyRequest->isValid()) {
+            if (record->state == Data::SemanticOperationState::Executing) {
+                freezeUnknown(
+                    controllerId,
+                    QStringLiteral("cancel-apply-request-unavailable"),
+                    QStringLiteral(
+                        "Cancellation cannot prove whether the provider mutation was sent."));
+            }
+            return;
+        }
+        if (record->cancellation->phase == Phase::Requested) {
+            SemanticOperationJournalCancellationUpdate update;
+            update.expectedState = record->state;
+            update.expectedPhase = Phase::Requested;
+            update.phase = Phase::WaitingForApplyResult;
+            update.actor = cancellationActor;
+            update.pendingApplyRequest = pendingApplyRequest;
+            update.priorAppliedRequest = lastAppliedRequest;
+            const SemanticOperationJournalResult waiting
+                = m_journal.updateCancellation(operationId, update);
+            const bool advanced = publishCancellation(waiting);
+            if (!guardedExecutor)
+                return;
+            if (!advanced)
+                return;
+            driveCancellation(operationId);
+            return;
+        }
+        if (record->state == Data::SemanticOperationState::Executing) {
+            freezeUnknown(
+                controllerId,
+                QStringLiteral("cancel-waiting-for-apply-result"),
+                QStringLiteral("Cancellation is waiting for the same output transaction result."));
+        }
+        return;
+    }
+
+    if (!lastAppliedRequest) {
+        if (record->state == Data::SemanticOperationState::Executing) {
+            freezeUnknown(
+                controllerId,
+                QStringLiteral("cancel-output-outcome-unproven"),
+                QStringLiteral("Cancellation cannot prove the last output transaction safe."));
+        }
+        return;
+    }
+    if (lastAppliedRequest->expectedRecoveryPolicy != Data::RuntimeOutputRecoveryPolicy::HoldSafe) {
+        if (record->state == Data::SemanticOperationState::Executing) {
+            freezeUnknown(
+                controllerId,
+                QStringLiteral("cancel-safe-hold-unavailable"),
+                QStringLiteral("The last signed output transaction has no SafeHold proof."));
+        }
+        return;
+    }
+
+    if (record->cancellation->phase == Phase::Requested
+        || record->cancellation->phase == Phase::WaitingForApplyResult) {
+        const Phase expectedPhase = record->cancellation->phase;
+        SemanticOperationJournalCancellationUpdate update;
+        update.expectedState = record->state;
+        update.expectedPhase = expectedPhase;
+        update.phase = Phase::ProvingSafeHold;
+        update.actor = cancellationActor;
+        update.priorAppliedRequest = lastAppliedRequest;
+        update.safeHoldRequest = lastAppliedRequest;
+        const SemanticOperationJournalResult proving
+            = m_journal.updateCancellation(operationId, update);
+        const bool advanced = publishCancellation(proving);
+        if (!guardedExecutor)
+            return;
+        if (!advanced)
+            return;
+        driveCancellation(operationId);
+        return;
+    }
+    if (record->cancellation->phase != Phase::ProvingSafeHold
+        || record->cancellation->safeHoldRequest != lastAppliedRequest) {
+        return;
+    }
+
+    queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->active || queue->active->operationId != operationId) {
+        return;
+    }
+    queue->active->recoveryState = Data::SemanticOperationState::Canceled;
+    queue->active->recoveryCode = QStringLiteral("semantic-operation-canceled-safe-hold");
+    queue->active->recoveryDetail = record->cancellation->request.reason;
+    queue->active->recoveryError.reset();
+    if (queue->active->phase != SemanticExecutionPhase::RecoveryState)
+        beginRecovery(
+            controllerId,
+            Data::SemanticOperationState::Canceled,
+            QStringLiteral("semantic-operation-canceled-safe-hold"),
+            record->cancellation->request.reason);
+}
+
+bool SemanticRuntimeExecutorExecution::divertPendingCancellation(
+    const QString &controllerId, bool allowRecoveryState)
+{
+    const auto queue = m_queues.constFind(controllerId);
+    if (queue == m_queues.cend() || !queue->active)
+        return false;
+    const Data::SemanticOperationId operationId = queue->active->operationId;
+    const SemanticExecutionPhase phase = queue->active->phase;
+    const std::optional<Data::SemanticOperationRecord> record = m_journal.operation(operationId);
+    if (!record || !record->cancellation)
+        return false;
+    if (allowRecoveryState && phase == SemanticExecutionPhase::RecoveryState
+        && record->cancellation->phase
+               == Data::SemanticOperationCancellationPhase::ProvingSafeHold) {
+        return false;
+    }
+    driveCancellation(operationId);
+    return true;
+}
+
 void SemanticRuntimeExecutorExecution::enqueue(const Data::SemanticOperationRecord &record)
 {
     ControllerQueue &queue = m_queues[record.request.target.controllerId];
@@ -1665,37 +2040,67 @@ void SemanticRuntimeExecutorExecution::startNext(const QString &controllerId)
     if (queue == m_queues.end() || queue->active || queue->liveRefresh || queue->pending.isEmpty())
         return;
 
-    const Data::SemanticOperationId operationId = queue->pending.takeFirst();
+    const Data::SemanticOperationId operationId = queue->pending.constFirst();
     const std::optional<Data::SemanticOperationRecord> record = m_journal.operation(operationId);
     if (!record || record->state != Data::SemanticOperationState::Approved) {
+        queue->pending.removeFirst();
         m_adapterAuthorizations.remove(operationId.value);
         QTimer::singleShot(0, q, [this, controllerId] { startNext(controllerId); });
         return;
     }
+    if (record->cancellation) {
+        driveCancellation(operationId);
+        return;
+    }
+    queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || queue->active || queue->pending.isEmpty()
+        || queue->pending.constFirst() != operationId) {
+        return;
+    }
+    const auto cancellationWasRequested = [this, &operationId] {
+        const std::optional<Data::SemanticOperationRecord> current = m_journal.operation(
+            operationId);
+        if (!current || !current->cancellation)
+            return false;
+        driveCancellation(operationId);
+        return true;
+    };
 
     QString error;
     const std::optional<Data::SemanticRuntimeContext> context = currentContext(record->request, &error);
     if (!guardedExecutor)
         return;
+    if (cancellationWasRequested())
+        return;
     const std::shared_ptr<const VerifiedRuntimePackageEvidence> evidence
         = context ? currentEvidence(record->request, &error) : nullptr;
     if (!guardedExecutor)
         return;
+    if (cancellationWasRequested())
+        return;
     QPointer<Core::ControllerConnectionProvider> provider
         = context ? currentProvider(record->request.target.scope, &error) : nullptr;
     if (!guardedExecutor)
+        return;
+    if (cancellationWasRequested())
         return;
     const Utils::Result<SemanticActionAdapterResolution> adapterResolution
         = context && evidence ? currentAdapterResolution(record->request)
                               : Utils::ResultError(conciseExecutionText(error));
     if (!guardedExecutor)
         return;
+    if (cancellationWasRequested())
+        return;
     Core::ControllerConnectionProvider *currentControllerProvider
         = currentProvider(record->request.target.scope, &error);
     if (!guardedExecutor)
         return;
+    if (cancellationWasRequested())
+        return;
     const bool providerAvailable = provider && provider->isAvailable();
     if (!guardedExecutor)
+        return;
+    if (cancellationWasRequested())
         return;
     const bool controllerProviderCurrent = providerAvailable
                                            && currentControllerProvider == provider;
@@ -1850,6 +2255,14 @@ void SemanticRuntimeExecutorExecution::startNext(const QString &controllerId)
         return;
     }
 
+    if (cancellationWasRequested())
+        return;
+    queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || queue->active || queue->pending.isEmpty()
+        || queue->pending.constFirst() != operationId) {
+        return;
+    }
+    queue->pending.removeFirst();
     ActiveExecution active(operationId, record->actor, *plan, provider.data(), *submittedToken);
     QList<QByteArray> sortedResourceIds = uniqueResources.values();
     std::sort(sortedResourceIds.begin(), sortedResourceIds.end());
@@ -1882,6 +2295,8 @@ void SemanticRuntimeExecutorExecution::beginBeforeSnapshot(const QString &contro
 {
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
+        return;
+    if (divertPendingCancellation(controllerId))
         return;
     ActiveExecution &active = *queue->active;
     ActiveExecution *const activeIdentity = &active;
@@ -1921,6 +2336,8 @@ void SemanticRuntimeExecutorExecution::beginBeforeSnapshot(const QString &contro
             QStringLiteral("The exact pre-operation snapshot request is invalid."));
         return;
     }
+    if (divertPendingCancellation(controllerId))
+        return;
     active.phase = SemanticExecutionPhase::BeforeSnapshot;
     active.snapshotRequest = request;
     QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
@@ -1944,6 +2361,8 @@ void SemanticRuntimeExecutorExecution::beginNextPolicy(const QString &controller
 {
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
+        return;
+    if (divertPendingCancellation(controllerId))
         return;
     ActiveExecution &active = *queue->active;
     if (active.policyIndex >= active.plan.groups().size()) {
@@ -1990,6 +2409,8 @@ void SemanticRuntimeExecutorExecution::beginNextPolicy(const QString &controller
             QStringLiteral("A signed output-group policy request is invalid."));
         return;
     }
+    if (divertPendingCancellation(controllerId))
+        return;
     active.phase = SemanticExecutionPhase::Policy;
     active.policyRequest = request;
     QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
@@ -2013,6 +2434,8 @@ void SemanticRuntimeExecutorExecution::beginState(const QString &controllerId)
 {
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
+        return;
+    if (divertPendingCancellation(controllerId))
         return;
     ActiveExecution &active = *queue->active;
     ActiveExecution *const activeIdentity = &active;
@@ -2045,6 +2468,8 @@ void SemanticRuntimeExecutorExecution::beginState(const QString &controllerId)
     request.sessionGeneration = active.plan.sessionGeneration();
     request.expectedEpoch = active.plan.epoch();
     request.expectedMappingDigest = active.plan.mappingDigest();
+    if (divertPendingCancellation(controllerId))
+        return;
     active.phase = SemanticExecutionPhase::State;
     active.stateRequest = request;
     QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
@@ -2069,6 +2494,8 @@ void SemanticRuntimeExecutorExecution::beginCurrentStep(const QString &controlle
 {
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
+        return;
+    if (divertPendingCancellation(controllerId))
         return;
     ActiveExecution &active = *queue->active;
     if (active.stepIndex < 0 || active.stepIndex >= active.plan.steps().size()) {
@@ -2139,6 +2566,8 @@ void SemanticRuntimeExecutorExecution::beginApply(const QString &controllerId)
 {
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
+        return;
+    if (divertPendingCancellation(controllerId))
         return;
     ActiveExecution &active = *queue->active;
     ActiveExecution *const activeIdentity = &active;
@@ -2227,6 +2656,8 @@ void SemanticRuntimeExecutorExecution::beginApply(const QString &controllerId)
             QStringLiteral("The complete signed output transaction is invalid."));
         return;
     }
+    if (divertPendingCancellation(controllerId))
+        return;
     active.phase = SemanticExecutionPhase::Apply;
     active.applyRequest = request;
     // Once dispatch begins, a transport or decoder failure can no longer prove
@@ -2246,12 +2677,9 @@ void SemanticRuntimeExecutorExecution::beginApply(const QString &controllerId)
             && check->active->applyRequest == request && record
             && record->state == Data::SemanticOperationState::Executing
             && record->currentStep == quint32(check->active->stepIndex)) {
-            check->active->applyOutcomePending = false;
-            check->active->mutationMayHaveExecuted
-                = check->active->lastAppliedRequest.has_value();
-            failActive(
+            freezeUnknown(
                 controllerId,
-                QStringLiteral("output-request-start-failed"),
+                QStringLiteral("output-request-start-outcome-unknown"),
                 conciseExecutionText(started.error()));
         }
     }
@@ -2261,6 +2689,8 @@ void SemanticRuntimeExecutorExecution::beginWaitSnapshot(const QString &controll
 {
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
+        return;
+    if (divertPendingCancellation(controllerId))
         return;
     ActiveExecution &active = *queue->active;
     if (active.stepIndex < 0 || active.stepIndex >= active.plan.steps().size()) {
@@ -2338,6 +2768,8 @@ void SemanticRuntimeExecutorExecution::beginWaitSnapshot(const QString &controll
             QStringLiteral("The exact signed wait snapshot request is invalid."));
         return;
     }
+    if (divertPendingCancellation(controllerId))
+        return;
     ++active.waitAttempts;
     active.phase = SemanticExecutionPhase::WaitSnapshot;
     active.snapshotRequest = request;
@@ -2362,6 +2794,8 @@ void SemanticRuntimeExecutorExecution::beginAfterSnapshot(const QString &control
 {
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
+        return;
+    if (divertPendingCancellation(controllerId))
         return;
     ActiveExecution &active = *queue->active;
     ActiveExecution *const activeIdentity = &active;
@@ -2411,6 +2845,8 @@ void SemanticRuntimeExecutorExecution::beginAfterSnapshot(const QString &control
             QStringLiteral("The exact post-write snapshot request is invalid."));
         return;
     }
+    if (divertPendingCancellation(controllerId))
+        return;
     active.phase = SemanticExecutionPhase::AfterSnapshot;
     active.snapshotRequest = request;
     QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
@@ -2434,6 +2870,8 @@ void SemanticRuntimeExecutorExecution::beginAfterState(const QString &controller
 {
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
+        return;
+    if (divertPendingCancellation(controllerId))
         return;
     ActiveExecution &active = *queue->active;
     ActiveExecution *const activeIdentity = &active;
@@ -2481,6 +2919,8 @@ void SemanticRuntimeExecutorExecution::beginAfterState(const QString &controller
             QStringLiteral("The post-operation state request is invalid."));
         return;
     }
+    if (divertPendingCancellation(controllerId))
+        return;
     active.phase = SemanticExecutionPhase::AfterState;
     active.stateRequest = request;
     QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
@@ -2506,6 +2946,8 @@ void SemanticRuntimeExecutorExecution::scheduleWaitRetry(const QString &controll
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
         return;
+    if (divertPendingCancellation(controllerId))
+        return;
     ActiveExecution &active = *queue->active;
     const Data::SemanticOperationId operationId = active.operationId;
     const qsizetype stepIndex = active.stepIndex;
@@ -2520,6 +2962,8 @@ void SemanticRuntimeExecutorExecution::scheduleWaitRetry(const QString &controll
             || currentQueue->active->snapshotRequest) {
             return;
         }
+        if (divertPendingCancellation(controllerId))
+            return;
         beginWaitSnapshot(controllerId);
     });
 }
@@ -2532,6 +2976,8 @@ bool SemanticRuntimeExecutorExecution::recordCurrentStep(
 {
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
+        return false;
+    if (divertPendingCancellation(controllerId))
         return false;
     ActiveExecution &active = *queue->active;
     if (active.stepIndex < 0 || active.stepIndex >= active.plan.steps().size())
@@ -2557,6 +3003,8 @@ bool SemanticRuntimeExecutorExecution::recordCurrentStep(
     publishJournalResult(recorded, controllerId);
     if (!guardedExecutor)
         return false;
+    if (divertPendingCancellation(controllerId))
+        return false;
     if (!recorded.accepted()) {
         failActive(
             controllerId,
@@ -2571,6 +3019,8 @@ void SemanticRuntimeExecutorExecution::completeCurrentStep(const QString &contro
 {
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
+        return;
+    if (divertPendingCancellation(controllerId))
         return;
     ActiveExecution &active = *queue->active;
     if (active.stepIndex < 0 || active.stepIndex + 1 >= active.plan.steps().size()) {
@@ -2605,11 +3055,33 @@ SemanticRuntimeExecutorExecution::operationSnapshot(
     const Data::RuntimeResourceSnapshot &snapshot,
     QString *error) const
 {
-    const std::optional<Data::RuntimeResourceCatalog> catalog
-        = current.provider->runtimeResourceCatalog();
-    if (!catalog || catalog->scope != active.plan.scope()
-        || catalog->sessionGeneration != active.plan.sessionGeneration()
-        || catalog->epoch != active.plan.epoch()) {
+    const ActiveExecution *const expectedActive = &active;
+    const Data::SemanticOperationId operationId = active.operationId;
+    const SemanticExecutionPhase phase = active.phase;
+    const std::optional<Data::RuntimeResourceSnapshotRequest> snapshotRequest
+        = active.snapshotRequest;
+    const SemanticActionPlan plan = active.plan;
+    const QString controllerId = plan.request().target.controllerId;
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    QPointer<Core::ControllerConnectionProvider> provider = current.provider;
+    if (!provider) {
+        if (error)
+            *error = QStringLiteral("The controller provider is unavailable.");
+        return std::nullopt;
+    }
+    const std::optional<Data::RuntimeResourceCatalog> catalog = provider->runtimeResourceCatalog();
+    if (!guardedExecutor || !provider)
+        return std::nullopt;
+    const auto queue = m_queues.constFind(controllerId);
+    if (queue == m_queues.cend() || !queue->active || &*queue->active != expectedActive
+        || queue->active->operationId != operationId || queue->active->phase != phase
+        || queue->active->snapshotRequest != snapshotRequest
+        || queue->active->provider != provider) {
+        return std::nullopt;
+    }
+    if (!catalog || catalog->scope != plan.scope()
+        || catalog->sessionGeneration != plan.sessionGeneration()
+        || catalog->epoch != plan.epoch()) {
         if (error)
             *error = QStringLiteral("The runtime resource catalog changed.");
         return std::nullopt;
@@ -2659,8 +3131,7 @@ SemanticRuntimeExecutorExecution::operationSnapshot(
         observation.controllerTimestampNs = validation.sample->controllerTimestampNs;
         result.observations.append(observation);
     }
-    result.digest = semanticOperationSnapshotDigest(
-        result, active.plan.epoch(), active.plan.sessionGeneration());
+    result.digest = semanticOperationSnapshotDigest(result, plan.epoch(), plan.sessionGeneration());
     if (!result.complete || !result.controllerTimestampNs || result.digest.size() != 32) {
         if (error)
             *error = QStringLiteral("The semantic snapshot evidence is incomplete.");
@@ -2941,6 +3412,8 @@ void SemanticRuntimeExecutorExecution::handleSnapshot(
     const Data::RuntimeResourceSnapshotRequest expected = *active.snapshotRequest;
     if (result.request.correlationId != expected.correlationId)
         return;
+    if (result.request == expected && divertPendingCancellation(controllerId))
+        return;
     if (result.request != expected || !result.isValid()) {
         failActive(
             controllerId,
@@ -3018,6 +3491,15 @@ void SemanticRuntimeExecutorExecution::handleSnapshot(
     }
     const std::optional<Data::SemanticOperationSnapshot> snapshot
         = operationSnapshot(active, *current, *result.snapshot, &error);
+    if (!validationGuard)
+        return;
+    queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->active || &*queue->active != validationIdentity
+        || queue->active->operationId != validationOperationId
+        || queue->active->phase != validationPhase || !queue->active->snapshotRequest
+        || *queue->active->snapshotRequest != expected) {
+        return;
+    }
     if (!snapshot) {
         failActive(
             controllerId,
@@ -3028,15 +3510,21 @@ void SemanticRuntimeExecutorExecution::handleSnapshot(
     active.lastCaptureCycle = result.snapshot->captureCycle;
 
     if (active.phase == SemanticExecutionPhase::BeforeSnapshot) {
+        const Data::SemanticOperationId operationId = active.operationId;
+        const SemanticExecutionPhase phase = active.phase;
+        const Data::RuntimeResourceSnapshotRequest snapshotRequest = expected;
         const SemanticOperationJournalResult recorded = m_journal.recordBeforeSnapshot(
-            active.operationId,
-            Data::SemanticOperationState::Executing,
-            *snapshot,
-            executorActor());
+            operationId, Data::SemanticOperationState::Executing, *snapshot, executorActor());
         QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
         publishJournalResult(recorded, controllerId);
         if (!guardedExecutor)
             return;
+        queue = m_queues.find(controllerId);
+        if (queue == m_queues.end() || !queue->active || queue->active->operationId != operationId
+            || queue->active->phase != phase || !queue->active->snapshotRequest
+            || *queue->active->snapshotRequest != snapshotRequest) {
+            return;
+        }
         if (!recorded.accepted()) {
             failActive(
                 controllerId,
@@ -3044,7 +3532,7 @@ void SemanticRuntimeExecutorExecution::handleSnapshot(
                 QStringLiteral("The pre-operation snapshot could not be recorded."));
             return;
         }
-        active.snapshotRequest.reset();
+        queue->active->snapshotRequest.reset();
         beginNextPolicy(controllerId);
         return;
     }
@@ -3182,6 +3670,8 @@ void SemanticRuntimeExecutorExecution::handlePolicy(
     const Data::RuntimeOutputGroupPolicyRequest expected = *active.policyRequest;
     if (result.request.correlationId != expected.correlationId)
         return;
+    if (result.request == expected && divertPendingCancellation(controllerId))
+        return;
     if (result.request != expected || !result.isValid()) {
         failActive(
             controllerId,
@@ -3282,6 +3772,8 @@ void SemanticRuntimeExecutorExecution::handleState(
     const Data::RuntimeOutputTransactionStateRequest expected = *active.stateRequest;
     if (result.request.correlationId != expected.correlationId)
         return;
+    if (result.request == expected && divertPendingCancellation(controllerId, true))
+        return;
     if (result.request != expected || !result.isValid()) {
         if (active.phase == SemanticExecutionPhase::RecoveryState) {
             active.stateRequest.reset();
@@ -3336,6 +3828,7 @@ void SemanticRuntimeExecutorExecution::handleState(
             return;
         }
         if (stateProvesLastSafeHold(active, *result.state)) {
+            active.recoverySafeHoldState = *result.state;
             finishRecovery(controllerId);
             return;
         }
@@ -3542,6 +4035,176 @@ void SemanticRuntimeExecutorExecution::handleApply(
     const auto currentRecord = m_journal.operation(active.operationId);
     if (!currentRecord)
         return;
+    if (currentRecord->cancellation
+        && currentRecord->cancellation->phase != Data::SemanticOperationCancellationPhase::Requested
+        && currentRecord->cancellation->phase
+               != Data::SemanticOperationCancellationPhase::WaitingForApplyResult) {
+        driveCancellation(active.operationId);
+        return;
+    }
+    std::optional<Data::SemanticOperationRecord> cancellationRecord = currentRecord;
+    if (cancellationRecord->cancellation
+        && cancellationRecord->cancellation->phase
+               == Data::SemanticOperationCancellationPhase::Requested) {
+        SemanticOperationJournalCancellationUpdate update;
+        update.expectedState = cancellationRecord->state;
+        update.expectedPhase = Data::SemanticOperationCancellationPhase::Requested;
+        update.phase = Data::SemanticOperationCancellationPhase::WaitingForApplyResult;
+        update.actor = cancellationRecord->cancellation->actor;
+        update.pendingApplyRequest = expected;
+        update.priorAppliedRequest = active.lastAppliedRequest;
+        const SemanticOperationJournalResult waiting
+            = m_journal.updateCancellation(active.operationId, update);
+        QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+        publishJournalResult(waiting, controllerId);
+        if (!guardedExecutor || !waiting.accepted())
+            return;
+        queue = m_queues.find(controllerId);
+        if (queue == m_queues.end() || !queue->active
+            || queue->active->operationId != cancellationRecord->request.operationId
+            || queue->active->phase != SemanticExecutionPhase::Apply
+            || queue->active->applyRequest != expected) {
+            return;
+        }
+        cancellationRecord = m_journal.operation(cancellationRecord->request.operationId);
+        if (!cancellationRecord || !cancellationRecord->cancellation)
+            return;
+    }
+    if (cancellationRecord->cancellation
+        && cancellationRecord->cancellation->phase
+               == Data::SemanticOperationCancellationPhase::WaitingForApplyResult) {
+        const Data::SemanticOperationId operationId = cancellationRecord->request.operationId;
+        const Data::SemanticRuntimeActor cancellationActor = cancellationRecord->cancellation->actor;
+        const QString cancellationReason = cancellationRecord->cancellation->request.reason;
+        const std::optional<Data::RuntimeOutputTransactionRequest> priorAppliedRequest
+            = queue->active->lastAppliedRequest;
+        const auto publishCancellation =
+            [this, &controllerId](const SemanticOperationJournalResult &journalResult) {
+                QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+                publishJournalResult(journalResult, controllerId);
+                return guardedExecutor && journalResult.accepted();
+            };
+
+        if (result.outcome == Data::RuntimeOutputTransactionOutcome::OutcomeUnknown) {
+            freezeUnknown(
+                controllerId,
+                QStringLiteral("cancel-output-outcome-unknown"),
+                QStringLiteral("Cancellation is waiting for the same output transaction result."),
+                result.error);
+            return;
+        }
+        if (result.outcome == Data::RuntimeOutputTransactionOutcome::Rejected) {
+            SemanticOperationJournalCancellationUpdate update;
+            update.expectedState = cancellationRecord->state;
+            update.expectedPhase = Data::SemanticOperationCancellationPhase::WaitingForApplyResult;
+            update.actor = cancellationActor;
+            if (priorAppliedRequest) {
+                update.phase = Data::SemanticOperationCancellationPhase::ProvingSafeHold;
+                update.priorAppliedRequest = priorAppliedRequest;
+                update.safeHoldRequest = priorAppliedRequest;
+                update.terminalApplyResult = result;
+            } else {
+                update.phase = Data::SemanticOperationCancellationPhase::Completed;
+                update.resultCode = QStringLiteral(
+                    "semantic-operation-canceled-after-provider-rejection");
+                update.detail = cancellationReason;
+                update.terminalApplyResult = result;
+            }
+            const SemanticOperationJournalResult progressed
+                = m_journal.updateCancellation(operationId, update);
+            if (progressed.accepted()) {
+                queue->active->applyOutcomePending = false;
+                queue->active->mutationMayHaveExecuted = priorAppliedRequest.has_value();
+            }
+            if (!publishCancellation(progressed))
+                return;
+            queue = m_queues.find(controllerId);
+            if (queue == m_queues.end() || !queue->active
+                || queue->active->operationId != operationId) {
+                return;
+            }
+            if (priorAppliedRequest)
+                driveCancellation(operationId);
+            else
+                finishActive(controllerId);
+            return;
+        }
+        if (result.outcome == Data::RuntimeOutputTransactionOutcome::AppliedThenRecovered) {
+            queue->active->applyOutcomePending = false;
+            queue->active->lastAppliedRequest = expected;
+            queue->active->appliedCycle = result.state ? result.state->appliedCycle : 0;
+            queue->active->expiryCycle = result.state ? result.state->expiryCycle : 0;
+            queue->active->appliedOutputGeneration = result.state ? result.state->outputGeneration
+                                                                  : 0;
+            queue->active->appliedControllerTimestampNs = result.state
+                                                              ? result.state->controllerTimestampNs
+                                                              : 0;
+            if (expected.expectedRecoveryPolicy != Data::RuntimeOutputRecoveryPolicy::HoldSafe
+                || !result.state || !stateProvesLastSafeHold(*queue->active, *result.state)) {
+                freezeUnknown(
+                    controllerId,
+                    QStringLiteral("cancel-safe-hold-unavailable"),
+                    QStringLiteral(
+                        "The completed output transaction has no exact SafeHold proof."));
+                return;
+            }
+            SemanticOperationJournalCancellationUpdate update;
+            update.expectedState = cancellationRecord->state;
+            update.expectedPhase = Data::SemanticOperationCancellationPhase::WaitingForApplyResult;
+            update.phase = Data::SemanticOperationCancellationPhase::Completed;
+            update.actor = cancellationActor;
+            update.resultCode = QStringLiteral("semantic-operation-canceled-safe-hold");
+            update.detail = cancellationReason;
+            update.safeHoldState = result.state;
+            update.safeHoldRequest = expected;
+            update.appliedCycle = result.state->appliedCycle;
+            update.appliedRuntimeGeneration = result.state->epoch.runtimeGeneration;
+            const SemanticOperationJournalResult completed
+                = m_journal.updateCancellation(operationId, update);
+            if (!publishCancellation(completed))
+                return;
+            queue = m_queues.find(controllerId);
+            if (queue == m_queues.end() || !queue->active
+                || queue->active->operationId != operationId) {
+                return;
+            }
+            queue->active->mutationMayHaveExecuted = false;
+            finishActive(controllerId);
+            return;
+        }
+        if (result.outcome == Data::RuntimeOutputTransactionOutcome::Applied && result.state) {
+            queue->active->applyOutcomePending = false;
+            queue->active->lastAppliedRequest = expected;
+            queue->active->appliedCycle = result.state->appliedCycle;
+            queue->active->expiryCycle = result.state->expiryCycle;
+            queue->active->appliedOutputGeneration = result.state->outputGeneration;
+            queue->active->appliedControllerTimestampNs = result.state->controllerTimestampNs;
+            if (expected.expectedRecoveryPolicy != Data::RuntimeOutputRecoveryPolicy::HoldSafe) {
+                freezeUnknown(
+                    controllerId,
+                    QStringLiteral("cancel-safe-hold-unavailable"),
+                    QStringLiteral("The last signed output transaction has no SafeHold proof."));
+                return;
+            }
+            SemanticOperationJournalCancellationUpdate update;
+            update.expectedState = cancellationRecord->state;
+            update.expectedPhase = Data::SemanticOperationCancellationPhase::WaitingForApplyResult;
+            update.phase = Data::SemanticOperationCancellationPhase::ProvingSafeHold;
+            update.actor = cancellationActor;
+            update.safeHoldRequest = expected;
+            const SemanticOperationJournalResult proving
+                = m_journal.updateCancellation(operationId, update);
+            if (!publishCancellation(proving))
+                return;
+            driveCancellation(operationId);
+            return;
+        }
+        freezeUnknown(
+            controllerId,
+            QStringLiteral("cancel-output-result-unsupported"),
+            QStringLiteral("Cancellation received an unsupported output result."));
+        return;
+    }
     if (result.outcome == Data::RuntimeOutputTransactionOutcome::OutcomeUnknown) {
         freezeUnknown(
             controllerId,
@@ -3624,6 +4287,8 @@ void SemanticRuntimeExecutorExecution::failActive(
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
         return;
+    if (divertPendingCancellation(controllerId))
+        return;
     const ActiveExecution &active = *queue->active;
     if (active.mutationMayHaveExecuted) {
         if (active.applyOutcomePending) {
@@ -3695,6 +4360,7 @@ void SemanticRuntimeExecutorExecution::beginRecovery(
     active.recoveryDetail = conciseExecutionText(detail);
     active.recoveryError = error;
     active.recoveryAttempts = 0;
+    active.recoverySafeHoldState.reset();
     active.snapshotRequest.reset();
     active.policyRequest.reset();
     active.stateRequest.reset();
@@ -3717,29 +4383,59 @@ void SemanticRuntimeExecutorExecution::beginRecoveryState(const QString &control
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
         return;
-    ActiveExecution &active = *queue->active;
-    if (active.phase != SemanticExecutionPhase::RecoveryState || active.stateRequest)
+    if (queue->active->phase != SemanticExecutionPhase::RecoveryState
+        || queue->active->stateRequest) {
         return;
-    if (!active.provider || !active.provider->isAvailable()
-        || !active.provider->supportsRuntimeOutputTransactions()) {
+    }
+    const Data::SemanticOperationId operationId = queue->active->operationId;
+    QPointer<Core::ControllerConnectionProvider> provider = queue->active->provider;
+    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+    const auto currentRecovery =
+        [this, &controllerId, &operationId, &provider]() -> ActiveExecution * {
+        auto current = m_queues.find(controllerId);
+        if (current == m_queues.end() || !current->active
+            || current->active->operationId != operationId
+            || current->active->phase != SemanticExecutionPhase::RecoveryState
+            || current->active->provider != provider) {
+            return nullptr;
+        }
+        return &*current->active;
+    };
+    if (!provider) {
         freezeUnknown(
             controllerId,
             QStringLiteral("safe-recovery-provider-unavailable"),
             QStringLiteral("The controller provider cannot prove signed SafeHold."));
         return;
     }
-    const Data::ControllerConnectionSnapshot connection
-        = active.provider->connectionSnapshot();
-    if (!isConnected(connection.state) || connection.scope != active.plan.scope()
-        || connection.sessionGeneration != active.plan.sessionGeneration()) {
+    const bool providerAvailable = provider->isAvailable();
+    if (!guardedExecutor || !provider || !currentRecovery())
+        return;
+    const bool transactionsSupported = provider->supportsRuntimeOutputTransactions();
+    if (!guardedExecutor || !provider || !currentRecovery())
+        return;
+    if (!providerAvailable || !transactionsSupported) {
+        freezeUnknown(
+            controllerId,
+            QStringLiteral("safe-recovery-provider-unavailable"),
+            QStringLiteral("The controller provider cannot prove signed SafeHold."));
+        return;
+    }
+    const Data::ControllerConnectionSnapshot connection = provider->connectionSnapshot();
+    if (!guardedExecutor || !provider)
+        return;
+    ActiveExecution *active = currentRecovery();
+    if (!active)
+        return;
+    if (!isConnected(connection.state) || connection.scope != active->plan.scope()
+        || connection.sessionGeneration != active->plan.sessionGeneration()) {
         freezeUnknown(
             controllerId,
             QStringLiteral("safe-recovery-session-changed"),
             QStringLiteral("The controller session changed before SafeHold was proved."));
         return;
     }
-    if (active.recoveryAttempts
-        >= qMin<quint32>(active.plan.ttlCycles() + 1, 65535)) {
+    if (active->recoveryAttempts >= qMin<quint32>(active->plan.ttlCycles() + 1, 65535)) {
         freezeUnknown(
             controllerId,
             QStringLiteral("safe-recovery-unproven"),
@@ -3748,13 +4444,13 @@ void SemanticRuntimeExecutorExecution::beginRecoveryState(const QString &control
     }
 
     Data::RuntimeOutputTransactionStateRequest request;
-    const quint32 attempt = ++active.attempt;
+    const quint32 attempt = ++active->attempt;
     request.correlationId = executionCorrelationId(
-        active.operationId, u"recovery-state", quint32(active.stepIndex), attempt);
-    request.scope = active.plan.scope();
-    request.sessionGeneration = active.plan.sessionGeneration();
-    request.expectedEpoch = active.plan.epoch();
-    request.expectedMappingDigest = active.plan.mappingDigest();
+        active->operationId, u"recovery-state", quint32(active->stepIndex), attempt);
+    request.scope = active->plan.scope();
+    request.sessionGeneration = active->plan.sessionGeneration();
+    request.expectedEpoch = active->plan.epoch();
+    request.expectedMappingDigest = active->plan.mappingDigest();
     if (!request.isValid()) {
         freezeUnknown(
             controllerId,
@@ -3762,18 +4458,16 @@ void SemanticRuntimeExecutorExecution::beginRecoveryState(const QString &control
             QStringLiteral("The signed SafeHold state request is invalid."));
         return;
     }
-    ++active.recoveryAttempts;
-    active.stateRequest = request;
-    QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
-    const Utils::Result<> started
-        = active.provider->requestRuntimeOutputTransactionState(request);
-    if (!guardedExecutor)
+    ++active->recoveryAttempts;
+    active->stateRequest = request;
+    const Utils::Result<> started = provider->requestRuntimeOutputTransactionState(request);
+    if (!guardedExecutor || !provider)
         return;
     if (!started) {
         auto check = m_queues.find(controllerId);
-        if (check == m_queues.end() || !check->active
+        if (check == m_queues.end() || !check->active || check->active->operationId != operationId
             || check->active->phase != SemanticExecutionPhase::RecoveryState
-            || check->active->stateRequest != request) {
+            || check->active->provider != provider || check->active->stateRequest != request) {
             return;
         }
         check->active->stateRequest.reset();
@@ -3798,34 +4492,86 @@ void SemanticRuntimeExecutorExecution::finishRecovery(const QString &controllerI
     const auto record = m_journal.operation(active.operationId);
     if (!record)
         return;
-    if (record->state == Data::SemanticOperationState::Executing
-        && record->currentStep == quint32(active.stepIndex)
-        && !recordCurrentStep(
-            controllerId,
-            true,
-            active.recoveryDetail,
-            active.recoveryError)) {
+    if (active.recoveryState == Data::SemanticOperationState::Canceled) {
+        if (!record->cancellation
+            || record->cancellation->phase
+                   != Data::SemanticOperationCancellationPhase::ProvingSafeHold
+            || !active.lastAppliedRequest || !active.recoverySafeHoldState
+            || record->cancellation->safeHoldRequest != active.lastAppliedRequest
+            || !stateProvesLastSafeHold(active, *active.recoverySafeHoldState)) {
+            freezeUnknown(
+                controllerId,
+                QStringLiteral("cancel-safe-hold-proof-mismatch"),
+                QStringLiteral("Cancellation could not bind the exact signed SafeHold proof."));
+            return;
+        }
+        const Data::SemanticOperationId operationId = active.operationId;
+        const Data::RuntimeOutputTransactionState safeHoldState = *active.recoverySafeHoldState;
+        SemanticOperationJournalCancellationUpdate update;
+        update.expectedState = record->state;
+        update.expectedPhase = Data::SemanticOperationCancellationPhase::ProvingSafeHold;
+        update.phase = Data::SemanticOperationCancellationPhase::Completed;
+        update.actor = record->cancellation->actor;
+        update.resultCode = QStringLiteral("semantic-operation-canceled-safe-hold");
+        update.detail = record->cancellation->request.reason;
+        update.safeHoldState = safeHoldState;
+        update.safeHoldRequest = *active.lastAppliedRequest;
+        update.appliedCycle = safeHoldState.appliedCycle;
+        update.appliedRuntimeGeneration = safeHoldState.epoch.runtimeGeneration;
+        const SemanticOperationJournalResult completed
+            = m_journal.updateCancellation(operationId, update);
+        if (completed.accepted())
+            active.mutationMayHaveExecuted = false;
+        QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+        publishJournalResult(completed, controllerId);
+        if (!guardedExecutor || !completed.accepted())
+            return;
+        queue = m_queues.find(controllerId);
+        if (queue == m_queues.end() || !queue->active || queue->active->operationId != operationId
+            || queue->active->phase != SemanticExecutionPhase::RecoveryState) {
+            return;
+        }
+        finishActive(controllerId);
         return;
     }
-    const auto refreshed = m_journal.operation(active.operationId);
+    const Data::SemanticOperationId operationId = active.operationId;
+    const Data::SemanticOperationState recoveryState = active.recoveryState;
+    const QString recoveryCode = active.recoveryCode;
+    const QString recoveryDetail = active.recoveryDetail;
+    const std::optional<Data::ControllerOperationError> recoveryError = active.recoveryError;
+    const quint64 appliedCycle = active.appliedCycle;
+    const quint64 runtimeGeneration = active.plan.epoch().runtimeGeneration;
+    if (record->state == Data::SemanticOperationState::Executing
+        && record->currentStep == quint32(active.stepIndex)) {
+        QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
+        const bool recorded = recordCurrentStep(controllerId, true, recoveryDetail, recoveryError);
+        if (!guardedExecutor || !recorded)
+            return;
+        queue = m_queues.find(controllerId);
+        if (queue == m_queues.end() || !queue->active || queue->active->operationId != operationId
+            || queue->active->phase != SemanticExecutionPhase::RecoveryState) {
+            return;
+        }
+    }
+    const auto refreshed = m_journal.operation(operationId);
     if (!refreshed)
         return;
-    Data::SemanticOperationState terminalState = active.recoveryState;
+    Data::SemanticOperationState terminalState = recoveryState;
     if (refreshed->state == Data::SemanticOperationState::OutcomeUnknown
         && terminalState == Data::SemanticOperationState::TimedOut) {
         terminalState = Data::SemanticOperationState::Failed;
     }
     const SemanticOperationJournalResult terminal = m_journal.transition(
-        active.operationId,
+        operationId,
         {
             refreshed->state,
             terminalState,
             executorActor(),
-            active.recoveryCode,
-            active.recoveryDetail,
-            active.recoveryError,
-            active.appliedCycle,
-            active.plan.epoch().runtimeGeneration,
+            recoveryCode,
+            recoveryDetail,
+            recoveryError,
+            appliedCycle,
+            runtimeGeneration,
         });
     QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     publishJournalResult(terminal, controllerId);
@@ -3835,7 +4581,12 @@ void SemanticRuntimeExecutorExecution::finishRecovery(const QString &controllerI
         && (!terminal.record || terminal.record->state != terminalState)) {
         return;
     }
-    active.mutationMayHaveExecuted = false;
+    queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->active || queue->active->operationId != operationId
+        || queue->active->phase != SemanticExecutionPhase::RecoveryState) {
+        return;
+    }
+    queue->active->mutationMayHaveExecuted = false;
     finishActive(controllerId);
 }
 
@@ -3849,6 +4600,9 @@ void SemanticRuntimeExecutorExecution::freezeUnknown(
     if (queue == m_queues.end() || !queue->active)
         return;
     ActiveExecution &active = *queue->active;
+    const Data::SemanticOperationId operationId = active.operationId;
+    const SemanticExecutionPhase phase = active.phase;
+    const std::optional<Data::RuntimeOutputTransactionRequest> applyRequest = active.applyRequest;
     const auto record = m_journal.operation(active.operationId);
     if (!record)
         return;
@@ -3876,9 +4630,20 @@ void SemanticRuntimeExecutorExecution::freezeUnknown(
             return;
         if (!step.accepted())
             return;
+        queue = m_queues.find(controllerId);
+        if (queue == m_queues.end() || !queue->active || queue->active->operationId != operationId
+            || queue->active->phase != phase || queue->active->applyRequest != applyRequest) {
+            return;
+        }
     }
+    queue = m_queues.find(controllerId);
+    if (queue == m_queues.end() || !queue->active || queue->active->operationId != operationId
+        || queue->active->phase != phase || queue->active->applyRequest != applyRequest) {
+        return;
+    }
+    const ActiveExecution &current = *queue->active;
     const SemanticOperationJournalResult unknown = m_journal.transition(
-        active.operationId,
+        operationId,
         {
             Data::SemanticOperationState::Executing,
             Data::SemanticOperationState::OutcomeUnknown,
@@ -3886,8 +4651,8 @@ void SemanticRuntimeExecutorExecution::freezeUnknown(
             code,
             conciseExecutionText(detail),
             error,
-            active.appliedCycle,
-            active.plan.epoch().runtimeGeneration,
+            current.appliedCycle,
+            current.plan.epoch().runtimeGeneration,
         });
     publishJournalResult(unknown, controllerId);
     // Keep the active request and output OperationId intact. No later queued
@@ -3900,6 +4665,8 @@ void SemanticRuntimeExecutorExecution::expireActive(
 {
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
+        return;
+    if (divertPendingCancellation(controllerId))
         return;
     const ActiveExecution &active = *queue->active;
     const auto record = m_journal.operation(active.operationId);
@@ -3935,6 +4702,8 @@ void SemanticRuntimeExecutorExecution::timeOutActive(
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
         return;
+    if (divertPendingCancellation(controllerId))
+        return;
     const ActiveExecution &active = *queue->active;
     const auto record = m_journal.operation(active.operationId);
     if (!record || record->state != Data::SemanticOperationState::Executing)
@@ -3967,6 +4736,8 @@ void SemanticRuntimeExecutorExecution::succeedActive(const QString &controllerId
 {
     auto queue = m_queues.find(controllerId);
     if (queue == m_queues.end() || !queue->active)
+        return;
+    if (divertPendingCancellation(controllerId))
         return;
     const ActiveExecution &active = *queue->active;
     const auto record = m_journal.operation(active.operationId);
@@ -4024,10 +4795,28 @@ void SemanticRuntimeExecutorExecution::providerRemoved(
     }
     QPointer<SemanticRuntimeExecutor> guardedExecutor(q);
     for (const QString &controllerId : std::as_const(affected)) {
-        failActive(
-            controllerId,
-            QStringLiteral("controller-provider-removed"),
-            QStringLiteral("The controller provider was removed during execution."));
+        const auto queue = m_queues.constFind(controllerId);
+        const std::optional<Data::SemanticOperationRecord> record
+            = queue != m_queues.cend() && queue->active
+                  ? m_journal.operation(queue->active->operationId)
+                  : std::nullopt;
+        const bool provingSafeHold
+            = queue != m_queues.cend() && queue->active && record && record->cancellation
+              && queue->active->phase == SemanticExecutionPhase::RecoveryState
+              && record->cancellation->phase
+                     == Data::SemanticOperationCancellationPhase::ProvingSafeHold;
+        if (provingSafeHold) {
+            freezeUnknown(
+                controllerId,
+                QStringLiteral("cancel-safe-hold-provider-removed"),
+                QStringLiteral(
+                    "The controller provider was removed before SafeHold could be proven."));
+        } else {
+            failActive(
+                controllerId,
+                QStringLiteral("controller-provider-removed"),
+                QStringLiteral("The controller provider was removed during execution."));
+        }
         if (!guardedExecutor)
             return;
     }
@@ -4259,16 +5048,10 @@ SemanticRuntimeExecutor::SemanticRuntimeExecutor(
             m_providerRegistry = nullptr;
             ++m_adapterProviderSignalGeneration;
             for (const QList<QMetaObject::Connection> &connections :
-                 std::as_const(m_providerConnections)) {
-                for (const QMetaObject::Connection &connection : connections)
-                    disconnect(connection);
-            }
-            for (const QList<QMetaObject::Connection> &connections :
                  std::as_const(m_adapterProviderConnections)) {
                 for (const QMetaObject::Connection &connection : connections)
                     disconnect(connection);
             }
-            m_providerConnections.clear();
             m_adapterProviderConnections.clear();
             m_runtimeBootstrapStates.clear();
             m_runtimeBootstrapSignalGenerations.clear();
@@ -4347,6 +5130,12 @@ QList<Data::SemanticRuntimeAuditEvent> SemanticRuntimeExecutor::audit(
     const QString &controllerId, quint64 afterSequence) const
 {
     return m_execution->audit(controllerId, afterSequence);
+}
+
+Data::SemanticOperationCancelResult SemanticRuntimeExecutor::cancel(
+    const Data::SemanticOperationCancelRequest &request, const Data::SemanticRuntimeActor &actor)
+{
+    return m_execution->cancel(request, actor);
 }
 
 std::shared_ptr<const VerifiedRuntimePackageEvidence>

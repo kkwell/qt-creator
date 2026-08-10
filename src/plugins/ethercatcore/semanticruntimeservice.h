@@ -38,6 +38,9 @@ enum class SemanticRuntimeValidationError {
     ApprovalNotRequired,
     ApprovalActorInvalid,
     ApprovalChallengeMismatch,
+    CancelActorInvalid,
+    CancelBindingMismatch,
+    CancelRevisionMismatch,
 };
 
 struct ETHERCATCORE_EXPORT SemanticRuntimeValidation
@@ -66,6 +69,8 @@ ETHERCATCORE_EXPORT bool isCompleteRuntimeResourceCatalogEpoch(
 ETHERCATCORE_EXPORT bool isCanonicalSha256Digest(const Data::SemanticRuntimeDigest &digest);
 ETHERCATCORE_EXPORT bool isCanonicalSemanticOperationId(
     const Data::SemanticOperationId &operationId);
+ETHERCATCORE_EXPORT bool isCanonicalSemanticOperationCancelId(
+    const Data::SemanticOperationCancelId &cancelId);
 ETHERCATCORE_EXPORT bool isAllowedSemanticRuntimeValue(const QVariant &value);
 ETHERCATCORE_EXPORT bool isSemanticRuntimeValueCompatible(
     const QVariant &value, const Data::SemanticRuntimeBinding &binding);
@@ -74,6 +79,8 @@ ETHERCATCORE_EXPORT QByteArray canonicalSemanticOperationRequest(
 ETHERCATCORE_EXPORT bool semanticOperationRequestsCanonicallyEqual(
     const Data::SemanticOperationRequest &left,
     const Data::SemanticOperationRequest &right);
+ETHERCATCORE_EXPORT QByteArray
+canonicalSemanticOperationCancelRequest(const Data::SemanticOperationCancelRequest &request);
 ETHERCATCORE_EXPORT SemanticRuntimeValidation validateSemanticRuntimeEpoch(
     const Data::RuntimeResourceCatalogEpoch &expected,
     const Data::RuntimeResourceCatalogEpoch &actual);
@@ -87,6 +94,14 @@ ETHERCATCORE_EXPORT SemanticRuntimeValidation validateSemanticOperationApproval(
     const Data::SemanticRuntimeActor &actor,
     const Data::SemanticOperationRecord &operation,
     const Data::SemanticRuntimeContext &context);
+ETHERCATCORE_EXPORT SemanticRuntimeValidation validateSemanticOperationCancelRequest(
+    const Data::SemanticOperationCancelRequest &request,
+    const Data::SemanticRuntimeActor &actor,
+    const Data::SemanticOperationRecord &operation);
+ETHERCATCORE_EXPORT SemanticRuntimeValidation validateSemanticOperationCancellationEvidence(
+    const Data::SemanticOperationCancelRequest &request,
+    const Data::SemanticRuntimeActor &actor,
+    const Data::SemanticOperationRecord &operation);
 ETHERCATCORE_EXPORT SemanticRuntimeReadValidation validateSemanticRuntimeRead(
     const Data::SemanticRuntimeBinding &binding,
     const Data::RuntimeResourceCatalog &catalog,
@@ -125,6 +140,9 @@ public:
         const Data::SemanticOperationId &operationId) const;
     virtual QList<Data::SemanticRuntimeAuditEvent> audit(
         const QString &controllerId, quint64 afterSequence = 0) const;
+    virtual Data::SemanticOperationCancelResult cancel(
+        const Data::SemanticOperationCancelRequest &request,
+        const Data::SemanticRuntimeActor &actor);
 
 signals:
     void contextsChanged();
