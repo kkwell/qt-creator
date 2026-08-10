@@ -189,12 +189,23 @@ hash 和 Authorization v2 精确摘要闭包；Core 的 `validateConfiguredDevic
 `realHardwareAllowed` 双重信任结果时，继续校验 required、ID、类型和工程范围。工程 v8 的
 持久化入口本身仍只验证通用语法，不会凭保存值自动完成资格化。
 
-当前树没有生产 v4 Adapter/Authorization 资产，已安装的 SV630N Adapter 仍为 v3 且动作保持
-disabled；compiler projection、Product API 在线实测参数证据和 configured/observed/match 界面也
-尚未完成，因此任一非空设备参数仍会在调用外部编译器前 fail closed。后续扫描得到的实测值属于
-带 Session/Boot/拓扑/设备身份的在线证据，只用于界面显示“工程设定值 / 扫描实测值 / 是否一致”，
-不得写回 `ProjectSnapshot` 冒充工程意图。当前字段或 v4 合同本身都不授权部署、SDO 下载或电机
-运动。
+Workbench 已为 ConfiguredSlave 提供 Project-only 的 Device Parameters 页。只有设备库仍能提供
+精确 ESI 描述，且唯一 available Adapter Provider 对保存的完整 Adapter/Profile/Module 选择返回
+`Qualified`、`signatureVerified`、`realHardwareAllowed` 的精确 v4 manifest，并以
+`allowCandidate=false`、`allowMock=false`、`requireRealHardwareQualification=true` 解析出同一
+完整设备模型时，页面才允许编辑。页面支持 Boolean、有符号整数、无符号整数、精确有理数和枚举；
+签名 default 仅作为参考占位，不会自动成为配置值。Apply 会现场重读 manifest，在 Provider 调用后
+再次比较完整 Project，再通过 `ProjectService` 的 expected-token 写入口进入 Undo/Redo。工程、ESI、
+Adapter、Profile、Module 或 Provider authority 改变后，现有草稿变为 stale，必须由用户明确 Reload
+后才能继续编辑或 Apply。
+
+该页面的 Observed/Source/Verification Status 当前只显示签名来源以及 `Not captured` 或
+`Unavailable`，不会发起 scan、SDO upload/download、控制器命令、部署、网络或硬件访问。当前树仍
+没有生产 v4 Adapter/Authorization 资产，已安装的 SV630N Adapter 仍为 v3 且动作保持 disabled；
+compiler projection、Product API 在线实测参数证据和设备参数动作也尚未完成，因此任一非空设备参数
+仍会在调用外部编译器前 fail closed。后续真实实测值必须绑定 Session/Boot/拓扑/设备身份，只用于
+比较工程设定与实测证据，不得写回 `ProjectSnapshot`。本地编辑成功不代表驱动器已经接收参数，也不
+授权部署、SDO 下载或电机运动。
 
 ### 4.2 设备目录状态
 
@@ -382,13 +393,15 @@ ShutdownFlag Plugin::aboutToShutdown()
   -> 写入 ProjectSnapshot，保留可证明兼容的配置
 编辑
   -> PDO / Startup SDO / DC / Adapter / 手动 envelope
-  -> 设备参数工程意图（当前仅有 v8 持久化底座）
+  -> Device Parameters（仅保存 Project 工程意图）
 保存工程
 ```
 
 连接不是扫描。物理总线未变化时，用户不需要每次运行都重新扫描。
-扫描实测设备参数的读取、证据绑定和 configured/observed/match 页面尚未实现；扫描拓扑成功
-不能伪造这些值，也不能把上一次会话的观察值保存进工程。
+Device Parameters 页当前只展示 signed observed source 以及 `Not captured`/`Unavailable`，不会因
+页面打开、Reload 或 Apply 而扫描、读取 SDO、控制或部署。扫描实测设备参数的 Product API 读取、
+Session/Boot/拓扑/设备身份证据绑定和 configured/observed match 判定仍未实现；扫描拓扑成功不能
+伪造这些值，也不能把上一次会话的观察值保存进工程。
 
 ### 6.2 编译、签名和激活
 

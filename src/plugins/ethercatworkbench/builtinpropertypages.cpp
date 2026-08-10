@@ -6,6 +6,7 @@
 #include "communicationpage.h"
 #include "dcpage.h"
 #include "deploymentpage.h"
+#include "deviceparameterspage.h"
 #include "ethercatpage.h"
 #include "ethercatworkbenchconstants.h"
 #include "ethercatworkbenchtr.h"
@@ -158,6 +159,7 @@ QList<Core::PropertyPageDescriptor> BuiltinPropertyPageProvider::pages(
                {Utils::Id(Constants::ETHERCAT_PAGE_ID), Tr::tr("EtherCAT"), 200},
                {Utils::Id(Constants::PROCESS_DATA_PAGE_ID), Tr::tr("Process Data"), 300},
                {Utils::Id(Constants::COE_ONLINE_PAGE_ID), Tr::tr("CoE Online"), 350},
+               {Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), Tr::tr("Device Parameters"), 375},
                {Utils::Id(Constants::STARTUP_PAGE_ID), Tr::tr("Startup"), 400},
                {Utils::Id(Constants::DC_PAGE_ID), Tr::tr("DC"), 500}};
         if ((!m_controller || !m_controller->diagnosticsAvailable())
@@ -226,6 +228,7 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
         Constants::ONLINE_PAGE_ID,
         Constants::DIAGNOSTICS_PAGE_ID,
         Constants::SEMANTIC_CONTROL_PAGE_ID,
+        Constants::DEVICE_PARAMETERS_PAGE_ID,
     };
     if (!knownPages.contains(pageId))
         return nullptr;
@@ -277,6 +280,11 @@ QWidget *BuiltinPropertyPageProvider::createPage(Utils::Id pageId, QWidget *pare
     }
     if (pageId == Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID)) {
         auto page = new SemanticControlPage(m_controller, m_runtimeService, parent);
+        page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
+        return page;
+    }
+    if (pageId == Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID)) {
+        auto page = new DeviceParametersPage(m_controller, parent);
         page->setObjectName("EtherCATWorkbenchPropertyPage_" + pageId.toString());
         return page;
     }
@@ -336,6 +344,11 @@ void BuiltinPropertyPageProvider::updatePage(
     if (pageId == Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID)) {
         if (auto semanticControlPage = qobject_cast<SemanticControlPage *>(page))
             semanticControlPage->setContext(context);
+        return;
+    }
+    if (pageId == Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID)) {
+        if (auto deviceParametersPage = qobject_cast<DeviceParametersPage *>(page))
+            deviceParametersPage->setContext(context);
         return;
     }
     BuiltinPageWidget *widget = pageWidget(page);

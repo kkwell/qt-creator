@@ -925,6 +925,231 @@ private:
     std::optional<QByteArray> m_resolvedContentSha256Override;
 };
 
+static Data::EngineeringConstraint deviceParameterIntegerConstraint(qint64 minimum, qint64 maximum)
+{
+    Data::EngineeringConstraint result;
+    result.minimum = {minimum, 1};
+    result.maximum = {maximum, 1};
+    result.step = {1, 1};
+    result.stepOrigin = {0, 1};
+    return result;
+}
+
+static Data::DeviceParameterDefinition deviceParameterDefinition(
+    const QString &id,
+    const QString &displayName,
+    Data::EngineeringValueKind kind,
+    const QString &unit,
+    const Data::EngineeringConstraint &constraint,
+    bool required,
+    const std::optional<Data::EngineeringValue> &defaultValue = std::nullopt)
+{
+    Data::DeviceParameterDefinition result;
+    result.id = id;
+    result.displayName = displayName;
+    result.description = QString("Signed test definition for %1.").arg(displayName);
+    result.valueKind = kind;
+    result.unit = unit;
+    result.engineeringConstraint = constraint;
+    result.required = required;
+    result.engineeringDefaultValue = defaultValue;
+    result.configuredProjection.kind = Data::DeviceParameterProjectionKind::ProjectOnly;
+    result.configuredProjection.reason = "workbench_test_project_only";
+    result.observedSource.kind = Data::DeviceParameterObservedSourceKind::Unavailable;
+    result.observedSource.reason = "workbench_test_unavailable";
+    const QByteArray hashInput = QByteArray("workbench-device-parameter:") + id.toUtf8();
+    result.definitionSha256 = QCryptographicHash::hash(hashInput, QCryptographicHash::Sha256);
+    return result;
+}
+
+static Data::DeviceAdapterManifest deviceParametersManifest()
+{
+    Data::DeviceAdapterManifest result;
+    result.contractVersion = Data::DeviceAdapterContractVersion::V4;
+    result.id = {"org.embedlabs.test.workbench-device-parameters"};
+    result.version = "4.0.0-test";
+    result.displayName = "Workbench parameterized drive";
+    result.qualification = Data::DeviceAdapterQualification::Qualified;
+    result.match = {2, 0x1000, 1, 1, QByteArray(32, '\x61')};
+    result.contentSha256 = QByteArray(32, '\x62');
+    result.signatureVerified = true;
+    result.realHardwareAllowed = true;
+
+    Data::ProcessDataProfile profile;
+    profile.id = "workbench.parameters.default";
+    result.processDataProfiles = {profile};
+
+    Data::DeviceParameterDefinition boolean = deviceParameterDefinition(
+        "a.boolean.required",
+        "Boolean required",
+        Data::EngineeringValueKind::Boolean,
+        "state",
+        deviceParameterIntegerConstraint(0, 1),
+        true);
+    Data::DeviceParameterObjectBinding booleanObject;
+    booleanObject.index = 0x2000;
+    booleanObject.subIndex = 1;
+    booleanObject.physicalType = Data::EtherCATDataType::Boolean;
+    booleanObject.byteOrder = Data::DeviceByteOrder::LittleEndian;
+    booleanObject.engineeringTransform.scale = {1, 1};
+    booleanObject.engineeringTransform.offset = {0, 1};
+    booleanObject.engineeringTransform.unit = boolean.unit;
+    booleanObject.engineeringTransform.constraint = boolean.engineeringConstraint;
+    booleanObject.engineeringTransform.rounding = Data::EngineeringRounding::RejectInexact;
+    boolean.configuredProjection = {};
+    boolean.configuredProjection.kind = Data::DeviceParameterProjectionKind::CoeStartupSdo;
+    boolean.configuredProjection.transition = "PS";
+    boolean.configuredProjection.object = booleanObject;
+    boolean.observedSource = {};
+    boolean.observedSource.kind = Data::DeviceParameterObservedSourceKind::CoeSdoUpload;
+    boolean.observedSource.object = booleanObject;
+
+    Data::DeviceParameterDefinition signedInteger = deviceParameterDefinition(
+        "b.signed.optional",
+        "Signed optional",
+        Data::EngineeringValueKind::SignedInteger,
+        "signed_unit",
+        deviceParameterIntegerConstraint(-10, 10),
+        false,
+        Data::EngineeringValue::fromSignedInteger(-2));
+    Data::DeviceParameterDefinition unsignedInteger = deviceParameterDefinition(
+        "c.unsigned.required",
+        "Unsigned required",
+        Data::EngineeringValueKind::UnsignedInteger,
+        "unsigned_unit",
+        deviceParameterIntegerConstraint(1, 100),
+        true);
+
+    Data::EngineeringConstraint rationalConstraint;
+    rationalConstraint.minimum = {-2, 1};
+    rationalConstraint.maximum = {2, 1};
+    rationalConstraint.step = {1, 2};
+    rationalConstraint.stepOrigin = {0, 1};
+    Data::DeviceParameterDefinition rational = deviceParameterDefinition(
+        "d.rational.optional",
+        "Rational optional",
+        Data::EngineeringValueKind::ExactRational,
+        "ratio",
+        rationalConstraint,
+        false,
+        Data::EngineeringValue::fromExactRational({1, 2}));
+
+    Data::EngineeringConstraint enumerationConstraint;
+    enumerationConstraint.enumeration = {
+        {"mode.idle", "Idle", {0, 1}},
+        {"mode.run", "Run", {1, 1}},
+    };
+    Data::DeviceParameterDefinition enumeration = deviceParameterDefinition(
+        "e.enumeration.optional",
+        "Enumeration optional",
+        Data::EngineeringValueKind::Enumeration,
+        "mode",
+        enumerationConstraint,
+        false,
+        Data::EngineeringValue::fromEnumeration("mode.run"));
+
+    result.parameterDefinitions = {
+        boolean,
+        signedInteger,
+        unsignedInteger,
+        rational,
+        enumeration,
+    };
+    return result;
+}
+
+static Data::DeviceAdapterProjectSelection deviceParametersSelection(
+    const Data::DeviceAdapterManifest &manifest)
+{
+    Data::DeviceAdapterProjectSelection result;
+    result.adapterId = manifest.id;
+    result.adapterVersion = manifest.version;
+    result.adapterContentSha256 = manifest.contentSha256;
+    result.processDataProfileId = manifest.processDataProfiles.constFirst().id;
+    return result;
+}
+
+class DeviceParametersTestAdapterProvider final : public Core::DeviceAdapterProvider
+{
+public:
+    explicit DeviceParametersTestAdapterProvider(
+        Utils::Id providerId = Utils::Id("EtherCAT.Workbench.TestDeviceParametersAdapter"))
+        : DeviceAdapterProvider(providerId, "Device Parameters test adapter")
+        , m_manifest(deviceParametersManifest())
+    {
+        setAvailable(true);
+    }
+
+    QList<Data::DeviceAdapterManifest> adapterManifests() const final
+    {
+        ++adapterManifestsCalls;
+        return {m_manifest};
+    }
+
+    std::optional<Data::DeviceAdapterManifest> adapterManifest(
+        const Data::DeviceAdapterId &adapterId, const QString &version) const final
+    {
+        ++adapterManifestCalls;
+        if (adapterId == m_manifest.id && version == m_manifest.version)
+            return m_manifest;
+        return std::nullopt;
+    }
+
+    Data::DeviceAdapterResolutionResult resolveDevice(
+        const Data::DeviceAdapterResolutionRequest &request) const final
+    {
+        ++resolveCalls;
+        lastRequest = request;
+        if (onResolve) {
+            std::function<void()> callback = std::exchange(onResolve, {});
+            callback();
+        }
+        if (!resolutionError.isEmpty())
+            return {false, {}, resolutionError};
+
+        Data::ResolvedDeviceModel model;
+        model.slaveId = request.slaveId;
+        model.identity = request.device.summary.identity;
+        model.esiSha256 = request.device.sourceSha256;
+        model.adapterId = m_manifest.id;
+        model.adapterVersion = m_manifest.version;
+        model.adapterContentSha256 = m_manifest.contentSha256;
+        model.qualification = m_manifest.qualification;
+        model.processDataProfileId = request.processDataProfileId;
+        model.moduleAssignments = request.moduleAssignments;
+        model.complete = true;
+        if (resolvedModelOverride)
+            model = *resolvedModelOverride;
+        return {true, model, {}};
+    }
+
+    Data::DeviceAdapterManifest manifest() const { return m_manifest; }
+    void setManifest(const Data::DeviceAdapterManifest &manifest)
+    {
+        m_manifest = manifest;
+        emit adapterManifestsChanged();
+    }
+    void bindManifestToDevice(const Data::DeviceDescription &device)
+    {
+        m_manifest.match.vendorId = device.summary.identity.vendorId;
+        m_manifest.match.productCode = device.summary.identity.productCode;
+        m_manifest.match.minimumRevision = device.summary.identity.revisionNumber;
+        m_manifest.match.maximumRevision = device.summary.identity.revisionNumber;
+        m_manifest.match.exactEsiSha256 = device.sourceSha256;
+    }
+
+    mutable int adapterManifestsCalls = 0;
+    mutable int adapterManifestCalls = 0;
+    mutable int resolveCalls = 0;
+    mutable Data::DeviceAdapterResolutionRequest lastRequest;
+    mutable std::function<void()> onResolve;
+    std::optional<Data::ResolvedDeviceModel> resolvedModelOverride;
+    QString resolutionError;
+
+private:
+    Data::DeviceAdapterManifest m_manifest;
+};
+
 class CurrentBusDeviceAdapterProvider final : public Core::DeviceAdapterProvider
 {
 public:
@@ -14518,7 +14743,7 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
     BuiltinPropertyPageProvider pages(&controller);
     const Core::PropertyPageContext context = controller.treeModel()->contextForIndex(slave);
     const QList<Core::PropertyPageDescriptor> slavePages = pages.pages(context);
-    QCOMPARE(slavePages.size(), 8);
+    QCOMPARE(slavePages.size(), 9);
     QCOMPARE(slavePages.constFirst().id, Utils::Id(Constants::SEMANTIC_CONTROL_PAGE_ID));
     QCOMPARE(slavePages.constFirst().priority, 50);
     std::unique_ptr<QWidget> processPage(pages.createPage(Constants::PROCESS_DATA_PAGE_ID, nullptr));
@@ -14613,6 +14838,595 @@ void EtherCATWorkbenchTests::testConfiguredSlaveTreeAndPages()
         QString("Unknown ESI device"));
     QCOMPARE(ethercatType->text(), QString("Unknown ESI device"));
     QCOMPARE(ethercatTree->topLevelItemCount(), 0);
+}
+
+void EtherCATWorkbenchTests::testDeviceParametersPageVisibilityAndQualification()
+{
+    WorkbenchController controller;
+    BuiltinPropertyPageProvider pages(&controller);
+
+    const auto deviceParametersDescriptor = [&pages](Core::WorkbenchNodeKind kind) {
+        Core::PropertyPageContext context;
+        context.nodeKind = kind;
+        const QList<Core::PropertyPageDescriptor> descriptors = pages.pages(context);
+        const auto found = std::find_if(
+            descriptors.cbegin(), descriptors.cend(), [](const Core::PropertyPageDescriptor &page) {
+                return page.id == Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID);
+            });
+        return found == descriptors.cend() ? std::optional<Core::PropertyPageDescriptor>()
+                                           : std::optional<Core::PropertyPageDescriptor>(*found);
+    };
+    for (Core::WorkbenchNodeKind kind : {Core::WorkbenchNodeKind::None,
+                                         Core::WorkbenchNodeKind::Project,
+                                         Core::WorkbenchNodeKind::Target,
+                                         Core::WorkbenchNodeKind::Master,
+                                         Core::WorkbenchNodeKind::Device,
+                                         Core::WorkbenchNodeKind::Modules,
+                                         Core::WorkbenchNodeKind::Module,
+                                         Core::WorkbenchNodeKind::Channel}) {
+        QVERIFY(!deviceParametersDescriptor(kind));
+    }
+    const std::optional<Core::PropertyPageDescriptor> configuredDescriptor
+        = deviceParametersDescriptor(Core::WorkbenchNodeKind::ConfiguredSlave);
+    QVERIFY(configuredDescriptor);
+    QCOMPARE(configuredDescriptor->priority, 375);
+
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("device-parameters-visibility.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(deviceEsi()));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto summary = std::find_if(devices.cbegin(), devices.cend(), [](const auto &device) {
+        return device.identity.productCode == 0x5678 && device.identity.revisionNumber == 0x11;
+    });
+    QVERIFY(summary != devices.cend());
+    const std::optional<Data::DeviceDescription> device = repository->device(summary->id);
+    QVERIFY(device);
+
+    DeviceParametersTestAdapterProvider provider;
+    provider.bindManifestToDevice(*device);
+    ExtensionSystem::PluginManager::addObject(&provider);
+    const QScopeGuard providerCleanup(
+        [&] { ExtensionSystem::PluginManager::removeObject(&provider); });
+
+    const TestProjectFile file = writeProjectWithSlave(directory, *summary);
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const QScopeGuard projectCleanup([&] {
+        controller.selectionService()->clear();
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+    const Core::PropertyPageContext context
+        = controller.treeModel()->contextForNodeId(file.slaveId);
+
+    std::unique_ptr<QWidget> page(
+        pages.createPage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), nullptr));
+    QVERIFY(page);
+    QTreeWidget *table = page->findChild<QTreeWidget *>("EtherCATDeviceParametersTable");
+    QPushButton *apply = page->findChild<QPushButton *>("EtherCATDeviceParametersApply");
+    QLabel *feedback = page->findChild<QLabel *>("EtherCATDeviceParametersFeedback");
+    QVERIFY(table);
+    QVERIFY(apply);
+    QVERIFY(feedback);
+
+    pages.updatePage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), page.get(), context);
+    QVERIFY(!table->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    const Data::DeviceAdapterManifest qualifiedManifest = provider.manifest();
+    QVERIFY_RESULT(projectService->setDeviceAdapterSelection(
+        file.projectId,
+        file.slaveId,
+        device->sourceSha256,
+        deviceParametersSelection(qualifiedManifest)));
+    pages.updatePage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), page.get(), context);
+    QCOMPARE(table->topLevelItemCount(), qualifiedManifest.parameterDefinitions.size());
+    QVERIFY(table->isEnabled());
+    QVERIFY(provider.resolveCalls > 0);
+    QCOMPARE(provider.lastRequest.slaveId, file.slaveId);
+    QCOMPARE(provider.lastRequest.device, *device);
+    QCOMPARE(provider.lastRequest.expectedAdapterId, qualifiedManifest.id);
+    QCOMPARE(provider.lastRequest.expectedAdapterVersion, qualifiedManifest.version);
+    QCOMPARE(provider.lastRequest.expectedAdapterContentSha256, qualifiedManifest.contentSha256);
+    QCOMPARE(provider.lastRequest.processDataProfileId, QString("workbench.parameters.default"));
+    QVERIFY(provider.lastRequest.moduleAssignments.isEmpty());
+    QVERIFY(!provider.lastRequest.allowCandidate);
+    QVERIFY(!provider.lastRequest.allowMock);
+    QVERIFY(provider.lastRequest.requireRealHardwareQualification);
+
+    Data::DeviceAdapterManifest legacyManifest = qualifiedManifest;
+    legacyManifest.contractVersion = Data::DeviceAdapterContractVersion::V3;
+    provider.setManifest(legacyManifest);
+    pages.updatePage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), page.get(), context);
+    QVERIFY(!table->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::DeviceAdapterManifest untrustedManifest = qualifiedManifest;
+    untrustedManifest.signatureVerified = false;
+    provider.setManifest(untrustedManifest);
+    pages.updatePage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), page.get(), context);
+    QVERIFY(!table->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::DeviceAdapterManifest wrongVendorManifest = qualifiedManifest;
+    ++wrongVendorManifest.match.vendorId;
+    provider.setManifest(wrongVendorManifest);
+    pages.updatePage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), page.get(), context);
+    QVERIFY(!table->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    Data::DeviceAdapterManifest wrongRevisionManifest = qualifiedManifest;
+    ++wrongRevisionManifest.match.minimumRevision;
+    ++wrongRevisionManifest.match.maximumRevision;
+    provider.setManifest(wrongRevisionManifest);
+    pages.updatePage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), page.get(), context);
+    QVERIFY(!table->isEnabled());
+    QVERIFY(!apply->isEnabled());
+
+    provider.setManifest(qualifiedManifest);
+    provider.resolvedModelOverride = Data::ResolvedDeviceModel();
+    pages.updatePage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), page.get(), context);
+    QVERIFY(!table->isEnabled());
+    QVERIFY(!apply->isEnabled());
+    QVERIFY(feedback->text().contains("resolved", Qt::CaseInsensitive));
+    provider.resolvedModelOverride.reset();
+
+    DeviceParametersTestAdapterProvider duplicate(
+        Utils::Id("EtherCAT.Workbench.TestDeviceParametersAdapter.Duplicate"));
+    duplicate.setManifest(qualifiedManifest);
+    ExtensionSystem::PluginManager::addObject(&duplicate);
+    pages.updatePage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), page.get(), context);
+    QVERIFY(!table->isEnabled());
+    QVERIFY(!apply->isEnabled());
+    QVERIFY(feedback->text().contains("Multiple providers", Qt::CaseInsensitive));
+    ExtensionSystem::PluginManager::removeObject(&duplicate);
+}
+
+void EtherCATWorkbenchTests::testDeviceParametersPageEditingAndSafety()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("device-parameters-editing.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(deviceEsi()));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto summary = std::find_if(devices.cbegin(), devices.cend(), [](const auto &device) {
+        return device.identity.productCode == 0x5678 && device.identity.revisionNumber == 0x11;
+    });
+    QVERIFY(summary != devices.cend());
+    const std::optional<Data::DeviceDescription> device = repository->device(summary->id);
+    QVERIFY(device);
+
+    DeviceParametersTestAdapterProvider adapter;
+    adapter.bindManifestToDevice(*device);
+    AvailableScanProvider scan(Utils::Id("EtherCAT.Workbench.DeviceParameters.Scan"));
+    ControlledControllerConnectionProvider connection(
+        Utils::Id("EtherCAT.Workbench.DeviceParameters.Connection"),
+        "Device Parameters controller guard");
+    ExtensionSystem::PluginManager::addObject(&adapter);
+    ExtensionSystem::PluginManager::addObject(&scan);
+    ExtensionSystem::PluginManager::addObject(&connection);
+    const QScopeGuard providersCleanup([&] {
+        ExtensionSystem::PluginManager::removeObject(&connection);
+        ExtensionSystem::PluginManager::removeObject(&scan);
+        ExtensionSystem::PluginManager::removeObject(&adapter);
+    });
+    TestSemanticRuntimeService runtime;
+    BuiltinPropertyPageProvider pages(&controller, nullptr, &runtime);
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory, *summary, "device-parameters-editing.ecatproject", "Device Parameters Editing");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const QScopeGuard projectCleanup([&] {
+        controller.selectionService()->clear();
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+
+    const Data::DeviceAdapterManifest manifest = adapter.manifest();
+    const Data::DeviceAdapterProjectSelection selection = deviceParametersSelection(manifest);
+    QVERIFY_RESULT(projectService->setDeviceAdapterSelection(
+        file.projectId, file.slaveId, device->sourceSha256, selection));
+    const Data::SemanticBindingArtifactReference binding{
+        "binding/workbench-device-parameters/1",
+        QByteArray(32, '\x71'),
+        QByteArray(32, '\x72'),
+        {{file.slaveId, "workbench:test:device:0"}},
+    };
+    QVERIFY_RESULT(projectService->setMasterBindingArtifact(file.projectId, binding));
+    QCOMPARE(projectService->project(file.projectId)->masterBindingArtifact, binding);
+
+    std::unique_ptr<QWidget> page(
+        pages.createPage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), nullptr));
+    QVERIFY(page);
+    const Core::PropertyPageContext context
+        = controller.treeModel()->contextForNodeId(file.slaveId);
+    pages.updatePage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), page.get(), context);
+    QTreeWidget *table = page->findChild<QTreeWidget *>("EtherCATDeviceParametersTable");
+    QPushButton *apply = page->findChild<QPushButton *>("EtherCATDeviceParametersApply");
+    QVERIFY(table);
+    QVERIFY(apply);
+    QCOMPARE(table->topLevelItemCount(), 5);
+    QCOMPARE(table->headerItem()->text(4), QString("Verification Status"));
+
+    const QStringList expectedIds{
+        "a.boolean.required",
+        "b.signed.optional",
+        "c.unsigned.required",
+        "d.rational.optional",
+        "e.enumeration.optional",
+    };
+    QStringList actualIds;
+    for (int row = 0; row < table->topLevelItemCount(); ++row)
+        actualIds.append(table->topLevelItem(row)->data(0, Qt::UserRole).toString());
+    QCOMPARE(actualIds, expectedIds);
+    QVERIFY(table->topLevelItem(0)->text(0).contains("required", Qt::CaseInsensitive));
+    QVERIFY(table->topLevelItem(1)->text(0).contains("optional", Qt::CaseInsensitive));
+    QCOMPARE(table->topLevelItem(0)->text(2), QString("Not captured"));
+    QCOMPARE(table->topLevelItem(0)->text(4), QString("Not captured"));
+    for (int row = 1; row < table->topLevelItemCount(); ++row)
+        QCOMPARE(table->topLevelItem(row)->text(2), QString("Unavailable"));
+    for (int row = 1; row < table->topLevelItemCount(); ++row)
+        QCOMPARE(table->topLevelItem(row)->text(4), QString("Unavailable"));
+    QVERIFY(!apply->isEnabled());
+
+    QComboBox *boolean = page->findChild<QComboBox *>(
+        "EtherCATDeviceParameterConfigured_a.boolean.required");
+    QLineEdit *signedInteger = page->findChild<QLineEdit *>(
+        "EtherCATDeviceParameterConfigured_b.signed.optional");
+    QLineEdit *unsignedInteger = page->findChild<QLineEdit *>(
+        "EtherCATDeviceParameterConfigured_c.unsigned.required");
+    QLineEdit *rational = page->findChild<QLineEdit *>(
+        "EtherCATDeviceParameterConfigured_d.rational.optional");
+    QComboBox *enumeration = page->findChild<QComboBox *>(
+        "EtherCATDeviceParameterConfigured_e.enumeration.optional");
+    QVERIFY(boolean);
+    QVERIFY(signedInteger);
+    QVERIFY(unsignedInteger);
+    QVERIFY(rational);
+    QVERIFY(enumeration);
+    QCOMPARE(boolean->currentIndex(), 0);
+    QVERIFY(signedInteger->text().isEmpty());
+    QVERIFY(signedInteger->placeholderText().contains("-2"));
+    QVERIFY(unsignedInteger->text().isEmpty());
+    QVERIFY(rational->text().isEmpty());
+    QVERIFY(rational->placeholderText().contains("1/2"));
+    QCOMPARE(enumeration->currentIndex(), 0);
+    QVERIFY(enumeration->toolTip().contains("reference only", Qt::CaseInsensitive));
+
+    const int scanStartBefore = scan.startCalls;
+    const int scanCancelBefore = scan.cancelCalls;
+    const int controlBefore = connection.controlCalls;
+    const int deployBefore = connection.deploymentCalls;
+    const int cancelDeployBefore = connection.cancelDeploymentCalls;
+    const int submitBefore = runtime.submitCalls;
+    const int approveBefore = runtime.approveCalls;
+    const qsizetype liveRefreshBefore = runtime.liveRefreshRequests.size();
+
+    boolean->setCurrentIndex(2);
+    unsignedInteger->setText("-1");
+    QVERIFY(!apply->isEnabled());
+    QVERIFY(unsignedInteger->toolTip().contains("unsigned", Qt::CaseInsensitive));
+    unsignedInteger->setText("18446744073709551615");
+    QVERIFY(!apply->isEnabled());
+    unsignedInteger->setText("7");
+    rational->setText("1/0");
+    QVERIFY(!apply->isEnabled());
+    rational->setText("3");
+    QVERIFY(!apply->isEnabled());
+    signedInteger->setText("-3");
+    rational->setText("2/4");
+    enumeration->setCurrentIndex(enumeration->findData("mode.run"));
+    QTRY_VERIFY(apply->isEnabled());
+    Data::SemanticBindingArtifactReference bindingDuringApply;
+    adapter.onResolve = [&] {
+        bindingDuringApply = projectService->project(file.projectId)->masterBindingArtifact;
+    };
+    QSignalSpy applyProjectChanged(projectService, &Core::ProjectService::projectChanged);
+    QCOMPARE(projectService->project(file.projectId)->masterBindingArtifact, binding);
+    apply->click();
+
+    Data::DeviceParameterConfiguration expected;
+    expected.values = {
+        {"a.boolean.required", Data::EngineeringValue::fromBoolean(true)},
+        {"b.signed.optional", Data::EngineeringValue::fromSignedInteger(-3)},
+        {"c.unsigned.required", Data::EngineeringValue::fromUnsignedInteger(7)},
+        {"d.rational.optional", Data::EngineeringValue::fromExactRational({1, 2})},
+        {"e.enumeration.optional", Data::EngineeringValue::fromEnumeration("mode.run")},
+    };
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().deviceParameters, expected);
+    QCOMPARE(bindingDuringApply, binding);
+    QCOMPARE(applyProjectChanged.count(), 1);
+    QCOMPARE(
+        projectService->project(file.projectId)->masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+    QVERIFY(!apply->isEnabled());
+
+    QVERIFY_RESULT(projectService->undoProject(file.projectId));
+    QTRY_VERIFY(projectService->project(file.projectId)->slaves.first().deviceParameters.values.isEmpty());
+    QVERIFY_RESULT(projectService->redoProject(file.projectId));
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().deviceParameters, expected);
+    QCOMPARE(
+        projectService->project(file.projectId)->masterBindingArtifact,
+        Data::SemanticBindingArtifactReference());
+
+    auto storedSignedInteger = qobject_cast<QLineEdit *>(
+        table->itemWidget(table->topLevelItem(1), 1));
+    auto storedRational = qobject_cast<QLineEdit *>(
+        table->itemWidget(table->topLevelItem(3), 1));
+    auto storedEnumeration = qobject_cast<QComboBox *>(
+        table->itemWidget(table->topLevelItem(4), 1));
+    QVERIFY(storedSignedInteger);
+    QVERIFY(storedRational);
+    QVERIFY(storedEnumeration);
+    storedSignedInteger->clear();
+    storedRational->clear();
+    storedEnumeration->setCurrentIndex(0);
+    QTRY_VERIFY(apply->isEnabled());
+    apply->click();
+    Data::DeviceParameterConfiguration requiredOnly;
+    requiredOnly.values = {
+        {"a.boolean.required", Data::EngineeringValue::fromBoolean(true)},
+        {"c.unsigned.required", Data::EngineeringValue::fromUnsignedInteger(7)},
+    };
+    QTRY_COMPARE(
+        projectService->project(file.projectId)->slaves.first().deviceParameters,
+        requiredOnly);
+
+    QCOMPARE(scan.startCalls, scanStartBefore);
+    QCOMPARE(scan.cancelCalls, scanCancelBefore);
+    QCOMPARE(connection.controlCalls, controlBefore);
+    QCOMPARE(connection.deploymentCalls, deployBefore);
+    QCOMPARE(connection.cancelDeploymentCalls, cancelDeployBefore);
+    QCOMPARE(runtime.submitCalls, submitBefore);
+    QCOMPARE(runtime.approveCalls, approveBefore);
+    QCOMPARE(runtime.liveRefreshRequests.size(), liveRefreshBefore);
+}
+
+void EtherCATWorkbenchTests::testDeviceParametersPageRejectsStaleBaselines()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("device-parameters-stale.xml");
+    QVERIFY_RESULT(esiPath.writeFileContents(deviceEsi()));
+    QCOMPARE(waitForJob(repository->importFiles({esiPath})).failedFiles, 0);
+    const QList<Data::DeviceSummary> devices = repository->devices();
+    const auto summary = std::find_if(devices.cbegin(), devices.cend(), [](const auto &device) {
+        return device.identity.productCode == 0x5678 && device.identity.revisionNumber == 0x11;
+    });
+    QVERIFY(summary != devices.cend());
+    const std::optional<Data::DeviceDescription> device = repository->device(summary->id);
+    QVERIFY(device);
+
+    DeviceParametersTestAdapterProvider provider;
+    provider.bindManifestToDevice(*device);
+    ExtensionSystem::PluginManager::addObject(&provider);
+    const QScopeGuard providerCleanup(
+        [&] { ExtensionSystem::PluginManager::removeObject(&provider); });
+    BuiltinPropertyPageProvider pages(&controller);
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory, *summary, "device-parameters-stale.ecatproject", "Device Parameters Stale");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    const QScopeGuard projectCleanup([&] {
+        controller.selectionService()->clear();
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+    QTRY_VERIFY(controller.treeModel()->indexForNodeId(file.slaveId).isValid());
+    const Data::DeviceAdapterManifest manifest = provider.manifest();
+    const Data::DeviceAdapterProjectSelection selection = deviceParametersSelection(manifest);
+    QVERIFY_RESULT(projectService->setDeviceAdapterSelection(
+        file.projectId, file.slaveId, device->sourceSha256, selection));
+    const Core::PropertyPageContext context
+        = controller.treeModel()->contextForNodeId(file.slaveId);
+    QSignalSpy projectChanged(projectService, &Core::ProjectService::projectChanged);
+
+    const auto createDraftPage = [&]() {
+        std::unique_ptr<QWidget> page(
+            pages.createPage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), nullptr));
+        pages.updatePage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), page.get(), context);
+        auto boolean = page->findChild<QComboBox *>(
+            "EtherCATDeviceParameterConfigured_a.boolean.required");
+        auto unsignedInteger = page->findChild<QLineEdit *>(
+            "EtherCATDeviceParameterConfigured_c.unsigned.required");
+        if (boolean)
+            boolean->setCurrentIndex(2);
+        if (unsignedInteger)
+            unsignedInteger->setText("7");
+        return page;
+    };
+    const auto rejectionFailure = [&](QWidget *page, int expectedProjectChanges) {
+        QTreeWidget *table = page->findChild<QTreeWidget *>("EtherCATDeviceParametersTable");
+        QPushButton *apply = page->findChild<QPushButton *>("EtherCATDeviceParametersApply");
+        if (!table || !apply)
+            return QString("Device Parameters controls are missing");
+        if (apply->isEnabled())
+            apply->click();
+        else if (table->isEnabled())
+            return QString("Apply was invalid before the stale operation was attempted");
+        if (table->isEnabled() || apply->isEnabled())
+            return QString("The rejected draft was not marked stale");
+        if (projectChanged.count() != expectedProjectChanges)
+            return QString("The rejected Apply mutated the Project");
+        if (!projectService->project(file.projectId)
+            || !projectService->project(file.projectId)
+                    ->slaves.first()
+                    .deviceParameters.values.isEmpty()) {
+            return QString("The rejected Apply stored device parameters");
+        }
+        return QString();
+    };
+
+    {
+        std::unique_ptr<QWidget> page = createDraftPage();
+        page->findChild<QLineEdit *>("EtherCATDeviceParameterConfigured_b.signed.optional")
+            ->setText("-3");
+        QVERIFY(page);
+        QVERIFY_RESULT(projectService->renameProject(file.projectId, "Externally Renamed"));
+        const int changesAfterDrift = projectChanged.count();
+        const Data::ProjectSnapshot afterDrift = *projectService->project(file.projectId);
+        const QString rejection = rejectionFailure(page.get(), changesAfterDrift);
+        QVERIFY2(rejection.isEmpty(), qPrintable(rejection));
+        QCOMPARE(*projectService->project(file.projectId), afterDrift);
+        QVERIFY_RESULT(projectService->renameProject(file.projectId, "Device Parameters Stale"));
+    }
+    QCOMPARE(projectService->project(file.projectId)->name, QString("Device Parameters Stale"));
+
+    {
+        std::unique_ptr<QWidget> page = createDraftPage();
+        Data::DeviceAdapterProjectSelection esiDrift = selection;
+        QVERIFY_RESULT(projectService->setDeviceAdapterSelection(
+            file.projectId, file.slaveId, QByteArray(32, '\x66'), esiDrift));
+        const int changesAfterDrift = projectChanged.count();
+        const Data::ProjectSnapshot afterDrift = *projectService->project(file.projectId);
+        const QString rejection = rejectionFailure(page.get(), changesAfterDrift);
+        QVERIFY2(rejection.isEmpty(), qPrintable(rejection));
+        QCOMPARE(*projectService->project(file.projectId), afterDrift);
+    }
+    QVERIFY_RESULT(projectService->setDeviceAdapterSelection(
+        file.projectId, file.slaveId, device->sourceSha256, selection));
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().esiSha256, device->sourceSha256);
+
+    {
+        std::unique_ptr<QWidget> page = createDraftPage();
+        Data::DeviceAdapterProjectSelection adapterDrift = selection;
+        adapterDrift.adapterContentSha256 = QByteArray(32, '\x67');
+        QVERIFY_RESULT(projectService->setDeviceAdapterSelection(
+            file.projectId, file.slaveId, device->sourceSha256, adapterDrift));
+        const int changesAfterDrift = projectChanged.count();
+        const QString rejection = rejectionFailure(page.get(), changesAfterDrift);
+        QVERIFY2(rejection.isEmpty(), qPrintable(rejection));
+    }
+    QVERIFY_RESULT(projectService->setDeviceAdapterSelection(
+        file.projectId, file.slaveId, device->sourceSha256, selection));
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().adapterSelection, selection);
+
+    {
+        std::unique_ptr<QWidget> page = createDraftPage();
+        Data::DeviceAdapterProjectSelection profileDrift = selection;
+        profileDrift.processDataProfileId = "workbench.parameters.changed";
+        QVERIFY_RESULT(projectService->setDeviceAdapterSelection(
+            file.projectId, file.slaveId, device->sourceSha256, profileDrift));
+        const int changesAfterDrift = projectChanged.count();
+        const QString rejection = rejectionFailure(page.get(), changesAfterDrift);
+        QVERIFY2(rejection.isEmpty(), qPrintable(rejection));
+    }
+    QVERIFY_RESULT(projectService->setDeviceAdapterSelection(
+        file.projectId, file.slaveId, device->sourceSha256, selection));
+    QCOMPARE(projectService->project(file.projectId)->slaves.first().adapterSelection, selection);
+
+    {
+        std::unique_ptr<QWidget> page = createDraftPage();
+        page->findChild<QLineEdit *>("EtherCATDeviceParameterConfigured_b.signed.optional")
+            ->setText("-3");
+        Data::DeviceAdapterManifest reloadedManifest = manifest;
+        reloadedManifest.contentSha256 = QByteArray(32, '\x68');
+        const int changesBeforeReload = projectChanged.count();
+        provider.setManifest(reloadedManifest);
+        const QString rejection = rejectionFailure(page.get(), changesBeforeReload);
+        QVERIFY2(rejection.isEmpty(), qPrintable(rejection));
+        provider.setManifest(manifest);
+        QPushButton *reload = page->findChild<QPushButton *>("EtherCATDeviceParametersReload");
+        QVERIFY(reload);
+        QVERIFY(reload->isEnabled());
+        reload->click();
+        QTreeWidget *table = page->findChild<QTreeWidget *>("EtherCATDeviceParametersTable");
+        QLabel *feedback = page->findChild<QLabel *>("EtherCATDeviceParametersFeedback");
+        QVERIFY(table);
+        QVERIFY(feedback);
+        QVERIFY2(table->isEnabled(), qPrintable(feedback->text()));
+        auto reloadedBoolean = qobject_cast<QComboBox *>(
+            table->itemWidget(table->topLevelItem(0), 1));
+        auto reloadedSignedInteger = qobject_cast<QLineEdit *>(
+            table->itemWidget(table->topLevelItem(1), 1));
+        QVERIFY(reloadedBoolean);
+        QVERIFY(reloadedSignedInteger);
+        QCOMPARE(reloadedBoolean->currentIndex(), 0);
+        QVERIFY(reloadedSignedInteger->text().isEmpty());
+        QVERIFY(!page->findChild<QPushButton *>("EtherCATDeviceParametersApply")->isEnabled());
+    }
+
+    {
+        std::unique_ptr<QWidget> page = createDraftPage();
+        DeviceParametersTestAdapterProvider duplicate(
+            Utils::Id("EtherCAT.Workbench.DeviceParameters.StaleDuplicate"));
+        duplicate.setManifest(manifest);
+        const int changesBeforeAmbiguity = projectChanged.count();
+        ExtensionSystem::PluginManager::addObject(&duplicate);
+        const QString rejection = rejectionFailure(page.get(), changesBeforeAmbiguity);
+        QVERIFY2(rejection.isEmpty(), qPrintable(rejection));
+        ExtensionSystem::PluginManager::removeObject(&duplicate);
+    }
+
+    {
+        std::unique_ptr<QWidget> page = createDraftPage();
+        const int changesBeforeResolution = projectChanged.count();
+        provider.onResolve = [&] {
+            const Utils::Result<> result
+                = projectService->renameProject(file.projectId, "Provider Synchronous Drift");
+            QTC_CHECK(result);
+        };
+        QTreeWidget *table = page->findChild<QTreeWidget *>("EtherCATDeviceParametersTable");
+        QPushButton *apply = page->findChild<QPushButton *>("EtherCATDeviceParametersApply");
+        QVERIFY(table);
+        QVERIFY(apply);
+        QVERIFY(apply->isEnabled());
+        apply->click();
+        QCOMPARE(projectChanged.count(), changesBeforeResolution + 1);
+        QVERIFY(!table->isEnabled());
+        QVERIFY(!apply->isEnabled());
+        QCOMPARE(
+            projectService->project(file.projectId)->name,
+            QString("Provider Synchronous Drift"));
+        QVERIFY(projectService->project(file.projectId)
+                    ->slaves.first()
+                    .deviceParameters.values.isEmpty());
+    }
+    QVERIFY_RESULT(projectService->renameProject(file.projectId, "Device Parameters Stale"));
 }
 
 void EtherCATWorkbenchTests::testTwinCatProcessDataTree()

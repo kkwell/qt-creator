@@ -101,13 +101,33 @@ selection, including an existing process-data profile; Adapter v4;
 definition closures, unknown or missing required IDs, kind mismatches, and
 values outside the signed engineering constraints.
 
-This contract is not an online parameter service. No production v4 Adapter is
-currently installed, Product API does not yet provide observed parameter
-evidence, and configured/observed/match UI and compiler projection are not yet
-implemented. Non-empty project parameters therefore continue to fail closed
-before compiler invocation. The installed SV630N Adapter remains v3 and its
-motion actions remain disabled; v4 parsing or validation is not evidence of an
-applied drive parameter or motor movement.
+Workbench now provides a Project-only **Device Parameters** page for a configured
+slave. The page is editable only when the repository still provides the exact
+supported ESI device and exactly one available Adapter Provider returns the
+saved ID, version, content digest, profile, and module assignment as an
+independently authorized `Qualified` v4 manifest. The signed VendorId,
+ProductCode, revision interval, and exact ESI SHA-256 must match, and the
+Provider must resolve the same complete model with `allowCandidate=false`,
+`allowMock=false`, and `requireRealHardwareQualification=true`.
+
+The page edits Boolean, signed integer, unsigned integer, exact rational, and
+enumeration values. Signed defaults are shown only as reference placeholders;
+they are never selected automatically. Apply re-reads the exact Provider
+manifest, repeats qualification, re-checks the complete Project after Provider
+calls, and then uses the Project service compare-and-set command so the accepted
+change enters Undo/Redo. A changed Project, ESI, Adapter, profile, modules, or
+Provider authority makes the local draft stale and disables editing until the
+user explicitly reloads it.
+
+This page is not an online parameter service. Its Observed and Verification
+Status columns show only the signed source plus `Not captured` or `Unavailable`;
+the page performs no scan, SDO upload/download, controller command, deployment,
+network, or hardware access. No production v4 Adapter is currently installed,
+Product API observed evidence and device-parameter actions are not implemented,
+and non-empty project parameters continue to fail closed before compiler
+invocation. The installed SV630N Adapter remains v3 and its motion actions
+remain disabled; editing Project intent is not evidence of an applied drive
+parameter or motor movement.
 
 ## Modular devices
 

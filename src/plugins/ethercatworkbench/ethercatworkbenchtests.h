@@ -82,6 +82,9 @@ private slots:
     void testNavigationKeyboardContextMenuTargetsCurrentNode();
     void testBuiltInDevicePages();
     void testConfiguredSlaveTreeAndPages();
+    void testDeviceParametersPageVisibilityAndQualification();
+    void testDeviceParametersPageEditingAndSafety();
+    void testDeviceParametersPageRejectsStaleBaselines();
     void testTwinCatProcessDataTree();
     void testProcessDataTableAccessibility();
     void testProcessDataRepositoryEmptyState();

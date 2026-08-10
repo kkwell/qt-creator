@@ -26,6 +26,8 @@ QtcPlugin {
         "dcpage.h",
         "deploymentpage.cpp",
         "deploymentpage.h",
+        "deviceparameterspage.cpp",
+        "deviceparameterspage.h",
         "detailsview.cpp",
         "detailsview.h",
         "esiconfigurationfactory.cpp",

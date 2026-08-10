@@ -849,6 +849,31 @@
       "notesZh": ["这些页面只修改本地工程；生成运行包和部署是独立步骤。"]
     },
     {
+      "id": "ethercat.workbench.device-parameters",
+      "area": "ui",
+      "titleZh": "Project-only 设备参数页",
+      "summaryZh": "从唯一精确授权的 Qualified Adapter v4 定义编辑设备参数工程意图，并以现场重验、完整 Project CAS 和 stale Reload 门禁保存到 Undo/Redo；当前不读取设备。",
+      "owner": "ethercat-workbench",
+      "runtimeBoundary": "engineering-only",
+      "evidenceBoundary": ["offscreen-ui"],
+      "keywords": ["Device Parameters", "Configured", "Observed", "Verification Status", "Adapter v4", "stale draft", "CAS", "Undo", "no evidence"],
+      "implementation": [
+        {"path": "src/plugins/ethercatworkbench/deviceparameterspage.cpp", "symbols": ["DeviceParametersPage::setContext", "DeviceParametersPage::applyConfiguration", "DeviceParametersPage::reloadFromProject"], "roleZh": "精确 ESI/Adapter/Provider 资格化、类型编辑、现场重验、stale 草稿和 Project Apply 生命周期"},
+        {"path": "src/plugins/ethercatworkbench/builtinpropertypages.cpp", "symbols": ["BuiltinPropertyPageProvider::pages", "DEVICE_PARAMETERS_PAGE_ID"], "roleZh": "ConfiguredSlave 属性页注册、创建和上下文更新"}
+      ],
+      "contracts": [
+        {"path": "src/libs/ethercatdata/deviceadapter.h", "symbols": ["DeviceParameterDefinition", "DeviceAdapterResolutionRequest", "ResolvedDeviceModel"], "roleZh": "签名参数定义、精确解析请求和返回模型"},
+        {"path": "src/plugins/ethercatcore/deviceparametercontract.h", "symbols": ["validateConfiguredDeviceParameters"], "roleZh": "Adapter v4 参数定义与工程值资格化入口"},
+        {"path": "src/plugins/ethercatcore/providers.h", "symbols": ["DeviceAdapterProvider", "resolveDevice", "setDeviceParameterConfiguration"], "roleZh": "唯一 Adapter Provider 解析和 Project expected-token 写入边界"}
+      ],
+      "tests": [
+        {"path": "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "cases": ["testDeviceParametersPageVisibilityAndQualification", "testDeviceParametersPageEditingAndSafety", "testDeviceParametersPageRejectsStaleBaselines"], "kind": "offscreen-ui"}
+      ],
+      "docs": ["docs/ethercat-device-adapters.md", "docs/ethercat-plugin-development-guide.zh_CN.md"],
+      "dependsOn": ["ethercat.workbench.details-routing", "ethercat.core.device-parameter-contract", "ethercat.project.mutation", "ethercat.adapters.catalog-authorization", "ethercat.devices.esi-repository"],
+      "notesZh": ["只接受精确 ESI 和唯一 available Provider 的 Qualified、signatureVerified、realHardwareAllowed v4 manifest；resolve request 禁止 Candidate/Mock 并要求真实硬件资格。", "Boolean、有符号/无符号整数、精确有理数和枚举由 signed definition 驱动；default 只作参考，optional 空值不写入。", "Apply 在 Provider 调用后重读完整 Project 并使用 expected ESI/Adapter token；任一 authority 或 Project 漂移保留 stale 草稿并禁用编辑，直到用户 Reload。", "Observed 仅显示 signed source 和 Not captured/Unavailable；页面不调用 scan、SDO、control、deploy、network 或 hardware。", "当前没有生产 v4 Adapter，非空参数 compiler 仍 fail closed；真实 Product API observed evidence、configured/observed match 和设备参数动作尚未实现。"]
+    },
+    {
       "id": "ethercat.workbench.esi-library",
       "area": "ui",
       "titleZh": "ESI 设备库界面",
@@ -1154,11 +1179,11 @@
       "id": "ui",
       "titleZh": "Workbench 界面知识卡",
       "purposeZh": "让工程树、右侧属性页、顶部/左下快捷操作和输出面板投影同一套服务状态。",
-      "readOrder": ["ethercat.workbench.details-routing", "ethercat.workbench.general-overview", "ethercat.workbench.project-navigation", "ethercat.workbench.mock-topology-selection", "ethercat.workbench.communication", "ethercat.workbench.configuration-pages", "ethercat.workbench.esi-library", "ethercat.workbench.coe-view", "ethercat.workbench.deployment", "ethercat.workbench.semantic-control", "ethercat.workbench.output-status"],
-      "callFlowsZh": ["树节点选择 -> SelectionService -> PropertyPageProvider -> DetailsView 对应页面。", "工具栏、左下控制区和树节点菜单复用同一 QAction -> WorkbenchController/公共服务 -> 输出和状态投影。", "页面编辑 -> ProjectService mutation -> projectChanged -> 树和详情重新读取 ProjectSnapshot。"],
-      "invariantsZh": ["页面只投影公共快照，不保存第二套工程、连接或运行状态机。", "同一操作在工具栏、快捷控制和右键菜单复用同一启用条件与处理器。", "关键错误进入应用程序输出并包含可行动原因；普通握手和重复状态不刷屏。", "无工程时设备树为空；连接状态由控制按钮/页面表达，不在底部状态栏重复。"],
-      "changeChecklistZh": ["先确认功能所有权和公共合同，再修改页面或 Controller 接线。", "测试选择切换、页面生命周期、可拖动布局、动作 enablement、错误断连和工程重开。", "遵守 Qt Creator 颜色、字体、间距 token 和 CMake/qbs 同步规则。"],
-      "avoidZh": ["不要在 QWidget 中创建协议客户端、Socket、RequestId 或厂家分支。", "不要用独立弹窗替代 Workbench 右侧页面。", "CoE 当前只汇总 ESI Startup/PDO 和本地配置，不要称为在线 SDO 对象字典。"]
+      "readOrder": ["ethercat.workbench.details-routing", "ethercat.workbench.general-overview", "ethercat.workbench.project-navigation", "ethercat.workbench.mock-topology-selection", "ethercat.workbench.communication", "ethercat.workbench.configuration-pages", "ethercat.workbench.device-parameters", "ethercat.workbench.esi-library", "ethercat.workbench.coe-view", "ethercat.workbench.deployment", "ethercat.workbench.semantic-control", "ethercat.workbench.output-status"],
+      "callFlowsZh": ["树节点选择 -> SelectionService -> PropertyPageProvider -> DetailsView 对应页面。", "工具栏、左下控制区和树节点菜单复用同一 QAction -> WorkbenchController/公共服务 -> 输出和状态投影。", "页面编辑 -> ProjectService mutation -> projectChanged -> 树和详情重新读取 ProjectSnapshot。", "ConfiguredSlave -> 精确 ESI + 唯一 Qualified v4 Provider resolve -> Device Parameters 草稿 -> Provider 后完整 Project CAS -> Undo/Redo。"],
+      "invariantsZh": ["页面只投影公共快照，不保存第二套工程、连接或运行状态机。", "同一操作在工具栏、快捷控制和右键菜单复用同一启用条件与处理器。", "关键错误进入应用程序输出并包含可行动原因；普通握手和重复状态不刷屏。", "无工程时设备树为空；连接状态由控制按钮/页面表达，不在底部状态栏重复。", "Device Parameters 的 configured 值是 Project 工程意图；Not captured/Unavailable 是当前唯一 observed 状态，不得暗示已写入驱动器。"],
+      "changeChecklistZh": ["先确认功能所有权和公共合同，再修改页面或 Controller 接线。", "测试选择切换、页面生命周期、可拖动布局、动作 enablement、错误断连和工程重开。", "设备参数页变更必须覆盖唯一 Provider、精确 resolve、manifest 现场重读、post-provider CAS、stale Reload、类型/default 和零在线副作用。", "遵守 Qt Creator 颜色、字体、间距 token 和 CMake/qbs 同步规则。"],
+      "avoidZh": ["不要在 QWidget 中创建协议客户端、Socket、RequestId 或厂家分支。", "不要用独立弹窗替代 Workbench 右侧页面。", "CoE 当前只汇总 ESI Startup/PDO 和本地配置，不要称为在线 SDO 对象字典。", "不要从 Device Parameters 页发起 scan、SDO、control 或 deploy，也不要把 Project Apply 称为设备参数已生效。"]
     },
     {
       "id": "mock",
@@ -1239,11 +1264,11 @@
       "titleZh": "设备参数资格、扫描实测与编译投影尚未闭环",
       "status": "open",
       "severity": "p0",
-      "affectedFeatures": ["ethercat.core.device-parameter-contract", "ethercat.project.model-format", "ethercat.project.mutation", "ethercat.adapters.catalog-authorization", "ethercat.product-api.topology-evidence", "ethercat.compiler.project-projection", "ethercat.workbench.configuration-pages", "ethercat.scan.mock-workflow"],
-      "problemZh": "Adapter v4 参数定义与资格校验底座已实现，但没有生产 v4 资产、真实 Product API 扫描实测证据、configured/observed/match 界面和完整 compiler projection，因此仍不能把用户配置或扫描拓扑解释为已应用的控制器参数。",
-      "currentBoundaryZh": "v4 强制 parameterDefinitions，manifest 与逐项定义使用独立 domain hash；Authorization v2 只授权精确 v4 与排序的 ID/digest 闭包。Core 可校验精确 ESI、完整 Adapter/Profile、Qualified、signatureVerified/realHardwareAllowed、required、类型和范围。工程 v8 持久化仍只做通用语法校验；当前无生产 v4 资产，SV630N v3 动作 disabled，编译请求对任意非空参数 fail closed，Product API/界面也没有 observed 证据。compile-recovery payload v2 保留设备参数字段并兼容 v1 空值；Mock 扫描只在精确设备身份不变时保留已有工程意图，绝不产生或持久化 observed 值。",
-      "nextActionZh": "先提供受治理、可独立验签的生产 v4 SV630N Adapter/Authorization，再增加绑定 Session/Boot/拓扑/从站身份的 Product API 只读扫描实测证据和 configured/observed/match UI，最后把已资格化值完整投影进 compiler request、签名包和恢复证据。",
-      "evidencePaths": ["docs/ethercat-device-adapters.md", "docs/ethercat-project-format.md", "docs/ethercat-plugin-development-guide.zh_CN.md", "src/libs/ethercatdata/deviceadapter.h", "src/libs/ethercatdata/deviceparameters.h", "src/plugins/ethercatcore/deviceparametercontract.h", "src/plugins/ethercatcore/deviceparametercontract.cpp", "src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp", "src/plugins/ethercatdeviceadapters/deviceadapterauthorization_p.cpp", "src/plugins/ethercatdeviceadapters/ethercatdeviceadapterstests.cpp", "src/plugins/ethercatproject/ethercatprojectformat.cpp", "src/plugins/ethercatproject/ethercatprojectdocument.cpp", "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp", "src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "src/plugins/ethercatscan/topologycomparison.cpp"],
+      "affectedFeatures": ["ethercat.core.device-parameter-contract", "ethercat.project.model-format", "ethercat.project.mutation", "ethercat.adapters.catalog-authorization", "ethercat.product-api.topology-evidence", "ethercat.compiler.project-projection", "ethercat.workbench.device-parameters", "ethercat.scan.mock-workflow"],
+      "problemZh": "Adapter v4 参数定义、资格校验和 Project-only 编辑页已实现，但没有生产 v4 资产、真实 Product API 扫描实测证据、configured/observed match 和完整 compiler projection，因此仍不能把用户配置或扫描拓扑解释为已应用的控制器参数。",
+      "currentBoundaryZh": "v4 强制 parameterDefinitions，manifest 与逐项定义使用独立 domain hash；Authorization v2 只授权精确 v4 与排序的 ID/digest 闭包。Core 可校验精确 ESI、完整 Adapter/Profile、Qualified、signatureVerified/realHardwareAllowed、required、类型和范围。Workbench Device Parameters 页仅在唯一 available Provider 完成真实硬件资格 resolve 后编辑 Boolean、整数、精确有理数和枚举 Project 意图；default 仅参考，Apply 现场重验并使用 post-provider Project CAS/Undo，authority 漂移后必须 Reload。Observed 当前只显示 signed source 和 Not captured/Unavailable，页面不 scan、SDO、control 或 deploy。当前无生产 v4 资产，SV630N v3 动作 disabled，编译请求对任意非空参数 fail closed，Product API 没有 observed 证据。compile-recovery payload v2 保留设备参数字段并兼容 v1 空值；Mock 扫描只在精确设备身份不变时保留已有工程意图，绝不产生或持久化 observed 值。",
+      "nextActionZh": "先提供受治理、可独立验签的生产 v4 SV630N Adapter/Authorization，再增加绑定 Session/Boot/拓扑/从站身份的 Product API 只读 observed 证据并扩展现有页面完成 configured/observed match，最后把已资格化值完整投影进 compiler request、签名包和恢复证据；设备参数动作仍需独立安全合同和真机验收。",
+      "evidencePaths": ["docs/ethercat-device-adapters.md", "docs/ethercat-project-format.md", "docs/ethercat-plugin-development-guide.zh_CN.md", "src/libs/ethercatdata/deviceadapter.h", "src/libs/ethercatdata/deviceparameters.h", "src/plugins/ethercatcore/deviceparametercontract.h", "src/plugins/ethercatcore/deviceparametercontract.cpp", "src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp", "src/plugins/ethercatdeviceadapters/deviceadapterauthorization_p.cpp", "src/plugins/ethercatdeviceadapters/ethercatdeviceadapterstests.cpp", "src/plugins/ethercatproject/ethercatprojectformat.cpp", "src/plugins/ethercatproject/ethercatprojectdocument.cpp", "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp", "src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "src/plugins/ethercatworkbench/deviceparameterspage.cpp", "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "src/plugins/ethercatscan/topologycomparison.cpp"],
       "resolutionCriteriaZh": ["签名 Adapter 定义闭合集合化声明参数 ID、类型、单位、范围、工程到设备投影和允许的实测来源。", "真实扫描证据绑定当前 Session、BootId、拓扑 capture 和精确从站身份；界面明确显示设定值、实测值、一致/不一致/不可用/陈旧状态。", "observed 证据保持会话级并与 ProjectSnapshot 分离；保存、重开、Undo/Redo 和 Mock 扫描均不能把实测值改写成工程意图。", "已资格化非空参数可确定性进入 compiler request、签名包和 recovery；缺失、越界、陈旧或不一致证据继续 fail closed。"],
       "notesZh": ["当前 v8 参数字段不授权部署、SDO 下载或电机运动。", "在完整资格和真机安全门禁通过前，不得用用户手填值、Mock 结果或拓扑扫描结果宣称正反转能力。"]
     },

@@ -48,6 +48,7 @@ const char ESI_REPOSITORY_PAGE_ID[] = "EtherCAT.Workbench.EsiRepository";
 const char ONLINE_PAGE_ID[] = "EtherCAT.Workbench.Online";
 const char DIAGNOSTICS_PAGE_ID[] = "EtherCAT.Workbench.Diagnostics";
 const char SEMANTIC_CONTROL_PAGE_ID[] = "EtherCAT.Workbench.SemanticControl";
+const char DEVICE_PARAMETERS_PAGE_ID[] = "EtherCAT.Workbench.DeviceParameters";
 
 constexpr int MODE_PRIORITY = 78;
 

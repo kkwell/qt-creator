@@ -72,6 +72,7 @@ python3 scripts/ethercat_feature_locator.py check
 | `ethercat.workbench.mock-topology-selection` | Workbench 精确 Mock 拓扑选择 | `EtherCATWorkbench` | `mock-only` | [`src/plugins/ethercatworkbench/workbenchcontroller.cpp`](../src/plugins/ethercatworkbench/workbenchcontroller.cpp) |
 | `ethercat.workbench.communication` | IP、连接、扫描和快捷控制 | `EtherCATWorkbench` | `real-controller` | [`src/plugins/ethercatworkbench/communicationpage.cpp`](../src/plugins/ethercatworkbench/communicationpage.cpp) |
 | `ethercat.workbench.configuration-pages` | PDO、Startup SDO 和 DC 配置页 | `EtherCATWorkbench` | `engineering-only` | [`src/plugins/ethercatworkbench/processdatapage.cpp`](../src/plugins/ethercatworkbench/processdatapage.cpp) |
+| `ethercat.workbench.device-parameters` | Project-only 设备参数页 | `EtherCATWorkbench` | `engineering-only` | [`src/plugins/ethercatworkbench/deviceparameterspage.cpp`](../src/plugins/ethercatworkbench/deviceparameterspage.cpp) |
 | `ethercat.workbench.esi-library` | ESI 设备库界面 | `EtherCATWorkbench` | `engineering-only` | [`src/plugins/ethercatworkbench/esirepositorypage.cpp`](../src/plugins/ethercatworkbench/esirepositorypage.cpp) |
 | `ethercat.workbench.coe-view` | CoE 参数浏览与 Startup 复制 | `EtherCATWorkbench` | `mock-only` | [`src/plugins/ethercatworkbench/coeonlinepage.cpp`](../src/plugins/ethercatworkbench/coeonlinepage.cpp) |
 | `ethercat.workbench.deployment` | 编译准备与运行包部署页 | `EtherCATWorkbench` | `real-controller` | [`src/plugins/ethercatworkbench/deploymentpage.cpp`](../src/plugins/ethercatworkbench/deploymentpage.cpp) |
@@ -675,6 +676,30 @@ python3 scripts/ethercat_feature_locator.py check
 - 前置功能：`ethercat.devices.esi-repository`、`ethercat.project.mutation`
 - 边界提醒：这些页面只修改本地工程；生成运行包和部署是独立步骤。
 
+#### `ethercat.workbench.device-parameters` — Project-only 设备参数页
+
+从唯一精确授权的 Qualified Adapter v4 定义编辑设备参数工程意图，并以现场重验、完整 Project CAS 和 stale Reload 门禁保存到 Undo/Redo；当前不读取设备。
+
+- Owner：`EtherCATWorkbench`（[`src/plugins/ethercatworkbench`](../src/plugins/ethercatworkbench)）
+- 运行边界：`engineering-only`
+- 证据边界：`offscreen-ui`
+- 修改入口：
+  - [`src/plugins/ethercatworkbench/deviceparameterspage.cpp`](../src/plugins/ethercatworkbench/deviceparameterspage.cpp)：精确 ESI/Adapter/Provider 资格化、类型编辑、现场重验、stale 草稿和 Project Apply 生命周期；`DeviceParametersPage::setContext`、`DeviceParametersPage::applyConfiguration`、`DeviceParametersPage::reloadFromProject`
+  - [`src/plugins/ethercatworkbench/builtinpropertypages.cpp`](../src/plugins/ethercatworkbench/builtinpropertypages.cpp)：ConfiguredSlave 属性页注册、创建和上下文更新；`BuiltinPropertyPageProvider::pages`、`DEVICE_PARAMETERS_PAGE_ID`
+- 公共合同：
+  - [`src/libs/ethercatdata/deviceadapter.h`](../src/libs/ethercatdata/deviceadapter.h)：签名参数定义、精确解析请求和返回模型；`DeviceParameterDefinition`、`DeviceAdapterResolutionRequest`、`ResolvedDeviceModel`
+  - [`src/plugins/ethercatcore/deviceparametercontract.h`](../src/plugins/ethercatcore/deviceparametercontract.h)：Adapter v4 参数定义与工程值资格化入口；`validateConfiguredDeviceParameters`
+  - [`src/plugins/ethercatcore/providers.h`](../src/plugins/ethercatcore/providers.h)：唯一 Adapter Provider 解析和 Project expected-token 写入边界；`DeviceAdapterProvider`、`resolveDevice`、`setDeviceParameterConfiguration`
+- 定向测试：
+  - [`src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp`](../src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp)（`offscreen-ui`）：`testDeviceParametersPageVisibilityAndQualification`、`testDeviceParametersPageEditingAndSafety`、`testDeviceParametersPageRejectsStaleBaselines`
+- 相关文档：[`docs/ethercat-device-adapters.md`](../docs/ethercat-device-adapters.md)、[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
+- 前置功能：`ethercat.workbench.details-routing`、`ethercat.core.device-parameter-contract`、`ethercat.project.mutation`、`ethercat.adapters.catalog-authorization`、`ethercat.devices.esi-repository`
+- 边界提醒：只接受精确 ESI 和唯一 available Provider 的 Qualified、signatureVerified、realHardwareAllowed v4 manifest；resolve request 禁止 Candidate/Mock 并要求真实硬件资格。
+- 边界提醒：Boolean、有符号/无符号整数、精确有理数和枚举由 signed definition 驱动；default 只作参考，optional 空值不写入。
+- 边界提醒：Apply 在 Provider 调用后重读完整 Project 并使用 expected ESI/Adapter token；任一 authority 或 Project 漂移保留 stale 草稿并禁用编辑，直到用户 Reload。
+- 边界提醒：Observed 仅显示 signed source 和 Not captured/Unavailable；页面不调用 scan、SDO、control、deploy、network 或 hardware。
+- 边界提醒：当前没有生产 v4 Adapter，非空参数 compiler 仍 fail closed；真实 Product API observed evidence、configured/observed match 和设备参数动作尚未实现。
+
 #### `ethercat.workbench.esi-library` — ESI 设备库界面
 
 在 Workbench 中导入原始 XML、拖放文件、重建索引并查看设备描述。
@@ -906,7 +931,7 @@ python3 scripts/ethercat_feature_locator.py check
 | `online` | 真实控制器在线功能知识卡 | 8 | 维护 Product API 三通道、会话、控制权、拓扑证据、部署和原子输出的一致在线快照。 |
 | `compiler` | 编译与准备知识卡 | 3 | 把工程快照和新鲜硬件证据确定性转换为可签名、可恢复、可验证的运行包。 |
 | `runtime` | 签名运行时与控制知识卡 | 4 | 在签名包、项目实例、控制器证明和审批一致时执行厂家无关的语义动作。 |
-| `ui` | Workbench 界面知识卡 | 11 | 让工程树、右侧属性页、顶部/左下快捷操作和输出面板投影同一套服务状态。 |
+| `ui` | Workbench 界面知识卡 | 12 | 让工程树、右侧属性页、顶部/左下快捷操作和输出面板投影同一套服务状态。 |
 | `mock` | Mock 工具知识卡 | 2 | 提供确定性的离线扫描和诊断测试，同时保持与真实控制器证据的严格隔离。 |
 | `automation` | 自动化网关知识卡 | 3 | 让外部 AI 通过本机受限入口读取 IDE 共享事实并提交需审批的语义意图。 |
 
@@ -921,7 +946,7 @@ python3 scripts/ethercat_feature_locator.py check
 | `ethercat.issue.detached-sign-ui-flow` | `open` | `p0` | `ethercat.compiler.preparation`、`ethercat.runtime.package-evidence`、`ethercat.runtime.activation`、`ethercat.workbench.deployment` | Workbench detached-sign 流程未形成完整用户闭环 |
 | `ethercat.issue.current-project-hardware-acceptance` | `blocked` | `p0` | `ethercat.compiler.project-projection`、`ethercat.product-api.topology-evidence`、`ethercat.product-api.package-deployment`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.output-transactions`、`ethercat.runtime.activation`、`ethercat.runtime.manual-control`、`ethercat.workbench.deployment`、`ethercat.workbench.semantic-control` | 当前工程到真实硬件的完整验收尚未闭环 |
 | `ethercat.issue.startup-sdo-compiler` | `open` | `p0` | `ethercat.project.model-format`、`ethercat.project.mutation`、`ethercat.workbench.configuration-pages`、`ethercat.compiler.project-projection`、`ethercat.compiler.backend` | 非空 Startup SDO 尚未进入编译闭环 |
-| `ethercat.issue.device-parameter-qualification` | `open` | `p0` | `ethercat.core.device-parameter-contract`、`ethercat.project.model-format`、`ethercat.project.mutation`、`ethercat.adapters.catalog-authorization`、`ethercat.product-api.topology-evidence`、`ethercat.compiler.project-projection`、`ethercat.workbench.configuration-pages`、`ethercat.scan.mock-workflow` | 设备参数资格、扫描实测与编译投影尚未闭环 |
+| `ethercat.issue.device-parameter-qualification` | `open` | `p0` | `ethercat.core.device-parameter-contract`、`ethercat.project.model-format`、`ethercat.project.mutation`、`ethercat.adapters.catalog-authorization`、`ethercat.product-api.topology-evidence`、`ethercat.compiler.project-projection`、`ethercat.workbench.device-parameters`、`ethercat.scan.mock-workflow` | 设备参数资格、扫描实测与编译投影尚未闭环 |
 | `ethercat.issue.restore-project-binding-guard` | `open` | `p0` | `ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.product-api.semantic-attestation`、`ethercat.runtime.package-evidence`、`ethercat.runtime.binding-actions`、`ethercat.runtime.activation`、`ethercat.workbench.communication` | Restore 运行前缺少当前工程绑定门禁 |
 | `ethercat.issue.scan-operation-cas` | `planned` | `p1` | `ethercat.scan.mock-workflow`、`ethercat.project.mutation`、`ethercat.core.scan-provider-selection`、`ethercat.core.topology-service`、`ethercat.core.provider-registry` | 扫描接受缺少跨调用者操作令牌与工程 CAS |
 | `ethercat.issue.engineering-coordinator` | `planned` | `p1` | `ethercat.workbench.communication`、`ethercat.workbench.deployment`、`ethercat.workbench.output-status`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.runtime.activation`、`ethercat.gateway.controller-views-intents` | 工程操作协调逻辑仍集中在 WorkbenchController |
