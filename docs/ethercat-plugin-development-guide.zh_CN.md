@@ -133,8 +133,9 @@ Qt Creator Core / ExtensionSystem / ProjectExplorer / Utils
 | `EtherCATDiagnostics` | `src/plugins/ethercatdiagnostics` | 可选的本地 Mock WKC/DC/告警趋势 | 真实控制器诊断生产 |
 | `EtherCATAutomationGateway` | `src/plugins/ethercatautomationgateway` | 默认关闭的本机 MCP/REST、Mock-only 旧控制器视图、显式选择的 Real/Mock 拓扑证据和经审批语义动作意图 | 点击 UI、选择/调用 Provider、触发扫描、直接调用 Product API、原始 PDO/SDO |
 
-`EasyBoard` 是独立的历史插件，不属于这条 EtherCAT 控制链。新的 EtherCAT 功能不得依赖
-或复用它的状态。
+`EasyBoard` 已从当前产品的 CMake/qbs 构建入口退役；源码只作为历史保留，不属于这条
+EtherCAT 控制链。新的 EtherCAT 功能不得依赖、加载或复用它，也不得把它作为 Product API
+或真实硬件访问的桥接层。
 
 ### 3.1 当前直接插件依赖
 

@@ -1978,9 +1978,10 @@ main window or new crash record.
 
 ## Existing EasyBoard isolation
 
-EasyBoard is not an EtherCAT plugin and must not become a shared container for
-new EtherCAT behavior. Its existing Core extension point is a recorded legacy
-delta, not the architecture template for new work.
+EasyBoard is retired from the current product build and is not an EtherCAT
+plugin. Its source and Core extension point remain only as recorded legacy
+delta; no new feature may depend on it, load it as a bridge, or use it as an
+architecture template.
 
 ## Per-plugin completion gate
 

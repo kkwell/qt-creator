@@ -41,7 +41,6 @@ Project {
         "diffeditor/diffeditor.qbs",
         "docker/docker.qbs",
         "dotnet/dotnet.qbs",
-        "easyboard/easyboard.qbs",
         "ethercatcore/ethercatcore.qbs",
         "ethercatdeviceadapters/ethercatdeviceadapters.qbs",
         "ethercatdevices/ethercatdevices.qbs",

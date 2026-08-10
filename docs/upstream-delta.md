@@ -70,17 +70,27 @@ logic to `src/app/main.cpp` or the application bootstrap path.
 execution. It depends on Core, Debugger, ProjectExplorer, and RemoteLinux and
 contains SSDP/UDP-related code.
 
-For the EtherCAT first phase:
+As of 2026-08-10, EasyBoard is retired from the current product profile:
 
-- Preserve its source and history.
+- Its top-level CMake and qbs registrations are removed, so clean product
+  builds neither compile nor package the plugin.
+- Preserve its source and history as dormant legacy code.
 - Do not add EtherCAT code to it.
 - Do not use its network behavior as an EtherCAT protocol.
 - Do not copy its Core intrusion pattern.
-- Treat its product visibility as a separate keep/hide/remove decision.
+- Do not use it as a bridge for Product API or hardware access.
 
-No EasyBoard deletion is authorized by this register. Hiding or removing it
-requires a dedicated local issue with an explicit migration and regression
-check.
+The legacy Core constants and `IEasyBoardPage` ABI remain for compatibility;
+they create no mode, socket, discovery, deployment, or runtime behavior when
+the EasyBoard plugin is absent. Removing that dormant ABI is a separate
+compatibility decision.
+
+The retirement gate uses a clean product build rather than an incremental App
+bundle: the plugin directory and `-version` inventory must contain no
+EasyBoard entry. The 2026-08-10 qualification built the complete current
+EtherCAT product profile from a new directory and passed the EtherCATCore
+45/45 and EtherCATWorkbench 119/119 offscreen suites. Existing `easyboard.xml`
+or settings data is intentionally left inert and is not migrated or deleted.
 
 ## Core patch budget
 

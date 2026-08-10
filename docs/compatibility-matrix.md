@@ -34,12 +34,12 @@ local decisions and easier maintenance.
 | TextEditor | Editor framework and transitive support | Required by current dependencies |
 | ProjectExplorer | Project and target framework | Required |
 | CppEditor | Current product editor/debug dependency | Retain for baseline |
-| Debugger | EasyBoard dependency | Retain while EasyBoard is enabled |
+| Debugger | Current editor/debug support | Retain independently of the retired EasyBoard plugin |
 | QtSupport | Project/kit support | Required by current dependencies |
 | ResourceEditor | Qt resource editing | Retain for baseline |
-| RemoteLinux | EasyBoard deployment dependency | Retain while EasyBoard is enabled |
+| RemoteLinux | Existing remote deployment support | Retain independently of the retired EasyBoard plugin |
 | QmakeProjectManager | Required by current Debugger plugin metadata | Required by baseline dependency |
-| EasyBoard | Existing board discovery/deployment mode | Preserve; visibility review pending |
+| EasyBoard | Historical board discovery/deployment mode | Retired from current CMake/qbs product builds; source retained for history |
 | EtherCATCore | EtherCAT services and extension points | Stage 1 verified |
 | EtherCATProject | Offline project lifecycle and persistence | Stage 2 verified |
 | EtherCATDevices | Managed ESI repository, bundled vendor library, and immutable device data | Current suite passed 9 tests; the original XB6 and SV630N XML identities, hashes, names, and DC capability are parser-verified |
