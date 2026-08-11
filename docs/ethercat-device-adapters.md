@@ -37,11 +37,10 @@ writable semantic signal or control action is inferred.
 `EtherCATDeviceAdapters` recursively loads packages below `ethercat/adapters`.
 The current parser accepts the explicit schemas `embed-labs.device-adapter/v1`,
 `v2`, `v3`, and `v4`. The bundled production forms remain separated under
-`adapters/v1`, `v2`, and `v3`; this tree does not install a production v4
-manifest or v2 authorization. Existing production work therefore remains v3,
-while v1/v2 are compatibility inputs and v4 is currently exercised with
-dynamically signed test artifacts. A package is selected only when all of the
-following match:
+`adapters/v1` through `adapters/v4`. API-075 installs the independently signed
+SV630N v4 manifest and matching Authorization v2 alongside its v3 form, while
+v1/v2 Adapter schemas remain compatibility inputs. A package is selected only
+when all of the following match:
 
 - VendorId and ProductCode;
 - the complete revision interval;
@@ -117,9 +116,11 @@ manifest, authorization, or provider drift fails closed before the next mutation
 Read-only SafeHold recovery proof, activation release, and reconciliation remain
 available for cleanup.
 
-Adapter v4 remains unsupported until the signed compiler contract carries and
-binds the complete device-parameter projection. Production v4 assets remain
-absent, and this gate does not enable a v4 action or prove real-hardware motion.
+The production v4 catalog is qualified for exact Project parameter editing and
+read-only evidence comparison. It remains unsupported as compiler input until
+the signed compiler contract carries and binds the complete device-parameter
+projection. Catalog admission does not enable a v4 action or prove
+real-hardware motion.
 It also does not defend against an arbitrary malicious in-process plugin;
 installed in-process plugins remain inside the existing trust boundary. The
 snapshot is current-process provenance, not independently portable
@@ -128,7 +129,7 @@ cryptographic evidence.
 ## Device parameter definitions
 
 Adapter v4 inherits the complete v3 contract and requires a
-`parameterDefinitions` array. The array is bounded to 256 entries, strictly
+`parameterDefinitions` array. The array is bounded to 64 entries, strictly
 ordered by unique canonical parameter ID, and every entry declares its display
 metadata, engineering value kind and unit, exact constraint, required/default
 policy, configured projection, and observed source. A configured projection is
@@ -198,9 +199,9 @@ persists that evidence, and clears the presentation when any authority or
 provenance binding changes. `Match` means only that a current read-only value
 equals current Project intent under the signed transform; it does not prove a
 Startup SDO was applied, a package was deployed, or an axis is ready to move.
-No production v4 Adapter is currently installed, and non-empty project
-parameters continue to fail closed before compiler invocation. The installed
-SV630N Adapter remains v3 and its motion actions remain disabled.
+The installed production SV630N v4 Adapter and Authorization v2 do not change
+the compiler boundary: non-empty project parameters continue to fail closed
+before compiler invocation, and its motion actions remain disabled.
 
 ## Modular devices
 
@@ -283,8 +284,8 @@ disconnect handling, and real hardware have all been qualified.
 
 The following identity and ESI observations originated with the earlier
 Candidate packages. Current qualification and action enablement must be read
-from the exact loaded v3 manifest plus its independently verified authorization,
-not inferred from this historical narrative.
+from the exact loaded v3 or v4 manifest plus its matching independently verified
+authorization, not inferred from this historical narrative.
 
 ### Solidot XB6-EC0002 revision 1
 

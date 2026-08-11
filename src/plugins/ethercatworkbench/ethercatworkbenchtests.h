@@ -125,6 +125,7 @@ private slots:
     void testControllerCommunicationAutoAcquire();
     void testControllerCommunicationDoesNotAutoDiscover();
     void testControllerCurrentBusApplyWorkflow();
+    void testControllerCurrentBusApplyPreservesV4Parameters();
     void testControllerCommunicationAutoAcquireAcrossProjects();
     void testControllerProjectRemovalPreservesAutonomousRuntime();
     void testControllerCommunicationLifecycleAndProviderRemoval();

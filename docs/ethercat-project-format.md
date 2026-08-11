@@ -214,15 +214,21 @@ engineering constraints. The version 8 persistence path itself still performs
 only the generic structural validation above; it does not turn saved values
 into qualified device operations.
 
-No production v4 Adapter is installed in this tree, and parameters are not yet
-projected into the compiler request or captured as scanned observations.
-Consequently every compile request containing a non-empty device-parameter
-configuration still fails closed before compilation. A later observed value
-must remain separately bound, session-scoped controller evidence for
-configured/observed comparison; it must never be persisted into
-`ProjectSnapshot` as engineering intent. No device-parameter value in this
-format, nor the presence of the v4 contract, authorizes deployment, SDO
-download, or motor motion.
+The production SV630N v4 Adapter and Authorization v2 are installed, and the
+Workbench can compare Project intent with separately bound, session-scoped
+Product API v1.16 observed evidence. That evidence is never persisted into
+`ProjectSnapshot`. Parameters are still absent from the signed compiler
+contract, so every compile request containing a non-empty device-parameter
+configuration fails closed before compiler invocation.
+
+Applying a current real bus preserves existing parameters only when the slave
+identity and ESI remain exact and the complete saved v4 Adapter selection is
+re-resolved with the same ID, version, content digest, profile, and modules. A
+new slave or one without a saved selection never adopts v4 automatically; it
+may only use the existing unambiguous v3 selection path. If any binding changes,
+the normal Project safety rule clears the parameters. No device-parameter value
+in this format, nor the presence of the v4 contract or an Observed match,
+authorizes deployment, SDO download, or motor motion.
 
 `semanticBindingArtifact` is optional and appears only once at master level.
 It is an immutable reference containing a non-empty trimmed artifact ID, the

@@ -208,8 +208,8 @@ Real controller，它会只读消费 Product API v1.16 在最近一次完整真�
 
 该会话证据不会写回 `ProjectSnapshot`，任何 authority/provenance 漂移都会先清除旧展示。`Match` 只
 表示同一会话、Boot 和拓扑证据中的只读值按签名换算后等于当前工程意图，不证明 Startup SDO 已应用、
-包已部署或轴可运行。当前树仍没有生产 v4 Adapter/Authorization 资产，已安装的 SV630N Adapter 仍为
-v3 且动作保持 disabled；compiler projection 和设备参数动作也尚未完成，因此任一非空设备参数仍会在
+包已部署或轴可运行。API-075 已安装并独立验签生产 SV630N v4 Adapter/Authorization v2，但其动作仍
+保持 disabled；compiler projection 和设备参数动作也尚未完成，因此任一非空设备参数仍会在
 调用外部编译器前 fail closed。`0x2000` 原始身份值不能自动解释为编码器分辨率，软件停止阈值也不是
 驱动器实测对象。
 
@@ -224,9 +224,10 @@ VendorId、ProductCode、Revision 和原始 XML SHA-256。显示名称、树序�
 设备型号身份。
 
 Adapter v4 参数定义属于签名设备目录事实，不属于工程或在线会话事实。每项定义包含 ID、类型、
-单位、完整工程约束、required/default 规则、配置投影和允许的实测来源；最多 256 项并按 ID 严格
-升序。`project-only`/`unavailable` 必须明确原因，CoE 配置只允许固定 `PS` Startup SDO，CoE 实测
-只允许固定 SDO upload，二者同时存在时必须指向同一个严格类型对象。Authorization v2 仅授权
+单位、完整工程约束、required/default 规则、配置投影和允许的实测来源；最多 64 项并按 ID 严格
+升序。`project-only` 配置不带设备对象，`unavailable` 实测必须使用受限原因；CoE 配置只允许固定
+`PS` Startup SDO，CoE 实测只允许固定 SDO upload，二者同时存在时必须指向同一个严格类型对象。
+Authorization v2 仅授权
 v4，并精确覆盖每项定义的 domain-separated digest；Authorization v1 仍只授权 v3，不能跨版本
 复用。
 
@@ -262,8 +263,8 @@ Provider 对象，禁止分别选择独立 provider 和 source。准入同时捕
 Provider 任一漂移，都会在下一次变更前 fail closed；只读 SafeHold 恢复判定及 activation
 release/reconcile 仍可用于安全清理。
 
-v4 在签名编译器合同能够携带并闭合完整设备参数投影前仍保持 unsupported；当前不安装生产 v4
-资产、不启用 v4 动作，也不证明真实硬件运动能力。该合同不防御任意恶意的进程内插件；已安装
+生产 v4 已可用于精确 Project 参数编辑和只读实测比较，但在签名编译器合同能够携带并闭合完整
+设备参数投影前仍不能作为编译输入；当前不启用 v4 动作，也不证明真实硬件运动能力。该合同不防御任意恶意的进程内插件；已安装
 的进程内插件仍位于现有信任边界之内。snapshot 是当前进程内的 provenance，不是可独立移植的
 密码学证据。
 
@@ -433,7 +434,7 @@ ShutdownFlag Plugin::aboutToShutdown()
 识别
   -> 精确 ESI -> 精确 Adapter -> 模块证据
 应用当前总线
-  -> 写入 ProjectSnapshot，保留可证明兼容的配置
+  -> 写入 ProjectSnapshot，精确重解析已有 V4 选择并保留可证明兼容的参数
 编辑
   -> PDO / Startup SDO / DC / Adapter / 手动 envelope
   -> Device Parameters（仅保存 Project 工程意图）
@@ -441,6 +442,9 @@ ShutdownFlag Plugin::aboutToShutdown()
 ```
 
 连接不是扫描。物理总线未变化时，用户不需要每次运行都重新扫描。
+“应用当前总线”只在同位置身份、ESI、既有 V4 ID/版本/内容摘要/Profile/Module 全部精确重解析时
+保留该选择和 `deviceParameters`；新设备或没有保存选择的设备不会自动采用 V4，仍只走现有唯一 V3
+自动选择。任何绑定漂移继续触发工程层清参门禁。
 Device Parameters 页不会因页面打开、Reload 或 Apply 而扫描、读取 SDO、控制或部署。Product API
 v1.16 在完整真实拓扑扫描后按固定八对象 profile 自动采集只读批次；页面只消费显式选择的 Real
 provider，并以当前 Session/Boot/拓扑 capture/payload SHA、完整从站 target 闭包、精确身份以及签名
@@ -729,8 +733,9 @@ SV630N 速度动作仍因实际编码器分辨率、0x6091 电子齿轮换算、
 4. Startup SDO 目前可编辑，但当前 compiler request builder 对非空 Startup SDO 仍会
    fail closed；需由编译器合同和 IDE 同步支持后再开放。
 5. Workbench 已能以签名 Adapter 定义消费 Product API v1.16 会话级固定只读参数证据并完成
-   configured/observed 对比；下一步是提供生产 v4 Adapter/Authorization，并实现 ProjectSnapshot
-   到编译请求、Startup SDO、换算与动作资格证据的精确 projection。在这些门禁闭合前，v8 中任一
+   configured/observed 对比，生产 SV630N v4/Authorization v2 也已安装并独立验签；下一步是实现
+   ProjectSnapshot 到新编译请求、Startup SDO/项目专属语义、签名包和 recovery 证据的精确
+   projection。在这些门禁闭合前，v8 中任一
    非空设备参数继续 fail closed，不进入部署或运动路径。
 
 ### P1：统一业务协调层

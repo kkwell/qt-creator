@@ -7169,6 +7169,12 @@ Master's offline slave list in one checked Project command:
 - the same VendorId/ProductCode/Revision at the same position retains its
   stable node ID, name, Alias, Process Data, Startup, and Distributed Clocks
   customization while its actual serial number is refreshed;
+- an existing complete v4 Adapter selection and its Project-owned device
+  parameters are retained only after a unique available provider re-resolves
+  the exact ID, version, content digest, profile, modules, device identity, and
+  ESI;
+- a new device or a device without a saved Adapter selection never adopts v4
+  automatically, while the existing unique v3 selection behavior remains;
 - a new or replaced identity with exactly one supported ESI match receives
   ESI-derived Process Data, Startup, and DC defaults;
 - a missing, ambiguous, or unsupported ESI match retains the actual identity,

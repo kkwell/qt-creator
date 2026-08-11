@@ -36,6 +36,7 @@
 
 #include <debugger/debuggerconstants.h>
 
+#include <ethercatcore/deviceparametercontract.h>
 #include <ethercatcore/ethercatcoretests.h>
 #include <ethercatcore/providerregistry.h>
 #include <ethercatcore/runtimepackagecompilercodec.h>
@@ -1334,6 +1335,18 @@ public:
     {
         m_manifest.processDataProfiles = available ? QList<Data::ProcessDataProfile>{m_profile}
                                                    : QList<Data::ProcessDataProfile>{};
+    }
+
+    void setV4ParameterDefinitions(
+        const QList<Data::DeviceParameterDefinition> &parameterDefinitions)
+    {
+        m_manifest.contractVersion = Data::DeviceAdapterContractVersion::V4;
+        m_manifest.version = "4.0.0";
+        m_manifest.parameterDefinitions = parameterDefinitions;
+        const QByteArray v4Content
+            = QByteArray("upper-v4:") + m_manifest.id.value.toUtf8();
+        m_manifest.contentSha256 = QCryptographicHash::hash(
+            v4Content, QCryptographicHash::Sha256);
     }
 
     Data::DeviceAdapterManifest manifest() const { return m_manifest; }
@@ -28656,6 +28669,203 @@ void EtherCATWorkbenchTests::testControllerCurrentBusApplyWorkflow()
     provider.publishSnapshot(snapshot);
     QVERIFY(!controller.canApplyCurrentBusToProject());
     QVERIFY(!controller.applyCurrentBusToProject());
+}
+
+void EtherCATWorkbenchTests::testControllerCurrentBusApplyPreservesV4Parameters()
+{
+    WorkbenchController controller;
+    Core::DeviceRepositoryProvider *repository = controller.deviceRepository();
+    Core::ProjectService *projectService = controller.projectService();
+    QVERIFY(repository);
+    QVERIFY(projectService);
+    controller.selectionService()->clear();
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const Utils::FilePath esiPath = Utils::FilePath::fromString(directory.path())
+                                        .canonicalPath()
+                                        .pathAppended("current-bus-v4-parameters.xml");
+    const Utils::Result<qint64> esiWriteResult = esiPath.writeFileContents(deviceEsi());
+    QVERIFY_RESULT(esiWriteResult);
+    const Data::DeviceImportResult importResult = waitForJob(repository->importFiles({esiPath}));
+    QCOMPARE(importResult.failedFiles, 0);
+    const QList<Data::DeviceSummary> repositoryDevices = repository->devices();
+    const auto matchingSummary = std::find_if(
+        repositoryDevices.cbegin(), repositoryDevices.cend(), [](const Data::DeviceSummary &device) {
+            return device.identity.vendorId == 0x00000002
+                   && device.identity.productCode == 0x00005678
+                   && device.identity.revisionNumber == 0x00000011;
+        });
+    QVERIFY(matchingSummary != repositoryDevices.cend());
+    const std::optional<Data::DeviceDescription> matchingDevice = repository->device(
+        matchingSummary->id);
+    QVERIFY(matchingDevice);
+
+    const TestProjectFile file = writeProjectWithSlave(
+        directory,
+        *matchingSummary,
+        "controller-current-bus-v4-parameters.ecatproject",
+        "Current Bus V4 Parameters");
+    QVERIFY(!file.path.isEmpty());
+    const ProjectExplorer::OpenProjectResult opened
+        = ProjectExplorer::ProjectExplorerPlugin::openProject(file.path, false);
+    QVERIFY2(opened, qPrintable(opened.errorMessage()));
+    ProjectExplorer::ProjectManager::setStartupProject(opened.project());
+
+    ControlledControllerConnectionProvider provider(
+        Utils::Id("EtherCAT.Workbench.TestControllerConnection.CurrentBusV4Parameters"),
+        "Current bus V4 parameters controller");
+    provider.setAvailable(true);
+    provider.setSingleProfile(true);
+    CurrentBusDeviceAdapterProvider adapterProvider(
+        Utils::Id("EtherCAT.Workbench.TestDeviceAdapter.CurrentBusV4Parameters"),
+        "org.embedlabs.test.current-bus.versioned-parameters",
+        *matchingDevice);
+    CurrentBusDeviceAdapterProvider v3AdapterProvider(
+        Utils::Id("EtherCAT.Workbench.TestDeviceAdapter.CurrentBusV3Fallback"),
+        "org.embedlabs.test.current-bus.versioned-parameters",
+        *matchingDevice);
+    const Data::DeviceParameterDefinition speedLimit = deviceParameterDefinition(
+        "speed.limit",
+        "Speed limit",
+        Data::EngineeringValueKind::SignedInteger,
+        "rpm",
+        deviceParameterIntegerConstraint(0, 100));
+    adapterProvider.setV4ParameterDefinitions({speedLimit});
+    adapterProvider.setQualification(Data::DeviceAdapterQualification::Qualified);
+    adapterProvider.setProductionTrust(true, true);
+    adapterProvider.setProvenanceSourceSha256(matchingDevice->sourceSha256);
+    v3AdapterProvider.setQualification(Data::DeviceAdapterQualification::Qualified);
+    v3AdapterProvider.setProductionTrust(true, true);
+    v3AdapterProvider.setProvenanceSourceSha256(matchingDevice->sourceSha256);
+
+    bool providerRegistered = false;
+    bool adapterProviderRegistered = false;
+    bool v3AdapterProviderRegistered = false;
+    const QScopeGuard cleanup([&] {
+        controller.selectionService()->clear();
+        if (v3AdapterProviderRegistered)
+            ExtensionSystem::PluginManager::removeObject(&v3AdapterProvider);
+        if (adapterProviderRegistered)
+            ExtensionSystem::PluginManager::removeObject(&adapterProvider);
+        if (providerRegistered)
+            ExtensionSystem::PluginManager::removeObject(&provider);
+        if (projectService->project(file.projectId))
+            ProjectExplorer::ProjectManager::removeProject(opened.project());
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    });
+    ExtensionSystem::PluginManager::addObject(&provider);
+    providerRegistered = true;
+    ExtensionSystem::PluginManager::addObject(&adapterProvider);
+    adapterProviderRegistered = true;
+    ExtensionSystem::PluginManager::addObject(&v3AdapterProvider);
+    v3AdapterProviderRegistered = true;
+    QTRY_VERIFY(projectService->project(file.projectId).has_value());
+
+    const Data::DeviceAdapterManifest manifest = adapterProvider.manifest();
+    QCOMPARE(manifest.contractVersion, Data::DeviceAdapterContractVersion::V4);
+    const Data::DeviceAdapterProjectSelection selection = deviceParametersSelection(manifest);
+    const Utils::Result<> selectionResult = projectService->setDeviceAdapterSelection(
+        file.projectId, file.slaveId, matchingDevice->sourceSha256, selection);
+    QVERIFY_RESULT(selectionResult);
+    const Data::DeviceParameterConfiguration parameters{{
+        {speedLimit.id, Data::EngineeringValue::fromSignedInteger(42)},
+    }};
+    const Core::ConfiguredDeviceParameterValidation parameterValidation
+        = Core::validateConfiguredDeviceParameters(
+            manifest, matchingDevice->sourceSha256, selection, parameters);
+    QVERIFY2(parameterValidation.accepted(), qPrintable(parameterValidation.detail));
+    const Utils::Result<> parameterResult = projectService->setDeviceParameterConfiguration(
+        file.projectId,
+        file.slaveId,
+        matchingDevice->sourceSha256,
+        selection,
+        parameters);
+    QVERIFY_RESULT(parameterResult);
+    const Data::OfflineSlaveConfiguration configuredSlave
+        = projectService->project(file.projectId)->slaves.constFirst();
+
+    const Data::ControllerConnectionScope scope{file.projectId, file.masterId};
+    controller.selectionService()->setCurrentNodeId(file.masterId);
+    const Utils::Result<> providerSelectionResult
+        = controller.selectControllerConnectionProvider(scope, provider.id());
+    QVERIFY_RESULT(providerSelectionResult);
+    const Utils::Result<> profileSelectionResult
+        = controller.selectControllerConnectionProfile(scope, provider.primaryProfileId());
+    QVERIFY_RESULT(profileSelectionResult);
+
+    Data::ControllerTopologySnapshot topology;
+    topology.firstStationAddress = 0x1001;
+    topology.respondingCount = 2;
+    topology.result = 0;
+    topology.discoveredAt = QDateTime::currentDateTimeUtc();
+    Data::ControllerTopologySlave existingTopologySlave;
+    existingTopologySlave.stationAddress = 0x1001;
+    existingTopologySlave.alState = 0x0002;
+    existingTopologySlave.vendorId = 0x00000002;
+    existingTopologySlave.productCode = 0x00005678;
+    existingTopologySlave.revision = 0x00000011;
+    existingTopologySlave.serial = 17;
+    Data::ControllerTopologySlave newTopologySlave = existingTopologySlave;
+    newTopologySlave.position = 1;
+    newTopologySlave.stationAddress = 0x1002;
+    newTopologySlave.serial = 18;
+    topology.slaves = {existingTopologySlave, newTopologySlave};
+    Data::ControllerConnectionSnapshot snapshot;
+    snapshot.scope = scope;
+    snapshot.profileId = provider.primaryProfileId();
+    snapshot.state = Data::ControllerConnectionState::Connected;
+    snapshot.protocolVersion = {1, 10};
+    snapshot.sessionGeneration = 1;
+    snapshot.topology = topology;
+    completeRealTopologyProvenance(snapshot, 901);
+    provider.publishSnapshot(snapshot);
+    QTRY_VERIFY(controller.canApplyCurrentBusToProject());
+    QCOMPARE(
+        projectService->project(file.projectId)->slaves.constFirst().deviceParameters,
+        parameters);
+
+    const Utils::Result<> applyResult = controller.applyCurrentBusToProject();
+    QVERIFY_RESULT(applyResult);
+    const Data::ProjectSnapshot applied = *projectService->project(file.projectId);
+    QCOMPARE(applied.slaves.size(), 2);
+    QCOMPARE(applied.slaves.constFirst().id, configuredSlave.id);
+    QCOMPARE(applied.slaves.constFirst().esiSha256, matchingDevice->sourceSha256);
+    QCOMPARE(applied.slaves.constFirst().adapterSelection, selection);
+    QCOMPARE(applied.slaves.constFirst().deviceParameters, parameters);
+    const Data::DeviceAdapterManifest v3Manifest = v3AdapterProvider.manifest();
+    QCOMPARE(v3Manifest.contractVersion, Data::DeviceAdapterContractVersion::V3);
+    QCOMPARE(v3Manifest.id, manifest.id);
+    QVERIFY(v3Manifest.contentSha256 != manifest.contentSha256);
+    QCOMPARE(
+        applied.slaves.constLast().adapterSelection,
+        deviceParametersSelection(v3Manifest));
+    QVERIFY(applied.slaves.constLast().deviceParameters.values.isEmpty());
+    QVERIFY(adapterProvider.resolveCalls > 0);
+    QCOMPARE(adapterProvider.lastRequest.expectedAdapterId, selection.adapterId);
+    QCOMPARE(adapterProvider.lastRequest.expectedAdapterVersion, selection.adapterVersion);
+    QCOMPARE(
+        adapterProvider.lastRequest.expectedAdapterContentSha256,
+        selection.adapterContentSha256);
+    QCOMPARE(adapterProvider.lastRequest.processDataProfileId, selection.processDataProfileId);
+    QCOMPARE(provider.controlCalls, 0);
+    QCOMPARE(provider.deploymentCalls, 0);
+    QCOMPARE(provider.cancelDeploymentCalls, 0);
+
+    const Utils::Result<> undoResult = projectService->undoProject(file.projectId);
+    QVERIFY_RESULT(undoResult);
+    const Data::ProjectSnapshot undone = *projectService->project(file.projectId);
+    QCOMPARE(undone.slaves.size(), 1);
+    QCOMPARE(undone.slaves.constFirst().id, configuredSlave.id);
+    QCOMPARE(undone.slaves.constFirst().adapterSelection, selection);
+    QCOMPARE(undone.slaves.constFirst().deviceParameters, parameters);
+    const Utils::Result<> redoResult = projectService->redoProject(file.projectId);
+    QVERIFY_RESULT(redoResult);
+    const Data::ProjectSnapshot redone = *projectService->project(file.projectId);
+    QCOMPARE(redone.slaves.size(), 2);
+    QCOMPARE(redone.slaves.constFirst().adapterSelection, selection);
+    QCOMPARE(redone.slaves.constFirst().deviceParameters, parameters);
 }
 
 void EtherCATWorkbenchTests::testControllerCommunicationAutoAcquireAcrossProjects()

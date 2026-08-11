@@ -300,7 +300,11 @@ static std::optional<CurrentBusAdapterSelection> resolveCurrentBusAdapterSelecti
             continue;
 
         for (const Data::DeviceAdapterManifest &manifest : provider->adapterManifests()) {
-            if (manifest.contractVersion != Data::DeviceAdapterContractVersion::V3
+            const bool supportedContract
+                = manifest.contractVersion == Data::DeviceAdapterContractVersion::V3
+                  || (hasCompleteSavedSelection
+                      && manifest.contractVersion == Data::DeviceAdapterContractVersion::V4);
+            if (!supportedContract
                 || (manifest.qualification != Data::DeviceAdapterQualification::Candidate
                     && manifest.qualification != Data::DeviceAdapterQualification::Qualified)
                 || manifest.contentSha256.size() != 32

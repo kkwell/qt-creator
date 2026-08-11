@@ -195,7 +195,7 @@ python3 scripts/ethercat_feature_locator.py check
 - 相关文档：[`docs/ethercat-device-adapters.md`](../docs/ethercat-device-adapters.md)、[`docs/ethercat-project-format.md`](../docs/ethercat-project-format.md)、[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
 - 前置功能：`ethercat.data.domain-contracts`
 - 边界提醒：工程持久化仍只验证通用语法；资格校验必须显式传入精确 ESI、完整 Adapter/Profile 选择、Qualified 以及 signatureVerified/realHardwareAllowed 双重信任结果。
-- 边界提醒：当前没有生产 v4 Adapter，非空参数 compiler 仍 fail closed。
+- 边界提醒：API-075 已安装独立授权的生产 SV630N v4 Adapter；任意非空参数在 compiler 合同完成投影前仍 fail closed。
 - 边界提醒：在线扫描实测值属于独立会话证据，不得写入 DeviceParameterConfiguration 或 ProjectSnapshot。
 
 ### 4.2 工程模型
@@ -274,7 +274,7 @@ python3 scripts/ethercat_feature_locator.py check
 - 相关文档：[`docs/ethercat-device-adapters.md`](../docs/ethercat-device-adapters.md)
 - 前置功能：`ethercat.data.domain-contracts`
 - 边界提醒：Authorization v1 只允许 v3；v2 只允许 v4，并精确闭包 schemaVersion 与严格排序的参数 ID/definitionSha256。
-- 边界提醒：当前树没有生产 v4 资产，已安装 SV630N 仍为 v3 且动作 disabled。
+- 边界提醒：API-075 已安装并独立验签 SV630N v4 资产；其参数投影尚未进入 compiler，运动动作仍因型号证据不足而 disabled。
 - 边界提醒：新增厂家或型号优先只增加 ESI、Adapter、授权和测试，不向 Product API 或 Workbench 添加厂家分支。
 
 ### 4.4 真实控制器在线功能
@@ -645,23 +645,24 @@ python3 scripts/ethercat_feature_locator.py check
 
 #### `ethercat.workbench.communication` — IP、连接、扫描和快捷控制
 
-统一 Communication 页、顶部命令和 Qt Creator 快捷按钮的连接与控制流程。
+统一 Communication 页、顶部命令、当前总线写入工程和 Qt Creator 快捷按钮的连接与控制流程。
 
 - Owner：`EtherCATWorkbench`（[`src/plugins/ethercatworkbench`](../src/plugins/ethercatworkbench)）
 - 运行边界：`real-controller`
 - 证据边界：`offscreen-ui`、`loopback`
 - 修改入口：
   - [`src/plugins/ethercatworkbench/communicationpage.cpp`](../src/plugins/ethercatworkbench/communicationpage.cpp)：嵌入式通信和控制页；`CommunicationPage::updateControllerControl`、`CommunicationPage::updateTopology`
-  - [`src/plugins/ethercatworkbench/workbenchcontroller.cpp`](../src/plugins/ethercatworkbench/workbenchcontroller.cpp)：UI 无关控制编排和精确真实拓扑投影；`WorkbenchController::connectController`、`WorkbenchController::beginControllerStartup`、`WorkbenchController::beginControllerStop`、`WorkbenchController::selectedRealTopology`、`WorkbenchController::projectedControllerConnectionSnapshot`
+  - [`src/plugins/ethercatworkbench/workbenchcontroller.cpp`](../src/plugins/ethercatworkbench/workbenchcontroller.cpp)：UI 无关控制编排、精确真实拓扑投影和显式工程写入；`WorkbenchController::connectController`、`WorkbenchController::beginControllerStartup`、`WorkbenchController::beginControllerStop`、`WorkbenchController::applyCurrentBusToProject`、`WorkbenchController::selectedRealTopology`、`WorkbenchController::projectedControllerConnectionSnapshot`
 - 公共合同：
   - [`src/plugins/ethercatcore/providers.h`](../src/plugins/ethercatcore/providers.h)：厂商无关控制器接口；`class ETHERCATCORE_EXPORT ControllerConnectionProvider`
 - 定向测试：
-  - [`src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp`](../src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp)（`offscreen-ui`）：`testControllerCommunicationControlWorkflow`、`testControllerCommunicationDoesNotAutoDiscover`、`testControllerQuickStopToShutdown`、`testWorkbenchUsesExactRealTopologySelection`
+  - [`src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp`](../src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp)（`offscreen-ui`）：`testControllerCommunicationControlWorkflow`、`testControllerCommunicationDoesNotAutoDiscover`、`testControllerQuickStopToShutdown`、`testWorkbenchUsesExactRealTopologySelection`、`testControllerCurrentBusApplyWorkflow`、`testControllerCurrentBusApplyPreservesV4Parameters`
 - 相关文档：[`docs/ethercat-workbench.md`](../docs/ethercat-workbench.md)、[`docs/ethercat-online-controller.md`](../docs/ethercat-online-controller.md)
 - 前置功能：`ethercat.product-api.control-lifecycle`、`ethercat.product-api.topology-evidence`
 - 边界提醒：页面只调用 ControllerConnectionProvider 和 Core TopologyService，不依赖 Product API Codec。
 - 边界提醒：连接报错后由 Provider 快照决定是否保留会话；输出必须显示可操作根因。
 - 边界提醒：Workbench 只投影工程显式选择的 Fresh RealController 拓扑；Mock、陈旧、不完整、scope/profile 不匹配和 Provider 移除均清空且不替补。
+- 边界提醒：应用当前总线时，仅已有完整精确选择的 v4 Adapter 可按 ID、版本、内容摘要、Profile 和 Module 重解析并保留 deviceParameters；新设备或无保存选择的设备不自动采用 v4，仍只走现有唯一 v3 自动选择。
 
 #### `ethercat.workbench.configuration-pages` — PDO、Startup SDO 和 DC 配置页
 
@@ -684,7 +685,7 @@ python3 scripts/ethercat_feature_locator.py check
 
 #### `ethercat.workbench.device-parameters` — Project-only 设备参数页
 
-从唯一精确授权的 Qualified Adapter v4 定义编辑设备参数工程意图，并以现场重验、完整 Project CAS 和 stale Reload 门禁保存到 Undo/Redo；当前不读取设备。
+从唯一精确授权的 Qualified Adapter v4 定义编辑设备参数工程意图，并只读比较 Product API v1.16 会话证据；保存使用现场重验、完整 Project CAS 和 stale Reload 门禁。
 
 - Owner：`EtherCATWorkbench`（[`src/plugins/ethercatworkbench`](../src/plugins/ethercatworkbench)）
 - 运行边界：`engineering-only`
@@ -697,14 +698,14 @@ python3 scripts/ethercat_feature_locator.py check
   - [`src/plugins/ethercatcore/deviceparametercontract.h`](../src/plugins/ethercatcore/deviceparametercontract.h)：Adapter v4 参数定义与工程值资格化入口；`validateConfiguredDeviceParameters`
   - [`src/plugins/ethercatcore/providers.h`](../src/plugins/ethercatcore/providers.h)：唯一 Adapter Provider 解析和 Project expected-token 写入边界；`DeviceAdapterProvider`、`resolveDevice`、`setDeviceParameterConfiguration`
 - 定向测试：
-  - [`src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp`](../src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp)（`offscreen-ui`）：`testDeviceParametersPageVisibilityAndQualification`、`testDeviceParametersPageEditingAndSafety`、`testDeviceParametersPageRejectsStaleBaselines`
+  - [`src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp`](../src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp)（`offscreen-ui`）：`testDeviceParametersPageVisibilityAndQualification`、`testDeviceParametersPageEditingAndSafety`、`testDeviceParametersPageAxisEvidence`、`testDeviceParametersPageRejectsStaleBaselines`
 - 相关文档：[`docs/ethercat-device-adapters.md`](../docs/ethercat-device-adapters.md)、[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
 - 前置功能：`ethercat.workbench.details-routing`、`ethercat.core.device-parameter-contract`、`ethercat.project.mutation`、`ethercat.adapters.catalog-authorization`、`ethercat.devices.esi-repository`
 - 边界提醒：只接受精确 ESI 和唯一 available Provider 的 Qualified、signatureVerified、realHardwareAllowed v4 manifest；resolve request 禁止 Candidate/Mock 并要求真实硬件资格。
-- 边界提醒：Boolean、有符号/无符号整数、精确有理数和枚举由 signed definition 驱动；default 只作参考，optional 空值不写入。
+- 边界提醒：生产 SV630N v4/Authorization v2 已安装；Boolean、有符号/无符号整数、精确有理数和枚举由 signed definition 驱动，default 只作参考，optional 空值不写入。
 - 边界提醒：Apply 在 Provider 调用后重读完整 Project 并使用 expected ESI/Adapter token；任一 authority 或 Project 漂移保留 stale 草稿并禁用编辑，直到用户 Reload。
-- 边界提醒：Observed 仅显示 signed source 和 Not captured/Unavailable；页面不调用 scan、SDO、control、deploy、network 或 hardware。
-- 边界提醒：当前没有生产 v4 Adapter，非空参数 compiler 仍 fail closed；真实 Product API observed evidence、configured/observed match 和设备参数动作尚未实现。
+- 边界提醒：Observed 只消费显式 Real controller 已捕获的 v1.16 会话证据，可显示 Match、Mismatch、Not configured 或 Unavailable；页面不主动 scan、SDO、control、deploy、network 或 hardware，也不把 observed 写入工程。
+- 边界提醒：非空参数 compiler projection 和设备参数动作尚未闭环；当前仍 fail closed，且不得宣称已部署或已具备真机运动资格。
 
 #### `ethercat.workbench.esi-library` — ESI 设备库界面
 
@@ -952,7 +953,7 @@ python3 scripts/ethercat_feature_locator.py check
 | `ethercat.issue.detached-sign-ui-flow` | `open` | `p0` | `ethercat.compiler.preparation`、`ethercat.runtime.package-evidence`、`ethercat.runtime.activation`、`ethercat.workbench.deployment` | Workbench detached-sign 流程未形成完整用户闭环 |
 | `ethercat.issue.current-project-hardware-acceptance` | `blocked` | `p0` | `ethercat.compiler.project-projection`、`ethercat.product-api.topology-evidence`、`ethercat.product-api.package-deployment`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.output-transactions`、`ethercat.runtime.activation`、`ethercat.runtime.manual-control`、`ethercat.workbench.deployment`、`ethercat.workbench.semantic-control` | 当前工程到真实硬件的完整验收尚未闭环 |
 | `ethercat.issue.startup-sdo-compiler` | `open` | `p0` | `ethercat.project.model-format`、`ethercat.project.mutation`、`ethercat.workbench.configuration-pages`、`ethercat.compiler.project-projection`、`ethercat.compiler.backend` | 非空 Startup SDO 尚未进入编译闭环 |
-| `ethercat.issue.device-parameter-qualification` | `open` | `p0` | `ethercat.core.device-parameter-contract`、`ethercat.project.model-format`、`ethercat.project.mutation`、`ethercat.adapters.catalog-authorization`、`ethercat.product-api.topology-evidence`、`ethercat.compiler.project-projection`、`ethercat.workbench.device-parameters`、`ethercat.scan.mock-workflow` | 设备参数资格、扫描实测与编译投影尚未闭环 |
+| `ethercat.issue.device-parameter-qualification` | `open` | `p0` | `ethercat.core.device-parameter-contract`、`ethercat.project.model-format`、`ethercat.project.mutation`、`ethercat.adapters.catalog-authorization`、`ethercat.product-api.topology-evidence`、`ethercat.compiler.project-projection`、`ethercat.workbench.communication`、`ethercat.workbench.device-parameters`、`ethercat.scan.mock-workflow` | 设备参数资格、扫描实测与编译投影尚未闭环 |
 | `ethercat.issue.restore-project-binding-guard` | `open` | `p0` | `ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.product-api.semantic-attestation`、`ethercat.runtime.package-evidence`、`ethercat.runtime.binding-actions`、`ethercat.runtime.activation`、`ethercat.workbench.communication` | Restore 运行前缺少当前工程绑定门禁 |
 | `ethercat.issue.scan-operation-cas` | `planned` | `p1` | `ethercat.scan.mock-workflow`、`ethercat.project.mutation`、`ethercat.core.scan-provider-selection`、`ethercat.core.topology-service`、`ethercat.core.provider-registry` | 扫描接受缺少跨调用者操作令牌与工程 CAS |
 | `ethercat.issue.engineering-coordinator` | `planned` | `p1` | `ethercat.workbench.communication`、`ethercat.workbench.deployment`、`ethercat.workbench.output-status`、`ethercat.product-api.control-lifecycle`、`ethercat.product-api.package-deployment`、`ethercat.runtime.activation`、`ethercat.gateway.controller-views-intents` | 工程操作协调逻辑仍集中在 WorkbenchController |
