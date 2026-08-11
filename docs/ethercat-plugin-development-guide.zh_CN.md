@@ -507,19 +507,21 @@ digest。
 执行后续变更。
 
 `SemanticRuntimeService` 现在仅为已有、已签名且 runtime state 与 definition 的
-`holdToRun` 均为 `false` 的 `InvokeAction` 提供显式 cancel；输出 TTL refresh 和
-hold-to-run 执行接口仍未开放。cancel 使用独立幂等 ID 和 CAS revision，精确绑定原请求
-的 operation ID、canonical request digest、原始 expected-context hash、已认证本机 User 与
-有界 reason；stale CAS revision 直接拒绝。只有在 executor 进入 Provider mutation virtual
-调用之前，取消才可按零写入终止；一旦进入该调用，即使调用返回错误，也必须视为写入可能已生效。
-此后只有在不存在更早已生效事务时，同一 pending request 的精确 terminal rejection 才足以
-终止为 `Canceled`。若已有 prior 事务，则必须同时保留 pending rejection，并以同一输出
-`OperationId` 精确证明 prior 的最后一笔 `HoldSafe` 事务已进入 `SafeHold`；若 pending
-request 已生效，则必须证明它自身精确进入 `SafeHold`。apply 结果未知时保留同一请求并阻塞
-队列等待 reconcile；后续 adapter authorization 或 runtime context 漂移不阻断这条既有清理
-路径。`ReleaseHold` 继续拒绝，写后 `ReturnTask`/Idle 也不是 `SafeHold` 证明。Workbench 的
-Stop 不再弹第二次确认，但在 operation record 出现所需终态证明前只显示请求已记录、等待证明。
-现有 `requestLiveRefresh` 仍只刷新输入语义信号，不能续期输出覆盖。生产 SV630N 动作仍是
+`holdToRun` 均为 `false` 的 `InvokeAction` 提供有类型 cancel；`ReleaseHold`、输出
+TTL refresh 和 hold-to-run 执行接口仍继续拒绝。cancel request 使用独立幂等 ID 和
+CAS revision，精确绑定原始 `operationId`、原始 `canonicalRequestDigest`、原始
+`expectedContextHash`、已认证本机 `User` 与有界 reason；stale CAS revision 保持零变更并
+直接拒绝，完全相同的 request 与 actor 则按幂等 exact replay 处理。只有在 executor
+进入 Provider mutation virtual 调用之前，取消才可按零写入终止为 `Canceled`；一旦进入该
+调用，即使调用返回 `false`，或任何写入可能已执行，该返回都不是 terminal rejection，
+操作必须继续阻塞并保持 `OutcomeUnknown`，直到精确证据闭合。不存在更早已生效事务时，
+同一 pending request 的精确 terminal rejection 才足以终止为 `Canceled`。若已有 prior 事务，
+则必须同时保留 pending rejection，并以同一输出 `OperationId` 精确证明 prior 的最后一笔
+`HoldSafe` 事务已进入 `SafeHold`；若 pending request 已生效，则必须证明它自身精确进入
+`SafeHold`。清理只消费已接受原操作的证据，不依赖当前 adapter authorization 或 runtime context；
+写后 `ReturnTask`/Idle 也不是 `SafeHold` 证明。Workbench 的 Stop 立即发送且不弹第二次确认，
+但在 operation record 出现所需终态证明前只显示请求已记录、等待证明。现有
+`requestLiveRefresh` 仍只刷新输入语义信号，不能续期输出覆盖。生产 SV630N 动作仍是
 disabled/unqualified；本轮能力只有 unit/loopback 证据，不代表已经完成正反转或任何真机运动。
 
 ### 6.4 自动运行和停止

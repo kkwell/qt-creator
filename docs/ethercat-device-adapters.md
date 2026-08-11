@@ -250,27 +250,29 @@ wait-condition evaluation. A failure, wait timeout, or drift can release later
 mutations only after the controller exactly proves `SafeHold` for the last
 signed transaction. `OutcomeUnknown` retains that same apply request and
 output OperationId and blocks later mutations until authoritative
-reconciliation. The public semantic runtime API currently has no explicit
-output-TTL refresh or hold-to-run execution command; input live refresh is not
-an output renewal. It does expose an explicit cancel for an existing signed
+reconciliation. The public semantic runtime API continues to reject
+`ReleaseHold`, output-TTL refresh, and hold-to-run execution; input live refresh
+is not an output renewal. It does expose a typed cancel for an existing signed
 `InvokeAction` whose runtime state and definition both have `holdToRun=false`.
 The request uses its own idempotency ID and CAS revision and binds the original
-operation ID, canonical request digest, original expected-context hash,
-authenticated local user, and bounded reason. A stale CAS revision is rejected.
+`operationId`, original `canonicalRequestDigest`, original `expectedContextHash`,
+authenticated local `User`, and bounded reason. A stale CAS revision is
+rejected without mutation, while an exact request-and-actor replay is handled
+idempotently.
 Cancellation completes with zero writes only before the executor enters the
-provider mutation virtual call. Once that call is entered, including when it
-returns an error, the write may have applied and the operation remains blocking.
-An exact terminal rejection is sufficient only when no earlier transaction had
-applied. If a prior transaction exists, that rejection must be retained and the
-controller must also prove `SafeHold` for the prior exact `HoldSafe`
-transaction; if the pending request applied, its own exact `SafeHold` proof is
-required. An unknown apply result retains the same request for reconciliation.
-Cleanup uses the accepted operation evidence and is not blocked by later
-adapter-authorization or runtime-context drift. `ReleaseHold` remains rejected,
-and a post-write `ReturnTask` action cannot be reported as canceled because an
-idle/returned-task state is not a `SafeHold` proof. Workbench submits Stop
-without another confirmation dialog, but reports only a pending request until
-the operation record contains the required terminal proof.
+provider mutation virtual call. Once that call is entered, even if it returns
+`false`, or whenever any write might have executed, that return is not a
+terminal rejection: the operation remains blocking as `OutcomeUnknown` until
+exact evidence closes it. An exact terminal rejection is sufficient only when
+no earlier transaction had applied. If a prior transaction exists, that exact
+rejection must be retained and the controller must also prove `SafeHold` for
+the prior exact `HoldSafe` transaction; if the pending request applied, its own
+exact `SafeHold` proof is required. Cleanup uses the accepted original operation
+evidence and does not depend on current adapter authorization or runtime
+context. A post-write `ReturnTask` action cannot be reported as canceled because
+an idle/returned-task state is not a `SafeHold` proof. Workbench sends Stop
+immediately without another confirmation dialog, but reports only a pending
+request until the operation record contains the required terminal proof.
 
 Raw drive Controlword and mode-command signals are internal action resources.
 They must not become generic editable UI fields. Candidate actions remain
