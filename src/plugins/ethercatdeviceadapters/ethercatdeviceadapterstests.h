@@ -16,6 +16,7 @@ private slots:
     void testBundledV2ExactContracts();
     void testBundledV3Api038Contracts();
     void testInstalledProductionAuthorizations();
+    void testInstalledApi075ProductionV4();
     void testSignedAdapterAuthorizationProjection();
     void testAuthorizationStartupMessage();
     void testV2StrictParserAndCanonicalDigest();
@@ -25,6 +26,7 @@ private slots:
     void testSignedAdapterAuthorizationV2ParameterClosure();
     void testV1RemainsFailClosed();
     void testV1AndV2ExactSelection();
+    void testV3AndV4ExactSelection();
     void testExactIdentityAndEsiMatching();
     void testExactPackageSelection();
     void testCandidateHardwareGate();

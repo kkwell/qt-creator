@@ -10390,14 +10390,14 @@ void EtherCATCoreTests::testConfiguredDeviceParameterQualification()
         Data::DeviceParameterDefinition result;
         result.id = id;
         result.displayName = id;
+        result.description = "Production-v4 device parameter test fixture.";
         result.valueKind = kind;
         result.unit = unit;
         result.engineeringConstraint = constraint;
         result.required = required;
         result.configuredProjection.kind = Data::DeviceParameterProjectionKind::ProjectOnly;
-        result.configuredProjection.reason = "test_project_only";
         result.observedSource.kind = Data::DeviceParameterObservedSourceKind::Unavailable;
-        result.observedSource.reason = "test_observed_unavailable";
+        result.observedSource.reason = "no_direct_readable_object";
         result.definitionSha256 = QByteArray(32, char(id.size()));
         return result;
     };
@@ -10432,7 +10432,7 @@ void EtherCATCoreTests::testConfiguredDeviceParameterQualification()
         Data::EngineeringValueKind::SignedInteger,
         "reference_unit_per_second",
         integerConstraint(0, 100),
-        false);
+        true);
     const Data::DeviceParameterDefinition encoder = projectOnlyDefinition(
         "motor.encoder_resolution_counts_per_revolution",
         Data::EngineeringValueKind::UnsignedInteger,
@@ -10472,13 +10472,14 @@ void EtherCATCoreTests::testConfiguredDeviceParameterQualification()
     QVERIFY(validateConfiguredDeviceParameters(
                 manifest, manifest.match.exactEsiSha256, selection, configuration)
                 .accepted());
-    Data::DeviceParameterConfiguration withoutOptional = configuration;
-    withoutOptional.values.removeAt(1);
-    QVERIFY(validateConfiguredDeviceParameters(
-                manifest, manifest.match.exactEsiSha256, selection, withoutOptional)
-                .accepted());
+    Data::DeviceParameterConfiguration missingStop = configuration;
+    missingStop.values.removeAt(1);
+    ConfiguredDeviceParameterValidation validation = validateConfiguredDeviceParameters(
+        manifest, manifest.match.exactEsiSha256, selection, missingStop);
+    QCOMPARE(validation.error, ConfiguredDeviceParameterError::MissingRequiredParameter);
+    QCOMPARE(validation.parameterId, stop.id);
 
-    ConfiguredDeviceParameterValidation validation
+    validation
         = validateConfiguredDeviceParameters(manifest, manifest.match.exactEsiSha256, selection, {});
     QCOMPARE(validation.error, ConfiguredDeviceParameterError::MissingRequiredParameter);
     QCOMPARE(validation.parameterId, gear.id);
@@ -10611,6 +10612,8 @@ void EtherCATCoreTests::testDeviceParameterObservationContract()
         Data::EngineeringConstraint result;
         result.minimum = {minimum, 1};
         result.maximum = {maximum, 1};
+        result.step = {1, 1};
+        result.stepOrigin = {0, 1};
         return result;
     };
     const auto definitionFor = [&](quint16 ordinal,
@@ -10623,12 +10626,12 @@ void EtherCATCoreTests::testDeviceParameterObservationContract()
         Data::DeviceParameterDefinition definition;
         definition.id = QString("observation.%1").arg(ordinal);
         definition.displayName = definition.id;
+        definition.description = "Production-v4 parameter observation test fixture.";
         definition.valueKind = valueKind;
-        definition.unit = "test_unit";
+        definition.unit = "reference_unit_per_second";
         definition.engineeringConstraint = integerConstraint(minimum, maximum);
         definition.configuredProjection.kind
             = Data::DeviceParameterProjectionKind::ProjectOnly;
-        definition.configuredProjection.reason = "observation_test_project_only";
         definition.observedSource.kind = Data::DeviceParameterObservedSourceKind::CoeSdoUpload;
         Data::DeviceParameterObjectBinding binding;
         binding.index = fixed.index;
@@ -10664,33 +10667,32 @@ void EtherCATCoreTests::testDeviceParameterObservationContract()
         QVERIFY(!result.detail.isEmpty());
     };
 
-    const Data::DeviceParameterDefinition signed16 = definitionFor(
+    const Data::DeviceParameterDefinition base16 = definitionFor(
         0,
-        Data::EtherCATDataType::Integer16,
-        Data::EngineeringValueKind::SignedInteger,
-        -10000,
-        10000);
-    const Data::AxisParameterEvidenceRecord negative16 = validRecord(
-        0, QByteArray::fromHex("feff"));
-    QVERIFY(negative16.isValid());
+        Data::EtherCATDataType::UnsignedInteger16,
+        Data::EngineeringValueKind::UnsignedInteger,
+        0,
+        65535);
+    const Data::AxisParameterEvidenceRecord value16 = validRecord(0, QByteArray::fromHex("0200"));
+    QVERIFY(value16.isValid());
     const DeviceParameterObservationResult match = evaluateDeviceParameterObservation(
-        signed16, Data::EngineeringValue::fromSignedInteger(-2), negative16);
+        base16, Data::EngineeringValue::fromUnsignedInteger(2), value16);
     QCOMPARE(match.state, DeviceParameterObservationState::Match);
     QVERIFY(match.isAvailable());
     QCOMPARE(
         match.observedValue,
-        std::optional<Data::EngineeringValue>(Data::EngineeringValue::fromSignedInteger(-2)));
+        std::optional<Data::EngineeringValue>(Data::EngineeringValue::fromUnsignedInteger(2)));
     QVERIFY(match.detail.contains("match", Qt::CaseInsensitive));
 
     const DeviceParameterObservationResult mismatch = evaluateDeviceParameterObservation(
-        signed16, Data::EngineeringValue::fromSignedInteger(-1), negative16);
+        base16, Data::EngineeringValue::fromUnsignedInteger(1), value16);
     QCOMPARE(mismatch.state, DeviceParameterObservationState::Mismatch);
     QVERIFY(mismatch.isAvailable());
     QCOMPARE(mismatch.observedValue, match.observedValue);
     QVERIFY(mismatch.detail.contains("differ", Qt::CaseInsensitive));
 
     const DeviceParameterObservationResult notConfigured
-        = evaluateDeviceParameterObservation(signed16, std::nullopt, negative16);
+        = evaluateDeviceParameterObservation(base16, std::nullopt, value16);
     QCOMPARE(notConfigured.state, DeviceParameterObservationState::NotConfigured);
     QVERIFY(notConfigured.isAvailable());
     QCOMPARE(notConfigured.observedValue, match.observedValue);
@@ -10701,7 +10703,7 @@ void EtherCATCoreTests::testDeviceParameterObservationContract()
         Data::EtherCATDataType::UnsignedInteger16,
         Data::EngineeringValueKind::UnsignedInteger,
         0,
-        100000);
+        65535);
     const DeviceParameterObservationResult decoded16 = evaluateDeviceParameterObservation(
         unsigned16, std::nullopt, validRecord(1, QByteArray::fromHex("3412")));
     QCOMPARE(decoded16.state, DeviceParameterObservationState::NotConfigured);
@@ -10726,68 +10728,66 @@ void EtherCATCoreTests::testDeviceParameterObservationContract()
             Data::EngineeringValue::fromUnsignedInteger(0x12345678)));
     QCOMPARE(decoded32.observedValue->kind, Data::EngineeringValueKind::UnsignedInteger);
 
-    Data::DeviceParameterDefinition transformed = signed16;
+    Data::DeviceParameterDefinition transformed = base16;
+    transformed.engineeringConstraint = integerConstraint(1, 65535);
+    transformed.engineeringConstraint.step = {2, 1};
+    transformed.engineeringConstraint.stepOrigin = {1, 1};
     transformed.observedSource.object->engineeringTransform.scale = {2, 1};
     transformed.observedSource.object->engineeringTransform.offset = {1, 1};
+    transformed.observedSource.object->engineeringTransform.constraint
+        = transformed.engineeringConstraint;
     const DeviceParameterObservationResult scaled = evaluateDeviceParameterObservation(
         transformed, std::nullopt, validRecord(0, QByteArray::fromHex("0a00")));
     QCOMPARE(scaled.state, DeviceParameterObservationState::NotConfigured);
     QCOMPARE(
         scaled.observedValue,
-        std::optional<Data::EngineeringValue>(Data::EngineeringValue::fromSignedInteger(21)));
-    QCOMPARE(scaled.observedValue->kind, Data::EngineeringValueKind::SignedInteger);
+        std::optional<Data::EngineeringValue>(Data::EngineeringValue::fromUnsignedInteger(21)));
+    QCOMPARE(scaled.observedValue->kind, Data::EngineeringValueKind::UnsignedInteger);
 
-    Data::DeviceParameterDefinition unavailable = signed16;
+    Data::DeviceParameterDefinition unavailable = base16;
     unavailable.observedSource = {};
     unavailable.observedSource.kind = Data::DeviceParameterObservedSourceKind::Unavailable;
-    unavailable.observedSource.reason = "signed_unavailable";
-    verifyUnavailable(evaluateDeviceParameterObservation(unavailable, std::nullopt, negative16));
+    unavailable.observedSource.reason = "no_direct_readable_object";
+    verifyUnavailable(evaluateDeviceParameterObservation(unavailable, std::nullopt, value16));
 
-    Data::DeviceParameterDefinition invalidDefinition = signed16;
+    Data::DeviceParameterDefinition invalidDefinition = base16;
     invalidDefinition.definitionSha256.clear();
-    verifyUnavailable(
-        evaluateDeviceParameterObservation(invalidDefinition, std::nullopt, negative16));
-    invalidDefinition = signed16;
+    verifyUnavailable(evaluateDeviceParameterObservation(invalidDefinition, std::nullopt, value16));
+    invalidDefinition = base16;
     invalidDefinition.definitionSha256 = QByteArray(32, '\0');
-    verifyUnavailable(
-        evaluateDeviceParameterObservation(invalidDefinition, std::nullopt, negative16));
-    invalidDefinition = signed16;
+    verifyUnavailable(evaluateDeviceParameterObservation(invalidDefinition, std::nullopt, value16));
+    invalidDefinition = base16;
     invalidDefinition.configuredProjection = {};
-    verifyUnavailable(
-        evaluateDeviceParameterObservation(invalidDefinition, std::nullopt, negative16));
+    verifyUnavailable(evaluateDeviceParameterObservation(invalidDefinition, std::nullopt, value16));
 
-    Data::DeviceParameterDefinition rejectedDefinition = signed16;
+    Data::DeviceParameterDefinition rejectedDefinition = base16;
     ++rejectedDefinition.observedSource.object->index;
-    verifyUnavailable(
-        evaluateDeviceParameterObservation(rejectedDefinition, std::nullopt, negative16));
-    rejectedDefinition = signed16;
+    verifyUnavailable(evaluateDeviceParameterObservation(rejectedDefinition, std::nullopt, value16));
+    rejectedDefinition = base16;
     ++rejectedDefinition.observedSource.object->subIndex;
-    verifyUnavailable(
-        evaluateDeviceParameterObservation(rejectedDefinition, std::nullopt, negative16));
-    rejectedDefinition = signed16;
+    verifyUnavailable(evaluateDeviceParameterObservation(rejectedDefinition, std::nullopt, value16));
+    rejectedDefinition = base16;
     rejectedDefinition.observedSource.object->physicalType = Data::EtherCATDataType::Integer32;
-    verifyUnavailable(
-        evaluateDeviceParameterObservation(rejectedDefinition, std::nullopt, negative16));
-    rejectedDefinition = signed16;
+    verifyUnavailable(evaluateDeviceParameterObservation(rejectedDefinition, std::nullopt, value16));
+    rejectedDefinition = base16;
     rejectedDefinition.observedSource.object->byteOrder = Data::DeviceByteOrder::BigEndian;
-    verifyUnavailable(
-        evaluateDeviceParameterObservation(rejectedDefinition, std::nullopt, negative16));
+    verifyUnavailable(evaluateDeviceParameterObservation(rejectedDefinition, std::nullopt, value16));
 
-    Data::AxisParameterEvidenceRecord rejectedRecord = negative16;
+    Data::AxisParameterEvidenceRecord rejectedRecord = value16;
     ++rejectedRecord.ordinal;
-    verifyUnavailable(evaluateDeviceParameterObservation(signed16, std::nullopt, rejectedRecord));
-    rejectedRecord = negative16;
+    verifyUnavailable(evaluateDeviceParameterObservation(base16, std::nullopt, rejectedRecord));
+    rejectedRecord = value16;
     ++rejectedRecord.index;
-    verifyUnavailable(evaluateDeviceParameterObservation(signed16, std::nullopt, rejectedRecord));
-    rejectedRecord = negative16;
+    verifyUnavailable(evaluateDeviceParameterObservation(base16, std::nullopt, rejectedRecord));
+    rejectedRecord = value16;
     rejectedRecord.valueBytes = 4;
     rejectedRecord.rawValue = QByteArray::fromHex("feff0000");
-    verifyUnavailable(evaluateDeviceParameterObservation(signed16, std::nullopt, rejectedRecord));
-    rejectedRecord = negative16;
+    verifyUnavailable(evaluateDeviceParameterObservation(base16, std::nullopt, rejectedRecord));
+    rejectedRecord = value16;
     rejectedRecord.encoding = Data::AxisParameterEvidenceEncoding::None;
-    verifyUnavailable(evaluateDeviceParameterObservation(signed16, std::nullopt, rejectedRecord));
+    verifyUnavailable(evaluateDeviceParameterObservation(base16, std::nullopt, rejectedRecord));
 
-    Data::DeviceParameterDefinition inexact = signed16;
+    Data::DeviceParameterDefinition inexact = base16;
     inexact.observedSource.object->engineeringTransform.scale = {1, 2};
     verifyUnavailable(evaluateDeviceParameterObservation(
         inexact, std::nullopt, validRecord(0, QByteArray::fromHex("0100"))));
@@ -10806,19 +10806,17 @@ void EtherCATCoreTests::testDeviceParameterObservationContract()
     verifyUnavailable(evaluateDeviceParameterObservation(
         overflow, std::nullopt, validRecord(3, QByteArray::fromHex("ffffffff"))));
 
-    Data::DeviceParameterDefinition constrained = signed16;
-    constrained.engineeringConstraint = integerConstraint(-10, 10);
+    Data::DeviceParameterDefinition constrained = base16;
+    constrained.engineeringConstraint = integerConstraint(0, 10);
     constrained.observedSource.object->engineeringTransform.constraint
         = constrained.engineeringConstraint;
     verifyUnavailable(evaluateDeviceParameterObservation(
         constrained, std::nullopt, validRecord(0, QByteArray::fromHex("0b00"))));
     verifyUnavailable(evaluateDeviceParameterObservation(
-        signed16,
-        Data::EngineeringValue::fromUnsignedInteger(2),
-        negative16));
+        base16, Data::EngineeringValue::fromSignedInteger(2), value16));
     verifyUnavailable(evaluateDeviceParameterObservation(
         constrained,
-        Data::EngineeringValue::fromSignedInteger(11),
+        Data::EngineeringValue::fromUnsignedInteger(11),
         validRecord(0, QByteArray::fromHex("0100"))));
 
     for (Data::AxisParameterEvidenceRecordState state : {
@@ -10826,7 +10824,7 @@ void EtherCATCoreTests::testDeviceParameterObservationContract()
              Data::AxisParameterEvidenceRecordState::SizeMismatch,
              Data::AxisParameterEvidenceRecordState::ReadFailed,
          }) {
-        Data::AxisParameterEvidenceRecord failure = negative16;
+        Data::AxisParameterEvidenceRecord failure = value16;
         failure.state = state;
         failure.valueBytes = 0;
         failure.encoding = Data::AxisParameterEvidenceEncoding::None;
@@ -10841,7 +10839,7 @@ void EtherCATCoreTests::testDeviceParameterObservationContract()
                                  : 0x52414e4700000001ULL;
         }
         QVERIFY(failure.isValid());
-        verifyUnavailable(evaluateDeviceParameterObservation(signed16, std::nullopt, failure));
+        verifyUnavailable(evaluateDeviceParameterObservation(base16, std::nullopt, failure));
     }
 
     QVERIFY(QMetaType::fromType<DeviceParameterObservationState>().isValid());

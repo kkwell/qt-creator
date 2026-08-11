@@ -59,7 +59,7 @@ enum class SemanticSignalExposure { Public, ActionOnly, Internal };
 enum class DeviceByteOrder { LittleEndian, BigEndian };
 enum class DeviceSignalBindingKind { ProcessDataObject, ObjectDictionary };
 
-inline constexpr qsizetype maximumDeviceParameterDefinitionsPerAdapter = 256;
+inline constexpr qsizetype maximumDeviceParameterDefinitionsPerAdapter = 64;
 
 enum class DeviceParameterProjectionKind {
     Invalid,

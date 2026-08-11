@@ -27,6 +27,7 @@ bool canonicalIdentifier(const QString &value)
         return false;
     return std::all_of(value.cbegin() + 1, value.cend(), [&](QChar character) {
         return asciiLetterOrDigit(character) || character == '.' || character == '_'
+               || character == ':' || character == '/' || character == '{' || character == '}'
                || character == '-';
     });
 }
@@ -69,24 +70,98 @@ std::optional<Data::EngineeringValueKind> parameterObjectValueKind(
     return std::nullopt;
 }
 
+bool productionV4ParameterUnit(const QString &unit)
+{
+    return unit == QStringLiteral("count_per_revolution")
+           || unit == QStringLiteral("reference_unit_per_second")
+           || unit == QStringLiteral("revolution") || unit == QStringLiteral("rpm");
+}
+
+bool productionV4UnavailableReason(const QString &reason)
+{
+    return reason == QStringLiteral("no_direct_readable_object")
+           || reason == QStringLiteral("software_policy_not_device_object");
+}
+
+std::optional<quint32> productionV4ParameterBitWidth(Data::EtherCATDataType physicalType)
+{
+    if (physicalType == Data::EtherCATDataType::UnsignedInteger16)
+        return 16;
+    if (physicalType == Data::EtherCATDataType::UnsignedInteger32)
+        return 32;
+    return std::nullopt;
+}
+
+bool parameterDomainFitsObject(
+    const Data::DeviceParameterDefinition &definition,
+    const Data::DeviceParameterObjectBinding &binding)
+{
+    const std::optional<quint32> width = productionV4ParameterBitWidth(binding.physicalType);
+    const Data::EngineeringConstraint &constraint = definition.engineeringConstraint;
+    if (!width || !constraint.minimum || !constraint.maximum || !constraint.step
+        || !constraint.stepOrigin || binding.engineeringTransform.scale.numerator <= 0) {
+        return false;
+    }
+    const auto converts = [&binding, width](const Data::EngineeringValue &value) {
+        return convertEngineeringToRaw(
+                   value,
+                   Data::EngineeringValueKind::UnsignedInteger,
+                   *width,
+                   binding.engineeringTransform)
+            .validation.accepted();
+    };
+    if (!converts(Data::EngineeringValue::fromExactRational(*constraint.minimum))
+        || !converts(Data::EngineeringValue::fromExactRational(*constraint.maximum))) {
+        return false;
+    }
+
+    Data::EngineeringTransform latticeTransform = binding.engineeringTransform;
+    latticeTransform.constraint = {};
+    if (!convertEngineeringToRaw(
+             Data::EngineeringValue::fromExactRational(*constraint.stepOrigin),
+             Data::EngineeringValueKind::UnsignedInteger,
+             *width,
+             latticeTransform)
+             .validation.accepted()) {
+        return false;
+    }
+    latticeTransform.offset = {0, 1};
+    return convertEngineeringToRaw(
+               Data::EngineeringValue::fromExactRational(*constraint.step),
+               Data::EngineeringValueKind::UnsignedInteger,
+               64,
+               latticeTransform)
+        .validation.accepted();
+}
+
 bool validParameterObjectBinding(
     const Data::DeviceParameterDefinition &definition,
     const Data::DeviceParameterObjectBinding &binding)
 {
     const std::optional<Data::EngineeringValueKind> rawKind = parameterObjectValueKind(
         binding.physicalType);
-    return binding.index != 0 && rawKind && *rawKind == definition.valueKind
+    return binding.index != 0 && productionV4ParameterBitWidth(binding.physicalType) && rawKind
+           && *rawKind == definition.valueKind
            && binding.byteOrder == Data::DeviceByteOrder::LittleEndian
            && binding.engineeringTransform.rounding == Data::EngineeringRounding::RejectInexact
            && binding.engineeringTransform.unit == definition.unit
            && binding.engineeringTransform.constraint == definition.engineeringConstraint
-           && validateEngineeringTransform(binding.engineeringTransform).accepted();
+           && validateEngineeringTransform(binding.engineeringTransform).accepted()
+           && parameterDomainFitsObject(definition, binding);
 }
 
 bool validParameterDefinition(const Data::DeviceParameterDefinition &definition)
 {
-    if (!canonicalIdentifier(definition.id)
-        || definition.valueKind == Data::EngineeringValueKind::Invalid
+    if (!canonicalIdentifier(definition.id) || definition.displayName.isEmpty()
+        || definition.displayName.size() > 128 || definition.description.isEmpty()
+        || definition.description.size() > 512
+        || (definition.valueKind != Data::EngineeringValueKind::SignedInteger
+            && definition.valueKind != Data::EngineeringValueKind::UnsignedInteger)
+        || !productionV4ParameterUnit(definition.unit) || !definition.required
+        || definition.engineeringDefaultValue || !definition.engineeringConstraint.minimum
+        || !definition.engineeringConstraint.maximum || !definition.engineeringConstraint.step
+        || !definition.engineeringConstraint.stepOrigin
+        || !definition.engineeringConstraint.enumeration.isEmpty()
         || definition.definitionSha256.size() != 32
         || std::all_of(
             definition.definitionSha256.cbegin(),
@@ -95,16 +170,9 @@ bool validParameterDefinition(const Data::DeviceParameterDefinition &definition)
         || !validateEngineeringConstraint(definition.engineeringConstraint).accepted()) {
         return false;
     }
-    if (definition.engineeringDefaultValue
-        && (definition.engineeringDefaultValue->kind != definition.valueKind
-            || !validateEngineeringValueAgainstConstraint(
-                    *definition.engineeringDefaultValue, definition.engineeringConstraint)
-                    .accepted())) {
-        return false;
-    }
     const Data::DeviceParameterConfiguredProjection &projection = definition.configuredProjection;
     if (projection.kind == Data::DeviceParameterProjectionKind::ProjectOnly) {
-        if (projection.reason.isEmpty() || !projection.transition.isEmpty() || projection.object)
+        if (!projection.reason.isEmpty() || !projection.transition.isEmpty() || projection.object)
             return false;
     } else if (projection.kind == Data::DeviceParameterProjectionKind::CoeStartupSdo) {
         if (!projection.reason.isEmpty() || projection.transition != QStringLiteral("PS")
@@ -118,7 +186,7 @@ bool validParameterDefinition(const Data::DeviceParameterDefinition &definition)
         return false;
     const Data::DeviceParameterObservedSource &observed = definition.observedSource;
     if (observed.kind == Data::DeviceParameterObservedSourceKind::Unavailable) {
-        if (observed.reason.isEmpty() || observed.object)
+        if (!productionV4UnavailableReason(observed.reason) || observed.object)
             return false;
     } else if (observed.kind == Data::DeviceParameterObservedSourceKind::CoeSdoUpload) {
         if (!observed.reason.isEmpty() || !observed.object)
@@ -324,11 +392,13 @@ ConfiguredDeviceParameterValidation validateConfiguredDeviceParameters(
             {},
             QStringLiteral("The Adapter parameter definitions are not independently authorized."));
     }
-    if (manifest.parameterDefinitions.size() > Data::maximumDeviceParameterDefinitionsPerAdapter) {
+    if (manifest.parameterDefinitions.isEmpty()
+        || manifest.parameterDefinitions.size()
+               > Data::maximumDeviceParameterDefinitionsPerAdapter) {
         return configuredRejection(
             ConfiguredDeviceParameterError::InvalidAdapterDefinition,
             {},
-            QStringLiteral("The Adapter contains too many parameter definitions."));
+            QStringLiteral("The Adapter must contain between 1 and 64 parameter definitions."));
     }
 
     QHash<QString, const Data::DeviceParameterDefinition *> definitions;

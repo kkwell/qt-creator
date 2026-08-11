@@ -124,9 +124,7 @@ static bool stableIdentifier(const QString &value)
 
 static bool parameterIdentifier(const QString &value)
 {
-    static const QRegularExpression pattern(
-        QString::fromLatin1("^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$"));
-    return pattern.match(value).hasMatch();
+    return stableIdentifier(value);
 }
 
 static bool parseString(
@@ -712,11 +710,12 @@ static bool validateAdapterBindingShape(
             return false;
         }
         const QJsonValue definitions = adapter.value("parameterDefinitions");
-        if (!definitions.isArray()
+        if (!definitions.isArray() || definitions.toArray().isEmpty()
             || definitions.toArray().size() > maximumDeviceParameterDefinitionsPerAdapter) {
             return fail(
                 error,
-                QString("%1.parameterDefinitions must be a bounded array").arg(context));
+                QString("%1.parameterDefinitions must contain between 1 and 64 entries")
+                    .arg(context));
         }
         previous.clear();
         for (qsizetype index = 0; index < definitions.toArray().size(); ++index) {

@@ -940,9 +940,7 @@ static Data::DeviceParameterDefinition deviceParameterDefinition(
     const QString &displayName,
     Data::EngineeringValueKind kind,
     const QString &unit,
-    const Data::EngineeringConstraint &constraint,
-    bool required,
-    const std::optional<Data::EngineeringValue> &defaultValue = std::nullopt)
+    const Data::EngineeringConstraint &constraint)
 {
     Data::DeviceParameterDefinition result;
     result.id = id;
@@ -951,12 +949,10 @@ static Data::DeviceParameterDefinition deviceParameterDefinition(
     result.valueKind = kind;
     result.unit = unit;
     result.engineeringConstraint = constraint;
-    result.required = required;
-    result.engineeringDefaultValue = defaultValue;
+    result.required = true;
     result.configuredProjection.kind = Data::DeviceParameterProjectionKind::ProjectOnly;
-    result.configuredProjection.reason = "workbench_test_project_only";
     result.observedSource.kind = Data::DeviceParameterObservedSourceKind::Unavailable;
-    result.observedSource.reason = "workbench_test_unavailable";
+    result.observedSource.reason = "no_direct_readable_object";
     const QByteArray hashInput = QByteArray("workbench-device-parameter:") + id.toUtf8();
     result.definitionSha256 = QCryptographicHash::hash(hashInput, QCryptographicHash::Sha256);
     return result;
@@ -979,81 +975,61 @@ static Data::DeviceAdapterManifest deviceParametersManifest()
     profile.id = "workbench.parameters.default";
     result.processDataProfiles = {profile};
 
-    Data::DeviceParameterDefinition boolean = deviceParameterDefinition(
-        "a.boolean.required",
-        "Boolean required",
-        Data::EngineeringValueKind::Boolean,
-        "state",
-        deviceParameterIntegerConstraint(0, 1),
-        true);
-    Data::DeviceParameterObjectBinding booleanObject;
-    booleanObject.index = 0x2000;
-    booleanObject.subIndex = 1;
-    booleanObject.physicalType = Data::EtherCATDataType::Boolean;
-    booleanObject.byteOrder = Data::DeviceByteOrder::LittleEndian;
-    booleanObject.engineeringTransform.scale = {1, 1};
-    booleanObject.engineeringTransform.offset = {0, 1};
-    booleanObject.engineeringTransform.unit = boolean.unit;
-    booleanObject.engineeringTransform.constraint = boolean.engineeringConstraint;
-    booleanObject.engineeringTransform.rounding = Data::EngineeringRounding::RejectInexact;
-    boolean.configuredProjection = {};
-    boolean.configuredProjection.kind = Data::DeviceParameterProjectionKind::CoeStartupSdo;
-    boolean.configuredProjection.transition = "PS";
-    boolean.configuredProjection.object = booleanObject;
-    boolean.observedSource = {};
-    boolean.observedSource.kind = Data::DeviceParameterObservedSourceKind::CoeSdoUpload;
-    boolean.observedSource.object = booleanObject;
-
-    Data::DeviceParameterDefinition signedInteger = deviceParameterDefinition(
-        "b.signed.optional",
-        "Signed optional",
-        Data::EngineeringValueKind::SignedInteger,
-        "signed_unit",
-        deviceParameterIntegerConstraint(-10, 10),
-        false,
-        Data::EngineeringValue::fromSignedInteger(-2));
-    Data::DeviceParameterDefinition unsignedInteger = deviceParameterDefinition(
-        "c.unsigned.required",
-        "Unsigned required",
+    Data::DeviceParameterDefinition observedSpeed = deviceParameterDefinition(
+        "a.unsigned.observed-speed",
+        "Unsigned observed speed",
         Data::EngineeringValueKind::UnsignedInteger,
-        "unsigned_unit",
-        deviceParameterIntegerConstraint(1, 100),
-        true);
+        "rpm",
+        deviceParameterIntegerConstraint(0, 6000));
+    Data::DeviceParameterObjectBinding observedSpeedObject;
+    observedSpeedObject.index = 0x2000;
+    observedSpeedObject.subIndex = 1;
+    observedSpeedObject.physicalType = Data::EtherCATDataType::UnsignedInteger16;
+    observedSpeedObject.byteOrder = Data::DeviceByteOrder::LittleEndian;
+    observedSpeedObject.engineeringTransform.scale = {1, 1};
+    observedSpeedObject.engineeringTransform.offset = {0, 1};
+    observedSpeedObject.engineeringTransform.unit = observedSpeed.unit;
+    observedSpeedObject.engineeringTransform.constraint = observedSpeed.engineeringConstraint;
+    observedSpeedObject.engineeringTransform.rounding = Data::EngineeringRounding::RejectInexact;
+    observedSpeed.configuredProjection = {};
+    observedSpeed.configuredProjection.kind = Data::DeviceParameterProjectionKind::CoeStartupSdo;
+    observedSpeed.configuredProjection.transition = "PS";
+    observedSpeed.configuredProjection.object = observedSpeedObject;
+    observedSpeed.observedSource = {};
+    observedSpeed.observedSource.kind = Data::DeviceParameterObservedSourceKind::CoeSdoUpload;
+    observedSpeed.observedSource.object = observedSpeedObject;
 
-    Data::EngineeringConstraint rationalConstraint;
-    rationalConstraint.minimum = {-2, 1};
-    rationalConstraint.maximum = {2, 1};
-    rationalConstraint.step = {1, 2};
-    rationalConstraint.stepOrigin = {0, 1};
-    Data::DeviceParameterDefinition rational = deviceParameterDefinition(
-        "d.rational.optional",
-        "Rational optional",
-        Data::EngineeringValueKind::ExactRational,
-        "ratio",
-        rationalConstraint,
-        false,
-        Data::EngineeringValue::fromExactRational({1, 2}));
-
-    Data::EngineeringConstraint enumerationConstraint;
-    enumerationConstraint.enumeration = {
-        {"mode.idle", "Idle", {0, 1}},
-        {"mode.run", "Run", {1, 1}},
-    };
-    Data::DeviceParameterDefinition enumeration = deviceParameterDefinition(
-        "e.enumeration.optional",
-        "Enumeration optional",
-        Data::EngineeringValueKind::Enumeration,
-        "mode",
-        enumerationConstraint,
-        false,
-        Data::EngineeringValue::fromEnumeration("mode.run"));
+    const Data::DeviceParameterDefinition signedVelocity = deviceParameterDefinition(
+        "b.signed.velocity",
+        "Signed velocity",
+        Data::EngineeringValueKind::SignedInteger,
+        "reference_unit_per_second",
+        deviceParameterIntegerConstraint(-100, 100));
+    const Data::DeviceParameterDefinition encoderResolution = deviceParameterDefinition(
+        "c.unsigned.encoder-resolution",
+        "Unsigned encoder resolution",
+        Data::EngineeringValueKind::UnsignedInteger,
+        "count_per_revolution",
+        deviceParameterIntegerConstraint(1, 100000000));
+    const Data::DeviceParameterDefinition stopThreshold = deviceParameterDefinition(
+        "d.signed.stop-threshold",
+        "Signed stop threshold",
+        Data::EngineeringValueKind::SignedInteger,
+        "reference_unit_per_second",
+        deviceParameterIntegerConstraint(0, 100));
+    const Data::DeviceParameterDefinition speedLimit = deviceParameterDefinition(
+        "e.unsigned.speed-limit",
+        "Unsigned speed limit",
+        Data::EngineeringValueKind::UnsignedInteger,
+        "rpm",
+        deviceParameterIntegerConstraint(0, 6000));
 
     result.parameterDefinitions = {
-        boolean,
-        signedInteger,
-        unsignedInteger,
-        rational,
-        enumeration,
+        observedSpeed,
+        signedVelocity,
+        encoderResolution,
+        stopThreshold,
+        speedLimit,
     };
     return result;
 }
@@ -1067,15 +1043,9 @@ static Data::DeviceAdapterManifest axisEvidenceDeviceParametersManifest()
                                        Data::EtherCATDataType physicalType,
                                        quint16 ordinal,
                                        qint64 minimum,
-                                       qint64 maximum,
-                                       bool required) {
+                                       qint64 maximum) {
         Data::DeviceParameterDefinition definition = deviceParameterDefinition(
-            id,
-            displayName,
-            valueKind,
-            "axis_unit",
-            deviceParameterIntegerConstraint(minimum, maximum),
-            required);
+            id, displayName, valueKind, "rpm", deviceParameterIntegerConstraint(minimum, maximum));
         const Data::FixedAxisParameterEvidenceRecord &fixed
             = Data::FixedAxisParameterEvidenceRecords.at(ordinal);
         Data::DeviceParameterObjectBinding object;
@@ -1098,19 +1068,17 @@ static Data::DeviceAdapterManifest axisEvidenceDeviceParametersManifest()
         "d.signed.unavailable",
         "Signed unavailable",
         Data::EngineeringValueKind::SignedInteger,
-        "axis_unit",
-        deviceParameterIntegerConstraint(-100, 100),
-        false);
+        "reference_unit_per_second",
+        deviceParameterIntegerConstraint(0, 100));
     result.parameterDefinitions = {
         observedDefinition(
-            "a.signed.match",
-            "Signed match",
-            Data::EngineeringValueKind::SignedInteger,
-            Data::EtherCATDataType::Integer16,
+            "a.unsigned.match",
+            "Unsigned match",
+            Data::EngineeringValueKind::UnsignedInteger,
+            Data::EtherCATDataType::UnsignedInteger16,
             0,
-            -100,
-            100,
-            true),
+            0,
+            100),
         observedDefinition(
             "b.unsigned.mismatch",
             "Unsigned mismatch",
@@ -1118,17 +1086,15 @@ static Data::DeviceAdapterManifest axisEvidenceDeviceParametersManifest()
             Data::EtherCATDataType::UnsignedInteger16,
             1,
             0,
-            100,
-            true),
+            100),
         observedDefinition(
-            "c.unsigned.not-configured",
-            "Unsigned not configured",
+            "c.unsigned.secondary-match",
+            "Unsigned secondary match",
             Data::EngineeringValueKind::UnsignedInteger,
             Data::EtherCATDataType::UnsignedInteger32,
             3,
             0,
-            1000000000,
-            false),
+            1000000000),
         unavailable,
     };
     return result;
@@ -2349,7 +2315,7 @@ static AxisParameterEvidencePageFixture axisParameterEvidencePageFixture(
     const Data::OfflineSlaveConfiguration &slave,
     quint64 bootId = 2002,
     quint32 captureSequence = 17,
-    const QByteArray &signedRaw = QByteArray::fromHex("feff"))
+    const QByteArray &firstRaw = QByteArray::fromHex("0200"))
 {
     AxisParameterEvidencePageFixture result;
     result.snapshot.scope = scope;
@@ -2444,7 +2410,7 @@ static AxisParameterEvidencePageFixture axisParameterEvidencePageFixture(
     result.batch.completedAt = QDateTime::currentDateTimeUtc();
 
     const QList<QByteArray> rawValues{
-        signedRaw,
+        firstRaw,
         QByteArray::fromHex("0b00"),
         QByteArray::fromHex("0300"),
         QByteArray::fromHex("04000000"),
@@ -16003,18 +15969,18 @@ void EtherCATWorkbenchTests::testDeviceParametersPageEditingAndSafety()
     QCOMPARE(table->headerItem()->text(4), QString("Verification Status"));
 
     const QStringList expectedIds{
-        "a.boolean.required",
-        "b.signed.optional",
-        "c.unsigned.required",
-        "d.rational.optional",
-        "e.enumeration.optional",
+        "a.unsigned.observed-speed",
+        "b.signed.velocity",
+        "c.unsigned.encoder-resolution",
+        "d.signed.stop-threshold",
+        "e.unsigned.speed-limit",
     };
     QStringList actualIds;
     for (int row = 0; row < table->topLevelItemCount(); ++row)
         actualIds.append(table->topLevelItem(row)->data(0, Qt::UserRole).toString());
     QCOMPARE(actualIds, expectedIds);
     QVERIFY(table->topLevelItem(0)->text(0).contains("required", Qt::CaseInsensitive));
-    QVERIFY(table->topLevelItem(1)->text(0).contains("optional", Qt::CaseInsensitive));
+    QVERIFY(table->topLevelItem(1)->text(0).contains("required", Qt::CaseInsensitive));
     QCOMPARE(table->topLevelItem(0)->text(2), QString("Not captured"));
     QCOMPARE(table->topLevelItem(0)->text(4), QString("Not captured"));
     for (int row = 1; row < table->topLevelItemCount(); ++row)
@@ -16023,29 +15989,26 @@ void EtherCATWorkbenchTests::testDeviceParametersPageEditingAndSafety()
         QCOMPARE(table->topLevelItem(row)->text(4), QString("Unavailable"));
     QVERIFY(!apply->isEnabled());
 
-    QComboBox *boolean = page->findChild<QComboBox *>(
-        "EtherCATDeviceParameterConfigured_a.boolean.required");
-    QLineEdit *signedInteger = page->findChild<QLineEdit *>(
-        "EtherCATDeviceParameterConfigured_b.signed.optional");
-    QLineEdit *unsignedInteger = page->findChild<QLineEdit *>(
-        "EtherCATDeviceParameterConfigured_c.unsigned.required");
-    QLineEdit *rational = page->findChild<QLineEdit *>(
-        "EtherCATDeviceParameterConfigured_d.rational.optional");
-    QComboBox *enumeration = page->findChild<QComboBox *>(
-        "EtherCATDeviceParameterConfigured_e.enumeration.optional");
-    QVERIFY(boolean);
-    QVERIFY(signedInteger);
-    QVERIFY(unsignedInteger);
-    QVERIFY(rational);
-    QVERIFY(enumeration);
-    QCOMPARE(boolean->currentIndex(), 0);
-    QVERIFY(signedInteger->text().isEmpty());
-    QVERIFY(signedInteger->placeholderText().contains("-2"));
-    QVERIFY(unsignedInteger->text().isEmpty());
-    QVERIFY(rational->text().isEmpty());
-    QVERIFY(rational->placeholderText().contains("1/2"));
-    QCOMPARE(enumeration->currentIndex(), 0);
-    QVERIFY(enumeration->toolTip().contains("reference only", Qt::CaseInsensitive));
+    QLineEdit *observedSpeed = page->findChild<QLineEdit *>(
+        "EtherCATDeviceParameterConfigured_a.unsigned.observed-speed");
+    QLineEdit *signedVelocity = page->findChild<QLineEdit *>(
+        "EtherCATDeviceParameterConfigured_b.signed.velocity");
+    QLineEdit *encoderResolution = page->findChild<QLineEdit *>(
+        "EtherCATDeviceParameterConfigured_c.unsigned.encoder-resolution");
+    QLineEdit *stopThreshold = page->findChild<QLineEdit *>(
+        "EtherCATDeviceParameterConfigured_d.signed.stop-threshold");
+    QLineEdit *speedLimit = page->findChild<QLineEdit *>(
+        "EtherCATDeviceParameterConfigured_e.unsigned.speed-limit");
+    QVERIFY(observedSpeed);
+    QVERIFY(signedVelocity);
+    QVERIFY(encoderResolution);
+    QVERIFY(stopThreshold);
+    QVERIFY(speedLimit);
+    for (QLineEdit *editor :
+         {observedSpeed, signedVelocity, encoderResolution, stopThreshold, speedLimit}) {
+        QVERIFY(editor->text().isEmpty());
+        QVERIFY(editor->placeholderText().contains("Not configured"));
+    }
 
     const int scanStartBefore = scan.startCalls;
     const int scanCancelBefore = scan.cancelCalls;
@@ -16056,20 +16019,20 @@ void EtherCATWorkbenchTests::testDeviceParametersPageEditingAndSafety()
     const int approveBefore = runtime.approveCalls;
     const qsizetype liveRefreshBefore = runtime.liveRefreshRequests.size();
 
-    boolean->setCurrentIndex(2);
-    unsignedInteger->setText("-1");
+    observedSpeed->setText("30");
+    signedVelocity->setText("1/2");
     QVERIFY(!apply->isEnabled());
-    QVERIFY(unsignedInteger->toolTip().contains("unsigned", Qt::CaseInsensitive));
-    unsignedInteger->setText("18446744073709551615");
+    signedVelocity->setText("-3");
+    encoderResolution->setText("-1");
     QVERIFY(!apply->isEnabled());
-    unsignedInteger->setText("7");
-    rational->setText("1/0");
+    QVERIFY(encoderResolution->toolTip().contains("unsigned", Qt::CaseInsensitive));
+    encoderResolution->setText("18446744073709551615");
     QVERIFY(!apply->isEnabled());
-    rational->setText("3");
+    encoderResolution->setText("7");
+    stopThreshold->setText("101");
     QVERIFY(!apply->isEnabled());
-    signedInteger->setText("-3");
-    rational->setText("2/4");
-    enumeration->setCurrentIndex(enumeration->findData("mode.run"));
+    stopThreshold->setText("2");
+    speedLimit->setText("6000");
     QTRY_VERIFY(apply->isEnabled());
     Data::SemanticBindingArtifactReference bindingDuringApply;
     adapter.onResolve = [&] {
@@ -16081,11 +16044,11 @@ void EtherCATWorkbenchTests::testDeviceParametersPageEditingAndSafety()
 
     Data::DeviceParameterConfiguration expected;
     expected.values = {
-        {"a.boolean.required", Data::EngineeringValue::fromBoolean(true)},
-        {"b.signed.optional", Data::EngineeringValue::fromSignedInteger(-3)},
-        {"c.unsigned.required", Data::EngineeringValue::fromUnsignedInteger(7)},
-        {"d.rational.optional", Data::EngineeringValue::fromExactRational({1, 2})},
-        {"e.enumeration.optional", Data::EngineeringValue::fromEnumeration("mode.run")},
+        {"a.unsigned.observed-speed", Data::EngineeringValue::fromUnsignedInteger(30)},
+        {"b.signed.velocity", Data::EngineeringValue::fromSignedInteger(-3)},
+        {"c.unsigned.encoder-resolution", Data::EngineeringValue::fromUnsignedInteger(7)},
+        {"d.signed.stop-threshold", Data::EngineeringValue::fromSignedInteger(2)},
+        {"e.unsigned.speed-limit", Data::EngineeringValue::fromUnsignedInteger(6000)},
     };
     QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().deviceParameters, expected);
     QCOMPARE(bindingDuringApply, binding);
@@ -16103,28 +16066,26 @@ void EtherCATWorkbenchTests::testDeviceParametersPageEditingAndSafety()
         projectService->project(file.projectId)->masterBindingArtifact,
         Data::SemanticBindingArtifactReference());
 
-    auto storedSignedInteger = qobject_cast<QLineEdit *>(
+    auto storedSignedVelocity = qobject_cast<QLineEdit *>(
         table->itemWidget(table->topLevelItem(1), 1));
-    auto storedRational = qobject_cast<QLineEdit *>(
+    auto storedStopThreshold = qobject_cast<QLineEdit *>(
         table->itemWidget(table->topLevelItem(3), 1));
-    auto storedEnumeration = qobject_cast<QComboBox *>(
-        table->itemWidget(table->topLevelItem(4), 1));
-    QVERIFY(storedSignedInteger);
-    QVERIFY(storedRational);
-    QVERIFY(storedEnumeration);
-    storedSignedInteger->clear();
-    storedRational->clear();
-    storedEnumeration->setCurrentIndex(0);
+    auto storedSpeedLimit = qobject_cast<QLineEdit *>(table->itemWidget(table->topLevelItem(4), 1));
+    QVERIFY(storedSignedVelocity);
+    QVERIFY(storedStopThreshold);
+    QVERIFY(storedSpeedLimit);
+    storedSignedVelocity->clear();
+    QVERIFY(!apply->isEnabled());
+    storedSignedVelocity->setText("-4");
+    storedStopThreshold->setText("3");
+    storedSpeedLimit->setText("5999");
     QTRY_VERIFY(apply->isEnabled());
     apply->click();
-    Data::DeviceParameterConfiguration requiredOnly;
-    requiredOnly.values = {
-        {"a.boolean.required", Data::EngineeringValue::fromBoolean(true)},
-        {"c.unsigned.required", Data::EngineeringValue::fromUnsignedInteger(7)},
-    };
-    QTRY_COMPARE(
-        projectService->project(file.projectId)->slaves.first().deviceParameters,
-        requiredOnly);
+    Data::DeviceParameterConfiguration updated = expected;
+    updated.values[1].value = Data::EngineeringValue::fromSignedInteger(-4);
+    updated.values[3].value = Data::EngineeringValue::fromSignedInteger(3);
+    updated.values[4].value = Data::EngineeringValue::fromUnsignedInteger(5999);
+    QTRY_COMPARE(projectService->project(file.projectId)->slaves.first().deviceParameters, updated);
 
     QCOMPARE(scan.startCalls, scanStartBefore);
     QCOMPARE(scan.cancelCalls, scanCancelBefore);
@@ -16222,8 +16183,10 @@ void EtherCATWorkbenchTests::testDeviceParametersPageAxisEvidence()
     QVERIFY_RESULT(projectService->setDeviceAdapterSelection(
         file.projectId, file.slaveId, device->sourceSha256, selection));
     const Data::DeviceParameterConfiguration configured{{
-        {"a.signed.match", Data::EngineeringValue::fromSignedInteger(-2)},
+        {"a.unsigned.match", Data::EngineeringValue::fromUnsignedInteger(2)},
         {"b.unsigned.mismatch", Data::EngineeringValue::fromUnsignedInteger(10)},
+        {"c.unsigned.secondary-match", Data::EngineeringValue::fromUnsignedInteger(4)},
+        {"d.signed.unavailable", Data::EngineeringValue::fromSignedInteger(5)},
     }};
     QVERIFY_RESULT(projectService->setDeviceParameterConfiguration(
         file.projectId, file.slaveId, device->sourceSha256, selection, configured));
@@ -16257,15 +16220,15 @@ void EtherCATWorkbenchTests::testDeviceParametersPageAxisEvidence()
         }
         return static_cast<QTreeWidgetItem *>(nullptr);
     };
-    QTreeWidgetItem *signedRow = rowFor("a.signed.match");
+    QTreeWidgetItem *matchedRow = rowFor("a.unsigned.match");
     QTreeWidgetItem *mismatchRow = rowFor("b.unsigned.mismatch");
-    QTreeWidgetItem *notConfiguredRow = rowFor("c.unsigned.not-configured");
+    QTreeWidgetItem *secondaryMatchRow = rowFor("c.unsigned.secondary-match");
     QTreeWidgetItem *unavailableRow = rowFor("d.signed.unavailable");
-    QVERIFY(signedRow);
+    QVERIFY(matchedRow);
     QVERIFY(mismatchRow);
-    QVERIFY(notConfiguredRow);
+    QVERIFY(secondaryMatchRow);
     QVERIFY(unavailableRow);
-    QCOMPARE(signedRow->text(2), QString("Not captured"));
+    QCOMPARE(matchedRow->text(2), QString("Not captured"));
     QCOMPARE(selectedProvider.axisParameterEvidenceReads, 0);
     QCOMPARE(otherProvider.axisParameterEvidenceReads, 0);
 
@@ -16277,16 +16240,16 @@ void EtherCATWorkbenchTests::testDeviceParametersPageAxisEvidence()
         scope, selectedProvider.primaryProfileId()));
     selectedProvider.publishSnapshot(selectedEvidence.snapshot);
     selectedProvider.publishAxisParameterEvidenceBatch(selectedEvidence.batch);
-    QTRY_COMPARE(signedRow->text(4), QString("Match"));
-    QCOMPARE(signedRow->text(2), QString("-2"));
+    QTRY_COMPARE(matchedRow->text(4), QString("Match"));
+    QCOMPARE(matchedRow->text(2), QString("2"));
     QCOMPARE(mismatchRow->text(2), QString("11"));
     QCOMPARE(mismatchRow->text(4), QString("Mismatch"));
-    QCOMPARE(notConfiguredRow->text(2), QString("4"));
-    QCOMPARE(notConfiguredRow->text(4), QString("Not configured"));
+    QCOMPARE(secondaryMatchRow->text(2), QString("4"));
+    QCOMPARE(secondaryMatchRow->text(4), QString("Match"));
     QCOMPARE(unavailableRow->text(2), QString("Unavailable"));
     QCOMPARE(unavailableRow->text(4), QString("Unavailable"));
-    QVERIFY(signedRow->text(3).contains("Real controller evidence"));
-    QVERIFY(signedRow->toolTip(3).contains("profile 1/1"));
+    QVERIFY(matchedRow->text(3).contains("Real controller evidence"));
+    QVERIFY(matchedRow->toolTip(3).contains("profile 1/1"));
     QVERIFY(selectedProvider.axisParameterEvidenceReads >= 2);
     QCOMPARE(otherProvider.axisParameterEvidenceReads, 0);
 
@@ -16302,12 +16265,12 @@ void EtherCATWorkbenchTests::testDeviceParametersPageAxisEvidence()
     controllerError.targets[0].evidence.reset();
     QVERIFY(controllerError.isValid());
     publishBatch(controllerError);
-    QTRY_COMPARE(signedRow->text(4), QString("Unavailable"));
-    QCOMPARE(signedRow->text(2), QString("Unavailable"));
-    QCOMPARE(signedRow->text(3), QString("Real controller typed error"));
-    QVERIFY(signedRow->toolTip(2).contains("status -14"));
-    QVERIFY(signedRow->toolTip(2).contains("operation -5"));
-    QVERIFY(!signedRow->text(3).contains("no read", Qt::CaseInsensitive));
+    QTRY_COMPARE(matchedRow->text(4), QString("Unavailable"));
+    QCOMPARE(matchedRow->text(2), QString("Unavailable"));
+    QCOMPARE(matchedRow->text(3), QString("Real controller typed error"));
+    QVERIFY(matchedRow->toolTip(2).contains("status -14"));
+    QVERIFY(matchedRow->toolTip(2).contains("operation -5"));
+    QVERIFY(!matchedRow->text(3).contains("no read", Qt::CaseInsensitive));
 
     Data::AxisParameterEvidenceBatch timedOut = selectedEvidence.batch;
     timedOut.targets[0].outcome = Data::AxisParameterEvidenceTargetOutcome::TimedOut;
@@ -16317,10 +16280,10 @@ void EtherCATWorkbenchTests::testDeviceParametersPageAxisEvidence()
     timedOut.targets[0].evidence.reset();
     QVERIFY(timedOut.isValid());
     publishBatch(timedOut);
-    QTRY_VERIFY(signedRow->text(3).contains("timed out", Qt::CaseInsensitive));
-    QCOMPARE(signedRow->text(4), QString("Unavailable"));
-    QVERIFY(signedRow->toolTip(2).contains("timed out", Qt::CaseInsensitive));
-    QVERIFY(!signedRow->text(3).contains("no read", Qt::CaseInsensitive));
+    QTRY_VERIFY(matchedRow->text(3).contains("timed out", Qt::CaseInsensitive));
+    QCOMPARE(matchedRow->text(4), QString("Unavailable"));
+    QVERIFY(matchedRow->toolTip(2).contains("timed out", Qt::CaseInsensitive));
+    QVERIFY(!matchedRow->text(3).contains("no read", Qt::CaseInsensitive));
 
     const QList<QPair<Data::AxisParameterEvidenceRecordState, QString>> recordFailures{
         {Data::AxisParameterEvidenceRecordState::SdoAbort, "SDO_ABORT"},
@@ -16345,27 +16308,27 @@ void EtherCATWorkbenchTests::testDeviceParametersPageAxisEvidence()
         }
         QVERIFY(failed.isValid());
         publishBatch(failed);
-        QTRY_VERIFY(signedRow->toolTip(2).contains(stateText));
-        QCOMPARE(signedRow->text(2), QString("Unavailable"));
-        QCOMPARE(signedRow->text(4), QString("Unavailable"));
-        QVERIFY(signedRow->text(3).contains("Real controller evidence"));
-        QVERIFY(!signedRow->text(3).contains("no read", Qt::CaseInsensitive));
+        QTRY_VERIFY(matchedRow->toolTip(2).contains(stateText));
+        QCOMPARE(matchedRow->text(2), QString("Unavailable"));
+        QCOMPARE(matchedRow->text(4), QString("Unavailable"));
+        QVERIFY(matchedRow->text(3).contains("Real controller evidence"));
+        QVERIFY(!matchedRow->text(3).contains("no read", Qt::CaseInsensitive));
     }
 
     publishBatch(selectedEvidence.batch);
-    QTRY_COMPARE(signedRow->text(4), QString("Match"));
-    QLineEdit *signedEditor = page->findChild<QLineEdit *>(
-        "EtherCATDeviceParameterConfigured_a.signed.match");
-    QVERIFY(signedEditor);
+    QTRY_COMPARE(matchedRow->text(4), QString("Match"));
+    QLineEdit *matchedEditor = page->findChild<QLineEdit *>(
+        "EtherCATDeviceParameterConfigured_a.unsigned.match");
+    QVERIFY(matchedEditor);
     page->raise();
     QApplication::setActiveWindow(page.get());
     page->activateWindow();
-    signedEditor->setFocus(Qt::OtherFocusReason);
-    QTRY_COMPARE(QApplication::focusWidget(), signedEditor);
-    signedEditor->setText("-3");
-    QCOMPARE(signedRow->text(4), QString("Unverified"));
+    matchedEditor->setFocus(Qt::OtherFocusReason);
+    QTRY_COMPARE(QApplication::focusWidget(), matchedEditor);
+    matchedEditor->setText("3");
+    QCOMPARE(matchedRow->text(4), QString("Unverified"));
     Data::AxisParameterEvidenceBatch refreshed = selectedEvidence.batch;
-    refreshed.targets[0].evidence->records[0].rawValue = QByteArray::fromHex("fdff");
+    refreshed.targets[0].evidence->records[0].rawValue = QByteArray::fromHex("0300");
     refreshed.targets[0].evidence->evidenceSequence += 10;
     refreshed.targets[0].evidence->completedTimeNs += 10;
     refreshed.targets[1].evidence->evidenceSequence += 10;
@@ -16373,14 +16336,14 @@ void EtherCATWorkbenchTests::testDeviceParametersPageAxisEvidence()
     refreshed.completedAt = QDateTime::currentDateTimeUtc();
     QVERIFY(refreshed.isValid());
     publishBatch(refreshed);
-    QTRY_COMPARE(signedRow->text(2), QString("-3"));
-    QCOMPARE(signedRow->text(4), QString("Unverified"));
-    QCOMPARE(signedEditor->text(), QString("-3"));
-    QCOMPARE(QApplication::focusWidget(), signedEditor);
+    QTRY_COMPARE(matchedRow->text(2), QString("3"));
+    QCOMPARE(matchedRow->text(4), QString("Unverified"));
+    QCOMPARE(matchedEditor->text(), QString("3"));
+    QCOMPARE(QApplication::focusWidget(), matchedEditor);
 
-    signedEditor->setText("-2");
+    matchedEditor->setText("2");
     publishBatch(selectedEvidence.batch);
-    QTRY_COMPARE(signedRow->text(4), QString("Match"));
+    QTRY_COMPARE(matchedRow->text(4), QString("Match"));
 
     QList<Data::ControllerConnectionSnapshot> rejectedSnapshots;
     Data::ControllerConnectionSnapshot mockSnapshot = selectedEvidence.snapshot;
@@ -16412,10 +16375,10 @@ void EtherCATWorkbenchTests::testDeviceParametersPageAxisEvidence()
     for (const Data::ControllerConnectionSnapshot &snapshot : rejectedSnapshots) {
         selectedProvider.publishSnapshot(selectedEvidence.snapshot);
         publishBatch(selectedEvidence.batch);
-        QTRY_COMPARE(signedRow->text(4), QString("Match"));
+        QTRY_COMPARE(matchedRow->text(4), QString("Match"));
         selectedProvider.publishSnapshot(snapshot);
-        QVERIFY(signedRow->text(4) != QString("Match"));
-        QTRY_COMPARE(signedRow->text(4), QString("Unavailable"));
+        QVERIFY(matchedRow->text(4) != QString("Match"));
+        QTRY_COMPARE(matchedRow->text(4), QString("Unavailable"));
     }
 
     QList<Data::AxisParameterEvidenceBatch> rejectedBatches;
@@ -16442,16 +16405,16 @@ void EtherCATWorkbenchTests::testDeviceParametersPageAxisEvidence()
     selectedProvider.publishSnapshot(selectedEvidence.snapshot);
     for (const Data::AxisParameterEvidenceBatch &batch : rejectedBatches) {
         publishBatch(selectedEvidence.batch);
-        QTRY_COMPARE(signedRow->text(4), QString("Match"));
+        QTRY_COMPARE(matchedRow->text(4), QString("Match"));
         publishBatch(batch);
-        QVERIFY(signedRow->text(4) != QString("Match"));
-        QTRY_COMPARE(signedRow->text(4), QString("Unavailable"));
+        QVERIFY(matchedRow->text(4) != QString("Match"));
+        QTRY_COMPARE(matchedRow->text(4), QString("Unavailable"));
     }
 
     publishBatch(selectedEvidence.batch);
-    QTRY_COMPARE(signedRow->text(4), QString("Match"));
+    QTRY_COMPARE(matchedRow->text(4), QString("Match"));
     publishBatch(controllerError);
-    QVERIFY(signedRow->text(4) != QString("Match"));
+    QVERIFY(matchedRow->text(4) != QString("Match"));
     selectedProvider.publishState(Data::ControllerConnectionState::Disconnected, scope);
     otherProvider.publishState(Data::ControllerConnectionState::Disconnected, scope);
     QVERIFY_RESULT(controller.selectControllerConnectionProvider(scope, otherProvider.id()));
@@ -16459,33 +16422,32 @@ void EtherCATWorkbenchTests::testDeviceParametersPageAxisEvidence()
         scope, otherProvider.primaryProfileId()));
     otherProvider.publishSnapshot(otherEvidence.snapshot);
     otherProvider.publishAxisParameterEvidenceBatch(otherEvidence.batch);
-    QTRY_COMPARE(signedRow->text(4), QString("Match"));
+    QTRY_COMPARE(matchedRow->text(4), QString("Match"));
     selectedProvider.publishAxisParameterEvidenceBatch(controllerError);
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    QCOMPARE(signedRow->text(4), QString("Match"));
+    QCOMPARE(matchedRow->text(4), QString("Match"));
 
     adapter.setAvailable(false);
-    QTreeWidgetItem *invalidatedRow = rowFor("a.signed.match");
+    QTreeWidgetItem *invalidatedRow = rowFor("a.unsigned.match");
     QVERIFY(!invalidatedRow || invalidatedRow->text(4) != QString("Match"));
     QTRY_VERIFY(!table->isEnabled());
-    QVERIFY(!rowFor("a.signed.match")
-            || rowFor("a.signed.match")->text(4) != QString("Match"));
+    QVERIFY(!rowFor("a.unsigned.match") || rowFor("a.unsigned.match")->text(4) != QString("Match"));
     adapter.setAvailable(true);
     otherProvider.publishSnapshot(otherEvidence.snapshot);
     otherProvider.publishAxisParameterEvidenceBatch(otherEvidence.batch);
     QTRY_VERIFY(table->isEnabled());
-    QTRY_COMPARE(rowFor("a.signed.match")->text(4), QString("Match"));
+    QTRY_COMPARE(rowFor("a.unsigned.match")->text(4), QString("Match"));
 
     ambiguousAdapter.setManifest(adapter.manifest());
-    invalidatedRow = rowFor("a.signed.match");
+    invalidatedRow = rowFor("a.unsigned.match");
     QVERIFY(!invalidatedRow || invalidatedRow->text(4) != QString("Match"));
     QTRY_VERIFY(!table->isEnabled());
     ambiguousAdapter.setManifest(nonMatchingManifest);
     otherProvider.publishSnapshot(otherEvidence.snapshot);
     otherProvider.publishAxisParameterEvidenceBatch(otherEvidence.batch);
     QTRY_VERIFY(table->isEnabled());
-    QTRY_COMPARE(rowFor("a.signed.match")->text(4), QString("Match"));
+    QTRY_COMPARE(rowFor("a.unsigned.match")->text(4), QString("Match"));
 
     QCOMPARE(projectChanged.count(), 0);
     QCOMPARE(*projectService->project(file.projectId), projectBeforeEvidence);
@@ -16562,14 +16524,26 @@ void EtherCATWorkbenchTests::testDeviceParametersPageRejectsStaleBaselines()
         std::unique_ptr<QWidget> page(
             pages.createPage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), nullptr));
         pages.updatePage(Utils::Id(Constants::DEVICE_PARAMETERS_PAGE_ID), page.get(), context);
-        auto boolean = page->findChild<QComboBox *>(
-            "EtherCATDeviceParameterConfigured_a.boolean.required");
-        auto unsignedInteger = page->findChild<QLineEdit *>(
-            "EtherCATDeviceParameterConfigured_c.unsigned.required");
-        if (boolean)
-            boolean->setCurrentIndex(2);
-        if (unsignedInteger)
-            unsignedInteger->setText("7");
+        auto observedSpeed = page->findChild<QLineEdit *>(
+            "EtherCATDeviceParameterConfigured_a.unsigned.observed-speed");
+        auto signedVelocity = page->findChild<QLineEdit *>(
+            "EtherCATDeviceParameterConfigured_b.signed.velocity");
+        auto encoderResolution = page->findChild<QLineEdit *>(
+            "EtherCATDeviceParameterConfigured_c.unsigned.encoder-resolution");
+        auto stopThreshold = page->findChild<QLineEdit *>(
+            "EtherCATDeviceParameterConfigured_d.signed.stop-threshold");
+        auto speedLimit = page->findChild<QLineEdit *>(
+            "EtherCATDeviceParameterConfigured_e.unsigned.speed-limit");
+        if (observedSpeed)
+            observedSpeed->setText("30");
+        if (signedVelocity)
+            signedVelocity->setText("-2");
+        if (encoderResolution)
+            encoderResolution->setText("7");
+        if (stopThreshold)
+            stopThreshold->setText("2");
+        if (speedLimit)
+            speedLimit->setText("6000");
         return page;
     };
     const auto rejectionFailure = [&](QWidget *page, int expectedProjectChanges) {
@@ -16596,7 +16570,7 @@ void EtherCATWorkbenchTests::testDeviceParametersPageRejectsStaleBaselines()
 
     {
         std::unique_ptr<QWidget> page = createDraftPage();
-        page->findChild<QLineEdit *>("EtherCATDeviceParameterConfigured_b.signed.optional")
+        page->findChild<QLineEdit *>("EtherCATDeviceParameterConfigured_b.signed.velocity")
             ->setText("-3");
         QVERIFY(page);
         QVERIFY_RESULT(projectService->renameProject(file.projectId, "Externally Renamed"));
@@ -16654,7 +16628,7 @@ void EtherCATWorkbenchTests::testDeviceParametersPageRejectsStaleBaselines()
 
     {
         std::unique_ptr<QWidget> page = createDraftPage();
-        page->findChild<QLineEdit *>("EtherCATDeviceParameterConfigured_b.signed.optional")
+        page->findChild<QLineEdit *>("EtherCATDeviceParameterConfigured_b.signed.velocity")
             ->setText("-3");
         Data::DeviceAdapterManifest reloadedManifest = manifest;
         reloadedManifest.contentSha256 = QByteArray(32, '\x68');
@@ -16672,14 +16646,14 @@ void EtherCATWorkbenchTests::testDeviceParametersPageRejectsStaleBaselines()
         QVERIFY(table);
         QVERIFY(feedback);
         QVERIFY2(table->isEnabled(), qPrintable(feedback->text()));
-        auto reloadedBoolean = qobject_cast<QComboBox *>(
+        auto reloadedObservedSpeed = qobject_cast<QLineEdit *>(
             table->itemWidget(table->topLevelItem(0), 1));
-        auto reloadedSignedInteger = qobject_cast<QLineEdit *>(
+        auto reloadedSignedVelocity = qobject_cast<QLineEdit *>(
             table->itemWidget(table->topLevelItem(1), 1));
-        QVERIFY(reloadedBoolean);
-        QVERIFY(reloadedSignedInteger);
-        QCOMPARE(reloadedBoolean->currentIndex(), 0);
-        QVERIFY(reloadedSignedInteger->text().isEmpty());
+        QVERIFY(reloadedObservedSpeed);
+        QVERIFY(reloadedSignedVelocity);
+        QVERIFY(reloadedObservedSpeed->text().isEmpty());
+        QVERIFY(reloadedSignedVelocity->text().isEmpty());
         QVERIFY(!page->findChild<QPushButton *>("EtherCATDeviceParametersApply")->isEnabled());
     }
 

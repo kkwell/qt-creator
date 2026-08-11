@@ -32,6 +32,7 @@
 #include <array>
 #include <limits>
 #include <optional>
+#include <utility>
 
 namespace EtherCAT::DeviceAdapters::Internal {
 
@@ -330,20 +331,19 @@ static QJsonObject parameterObject(
     quint16 index,
     quint8 subIndex,
     const QString &physicalType,
-    const QString &unit,
+    int bitWidth,
     const QJsonObject &constraint)
 {
     return {
-        {"protocol", "coe"},
         {"index", index},
         {"subIndex", subIndex},
         {"physicalType", physicalType},
+        {"bitWidth", bitWidth},
         {"byteOrder", "little-endian"},
         {"engineeringTransform",
          QJsonObject{
              {"scale", exactRational(1)},
              {"offset", exactRational(0)},
-             {"unit", unit},
              {"rounding", "reject-inexact"},
              {"constraint", constraint},
          }},
@@ -352,36 +352,25 @@ static QJsonObject parameterObject(
 
 static QJsonObject deviceParameterDefinition(
     const QString &id,
-    const QString &valueKind,
+    const QString &dataType,
     const QString &unit,
     const QJsonObject &constraint,
     const std::optional<QJsonObject> &object = std::nullopt,
     const QString &projectOnlyReason = {})
 {
-    const QJsonObject configured = object
-                                       ? QJsonObject{
-                                             {"kind", "coe-startup-sdo"},
-                                             {"transition", "PS"},
-                                             {"object", *object},
-                                         }
-                                       : QJsonObject{
-                                             {"kind", "project-only"},
-                                             {"reason", projectOnlyReason},
-                                         };
-    const QJsonObject observed = object
-                                     ? QJsonObject{
-                                           {"kind", "coe-sdo-upload"},
-                                           {"object", *object},
-                                       }
-                                     : QJsonObject{
-                                           {"kind", "unavailable"},
-                                           {"reason", projectOnlyReason},
-                                       };
+    QJsonObject configured = object.value_or(QJsonObject{});
+    configured.insert("kind", object ? "coe-startup-sdo" : "project-only");
+    if (object)
+        configured.insert("transition", "PS");
+    QJsonObject observed = object.value_or(QJsonObject{});
+    observed.insert("kind", object ? "coe-sdo-upload" : "unavailable");
+    if (!object)
+        observed.insert("reason", projectOnlyReason);
     return {
         {"id", id},
         {"displayName", id},
         {"description", "Offline-only Adapter v4 contract fixture."},
-        {"valueKind", valueKind},
+        {"dataType", dataType},
         {"unit", unit},
         {"engineeringConstraint", constraint},
         {"required", true},
@@ -403,32 +392,31 @@ static QJsonArray sv630nV4ParameterDefinitions()
             "unsigned-integer",
             "revolution",
             uint32Positive,
-            parameterObject(0x6091, 1, "unsigned-integer32", "revolution", uint32Positive)),
+            parameterObject(0x6091, 1, "unsigned-integer32", 32, uint32Positive)),
         deviceParameterDefinition(
             "cia402.gear_ratio.shaft_revolutions",
             "unsigned-integer",
             "revolution",
             uint32Positive,
-            parameterObject(0x6091, 2, "unsigned-integer32", "revolution", uint32Positive)),
+            parameterObject(0x6091, 2, "unsigned-integer32", 32, uint32Positive)),
         deviceParameterDefinition(
             "cia402.max_profile_velocity.reference_units_per_second",
             "unsigned-integer",
             "reference_unit_per_second",
             uint32NonNegative,
-            parameterObject(
-                0x607f, 0, "unsigned-integer32", "reference_unit_per_second", uint32NonNegative)),
+            parameterObject(0x607f, 0, "unsigned-integer32", 32, uint32NonNegative)),
         deviceParameterDefinition(
             "inovance.sv630n.speed_limit.positive_rpm",
             "unsigned-integer",
             "rpm",
             rpmLimit,
-            parameterObject(0x2006, 9, "unsigned-integer16", "rpm", rpmLimit)),
+            parameterObject(0x2006, 9, "unsigned-integer16", 16, rpmLimit)),
         deviceParameterDefinition(
             "inovance.sv630n.speed_limit.reverse_rpm",
             "unsigned-integer",
             "rpm",
             rpmLimit,
-            parameterObject(0x2006, 10, "unsigned-integer16", "rpm", rpmLimit)),
+            parameterObject(0x2006, 10, "unsigned-integer16", 16, rpmLimit)),
         deviceParameterDefinition(
             "motion.csv.stop_velocity_threshold.reference_units_per_second",
             "signed-integer",
@@ -462,6 +450,17 @@ static QJsonObject sv630nV4Fixture()
     result.insert("description", "Offline-only SV630N Adapter v4 contract fixture.");
     result.insert("parameterDefinitions", sv630nV4ParameterDefinitions());
     return result;
+}
+
+static QJsonObject installedSv630nV4Manifest()
+{
+    const Utils::FilePath path = ::Core::ICore::resourcePath(
+        "ethercat/adapters/v4/inovance-sv630n-rev00010000.adapter.json");
+    const Utils::Result<QByteArray> contents = path.fileContents();
+    if (!contents)
+        return {};
+    const QJsonDocument document = QJsonDocument::fromJson(*contents);
+    return document.isObject() ? document.object() : QJsonObject{};
 }
 
 static Utils::FilePath adaptersRoot()
@@ -646,6 +645,47 @@ static Data::ProcessImagePreview sv630nVelocityProcessImage()
     return result;
 }
 
+static Data::DeviceAdapterResolutionRequest sv630nApi038Request(
+    const Data::DeviceAdapterManifest &manifest)
+{
+    Data::DeviceAdapterResolutionRequest request;
+    request.slaveId = Data::NodeId::create();
+    request.device = device(sv630nIdentity, sv630nEsiSha256);
+    request.allowCandidate = true;
+    if (manifest.processDataProfiles.isEmpty())
+        return request;
+
+    const Data::ProcessDataProfile &profile = manifest.processDataProfiles.constFirst();
+    request.processDataProfileId = profile.id;
+    qint64 outputBitOffset = 0;
+    qint64 inputBitOffset = 0;
+    for (const Data::SemanticSignalDefinition &signal : manifest.semanticSignals) {
+        for (const Data::DeviceSignalBinding &binding : signal.bindings) {
+            if (binding.kind != Data::DeviceSignalBindingKind::ProcessDataObject)
+                continue;
+            const bool selected = binding.pdoDirection == Data::PdoDirection::Rx
+                                      ? profile.rxPdoIndices.contains(binding.pdoIndex)
+                                      : profile.txPdoIndices.contains(binding.pdoIndex);
+            if (!selected)
+                continue;
+            qint64 &bitOffset = binding.pdoDirection == Data::PdoDirection::Rx ? outputBitOffset
+                                                                               : inputBitOffset;
+            appendProcessEntry(
+                &request.processImage,
+                processEntry(
+                    binding.pdoDirection,
+                    binding.pdoIndex,
+                    binding.objectIndex,
+                    binding.objectSubIndex,
+                    bitOffset,
+                    binding.bitWidth,
+                    binding.physicalType));
+            bitOffset += binding.bitWidth;
+        }
+    }
+    return request;
+}
+
 static Data::DeviceAdapterResolutionRequest sv630nRequest(const Data::DeviceAdapterManifest &manifest)
 {
     Data::DeviceAdapterResolutionRequest request;
@@ -708,19 +748,20 @@ void EtherCATDeviceAdaptersTests::testBundledResourcesAndManifests()
     AdapterPackageRepository repository(packageRoot);
     QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
     QCOMPARE(repository.packageRoot(), packageRoot);
-    QCOMPARE(repository.loadedPackageCount(), 6);
+    QCOMPARE(repository.loadedPackageCount(), 7);
     QVERIFY(repository.loadErrors().isEmpty());
 
     const QList<Data::DeviceAdapterManifest> manifests = repository.adapterManifests();
-    QCOMPARE(manifests.size(), 6);
-    const Data::DeviceAdapterManifest *xb6 = manifestForIdentity(manifests, xb6Identity);
-    const Data::DeviceAdapterManifest *sv630n = manifestForIdentity(manifests, sv630nIdentity);
+    QCOMPARE(manifests.size(), 7);
+    const Data::DeviceAdapterManifest *xb6 = manifestForIdentity(manifests, xb6Identity, "0.3.1");
+    const Data::DeviceAdapterManifest *sv630n
+        = manifestForIdentity(manifests, sv630nIdentity, "0.4.0");
     QVERIFY(xb6);
     QVERIFY(sv630n);
     QCOMPARE(xb6->contractVersion, Data::DeviceAdapterContractVersion::V3);
-    QCOMPARE(sv630n->contractVersion, Data::DeviceAdapterContractVersion::V3);
+    QCOMPARE(sv630n->contractVersion, Data::DeviceAdapterContractVersion::V4);
     QCOMPARE(xb6->version, QString("0.3.1"));
-    QCOMPARE(sv630n->version, QString("0.3.0"));
+    QCOMPARE(sv630n->version, QString("0.4.0"));
     QCOMPARE(xb6->match.exactEsiSha256, xb6EsiSha256);
     QCOMPARE(sv630n->match.exactEsiSha256, sv630nEsiSha256);
 
@@ -1044,30 +1085,36 @@ void EtherCATDeviceAdaptersTests::testBundledV3Api038Contracts()
 void EtherCATDeviceAdaptersTests::testInstalledProductionAuthorizations()
 {
     AdapterPackageRepository repository(
-        adaptersRoot().pathAppended("v3"),
+        adaptersRoot(),
         ::Core::ICore::resourcePath("ethercat/adapter-authorizations"),
         ::Core::ICore::resourcePath("ethercat/adapter-authorization-trust"));
 
     QVERIFY(repository.isAvailable());
     QVERIFY2(repository.loadErrors().isEmpty(), qPrintable(repository.loadErrors().join('\n')));
+    QCOMPARE(repository.loadedPackageCount(), 7);
     QVERIFY2(
         repository.authorizationDiagnostics().isEmpty(),
         qPrintable(repository.authorizationDiagnostics().join('\n')));
     QCOMPARE(repository.authorizationStatus().state, AdapterAuthorizationState::Authorized);
-    QCOMPARE(repository.authorizationStatus().authorizedAdapterCount, 2);
+    QCOMPARE(repository.authorizationStatus().authorizedAdapterCount, 3);
     QCOMPARE(repository.authorizationStatus().validationFailureCount, 0);
     QVERIFY(repository.startupDiagnostics().isEmpty());
 
     const auto xb6 = repository.adapterManifest(
         {"org.embedlabs.adapter.solidot.xb6-ec0002.rev1"}, "0.3.1");
-    const auto sv630n = repository.adapterManifest(
+    const auto sv630nV3 = repository.adapterManifest(
         {"org.embedlabs.adapter.inovance.sv630n-1axis.rev00010000"}, "0.3.0");
+    const auto sv630nV4 = repository.adapterManifest(
+        {"org.embedlabs.adapter.inovance.sv630n-1axis.rev00010000"}, "0.4.0");
     QVERIFY(xb6);
-    QVERIFY(sv630n);
+    QVERIFY(sv630nV3);
+    QVERIFY(sv630nV4);
     QVERIFY(xb6->signatureVerified);
     QVERIFY(xb6->realHardwareAllowed);
-    QVERIFY(sv630n->signatureVerified);
-    QVERIFY(sv630n->realHardwareAllowed);
+    QVERIFY(sv630nV3->signatureVerified);
+    QVERIFY(sv630nV3->realHardwareAllowed);
+    QVERIFY(sv630nV4->signatureVerified);
+    QVERIFY(sv630nV4->realHardwareAllowed);
     auto *source
         = qobject_cast<Core::DeviceAdapterAuthorizationProvenanceSource *>(&repository);
     QVERIFY(source);
@@ -1076,10 +1123,159 @@ void EtherCATDeviceAdaptersTests::testInstalledProductionAuthorizations()
     QVERIFY(snapshot.isValid());
     QCOMPARE(
         snapshot.state, Data::DeviceAdapterAuthorizationProvenanceState::Authorized);
-    QCOMPARE(snapshot.records.size(), 2);
+    QCOMPARE(snapshot.records.size(), 3);
     QVERIFY(source->validateCurrent(snapshot));
     QVERIFY(source->validateCurrent(snapshot, *xb6));
-    QVERIFY(source->validateCurrent(snapshot, *sv630n));
+    QVERIFY(source->validateCurrent(snapshot, *sv630nV3));
+    QVERIFY(source->validateCurrent(snapshot, *sv630nV4));
+}
+
+void EtherCATDeviceAdaptersTests::testInstalledApi075ProductionV4()
+{
+    AdapterPackageRepository repository(
+        adaptersRoot(),
+        ::Core::ICore::resourcePath("ethercat/adapter-authorizations"),
+        ::Core::ICore::resourcePath("ethercat/adapter-authorization-trust"));
+    QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
+    QVERIFY2(
+        repository.authorizationDiagnostics().isEmpty(),
+        qPrintable(repository.authorizationDiagnostics().join('\n')));
+
+    const auto manifest = repository.adapterManifest(
+        {"org.embedlabs.adapter.inovance.sv630n-1axis.rev00010000"}, "0.4.0");
+    QVERIFY(manifest);
+    QCOMPARE(manifest->contractVersion, Data::DeviceAdapterContractVersion::V4);
+    QCOMPARE(
+        manifest->contentSha256,
+        QByteArray::fromHex("4524bb0a9b796f580c6012a95c1c77257f5afa31c0851cb65595295bf1f2c3bc"));
+    QVERIFY(manifest->signatureVerified);
+    QVERIFY(manifest->realHardwareAllowed);
+
+    static constexpr std::array<std::pair<const char *, const char *>, 7> expectedDefinitions{{
+        {"cia402.gear_ratio.motor_revolutions",
+         "0c7e0c701e2c62f137d23388fa7681b96812d3c006b4a203041339fb8824662c"},
+        {"cia402.gear_ratio.shaft_revolutions",
+         "a6dab16a98c4b0faa169a0e7901d7506fb44a11ddc57f484a92535208ea7f689"},
+        {"cia402.max_profile_velocity.reference_units_per_second",
+         "b4928ade1adb41cc2f6476067d211a46caf509e23e14a0fdc5cc2bf55dd5500e"},
+        {"inovance.sv630n.speed_limit.positive_rpm",
+         "7be8f2b7321d277fb9601201586034e6304edcab39bda07ce3fbf2c55035853b"},
+        {"inovance.sv630n.speed_limit.reverse_rpm",
+         "f5619085e895fa9dee7d532eafd3c07f4fe816a939ce1e964f6457dfa5549ba8"},
+        {"motion.csv.stop_velocity_threshold.reference_units_per_second",
+         "e17e32f201b0821fe5a2b90a8e6f70a4ba391969bfbcabc8fcb599e9e37acf8c"},
+        {"motor.encoder_resolution_counts_per_revolution",
+         "d9d8d45a3be389585857354a36395f546d3e93c3f1ce6a00b7e43c6600ce3201"},
+    }};
+    QCOMPARE(manifest->parameterDefinitions.size(), qsizetype(expectedDefinitions.size()));
+    for (qsizetype index = 0; index < manifest->parameterDefinitions.size(); ++index) {
+        const Data::DeviceParameterDefinition &definition = manifest->parameterDefinitions.at(index);
+        const auto &expected = expectedDefinitions.at(size_t(index));
+        QCOMPARE(definition.id, QString::fromLatin1(expected.first));
+        QCOMPARE(definition.definitionSha256, QByteArray::fromHex(expected.second));
+        QVERIFY(definition.required);
+        QVERIFY(!definition.engineeringDefaultValue);
+    }
+
+    const auto objectProjectionMatches = [](const Data::DeviceParameterDefinition &definition,
+                                            quint16 index,
+                                            quint8 subIndex,
+                                            Data::EtherCATDataType physicalType) {
+        return definition.configuredProjection.kind
+                   == Data::DeviceParameterProjectionKind::CoeStartupSdo
+               && definition.configuredProjection.transition == "PS"
+               && definition.configuredProjection.object
+               && definition.configuredProjection.object->index == index
+               && definition.configuredProjection.object->subIndex == subIndex
+               && definition.configuredProjection.object->physicalType == physicalType
+               && definition.observedSource.kind
+                      == Data::DeviceParameterObservedSourceKind::CoeSdoUpload
+               && definition.observedSource.object
+               && *definition.observedSource.object == *definition.configuredProjection.object;
+    };
+    QVERIFY(objectProjectionMatches(
+        manifest->parameterDefinitions.at(0), 0x6091, 1, Data::EtherCATDataType::UnsignedInteger32));
+    QVERIFY(objectProjectionMatches(
+        manifest->parameterDefinitions.at(1), 0x6091, 2, Data::EtherCATDataType::UnsignedInteger32));
+    QVERIFY(objectProjectionMatches(
+        manifest->parameterDefinitions.at(2), 0x607f, 0, Data::EtherCATDataType::UnsignedInteger32));
+    QVERIFY(objectProjectionMatches(
+        manifest->parameterDefinitions.at(3), 0x2006, 9, Data::EtherCATDataType::UnsignedInteger16));
+    QVERIFY(objectProjectionMatches(
+        manifest->parameterDefinitions.at(4), 0x2006, 10, Data::EtherCATDataType::UnsignedInteger16));
+    QCOMPARE(
+        manifest->parameterDefinitions.at(5).configuredProjection.kind,
+        Data::DeviceParameterProjectionKind::ProjectOnly);
+    QCOMPARE(
+        manifest->parameterDefinitions.at(5).observedSource.kind,
+        Data::DeviceParameterObservedSourceKind::Unavailable);
+    QCOMPARE(
+        manifest->parameterDefinitions.at(5).observedSource.reason,
+        QString("software_policy_not_device_object"));
+    QCOMPARE(
+        manifest->parameterDefinitions.at(6).configuredProjection.kind,
+        Data::DeviceParameterProjectionKind::ProjectOnly);
+    QCOMPARE(
+        manifest->parameterDefinitions.at(6).observedSource.reason,
+        QString("no_direct_readable_object"));
+
+    static constexpr std::array<const char *, 3> expectedActionIds{
+        "org.embedlabs.inovance.sv630n.action.prepare-csv",
+        "org.embedlabs.inovance.sv630n.action.set-csv-velocity",
+        "org.embedlabs.inovance.sv630n.action.stop-csv",
+    };
+    QCOMPARE(manifest->controlActions.size(), qsizetype(expectedActionIds.size()));
+    for (qsizetype index = 0; index < manifest->controlActions.size(); ++index) {
+        const Data::DeviceControlAction &action = manifest->controlActions.at(index);
+        QCOMPARE(action.id.value, QString::fromLatin1(expectedActionIds.at(size_t(index))));
+        QVERIFY(!action.enabled);
+        QCOMPARE(action.signedQualification, Data::DeviceControlActionQualification::Unqualified);
+        QCOMPARE(action.disabledReason, QString("reference_unit_to_rpm_conversion_not_bound"));
+    }
+
+    const auto binding = Data::canonicalDeviceAdapterAuthorizationBinding(
+        *manifest, Data::DeviceAdapterAuthorizationVersion::V2);
+    QVERIFY(binding);
+    QVERIFY(binding->isValid());
+    const Utils::Result<QByteArray> authorizationContents
+        = ::Core::ICore::resourcePath(
+              "ethercat/adapter-authorizations/"
+              "embedlabs.adapter-auth.inovance-sv630n.0.4.0.api075.authorization.json")
+              .fileContents();
+    QVERIFY_RESULT(authorizationContents);
+    const QJsonDocument authorizationDocument = QJsonDocument::fromJson(*authorizationContents);
+    const QJsonDocument bindingDocument = QJsonDocument::fromJson(binding->exactBytes);
+    QVERIFY(authorizationDocument.isObject());
+    QVERIFY(bindingDocument.isObject());
+    QCOMPARE(bindingDocument.object(), authorizationDocument.object().value("adapter").toObject());
+
+    auto *source = qobject_cast<Core::DeviceAdapterAuthorizationProvenanceSource *>(&repository);
+    QVERIFY(source);
+    const Data::DeviceAdapterAuthorizationProvenanceSnapshot snapshot
+        = source->authorizationProvenanceSnapshot();
+    QVERIFY(snapshot.isValid());
+    QCOMPARE(snapshot.records.size(), 3);
+    const auto provenance = std::find_if(
+        snapshot.records.cbegin(),
+        snapshot.records.cend(),
+        [](const Data::DeviceAdapterAuthorizationProvenance &record) {
+            return record.authorizationVersion == Data::DeviceAdapterAuthorizationVersion::V2;
+        });
+    QVERIFY(provenance != snapshot.records.cend());
+    QCOMPARE(provenance->adapterContractVersion, Data::DeviceAdapterContractVersion::V4);
+    QCOMPARE(provenance->adapterId, manifest->id);
+    QCOMPARE(provenance->adapterVersion, QString("0.4.0"));
+    QCOMPARE(provenance->adapterContentSha256, manifest->contentSha256);
+    QCOMPARE(provenance->adapterBindingSha256, binding->sha256);
+    QCOMPARE(
+        provenance->authorizationId, QString("embedlabs.adapter-auth.inovance-sv630n.0.4.0.api075"));
+    QCOMPARE(provenance->policyId, QString("embedlabs.adapter-authorization.production.api054"));
+    QCOMPARE(provenance->policyRevision, quint32(1));
+    QCOMPARE(
+        provenance->signerKeyId,
+        QByteArray::fromHex("017eec68600999eea588857f765c10e740327091ccf0fd9bde86236af3ac5783"));
+    QVERIFY(source->validateCurrent(snapshot));
+    QVERIFY(source->validateCurrent(snapshot, *manifest));
 }
 
 void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationProjection()
@@ -2251,7 +2447,7 @@ void EtherCATDeviceAdaptersTests::testV3RejectsUnsafeContracts()
 
 void EtherCATDeviceAdaptersTests::testV4ParameterDefinitionContract()
 {
-    const QJsonObject valid = sv630nV4Fixture();
+    const QJsonObject valid = installedSv630nV4Manifest();
     QVERIFY(!valid.isEmpty());
     QVERIFY2(packageLoadError(valid).isEmpty(), qPrintable(packageLoadError(valid)));
 
@@ -2306,6 +2502,11 @@ void EtherCATDeviceAdaptersTests::testV4ParameterDefinitionContract()
     missingDefinitions.remove("parameterDefinitions");
     QVERIFY(packageLoadError(missingDefinitions).contains("missing field \"parameterDefinitions\""));
 
+    QCOMPARE(Data::maximumDeviceParameterDefinitionsPerAdapter, qsizetype(64));
+    QJsonObject emptyDefinitions = valid;
+    emptyDefinitions.insert("parameterDefinitions", QJsonArray{});
+    QVERIFY(packageLoadError(emptyDefinitions).contains("between 1 and 64 definitions"));
+
     QJsonObject v3WithDefinitions = valid;
     v3WithDefinitions.insert("schemaVersion", "embed-labs.device-adapter/v3");
     QVERIFY(packageLoadError(v3WithDefinitions).contains("unknown field \"parameterDefinitions\""));
@@ -2326,24 +2527,153 @@ void EtherCATDeviceAdaptersTests::testV4ParameterDefinitionContract()
     unsorted.insert("parameterDefinitions", definitions);
     QVERIFY(packageLoadError(unsorted).contains("strict parameter ID order"));
 
-    QJsonObject wrongDefaultKind = valid;
-    definitions = wrongDefaultKind.value("parameterDefinitions").toArray();
+    QJsonObject requiredFalse = valid;
+    definitions = requiredFalse.value("parameterDefinitions").toArray();
+    first = definitions.at(0).toObject();
+    first.insert("required", false);
+    definitions.replace(0, first);
+    requiredFalse.insert("parameterDefinitions", definitions);
+    QVERIFY(packageLoadError(requiredFalse).contains("required must equal true"));
+
+    QJsonObject nonNullDefault = valid;
+    definitions = nonNullDefault.value("parameterDefinitions").toArray();
     first = definitions.at(0).toObject();
     first.insert("engineeringDefaultValue", QJsonObject{{"kind", "signed-integer"}, {"value", "1"}});
     definitions.replace(0, first);
-    wrongDefaultKind.insert("parameterDefinitions", definitions);
-    QVERIFY(packageLoadError(wrongDefaultKind).contains("does not match its signed contract"));
+    nonNullDefault.insert("parameterDefinitions", definitions);
+    QVERIFY(packageLoadError(nonNullDefault).contains("engineeringDefaultValue must equal null"));
+
+    QJsonObject badUnit = valid;
+    definitions = badUnit.value("parameterDefinitions").toArray();
+    first = definitions.at(0).toObject();
+    first.insert("unit", "raw-drive-unit");
+    definitions.replace(0, first);
+    badUnit.insert("parameterDefinitions", definitions);
+    QVERIFY(packageLoadError(badUnit).contains("unit is not supported"));
+
+    QJsonObject badDataType = valid;
+    definitions = badDataType.value("parameterDefinitions").toArray();
+    first = definitions.at(0).toObject();
+    first.insert("dataType", "exact-rational");
+    definitions.replace(0, first);
+    badDataType.insert("parameterDefinitions", definitions);
+    QVERIFY(packageLoadError(badDataType).contains("dataType is not supported"));
+
+    QJsonObject legacyValueKind = valid;
+    definitions = legacyValueKind.value("parameterDefinitions").toArray();
+    first = definitions.at(0).toObject();
+    first.remove("dataType");
+    first.insert("valueKind", "unsigned-integer");
+    definitions.replace(0, first);
+    legacyValueKind.insert("parameterDefinitions", definitions);
+    QVERIFY(!packageLoadError(legacyValueKind).isEmpty());
+
+    QJsonObject mixedValueKind = valid;
+    definitions = mixedValueKind.value("parameterDefinitions").toArray();
+    first = definitions.at(0).toObject();
+    first.insert("valueKind", first.value("dataType"));
+    definitions.replace(0, first);
+    mixedValueKind.insert("parameterDefinitions", definitions);
+    QVERIFY(packageLoadError(mixedValueKind).contains("unknown field \"valueKind\""));
+
+    QJsonObject legacyNestedProjection = valid;
+    definitions = legacyNestedProjection.value("parameterDefinitions").toArray();
+    first = definitions.at(0).toObject();
+    QJsonObject projection = first.value("configuredProjection").toObject();
+    QJsonObject legacyObject = projection;
+    legacyObject.remove("kind");
+    legacyObject.remove("transition");
+    legacyObject.remove("bitWidth");
+    legacyObject.insert("protocol", "coe");
+    QJsonObject legacyTransform = legacyObject.value("engineeringTransform").toObject();
+    legacyTransform.insert("unit", first.value("unit"));
+    legacyObject.insert("engineeringTransform", legacyTransform);
+    first.insert(
+        "configuredProjection",
+        QJsonObject{{"kind", "coe-startup-sdo"}, {"transition", "PS"}, {"object", legacyObject}});
+    first.insert("observedSource", QJsonObject{{"kind", "coe-sdo-upload"}, {"object", legacyObject}});
+    definitions.replace(0, first);
+    legacyNestedProjection.insert("parameterDefinitions", definitions);
+    QVERIFY(!packageLoadError(legacyNestedProjection).isEmpty());
+
+    QJsonObject mixedNestedProjection = valid;
+    definitions = mixedNestedProjection.value("parameterDefinitions").toArray();
+    first = definitions.at(0).toObject();
+    projection = first.value("configuredProjection").toObject();
+    projection.insert("object", legacyObject);
+    first.insert("configuredProjection", projection);
+    definitions.replace(0, first);
+    mixedNestedProjection.insert("parameterDefinitions", definitions);
+    QVERIFY(packageLoadError(mixedNestedProjection).contains("unknown field \"object\""));
+
+    QJsonObject wrongBitWidth = valid;
+    definitions = wrongBitWidth.value("parameterDefinitions").toArray();
+    first = definitions.at(0).toObject();
+    projection = first.value("configuredProjection").toObject();
+    projection.insert("bitWidth", 16);
+    first.insert("configuredProjection", projection);
+    definitions.replace(0, first);
+    wrongBitWidth.insert("parameterDefinitions", definitions);
+    QVERIFY(packageLoadError(wrongBitWidth).contains("bitWidth does not match physicalType"));
+
+    QJsonObject badPhysicalType = valid;
+    definitions = badPhysicalType.value("parameterDefinitions").toArray();
+    first = definitions.at(0).toObject();
+    projection = first.value("configuredProjection").toObject();
+    projection.insert("physicalType", "integer32");
+    first.insert("configuredProjection", projection);
+    definitions.replace(0, first);
+    badPhysicalType.insert("parameterDefinitions", definitions);
+    QVERIFY(packageLoadError(badPhysicalType).contains("physicalType must be"));
+
+    QJsonObject badByteOrder = valid;
+    definitions = badByteOrder.value("parameterDefinitions").toArray();
+    first = definitions.at(0).toObject();
+    projection = first.value("configuredProjection").toObject();
+    projection.insert("byteOrder", "big-endian");
+    first.insert("configuredProjection", projection);
+    definitions.replace(0, first);
+    badByteOrder.insert("parameterDefinitions", definitions);
+    QVERIFY(packageLoadError(badByteOrder).contains("byteOrder must equal little-endian"));
+
+    QJsonObject badTransition = valid;
+    definitions = badTransition.value("parameterDefinitions").toArray();
+    first = definitions.at(0).toObject();
+    projection = first.value("configuredProjection").toObject();
+    projection.insert("transition", "OP");
+    first.insert("configuredProjection", projection);
+    definitions.replace(0, first);
+    badTransition.insert("parameterDefinitions", definitions);
+    QVERIFY(packageLoadError(badTransition).contains("transition must equal PS"));
+
+    QJsonObject projectOnlyReason = valid;
+    definitions = projectOnlyReason.value("parameterDefinitions").toArray();
+    first = definitions.at(5).toObject();
+    projection = first.value("configuredProjection").toObject();
+    projection.insert("reason", "software_policy_not_device_object");
+    first.insert("configuredProjection", projection);
+    definitions.replace(5, first);
+    projectOnlyReason.insert("parameterDefinitions", definitions);
+    QVERIFY(packageLoadError(projectOnlyReason).contains("unknown field \"reason\""));
+
+    QJsonObject unknownUnavailableReason = valid;
+    definitions = unknownUnavailableReason.value("parameterDefinitions").toArray();
+    first = definitions.at(5).toObject();
+    QJsonObject observed = first.value("observedSource").toObject();
+    observed.insert("reason", "unknown_reason");
+    first.insert("observedSource", observed);
+    definitions.replace(5, first);
+    unknownUnavailableReason.insert("parameterDefinitions", definitions);
+    QVERIFY(packageLoadError(unknownUnavailableReason).contains("reason is not supported"));
 
     QJsonObject zeroIndex = valid;
     definitions = zeroIndex.value("parameterDefinitions").toArray();
     first = definitions.at(0).toObject();
-    QJsonObject projection = first.value("configuredProjection").toObject();
-    QJsonObject object = projection.value("object").toObject();
-    object.insert("index", 0);
-    projection.insert("object", object);
+    projection = first.value("configuredProjection").toObject();
+    projection.insert("index", 0);
     first.insert("configuredProjection", projection);
-    QJsonObject observed = first.value("observedSource").toObject();
-    observed.insert("object", object);
+    observed = first.value("observedSource").toObject();
+    observed.insert("index", 0);
     first.insert("observedSource", observed);
     definitions.replace(0, first);
     zeroIndex.insert("parameterDefinitions", definitions);
@@ -2353,9 +2683,7 @@ void EtherCATDeviceAdaptersTests::testV4ParameterDefinitionContract()
     definitions = mismatchedReadback.value("parameterDefinitions").toArray();
     first = definitions.at(0).toObject();
     observed = first.value("observedSource").toObject();
-    object = observed.value("object").toObject();
-    object.insert("subIndex", 2);
-    observed.insert("object", object);
+    observed.insert("subIndex", 2);
     first.insert("observedSource", observed);
     definitions.replace(0, first);
     mismatchedReadback.insert("parameterDefinitions", definitions);
@@ -2375,8 +2703,9 @@ void EtherCATDeviceAdaptersTests::testV4ParameterDefinitionContract()
     definitions = tooMany.value("parameterDefinitions").toArray();
     while (definitions.size() <= Data::maximumDeviceParameterDefinitionsPerAdapter)
         definitions.append(definitions.at(0));
+    QCOMPARE(definitions.size(), 65);
     tooMany.insert("parameterDefinitions", definitions);
-    QVERIFY(packageLoadError(tooMany).contains("definition limit"));
+    QVERIFY(packageLoadError(tooMany).contains("between 1 and 64 definitions"));
 }
 
 void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationV2ParameterClosure()
@@ -2573,7 +2902,12 @@ void EtherCATDeviceAdaptersTests::testSignedAdapterAuthorizationV2ParameterClosu
 
     QJsonObject v3Binding = authorizationBinding(*unsignedV3);
     v3Binding.insert("schemaVersion", "embed-labs.device-adapter/v4");
-    v3Binding.insert("parameterDefinitions", QJsonArray{});
+    v3Binding.insert(
+        "parameterDefinitions",
+        QJsonArray{QJsonObject{
+            {"id", "test.v3.synthetic-parameter"},
+            {"definitionSha256", QString(64, QLatin1Char('1'))},
+        }});
     install(
         authorization(
             "embed-labs.ethercat-device-adapter-authorization-v2",
@@ -3076,6 +3410,46 @@ void EtherCATDeviceAdaptersTests::testV1AndV2ExactSelection()
     const Data::DeviceAdapterResolutionResult v2Result = repository.resolveDevice(exactV2);
     QVERIFY2(v2Result.resolved, qPrintable(v2Result.error));
     QCOMPARE(v2Result.model.adapterVersion, QString("0.2.0"));
+}
+
+void EtherCATDeviceAdaptersTests::testV3AndV4ExactSelection()
+{
+    AdapterPackageRepository repository(adaptersRoot());
+    QVERIFY2(repository.isAvailable(), qPrintable(repository.loadErrors().join('\n')));
+    const Data::DeviceAdapterId adapterId{
+        "org.embedlabs.adapter.inovance.sv630n-1axis.rev00010000",
+    };
+    const auto v3 = repository.adapterManifest(adapterId, "0.3.0");
+    const auto v4 = repository.adapterManifest(adapterId, "0.4.0");
+    QVERIFY(v3);
+    QVERIFY(v4);
+    QCOMPARE(v3->contractVersion, Data::DeviceAdapterContractVersion::V3);
+    QCOMPARE(v4->contractVersion, Data::DeviceAdapterContractVersion::V4);
+    QVERIFY(v3->contentSha256 != v4->contentSha256);
+
+    Data::DeviceAdapterResolutionRequest automatic = sv630nApi038Request(*v4);
+    QVERIFY(!automatic.processDataProfileId.isEmpty());
+    const Data::DeviceAdapterResolutionResult automaticResult = repository.resolveDevice(automatic);
+    QVERIFY(!automaticResult.resolved);
+    QVERIFY(automaticResult.error.contains("ambiguous at the highest priority"));
+
+    Data::DeviceAdapterResolutionRequest exactV3 = automatic;
+    exactV3.expectedAdapterId = v3->id;
+    exactV3.expectedAdapterVersion = v3->version;
+    exactV3.expectedAdapterContentSha256 = v3->contentSha256;
+    const Data::DeviceAdapterResolutionResult v3Result = repository.resolveDevice(exactV3);
+    QVERIFY2(v3Result.resolved, qPrintable(v3Result.error));
+    QCOMPARE(v3Result.model.adapterVersion, QString("0.3.0"));
+    QCOMPARE(v3Result.model.adapterContentSha256, v3->contentSha256);
+
+    Data::DeviceAdapterResolutionRequest exactV4 = automatic;
+    exactV4.expectedAdapterId = v4->id;
+    exactV4.expectedAdapterVersion = v4->version;
+    exactV4.expectedAdapterContentSha256 = v4->contentSha256;
+    const Data::DeviceAdapterResolutionResult v4Result = repository.resolveDevice(exactV4);
+    QVERIFY2(v4Result.resolved, qPrintable(v4Result.error));
+    QCOMPARE(v4Result.model.adapterVersion, QString("0.4.0"));
+    QCOMPARE(v4Result.model.adapterContentSha256, v4->contentSha256);
 }
 
 void EtherCATDeviceAdaptersTests::testExactIdentityAndEsiMatching()
