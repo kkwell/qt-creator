@@ -34,9 +34,10 @@ starting a process:
    archive.
 2. The release identity binds the exact bundle ID, version and manifest
    SHA-256. A release test key is not a product-wide trust root.
-3. The signature covers
-   `embedlabs-ethercat-compiler-runtime-bundle-v1`, one NUL byte, and the exact
-   canonical `manifest.json` bytes.
+3. The signature covers the exact versioned domain
+   (`embedlabs-ethercat-compiler-runtime-bundle-v1` or the governed v2 domain),
+   one NUL byte, and the exact canonical `manifest.json` bytes. A v1-domain
+   signature cannot authenticate a v2 manifest.
 4. The installed tree is a closed set: every regular file has the signed path,
    size, mode and SHA-256; unexpected files, links, unsafe permissions and
    changes observed during validation fail closed.
@@ -92,6 +93,36 @@ This proves the external compiler runtime and its golden contract. It does not
 prove IDE discovery, current-project input generation, controller deployment
 or real hardware operation.
 
+## API-078 compiler-v2 boundary
+
+The verified API-078 delivery archive has SHA-256
+`407bc0424d8ce64e3664c5e4140a7b55812e119e31f55e012f0159bd70c036b3`.
+Its Mac compiler runtime archive has SHA-256
+`f977e58d11e1316c73e762e72855826696252d3c1bccf58d35c1be58bdd82ca8`,
+manifest SHA-256
+`bd4d19fed901c5d1feea0055b48a95adfc2c7017542afd7bbe2a09f818f83713`,
+and contract `ethercat-ide-project-compiler` version 2. The IDE accepts that
+identity separately from the frozen v1 identity, encodes
+`ethercat-ide-project-compiler-request-v2`, checks v2 result identity, and
+requires all seven companion identities declared by the signed compiler
+manifest to match the installed Python runtime profile.
+
+Compiler v2 adds a content-addressed parameter-contract bundle and a strictly
+ordered per-device parameter projection. Each item binds its ID, signed
+definition SHA-256, integer engineering value, and either a matching fixed
+Product API v1.16 evidence record or JSON `null`. Project-only parameters must
+not claim device evidence. The operation store materializes and revalidates the
+parameter bundle, and compile-recovery payload v3 preserves the complete typed
+projection while retaining v1/v2 decoding compatibility.
+
+This delivery is explicitly `production-signed-motion-disabled` and records
+`motion_section_9_emitted=false`. The Windows API-077 cfg7705 package is a
+frozen, signed golden with Section 9; it was not produced by the delivered Mac
+runtime. No other API-077-capable signed Mac runtime exists in the audited
+delivery. Consequently this integration advances deterministic parameter
+compilation only. It must not be described as an IDE path that rebuilds or
+executes manual motion.
+
 ## Product runtime bootstrap
 
 The product plugin reads the administrator-owned
@@ -133,14 +164,22 @@ generate `provisioning.json` or initialize an operation store after failure.
   `compile-inputs.json` is instead an
   `ethercat-ide-compiler-input-provisioning-v1` catalog. They are different
   contracts and must not overwrite one another.
-- The Core wire codec accepts only the exact contract ID/version pair
-  `ethercat-ide-project-compiler-contract-v1`/`1` for compile, finalize,
-  query, and verify. Changing a provisioning identity is not wire-version
-  negotiation and cannot relabel v1 bytes as a future contract. The schema
-  bundle digest remains bound by exact provisioning, Provider, bootstrap,
-  and operation-store equality instead of a codec constant. Device-parameter
-  support requires a separately governed schema, codec, runtime, and signed
-  provisioning identity.
+- The Core wire codec accepts only the exact contract ID/version pairs
+  `ethercat-ide-project-compiler-contract-v1`/`1` and
+  `ethercat-ide-project-compiler`/`2`. V1 canonical bytes and their golden SHA
+  are unchanged; v1 cannot carry a parameter bundle or device parameters.
+  Compile/finalize result formats must match the request contract. The schema
+  bundle digest remains bound by exact provisioning, Provider, bootstrap, and
+  operation-store equality instead of a codec constant.
+- Non-empty explicit Project Startup SDOs remain denied. The Project model
+  does not yet carry the compiler's complete-access, timeout, retry, failure,
+  persistence and power-cycle semantics, so the IDE cannot invent defaults.
+- A usable product installation still needs the exact v2 compiler tree,
+  relocatable companion, runtime expectations, `provisioning.json`, and the
+  current project's `compile-inputs.json`. API-078 does not supply a
+  motion-enabled runtime. A new immutable signed delivery must include the
+  API-077 verifier/qualification closed set and prove deterministic Section 9
+  emission before manual motion integration can proceed.
 - The API-068 signing key is limited to this exact release. Future product
   releases need governed key rotation, revocation and recovery.
 

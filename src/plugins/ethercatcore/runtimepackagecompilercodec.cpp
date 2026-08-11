@@ -20,20 +20,36 @@ namespace {
 
 using namespace Data;
 
-bool usesFrozenApi042V1Contract(const RuntimePackageCompilerContractIdentity &identity)
+enum class CompilerContractVersion { Unsupported, V1, V2 };
+
+CompilerContractVersion compilerContractVersion(
+    const RuntimePackageCompilerContractIdentity &identity)
 {
     // The v1 compile wire request does not encode its provisioning identity.
     // Treating that identity as version negotiation would silently relabel v1
     // bytes.
-    return identity.contractId
-               == QStringLiteral("ethercat-ide-project-compiler-contract-v1")
-           && identity.contractVersion == 1;
+    if (identity.contractId
+            == QStringLiteral("ethercat-ide-project-compiler-contract-v1")
+        && identity.contractVersion == 1) {
+        return CompilerContractVersion::V1;
+    }
+    if (identity.contractId == QStringLiteral("ethercat-ide-project-compiler")
+        && identity.contractVersion == 2) {
+        return CompilerContractVersion::V2;
+    }
+    return CompilerContractVersion::Unsupported;
 }
 
-Utils::ResultError unsupportedApi042V1Contract()
+bool usesSupportedCompilerContract(const RuntimePackageCompilerContractIdentity &identity)
+{
+    return compilerContractVersion(identity) != CompilerContractVersion::Unsupported;
+}
+
+Utils::ResultError unsupportedCompilerContract()
 {
     return Utils::ResultError(
-        QStringLiteral("The request does not use the frozen API-042 v1 contract."));
+        QStringLiteral(
+            "The request does not use the frozen API-042 v1 contract or compiler v2 contract."));
 }
 
 struct JsonValue
@@ -422,7 +438,49 @@ JsonValue manualEnvelopeValue(const RuntimePackageCompilerManualEnvelope &envelo
     });
 }
 
-JsonValue deviceValue(const RuntimePackageCompilerDeviceProjection &device)
+JsonValue parameterObservedEvidenceValue(
+    const RuntimePackageCompilerParameterObservedEvidence &evidence)
+{
+    return objectValue({
+        {QStringLiteral("boot_id"), unsignedValue(evidence.bootId)},
+        {QStringLiteral("completed_time_ns"), unsignedValue(evidence.completedTimeNs)},
+        {QStringLiteral("evidence_sequence"), unsignedValue(evidence.evidenceSequence)},
+        {QStringLiteral("format"),
+         stringValue(QStringLiteral("axis-parameter-evidence-record-v1"))},
+        {QStringLiteral("index"), unsignedValue(evidence.index)},
+        {QStringLiteral("position"), unsignedValue(quint64(evidence.position))},
+        {QStringLiteral("product_code"), unsignedValue(evidence.identity.productCode)},
+        {QStringLiteral("profile_sha256"), shaValue(evidence.profileSha256)},
+        {QStringLiteral("raw_value_hex"),
+         stringValue(QString::fromLatin1(evidence.rawValue.toHex()))},
+        {QStringLiteral("revision"), unsignedValue(evidence.identity.revisionNumber)},
+        {QStringLiteral("serial"), unsignedValue(evidence.serialNumber)},
+        {QStringLiteral("state"), stringValue(QStringLiteral("valid"))},
+        {QStringLiteral("station_address"), unsignedValue(evidence.stationAddress)},
+        {QStringLiteral("subindex"), unsignedValue(evidence.subIndex)},
+        {QStringLiteral("topology_capture_sequence"),
+         unsignedValue(evidence.topologyCaptureSequence)},
+        {QStringLiteral("value"), signedValue(evidence.value)},
+        {QStringLiteral("vendor_id"), unsignedValue(evidence.identity.vendorId)},
+    });
+}
+
+JsonValue deviceParameterValue(const RuntimePackageCompilerDeviceParameter &parameter)
+{
+    return objectValue({
+        {QStringLiteral("configured_value"), signedValue(parameter.configuredValue)},
+        {QStringLiteral("definition_sha256"), shaValue(parameter.definitionSha256)},
+        {QStringLiteral("observed_evidence"),
+         parameter.observedEvidence
+             ? parameterObservedEvidenceValue(*parameter.observedEvidence)
+             : nullValue()},
+        {QStringLiteral("parameter_id"), stringValue(parameter.parameterId)},
+    });
+}
+
+JsonValue deviceValue(
+    const RuntimePackageCompilerDeviceProjection &device,
+    CompilerContractVersion contractVersion)
 {
     std::vector<JsonValue> mappings;
     mappings.reserve(size_t(device.pdoMappings.size()));
@@ -443,7 +501,7 @@ JsonValue deviceValue(const RuntimePackageCompilerDeviceProjection &device)
         }));
     }
 
-    return objectValue({
+    std::vector<std::pair<QString, JsonValue>> members{
         {QStringLiteral("alias"), unsignedValue(device.alias)},
         {QStringLiteral("component_binding_ids"), stringMapValue(device.componentBindingIds)},
         {QStringLiteral("controller_adapter_target"),
@@ -482,15 +540,26 @@ JsonValue deviceValue(const RuntimePackageCompilerDeviceProjection &device)
         {QStringLiteral("station_address"), unsignedValue(device.stationAddress)},
         {QStringLiteral("symbol_mode"), stringValue(symbolModeName(device.symbolMode))},
         {QStringLiteral("symbols"), stringMapValue(device.symbols)},
-    });
+    };
+    if (contractVersion == CompilerContractVersion::V2) {
+        std::vector<JsonValue> parameters;
+        parameters.reserve(size_t(device.deviceParameters.size()));
+        for (const RuntimePackageCompilerDeviceParameter &parameter : device.deviceParameters)
+            parameters.push_back(deviceParameterValue(parameter));
+        members.emplace_back(
+            QStringLiteral("device_parameters"), arrayValue(std::move(parameters)));
+    }
+    return objectValue(std::move(members));
 }
 
-JsonValue projectValue(const RuntimePackageCompilerProjectProjection &project)
+JsonValue projectValue(
+    const RuntimePackageCompilerProjectProjection &project,
+    CompilerContractVersion contractVersion)
 {
     std::vector<JsonValue> devices;
     devices.reserve(size_t(project.devices.size()));
     for (const RuntimePackageCompilerDeviceProjection &device : project.devices)
-        devices.push_back(deviceValue(device));
+        devices.push_back(deviceValue(device, contractVersion));
 
     QByteArray uiMetadata = project.uiMetadata.exactBytes();
     uiMetadata.chop(1);
@@ -518,29 +587,42 @@ RuntimePackageCompilerCanonicalJson encodeCompileRequestUnchecked(
     const RuntimePackageCompilerCompileRequest &request)
 {
     const RuntimePackageCompilerSourceArtifacts &artifacts = request.sourceArtifacts;
+    const CompilerContractVersion contractVersion = compilerContractVersion(
+        request.contractIdentity);
+    std::vector<std::pair<QString, JsonValue>> artifactMembers{
+        {QStringLiteral("adapter_bundle"), artifactValue(artifacts.adapterBundle)},
+        {QStringLiteral("controller_features"), artifactValue(artifacts.controllerFeatures)},
+        {QStringLiteral("policy_template"), artifactValue(artifacts.policyTemplate)},
+        {QStringLiteral("production_public_key"), artifactValue(artifacts.productionPublicKey)},
+        {QStringLiteral("runtime_source"), artifactValue(artifacts.runtimeSource)},
+        {QStringLiteral("target_profile"), artifactValue(artifacts.targetProfile)},
+        {QStringLiteral("target_profile_signature"),
+         artifactValue(artifacts.targetProfileSignature)},
+        {QStringLiteral("topology_evidence"), artifactValue(artifacts.topologyEvidence)},
+    };
+    if (contractVersion == CompilerContractVersion::V2) {
+        artifactMembers.emplace_back(
+            QStringLiteral("parameter_contract_bundle"),
+            artifactValue(*artifacts.parameterContractBundle));
+    }
     return canonicalObject(objectValue({
         {QStringLiteral("artifacts"),
-         objectValue({
-             {QStringLiteral("adapter_bundle"), artifactValue(artifacts.adapterBundle)},
-             {QStringLiteral("controller_features"), artifactValue(artifacts.controllerFeatures)},
-             {QStringLiteral("policy_template"), artifactValue(artifacts.policyTemplate)},
-             {QStringLiteral("production_public_key"), artifactValue(artifacts.productionPublicKey)},
-             {QStringLiteral("runtime_source"), artifactValue(artifacts.runtimeSource)},
-             {QStringLiteral("target_profile"), artifactValue(artifacts.targetProfile)},
-             {QStringLiteral("target_profile_signature"),
-              artifactValue(artifacts.targetProfileSignature)},
-             {QStringLiteral("topology_evidence"), artifactValue(artifacts.topologyEvidence)},
-         })},
+         objectValue(std::move(artifactMembers))},
         {QStringLiteral("build_timestamp_ns"), unsignedValue(request.buildTimestampNs)},
         {QStringLiteral("compile_time_ns"), unsignedValue(request.compileTimeNs)},
         {QStringLiteral("configuration_id"), unsignedValue(request.configurationId)},
         {QStringLiteral("format"),
-         stringValue(QStringLiteral("ethercat-ide-project-compiler-request-v1"))},
-        {QStringLiteral("format_version"), unsignedValue(1)},
+         stringValue(
+             contractVersion == CompilerContractVersion::V2
+                 ? QStringLiteral("ethercat-ide-project-compiler-request-v2")
+                 : QStringLiteral("ethercat-ide-project-compiler-request-v1"))},
+        {QStringLiteral("format_version"),
+         unsignedValue(contractVersion == CompilerContractVersion::V2 ? 2 : 1)},
         {QStringLiteral("intent_id"), stringValue(request.intentId)},
         {QStringLiteral("manifest_format_version"), unsignedValue(request.manifestFormatVersion)},
         {QStringLiteral("operation_id"), stringValue(request.operationId.value())},
-        {QStringLiteral("project_snapshot"), projectValue(request.projectProjection)},
+        {QStringLiteral("project_snapshot"),
+         projectValue(request.projectProjection, contractVersion)},
     }));
 }
 
@@ -932,6 +1014,34 @@ Utils::Result<Result> checkedResult(Result result, const QString &description)
     return result;
 }
 
+bool successfulResultMatchesContract(
+    const DecodedProcessDocument &document,
+    const RuntimePackageCompilerContractIdentity &identity,
+    const RuntimePackageCompilerOperationId &operationId,
+    quint64 configurationId,
+    const QString &status)
+{
+    if (document.status != RuntimePackageCompilerResultStatus::Succeeded)
+        return true;
+    const CompilerContractVersion version = compilerContractVersion(identity);
+    if (version == CompilerContractVersion::Unsupported)
+        return false;
+    const QJsonObject object = QJsonDocument::fromJson(document.canonical.exactBytes()).object();
+    const QString expectedFormat
+        = version == CompilerContractVersion::V2
+              ? QStringLiteral("ethercat-ide-project-compiler-result-v2")
+              : QStringLiteral("ethercat-ide-project-compiler-result-v1");
+    const std::optional<quint64> encodedConfigurationId = rootUnsignedInteger(
+        document.canonical, QByteArrayView("configuration_id"));
+    return object.value(QStringLiteral("format")).toString() == expectedFormat
+           && object.value(QStringLiteral("format_version")).isDouble()
+           && object.value(QStringLiteral("format_version")).toDouble()
+                  == (version == CompilerContractVersion::V2 ? 2 : 1)
+           && object.value(QStringLiteral("operation_id")).toString() == operationId.value()
+           && encodedConfigurationId && *encodedConfigurationId == configurationId
+           && object.value(QStringLiteral("status")).toString() == status;
+}
+
 } // namespace
 
 Utils::Result<RuntimePackageCompilerCanonicalJson> encodeRuntimePackageCompilerCompileRequest(
@@ -941,8 +1051,8 @@ Utils::Result<RuntimePackageCompilerCanonicalJson> encodeRuntimePackageCompilerC
         return Utils::ResultError(
             QStringLiteral("The typed API-042 compile request is incomplete or inconsistent."));
     }
-    if (!usesFrozenApi042V1Contract(request.contractIdentity))
-        return unsupportedApi042V1Contract();
+    if (!usesSupportedCompilerContract(request.contractIdentity))
+        return unsupportedCompilerContract();
     RuntimePackageCompilerCanonicalJson result = encodeCompileRequestUnchecked(request);
     if (!result.isValid()) {
         return Utils::ResultError(
@@ -956,8 +1066,8 @@ Utils::Result<RuntimePackageCompilerCanonicalJson> encodeRuntimePackageCompilerF
 {
     if (!request.isValid())
         return Utils::ResultError(QStringLiteral("The finalize request is incomplete."));
-    if (!usesFrozenApi042V1Contract(request.contractIdentity))
-        return unsupportedApi042V1Contract();
+    if (!usesSupportedCompilerContract(request.contractIdentity))
+        return unsupportedCompilerContract();
     RuntimePackageCompilerCanonicalJson result = encodeFinalizeRequestUnchecked(request);
     if (!result.isValid()) {
         return Utils::ResultError(
@@ -971,8 +1081,8 @@ Utils::Result<RuntimePackageCompilerCanonicalJson> encodeRuntimePackageCompilerV
 {
     if (!request.isValid())
         return Utils::ResultError(QStringLiteral("The verify request is incomplete."));
-    if (!usesFrozenApi042V1Contract(request.contractIdentity))
-        return unsupportedApi042V1Contract();
+    if (!usesSupportedCompilerContract(request.contractIdentity))
+        return unsupportedCompilerContract();
     RuntimePackageCompilerCanonicalJson result = encodeVerifyRequestUnchecked(request);
     if (!result.isValid()) {
         return Utils::ResultError(
@@ -993,6 +1103,15 @@ Utils::Result<RuntimePackageCompilerCompileResult> decodeRuntimePackageCompilerC
     const Utils::Result<DecodedProcessDocument> document = decodeProcessDocument(output);
     if (!document)
         return Utils::ResultError(document.error());
+    if (!successfulResultMatchesContract(
+            *document,
+            request.contractIdentity,
+            request.operationId,
+            request.configurationId,
+            QStringLiteral("awaiting_signature"))) {
+        return Utils::ResultError(
+            QStringLiteral("Compiler prepared result has the wrong contract identity."));
+    }
     const RuntimePackageCompilerResultEnvelope resultEnvelope = envelope(
         RuntimePackageCompilerCommand::Compile,
         *document,
@@ -1052,11 +1171,20 @@ Utils::Result<RuntimePackageCompilerFinalizeResult> decodeRuntimePackageCompiler
 {
     if (!request.isValid())
         return Utils::ResultError(QStringLiteral("Finalize request is invalid."));
-    if (!usesFrozenApi042V1Contract(request.contractIdentity))
-        return unsupportedApi042V1Contract();
+    if (!usesSupportedCompilerContract(request.contractIdentity))
+        return unsupportedCompilerContract();
     const Utils::Result<DecodedProcessDocument> document = decodeProcessDocument(output);
     if (!document)
         return Utils::ResultError(document.error());
+    if (!successfulResultMatchesContract(
+            *document,
+            request.contractIdentity,
+            request.operationId,
+            request.configurationId,
+            QStringLiteral("complete"))) {
+        return Utils::ResultError(
+            QStringLiteral("Finalize result has the wrong contract identity."));
+    }
     const RuntimePackageCompilerResultEnvelope resultEnvelope = envelope(
         RuntimePackageCompilerCommand::Finalize,
         *document,
@@ -1099,8 +1227,8 @@ Utils::Result<RuntimePackageCompilerQueryResult> decodeRuntimePackageCompilerQue
 {
     if (!request.isValid())
         return Utils::ResultError(QStringLiteral("Query request is invalid."));
-    if (!usesFrozenApi042V1Contract(request.contractIdentity))
-        return unsupportedApi042V1Contract();
+    if (!usesSupportedCompilerContract(request.contractIdentity))
+        return unsupportedCompilerContract();
     const Utils::Result<DecodedProcessDocument> document = decodeProcessDocument(output);
     if (!document)
         return Utils::ResultError(document.error());
@@ -1157,8 +1285,8 @@ Utils::Result<RuntimePackageCompilerVerifyResult> decodeRuntimePackageCompilerVe
 {
     if (!request.isValid())
         return Utils::ResultError(QStringLiteral("Verify request is invalid."));
-    if (!usesFrozenApi042V1Contract(request.contractIdentity))
-        return unsupportedApi042V1Contract();
+    if (!usesSupportedCompilerContract(request.contractIdentity))
+        return unsupportedCompilerContract();
     const Utils::Result<DecodedProcessDocument> document = decodeProcessDocument(output);
     if (!document)
         return Utils::ResultError(document.error());

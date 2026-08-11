@@ -2190,6 +2190,10 @@ Utils::Result<> CompilerOperationStore::validateActivationProofEvidenceWithLease
         proof.compileRequest.sourceArtifacts.controllerFeatures,
         proof.compileRequest.sourceArtifacts.runtimeSource,
     };
+    if (proof.compileRequest.sourceArtifacts.parameterContractBundle) {
+        sourceArtifacts.append(
+            *proof.compileRequest.sourceArtifacts.parameterContractBundle);
+    }
     for (const Data::RuntimePackageCompilerDeviceSourceEvidence &device :
          proof.compileRequest.deviceSourceEvidence) {
         sourceArtifacts.append(device.originalEsi);
@@ -2462,6 +2466,8 @@ Utils::Result<> CompilerOperationStore::materializeCompileArtifacts(
         request.sourceArtifacts.controllerFeatures,
         request.sourceArtifacts.runtimeSource,
     };
+    if (request.sourceArtifacts.parameterContractBundle)
+        artifacts.append(*request.sourceArtifacts.parameterContractBundle);
     for (const Data::RuntimePackageCompilerDeviceSourceEvidence &device :
          request.deviceSourceEvidence) {
         artifacts.append(device.originalEsi);

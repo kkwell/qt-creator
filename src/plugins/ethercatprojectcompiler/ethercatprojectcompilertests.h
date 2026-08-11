@@ -22,6 +22,7 @@ private slots:
     void testCompileRecoveryRejectsMutations();
     void testProjectRequestBuilderProvisioningAndDeterminism();
     void testDeviceParametersFailClosedBeforeCompilation();
+    void testDeviceParametersProjectWithCompilerV2();
     void testProjectRequestBuilderFailsClosedOnUnprovenTopology();
     void testScheduledJobUsesPinnedProvisioning();
     void testStoreAnchorsAncestorsAndPreservesEvidence();

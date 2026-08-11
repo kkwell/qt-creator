@@ -296,7 +296,7 @@ Utils::Result<CompilerInputProvisioningProfile> CompilerInputProvisioningProfile
     if (parseError.error != QJsonParseError::NoError || !document.isObject())
         return Utils::ResultError(QStringLiteral("Compiler input provisioning JSON is malformed."));
     const QJsonObject object = document.object();
-    static const QSet<QString> keys{
+    QSet<QString> keys{
         QStringLiteral("adapter_bundle"),
         QStringLiteral("contract_id"),
         QStringLiteral("contract_version"),
@@ -315,10 +315,17 @@ Utils::Result<CompilerInputProvisioningProfile> CompilerInputProvisioningProfile
         QStringLiteral("topology_ttl_ns"),
         QStringLiteral("ui_metadata"),
     };
-    if (!hasExactKeys(object, keys)
-        || object.value(QStringLiteral("format")).toString()
-               != QStringLiteral("ethercat-ide-compiler-input-provisioning-v1")
-        || object.value(QStringLiteral("format_version")).toInt() != 1
+    const QString format = object.value(QStringLiteral("format")).toString();
+    const int formatVersion = object.value(QStringLiteral("format_version")).toInt();
+    const bool versionOne
+        = format == QLatin1String("ethercat-ide-compiler-input-provisioning-v1")
+          && formatVersion == 1;
+    const bool versionTwo
+        = format == QLatin1String("ethercat-ide-compiler-input-provisioning-v2")
+          && formatVersion == 2;
+    if (versionTwo)
+        keys.insert(QStringLiteral("parameter_contract_bundle"));
+    if ((!versionOne && !versionTwo) || !hasExactKeys(object, keys)
         || !object.value(QStringLiteral("ui_metadata")).isObject()
         || object.value(QStringLiteral("ui_metadata")).toObject().size() != 0) {
         return Utils::ResultError(QStringLiteral("Compiler input provisioning shape is invalid."));
@@ -333,7 +340,15 @@ Utils::Result<CompilerInputProvisioningProfile> CompilerInputProvisioningProfile
             ? quint32(*contractVersion)
             : 0,
         schemaSha.value_or(Data::RuntimePackageCompilerSha256{})};
-    if (!contract.isValid() || !topologyTtl || *topologyTtl < 1'000'000
+    const bool supportedContract
+        = (versionOne
+           && contract.contractId
+                  == QLatin1String("ethercat-ide-project-compiler-contract-v1")
+           && contract.contractVersion == 1)
+          || (versionTwo
+              && contract.contractId == QLatin1String("ethercat-ide-project-compiler")
+              && contract.contractVersion == 2);
+    if (!contract.isValid() || !supportedContract || !topologyTtl || *topologyTtl < 1'000'000
         || *topologyTtl > 3'600'000'000'000ULL) {
         return Utils::ResultError(QStringLiteral("Compiler input provisioning identity is invalid."));
     }
@@ -369,8 +384,17 @@ Utils::Result<CompilerInputProvisioningProfile> CompilerInputProvisioningProfile
         profileFile,
         object.value(QStringLiteral("runtime_source")),
         Data::RuntimePackageCompilerSourceArtifactKind::RuntimeSource);
+    Utils::Result<Data::RuntimePackageCompilerSourceArtifact> parameterContract{
+        Utils::ResultError(QStringLiteral("Compiler v2 parameter contract is absent."))};
+    if (versionTwo) {
+        parameterContract = loadArtifact(
+            profileFile,
+            object.value(QStringLiteral("parameter_contract_bundle")),
+            Data::RuntimePackageCompilerSourceArtifactKind::ParameterContractBundle);
+    }
     if (!targetArtifact || !targetSignature || !publicKey || !adapterBundle || !policy || !features
-        || !runtime || targetSignature->exactBytes.size() != 64 || publicKey->exactBytes.size() != 32) {
+        || !runtime || (versionTwo && !parameterContract)
+        || targetSignature->exactBytes.size() != 64 || publicKey->exactBytes.size() != 32) {
         return Utils::ResultError(QStringLiteral("Compiler input artifacts are incomplete."));
     }
     if (crypto_ed25519_check(
@@ -444,6 +468,8 @@ Utils::Result<CompilerInputProvisioningProfile> CompilerInputProvisioningProfile
     result.m_sourceArtifacts.policyTemplate = *policy;
     result.m_sourceArtifacts.controllerFeatures = *features;
     result.m_sourceArtifacts.runtimeSource = *runtime;
+    if (versionTwo)
+        result.m_sourceArtifacts.parameterContractBundle = *parameterContract;
     result.m_targetProfile = target;
     result.m_devices = devices;
     if (result.m_projectId.isEmpty() || result.m_masterNodeId.isEmpty()

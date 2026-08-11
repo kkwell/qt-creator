@@ -117,10 +117,13 @@ Read-only SafeHold recovery proof, activation release, and reconciliation remain
 available for cleanup.
 
 The production v4 catalog is qualified for exact Project parameter editing and
-read-only evidence comparison. It remains unsupported as compiler input until
-the signed compiler contract carries and binds the complete device-parameter
-projection. Catalog admission does not enable a v4 action or prove
-real-hardware motion.
+read-only evidence comparison. The exact compiler-v2 path now carries the
+complete configured parameter closure, signed definition digests, and matching
+same-topology evidence; compiler-v1 remains byte-compatible and rejects those
+fields. Catalog admission and request projection do not enable a v4 action or
+prove deployment or real-hardware motion. The currently delivered signed Mac
+compiler-v2 runtime is motion-disabled and cannot rebuild the API-077 v0.4.2
+Section 9 golden package.
 It also does not defend against an arbitrary malicious in-process plugin;
 installed in-process plugins remain inside the existing trust boundary. The
 snapshot is current-process provenance, not independently portable

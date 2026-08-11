@@ -546,54 +546,54 @@
       "id": "ethercat.compiler.project-projection",
       "area": "compiler",
       "titleZh": "工程快照到编译请求",
-      "summaryZh": "把工程、真实拓扑、ESI、Adapter、目标能力和固定构建身份投影为严格编译输入；当前任意非空设备参数在外部编译前 fail closed。",
+      "summaryZh": "把工程、真实拓扑、ESI、Adapter、目标能力和固定构建身份投影为严格编译输入；compiler v2 可确定性携带完整设备参数与同拓扑只读实测证据。",
       "owner": "ethercat-project-compiler",
       "runtimeBoundary": "engineering-only",
       "evidenceBoundary": ["unit", "artifact"],
-      "keywords": ["编译请求", "ProjectSnapshot", "设备参数", "fail closed", "compile recovery v2"],
+      "keywords": ["编译请求", "ProjectSnapshot", "设备参数", "observed evidence", "compile recovery v3"],
       "implementation": [
-        {"path": "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp", "symbols": ["ProvisionedRuntimePackageCompilerProjectRequestBuilder::build"], "roleZh": "严格工程投影和非空设备参数 fail-closed 校验"},
-        {"path": "src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp", "symbols": ["writeDeviceParameterConfiguration", "readDeviceParameterConfiguration", "writeOfflineSlave", "readOfflineSlave"], "roleZh": "compile-recovery payload v2 保留设备参数字段，v1 兼容为空"}
+        {"path": "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp", "symbols": ["ProvisionedRuntimePackageCompilerProjectRequestBuilder::build"], "roleZh": "v1 严格工程投影及 v2 已资格化参数、definition 摘要和同拓扑实测证据投影"},
+        {"path": "src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp", "symbols": ["writeVersionThreeExtensions", "readVersionThreeExtensions", "writeCompilerDeviceParameter", "readCompilerDeviceParameter"], "roleZh": "compile-recovery payload v3 保留参数投影、实测证据和参数合同包，并兼容 v1/v2"}
       ],
       "contracts": [
         {"path": "src/plugins/ethercatcore/runtimepackagecompilerprojectrequestbuilder.h", "symbols": ["class ETHERCATCORE_EXPORT RuntimePackageCompilerProjectRequestBuilder"], "roleZh": "工程编译请求构建边界"},
-        {"path": "src/libs/ethercatdata/runtimepackagecompiler.cpp", "symbols": ["projectDeviceParametersAreEmpty", "RuntimePackageCompilerCompileRequest::hasValidReservationInputs"], "roleZh": "编译请求值合同拒绝未投影的非空设备参数"}
+        {"path": "src/libs/ethercatdata/runtimepackagecompiler.cpp", "symbols": ["RuntimePackageCompilerDeviceParameter::isValid", "RuntimePackageCompilerCompileRequest::hasValidReservationInputs", "RuntimePackageCompilerCompileRequest::isValid"], "roleZh": "v1 空参数兼容与 v2 参数、来源、工程快照和实测拓扑闭包"}
       ],
       "tests": [
-        {"path": "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "cases": ["testProjectRequestBuilderProvisioningAndDeterminism", "testDeviceParametersFailClosedBeforeCompilation", "testCompileRecoveryRoundTrip", "testCompileRecoveryVersionOneCompatibility", "testProjectRequestBuilderFailsClosedOnUnprovenTopology"], "kind": "artifact"}
+        {"path": "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "cases": ["testProjectRequestBuilderProvisioningAndDeterminism", "testDeviceParametersFailClosedBeforeCompilation", "testDeviceParametersProjectWithCompilerV2", "testCompileRecoveryRoundTrip", "testCompileRecoveryVersionOneCompatibility", "testProjectRequestBuilderFailsClosedOnUnprovenTopology"], "kind": "artifact"}
       ],
       "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md"],
       "dependsOn": ["ethercat.project.model-format", "ethercat.core.device-parameter-contract", "ethercat.adapters.catalog-authorization", "ethercat.product-api.topology-evidence"],
-      "notesZh": ["不受支持的 PDO、Startup SDO、DC 或非空设备参数必须结构化拒绝，不能静默回退。", "compile-recovery v2 编解码设备参数字段且兼容 v1 空值，但这不是完整 compiler projection，也不授权部署。"]
+      "notesZh": ["v1 请求继续要求设备参数和参数合同包为空，原 canonical bytes 与 SHA 不变；v2 只接受精确合同身份、完整 Qualified Adapter v4 参数闭包和可选的同 Session/Boot/拓扑实测记录。", "Project-only 参数不得伪造 observed；CoE observed 只有精确固定对象、位宽、换算和值匹配时才进入请求。", "显式非空 Startup SDO 仍因缺少 timeout/retry/failure/persistence 等完整签名执行语义而 fail closed，不能猜测默认值。"]
     },
     {
       "id": "ethercat.compiler.backend",
       "area": "compiler",
       "titleZh": "外部编译器与不可变工件",
-      "summaryZh": "调用已配置的外部 compile/finalize/query/verify 后端，并保存幂等操作证据。",
+      "summaryZh": "调用已配置的 v1/v2 外部 compile/finalize/query/verify 后端，并保存幂等操作与参数合同证据。",
       "owner": "ethercat-project-compiler",
       "runtimeBoundary": "engineering-only",
       "evidenceBoundary": ["unit", "artifact"],
       "keywords": ["编译器", "compile", "finalize", "verify", "签名", "OperationId"],
       "implementation": [
         {"path": "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp", "symbols": ["ProvisionedRuntimePackageCompilerProvider::compile", "ProvisionedRuntimePackageCompilerProvider::verify", "validateExecutionFiles"], "roleZh": "双 Profile 外部进程、空白环境和启动前后复验"},
-        {"path": "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp", "symbols": ["CompilerRuntimeBundleProfile::load", "CompilerRuntimeBundleProfile::validateCurrent", "CompilerRuntimeBundleProfile::compilerImportRoot"], "roleZh": "API-068 签名编译器树、外部信任锚和导入根闭集校验"},
+        {"path": "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp", "symbols": ["CompilerRuntimeBundleProfile::load", "CompilerRuntimeBundleProfile::validateCurrent", "validateCompilerRuntimeCompanionBinding"], "roleZh": "v1/v2 签名编译器树、签名域、外部信任锚和 v2 Python companion 身份闭包校验"},
         {"path": "src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.cpp", "symbols": ["CompilerPythonRuntimeProfile::load", "CompilerPythonRuntimeProfile::validateCurrent"], "roleZh": "API-070 签名 companion 与可重定位 Python 树闭集校验"},
-        {"path": "src/plugins/ethercatprojectcompiler/compileroperationstore.cpp", "symbols": ["CompilerOperationStore"], "roleZh": "持久幂等账本"}
+        {"path": "src/plugins/ethercatprojectcompiler/compileroperationstore.cpp", "symbols": ["CompilerOperationStore::materializeCompileArtifacts", "CompilerOperationStore::validateActivationProof"], "roleZh": "持久幂等账本、参数合同物化与激活证明复核"}
       ],
       "contracts": [
-        {"path": "src/plugins/ethercatcore/runtimepackagecompilercodec.cpp", "symbols": ["encodeRuntimePackageCompilerCompileRequest", "encodeRuntimePackageCompilerFinalizeRequest", "encodeRuntimePackageCompilerVerifyRequest", "decodeRuntimePackageCompilerCompileResult", "decodeRuntimePackageCompilerFinalizeResult", "decodeRuntimePackageCompilerQueryResult", "decodeRuntimePackageCompilerVerifyResult"], "roleZh": "固定 API-042 v1 字节合同、精确合同 ID/版本门禁和严格结果解码"},
+        {"path": "src/plugins/ethercatcore/runtimepackagecompilercodec.cpp", "symbols": ["encodeRuntimePackageCompilerCompileRequest", "encodeRuntimePackageCompilerFinalizeRequest", "encodeRuntimePackageCompilerVerifyRequest", "decodeRuntimePackageCompilerCompileResult", "decodeRuntimePackageCompilerFinalizeResult", "decodeRuntimePackageCompilerQueryResult", "decodeRuntimePackageCompilerVerifyResult"], "roleZh": "v1 字节兼容、精确 v2 参数 JSON、合同 ID/版本门禁和严格结果解码"},
         {"path": "src/plugins/ethercatcore/runtimepackagecompilerprovider.h", "symbols": ["class ETHERCATCORE_EXPORT RuntimePackageCompilerProvider"], "roleZh": "可替换编译器 Provider 合同"},
         {"path": "src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.h", "symbols": ["struct CompilerRuntimeBundleExpectation", "class CompilerRuntimeBundleProfile"], "roleZh": "API-068 固定版本、外部公钥和不可变树身份合同"},
         {"path": "src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.h", "symbols": ["struct CompilerPythonRuntimeExpectation", "class CompilerPythonRuntimeProfile"], "roleZh": "API-070 固定版本、独立公钥和便携身份合同"}
       ],
       "tests": [
-        {"path": "src/plugins/ethercatcore/ethercatcoretests.cpp", "cases": ["testRuntimePackageCompilerCodec", "testRuntimePackageCompilerCodecRejectsContractConfusion"], "kind": "unit"},
-        {"path": "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "cases": ["testPythonRuntimeProfileVerifiesSignedInstalledTree", "testRuntimeBundleProfileVerifiesInstalledTree", "testCompileProcessAndImmutableEvidence", "testFinalizeQueryVerifyAndRestart"], "kind": "artifact"}
+        {"path": "src/plugins/ethercatcore/ethercatcoretests.cpp", "cases": ["testRuntimePackageCompilerCodec", "testRuntimePackageCompilerV2Codec", "testRuntimePackageCompilerCodecRejectsContractConfusion"], "kind": "unit"},
+        {"path": "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "cases": ["testPythonRuntimeProfileVerifiesSignedInstalledTree", "testRuntimeBundleProfileVerifiesInstalledTree", "testDeviceParametersProjectWithCompilerV2", "testCompileProcessAndImmutableEvidence", "testFinalizeQueryVerifyAndRestart"], "kind": "artifact"}
       ],
       "docs": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-compiler-runtime.md"],
       "dependsOn": ["ethercat.compiler.project-projection"],
-      "notesZh": ["生产私钥不进入 IDE；签名由外部 signer 或 HSM 完成。", "固定 v1 codec 只接受 ethercat-ide-project-compiler-contract-v1/version 1；未知 ID 或 v2 在请求编码或结果接受时 fail closed，不能用 provisioning 重标记 v1 wire；schema bundle 摘要继续由 provisioning、Provider、bootstrap 和 operation store 的完整相等性绑定。", "API-068 与 API-070 使用独立外部信任锚；Provider 不从 PATH、系统 Python 或复制出的 wrapper 推断运行时。", "当前双 Profile 正例是 unit/artifact 动态修正版 fixture，不代表产品 bootstrap、原生修正版 API-070 或真机验收。"]
+      "notesZh": ["生产私钥不进入 IDE；签名由外部 signer 或 HSM 完成。", "v1 codec 只接受 ethercat-ide-project-compiler-contract-v1/version 1；v2 只接受 ethercat-ide-project-compiler/version 2，结果身份必须与请求一致，不能用 provisioning 重标记 wire。", "v2 compiler manifest 的 companion version/archive/manifest/key/executable/tree/portable identity 七项必须与实际 Python Profile 全值相等；参数合同包同时进入工件根、operation store、recovery v3 和 activation proof。", "API-078 当前交付的签名 v2 runtime 为 motion-disabled，不能生成 API-077 v0.4.2 Section 9；它只证明参数编译合同，不证明 IDE 手动运动。"]
     },
     {
       "id": "ethercat.compiler.preparation",
@@ -1268,12 +1268,12 @@
       "status": "open",
       "severity": "p0",
       "affectedFeatures": ["ethercat.core.device-parameter-contract", "ethercat.project.model-format", "ethercat.project.mutation", "ethercat.adapters.catalog-authorization", "ethercat.product-api.topology-evidence", "ethercat.compiler.project-projection", "ethercat.workbench.communication", "ethercat.workbench.device-parameters", "ethercat.scan.mock-workflow"],
-      "problemZh": "生产 Adapter v4、真实 Product API 只读实测证据和 configured/observed 页面已经完成，但已资格化设备参数仍未进入完整 compiler projection，因此用户工程值不能被解释为已编译、已部署或已应用的控制器参数。",
-      "currentBoundaryZh": "API-075 已安装并独立验签 SV630N v4/Authorization v2；Core 可校验精确 ESI、完整 Adapter/Profile、Qualified、signatureVerified/realHardwareAllowed、required、类型和范围。Workbench 以 post-provider Project CAS 保存工程值，并只读消费 Product API v1.16 绑定 Session、Boot、拓扑 capture、从站身份和 payload 摘要的会话证据，显示 Match、Mismatch、Not configured 或 Unavailable，observed 永不写入 ProjectSnapshot。应用当前总线时，同位置同身份设备只有在已有完整精确 v4 选择可按 ID、版本、内容摘要、Profile 和 Module 重解析时才保留该选择与 deviceParameters；新设备或无保存选择的设备不自动采用 v4，仍可走唯一 v3 自动选择。compile-recovery payload v2 已保留设备参数字段并兼容 v1 空值，但编译请求仍对任意非空参数 fail closed；固定 API-042 v1 codec 已精确绑定合同 ID/version，未知 ID 或 v2 不能重标记 v1 wire。SV630N 运动动作仍因型号证据不足而 disabled。",
-      "nextActionZh": "冻结新的签名编译合同，并把已资格化的参数 ID、definitionSha256 与 typed engineering value 确定性投影到 compiler request、Startup SDO/项目专属语义、签名包和 recovery 同一性证据；缺失、越界、陈旧、类型漂移或不一致继续结构化 fail closed，设备参数动作仍需独立安全合同和真机验收。",
+      "problemZh": "已资格化设备参数现可进入 compiler v2 request 和 recovery，但产品仍缺少可安装的完整 v2 runtime/companion/provisioning，且显式 Project Startup SDO 的执行语义与 API-077 motion Section 9 尚未在 IDE 闭环。",
+      "currentBoundaryZh": "API-075 生产 SV630N v4/Authorization v2、Workbench configured/observed 页面和 Product API v1.16 会话证据均已存在。compiler v2 现在以精确合同身份携带完整参数 ID、definitionSha256、typed integer value、Project-only null observed 以及同 Session/Boot/拓扑的 CoE observed；v1 canonical bytes 保持不变并继续拒绝参数。参数合同包被物化、持久复核并进入 recovery payload v3，v1/v2 recovery 仍可解码。API-078 的签名 macOS compiler v2 只生成 motion-disabled 包；Windows API-077 cfg7705 是冻结 golden，不是当前 IDE 可重建的运动包。非空显式 Startup SDO 仍因缺少完整签名执行语义而 fail closed。",
+      "nextActionZh": "由 Windows 侧交付新版本、motion-enabled 且闭集签名的 macOS compiler runtime 与 companion 身份，补齐 v0.4.2/API-077 verifier、qualification schemas 和 Section 9 deterministic self-test；IDE 再完成受信安装/provisioning、显式 Startup SDO 全语义投影和真实 compile/deploy 验收。随后独立接入 Product API v1.17 TimedAction start/stop/query 与 Section 9 policy catalog，才允许手动运动。",
       "evidencePaths": ["docs/ethercat-device-adapters.md", "docs/ethercat-project-format.md", "docs/ethercat-plugin-development-guide.zh_CN.md", "src/libs/ethercatdata/deviceadapter.h", "src/libs/ethercatdata/deviceparameters.h", "src/plugins/ethercatcore/deviceparametercontract.h", "src/plugins/ethercatcore/deviceparametercontract.cpp", "src/plugins/ethercatdeviceadapters/adapterpackagerepository.cpp", "src/plugins/ethercatdeviceadapters/deviceadapterauthorization_p.cpp", "src/plugins/ethercatdeviceadapters/ethercatdeviceadapterstests.cpp", "src/plugins/ethercatproject/ethercatprojectformat.cpp", "src/plugins/ethercatproject/ethercatprojectdocument.cpp", "src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp", "src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp", "src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp", "src/plugins/ethercatworkbench/deviceparameterspage.cpp", "src/plugins/ethercatworkbench/workbenchcontroller.cpp", "src/plugins/ethercatworkbench/ethercatworkbenchtests.cpp", "src/plugins/ethercatscan/topologycomparison.cpp"],
-      "resolutionCriteriaZh": ["签名 Adapter 定义闭合集合化声明参数 ID、类型、单位、范围、工程到设备投影和允许的实测来源。", "真实扫描证据绑定当前 Session、BootId、拓扑 capture 和精确从站身份；界面明确显示设定值、实测值、一致/不一致/不可用/陈旧状态。", "observed 证据保持会话级并与 ProjectSnapshot 分离；保存、重开、Undo/Redo 和 Mock 扫描均不能把实测值改写成工程意图。", "已资格化非空参数可确定性进入 compiler request、签名包和 recovery；缺失、越界、陈旧或不一致证据继续 fail closed。"],
-      "notesZh": ["当前 v8 参数字段不授权部署、SDO 下载或电机运动。", "在完整资格和真机安全门禁通过前，不得用用户手填值、Mock 结果或拓扑扫描结果宣称正反转能力。"]
+      "resolutionCriteriaZh": ["签名 Adapter 定义闭合集合化声明参数 ID、类型、单位、范围、工程到设备投影和允许的实测来源。", "真实扫描证据绑定当前 Session、BootId、拓扑 capture 和精确从站身份；界面明确显示设定值、实测值、一致/不一致/不可用/陈旧状态。", "observed 证据保持会话级并与 ProjectSnapshot 分离；保存、重开、Undo/Redo 和 Mock 扫描均不能把实测值改写成工程意图。", "已资格化非空参数可确定性进入 compiler v2 request、外部签名包和 recovery v3；显式 Startup 语义缺失或任一合同漂移继续 fail closed。", "motion-enabled runtime、Section 9、Product API v1.17 TimedAction 和真机安全停止全部闭环后才开放运动。"],
+      "notesZh": ["compiler v2 参数投影不等于参数已部署或驱动器已应用；当前产品 runtime/provisioning 尚未安装验收。", "API-077 golden ECPKG 可作验收向量，不能冒充任意当前工程的可重建产物。", "在完整资格和真机安全门禁通过前，不得用用户手填值、Mock 结果或拓扑扫描结果宣称正反转能力。"]
     },
     {
       "id": "ethercat.issue.restore-project-binding-guard",
@@ -1424,12 +1424,12 @@
       "status": "blocked",
       "severity": "p2",
       "affectedFeatures": ["ethercat.adapters.catalog-authorization", "ethercat.runtime.binding-actions", "ethercat.runtime.manual-control", "ethercat.workbench.semantic-control"],
-      "problemZh": "0x60FF/0x606C 的 reference unit/s 到 RPM 换算还依赖未绑定的电子齿轮和编码器证据，因此速度动作必须保持 disabled/unqualified。",
-      "currentBoundaryZh": "有界多步 executor 的 unit/loopback 覆盖只证明通用步骤闭集；生产 SV630N v3 动作仍为 disabled/unqualified，离线动作定义和历史 DC 运行记录都不能证明真实速度单位、允许正反转或实际电机运动。",
-      "nextActionZh": "取得并签入精确型号的实际编码器分辨率、0x6091 电子齿轮换算、速度限制、停止阈值和安全门禁，完成扫描 observed evidence 与 configured/observed 判定后，再更新 Adapter 动作资格并执行受控真机验收。",
-      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-device-adapters.md", "share/qtcreator/ethercat/adapters/v3/inovance-sv630n-rev00010000.adapter.json", "share/qtcreator/ethercat/adapter-authorizations/inovance-sv630n-rev00010000.authorization.json", "src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp"],
-      "resolutionCriteriaZh": ["换算公式和全部依赖参数进入受签名 evidence。", "UI 显示 reference unit 与工程单位的明确关系和范围。", "按受控运动测试验证设速、反馈、停止、TTL 和故障路径。"],
-      "notesZh": ["资格闭环前不得为了演示启用真机速度动作；当前 ISSUE 未访问硬件，也没有新增真机运动证据。"]
+      "problemZh": "Windows API-077 已完成双轴 +30 rpm 定时动作资格，但该能力尚未以 IDE 可消费的 motion-enabled 签名 macOS compiler runtime、Section 9 catalog 和 Product API v1.17 TimedAction 公共接口交付。",
+      "currentBoundaryZh": "API-077 v0.4.2 golden 已绑定电子齿轮、编码器、速度限制、停止阈值、2 个 timed-action policies 与真机证据；当前仓库仍安装 motion-disabled v0.4.0，Product API 只到 v1.16，现有 SemanticRuntime 多步输出事务不能替代控制器拥有的 TimedAction。API-078 附带的 compiler v2 也明确 motion_section_9_emitted=false。",
+      "nextActionZh": "先取得新版本 motion-enabled 签名 Mac compiler runtime；随后在 Data/Core/Provider 增加 vendor-neutral TimedAction start/stop/query，Product API 接入 v1.17 三条精确 wire，SemanticRuntime 从已验 ECPKG Section 9 读取 policy ID/SHA，Workbench 只在完整 epoch、包、拓扑、输出代际和 SafeHold 停止证明闭合时开放动作。",
+      "evidencePaths": ["docs/ethercat-plugin-development-guide.zh_CN.md", "docs/ethercat-device-adapters.md", "docs/ethercat-compiler-runtime.md", "share/qtcreator/ethercat/adapters/v4/inovance-sv630n-rev00010000.adapter.json", "src/plugins/ethercatproductapi/productapicodec.h", "src/plugins/ethercatsemanticruntime/ethercatsemanticruntimetests.cpp"],
+      "resolutionCriteriaZh": ["motion-enabled compiler runtime 以新不可变版本、manifest SHA、外部 raw32 key 和 closed-set self-test 交付。", "IDE 从已验 Section 9 获取 policy catalog，不从 Adapter 名称或厂家字段猜测。", "Product API v1.17 TimedAction golden、replay/reconcile、typed stop 和 terminal SafeHold 全覆盖。", "按当前 IDE 公共接口完成受控运动测试并记录精确包、BootId、拓扑与完整 epoch。"],
+      "notesZh": ["Windows frozen cfg7705 可作 golden 与真机证据，不能替代 IDE 从当前工程重编的产物。", "在新 runtime 与 v1.17 路径闭环前不得导入 0.4.2 并复用 legacy output transaction 执行运动。"]
     },
     {
       "id": "ethercat.issue.coe-online-sdo",

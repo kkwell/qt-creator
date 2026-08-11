@@ -4,6 +4,7 @@
 
 #include "ethercatprojectcompilertr.h"
 
+#include <ethercatcore/deviceparametercontract.h>
 #include <ethercatcore/providerregistry.h>
 #include <ethercatcore/runtimepackagecompilercodec.h>
 #include <ethercatcore/runtimepackagecompilerpreparationcoordinator.h>
@@ -182,6 +183,170 @@ const Data::ProcessDataProfile *selectedProcessDataProfile(
     return found == manifest.processDataProfiles.cend() ? nullptr : &*found;
 }
 
+const Data::DeviceParameterDefinition *parameterDefinition(
+    const Data::DeviceAdapterManifest &manifest, const QString &id)
+{
+    const auto found = std::find_if(
+        manifest.parameterDefinitions.cbegin(),
+        manifest.parameterDefinitions.cend(),
+        [&id](const Data::DeviceParameterDefinition &definition) { return definition.id == id; });
+    return found == manifest.parameterDefinitions.cend() ? nullptr : &*found;
+}
+
+Utils::Result<const Data::AxisParameterEvidence *> axisParameterEvidence(
+    const std::optional<Data::AxisParameterEvidenceBatch> &batch,
+    const Data::OfflineSlaveConfiguration &slave)
+{
+    if (!batch)
+        return static_cast<const Data::AxisParameterEvidence *>(nullptr);
+    const auto found = std::find_if(
+        batch->targets.cbegin(), batch->targets.cend(), [&slave](const auto &target) {
+            return target.position == slave.position
+                   && target.stationAddress == slave.stationAddress;
+        });
+    if (found == batch->targets.cend())
+        return static_cast<const Data::AxisParameterEvidence *>(nullptr);
+    if (found->vendorId != slave.identity.vendorId
+        || found->productCode != slave.identity.productCode
+        || found->revision != slave.identity.revisionNumber
+        || found->serial != slave.serialNumber) {
+        return Utils::ResultError(
+            Tr::tr("Axis parameter evidence names a different topology device."));
+    }
+    return found->evidence ? &*found->evidence
+                           : static_cast<const Data::AxisParameterEvidence *>(nullptr);
+}
+
+std::optional<qint64> integerParameterValue(const Data::EngineeringValue &value)
+{
+    if (value.kind == Data::EngineeringValueKind::SignedInteger)
+        return value.signedInteger;
+    if (value.kind == Data::EngineeringValueKind::UnsignedInteger
+        && value.unsignedInteger <= quint64(std::numeric_limits<qint64>::max())) {
+        return qint64(value.unsignedInteger);
+    }
+    return std::nullopt;
+}
+
+Utils::Result<> validateAxisParameterEvidenceBatch(
+    const Data::ControllerConnectionSnapshot &snapshot,
+    const std::optional<Data::AxisParameterEvidenceBatch> &batch)
+{
+    if (!batch)
+        return Utils::ResultOk;
+    if (!snapshot.session || !snapshot.topology || !batch->isValid()
+        || batch->scope != snapshot.scope
+        || batch->sessionGeneration != snapshot.sessionGeneration
+        || batch->sessionId != snapshot.session->sessionId
+        || batch->bootId != snapshot.session->bootId
+        || batch->topologyRequestId != snapshot.topology->requestId
+        || batch->topologyResponseSequence != snapshot.topology->responseSequence
+        || batch->topologyCaptureSequence != snapshot.topology->topologyCaptureSequence
+        || batch->topologyCompletedTimeNs != snapshot.topology->topologyCompletedTimeNs
+        || batch->topologyPayloadSha256 != snapshot.topology->topologyPayloadSha256) {
+        return Utils::ResultError(
+            Tr::tr("Axis parameter evidence does not belong to the current topology capture."));
+    }
+    return Utils::ResultOk;
+}
+
+Utils::Result<QList<Data::RuntimePackageCompilerDeviceParameter>> deviceParameterProjection(
+    const Data::OfflineSlaveConfiguration &slave,
+    const Data::DeviceAdapterManifest &manifest,
+    const std::optional<Data::AxisParameterEvidenceBatch> &batch)
+{
+    if (manifest.contractVersion != Data::DeviceAdapterContractVersion::V4) {
+        return slave.deviceParameters.values.isEmpty()
+                   ? Utils::Result<QList<Data::RuntimePackageCompilerDeviceParameter>>{
+                         QList<Data::RuntimePackageCompilerDeviceParameter>{}}
+                   : Utils::Result<QList<Data::RuntimePackageCompilerDeviceParameter>>{
+                         Utils::ResultError(
+                             Tr::tr("Device parameters require an authorized Adapter v4."))};
+    }
+
+    const Core::ConfiguredDeviceParameterValidation validation
+        = Core::validateConfiguredDeviceParameters(
+            manifest, slave.esiSha256, slave.adapterSelection, slave.deviceParameters);
+    if (!validation.accepted()
+        || slave.deviceParameters.values.size() != manifest.parameterDefinitions.size()) {
+        return Utils::ResultError(
+            validation.detail.isEmpty()
+                ? Tr::tr("The configured parameter set does not close the signed Adapter set.")
+                : validation.detail);
+    }
+
+    const auto evidenceResult = axisParameterEvidence(batch, slave);
+    if (!evidenceResult)
+        return Utils::ResultError(evidenceResult.error());
+    const Data::AxisParameterEvidence *evidence = *evidenceResult;
+    QList<Data::RuntimePackageCompilerDeviceParameter> result;
+    result.reserve(slave.deviceParameters.values.size());
+    for (const Data::DeviceParameterValue &configured : slave.deviceParameters.values) {
+        const Data::DeviceParameterDefinition *definition
+            = parameterDefinition(manifest, configured.parameterId);
+        const std::optional<qint64> configuredValue = integerParameterValue(configured.value);
+        if (!definition || !configuredValue) {
+            return Utils::ResultError(
+                Tr::tr("Compiler v2 accepts only signed or bounded unsigned integer parameters."));
+        }
+
+        Data::RuntimePackageCompilerDeviceParameter projected;
+        projected.parameterId = configured.parameterId;
+        projected.definitionSha256
+            = Data::RuntimePackageCompilerSha256{definition->definitionSha256};
+        projected.configuredValue = *configuredValue;
+        if (evidence
+            && definition->observedSource.kind
+                   == Data::DeviceParameterObservedSourceKind::CoeSdoUpload
+            && definition->observedSource.object) {
+            const Data::DeviceParameterObjectBinding &binding
+                = *definition->observedSource.object;
+            const auto record = std::find_if(
+                evidence->records.cbegin(),
+                evidence->records.cend(),
+                [&binding](const Data::AxisParameterEvidenceRecord &candidate) {
+                    return candidate.index == binding.index
+                           && candidate.subIndex == binding.subIndex;
+                });
+            if (record != evidence->records.cend()
+                && record->state == Data::AxisParameterEvidenceRecordState::Valid) {
+                const Core::DeviceParameterObservationResult observation
+                    = Core::evaluateDeviceParameterObservation(
+                        *definition, configured.value, *record);
+                const std::optional<qint64> observedValue
+                    = observation.observedValue
+                          ? integerParameterValue(*observation.observedValue)
+                          : std::nullopt;
+                if (observation.state != Core::DeviceParameterObservationState::Match
+                    || !observedValue) {
+                    return Utils::ResultError(
+                        Tr::tr("Live parameter evidence differs from the configured value."));
+                }
+                projected.observedEvidence
+                    = Data::RuntimePackageCompilerParameterObservedEvidence{
+                        evidence->bootId,
+                        evidence->topologyCaptureSequence,
+                        evidence->evidenceSequence,
+                        evidence->completedTimeNs,
+                        Data::RuntimePackageCompilerSha256{evidence->profileSha256},
+                        evidence->position,
+                        evidence->stationAddress,
+                        {evidence->vendorId, evidence->productCode, evidence->revision},
+                        evidence->serial,
+                        record->index,
+                        record->subIndex,
+                        record->rawValue,
+                        *observedValue,
+                    };
+            }
+        }
+        if (!projected.isValid())
+            return Utils::ResultError(Tr::tr("Device parameter projection is invalid."));
+        result.append(std::move(projected));
+    }
+    return result;
+}
+
 Utils::Result<> validateSelectedPdos(
     const Data::OfflineSlaveConfiguration &slave, const Data::ProcessDataProfile &profile)
 {
@@ -249,7 +414,8 @@ Utils::Result<Data::RuntimePackageCompilerDeviceProjection> deviceProjection(
     const Data::DeviceAdapterManifest &manifest,
     const Data::ProcessDataProfile &processProfile,
     const CompilerInputProvisionedDevice &provisioned,
-    const Data::RuntimePackageCompilerSignedTargetProfileEvidence &target)
+    const Data::RuntimePackageCompilerSignedTargetProfileEvidence &target,
+    const std::optional<Data::AxisParameterEvidenceBatch> &axisEvidence)
 {
     if (!slave.startup.parameters.isEmpty()) {
         return Utils::ResultError(
@@ -310,6 +476,10 @@ Utils::Result<Data::RuntimePackageCompilerDeviceProjection> deviceProjection(
     result.symbolMode = provisioned.symbolMode;
     result.symbols = provisioned.symbols;
     result.manualEnvelope = provisioned.manualEnvelope;
+    const auto parameters = deviceParameterProjection(slave, manifest, axisEvidence);
+    if (!parameters)
+        return Utils::ResultError(parameters.error());
+    result.deviceParameters = *parameters;
     return result.isValid() ? Utils::Result<Data::RuntimePackageCompilerDeviceProjection>{result}
                             : Utils::Result<Data::RuntimePackageCompilerDeviceProjection>{
                                   Utils::ResultError(Tr::tr("Device projection is incomplete."))};
@@ -388,25 +558,27 @@ public:
         const Data::ControllerConnectionSnapshot before = (*connectionProvider)->connectionSnapshot();
         if (const Utils::Result<> valid = validateConnectionSnapshot(before, seed); !valid)
             return Utils::ResultError(valid.error());
+        const bool compilerV2
+            = profile->contractIdentity().contractId
+                  == QLatin1String("ethercat-ide-project-compiler")
+              && profile->contractIdentity().contractVersion == 2;
+        const std::optional<Data::AxisParameterEvidenceBatch> axisEvidence
+            = compilerV2 ? (*connectionProvider)->axisParameterEvidenceBatch() : std::nullopt;
+        if (const Utils::Result<> valid
+            = validateAxisParameterEvidenceBatch(before, axisEvidence);
+            !valid) {
+            return Utils::ResultError(valid.error());
+        }
         const auto capture = (*projectService)->captureRuntimePackageActivationProject(
             seed.scope.projectId);
         if (!capture)
             return Utils::ResultError(capture.error());
-        const bool hasDeviceParameters = std::any_of(
-            capture->snapshot().slaves.cbegin(),
-            capture->snapshot().slaves.cend(),
-            [](const Data::OfflineSlaveConfiguration &slave) {
-                return !slave.deviceParameters.values.isEmpty();
-            });
-        if (hasDeviceParameters) {
-            return Utils::ResultError(
-                Tr::tr("Device parameter compiler projection is not provisioned; compilation is "
-                       "denied."));
-        }
         const Data::ControllerConnectionSnapshot after = (*connectionProvider)->connectionSnapshot();
-        if (before != after) {
+        const std::optional<Data::AxisParameterEvidenceBatch> axisEvidenceAfter
+            = compilerV2 ? (*connectionProvider)->axisParameterEvidenceBatch() : std::nullopt;
+        if (before != after || axisEvidence != axisEvidenceAfter) {
             return Utils::ResultError(
-                Tr::tr("Controller topology changed while project inputs were captured."));
+                Tr::tr("Controller topology or parameter evidence changed while inputs were captured."));
         }
 
         Data::RuntimePackageCompilerCompileRequest request;
@@ -436,6 +608,7 @@ public:
             *capture,
             **deviceRepository,
             **adapterProvider,
+            axisEvidence,
             &request.deviceSourceEvidence);
         if (!projection)
             return Utils::ResultError(projection.error());
@@ -626,6 +799,7 @@ public:
         const Data::RuntimePackageActivationProjectCapture &capture,
         Core::DeviceRepositoryProvider &deviceRepository,
         Core::DeviceAdapterProvider &adapterProvider,
+        const std::optional<Data::AxisParameterEvidenceBatch> &axisEvidence,
         QList<Data::RuntimePackageCompilerDeviceSourceEvidence> *deviceSources) const
     {
         const Data::ProjectSnapshot &project = capture.snapshot();
@@ -670,8 +844,17 @@ public:
             }
             const auto manifest = adapterProvider.adapterManifest(
                 slave.adapterSelection.adapterId, slave.adapterSelection.adapterVersion);
-            if (!manifest || manifest->contractVersion != Data::DeviceAdapterContractVersion::V3
-                || !manifest->signatureVerified || !manifest->realHardwareAllowed
+            const bool compilerV2
+                = profile->contractIdentity().contractId
+                      == QLatin1String("ethercat-ide-project-compiler")
+                  && profile->contractIdentity().contractVersion == 2;
+            const bool supportedAdapter
+                = manifest
+                  && (manifest->contractVersion == Data::DeviceAdapterContractVersion::V3
+                      || (compilerV2
+                          && manifest->contractVersion
+                                 == Data::DeviceAdapterContractVersion::V4));
+            if (!supportedAdapter || !manifest->signatureVerified || !manifest->realHardwareAllowed
                 || manifest->contentSha256 != slave.adapterSelection.adapterContentSha256
                 || manifest->match.exactEsiSha256 != slave.esiSha256
                 || manifest->controllerAdapterTarget.esiSha256 != slave.esiSha256
@@ -689,7 +872,12 @@ public:
             }
 
             const auto projected = deviceProjection(
-                slave, *manifest, *processProfile, *provisioned, profile->targetProfile());
+                slave,
+                *manifest,
+                *processProfile,
+                *provisioned,
+                profile->targetProfile(),
+                axisEvidence);
             if (!projected)
                 return Utils::ResultError(projected.error());
             result.devices.append(*projected);

@@ -106,6 +106,7 @@ enum class RuntimePackageCompilerSourceArtifactKind {
     RuntimeSource,
     OriginalEsi,
     AdapterSourceFile,
+    ParameterContractBundle,
 };
 
 struct ETHERCATDATA_EXPORT RuntimePackageCompilerSourceArtifact
@@ -123,8 +124,8 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerSourceArtifact
         = default;
 };
 
-// Exact closed artifact set from ide-project-compiler-v1. Referenced lower
-// adapter files remain bound by the canonical AdapterBundle artifact.
+// Exact closed artifact set from compiler-v1 plus the compiler-v2 parameter
+// contract. Referenced lower adapter files remain bound by AdapterBundle.
 struct ETHERCATDATA_EXPORT RuntimePackageCompilerSourceArtifacts
 {
     RuntimePackageCompilerSourceArtifact topologyEvidence;
@@ -135,6 +136,7 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerSourceArtifacts
     RuntimePackageCompilerSourceArtifact policyTemplate;
     RuntimePackageCompilerSourceArtifact controllerFeatures;
     RuntimePackageCompilerSourceArtifact runtimeSource;
+    std::optional<RuntimePackageCompilerSourceArtifact> parameterContractBundle;
 
     bool isValid() const;
 
@@ -256,7 +258,47 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerManualEnvelope
 
 enum class RuntimePackageCompilerSymbolMode { Unknown, ReportOnly, Requested, All };
 
-// This is the complete, typed API-042 projection for one current Qt project
+// One valid, topology-bound device readback record projected into compiler-v2.
+// The wire format and state are fixed by the codec to
+// axis-parameter-evidence-record-v1 and valid respectively.
+struct ETHERCATDATA_EXPORT RuntimePackageCompilerParameterObservedEvidence
+{
+    quint64 bootId = 0;
+    quint32 topologyCaptureSequence = 0;
+    quint32 evidenceSequence = 0;
+    quint64 completedTimeNs = 0;
+    RuntimePackageCompilerSha256 profileSha256;
+    int position = -1;
+    quint16 stationAddress = 0;
+    DeviceIdentity identity;
+    quint32 serialNumber = 0;
+    quint16 index = 0;
+    quint8 subIndex = 0;
+    QByteArray rawValue;
+    qint64 value = 0;
+
+    bool isValid() const;
+
+    friend bool operator==(
+        const RuntimePackageCompilerParameterObservedEvidence &,
+        const RuntimePackageCompilerParameterObservedEvidence &) = default;
+};
+
+struct ETHERCATDATA_EXPORT RuntimePackageCompilerDeviceParameter
+{
+    QString parameterId;
+    RuntimePackageCompilerSha256 definitionSha256;
+    qint64 configuredValue = 0;
+    std::optional<RuntimePackageCompilerParameterObservedEvidence> observedEvidence;
+
+    bool isValid() const;
+
+    friend bool operator==(
+        const RuntimePackageCompilerDeviceParameter &,
+        const RuntimePackageCompilerDeviceParameter &) = default;
+};
+
+// This is the complete, typed compiler-v1/v2 projection for one current project
 // slave. projectSlaveNodeId is the local immutable join key and is never
 // encoded. slaveNodeId and projectDeviceId are independent signed identifiers;
 // neither may be inferred from the other or from position/station address.
@@ -287,6 +329,7 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerDeviceProjection
     RuntimePackageCompilerSymbolMode symbolMode = RuntimePackageCompilerSymbolMode::Unknown;
     QMap<QString, QString> symbols;
     RuntimePackageCompilerManualEnvelope manualEnvelope;
+    QList<RuntimePackageCompilerDeviceParameter> deviceParameters;
 
     bool isValid() const;
 
@@ -295,8 +338,8 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerDeviceProjection
         const RuntimePackageCompilerDeviceProjection &) = default;
 };
 
-// The encoded IDs remain API-042 stable strings while the local NodeIds bind
-// the projection to exactly one captured Qt project and master.
+// The encoded IDs remain stable compiler-contract strings while the local
+// NodeIds bind the projection to exactly one captured Qt project and master.
 struct ETHERCATDATA_EXPORT RuntimePackageCompilerProjectProjection
 {
     NodeId projectNodeId;
@@ -325,7 +368,7 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerDeviceSourceEvidence
     RuntimePackageCompilerSourceArtifact originalEsi;
     RuntimePackageCompilerSourceArtifact adapterSourceFile;
 
-    // The project retains the upper V3 adapter selection used by Workbench.
+    // The project retains the upper V3 or V4 adapter selection used by Workbench.
     // The lower fields below identify the compiler adapter bundle entry. A
     // production request builder must derive this bridge from one exact,
     // content-addressed upper manifest's controllerAdapterTarget and selected
@@ -544,7 +587,7 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerResultEnvelope
 struct ETHERCATDATA_EXPORT RuntimePackageCompilerCompileRequest
 {
     // Typed IDE data is the sole request source of truth. A provider codec
-    // creates and schema-validates the API-042 canonical request; callers do
+    // creates and schema-validates the governed canonical request; callers do
     // not supply a second whole-request JSON representation.
     RuntimePackageCompilerOperationId operationId;
     QString intentId;
@@ -562,7 +605,7 @@ struct ETHERCATDATA_EXPORT RuntimePackageCompilerCompileRequest
 
     // These are the typed structural inputs needed before reservation. The
     // provider codec must still validate its encoded canonical request against
-    // the frozen API-042 schema before it reserves OperationId/configurationId.
+    // the provisioned contract schema before reserving OperationId/configurationId.
     bool hasValidReservationInputs() const;
     bool isValid() const;
 
@@ -770,6 +813,8 @@ Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerDcProjection)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerManualRecoveryAction)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerManualEnvelope)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerSymbolMode)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerParameterObservedEvidence)
+Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerDeviceParameter)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerDeviceProjection)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerProjectProjection)
 Q_DECLARE_METATYPE(EtherCAT::Data::RuntimePackageCompilerDeviceSourceEvidence)

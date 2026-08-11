@@ -208,10 +208,12 @@ Real controller，它会只读消费 Product API v1.16 在最近一次完整真�
 
 该会话证据不会写回 `ProjectSnapshot`，任何 authority/provenance 漂移都会先清除旧展示。`Match` 只
 表示同一会话、Boot 和拓扑证据中的只读值按签名换算后等于当前工程意图，不证明 Startup SDO 已应用、
-包已部署或轴可运行。API-075 已安装并独立验签生产 SV630N v4 Adapter/Authorization v2，但其动作仍
-保持 disabled；compiler projection 和设备参数动作也尚未完成，因此任一非空设备参数仍会在
-调用外部编译器前 fail closed。`0x2000` 原始身份值不能自动解释为编码器分辨率，软件停止阈值也不是
-驱动器实测对象。
+包已部署或轴可运行。精确 compiler v2 合同现可把完整参数闭包、definition SHA、typed integer value
+以及同拓扑的匹配实测证据确定性编码；Project-only 参数必须携带 `null` observed。v1 canonical bytes
+保持不变并继续拒绝参数，recovery payload v3 同时保存参数投影和参数合同包。API-078 当前签名的
+macOS compiler v2 明确为 motion-disabled，显式 Project Startup SDO 也仍缺完整执行语义，因此这些
+能力不能解释为已部署或已具备手动运动资格。`0x2000` 原始身份值不能自动解释为编码器分辨率，软件
+停止阈值也不是驱动器实测对象。
 
 ### 4.2 设备目录状态
 
@@ -733,11 +735,13 @@ SV630N 速度动作仍因实际编码器分辨率、0x6091 电子齿轮换算、
 4. Startup SDO 目前可编辑，但当前 compiler request builder 对非空 Startup SDO 仍会
    fail closed；需由编译器合同和 IDE 同步支持后再开放。
 5. Workbench 已能以签名 Adapter 定义消费 Product API v1.16 会话级固定只读参数证据并完成
-   configured/observed 对比，生产 SV630N v4/Authorization v2 也已安装并独立验签；下一步是实现
-   ProjectSnapshot 到新编译请求、Startup SDO/项目专属语义、签名包和 recovery 证据的精确
-   projection。现有 API-042 v1 codec 已精确绑定合同 ID/version，不能通过修改 provisioning 把
-   v1 wire 重标记为 v2；在新签名 schema、codec 和 runtime 闭合前，v8 中任一非空设备参数继续
-   fail closed，不进入部署或运动路径。
+   configured/observed 对比；IDE 也已实现精确 compiler v2 参数投影、参数合同工件物化和 recovery
+   payload v3，且 v1 wire 逐字节保持兼容。下一步是安装并验收 v2 runtime/companion/provisioning，
+   冻结显式 Startup SDO 的 timeout/retry/failure/persistence 全语义，再以当前工程完成真实
+   compile/finalize/verify/deploy。当前 API-078 runtime 不能生成 API-077 motion Section 9。
+6. 手动运动必须另行接入 Product API v1.17 controller-owned TimedAction start/stop/query，并从已验
+   ECPKG Section 9 获取 policy ID/SHA。现有多步 output transaction 不能替代该合同；在新的
+   motion-enabled 签名 Mac compiler runtime、v0.4.2 资产与真机 SafeHold 验收闭合前，动作保持禁用。
 
 ### P1：统一业务协调层
 

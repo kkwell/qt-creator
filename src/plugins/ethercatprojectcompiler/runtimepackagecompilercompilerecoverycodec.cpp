@@ -27,7 +27,7 @@ constexpr qsizetype maximumTextBytes = 256 * 1024;
 constexpr quint32 maximumCollectionItems = 4096;
 constexpr char payloadMagic[] = {'E', 'L', 'P', 'C', 'R', 'Q', '0', '1'};
 constexpr quint32 minimumPayloadVersion = 1;
-constexpr quint32 currentPayloadVersion = 2;
+constexpr quint32 currentPayloadVersion = 3;
 
 QByteArray sha256(QByteArrayView bytes)
 {
@@ -1106,6 +1106,113 @@ Data::RuntimePackageCompilerDeviceProjection readCompilerDevice(BinaryReader &re
     return result;
 }
 
+void writeArtifact(
+    BinaryWriter &writer,
+    const Data::RuntimePackageCompilerSourceArtifact &artifact,
+    quint32 maximumKind = 10);
+Data::RuntimePackageCompilerSourceArtifact readArtifact(
+    BinaryReader &reader, quint32 maximumKind = 10);
+
+void writeCompilerParameterObservedEvidence(
+    BinaryWriter &writer,
+    const Data::RuntimePackageCompilerParameterObservedEvidence &evidence)
+{
+    writer.u64(evidence.bootId);
+    writer.u32(evidence.topologyCaptureSequence);
+    writer.u32(evidence.evidenceSequence);
+    writer.u64(evidence.completedTimeNs);
+    writeSha(writer, evidence.profileSha256);
+    writer.i32(qint32(evidence.position));
+    writer.u16(evidence.stationAddress);
+    writeIdentity(writer, evidence.identity);
+    writer.u32(evidence.serialNumber);
+    writer.u16(evidence.index);
+    writer.u8(evidence.subIndex);
+    writer.bytes(evidence.rawValue, 8);
+    writer.i64(evidence.value);
+}
+
+Data::RuntimePackageCompilerParameterObservedEvidence
+readCompilerParameterObservedEvidence(BinaryReader &reader)
+{
+    Data::RuntimePackageCompilerParameterObservedEvidence result;
+    result.bootId = reader.u64();
+    result.topologyCaptureSequence = reader.u32();
+    result.evidenceSequence = reader.u32();
+    result.completedTimeNs = reader.u64();
+    result.profileSha256 = readSha(reader);
+    result.position = reader.i32();
+    result.stationAddress = reader.u16();
+    result.identity = readIdentity(reader);
+    result.serialNumber = reader.u32();
+    result.index = reader.u16();
+    result.subIndex = reader.u8();
+    result.rawValue = reader.bytes(8);
+    result.value = reader.i64();
+    return result;
+}
+
+void writeCompilerDeviceParameter(
+    BinaryWriter &writer, const Data::RuntimePackageCompilerDeviceParameter &parameter)
+{
+    writer.string(parameter.parameterId);
+    writeSha(writer, parameter.definitionSha256);
+    writer.i64(parameter.configuredValue);
+    writeOptional(
+        writer,
+        parameter.observedEvidence,
+        writeCompilerParameterObservedEvidence);
+}
+
+Data::RuntimePackageCompilerDeviceParameter readCompilerDeviceParameter(BinaryReader &reader)
+{
+    Data::RuntimePackageCompilerDeviceParameter result;
+    result.parameterId = reader.string();
+    result.definitionSha256 = readSha(reader);
+    result.configuredValue = reader.i64();
+    result.observedEvidence
+        = readOptional<Data::RuntimePackageCompilerParameterObservedEvidence>(
+            reader, readCompilerParameterObservedEvidence);
+    return result;
+}
+
+void writeVersionThreeExtensions(
+    BinaryWriter &writer, const Data::RuntimePackageCompilerCompileRequest &request)
+{
+    writeList(
+        writer,
+        request.projectProjection.devices,
+        [](BinaryWriter &binary, const Data::RuntimePackageCompilerDeviceProjection &device) {
+            writeList(binary, device.deviceParameters, writeCompilerDeviceParameter);
+        });
+    writeOptional(
+        writer,
+        request.sourceArtifacts.parameterContractBundle,
+        [](BinaryWriter &binary, const Data::RuntimePackageCompilerSourceArtifact &artifact) {
+            writeArtifact(binary, artifact, 11);
+        });
+}
+
+void readVersionThreeExtensions(
+    BinaryReader &reader, Data::RuntimePackageCompilerCompileRequest *request)
+{
+    const QList<QList<Data::RuntimePackageCompilerDeviceParameter>> parameters
+        = readList<QList<Data::RuntimePackageCompilerDeviceParameter>>(
+            reader, [](BinaryReader &binary) {
+                return readList<Data::RuntimePackageCompilerDeviceParameter>(
+                    binary, readCompilerDeviceParameter);
+            });
+    if (parameters.size() != request->projectProjection.devices.size()) {
+        reader.invalidate();
+        return;
+    }
+    for (qsizetype index = 0; index < parameters.size(); ++index)
+        request->projectProjection.devices[index].deviceParameters = parameters.at(index);
+    request->sourceArtifacts.parameterContractBundle
+        = readOptional<Data::RuntimePackageCompilerSourceArtifact>(
+            reader, [](BinaryReader &binary) { return readArtifact(binary, 11); });
+}
+
 void writeProjectProjection(
     BinaryWriter &writer, const Data::RuntimePackageCompilerProjectProjection &project)
 {
@@ -1201,18 +1308,22 @@ Data::RuntimePackageCompilerFreshTopologyEvidence readTopology(BinaryReader &rea
     return result;
 }
 
-void writeArtifact(BinaryWriter &writer, const Data::RuntimePackageCompilerSourceArtifact &artifact)
+void writeArtifact(
+    BinaryWriter &writer,
+    const Data::RuntimePackageCompilerSourceArtifact &artifact,
+    quint32 maximumKind)
 {
-    writer.enumeration(artifact.kind, 10);
+    writer.enumeration(artifact.kind, maximumKind);
     writer.string(artifact.relativePath);
     writer.bytes(artifact.exactBytes, maximumArtifactBytes);
     writeSha(writer, artifact.sha256);
 }
 
-Data::RuntimePackageCompilerSourceArtifact readArtifact(BinaryReader &reader)
+Data::RuntimePackageCompilerSourceArtifact readArtifact(
+    BinaryReader &reader, quint32 maximumKind)
 {
     Data::RuntimePackageCompilerSourceArtifact result;
-    result.kind = reader.enumeration<Data::RuntimePackageCompilerSourceArtifactKind>(10);
+    result.kind = reader.enumeration<Data::RuntimePackageCompilerSourceArtifactKind>(maximumKind);
     result.relativePath = reader.string();
     result.exactBytes = reader.bytes(maximumArtifactBytes);
     result.sha256 = readSha(reader);
@@ -1234,25 +1345,27 @@ void writeArtifacts(
 
 Data::RuntimePackageCompilerSourceArtifacts readArtifacts(BinaryReader &reader)
 {
-    return {
-        readArtifact(reader),
-        readArtifact(reader),
-        readArtifact(reader),
-        readArtifact(reader),
-        readArtifact(reader),
-        readArtifact(reader),
-        readArtifact(reader),
-        readArtifact(reader),
-    };
+    Data::RuntimePackageCompilerSourceArtifacts result;
+    result.topologyEvidence = readArtifact(reader);
+    result.targetProfile = readArtifact(reader);
+    result.targetProfileSignature = readArtifact(reader);
+    result.productionPublicKey = readArtifact(reader);
+    result.adapterBundle = readArtifact(reader);
+    result.policyTemplate = readArtifact(reader);
+    result.controllerFeatures = readArtifact(reader);
+    result.runtimeSource = readArtifact(reader);
+    return result;
 }
 
 void writeDeviceSource(
-    BinaryWriter &writer, const Data::RuntimePackageCompilerDeviceSourceEvidence &source)
+    BinaryWriter &writer,
+    const Data::RuntimePackageCompilerDeviceSourceEvidence &source,
+    quint32 payloadVersion)
 {
     writeNodeId(writer, source.projectSlaveNodeId);
     writeArtifact(writer, source.originalEsi);
     writeArtifact(writer, source.adapterSourceFile);
-    writer.enumeration(source.projectAdapterContractVersion, 3);
+    writer.enumeration(source.projectAdapterContractVersion, payloadVersion >= 3 ? 4 : 3);
     writer.string(source.projectAdapterId.value);
     writer.string(source.projectAdapterVersion);
     writeSha(writer, source.projectAdapterContentSha256);
@@ -1273,13 +1386,15 @@ void writeDeviceSource(
     writer.boolean(source.explicitNoDc);
 }
 
-Data::RuntimePackageCompilerDeviceSourceEvidence readDeviceSource(BinaryReader &reader)
+Data::RuntimePackageCompilerDeviceSourceEvidence readDeviceSource(
+    BinaryReader &reader, quint32 payloadVersion)
 {
     Data::RuntimePackageCompilerDeviceSourceEvidence result;
     result.projectSlaveNodeId = readNodeId(reader);
     result.originalEsi = readArtifact(reader);
     result.adapterSourceFile = readArtifact(reader);
-    result.projectAdapterContractVersion = reader.enumeration<Data::DeviceAdapterContractVersion>(3);
+    result.projectAdapterContractVersion = reader.enumeration<Data::DeviceAdapterContractVersion>(
+        payloadVersion >= 3 ? 4 : 3);
     result.projectAdapterId.value = reader.string();
     result.projectAdapterVersion = reader.string();
     result.projectAdapterContentSha256 = readSha(reader);
@@ -1366,8 +1481,17 @@ QByteArray encodePayload(
     writeProjectProjection(writer, request.projectProjection);
     writeTopology(writer, request.topologyEvidence);
     writeArtifacts(writer, request.sourceArtifacts);
-    writeList(writer, request.deviceSourceEvidence, writeDeviceSource);
+    writeList(
+        writer,
+        request.deviceSourceEvidence,
+        [payloadVersion](
+            BinaryWriter &binary,
+            const Data::RuntimePackageCompilerDeviceSourceEvidence &source) {
+            writeDeviceSource(binary, source, payloadVersion);
+        });
     writeTarget(writer, request.targetProfile);
+    if (payloadVersion >= 3)
+        writeVersionThreeExtensions(writer, request);
     return writer.take();
 }
 
@@ -1419,8 +1543,13 @@ Utils::Result<RuntimePackageCompilerCompileRecovery> decodePayload(
     request.topologyEvidence = readTopology(reader);
     request.sourceArtifacts = readArtifacts(reader);
     request.deviceSourceEvidence
-        = readList<Data::RuntimePackageCompilerDeviceSourceEvidence>(reader, readDeviceSource);
+        = readList<Data::RuntimePackageCompilerDeviceSourceEvidence>(
+            reader, [payloadVersion](BinaryReader &binary) {
+                return readDeviceSource(binary, payloadVersion);
+            });
     request.targetProfile = readTarget(reader);
+    if (payloadVersion >= 3)
+        readVersionThreeExtensions(reader, &request);
 
     RuntimePackageCompilerCompileRecovery recovery{std::move(request), std::move(serializedProject)};
     if (!reader.atEnd() || !recovery.isValid())

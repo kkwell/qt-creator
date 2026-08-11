@@ -217,9 +217,13 @@ into qualified device operations.
 The production SV630N v4 Adapter and Authorization v2 are installed, and the
 Workbench can compare Project intent with separately bound, session-scoped
 Product API v1.16 observed evidence. That evidence is never persisted into
-`ProjectSnapshot`. Parameters are still absent from the signed compiler
-contract, so every compile request containing a non-empty device-parameter
-configuration fails closed before compiler invocation.
+`ProjectSnapshot`. For the exact compiler-v2 identity, the request builder now
+projects the complete configured parameter closure, each signed definition
+digest, and only matching evidence from the same Session, Boot and topology
+capture. Project-only parameters carry a JSON `null` observation. Compiler-v1
+bytes remain unchanged and continue to reject every non-empty configuration.
+The same v2 projection and parameter-contract artifact are preserved by
+compile-recovery payload v3; older payload versions remain readable.
 
 Applying a current real bus preserves existing parameters only when the slave
 identity and ESI remain exact and the complete saved v4 Adapter selection is
@@ -227,8 +231,12 @@ re-resolved with the same ID, version, content digest, profile, and modules. A
 new slave or one without a saved selection never adopts v4 automatically; it
 may only use the existing unambiguous v3 selection path. If any binding changes,
 the normal Project safety rule clears the parameters. No device-parameter value
-in this format, nor the presence of the v4 contract or an Observed match,
-authorizes deployment, SDO download, or motor motion.
+in this format, nor the presence of the v4 contract, a compiler-v2 request, or
+an Observed match, authorizes deployment, SDO download, or motor motion. The
+current signed macOS compiler-v2 delivery is explicitly motion-disabled, and
+non-empty explicit Project Startup SDOs still fail closed because the Project
+model does not carry their complete timeout, retry, failure and persistence
+semantics.
 
 `semanticBindingArtifact` is optional and appears only once at master level.
 It is an immutable reference containing a non-empty trimmed artifact ID, the

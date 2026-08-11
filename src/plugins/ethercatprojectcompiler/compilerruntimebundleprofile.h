@@ -7,7 +7,11 @@
 #include <utils/filepath.h>
 #include <utils/result.h>
 
+#include <optional>
+
 namespace EtherCAT::ProjectCompiler {
+
+struct CompilerPythonRuntimeIdentity;
 
 struct CompilerRuntimeBundleExpectation
 {
@@ -24,6 +28,21 @@ struct CompilerRuntimeBundleExpectation
 
 struct CompilerRuntimeBundleIdentity
 {
+    struct CompanionIdentity
+    {
+        QString bundleVersion;
+        Data::RuntimePackageCompilerSha256 archiveSha256;
+        Data::RuntimePackageCompilerSha256 manifestSha256;
+        Data::RuntimePackageCompilerSha256 keyId;
+        Data::RuntimePackageCompilerSha256 portableIdentitySha256;
+        Data::RuntimePackageCompilerSha256 pythonExecutableSha256;
+        Data::RuntimePackageCompilerSha256 installedTreeSha256;
+
+        bool isValid() const;
+
+        friend bool operator==(const CompanionIdentity &, const CompanionIdentity &) = default;
+    };
+
     QString bundleId;
     QString bundleVersion;
     QString compilerContractName;
@@ -35,6 +54,7 @@ struct CompilerRuntimeBundleIdentity
     Data::RuntimePackageCompilerSha256 requirementsSha256;
     qsizetype fileCount = 0;
     quint64 totalPayloadBytes = 0;
+    std::optional<CompanionIdentity> companion;
 
     bool isValid() const;
 
@@ -42,6 +62,10 @@ struct CompilerRuntimeBundleIdentity
         const CompilerRuntimeBundleIdentity &, const CompilerRuntimeBundleIdentity &)
         = default;
 };
+
+Utils::Result<> validateCompilerRuntimeCompanionBinding(
+    const CompilerRuntimeBundleIdentity &compiler,
+    const CompilerPythonRuntimeIdentity &python);
 
 // Verified view of one already-installed API-068 compiler runtime. The caller
 // supplies the raw32 release key and exact manifest identity from outside the

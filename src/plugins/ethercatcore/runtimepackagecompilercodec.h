@@ -10,7 +10,7 @@
 
 namespace EtherCAT::Core {
 
-// Exact output from one independently provisioned API-042 compiler process.
+// Exact output from one independently provisioned external compiler process.
 // The codec accepts no merged streams: stdout/stderr and process termination
 // remain separate so extra output can never be mistaken for a domain result.
 struct ETHERCATCORE_EXPORT RuntimePackageCompilerProcessOutput

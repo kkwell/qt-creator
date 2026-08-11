@@ -492,6 +492,14 @@ public:
                 profile.reset();
                 return;
             }
+            if (const Utils::Result<> companionBinding
+                = validateCompilerRuntimeCompanionBinding(
+                    runtimeBundle->identity(), pythonRuntime->identity());
+                !companionBinding) {
+                error = companionBinding.error();
+                profile.reset();
+                return;
+            }
             selectedExecutable = runtimeBundle->compilerExecutable();
             this->runtimeBundle = std::move(runtimeBundle);
             this->pythonRuntime = std::move(pythonRuntime);
@@ -553,6 +561,12 @@ public:
                 return Utils::ResultError(Tr::tr("Python runtime profile is unavailable."));
             if (const Utils::Result<> current = pythonRuntime->validateCurrent(); !current)
                 return current;
+            if (const Utils::Result<> companionBinding
+                = validateCompilerRuntimeCompanionBinding(
+                    runtimeBundle->identity(), pythonRuntime->identity());
+                !companionBinding) {
+                return companionBinding;
+            }
         } else if (const Utils::Result<> executable = store.validatePinnedProvisionedFile(
                        lease,
                        profile->executable(),
@@ -607,6 +621,13 @@ public:
             const Utils::Result<> pythonCurrent = pythonRuntime->validateCurrent();
             if (!pythonCurrent) {
                 error = pythonCurrent.error();
+                q->setAvailable(false);
+                return Utils::ResultError(error);
+            }
+            const Utils::Result<> companionBinding = validateCompilerRuntimeCompanionBinding(
+                runtimeBundle->identity(), pythonRuntime->identity());
+            if (!companionBinding) {
+                error = companionBinding.error();
                 q->setAvailable(false);
                 return Utils::ResultError(error);
             }

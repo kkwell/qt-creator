@@ -765,6 +765,65 @@ struct RuntimePackageCompilerFixture
     }
 };
 
+static Data::RuntimePackageCompilerCompileRequest compilerV2FixtureRequest()
+{
+    RuntimePackageCompilerFixture fixture;
+    Data::RuntimePackageCompilerCompileRequest request = fixture.request;
+    request.contractIdentity.contractId = QStringLiteral("ethercat-ide-project-compiler");
+    request.contractIdentity.contractVersion = 2;
+    request.contractIdentity.schemaBundleSha256
+        = RuntimePackageCompilerFixture::sha256("compiler-v2-schema-bundle");
+    request.sourceArtifacts.parameterContractBundle = RuntimePackageCompilerFixture::artifact(
+        Data::RuntimePackageCompilerSourceArtifactKind::ParameterContractBundle,
+        QStringLiteral("phaseb/parameter-contract.zip"),
+        QByteArray("signed-parameter-contract-bundle"));
+    request.deviceSourceEvidence[0].projectAdapterContractVersion
+        = Data::DeviceAdapterContractVersion::V4;
+
+    Data::ProjectSnapshot project = request.projectSnapshotEvidence.snapshot();
+    project.slaves[0].deviceParameters.values = {
+        {QStringLiteral("axis.speed_limit"), Data::EngineeringValue::fromSignedInteger(6000)},
+        {QStringLiteral("motor.encoder_resolution_counts_per_revolution"),
+         Data::EngineeringValue::fromUnsignedInteger(8'388'608)},
+    };
+    const Data::RuntimePackageActivationProjectCapture capture{
+        project,
+        QByteArray("{\"format\":\"compiler-v2-project-fixture\"}\n"),
+        request.projectSnapshotEvidence.documentRevisionNumber(),
+        request.projectSnapshotEvidence.documentRevision(),
+        request.projectSnapshotEvidence.originalBinding(),
+    };
+    request.projectSnapshotEvidence = Data::RuntimePackageCompilerProjectSnapshotEvidence{capture};
+
+    const Data::RuntimePackageCompilerParameterObservedEvidence observed{
+        request.topologyEvidence.captureBootId,
+        quint32(request.topologyEvidence.captureSequence),
+        1,
+        request.topologyEvidence.capturedAtNs + 1,
+        Data::RuntimePackageCompilerSha256{
+            Data::fixedAxisParameterEvidenceProfileSha256()},
+        request.projectProjection.devices[0].position,
+        request.projectProjection.devices[0].stationAddress,
+        request.projectProjection.devices[0].identity,
+        request.projectProjection.devices[0].serialNumber,
+        0x2006,
+        0x09,
+        QByteArray::fromHex("7017"),
+        6000,
+    };
+    request.projectProjection.devices[0].deviceParameters = {
+        {QStringLiteral("axis.speed_limit"),
+         RuntimePackageCompilerFixture::sha256("axis.speed_limit-definition"),
+         6000,
+         observed},
+        {QStringLiteral("motor.encoder_resolution_counts_per_revolution"),
+         RuntimePackageCompilerFixture::sha256("motor.encoder-definition"),
+         8'388'608,
+         std::nullopt},
+    };
+    return request;
+}
+
 static QByteArray readExactFile(const QString &path)
 {
     QFile file(path);
@@ -6674,7 +6733,31 @@ void EtherCATCoreTests::testRuntimePackageCompilerValueSemantics()
     invalidActivationProof = activationProof;
     invalidActivationProof.compileRequest.contractIdentity.contractId.append(
         QStringLiteral(".different"));
-    QVERIFY(invalidActivationProof.compileRequest.isValid());
+    QVERIFY(!invalidActivationProof.compileRequest.isValid());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    QByteArray v2CompileResult
+        = invalidActivationProof.compileResult.envelope.canonicalResult.exactBytes();
+    v2CompileResult.replace(
+        "ethercat-ide-project-compiler-result-v1",
+        "ethercat-ide-project-compiler-result-v2");
+    v2CompileResult.replace("\"format_version\":1", "\"format_version\":2");
+    invalidActivationProof.compileResult.envelope.canonicalResult
+        = RuntimePackageCompilerFixture::canonical(v2CompileResult);
+    QVERIFY(invalidActivationProof.compileResult.isSuccess());
+    QVERIFY(!invalidActivationProof.isValid());
+
+    invalidActivationProof = activationProof;
+    QByteArray v2FinalizeResult
+        = invalidActivationProof.finalizeResult.envelope.canonicalResult.exactBytes();
+    v2FinalizeResult.replace(
+        "ethercat-ide-project-compiler-result-v1",
+        "ethercat-ide-project-compiler-result-v2");
+    v2FinalizeResult.replace("\"format_version\":1", "\"format_version\":2");
+    invalidActivationProof.finalizeResult.envelope.canonicalResult
+        = RuntimePackageCompilerFixture::canonical(v2FinalizeResult);
+    QVERIFY(invalidActivationProof.finalizeResult.isSuccess());
     QVERIFY(!invalidActivationProof.isValid());
 
     invalidActivationProof = activationProof;
@@ -7325,6 +7408,204 @@ void EtherCATCoreTests::testRuntimePackageCompilerCodec()
     QVERIFY(!decodeRuntimePackageCompilerCompileResult(request, malformed, signRequest));
 }
 
+void EtherCATCoreTests::testRuntimePackageCompilerV2Codec()
+{
+    const Data::RuntimePackageCompilerCompileRequest request = compilerV2FixtureRequest();
+    QVERIFY(request.hasValidReservationInputs());
+    QVERIFY(request.isValid());
+    QVERIFY(
+        QMetaType::fromType<Data::RuntimePackageCompilerParameterObservedEvidence>().isValid());
+    QVERIFY(QMetaType::fromType<Data::RuntimePackageCompilerDeviceParameter>().isValid());
+
+    const Utils::Result<Data::RuntimePackageCompilerCanonicalJson> encoded
+        = encodeRuntimePackageCompilerCompileRequest(request);
+    QVERIFY_RESULT(encoded);
+    QCOMPARE(
+        encoded->sha256().value().toHex(),
+        QByteArray("d849847da0f3bf620a2e286dcd33076292737a5289093405a86fa93a813b712f"));
+    const QJsonObject root = QJsonDocument::fromJson(encoded->exactBytes()).object();
+    QCOMPARE(
+        root.value(QStringLiteral("format")).toString(),
+        QStringLiteral("ethercat-ide-project-compiler-request-v2"));
+    QCOMPARE(root.value(QStringLiteral("format_version")).toInt(), 2);
+    const QJsonObject artifact = root.value(QStringLiteral("artifacts"))
+                                     .toObject()
+                                     .value(QStringLiteral("parameter_contract_bundle"))
+                                     .toObject();
+    QCOMPARE(artifact.value(QStringLiteral("path")).toString(),
+             QStringLiteral("phaseb/parameter-contract.zip"));
+    QCOMPARE(artifact.value(QStringLiteral("bytes")).toInteger(), qint64(32));
+    const QJsonArray parameters = root.value(QStringLiteral("project_snapshot"))
+                                      .toObject()
+                                      .value(QStringLiteral("devices"))
+                                      .toArray()
+                                      .at(0)
+                                      .toObject()
+                                      .value(QStringLiteral("device_parameters"))
+                                      .toArray();
+    QCOMPARE(parameters.size(), 2);
+    const QJsonObject parameter = parameters.at(0).toObject();
+    QCOMPARE(parameter.value(QStringLiteral("parameter_id")).toString(),
+             QStringLiteral("axis.speed_limit"));
+    QCOMPARE(parameter.value(QStringLiteral("configured_value")).toInteger(), qint64(6000));
+    const QJsonObject observed = parameter.value(QStringLiteral("observed_evidence")).toObject();
+    QCOMPARE(observed.value(QStringLiteral("format")).toString(),
+             QStringLiteral("axis-parameter-evidence-record-v1"));
+    QCOMPARE(observed.value(QStringLiteral("state")).toString(), QStringLiteral("valid"));
+    QCOMPARE(observed.value(QStringLiteral("raw_value_hex")).toString(), QStringLiteral("7017"));
+    QCOMPARE(observed.value(QStringLiteral("value")).toInteger(), qint64(6000));
+    QVERIFY(parameters.at(1)
+                .toObject()
+                .value(QStringLiteral("observed_evidence"))
+                .isNull());
+
+    RuntimePackageCompilerFixture v1Fixture;
+    const auto v1Encoded = encodeRuntimePackageCompilerCompileRequest(v1Fixture.request);
+    QVERIFY_RESULT(v1Encoded);
+    QVERIFY(!v1Encoded->exactBytes().contains("device_parameters"));
+    QVERIFY(!v1Encoded->exactBytes().contains("parameter_contract_bundle"));
+
+    Data::RuntimePackageCompilerCompileRequest missingBundle = request;
+    missingBundle.sourceArtifacts.parameterContractBundle.reset();
+    QVERIFY(!missingBundle.hasValidReservationInputs());
+    QVERIFY(!encodeRuntimePackageCompilerCompileRequest(missingBundle));
+
+    Data::RuntimePackageCompilerCompileRequest v1ContractConfusion = request;
+    v1ContractConfusion.contractIdentity = v1Fixture.request.contractIdentity;
+    QVERIFY(!v1ContractConfusion.hasValidReservationInputs());
+    QVERIFY(!encodeRuntimePackageCompilerCompileRequest(v1ContractConfusion));
+
+    Data::RuntimePackageCompilerCompileRequest v3ParameterSource = request;
+    v3ParameterSource.deviceSourceEvidence[0].projectAdapterContractVersion
+        = Data::DeviceAdapterContractVersion::V3;
+    QVERIFY(!v3ParameterSource.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest projectValueMismatch = request;
+    auto &mismatchedParameter
+        = projectValueMismatch.projectProjection.devices[0].deviceParameters[0];
+    mismatchedParameter.observedEvidence.reset();
+    mismatchedParameter.configuredValue = 5999;
+    QVERIFY(projectValueMismatch.projectProjection.isValid());
+    QVERIFY(!projectValueMismatch.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest staleEvidence = request;
+    ++staleEvidence.projectProjection.devices[0]
+          .deviceParameters[0]
+          .observedEvidence->bootId;
+    QVERIFY(!staleEvidence.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest wrongEvidenceProfile = request;
+    wrongEvidenceProfile.projectProjection.devices[0]
+        .deviceParameters[0]
+        .observedEvidence->profileSha256
+        = RuntimePackageCompilerFixture::sha256("different-parameter-profile");
+    QVERIFY(!wrongEvidenceProfile.projectProjection.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest wrongEvidenceTuple = request;
+    --wrongEvidenceTuple.projectProjection.devices[0]
+          .deviceParameters[0]
+          .observedEvidence->subIndex;
+    QVERIFY(!wrongEvidenceTuple.projectProjection.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest wrongEvidenceWidth = request;
+    wrongEvidenceWidth.projectProjection.devices[0]
+        .deviceParameters[0]
+        .observedEvidence->rawValue.append('\0');
+    QVERIFY(!wrongEvidenceWidth.projectProjection.isValid());
+
+    Data::RuntimePackageCompilerCompileRequest unorderedParameters = request;
+    unorderedParameters.projectProjection.devices[0].deviceParameters.append(
+        {QStringLiteral("axis.alpha"),
+         RuntimePackageCompilerFixture::sha256("axis.alpha-definition"),
+         1,
+         std::nullopt});
+    QVERIFY(!unorderedParameters.projectProjection.isValid());
+
+    const Data::RuntimePackageCompilerCompileResult compileSeed = successfulCompileResult(request);
+    QByteArray v2CompileResult = compileSeed.envelope.canonicalResult.exactBytes();
+    v2CompileResult.replace(
+        "ethercat-ide-project-compiler-result-v1",
+        "ethercat-ide-project-compiler-result-v2");
+    v2CompileResult.replace("\"format_version\":1", "\"format_version\":2");
+    QByteArray confusedCompileResult = v2CompileResult;
+    confusedCompileResult.replace("\"format_version\":2", "\"format_version\":1");
+    QVERIFY(!decodeRuntimePackageCompilerCompileResult(
+        request,
+        {true, 0, confusedCompileResult, {}},
+        *compileSeed.signRequest));
+    const Utils::Result<Data::RuntimePackageCompilerCompileResult> compileResult
+        = decodeRuntimePackageCompilerCompileResult(
+            request,
+            {true, 0, v2CompileResult, {}},
+            *compileSeed.signRequest);
+    QVERIFY_RESULT(compileResult);
+    QVERIFY(compileResult->isSuccess());
+    QVERIFY(!decodeRuntimePackageCompilerCompileResult(
+        request,
+        {true, 0, compileSeed.envelope.canonicalResult.exactBytes(), {}},
+        *compileSeed.signRequest));
+    QVERIFY(!decodeRuntimePackageCompilerCompileResult(
+        v1Fixture.request,
+        {true, 0, v2CompileResult, {}},
+        *compileSeed.signRequest));
+
+    const Data::RuntimePackageCompilerFinalizeRequest finalizeRequest{
+        request.operationId,
+        request.configurationId,
+        request.contractIdentity,
+        encoded->sha256(),
+        compileResult->signRequest->sha256(),
+        *compileResult->manifestSha256,
+        request.targetProfile.signingKeyIdSha256,
+        request.targetProfile.policyRevision,
+        detachedSigningResponse(request, *compileResult),
+    };
+    QVERIFY(finalizeRequest.isValid());
+    QVERIFY_RESULT(encodeRuntimePackageCompilerFinalizeRequest(finalizeRequest));
+    const Data::RuntimePackageCompilerFinalizeResult finalizeSeed = successfulFinalizeResult(
+        finalizeRequest);
+    QByteArray v2FinalizeResult = finalizeSeed.envelope.canonicalResult.exactBytes();
+    v2FinalizeResult.replace(
+        "ethercat-ide-project-compiler-result-v1",
+        "ethercat-ide-project-compiler-result-v2");
+    v2FinalizeResult.replace("\"format_version\":1", "\"format_version\":2");
+    const Utils::Result<Data::RuntimePackageCompilerFinalizeResult> finalizeResult
+        = decodeRuntimePackageCompilerFinalizeResult(
+            finalizeRequest,
+            {true, 0, v2FinalizeResult, {}},
+            finalizeSeed.packageBytes);
+    QVERIFY_RESULT(finalizeResult);
+    QVERIFY(finalizeResult->isSuccess());
+    QVERIFY(!decodeRuntimePackageCompilerFinalizeResult(
+        finalizeRequest,
+        {true, 0, finalizeSeed.envelope.canonicalResult.exactBytes(), {}},
+        finalizeSeed.packageBytes));
+    Data::RuntimePackageCompilerFinalizeRequest v1FinalizeRequest = finalizeRequest;
+    v1FinalizeRequest.contractIdentity = v1Fixture.request.contractIdentity;
+    QVERIFY(v1FinalizeRequest.isValid());
+    QVERIFY(!decodeRuntimePackageCompilerFinalizeResult(
+        v1FinalizeRequest,
+        {true, 0, v2FinalizeResult, {}},
+        finalizeSeed.packageBytes));
+
+    Data::RuntimePackageCompilerActivationProof v2Proof = successfulActivationProof(request);
+    v2Proof.compileResult.envelope.canonicalResult
+        = RuntimePackageCompilerFixture::canonical(v2CompileResult);
+    v2Proof.finalizeResult.envelope.canonicalResult
+        = RuntimePackageCompilerFixture::canonical(v2FinalizeResult);
+    QVERIFY(v2Proof.isValid());
+
+    Data::RuntimePackageCompilerActivationProof mixedV1CompileResult = v2Proof;
+    mixedV1CompileResult.compileResult = compileSeed;
+    QVERIFY(mixedV1CompileResult.compileResult.isSuccess());
+    QVERIFY(!mixedV1CompileResult.isValid());
+
+    Data::RuntimePackageCompilerActivationProof mixedV1FinalizeResult = v2Proof;
+    mixedV1FinalizeResult.finalizeResult = finalizeSeed;
+    QVERIFY(mixedV1FinalizeResult.finalizeResult.isSuccess());
+    QVERIFY(!mixedV1FinalizeResult.isValid());
+}
+
 void EtherCATCoreTests::testRuntimePackageCompilerCodecRejectsContractConfusion()
 {
     const Data::RuntimePackageCompilerCompileRequest compileRequest = api042GoldenCompileRequest();
@@ -7358,9 +7639,10 @@ void EtherCATCoreTests::testRuntimePackageCompilerCodecRejectsContractConfusion(
 
         Data::RuntimePackageCompilerCompileRequest changedCompile = compileRequest;
         changedCompile.contractIdentity = contract;
-        QVERIFY(changedCompile.isValid());
-        verifyRejected(encodeRuntimePackageCompilerCompileRequest(changedCompile));
-        verifyRejected(decodeRuntimePackageCompilerCompileResult(
+        QVERIFY(!changedCompile.hasValidReservationInputs());
+        QVERIFY(!changedCompile.isValid());
+        QVERIFY(!encodeRuntimePackageCompilerCompileRequest(changedCompile));
+        QVERIFY(!decodeRuntimePackageCompilerCompileResult(
             changedCompile,
             noProcessOutput,
             *proof.compileResult.signRequest));

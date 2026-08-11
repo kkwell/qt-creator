@@ -2,6 +2,8 @@
 
 #include "compilerruntimebundleprofile.h"
 
+#include "compilerpythonruntimeprofile.h"
+
 #include <monocypher-ed25519.h>
 
 #include <QCryptographicHash>
@@ -33,11 +35,8 @@ namespace EtherCAT::ProjectCompiler {
 
 namespace {
 
-constexpr auto bundleFormat = "embedlabs-external-compiler-runtime-bundle-v1";
 constexpr auto bundleId = "org.embedlabs.ethercat.project-compiler";
-constexpr auto signatureDomain = "embedlabs-ethercat-compiler-runtime-bundle-v1";
 constexpr auto compilerContractName = "ethercat-ide-project-compiler";
-constexpr auto compilerImplementation = "ethercat-ide-project-compiler-1.0.0";
 constexpr auto compilerPath = "bin/embedlabs-ecpkg-compiler";
 constexpr auto provisionPath = "bin/embedlabs-ecpkg-compiler-provision";
 constexpr auto verifyPath = "bin/embedlabs-ecpkg-compiler-verify";
@@ -65,6 +64,7 @@ struct FileRecord
 struct ParsedManifest
 {
     CompilerRuntimeBundleIdentity identity;
+    QByteArray signatureDomain;
     QString compiler;
     QString provision;
     QString verify;
@@ -72,6 +72,42 @@ struct ParsedManifest
     QString requirements;
     QList<FileRecord> files;
 };
+
+struct CompilerRuntimeContract
+{
+    quint32 version = 0;
+    QString implementation;
+    QString requestFormat;
+    QString resultFormat;
+    QByteArray signatureDomain;
+};
+
+std::optional<CompilerRuntimeContract> compilerRuntimeContract(const QJsonObject &root)
+{
+    const QString format = root.value(QStringLiteral("format")).toString();
+    const int formatVersion = root.value(QStringLiteral("format_version")).toInt();
+    if (format == QLatin1String("embedlabs-external-compiler-runtime-bundle-v1")
+        && formatVersion == 1) {
+        return CompilerRuntimeContract{
+            1,
+            QStringLiteral("ethercat-ide-project-compiler-1.0.0"),
+            {},
+            {},
+            QByteArrayLiteral("embedlabs-ethercat-compiler-runtime-bundle-v1"),
+        };
+    }
+    if (format == QLatin1String("embedlabs-external-compiler-runtime-bundle-v2")
+        && formatVersion == 2) {
+        return CompilerRuntimeContract{
+            2,
+            QStringLiteral("ethercat-ide-project-compiler-2.0.0"),
+            QStringLiteral("ethercat-ide-project-compiler-request-v2"),
+            QStringLiteral("ethercat-ide-project-compiler-result-v2"),
+            QByteArrayLiteral("embedlabs-ethercat-compiler-runtime-bundle-v2"),
+        };
+    }
+    return std::nullopt;
+}
 
 #ifdef Q_OS_UNIX
 struct TreeEntry
@@ -176,6 +212,7 @@ Utils::Result<ParsedManifest> parseManifest(
     }
 
     const QJsonObject root = document.object();
+    const auto runtimeContract = compilerRuntimeContract(root);
     static const QSet<QString> rootKeys{
         QStringLiteral("artifact_root_contract"),
         QStringLiteral("bundle_id"),
@@ -189,9 +226,7 @@ Utils::Result<ParsedManifest> parseManifest(
         QStringLiteral("runtime"),
         QStringLiteral("signature"),
     };
-    if (!hasExactKeys(root, rootKeys)
-        || root.value(QStringLiteral("format")).toString() != QLatin1String(bundleFormat)
-        || root.value(QStringLiteral("format_version")).toInt() != 1
+    if (!hasExactKeys(root, rootKeys) || !runtimeContract
         || root.value(QStringLiteral("bundle_id")).toString() != QLatin1String(bundleId)
         || root.value(QStringLiteral("bundle_version")).toString()
                != expectation.bundleVersion) {
@@ -199,26 +234,35 @@ Utils::Result<ParsedManifest> parseManifest(
     }
 
     const QJsonObject contract = root.value(QStringLiteral("compiler_contract")).toObject();
-    static const QSet<QString> contractKeys{
+    QSet<QString> contractKeys{
         QStringLiteral("ecpkg_versions"),
         QStringLiteral("implementation"),
         QStringLiteral("name"),
         QStringLiteral("version"),
     };
+    if (runtimeContract->version == 2) {
+        contractKeys.insert(QStringLiteral("request_format"));
+        contractKeys.insert(QStringLiteral("result_format"));
+    }
     const QJsonArray ecpkgVersions = contract.value(QStringLiteral("ecpkg_versions")).toArray();
     if (!hasExactKeys(contract, contractKeys)
         || contract.value(QStringLiteral("name")).toString()
                != QLatin1String(compilerContractName)
-        || contract.value(QStringLiteral("version")).toInt() != 1
+        || contract.value(QStringLiteral("version")).toInt() != int(runtimeContract->version)
         || contract.value(QStringLiteral("implementation")).toString()
-               != QLatin1String(compilerImplementation)
+               != runtimeContract->implementation
+        || (runtimeContract->version == 2
+            && (contract.value(QStringLiteral("request_format")).toString()
+                    != runtimeContract->requestFormat
+                || contract.value(QStringLiteral("result_format")).toString()
+                       != runtimeContract->resultFormat))
         || ecpkgVersions.size() != 1 || ecpkgVersions.at(0).toInt() != 2) {
         return Utils::ResultError(
             QStringLiteral("Compiler runtime compiler contract is unsupported."));
     }
 
     const QJsonObject runtime = root.value(QStringLiteral("runtime")).toObject();
-    static const QSet<QString> runtimeKeys{
+    QSet<QString> runtimeKeys{
         QStringLiteral("implementation"),
         QStringLiteral("native_windows_supported"),
         QStringLiteral("platforms"),
@@ -227,9 +271,14 @@ Utils::Result<ParsedManifest> parseManifest(
         QStringLiteral("requirements_path"),
         QStringLiteral("requirements_sha256"),
     };
+    if (runtimeContract->version == 2) {
+        runtimeKeys.insert(QStringLiteral("companion"));
+        runtimeKeys.insert(QStringLiteral("primary_target"));
+    }
     const QJsonArray platforms = runtime.value(QStringLiteral("platforms")).toArray();
     const auto requirementsSha = sha256FromJson(
         runtime.value(QStringLiteral("requirements_sha256")));
+    std::optional<CompilerRuntimeBundleIdentity::CompanionIdentity> companionIdentity;
     if (!hasExactKeys(runtime, runtimeKeys)
         || runtime.value(QStringLiteral("implementation")).toString() != QLatin1String("CPython")
         || platforms.size() != 2 || platforms.at(0).toString() != QLatin1String("darwin")
@@ -242,6 +291,47 @@ Utils::Result<ParsedManifest> parseManifest(
         || !requirementsSha
         || runtime.value(QStringLiteral("native_windows_supported")).toBool(true)) {
         return Utils::ResultError(QStringLiteral("Compiler runtime host contract is invalid."));
+    }
+    if (runtimeContract->version == 2) {
+        const QJsonObject companion = runtime.value(QStringLiteral("companion")).toObject();
+        static const QSet<QString> companionKeys{
+            QStringLiteral("archive_sha256"),
+            QStringLiteral("bundle_version"),
+            QStringLiteral("installed_tree_sha256"),
+            QStringLiteral("key_id"),
+            QStringLiteral("manifest_sha256"),
+            QStringLiteral("portable_identity_sha256"),
+            QStringLiteral("python_executable_sha256"),
+        };
+        const auto archiveSha = sha256FromJson(companion.value(QStringLiteral("archive_sha256")));
+        const auto installedTreeSha = sha256FromJson(
+            companion.value(QStringLiteral("installed_tree_sha256")));
+        const auto companionKeyId = sha256FromJson(companion.value(QStringLiteral("key_id")));
+        const auto companionManifestSha = sha256FromJson(
+            companion.value(QStringLiteral("manifest_sha256")));
+        const auto portableIdentitySha = sha256FromJson(
+            companion.value(QStringLiteral("portable_identity_sha256")));
+        const auto pythonExecutableSha = sha256FromJson(
+            companion.value(QStringLiteral("python_executable_sha256")));
+        if (runtime.value(QStringLiteral("primary_target")).toString()
+                != QLatin1String("macos-arm64")
+            || !hasExactKeys(companion, companionKeys)
+            || companion.value(QStringLiteral("bundle_version")).toString()
+                   != QLatin1String("1.0.4")
+            || !archiveSha || !installedTreeSha || !companionKeyId || !companionManifestSha
+            || !portableIdentitySha || !pythonExecutableSha) {
+            return Utils::ResultError(
+                QStringLiteral("Compiler runtime companion contract is invalid."));
+        }
+        companionIdentity = CompilerRuntimeBundleIdentity::CompanionIdentity{
+            companion.value(QStringLiteral("bundle_version")).toString(),
+            *archiveSha,
+            *companionManifestSha,
+            *companionKeyId,
+            *portableIdentitySha,
+            *pythonExecutableSha,
+            *installedTreeSha,
+        };
     }
 
     const QJsonObject entrypoints = root.value(QStringLiteral("entrypoints")).toObject();
@@ -308,7 +398,8 @@ Utils::Result<ParsedManifest> parseManifest(
     const auto expectedKeyId = sha256(expectation.signingPublicKey);
     if (!hasExactKeys(signature, signatureKeys)
         || signature.value(QStringLiteral("algorithm")).toString() != QLatin1String("ed25519")
-        || signature.value(QStringLiteral("domain")).toString() != QLatin1String(signatureDomain)
+        || signature.value(QStringLiteral("domain")).toString().toLatin1()
+               != runtimeContract->signatureDomain
         || signature.value(QStringLiteral("signature_file")).toString()
                != QLatin1String("manifest.sig")
         || !manifestKeyId || *manifestKeyId != expectedKeyId) {
@@ -386,17 +477,19 @@ Utils::Result<ParsedManifest> parseManifest(
     }
 
     ParsedManifest result;
+    result.signatureDomain = runtimeContract->signatureDomain;
     result.identity.bundleId = QString::fromLatin1(bundleId);
     result.identity.bundleVersion = expectation.bundleVersion;
     result.identity.compilerContractName = QString::fromLatin1(compilerContractName);
-    result.identity.compilerContractVersion = 1;
-    result.identity.compilerImplementation = QString::fromLatin1(compilerImplementation);
+    result.identity.compilerContractVersion = runtimeContract->version;
+    result.identity.compilerImplementation = runtimeContract->implementation;
     result.identity.ecpkgVersions = {2};
     result.identity.manifestSha256 = sha256(exactBytes);
     result.identity.signingKeyId = expectedKeyId;
     result.identity.requirementsSha256 = *requirementsSha;
     result.identity.fileCount = records.size();
     result.identity.totalPayloadBytes = totalBytes;
+    result.identity.companion = companionIdentity;
     result.compiler = QString::fromLatin1(compilerPath);
     result.provision = QString::fromLatin1(provisionPath);
     result.verify = QString::fromLatin1(verifyPath);
@@ -683,7 +776,15 @@ Utils::Result<CompilerRuntimeBundleProfile> CompilerRuntimeBundleProfile::loadIm
             QStringLiteral("Compiler runtime manifest or signature identity does not match."));
     }
 
-    QByteArray signedBytes(signatureDomain);
+    const Utils::Result<ParsedManifest> parsed = parseManifest(*manifestBytes, expectation);
+    if (!parsed)
+        return Utils::ResultError(parsed.error());
+    if (parsed->identity.manifestSha256 != expectation.manifestSha256) {
+        return Utils::ResultError(
+            QStringLiteral("Compiler runtime manifest digest is inconsistent."));
+    }
+
+    QByteArray signedBytes = parsed->signatureDomain;
     signedBytes.append('\0');
     signedBytes.append(*manifestBytes);
     const int signatureStatus = crypto_ed25519_check(
@@ -694,14 +795,6 @@ Utils::Result<CompilerRuntimeBundleProfile> CompilerRuntimeBundleProfile::loadIm
     if (signatureStatus != 0) {
         return Utils::ResultError(
             QStringLiteral("Compiler runtime manifest signature is invalid."));
-    }
-
-    const Utils::Result<ParsedManifest> parsed = parseManifest(*manifestBytes, expectation);
-    if (!parsed)
-        return Utils::ResultError(parsed.error());
-    if (parsed->identity.manifestSha256 != expectation.manifestSha256) {
-        return Utils::ResultError(
-            QStringLiteral("Compiler runtime manifest digest is inconsistent."));
     }
 
     QSet<QString> expectedFiles{QStringLiteral("manifest.json"), QStringLiteral("manifest.sig")};
@@ -779,18 +872,61 @@ bool CompilerRuntimeBundleExpectation::isValid() const
            && manifestSha256.isValid();
 }
 
+bool CompilerRuntimeBundleIdentity::CompanionIdentity::isValid() const
+{
+    return isSemanticVersion(bundleVersion) && archiveSha256.isValid()
+           && manifestSha256.isValid() && keyId.isValid() && portableIdentitySha256.isValid()
+           && pythonExecutableSha256.isValid() && installedTreeSha256.isValid();
+}
+
 bool CompilerRuntimeBundleIdentity::isValid() const
 {
+    const bool supportedCompiler
+        = (compilerContractVersion == 1
+           && compilerImplementation
+                  == QLatin1String("ethercat-ide-project-compiler-1.0.0"))
+          || (compilerContractVersion == 2
+              && compilerImplementation
+                     == QLatin1String("ethercat-ide-project-compiler-2.0.0"));
+    const bool companionIsValid
+        = compilerContractVersion == 1 ? !companion : companion && companion->isValid();
     return bundleId == QLatin1String(::EtherCAT::ProjectCompiler::bundleId)
            && isSemanticVersion(bundleVersion)
            && compilerContractName
                   == QLatin1String(::EtherCAT::ProjectCompiler::compilerContractName)
-           && compilerContractVersion == 1
-           && compilerImplementation
-                  == QLatin1String(::EtherCAT::ProjectCompiler::compilerImplementation)
+           && supportedCompiler
            && ecpkgVersions == QList<quint32>{2} && manifestSha256.isValid()
            && signingKeyId.isValid() && requirementsSha256.isValid() && fileCount > 0
-           && fileCount <= maximumFiles && totalPayloadBytes <= maximumTotalBytes;
+           && fileCount <= maximumFiles && totalPayloadBytes <= maximumTotalBytes
+           && companionIsValid;
+}
+
+Utils::Result<> validateCompilerRuntimeCompanionBinding(
+    const CompilerRuntimeBundleIdentity &compiler,
+    const CompilerPythonRuntimeIdentity &python)
+{
+    if (!compiler.isValid() || !python.isValid()) {
+        return Utils::ResultError(
+            QStringLiteral("Compiler runtime companion identities are invalid."));
+    }
+    if (compiler.compilerContractVersion == 1)
+        return Utils::ResultOk;
+    if (!compiler.companion) {
+        return Utils::ResultError(
+            QStringLiteral("Compiler runtime companion identity is unavailable."));
+    }
+    const CompilerRuntimeBundleIdentity::CompanionIdentity &companion = *compiler.companion;
+    if (companion.bundleVersion != python.companionVersion
+        || companion.archiveSha256 != python.companionBundleSha256
+        || companion.manifestSha256 != python.companionManifestSha256
+        || companion.keyId != python.companionKeyId
+        || companion.portableIdentitySha256 != python.portableIdentitySha256
+        || companion.pythonExecutableSha256 != python.pythonExecutableSha256
+        || companion.installedTreeSha256 != python.installedTreeSha256) {
+        return Utils::ResultError(
+            QStringLiteral("Compiler runtime names a different Python companion identity."));
+    }
+    return Utils::ResultOk;
 }
 
 Utils::Result<CompilerRuntimeBundleProfile> CompilerRuntimeBundleProfile::load(

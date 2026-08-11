@@ -375,6 +375,11 @@ Utils::Result<CompilerRuntimeBootstrapProfile> CompilerRuntimeBootstrapProfile::
          *portableIdentitySha});
     if (!python)
         return Utils::ResultError(python.error());
+    if (const Utils::Result<> companionBinding = validateCompilerRuntimeCompanionBinding(
+            compiler->identity(), python->identity());
+        !companionBinding) {
+        return Utils::ResultError(companionBinding.error());
+    }
 
     const Utils::Result<QByteArray> stableExpectations
         = readProvisionedRegularLeaf(expectationFile, maximumExpectationBytes, false);

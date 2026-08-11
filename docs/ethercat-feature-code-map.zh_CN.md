@@ -426,50 +426,51 @@ python3 scripts/ethercat_feature_locator.py check
 
 #### `ethercat.compiler.project-projection` — 工程快照到编译请求
 
-把工程、真实拓扑、ESI、Adapter、目标能力和固定构建身份投影为严格编译输入；当前任意非空设备参数在外部编译前 fail closed。
+把工程、真实拓扑、ESI、Adapter、目标能力和固定构建身份投影为严格编译输入；compiler v2 可确定性携带完整设备参数与同拓扑只读实测证据。
 
 - Owner：`EtherCATProjectCompiler`（[`src/plugins/ethercatprojectcompiler`](../src/plugins/ethercatprojectcompiler)）
 - 运行边界：`engineering-only`
 - 证据边界：`unit`、`artifact`
 - 修改入口：
-  - [`src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp`](../src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp)：严格工程投影和非空设备参数 fail-closed 校验；`ProvisionedRuntimePackageCompilerProjectRequestBuilder::build`
-  - [`src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp`](../src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp)：compile-recovery payload v2 保留设备参数字段，v1 兼容为空；`writeDeviceParameterConfiguration`、`readDeviceParameterConfiguration`、`writeOfflineSlave`、`readOfflineSlave`
+  - [`src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp`](../src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprojectrequestbuilder.cpp)：v1 严格工程投影及 v2 已资格化参数、definition 摘要和同拓扑实测证据投影；`ProvisionedRuntimePackageCompilerProjectRequestBuilder::build`
+  - [`src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp`](../src/plugins/ethercatprojectcompiler/runtimepackagecompilercompilerecoverycodec.cpp)：compile-recovery payload v3 保留参数投影、实测证据和参数合同包，并兼容 v1/v2；`writeVersionThreeExtensions`、`readVersionThreeExtensions`、`writeCompilerDeviceParameter`、`readCompilerDeviceParameter`
 - 公共合同：
   - [`src/plugins/ethercatcore/runtimepackagecompilerprojectrequestbuilder.h`](../src/plugins/ethercatcore/runtimepackagecompilerprojectrequestbuilder.h)：工程编译请求构建边界；`class ETHERCATCORE_EXPORT RuntimePackageCompilerProjectRequestBuilder`
-  - [`src/libs/ethercatdata/runtimepackagecompiler.cpp`](../src/libs/ethercatdata/runtimepackagecompiler.cpp)：编译请求值合同拒绝未投影的非空设备参数；`projectDeviceParametersAreEmpty`、`RuntimePackageCompilerCompileRequest::hasValidReservationInputs`
+  - [`src/libs/ethercatdata/runtimepackagecompiler.cpp`](../src/libs/ethercatdata/runtimepackagecompiler.cpp)：v1 空参数兼容与 v2 参数、来源、工程快照和实测拓扑闭包；`RuntimePackageCompilerDeviceParameter::isValid`、`RuntimePackageCompilerCompileRequest::hasValidReservationInputs`、`RuntimePackageCompilerCompileRequest::isValid`
 - 定向测试：
-  - [`src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp`](../src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp)（`artifact`）：`testProjectRequestBuilderProvisioningAndDeterminism`、`testDeviceParametersFailClosedBeforeCompilation`、`testCompileRecoveryRoundTrip`、`testCompileRecoveryVersionOneCompatibility`、`testProjectRequestBuilderFailsClosedOnUnprovenTopology`
+  - [`src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp`](../src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp)（`artifact`）：`testProjectRequestBuilderProvisioningAndDeterminism`、`testDeviceParametersFailClosedBeforeCompilation`、`testDeviceParametersProjectWithCompilerV2`、`testCompileRecoveryRoundTrip`、`testCompileRecoveryVersionOneCompatibility`、`testProjectRequestBuilderFailsClosedOnUnprovenTopology`
 - 相关文档：[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)
 - 前置功能：`ethercat.project.model-format`、`ethercat.core.device-parameter-contract`、`ethercat.adapters.catalog-authorization`、`ethercat.product-api.topology-evidence`
-- 边界提醒：不受支持的 PDO、Startup SDO、DC 或非空设备参数必须结构化拒绝，不能静默回退。
-- 边界提醒：compile-recovery v2 编解码设备参数字段且兼容 v1 空值，但这不是完整 compiler projection，也不授权部署。
+- 边界提醒：v1 请求继续要求设备参数和参数合同包为空，原 canonical bytes 与 SHA 不变；v2 只接受精确合同身份、完整 Qualified Adapter v4 参数闭包和可选的同 Session/Boot/拓扑实测记录。
+- 边界提醒：Project-only 参数不得伪造 observed；CoE observed 只有精确固定对象、位宽、换算和值匹配时才进入请求。
+- 边界提醒：显式非空 Startup SDO 仍因缺少 timeout/retry/failure/persistence 等完整签名执行语义而 fail closed，不能猜测默认值。
 
 #### `ethercat.compiler.backend` — 外部编译器与不可变工件
 
-调用已配置的外部 compile/finalize/query/verify 后端，并保存幂等操作证据。
+调用已配置的 v1/v2 外部 compile/finalize/query/verify 后端，并保存幂等操作与参数合同证据。
 
 - Owner：`EtherCATProjectCompiler`（[`src/plugins/ethercatprojectcompiler`](../src/plugins/ethercatprojectcompiler)）
 - 运行边界：`engineering-only`
 - 证据边界：`unit`、`artifact`
 - 修改入口：
   - [`src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp`](../src/plugins/ethercatprojectcompiler/provisionedruntimepackagecompilerprovider.cpp)：双 Profile 外部进程、空白环境和启动前后复验；`ProvisionedRuntimePackageCompilerProvider::compile`、`ProvisionedRuntimePackageCompilerProvider::verify`、`validateExecutionFiles`
-  - [`src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp`](../src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp)：API-068 签名编译器树、外部信任锚和导入根闭集校验；`CompilerRuntimeBundleProfile::load`、`CompilerRuntimeBundleProfile::validateCurrent`、`CompilerRuntimeBundleProfile::compilerImportRoot`
+  - [`src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp`](../src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.cpp)：v1/v2 签名编译器树、签名域、外部信任锚和 v2 Python companion 身份闭包校验；`CompilerRuntimeBundleProfile::load`、`CompilerRuntimeBundleProfile::validateCurrent`、`validateCompilerRuntimeCompanionBinding`
   - [`src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.cpp`](../src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.cpp)：API-070 签名 companion 与可重定位 Python 树闭集校验；`CompilerPythonRuntimeProfile::load`、`CompilerPythonRuntimeProfile::validateCurrent`
-  - [`src/plugins/ethercatprojectcompiler/compileroperationstore.cpp`](../src/plugins/ethercatprojectcompiler/compileroperationstore.cpp)：持久幂等账本；`CompilerOperationStore`
+  - [`src/plugins/ethercatprojectcompiler/compileroperationstore.cpp`](../src/plugins/ethercatprojectcompiler/compileroperationstore.cpp)：持久幂等账本、参数合同物化与激活证明复核；`CompilerOperationStore::materializeCompileArtifacts`、`CompilerOperationStore::validateActivationProof`
 - 公共合同：
-  - [`src/plugins/ethercatcore/runtimepackagecompilercodec.cpp`](../src/plugins/ethercatcore/runtimepackagecompilercodec.cpp)：固定 API-042 v1 字节合同、精确合同 ID/版本门禁和严格结果解码；`encodeRuntimePackageCompilerCompileRequest`、`encodeRuntimePackageCompilerFinalizeRequest`、`encodeRuntimePackageCompilerVerifyRequest`、`decodeRuntimePackageCompilerCompileResult`、`decodeRuntimePackageCompilerFinalizeResult`、`decodeRuntimePackageCompilerQueryResult`、`decodeRuntimePackageCompilerVerifyResult`
+  - [`src/plugins/ethercatcore/runtimepackagecompilercodec.cpp`](../src/plugins/ethercatcore/runtimepackagecompilercodec.cpp)：v1 字节兼容、精确 v2 参数 JSON、合同 ID/版本门禁和严格结果解码；`encodeRuntimePackageCompilerCompileRequest`、`encodeRuntimePackageCompilerFinalizeRequest`、`encodeRuntimePackageCompilerVerifyRequest`、`decodeRuntimePackageCompilerCompileResult`、`decodeRuntimePackageCompilerFinalizeResult`、`decodeRuntimePackageCompilerQueryResult`、`decodeRuntimePackageCompilerVerifyResult`
   - [`src/plugins/ethercatcore/runtimepackagecompilerprovider.h`](../src/plugins/ethercatcore/runtimepackagecompilerprovider.h)：可替换编译器 Provider 合同；`class ETHERCATCORE_EXPORT RuntimePackageCompilerProvider`
   - [`src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.h`](../src/plugins/ethercatprojectcompiler/compilerruntimebundleprofile.h)：API-068 固定版本、外部公钥和不可变树身份合同；`struct CompilerRuntimeBundleExpectation`、`class CompilerRuntimeBundleProfile`
   - [`src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.h`](../src/plugins/ethercatprojectcompiler/compilerpythonruntimeprofile.h)：API-070 固定版本、独立公钥和便携身份合同；`struct CompilerPythonRuntimeExpectation`、`class CompilerPythonRuntimeProfile`
 - 定向测试：
-  - [`src/plugins/ethercatcore/ethercatcoretests.cpp`](../src/plugins/ethercatcore/ethercatcoretests.cpp)（`unit`）：`testRuntimePackageCompilerCodec`、`testRuntimePackageCompilerCodecRejectsContractConfusion`
-  - [`src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp`](../src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp)（`artifact`）：`testPythonRuntimeProfileVerifiesSignedInstalledTree`、`testRuntimeBundleProfileVerifiesInstalledTree`、`testCompileProcessAndImmutableEvidence`、`testFinalizeQueryVerifyAndRestart`
+  - [`src/plugins/ethercatcore/ethercatcoretests.cpp`](../src/plugins/ethercatcore/ethercatcoretests.cpp)（`unit`）：`testRuntimePackageCompilerCodec`、`testRuntimePackageCompilerV2Codec`、`testRuntimePackageCompilerCodecRejectsContractConfusion`
+  - [`src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp`](../src/plugins/ethercatprojectcompiler/ethercatprojectcompilertests.cpp)（`artifact`）：`testPythonRuntimeProfileVerifiesSignedInstalledTree`、`testRuntimeBundleProfileVerifiesInstalledTree`、`testDeviceParametersProjectWithCompilerV2`、`testCompileProcessAndImmutableEvidence`、`testFinalizeQueryVerifyAndRestart`
 - 相关文档：[`docs/ethercat-plugin-development-guide.zh_CN.md`](../docs/ethercat-plugin-development-guide.zh_CN.md)、[`docs/ethercat-compiler-runtime.md`](../docs/ethercat-compiler-runtime.md)
 - 前置功能：`ethercat.compiler.project-projection`
 - 边界提醒：生产私钥不进入 IDE；签名由外部 signer 或 HSM 完成。
-- 边界提醒：固定 v1 codec 只接受 ethercat-ide-project-compiler-contract-v1/version 1；未知 ID 或 v2 在请求编码或结果接受时 fail closed，不能用 provisioning 重标记 v1 wire；schema bundle 摘要继续由 provisioning、Provider、bootstrap 和 operation store 的完整相等性绑定。
-- 边界提醒：API-068 与 API-070 使用独立外部信任锚；Provider 不从 PATH、系统 Python 或复制出的 wrapper 推断运行时。
-- 边界提醒：当前双 Profile 正例是 unit/artifact 动态修正版 fixture，不代表产品 bootstrap、原生修正版 API-070 或真机验收。
+- 边界提醒：v1 codec 只接受 ethercat-ide-project-compiler-contract-v1/version 1；v2 只接受 ethercat-ide-project-compiler/version 2，结果身份必须与请求一致，不能用 provisioning 重标记 wire。
+- 边界提醒：v2 compiler manifest 的 companion version/archive/manifest/key/executable/tree/portable identity 七项必须与实际 Python Profile 全值相等；参数合同包同时进入工件根、operation store、recovery v3 和 activation proof。
+- 边界提醒：API-078 当前交付的签名 v2 runtime 为 motion-disabled，不能生成 API-077 v0.4.2 Section 9；它只证明参数编译合同，不证明 IDE 手动运动。
 
 #### `ethercat.compiler.preparation` — 可恢复的编译准备事务
 

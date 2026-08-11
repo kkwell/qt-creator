@@ -222,6 +222,28 @@ std::optional<QByteArray> rootValue(const QByteArray &canonical, QByteArrayView 
     return std::nullopt;
 }
 
+QList<QByteArray> arrayItems(QByteArrayView array)
+{
+    QList<QByteArray> result;
+    if (array.size() < 2 || array.front() != '[' || array.back() != ']')
+        return {};
+    qsizetype offset = 1;
+    if (array[offset] == ']')
+        return result;
+    while (offset < array.size()) {
+        const qsizetype start = offset;
+        if (!skipValue(array, &offset))
+            return {};
+        result.append(QByteArray(array.sliced(start, offset - start)));
+        if (offset < array.size() && array[offset] == ']')
+            return result;
+        if (offset >= array.size() || array[offset] != ',')
+            return {};
+        ++offset;
+    }
+    return {};
+}
+
 std::optional<quint64> unsignedRootValue(const QByteArray &canonical, QByteArrayView key)
 {
     const auto raw = rootValue(canonical, key);
@@ -419,17 +441,21 @@ QByteArray digestObject(const QJsonValue &value)
 
 std::optional<QByteArray> effectiveCompanion(
     const QJsonObject &request,
+    bool versionTwo,
     const QByteArray &configurationId,
     const QByteArray &compiledProjectSha,
     const QByteArray &intentSha,
     const QByteArray &topologySha,
     const QByteArray &targetSha,
-    const QByteArray &adapterSha)
+    const QByteArray &adapterSha,
+    const QByteArray &parameterContractSha,
+    const QList<QByteArray> &deviceParameterDigests)
 {
     const QJsonObject snapshot = request.value(QStringLiteral("project_snapshot")).toObject();
     const QJsonArray requestDevices = snapshot.value(QStringLiteral("devices")).toArray();
     QList<QByteArray> devices;
-    for (const QJsonValue &value : requestDevices) {
+    for (qsizetype deviceIndex = 0; deviceIndex < requestDevices.size(); ++deviceIndex) {
+        const QJsonValue value = requestDevices.at(deviceIndex);
         const QJsonObject device = value.toObject();
         const QJsonObject target
             = device.value(QStringLiteral("controller_adapter_target")).toObject();
@@ -446,7 +472,7 @@ std::optional<QByteArray> effectiveCompanion(
         const auto station = canonicalValue(device.value(QStringLiteral("station_address")));
         if (!position || !station)
             return std::nullopt;
-        devices.append(jsonObject({
+        JsonMembers deviceMembers{
             {QStringLiteral("adapter_id"),
              jsonString(target.value(QStringLiteral("adapter_id")).toString())},
             {QStringLiteral("adapter_sha256"),
@@ -479,14 +505,22 @@ std::optional<QByteArray> effectiveCompanion(
              jsonString(
                  QString::fromLatin1(digestObject(device.value(QStringLiteral("startup_sdos")))))},
             {QStringLiteral("station_address"), *station},
-        }));
+        };
+        if (versionTwo) {
+            if (deviceParameterDigests.size() != requestDevices.size())
+                return std::nullopt;
+            deviceMembers.insert(
+                QStringLiteral("device_parameters_sha256"),
+                jsonString(QString::fromLatin1(deviceParameterDigests.at(deviceIndex))));
+        }
+        devices.append(jsonObject(deviceMembers));
     }
     const auto documentRevision = canonicalValue(
         snapshot.value(QStringLiteral("document_revision")));
     const auto master = canonicalValue(snapshot.value(QStringLiteral("master")));
     if (!documentRevision || !master || devices.isEmpty())
         return std::nullopt;
-    return canonicalDocument({
+    JsonMembers companionMembers{
         {QStringLiteral("adapter_bundle_sha256"), jsonString(QString::fromLatin1(adapterSha))},
         {QStringLiteral("compiled_project_sha256"),
          jsonString(QString::fromLatin1(compiledProjectSha))},
@@ -504,7 +538,13 @@ std::optional<QByteArray> effectiveCompanion(
          jsonString(snapshot.value(QStringLiteral("project_id")).toString())},
         {QStringLiteral("target_profile_sha256"), jsonString(QString::fromLatin1(targetSha))},
         {QStringLiteral("topology_evidence_sha256"), jsonString(QString::fromLatin1(topologySha))},
-    });
+    };
+    if (versionTwo) {
+        companionMembers.insert(
+            QStringLiteral("parameter_contract_bundle_sha256"),
+            jsonString(QString::fromLatin1(parameterContractSha)));
+    }
+    return canonicalDocument(companionMembers);
 }
 
 QByteArray compilerRecord(
@@ -559,6 +599,18 @@ int compileCommand(const Arguments &arguments)
     const auto configurationValue = unsignedRootValue(requestBytes, "configuration_id");
     if (!request || !configurationId || !configurationValue || *configurationValue == 0)
         return fail(failureDocument("ECOMP-TEST-REQUEST", "input", "$.request", "request invalid"));
+    const bool versionOne
+        = request->value(QStringLiteral("format")).toString()
+              == QStringLiteral("ethercat-ide-project-compiler-request-v1")
+          && request->value(QStringLiteral("format_version")).toInteger() == 1;
+    const bool versionTwo
+        = request->value(QStringLiteral("format")).toString()
+              == QStringLiteral("ethercat-ide-project-compiler-request-v2")
+          && request->value(QStringLiteral("format_version")).toInteger() == 2;
+    if (!versionOne && !versionTwo) {
+        return fail(failureDocument(
+            "ECOMP-TEST-CONTRACT", "input", "$.format", "request contract unsupported"));
+    }
     const QString operationId = request->value(QStringLiteral("operation_id")).toString();
     const QString ledgerPath = arguments.values.value(QStringLiteral("ledger"));
     appendObservation(
@@ -590,9 +642,36 @@ int compileCommand(const Arguments &arguments)
             "ECOMP-TEST-TARGET", "capability", "$.artifacts.target_profile", "target invalid"));
     }
     const auto target = objectDocument(targetBytes);
-    const auto projectData = canonicalValue(request->value(QStringLiteral("project_snapshot")));
+    const auto projectData = rootValue(requestBytes, QByteArrayView("project_snapshot"));
     if (!target || !projectData)
         return fail(failureDocument("ECOMP-TEST-JSON", "input", "$.request", "JSON invalid"));
+
+    QList<QByteArray> deviceParameterDigests;
+    if (versionTwo) {
+        QByteArray projectObject = *projectData;
+        projectObject.append('\n');
+        const auto deviceArray = rootValue(projectObject, QByteArrayView("devices"));
+        if (!deviceArray) {
+            return fail(failureDocument(
+                "ECOMP-TEST-PARAMETERS",
+                "input",
+                "$.project_snapshot.devices",
+                "device parameters missing"));
+        }
+        const QList<QByteArray> rawDevices = arrayItems(*deviceArray);
+        for (QByteArray rawDevice : rawDevices) {
+            rawDevice.append('\n');
+            const auto parameters = rootValue(rawDevice, QByteArrayView("device_parameters"));
+            if (!parameters) {
+                return fail(failureDocument(
+                    "ECOMP-TEST-PARAMETERS",
+                    "input",
+                    "$.project_snapshot.devices[].device_parameters",
+                    "device parameters missing"));
+            }
+            deviceParameterDigests.append(sha256(*parameters + '\n'));
+        }
+    }
 
     const QByteArray projectDocument = *projectData + '\n';
     const QByteArray compiledProjectSha = sha256(projectDocument);
@@ -609,14 +688,35 @@ int compileCommand(const Arguments &arguments)
                                        .value(QStringLiteral("sha256"))
                                        .toString()
                                        .toLatin1();
+    QByteArray parameterContractSha;
+    if (versionTwo) {
+        const QJsonObject descriptor
+            = artifacts.value(QStringLiteral("parameter_contract_bundle")).toObject();
+        const QString parameterContractPath
+            = QDir(arguments.values.value(QStringLiteral("artifact-root")))
+                  .filePath(descriptor.value(QStringLiteral("path")).toString());
+        QByteArray parameterContractBytes;
+        parameterContractSha = descriptor.value(QStringLiteral("sha256")).toString().toLatin1();
+        if (!readFile(parameterContractPath, &parameterContractBytes)
+            || sha256(parameterContractBytes) != parameterContractSha) {
+            return fail(failureDocument(
+                "ECOMP-TEST-PARAMETER-CONTRACT",
+                "input",
+                "$.artifacts.parameter_contract_bundle",
+                "parameter contract invalid"));
+        }
+    }
     const auto companion = effectiveCompanion(
         *request,
+        versionTwo,
         *configurationId,
         compiledProjectSha,
         intentSha,
         topologySha,
         targetSha,
-        adapterSha);
+        adapterSha,
+        parameterContractSha,
+        deviceParameterDigests);
     if (!companion)
         return fail(failureDocument(
             "ECOMP-TEST-COMPANION", "configuration", "$.project_snapshot", "companion invalid"));
@@ -690,8 +790,10 @@ int compileCommand(const Arguments &arguments)
         {QStringLiteral("effective_project_companion_sha256"),
          jsonString(QString::fromLatin1(companionSha))},
         {QStringLiteral("format"),
-         jsonString(QStringLiteral("ethercat-ide-project-compiler-result-v1"))},
-        {QStringLiteral("format_version"), QByteArray("1")},
+         jsonString(
+             versionTwo ? QStringLiteral("ethercat-ide-project-compiler-result-v2")
+                        : QStringLiteral("ethercat-ide-project-compiler-result-v1"))},
+        {QStringLiteral("format_version"), versionTwo ? QByteArray("2") : QByteArray("1")},
         {QStringLiteral("intent_sha256"), jsonString(QString::fromLatin1(intentSha))},
         {QStringLiteral("manifest_sha256"), jsonString(QString::fromLatin1(manifestSha))},
         {QStringLiteral("operation_id"), jsonString(operationId)},
@@ -730,6 +832,10 @@ int finalizeCommand(const Arguments &arguments)
         return fail(
             failureDocument("ECOMP-TEST-FINALIZE", "signing", "$.sign_response", "input invalid"));
     const QString operationId = request->value(QStringLiteral("operation_id")).toString();
+    const bool versionTwo
+        = request->value(QStringLiteral("format")).toString()
+              == QStringLiteral("ethercat-ide-project-compiler-request-v2")
+          && request->value(QStringLiteral("format_version")).toInteger() == 2;
     const QString ledgerPath = arguments.values.value(QStringLiteral("ledger"));
     appendObservation(
         ledgerPath + QStringLiteral(".calls"),
@@ -811,8 +917,10 @@ int finalizeCommand(const Arguments &arguments)
     const QByteArray result = canonicalDocument({
         {QStringLiteral("configuration_id"), *configurationId},
         {QStringLiteral("format"),
-         jsonString(QStringLiteral("ethercat-ide-project-compiler-result-v1"))},
-        {QStringLiteral("format_version"), QByteArray("1")},
+         jsonString(
+             versionTwo ? QStringLiteral("ethercat-ide-project-compiler-result-v2")
+                        : QStringLiteral("ethercat-ide-project-compiler-result-v1"))},
+        {QStringLiteral("format_version"), versionTwo ? QByteArray("2") : QByteArray("1")},
         {QStringLiteral("manifest_sha256"), jsonString(QString::fromLatin1(manifestSha))},
         {QStringLiteral("operation_id"), jsonString(operationId)},
         {QStringLiteral("package_bytes"), QString::number(package.size()).toLatin1()},
