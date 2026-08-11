@@ -735,8 +735,9 @@ SV630N 速度动作仍因实际编码器分辨率、0x6091 电子齿轮换算、
 5. Workbench 已能以签名 Adapter 定义消费 Product API v1.16 会话级固定只读参数证据并完成
    configured/observed 对比，生产 SV630N v4/Authorization v2 也已安装并独立验签；下一步是实现
    ProjectSnapshot 到新编译请求、Startup SDO/项目专属语义、签名包和 recovery 证据的精确
-   projection。在这些门禁闭合前，v8 中任一
-   非空设备参数继续 fail closed，不进入部署或运动路径。
+   projection。现有 API-042 v1 codec 已精确绑定合同 ID/version，不能通过修改 provisioning 把
+   v1 wire 重标记为 v2；在新签名 schema、codec 和 runtime 闭合前，v8 中任一非空设备参数继续
+   fail closed，不进入部署或运动路径。
 
 ### P1：统一业务协调层
 

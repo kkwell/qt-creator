@@ -7325,6 +7325,68 @@ void EtherCATCoreTests::testRuntimePackageCompilerCodec()
     QVERIFY(!decodeRuntimePackageCompilerCompileResult(request, malformed, signRequest));
 }
 
+void EtherCATCoreTests::testRuntimePackageCompilerCodecRejectsContractConfusion()
+{
+    const Data::RuntimePackageCompilerCompileRequest compileRequest = api042GoldenCompileRequest();
+    const Data::RuntimePackageCompilerActivationProof proof = successfulActivationProof(
+        compileRequest);
+    QVERIFY(proof.isValid());
+    const Data::RuntimePackageCompilerQueryRequest queryRequest{
+        compileRequest.operationId,
+        compileRequest.contractIdentity,
+        proof.compileResult.envelope.requestSha256,
+    };
+    QVERIFY(queryRequest.isValid());
+    const RuntimePackageCompilerProcessOutput noProcessOutput;
+
+    QList<Data::RuntimePackageCompilerContractIdentity> unsupportedContracts;
+    Data::RuntimePackageCompilerContractIdentity wrongId = compileRequest.contractIdentity;
+    wrongId.contractId.append(QStringLiteral(".different"));
+    unsupportedContracts.append(wrongId);
+    Data::RuntimePackageCompilerContractIdentity versionTwo = compileRequest.contractIdentity;
+    versionTwo.contractVersion = 2;
+    unsupportedContracts.append(versionTwo);
+
+    const auto verifyRejected = [](const auto &result) {
+        QVERIFY(!result);
+        QVERIFY2(
+            result.error().contains(QStringLiteral("API-042 v1 contract")),
+            qPrintable(result.error()));
+    };
+    for (const Data::RuntimePackageCompilerContractIdentity &contract : unsupportedContracts) {
+        QVERIFY(contract.isValid());
+
+        Data::RuntimePackageCompilerCompileRequest changedCompile = compileRequest;
+        changedCompile.contractIdentity = contract;
+        QVERIFY(changedCompile.isValid());
+        verifyRejected(encodeRuntimePackageCompilerCompileRequest(changedCompile));
+        verifyRejected(decodeRuntimePackageCompilerCompileResult(
+            changedCompile,
+            noProcessOutput,
+            *proof.compileResult.signRequest));
+
+        Data::RuntimePackageCompilerFinalizeRequest changedFinalize = proof.finalizeRequest;
+        changedFinalize.contractIdentity = contract;
+        QVERIFY(changedFinalize.isValid());
+        verifyRejected(encodeRuntimePackageCompilerFinalizeRequest(changedFinalize));
+        verifyRejected(decodeRuntimePackageCompilerFinalizeResult(
+            changedFinalize,
+            noProcessOutput,
+            proof.finalizeResult.packageBytes));
+
+        Data::RuntimePackageCompilerQueryRequest changedQuery = queryRequest;
+        changedQuery.contractIdentity = contract;
+        QVERIFY(changedQuery.isValid());
+        verifyRejected(decodeRuntimePackageCompilerQueryResult(changedQuery, noProcessOutput));
+
+        Data::RuntimePackageCompilerVerifyRequest changedVerify = proof.verifyRequest;
+        changedVerify.contractIdentity = contract;
+        QVERIFY(changedVerify.isValid());
+        verifyRejected(encodeRuntimePackageCompilerVerifyRequest(changedVerify));
+        verifyRejected(decodeRuntimePackageCompilerVerifyResult(changedVerify, noProcessOutput));
+    }
+}
+
 void EtherCATCoreTests::testRuntimePackageCompilerProviderContract()
 {
     RuntimePackageCompilerFixture fixture;

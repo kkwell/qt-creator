@@ -20,6 +20,22 @@ namespace {
 
 using namespace Data;
 
+bool usesFrozenApi042V1Contract(const RuntimePackageCompilerContractIdentity &identity)
+{
+    // The v1 compile wire request does not encode its provisioning identity.
+    // Treating that identity as version negotiation would silently relabel v1
+    // bytes.
+    return identity.contractId
+               == QStringLiteral("ethercat-ide-project-compiler-contract-v1")
+           && identity.contractVersion == 1;
+}
+
+Utils::ResultError unsupportedApi042V1Contract()
+{
+    return Utils::ResultError(
+        QStringLiteral("The request does not use the frozen API-042 v1 contract."));
+}
+
 struct JsonValue
 {
     enum class Kind { Null, Boolean, Signed, Unsigned, String, Array, Object, Raw };
@@ -925,6 +941,8 @@ Utils::Result<RuntimePackageCompilerCanonicalJson> encodeRuntimePackageCompilerC
         return Utils::ResultError(
             QStringLiteral("The typed API-042 compile request is incomplete or inconsistent."));
     }
+    if (!usesFrozenApi042V1Contract(request.contractIdentity))
+        return unsupportedApi042V1Contract();
     RuntimePackageCompilerCanonicalJson result = encodeCompileRequestUnchecked(request);
     if (!result.isValid()) {
         return Utils::ResultError(
@@ -938,6 +956,8 @@ Utils::Result<RuntimePackageCompilerCanonicalJson> encodeRuntimePackageCompilerF
 {
     if (!request.isValid())
         return Utils::ResultError(QStringLiteral("The finalize request is incomplete."));
+    if (!usesFrozenApi042V1Contract(request.contractIdentity))
+        return unsupportedApi042V1Contract();
     RuntimePackageCompilerCanonicalJson result = encodeFinalizeRequestUnchecked(request);
     if (!result.isValid()) {
         return Utils::ResultError(
@@ -951,6 +971,8 @@ Utils::Result<RuntimePackageCompilerCanonicalJson> encodeRuntimePackageCompilerV
 {
     if (!request.isValid())
         return Utils::ResultError(QStringLiteral("The verify request is incomplete."));
+    if (!usesFrozenApi042V1Contract(request.contractIdentity))
+        return unsupportedApi042V1Contract();
     RuntimePackageCompilerCanonicalJson result = encodeVerifyRequestUnchecked(request);
     if (!result.isValid()) {
         return Utils::ResultError(
@@ -1030,6 +1052,8 @@ Utils::Result<RuntimePackageCompilerFinalizeResult> decodeRuntimePackageCompiler
 {
     if (!request.isValid())
         return Utils::ResultError(QStringLiteral("Finalize request is invalid."));
+    if (!usesFrozenApi042V1Contract(request.contractIdentity))
+        return unsupportedApi042V1Contract();
     const Utils::Result<DecodedProcessDocument> document = decodeProcessDocument(output);
     if (!document)
         return Utils::ResultError(document.error());
@@ -1075,6 +1099,8 @@ Utils::Result<RuntimePackageCompilerQueryResult> decodeRuntimePackageCompilerQue
 {
     if (!request.isValid())
         return Utils::ResultError(QStringLiteral("Query request is invalid."));
+    if (!usesFrozenApi042V1Contract(request.contractIdentity))
+        return unsupportedApi042V1Contract();
     const Utils::Result<DecodedProcessDocument> document = decodeProcessDocument(output);
     if (!document)
         return Utils::ResultError(document.error());
@@ -1131,6 +1157,8 @@ Utils::Result<RuntimePackageCompilerVerifyResult> decodeRuntimePackageCompilerVe
 {
     if (!request.isValid())
         return Utils::ResultError(QStringLiteral("Verify request is invalid."));
+    if (!usesFrozenApi042V1Contract(request.contractIdentity))
+        return unsupportedApi042V1Contract();
     const Utils::Result<DecodedProcessDocument> document = decodeProcessDocument(output);
     if (!document)
         return Utils::ResultError(document.error());

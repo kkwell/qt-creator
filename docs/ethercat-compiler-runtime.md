@@ -133,6 +133,14 @@ generate `provisioning.json` or initialize an operation store after failure.
   `compile-inputs.json` is instead an
   `ethercat-ide-compiler-input-provisioning-v1` catalog. They are different
   contracts and must not overwrite one another.
+- The Core wire codec accepts only the exact contract ID/version pair
+  `ethercat-ide-project-compiler-contract-v1`/`1` for compile, finalize,
+  query, and verify. Changing a provisioning identity is not wire-version
+  negotiation and cannot relabel v1 bytes as a future contract. The schema
+  bundle digest remains bound by exact provisioning, Provider, bootstrap,
+  and operation-store equality instead of a codec constant. Device-parameter
+  support requires a separately governed schema, codec, runtime, and signed
+  provisioning identity.
 - The API-068 signing key is limited to this exact release. Future product
   releases need governed key rotation, revocation and recovery.
 

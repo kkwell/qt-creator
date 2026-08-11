@@ -33,6 +33,7 @@ private slots:
     void testRuntimePackageActivationContract();
     void testRuntimePackageCompilerValueSemantics();
     void testRuntimePackageCompilerCodec();
+    void testRuntimePackageCompilerCodecRejectsContractConfusion();
     void testRuntimePackageCompilerProviderContract();
     void testRuntimePackageCompilerProjectRequestBuilderContract();
     void testRuntimePackageCompilerPreparationCoordinatorContract();
