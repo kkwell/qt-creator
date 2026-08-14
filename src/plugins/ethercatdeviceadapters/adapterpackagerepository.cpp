@@ -23,6 +23,7 @@
 #include <cmath>
 #include <iterator>
 #include <limits>
+#include <numeric>
 #include <tuple>
 
 namespace EtherCAT::DeviceAdapters::Internal {
@@ -3155,6 +3156,35 @@ static bool valueConvertsForAllBindings(
     return true;
 }
 
+static quint64 unsignedMagnitude(qint64 value)
+{
+    return value < 0 ? quint64(-(value + 1)) + 1 : quint64(value);
+}
+
+static bool rationalQuotientIsIntegral(const ExactRational &left, const ExactRational &right)
+{
+    if (left.denominator <= 0 || right.denominator <= 0 || right.numerator == 0)
+        return false;
+    if (left.numerator == 0)
+        return true;
+
+    quint64 leftNumerator = unsignedMagnitude(left.numerator);
+    quint64 leftDenominator = quint64(left.denominator);
+    quint64 rightNumerator = unsignedMagnitude(right.numerator);
+    quint64 rightDenominator = quint64(right.denominator);
+
+    const quint64 leftDivisor = std::gcd(leftNumerator, leftDenominator);
+    const quint64 rightDivisor = std::gcd(rightNumerator, rightDenominator);
+    leftNumerator /= leftDivisor;
+    leftDenominator /= leftDivisor;
+    rightNumerator /= rightDivisor;
+    rightDenominator /= rightDivisor;
+
+    rightNumerator /= std::gcd(leftNumerator, rightNumerator);
+    leftDenominator /= std::gcd(leftDenominator, rightDenominator);
+    return rightNumerator == 1 && leftDenominator == 1;
+}
+
 static bool parameterDomainConvertsForAllBindings(
     const DeviceControlActionParameter &parameter,
     const SemanticSignalDefinition &signal,
@@ -3184,11 +3214,7 @@ static bool parameterDomainConvertsForAllBindings(
         return false;
     }
 
-    const __int128 rawStepNumerator = __int128(constraint.step->numerator)
-                                      * signal.engineeringTransform->scale.denominator;
-    const __int128 rawStepDenominator = __int128(constraint.step->denominator)
-                                        * signal.engineeringTransform->scale.numerator;
-    if (rawStepDenominator == 0 || rawStepNumerator % rawStepDenominator != 0) {
+    if (!rationalQuotientIsIntegral(*constraint.step, signal.engineeringTransform->scale)) {
         return fail(
             error, QString("%1 step is not exactly encodable by the target signal").arg(context));
     }
