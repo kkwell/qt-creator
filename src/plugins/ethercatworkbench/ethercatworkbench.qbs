@@ -75,4 +75,9 @@ QtcPlugin {
             "ethercatworkbenchtests.h",
         ]
     }
+
+    Properties {
+        condition: qbs.toolchain.contains("msvc")
+        cpp.cxxFlags: "/bigobj"
+    }
 }

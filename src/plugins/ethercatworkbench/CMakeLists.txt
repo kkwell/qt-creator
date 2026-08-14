@@ -62,3 +62,8 @@ extend_qtc_plugin(EtherCATWorkbench
     ethercatworkbenchtests.cpp
     ethercatworkbenchtests.h
 )
+
+if (MSVC)
+  # Prevent fatal error C1128 for the large combined test translation unit.
+  target_compile_options(EtherCATWorkbench PRIVATE /bigobj)
+endif()
