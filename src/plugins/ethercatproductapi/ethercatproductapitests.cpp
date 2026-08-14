@@ -26,6 +26,7 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTest>
+#include <QTimer>
 
 #include <algorithm>
 #include <array>
