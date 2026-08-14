@@ -820,7 +820,7 @@ void EtherCATDevicesTests::testRepositoryImportFilterAndRebuild()
     QCOMPARE(latestRebuilt.devices().first().name, QString("Updated Terminal"));
 
     const Utils::FilePaths storedSources = repositoryRoot.pathAppended("sources").dirEntries(
-        QDir::Files | QDir::NoDotAndDotDot);
+        Utils::DirFilterFlag::Files | Utils::DirFilterFlag::NoDotAndDotDot);
     QCOMPARE(storedSources.size(), 1);
     QVERIFY_RESULT(storedSources.first().writeFileContents("<tampered/>"));
     DeviceRepository corrupted(repositoryRoot);

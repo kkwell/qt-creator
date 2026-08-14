@@ -5131,18 +5131,20 @@ void EtherCATCoreTests::testRuntimePackageActivationContract()
                                   Data::ControllerServiceState serviceState,
                                   quint64 leaseOwner,
                                   const QDateTime &at,
-                                  quint64 generation = sessionGeneration,
-                                  quint64 observer = sessionId) {
+                                  std::optional<quint64> generation = {},
+                                  std::optional<quint64> observer = {}) {
+        const quint64 effectiveGeneration = generation.value_or(sessionGeneration);
+        const quint64 effectiveObserver = observer.value_or(sessionId);
         return Data::RuntimePackageActivationControllerEvidence{
             scope,
-            generation,
-            observer,
+            effectiveGeneration,
+            effectiveObserver,
             leaseOwner,
             bootId,
             selector,
             Data::ControllerPackageState::Active,
             serviceState,
-            makeAttestation(selector, proof, generation, at),
+            makeAttestation(selector, proof, effectiveGeneration, at),
             at,
         };
     };
