@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (C) 2016 The Qt Company Ltd. Contact: https://www.qt.io/licensing/ -->
+<component type="desktop">
+ <id>org.qt-project.embedlabs</id>
+ <name>Embed Labs</name>
+ <developer id="org.qt-project">
+  <name>Embed Labs</name>
+ </developer>
+ <summary>Integrated development environment for embedded control</summary>
+ <metadata_license>CC0-1.0</metadata_license>
+ <project_license>GPL-3.0</project_license>
+ <description>
+  <p>
+   Embed Labs extends Qt Creator with integrated workflows for embedded and
+   industrial control development.
+  </p>
+  <p>
+   It retains Qt Creator's cross-platform editing, project, build, deployment,
+   and debugging capabilities while adding controller engineering tools.
+  </p>
+ </description>
+ <launchable type="desktop-id">org.qt-project.embedlabs.desktop</launchable>
+
+ <url type="homepage">https://github.com/kkwell/qt-creator</url>
+ <url type="bugtracker">https://github.com/kkwell/qt-creator/issues</url>
+ <url type="help">https://doc.qt.io/qtcreator</url>
+ <url type="vcs-browser">https://github.com/kkwell/qt-creator</url>
+
+ <project_group>Qt</project_group>
+ <content_rating type="oars-1.1" />
+ <releases>
+  <release version="${IDE_VERSION_DISPLAY}"${DATE_ATTRIBUTE}>
+   <description>
+    <p>Embed Labs v${IDE_VERSION_DISPLAY}</p>
+   </description>
+   <url>https://github.com/kkwell/qt-creator/releases/tag/v${IDE_VERSION_DISPLAY}</url>
+  </release>
+ </releases>
+</component>
