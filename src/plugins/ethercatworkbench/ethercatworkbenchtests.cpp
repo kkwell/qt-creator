@@ -21,7 +21,7 @@
 #include "workbenchstatuswidget.h"
 #include "workbenchtreemodel.h"
 
-#include <aggregation/aggregate.h>
+#include <utils/aggregate.h>
 
 #include <coreplugin/actionmanager/actioncontainer.h>
 #include <coreplugin/actionmanager/actionmanager.h>
@@ -12329,7 +12329,7 @@ void EtherCATWorkbenchTests::testProviderStateTreeAndNavigation()
                 .toString()
                 .contains("Offline 0x21, scanned 0x22"));
     ::Core::IFindSupport *findSupport
-        = Aggregation::query<::Core::IFindSupport>(navigation.treeView());
+        = Utils::Aggregation::query<::Core::IFindSupport>(navigation.treeView());
     QVERIFY(findSupport);
     QCOMPARE(
         findSupport->findStep("Unexpected I/O", {}),
@@ -15089,7 +15089,7 @@ void EtherCATWorkbenchTests::testNavigationNativeFindIntegration()
         findPlaceHolderGuard = findPlaceHolder;
         QCOMPARE(findPlaceHolder->owner(), searchableTree);
         ::Core::IFindSupport *findSupport
-            = Aggregation::query<::Core::IFindSupport>(tree);
+            = Utils::Aggregation::query<::Core::IFindSupport>(tree);
         QVERIFY(findSupport);
         findGuard = findSupport;
         QVERIFY(!findSupport->supportsReplace());
@@ -22604,7 +22604,7 @@ void EtherCATWorkbenchTests::testStartupEditRejectionFeedback()
     const QString acceptedValidation = validation->text();
     QVERIFY(!acceptedValidation.isEmpty());
     auto infoValidation = static_cast<Utils::InfoLabel *>(validation.data());
-    const Utils::InfoLabelType::InfoType acceptedType = infoValidation->type();
+    const Utils::InfoLabelType acceptedType = infoValidation->type();
     const QString acceptedAccessibleDescription = validation->accessibleDescription();
     const QString acceptedAdditionalToolTip = infoValidation->additionalToolTip();
     const QString acceptedToolTip = validation->toolTip();
@@ -22978,7 +22978,7 @@ void EtherCATWorkbenchTests::testStartupEditRejectionFeedback()
     const int changesBeforeCheckRejection = projectChanges.count();
     const int dataChangesBeforeCheckRejection = dataChanges.count();
     const QString validationBeforeDirectCheckRejection = validation->text();
-    const Utils::InfoLabelType::InfoType typeBeforeDirectCheckRejection = infoValidation->type();
+    const Utils::InfoLabelType typeBeforeDirectCheckRejection = infoValidation->type();
     const QString descriptionBeforeDirectCheckRejection = validation->accessibleDescription();
     const QString additionalToolTipBeforeDirectCheckRejection
         = infoValidation->additionalToolTip();
