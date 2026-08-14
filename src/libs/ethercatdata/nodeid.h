@@ -10,6 +10,9 @@
 
 namespace EtherCAT::Data {
 
+class NodeId;
+ETHERCATDATA_EXPORT size_t qHash(const NodeId &id, size_t seed = 0) noexcept;
+
 class ETHERCATDATA_EXPORT NodeId
 {
 public:
@@ -35,8 +38,6 @@ private:
 
     friend size_t qHash(const NodeId &id, size_t seed) noexcept;
 };
-
-ETHERCATDATA_EXPORT size_t qHash(const NodeId &id, size_t seed = 0) noexcept;
 
 } // namespace EtherCAT::Data
 
